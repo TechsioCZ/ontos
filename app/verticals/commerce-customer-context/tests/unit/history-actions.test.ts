@@ -21,6 +21,7 @@ import type { CustomerHistorySubject } from '../../shared/domain/record-visibili
 import type { RepeatOrderCartLineResult } from '../../shared/domain/history-action-contracts.ts';
 import { handleRepeatRetailOrder } from '../../src/actions/history-action-support.ts';
 
+const originalCompositionRevision = 'a'.repeat(64);
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const principalId = '33333333-3333-4333-8333-333333333333';
@@ -281,6 +282,7 @@ it.effect('creates a new Cart from only current repeatable intent and preserves 
       actionInvocationId: 'repeat-invocation-1',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: originalCompositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,
@@ -332,6 +334,7 @@ it.effect('reuses one repeat-purchase intent for retries and separates a later d
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -374,6 +377,7 @@ it.effect('rejects a Cart result bound to another repeat-purchase intent', () =>
         actionInvocationId: 'expected-repeat-intent',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -411,6 +415,7 @@ it.effect('rejects a Cart result bound to another source Order or purchasing sub
           actionInvocationId: 'source-binding-intent',
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision: originalCompositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: collector.recordDataAccess,
           scope,
@@ -461,6 +466,7 @@ it.effect('rejects Cart outcomes that add a non-repeatable line or hide a change
         actionInvocationId: 'line-outcome-intent',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -530,6 +536,7 @@ it.effect('fails closed for cross-tenant and wrong-type Cart ResourceRefs', () =
         actionInvocationId: `misbound-cart-${index}`,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -570,6 +577,7 @@ it.effect('returns typed repeat failures for conflict, empty intent, and owner o
         actionInvocationId: 'repeat-failure-invocation',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -664,6 +672,7 @@ it.effect('rejects untrusted Storefront and mismatched Counterparty profile befo
         actionInvocationId: 'counterparty-trust-invocation',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope: trustedStorefrontId === undefined ? scope : { ...scope, trustedStorefrontId },

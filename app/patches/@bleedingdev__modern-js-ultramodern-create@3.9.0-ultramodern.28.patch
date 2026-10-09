@@ -1,0 +1,2766 @@
+diff --git a/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs b/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
+index a1775149e82be16500687d9712a2bd37b6427034..9fc7e36413ca4a7fe095732b4f7dba2a17e010c4 100644
+--- a/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
++++ b/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
+@@ -179,11 +179,8 @@ function executeAddUltramodernVertical(options, logicalWorkspaceRoot = options.w
+         ...updatedVerticals,
+         ...nextAdditionalShells
+     ])}\n`);
+-    for (const shellToRefresh of [
+-        nextPrimaryShell,
+-        ...nextAdditionalShells
+-    ])(0, external_shell_files_cjs_namespaceObject.rewriteShellAppFiles)(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, shellToRefresh.id === nextTargetShell.id ? nextTargetShell : shellToRefresh, configuredDevPorts, {
+-        shell: previousProjection(previousApps).find((app)=>app.id === shellToRefresh.id),
++    (0, external_shell_files_cjs_namespaceObject.rewriteShellAppFiles)(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, nextTargetShell, configuredDevPorts, {
++        shell: previousProjection(previousApps).find((app)=>app.id === nextTargetShell.id),
+         remotes: existingVerticals,
+         devPorts: previousDevPorts,
+         enableTailwind: previousTailwind
+diff --git a/dist/cjs/ultramodern-workspace/add-vertical/shell-files.cjs b/dist/cjs/ultramodern-workspace/add-vertical/shell-files.cjs
+index 935bd9aff97cbb83a4b33fdd188a98358baeb3c2..b1c17ab5be7cc741f517a2ec375981fea57724b6 100644
+--- a/dist/cjs/ultramodern-workspace/add-vertical/shell-files.cjs
++++ b/dist/cjs/ultramodern-workspace/add-vertical/shell-files.cjs
+@@ -44,7 +44,6 @@ const external_node_fs_namespaceObject = require("node:fs");
+ var external_node_fs_default = /*#__PURE__*/ __webpack_require__.n(external_node_fs_namespaceObject);
+ const external_node_path_namespaceObject = require("node:path");
+ var external_node_path_default = /*#__PURE__*/ __webpack_require__.n(external_node_path_namespaceObject);
+-const external_api_cjs_namespaceObject = require("../api.cjs");
+ const external_app_files_cjs_namespaceObject = require("../app-files.cjs");
+ const external_demo_components_cjs_namespaceObject = require("../demo-components.cjs");
+ const external_descriptors_cjs_namespaceObject = require("../descriptors.cjs");
+@@ -104,8 +103,7 @@ function shellAppArtifacts(scope, packageSource, enableTailwind, remotes, bridge
+         [`${shellHost.directory}/src/routes/[lang]/page.tsx`]: (0, external_demo_components_cjs_namespaceObject.createShellPage)(shellHost, uiRemotes),
+         [`${shellHost.directory}/src/routes/vertical-components.tsx`]: (0, external_demo_components_cjs_namespaceObject.createShellRemoteComponents)(shellHost, uiRemotes),
+         [`${shellHost.directory}/src/routes/vertical-components.worker.tsx`]: (0, external_demo_components_cjs_namespaceObject.createShellWorkerRemoteComponents)(shellHost, uiRemotes),
+-        [`${shellHost.directory}/src/routes/shell-frame.tsx`]: (0, external_app_files_cjs_namespaceObject.createShellFrameComponent)(shellHost),
+-        [`${shellHost.directory}/src/api/vertical-clients.ts`]: (0, external_api_cjs_namespaceObject.createShellApiClient)(scope, remotes)
++        [`${shellHost.directory}/src/routes/shell-frame.tsx`]: (0, external_app_files_cjs_namespaceObject.createShellFrameComponent)(shellHost)
+     };
+     return {
+         shellHost,
+diff --git a/dist/cjs/ultramodern-workspace/api/client.cjs b/dist/cjs/ultramodern-workspace/api/client.cjs
+index be972eb6fd9bdfc9270a431f194f590632c040a7..6dfb3efd4d0ff2a8dfb8d9ffca51b06b4b267673 100644
+--- a/dist/cjs/ultramodern-workspace/api/client.cjs
++++ b/dist/cjs/ultramodern-workspace/api/client.cjs
+@@ -28,8 +28,7 @@ var __webpack_require__ = {};
+ var __webpack_exports__ = {};
+ __webpack_require__.r(__webpack_exports__);
+ __webpack_require__.d(__webpack_exports__, {
+-    createApiClient: ()=>createApiClient,
+-    createShellApiClient: ()=>createShellApiClient
++    createApiClient: ()=>createApiClient
+ });
+ const external_descriptors_cjs_namespaceObject = require("../descriptors.cjs");
+ const external_naming_cjs_namespaceObject = require("../naming.cjs");
+@@ -181,43 +180,9 @@ export const ${createName} = (
+   );${checkoutCartClientExports}
+ `;
+ }
+-function createShellApiClient(scope, remotes = []) {
+-    const exports1 = (0, external_descriptors_cjs_namespaceObject.verticalApiApps)(remotes).map((remote)=>{
+-        const stem = (0, external_descriptors_cjs_namespaceObject.resolveApiStem)(remote);
+-        const pascalStem = (0, external_naming_cjs_namespaceObject.toPascalCase)(stem);
+-        const rpc = 'rpc' === (0, external_descriptors_cjs_namespaceObject.resolveApiProtocol)(remote);
+-        const pascalSingular = (0, external_naming_cjs_namespaceObject.toPascalCase)((0, external_names_cjs_namespaceObject.verticalApiErrorStem)(remote));
+-        const checkoutCartExports = !rpc && (0, external_checkout_cart_cjs_namespaceObject.serviceHasCheckoutCartState)(remote) ? `  addCheckoutCartItem,
+-  clearCheckoutCart,
+-  getCheckoutCart,
+-  removeCheckoutCartItem,
+-  type CheckoutAddCartItemInput,
+-  type CheckoutCart,
+-  type CheckoutCartLine,
+-` : '';
+-        if (rpc) return `export {
+-  get${pascalStem}Rpc,
+-  list${pascalStem}Rpc,
+-  make${pascalStem}RpcClient,
+-  type ${pascalStem}RpcClientOptions,
+-} from '${(0, external_naming_cjs_namespaceObject.packageName)(scope, remote.packageSuffix)}/api/rpc-client';`;
+-        return `export {
+-${checkoutCartExports}  create${pascalSingular},
+-  create${pascalStem}Client,
+-  get${pascalSingular},
+-  get${pascalStem}Readiness,
+-  list${pascalStem},
+-  type ${pascalStem}ClientOptions,
+-} from '${(0, external_naming_cjs_namespaceObject.packageName)(scope, remote.packageSuffix)}/api/client';`;
+-    }).join('\n\n');
+-    return exports1 ? `${exports1}\n` : `export const ultramodernVerticalClients = [] as const;
+-`;
+-}
+ exports.createApiClient = __webpack_exports__.createApiClient;
+-exports.createShellApiClient = __webpack_exports__.createShellApiClient;
+ for(var __rspack_i in __webpack_exports__)if (-1 === [
+-    "createApiClient",
+-    "createShellApiClient"
++    "createApiClient"
+ ].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
+ Object.defineProperty(exports, '__esModule', {
+     value: true
+diff --git a/dist/cjs/ultramodern-workspace/api.cjs b/dist/cjs/ultramodern-workspace/api.cjs
+index 7567a916e8470b19c5187f6b4a1d004e575d1dda..8740d6edadb71337e4f9b6d4c26374171aab24bb 100644
+--- a/dist/cjs/ultramodern-workspace/api.cjs
++++ b/dist/cjs/ultramodern-workspace/api.cjs
+@@ -36,7 +36,6 @@ __webpack_require__.d(__webpack_exports__, {
+     createRpcClientFile: ()=>rpc_cjs_namespaceObject.createRpcClientFile,
+     createRpcContractFile: ()=>rpc_cjs_namespaceObject.createRpcContractFile,
+     createSharedApi: ()=>shared_cjs_namespaceObject.createSharedApi,
+-    createShellApiClient: ()=>client_cjs_namespaceObject.createShellApiClient,
+     rpcPath: ()=>rpc_cjs_namespaceObject.rpcPath,
+     verticalApiCreatePayloadSchemaExport: ()=>names_cjs_namespaceObject.verticalApiCreatePayloadSchemaExport,
+     verticalApiErrorStem: ()=>names_cjs_namespaceObject.verticalApiErrorStem,
+@@ -65,7 +64,6 @@ exports.createRpcApiServiceEntry = __webpack_exports__.createRpcApiServiceEntry;
+ exports.createRpcClientFile = __webpack_exports__.createRpcClientFile;
+ exports.createRpcContractFile = __webpack_exports__.createRpcContractFile;
+ exports.createSharedApi = __webpack_exports__.createSharedApi;
+-exports.createShellApiClient = __webpack_exports__.createShellApiClient;
+ exports.rpcPath = __webpack_exports__.rpcPath;
+ exports.verticalApiCreatePayloadSchemaExport = __webpack_exports__.verticalApiCreatePayloadSchemaExport;
+ exports.verticalApiErrorStem = __webpack_exports__.verticalApiErrorStem;
+@@ -88,7 +86,6 @@ for(var __rspack_i in __webpack_exports__)if (-1 === [
+     "createRpcClientFile",
+     "createRpcContractFile",
+     "createSharedApi",
+-    "createShellApiClient",
+     "rpcPath",
+     "verticalApiCreatePayloadSchemaExport",
+     "verticalApiErrorStem",
+diff --git a/dist/cjs/ultramodern-workspace/package-json.cjs b/dist/cjs/ultramodern-workspace/package-json.cjs
+index 83471cd1f552d0e05fb9799407f3611f1be26140..12b5c5c0cad62f2a375efe473cc29e29b01d403f 100644
+--- a/dist/cjs/ultramodern-workspace/package-json.cjs
++++ b/dist/cjs/ultramodern-workspace/package-json.cjs
+@@ -72,7 +72,6 @@ function appDependencies(scope, packageSource, app, remotes = [], bridge) {
+         dependencies['@modern-js/boundary-debugger'] = frameworkRequest(packageSource);
+         dependencies['@modern-js/plugin-bff'] = frameworkRequest(packageSource);
+         Object.assign(dependencies, external_versions_cjs_namespaceObject.ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies);
+-        for (const remote of (0, external_descriptors_cjs_namespaceObject.verticalApiApps)(remotes))dependencies[(0, external_naming_cjs_namespaceObject.packageName)(scope, remote.packageSuffix)] = external_ultramodern_package_source_cjs_namespaceObject.WORKSPACE_PACKAGE_VERSION;
+     }
+     for (const remote of appRemotes)dependencies[(0, external_naming_cjs_namespaceObject.packageName)(scope, remote.packageSuffix)] = external_ultramodern_package_source_cjs_namespaceObject.WORKSPACE_PACKAGE_VERSION;
+     if ((0, external_descriptors_cjs_namespaceObject.appHasApi)(app)) {
+@@ -228,9 +227,7 @@ function createAppPackage(scope, app, packageSource, enableTailwind, remotes = [
+             './api': './shared/api.ts',
+             './api/client': `./${clientDirectory}/${app.api.stem}-client.ts`
+         });
+-    } else if ('shell' === app.kind) Object.assign(packageExports, {
+-        './api/clients': './src/api/vertical-clients.ts'
+-    });
++    }
+     if (Object.keys(packageExports).length > 0) packageJson.exports = packageExports;
+     return packageJson;
+ }
+diff --git a/dist/cjs/ultramodern-workspace/validation/architecture.cjs b/dist/cjs/ultramodern-workspace/validation/architecture.cjs
+index 70bb2be66ec4be9fddea2f3511021caaa3f47f2b..1f90c1c1352dd25e83e0ca130874e349286ccba3 100644
+--- a/dist/cjs/ultramodern-workspace/validation/architecture.cjs
++++ b/dist/cjs/ultramodern-workspace/validation/architecture.cjs
+@@ -45,6 +45,8 @@ const external_node_module_namespaceObject = require("node:module");
+ const external_node_path_namespaceObject = require("node:path");
+ var external_node_path_default = /*#__PURE__*/ __webpack_require__.n(external_node_path_namespaceObject);
+ const external_assertions_cjs_namespaceObject = require("./assertions.cjs");
++const external_native_build_target_cjs_namespaceObject = require("./native-build-target.cjs");
++const external_native_federation_loading_cjs_namespaceObject = require("./native-federation-loading.cjs");
+ function assertCompilerArchitecture(root, workspaceValidationContract) {
+     const fullStackVerticals = workspaceValidationContract.apps.filter((app)=>'shell' !== app.kind);
+     const tailwindEnabled = workspaceValidationContract.tailwindEnabled;
+@@ -326,12 +328,38 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                 ...shellRouteDirectories.flatMap(collectCompilerInputs),
+                 ...configFiles.map((relativePath)=>external_node_path_default().join(root, relativePath)).filter((absolutePath)=>external_node_fs_default().existsSync(absolutePath))
+             ]);
++            const nativeCompilerSourceDirectories = new Set();
++            const nativeBrowserDefineSourceDirectories = new Set();
++            for (const appPath of appPaths){
++                const configPath = external_node_path_default().join(root, appPath, 'modern.config.ts');
++                if (!external_node_fs_default().existsSync(configPath)) continue;
++                const configProject = compilerSnapshot?.getDefaultProjectForFile(configPath);
++                const configSource = configProject?.program.getSourceFile(configPath);
++                if (void 0 !== configProject && void 0 !== configSource && (0, external_native_build_target_cjs_namespaceObject.isNativeModernCompilerOwner)(typescript, configProject.checker, configSource, readJson(`${appPath}/package.json`))) {
++                    nativeCompilerSourceDirectories.add(external_node_path_default().join(root, appPath, 'src') + external_node_path_default().sep);
++                    if ((0, external_native_build_target_cjs_namespaceObject.isNativeBrowserCompilerDefine)(typescript, configProject.checker, configSource)) nativeBrowserDefineSourceDirectories.add(external_node_path_default().join(root, appPath, 'src') + external_node_path_default().sep);
++                }
++            }
+             for (const absolutePath of checkedFiles){
+                 const sourceFile = parseCompilerInput(absolutePath);
+                 const isShellRoute = shellRouteDirectories.some((relativeDirectory)=>{
+                     const absoluteDirectory = external_node_path_default().join(root, relativeDirectory);
+                     return absolutePath.startsWith(absoluteDirectory + external_node_path_default().sep);
+                 });
++                let nativeFederationLoading;
++                let nativeBuildTarget;
++                if (isShellRoute) {
++                    const project = compilerSnapshot?.getDefaultProjectForFile(absolutePath);
++                    (0, external_assertions_cjs_namespaceObject.assert)(void 0 !== project, `Native compiler project is missing: ${absolutePath}`);
++                    const compilerOwned = [
++                        ...nativeCompilerSourceDirectories
++                    ].some((directory)=>absolutePath.startsWith(directory));
++                    const browserDefineOwned = [
++                        ...nativeBrowserDefineSourceDirectories
++                    ].some((directory)=>absolutePath.startsWith(directory));
++                    nativeBuildTarget = (0, external_native_build_target_cjs_namespaceObject.createNativeBuildTargetProof)(typescript, project.checker, sourceFile, compilerOwned, browserDefineOwned);
++                    nativeFederationLoading = (0, external_native_federation_loading_cjs_namespaceObject.createNativeFederationLoadingProof)(typescript, project.checker, sourceFile, compilerOwned, browserDefineOwned);
++                }
+                 const moduleFederationAppPath = moduleFederationConfigAppPaths.get(absolutePath);
+                 const tailwindFactories = new Set();
+                 const presetFactories = new Set();
+@@ -361,7 +389,7 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                     if ((0, external_assertions_cjs_namespaceObject.sameJson)(accessPath, [
+                         'process',
+                         'env'
+-                    ])) compilerFailure(sourceFile, node, 'framework config API direct-process-env-access', 'Generated config must use the framework config environment API instead of process.env.', 'use getBuildConfigEnvironment');
++                    ]) && !nativeBuildTarget?.environmentAccess(node)) compilerFailure(sourceFile, node, 'framework config API direct-process-env-access', 'Generated config must use the framework config environment API instead of process.env.', 'use getBuildConfigEnvironment');
+                     if (typescript.isIdentifier(node) && 'ULTRAMODERN_ZEPHYR' === node.text) compilerFailure(sourceFile, node, 'zephyr gating ultramodern-zephyr-environment-gate', 'Generated Zephyr integration must not be gated through ULTRAMODERN_ZEPHYR.', 'use Zephyr native deploy-token behavior');
+                     if (typescript.isPropertyAssignment(node)) {
+                         const property = nodeName(node.name);
+@@ -373,7 +401,7 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                             'hydrateRoot',
+                             'loadRemote',
+                             'loadShare'
+-                        ]))) compilerFailure(sourceFile, node, 'module federation native loading', 'Shell routing must use framework Module Federation loading primitives.', 'remove manual hydration or remote-loading wrappers');
++                        ])) && !nativeFederationLoading?.(node)) compilerFailure(sourceFile, node, 'module federation native loading', 'Shell routing must use framework Module Federation loading primitives.', 'remove manual hydration or remote-loading wrappers');
+                         if (typescript.isBinaryExpression(node) && node.operatorToken.kind === typescript.SyntaxKind.EqualsToken && propertyAccessPath(node.left)?.slice(0, 2).join('.') === 'window.location' || typescript.isCallExpression(node) && propertyAccessPath(node.expression)?.slice(0, 2).join('.') === 'window.location') compilerFailure(sourceFile, node, 'shell routing window-location-navigation', 'Shell routing must use router navigation instead of window.location.', 'use the router navigation primitive');
+                     }
+                     node.forEachChild(visit);
+diff --git a/dist/cjs/ultramodern-workspace/validation/native-build-target.cjs b/dist/cjs/ultramodern-workspace/validation/native-build-target.cjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..47e5963d3a6cf0fcd5eadb67fa81742c8d5c7e4f
+--- /dev/null
++++ b/dist/cjs/ultramodern-workspace/validation/native-build-target.cjs
+@@ -0,0 +1,254 @@
++"use strict";
++var __webpack_require__ = {};
++(()=>{
++    __webpack_require__.d = (exports1, getters, values)=>{
++        var define = (defs, kind)=>{
++            for(var key in defs)if (__webpack_require__.o(defs, key) && !__webpack_require__.o(exports1, key)) Object.defineProperty(exports1, key, {
++                enumerable: true,
++                [kind]: defs[key]
++            });
++        };
++        define(getters, "get");
++        define(values, "value");
++    };
++})();
++(()=>{
++    __webpack_require__.o = (obj, prop)=>Object.prototype.hasOwnProperty.call(obj, prop);
++})();
++(()=>{
++    __webpack_require__.r = (exports1)=>{
++        if ("u" > typeof Symbol && Symbol.toStringTag) Object.defineProperty(exports1, Symbol.toStringTag, {
++            value: 'Module'
++        });
++        Object.defineProperty(exports1, '__esModule', {
++            value: true
++        });
++    };
++})();
++var __webpack_exports__ = {};
++__webpack_require__.r(__webpack_exports__);
++function isNativeModernCompilerOwner(ast, checker, config, manifest) {
++    if (!manifest || 'object' != typeof manifest) return false;
++    const metadata = manifest;
++    const dependencies = metadata.dependencies;
++    const devDependencies = metadata.devDependencies;
++    const scripts = metadata.scripts;
++    if (!scripts || 'object' != typeof scripts) return false;
++    const build = scripts.build;
++    if ('string' != typeof build || !/^modern[ \t]+build(?:[ \t]|$)/u.test(build)) return false;
++    const ownsPackage = (name)=>[
++            dependencies,
++            devDependencies
++        ].some((values)=>{
++            if (!values || 'object' != typeof values) return false;
++            const version = values[name];
++            return 'string' == typeof version && version.length > 0;
++        });
++    if (!ownsPackage('@modern-js/app-tools') || !ownsPackage('@modern-js/runtime')) return false;
++    const factories = new Set();
++    for (const statement of config.statements){
++        if (!ast.isImportDeclaration(statement) || statement.importClause?.phaseModifier === ast.SyntaxKind.TypeKeyword || !ast.isStringLiteralLikeNode(statement.moduleSpecifier) || '@modern-js/app-tools' !== statement.moduleSpecifier.text) continue;
++        const bindings = statement.importClause?.namedBindings;
++        if (bindings && ast.isNamedImports(bindings)) for (const binding of bindings.elements){
++            if (binding.isTypeOnly || 'defineConfig' !== (binding.propertyName ?? binding.name).text) continue;
++            const id = checker.getSymbolAtLocation(binding.name)?.id;
++            if (void 0 !== id) factories.add(id);
++        }
++    }
++    return config.statements.some((statement)=>{
++        if (!ast.isExportAssignment(statement) || statement.isExportEquals || !ast.isCallExpression(statement.expression) || !ast.isIdentifier(statement.expression.expression)) return false;
++        const id = checker.getSymbolAtLocation(statement.expression.expression)?.id;
++        return void 0 !== id && factories.has(id);
++    });
++}
++function isNativeBrowserCompilerDefine(ast, checker, config) {
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const sameBinding = (node, binding)=>ast.isIdentifier(node) && checker.getSymbolAtLocation(node)?.id !== void 0 && checker.getSymbolAtLocation(node)?.id === checker.getSymbolAtLocation(binding)?.id;
++    const property = (node, name)=>ast.isPropertyAccessExpression(node) && void 0 === node.questionDotToken && node.name.text === name;
++    const declaration = (name, bindings)=>{
++        const element = bindings.elements.find((element)=>!element.dotDotDotToken && !element.initializer && void 0 !== element.name && ast.isIdentifier(element.name) && (element.propertyName ? ast.isIdentifier(element.propertyName) && element.propertyName.text === name : element.name.text === name));
++        return element?.name && ast.isIdentifier(element.name) ? element.name : void 0;
++    };
++    const exported = config.statements.find((statement)=>ast.isExportAssignment(statement) && !statement.isExportEquals);
++    if (!exported || !ast.isExportAssignment(exported)) return false;
++    let found = false;
++    const visit = (node)=>{
++        if (found) return;
++        if (ast.isPropertyAssignment(node) && ast.isIdentifier(node.name) && 'rspack' === node.name.text && ast.isObjectLiteralExpression(node.parent) && ast.isPropertyAssignment(node.parent.parent) && ast.isIdentifier(node.parent.parent.name) && 'tools' === node.parent.parent.name.text) {
++            const tools = node.parent.parent;
++            if (!ast.isObjectLiteralExpression(tools.parent)) return;
++            for (const selected of [
++                node,
++                tools
++            ]){
++                if (!ast.isObjectLiteralExpression(selected.parent)) return;
++                const following = selected.parent.properties.slice(selected.parent.properties.indexOf(selected) + 1);
++                if (following.some((property)=>ast.isSpreadAssignment(property) || ast.isPropertyAssignment(property) && (ast.isIdentifier(property.name) || ast.isStringLiteralLikeNode(property.name)) && property.name.text === (selected === node ? 'rspack' : 'tools'))) return;
++            }
++            let owner = tools.parent;
++            while(owner !== exported.expression){
++                const parent = owner.parent;
++                if ((ast.isParenthesizedExpression(parent) || ast.isSatisfiesExpression(parent)) && parent.expression === owner) owner = parent;
++                else {
++                    if (!(ast.isCallExpression(parent) && parent.arguments.some((argument)=>argument === owner))) return;
++                    owner = parent;
++                }
++            }
++            const hook = unwrap(node.initializer);
++            if (!ast.isArrowFunction(hook) || 2 !== hook.parameters.length || !ast.isBlock(hook.body)) return;
++            const [configParameter, context] = hook.parameters;
++            if (!ast.isIdentifier(configParameter.name) || configParameter.initializer || configParameter.dotDotDotToken || !ast.isObjectBindingPattern(context.name) || context.initializer || context.dotDotDotToken) return;
++            const environment = declaration('environment', context.name);
++            const isServer = declaration('isServer', context.name);
++            const rspack = declaration('rspack', context.name);
++            if (!environment || !isServer || !rspack) return;
++            const statement = hook.body.statements[0];
++            if (!statement || !ast.isExpressionStatement(statement) || !ast.isCallExpression(statement.expression)) return;
++            const push = statement.expression;
++            if (!property(push.expression, 'push') || !property(push.expression.expression, 'plugins') || !sameBinding(push.expression.expression.expression, configParameter.name) || 1 !== push.arguments.length) return;
++            const plugin = push.arguments[0];
++            if (!ast.isNewExpression(plugin) || !property(plugin.expression, 'DefinePlugin') || !sameBinding(plugin.expression.expression, rspack) || plugin.arguments?.length !== 1 || !ast.isObjectLiteralExpression(plugin.arguments[0]) || 1 !== plugin.arguments[0].properties.length) return;
++            const definition = plugin.arguments[0].properties[0];
++            if (!ast.isPropertyAssignment(definition) || !ast.isIdentifier(definition.name) || '__ONTOS_BROWSER_BUILD__' !== definition.name.text) return;
++            const negation = definition.initializer;
++            if (!ast.isPrefixUnaryExpression(negation) || negation.operator !== ast.SyntaxKind.ExclamationToken) return;
++            const server = unwrap(negation.operand);
++            if (!ast.isBinaryExpression(server) || server.operatorToken.kind !== ast.SyntaxKind.BarBarToken || !sameBinding(server.left, isServer)) return;
++            const worker = server.right;
++            let replaced = false;
++            const pluginTarget = (value)=>{
++                value = unwrap(value);
++                if (property(value, 'plugins') && sameBinding(value.expression, configParameter.name)) return true;
++                return (ast.isPropertyAccessExpression(value) || ast.isElementAccessExpression(value)) && pluginTarget(value.expression);
++            };
++            const retainsPlugin = (value)=>{
++                if (ast.isBinaryExpression(value) && value.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && value.operatorToken.kind <= ast.SyntaxKind.LastAssignment && pluginTarget(value.left) || ast.isDeleteExpression(value) && pluginTarget(value.expression) || ast.isCallExpression(value) && ast.isPropertyAccessExpression(value.expression) && pluginTarget(value.expression.expression) && 'push' !== value.expression.name.text || ast.isReturnStatement(value) && void 0 !== value.expression && !sameBinding(value.expression, configParameter.name)) replaced = true;
++                value.forEachChild(retainsPlugin);
++            };
++            for (const statement of hook.body.statements.slice(1))retainsPlugin(statement);
++            if (replaced) return;
++            found = ast.isBinaryExpression(worker) && worker.operatorToken.kind === ast.SyntaxKind.EqualsEqualsEqualsToken && property(worker.left, 'name') && sameBinding(worker.left.expression, environment) && ast.isStringLiteralLikeNode(worker.right) && 'workerSSR' === worker.right.text;
++            return;
++        }
++        node.forEachChild(visit);
++    };
++    visit(exported.expression);
++    return found;
++}
++function createNativeBuildTargetProof(ast, checker, sourceFile, compilerOwned, browserDefineOwned) {
++    const localBindings = new Set();
++    const collectBindings = (node)=>{
++        if ((ast.isVariableDeclaration(node) || ast.isParameterDeclaration(node) || ast.isBindingElement(node) || ast.isImportClause(node) || ast.isImportEqualsDeclaration(node) || ast.isImportSpecifier(node) || ast.isNamespaceImport(node) || ast.isFunctionDeclaration(node) || ast.isFunctionExpression(node) || ast.isClassDeclaration(node) || ast.isClassExpression(node) || ast.isEnumDeclaration(node) || ast.isModuleDeclaration(node)) && void 0 !== node.name && ast.isIdentifier(node.name)) {
++            const id = checker.getSymbolAtLocation(node.name)?.id;
++            if (void 0 !== id) localBindings.add(id);
++        }
++        node.forEachChild(collectBindings);
++    };
++    collectBindings(sourceFile);
++    const globalIdentifier = (node, name)=>{
++        if (!ast.isIdentifier(node) || node.text !== name) return false;
++        const id = checker.getSymbolAtLocation(node)?.id;
++        return void 0 === id || !localBindings.has(id);
++    };
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isAsExpression(node) || ast.isTypeAssertion(node) || ast.isNonNullExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const globalContainer = (node)=>[
++            'globalThis',
++            'global',
++            'window',
++            'self'
++        ].some((name)=>globalIdentifier(unwrap(node), name));
++    const processValue = (node)=>{
++        node = unwrap(node);
++        if (globalIdentifier(node, 'process')) return true;
++        if (!ast.isPropertyAccessExpression(node) && !ast.isElementAccessExpression(node)) return false;
++        const name = ast.isPropertyAccessExpression(node) ? node.name.text : ast.isStringLiteralLikeNode(node.argumentExpression) ? node.argumentExpression.text : void 0;
++        if ('env' === name) return processValue(node.expression);
++        return 'process' === name && globalContainer(node.expression);
++    };
++    const escapesProcess = (node)=>{
++        node = unwrap(node);
++        if (processValue(node) || globalContainer(node)) return true;
++        if (ast.isPropertyAssignment(node)) return escapesProcess(node.initializer) || ast.isComputedPropertyName(node.name) && escapesProcess(node.name.expression);
++        if (ast.isShorthandPropertyAssignment(node)) {
++            if (!ast.isIdentifier(node.name) || 'process' !== node.name.text) return false;
++            const id = checker.getShorthandAssignmentValueSymbol(node)?.id;
++            return void 0 === id || !localBindings.has(id);
++        }
++        if (ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node) || ast.isCallExpression(node) || ast.isNewExpression(node) || ast.isArrowFunction(node) || ast.isFunctionExpression(node) || ast.isMethodDeclaration(node) || ast.isGetAccessorDeclaration(node) || ast.isSetAccessorDeclaration(node)) return false;
++        let escaped = false;
++        node.forEachChild((child)=>{
++            if (escapesProcess(child)) escaped = true;
++        });
++        return escaped;
++    };
++    let immutableProcess = true;
++    let immutableBrowserDefine = true;
++    const mutationTarget = (node)=>{
++        node = unwrap(node);
++        if (processValue(node)) return true;
++        if (ast.isElementAccessExpression(node) && globalContainer(node.expression) && !ast.isStringLiteralLikeNode(node.argumentExpression)) return true;
++        if (ast.isArrayLiteralExpression(node)) return node.elements.some(mutationTarget);
++        if (ast.isObjectLiteralExpression(node)) return node.properties.some(mutationTarget);
++        if (ast.isPropertyAssignment(node)) return mutationTarget(node.initializer);
++        if (ast.isShorthandPropertyAssignment(node)) {
++            if (!ast.isIdentifier(node.name)) return false;
++            const id = checker.getShorthandAssignmentValueSymbol(node)?.id;
++            return 'process' === node.name.text && (void 0 === id || !localBindings.has(id));
++        }
++        if (ast.isSpreadAssignment(node) || ast.isSpreadElement(node)) return mutationTarget(node.expression);
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind === ast.SyntaxKind.EqualsToken) return mutationTarget(node.left);
++        while(ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node)){
++            node = unwrap(node.expression);
++            if (processValue(node)) return true;
++        }
++        return false;
++    };
++    const collectMutations = (node)=>{
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment && globalIdentifier(unwrap(node.left), '__ONTOS_BROWSER_BUILD__') || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken) && globalIdentifier(unwrap(node.operand), '__ONTOS_BROWSER_BUILD__') || ast.isDeleteExpression(node) && globalIdentifier(unwrap(node.expression), '__ONTOS_BROWSER_BUILD__')) immutableBrowserDefine = false;
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment && (mutationTarget(node.left) || escapesProcess(node.right)) || ast.isDeleteExpression(node) && mutationTarget(node.expression) || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken) && mutationTarget(node.operand) || (ast.isCallExpression(node) || ast.isNewExpression(node)) && (node.arguments ?? []).some(escapesProcess) || ast.isVariableDeclaration(node) && void 0 !== node.initializer && escapesProcess(node.initializer) || ast.isParameterDeclaration(node) && void 0 !== node.initializer && escapesProcess(node.initializer) || ast.isReturnStatement(node) && void 0 !== node.expression && escapesProcess(node.expression) || ast.isArrowFunction(node) && !ast.isBlock(node.body) && escapesProcess(node.body)) immutableProcess = false;
++        node.forEachChild(collectMutations);
++    };
++    collectMutations(sourceFile);
++    const comparison = (node, target)=>{
++        if (compilerOwned && browserDefineOwned && immutableBrowserDefine && 'node' !== target && globalIdentifier(node, '__ONTOS_BROWSER_BUILD__') && (ast.isIfStatement(node.parent) && node.parent.expression === node || ast.isConditionalExpression(node.parent) && node.parent.condition === node)) return true;
++        if (!compilerOwned || !immutableProcess || !ast.isBinaryExpression(node) || node.operatorToken.kind !== ast.SyntaxKind.EqualsEqualsEqualsToken || !ast.isStringLiteralLikeNode(node.right) || ![
++            'browser',
++            'node'
++        ].includes(node.right.text) || void 0 !== target && node.right.text !== target) return false;
++        const parent = node.parent;
++        if (!(ast.isIfStatement(parent) && parent.expression === node || ast.isConditionalExpression(parent) && parent.condition === node)) return false;
++        const value = node.left;
++        if (!ast.isPropertyAccessExpression(value) || void 0 !== value.questionDotToken || 'MODERN_TARGET' !== value.name.text) return false;
++        const environment = value.expression;
++        return ast.isPropertyAccessExpression(environment) && void 0 === environment.questionDotToken && 'env' === environment.name.text && globalIdentifier(environment.expression, 'process');
++    };
++    return {
++        comparison,
++        environmentAccess: (node)=>{
++            const value = node.parent;
++            return ast.isPropertyAccessExpression(value) && value.expression === node && comparison(value.parent);
++        }
++    };
++}
++__webpack_require__.d(__webpack_exports__, {
++    createNativeBuildTargetProof: ()=>createNativeBuildTargetProof,
++    isNativeBrowserCompilerDefine: ()=>isNativeBrowserCompilerDefine,
++    isNativeModernCompilerOwner: ()=>isNativeModernCompilerOwner
++});
++exports.createNativeBuildTargetProof = __webpack_exports__.createNativeBuildTargetProof;
++exports.isNativeBrowserCompilerDefine = __webpack_exports__.isNativeBrowserCompilerDefine;
++exports.isNativeModernCompilerOwner = __webpack_exports__.isNativeModernCompilerOwner;
++for(var __rspack_i in __webpack_exports__)if (-1 === [
++    "createNativeBuildTargetProof",
++    "isNativeBrowserCompilerDefine",
++    "isNativeModernCompilerOwner"
++].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
++Object.defineProperty(exports, '__esModule', {
++    value: true
++});
+diff --git a/dist/cjs/ultramodern-workspace/validation/native-federation-loading.cjs b/dist/cjs/ultramodern-workspace/validation/native-federation-loading.cjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..9daf092eb6209826ab6ab76bff6426775dd7a783
+--- /dev/null
++++ b/dist/cjs/ultramodern-workspace/validation/native-federation-loading.cjs
+@@ -0,0 +1,319 @@
++"use strict";
++var __webpack_require__ = {};
++(()=>{
++    __webpack_require__.d = (exports1, getters, values)=>{
++        var define = (defs, kind)=>{
++            for(var key in defs)if (__webpack_require__.o(defs, key) && !__webpack_require__.o(exports1, key)) Object.defineProperty(exports1, key, {
++                enumerable: true,
++                [kind]: defs[key]
++            });
++        };
++        define(getters, "get");
++        define(values, "value");
++    };
++})();
++(()=>{
++    __webpack_require__.o = (obj, prop)=>Object.prototype.hasOwnProperty.call(obj, prop);
++})();
++(()=>{
++    __webpack_require__.r = (exports1)=>{
++        if ("u" > typeof Symbol && Symbol.toStringTag) Object.defineProperty(exports1, Symbol.toStringTag, {
++            value: 'Module'
++        });
++        Object.defineProperty(exports1, '__esModule', {
++            value: true
++        });
++    };
++})();
++var __webpack_exports__ = {};
++__webpack_require__.r(__webpack_exports__);
++__webpack_require__.d(__webpack_exports__, {
++    createNativeFederationLoadingProof: ()=>createNativeFederationLoadingProof
++});
++const external_native_build_target_cjs_namespaceObject = require("./native-build-target.cjs");
++const FEDERATION_RUNTIME = '@module-federation/modern-js-v3/runtime';
++function createNativeFederationLoadingProof(ast, checker, sourceFile, compilerOwned, browserDefineOwned) {
++    const nativeBuildTarget = (0, external_native_build_target_cjs_namespaceObject.createNativeBuildTargetProof)(ast, checker, sourceFile, compilerOwned, browserDefineOwned);
++    const literalRuntimeImport = (node)=>ast.isCallExpression(node) && node.expression.kind === ast.SyntaxKind.ImportKeyword && 1 === node.arguments.length && ast.isStringLiteralLikeNode(node.arguments[0]) && node.arguments[0].text === FEDERATION_RUNTIME;
++    let hasProvider = sourceFile.statements.some((statement)=>{
++        if (!ast.isImportDeclaration(statement) || statement.importClause?.phaseModifier === ast.SyntaxKind.TypeKeyword || !ast.isStringLiteralLikeNode(statement.moduleSpecifier) || statement.moduleSpecifier.text !== FEDERATION_RUNTIME) return false;
++        const bindings = statement.importClause?.namedBindings;
++        return void 0 !== bindings && (ast.isNamespaceImport(bindings) || ast.isNamedImports(bindings) && bindings.elements.some((binding)=>!binding.isTypeOnly && 'getInstance' === (binding.propertyName ?? binding.name).text));
++    });
++    const findDynamicProvider = (node)=>{
++        if (hasProvider) return;
++        if (literalRuntimeImport(node)) hasProvider = true;
++        else node.forEachChild(findDynamicProvider);
++    };
++    if (!hasProvider) findDynamicProvider(sourceFile);
++    if (!hasProvider) return ()=>false;
++    const declarations = new Map();
++    const mutated = new Set();
++    const returnValues = [];
++    const symbols = new Map();
++    const symbolId = (node)=>{
++        if (!symbols.has(node)) symbols.set(node, checker.getSymbolAtLocation(node)?.id);
++        return symbols.get(node);
++    };
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isAsExpression(node) || ast.isTypeAssertion(node) || ast.isNonNullExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const isConst = (node)=>ast.isVariableDeclarationList(node.parent) && (node.parent.flags & ast.NodeFlags.Const) !== 0;
++    const collect = (node)=>{
++        if ((ast.isVariableDeclaration(node) || ast.isParameterDeclaration(node) || ast.isBindingElement(node) || ast.isImportClause(node) || ast.isImportEqualsDeclaration(node) || ast.isImportSpecifier(node) || ast.isNamespaceImport(node) || ast.isFunctionDeclaration(node) || ast.isFunctionExpression(node) || ast.isClassDeclaration(node) || ast.isClassExpression(node) || ast.isEnumDeclaration(node) || ast.isModuleDeclaration(node)) && void 0 !== node.name && ast.isIdentifier(node.name)) {
++            const id = symbolId(node.name);
++            if (void 0 !== id) declarations.set(id, node);
++        }
++        node.forEachChild(collect);
++    };
++    collect(sourceFile);
++    const markSymbolMutated = (id, seen = new Set())=>{
++        if (void 0 === id || seen.has(id)) return;
++        seen.add(id);
++        mutated.add(id);
++        const declaration = declarations.get(id);
++        if (declaration && ast.isVariableDeclaration(declaration) && isConst(declaration) && declaration.initializer) {
++            const initializer = unwrap(declaration.initializer);
++            if (ast.isIdentifier(initializer)) markSymbolMutated(symbolId(initializer), seen);
++        }
++    };
++    const markMutated = (node)=>{
++        node = unwrap(node);
++        while(ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node))node = unwrap(node.expression);
++        if (ast.isIdentifier(node)) markSymbolMutated(symbolId(node));
++    };
++    const escapeValue = (node)=>{
++        if (!node) return;
++        const value = unwrap(node);
++        if (ast.isIdentifier(value)) return void markMutated(value);
++        if (ast.isCallExpression(value) || ast.isNewExpression(value) || ast.isArrowFunction(value) || ast.isFunctionExpression(value) || ast.isMethodDeclaration(value)) return;
++        if (ast.isPropertyAccessExpression(value) || ast.isElementAccessExpression(value)) return;
++        if (ast.isConditionalExpression(value)) {
++            escapeValue(value.whenTrue);
++            escapeValue(value.whenFalse);
++            return;
++        }
++        if (ast.isBinaryExpression(value)) {
++            if (value.operatorToken.kind === ast.SyntaxKind.AmpersandAmpersandToken || value.operatorToken.kind === ast.SyntaxKind.BarBarToken || value.operatorToken.kind === ast.SyntaxKind.QuestionQuestionToken || value.operatorToken.kind === ast.SyntaxKind.CommaToken) {
++                escapeValue(value.left);
++                escapeValue(value.right);
++            }
++            return;
++        }
++        if (ast.isShorthandPropertyAssignment(value)) return void markSymbolMutated(checker.getShorthandAssignmentValueSymbol(value)?.id);
++        if (ast.isPropertyAssignment(value)) return void escapeValue(value.initializer);
++        value.forEachChild(escapeValue);
++    };
++    const collectMutations = (node)=>{
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment) {
++            markMutated(node.left);
++            escapeValue(node.right);
++        }
++        if ((ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken)) markMutated(node.operand);
++        if (ast.isDeleteExpression(node)) markMutated(node.expression);
++        if (ast.isCallExpression(node) || ast.isNewExpression(node)) for (const argument of node.arguments ?? [])escapeValue(argument);
++        if (ast.isVariableDeclaration(node) && node.initializer) {
++            const initializer = unwrap(node.initializer);
++            if (!isConst(node) || !ast.isIdentifier(node.name) || !ast.isIdentifier(initializer) && !ast.isCallExpression(initializer)) escapeValue(initializer);
++        }
++        if (ast.isTemplateExpression(node) || ast.isTaggedTemplateExpression(node)) escapeValue(node);
++        if (ast.isPropertyAssignment(node)) escapeValue(node.initializer);
++        if (ast.isShorthandPropertyAssignment(node)) markSymbolMutated(checker.getShorthandAssignmentValueSymbol(node)?.id);
++        if (ast.isArrayLiteralExpression(node)) for (const element of node.elements)escapeValue(element);
++        if (ast.isReturnStatement(node) && node.expression) returnValues.push(node.expression);
++        if (ast.isArrowFunction(node) && !ast.isBlock(node.body)) returnValues.push(node.body);
++        node.forEachChild(collectMutations);
++    };
++    collectMutations(sourceFile);
++    const declarationFor = (node)=>{
++        node = unwrap(node);
++        if (!ast.isIdentifier(node)) return;
++        const id = symbolId(node);
++        return void 0 === id || mutated.has(id) ? void 0 : declarations.get(id);
++    };
++    const runtimeImport = (declaration, packageName = FEDERATION_RUNTIME)=>{
++        let node = declaration;
++        while(!ast.isImportDeclaration(node) && !ast.isSourceFile(node))node = node.parent;
++        return ast.isImportDeclaration(node) && node.importClause?.phaseModifier !== ast.SyntaxKind.TypeKeyword && ast.isStringLiteralLikeNode(node.moduleSpecifier) && node.moduleSpecifier.text === packageName;
++    };
++    const nativeEffect = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration) return false;
++        if (ast.isImportSpecifier(declaration)) return !declaration.isTypeOnly && 'Effect' === (declaration.propertyName ?? declaration.name).text && runtimeImport(declaration, 'effect');
++        if (!ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        return nativeEffect(declaration.initializer, seen);
++    };
++    const effectMethod = (node, method)=>{
++        node = unwrap(node);
++        return ast.isPropertyAccessExpression(node) && node.name.text === method && nativeEffect(node.expression);
++    };
++    const plainArrow = (node)=>ast.isArrowFunction(node) && !node.modifiers?.some((modifier)=>modifier.kind === ast.SyntaxKind.AsyncKeyword);
++    const nativeImportFactory = (node)=>{
++        node = unwrap(node);
++        return plainArrow(node) && 0 === node.parameters.length && !ast.isBlock(node.body) && literalRuntimeImport(unwrap(node.body));
++    };
++    const lazyModuleEffect = (node, depth = 0)=>{
++        if (depth > 128) return false;
++        node = unwrap(node);
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'tryPromise')) return 1 === node.arguments.length && nativeImportFactory(node.arguments[0]);
++        return ast.isPropertyAccessExpression(node.expression) && 'pipe' === node.expression.name.text && lazyModuleEffect(node.expression.expression, depth + 1) && node.arguments.every((stage)=>{
++            const value = unwrap(stage);
++            return ast.isCallExpression(value) && effectMethod(value.expression, 'timeout') && 1 === value.arguments.length;
++        });
++    };
++    const guardedModuleEffect = (node)=>{
++        node = unwrap(node);
++        return ast.isConditionalExpression(node) && nativeBuildTarget.comparison(node.condition, 'browser') && lazyModuleEffect(node.whenTrue) && effectMethod(node.whenFalse, 'interrupt');
++    };
++    const hoistedModuleValue = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration || !ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        const initializer = unwrap(declaration.initializer);
++        if (ast.isIdentifier(initializer)) return hoistedModuleValue(initializer, seen);
++        return ast.isVariableStatement(declaration.parent.parent) && declaration.parent.parent.parent === sourceFile && guardedModuleEffect(initializer);
++    };
++    const nativeProducerReturn = (value)=>{
++        let callback = value.parent;
++        while(!ast.isArrowFunction(callback) && !ast.isFunctionExpression(callback) && !ast.isFunctionDeclaration(callback) && !ast.isMethodDeclaration(callback) && !ast.isSourceFile(callback))callback = callback.parent;
++        if (!plainArrow(callback)) return false;
++        let node = callback;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const call = node.parent;
++        return ast.isCallExpression(call) && effectMethod(call.expression, 'flatMap') && (1 === call.arguments.length && unwrap(call.arguments[0]) === callback || 2 === call.arguments.length && unwrap(call.arguments[1]) === callback) && hoistedModuleValue(value);
++    };
++    const producerCallback = (node, seen)=>{
++        node = unwrap(node);
++        if (!plainArrow(node)) return false;
++        if (!ast.isBlock(node.body)) return moduleEffect(node.body, seen);
++        const last = node.body.statements.at(-1);
++        if (!last || !ast.isReturnStatement(last)) return false;
++        let hasModule = false;
++        let valid = true;
++        const returns = (statement)=>{
++            if (ast.isArrowFunction(statement) || ast.isFunctionExpression(statement) || ast.isFunctionDeclaration(statement) || ast.isMethodDeclaration(statement)) return;
++            if (ast.isReturnStatement(statement)) {
++                if (statement.expression) {
++                    if (moduleEffect(statement.expression, seen)) hasModule = true;
++                    else if (!effectMethod(statement.expression, 'interrupt')) valid = false;
++                } else valid = false;
++                return;
++            }
++            statement.forEachChild(returns);
++        };
++        returns(node.body);
++        return valid && hasModule;
++    };
++    const pipelineStage = (previous, node, seen)=>{
++        node = unwrap(node);
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'flatMap') && 1 === node.arguments.length) return producerCallback(node.arguments[0], seen);
++        return previous && effectMethod(node.expression, 'timeout') && 1 === node.arguments.length;
++    };
++    const moduleEffect = (node, seen = new Set())=>{
++        node = unwrap(node);
++        if (seen.has(node) || seen.size > 128) return false;
++        seen = new Set(seen).add(node);
++        if (ast.isConditionalExpression(node)) return guardedModuleEffect(node);
++        if (ast.isIdentifier(node)) {
++            const declaration = declarationFor(node);
++            return void 0 !== declaration && ast.isVariableDeclaration(declaration) && isConst(declaration) && void 0 !== declaration.initializer && moduleEffect(declaration.initializer, seen);
++        }
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'tryPromise')) return 1 === node.arguments.length && nativeImportFactory(node.arguments[0]);
++        if (effectMethod(node.expression, 'flatMap') && 2 === node.arguments.length) return producerCallback(node.arguments[1], seen);
++        if (ast.isPropertyAccessExpression(node.expression) && 'pipe' === node.expression.name.text) {
++            let result = moduleEffect(node.expression.expression, seen);
++            if (!result) return false;
++            for (const stage of node.arguments)result = pipelineStage(result, stage, seen);
++            return result;
++        }
++        return false;
++    };
++    const callbackInput = (callback)=>{
++        let node = callback;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const stage = node.parent;
++        if (!stage || !ast.isCallExpression(stage) || !effectMethod(stage.expression, 'flatMap')) return false;
++        if (2 === stage.arguments.length && unwrap(stage.arguments[1]) === callback) return moduleEffect(stage.arguments[0]);
++        if (1 !== stage.arguments.length || unwrap(stage.arguments[0]) !== callback) return false;
++        node = stage;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const pipeline = node.parent;
++        if (!pipeline || !ast.isCallExpression(pipeline) || !ast.isPropertyAccessExpression(pipeline.expression) || 'pipe' !== pipeline.expression.name.text) return false;
++        let input = moduleEffect(pipeline.expression.expression);
++        if (!input) return false;
++        for (const argument of pipeline.arguments){
++            if (unwrap(argument) === stage) return input;
++            input = pipelineStage(input, argument, new Set());
++        }
++        return false;
++    };
++    const dynamicGetter = (binding)=>{
++        const name = binding.propertyName ?? binding.name;
++        const pattern = binding.parent;
++        const parameter = pattern.parent;
++        const callback = parameter.parent;
++        return !binding.dotDotDotToken && !binding.initializer && void 0 !== name && ast.isIdentifier(name) && 'getInstance' === name.text && ast.isObjectBindingPattern(pattern) && ast.isParameterDeclaration(parameter) && !parameter.initializer && !parameter.dotDotDotToken && plainArrow(callback) && 1 === callback.parameters.length && callback.parameters[0] === parameter && callbackInput(callback);
++    };
++    const getter = (node, seen = new Set())=>{
++        node = unwrap(node);
++        if (ast.isPropertyAccessExpression(node) && 'getInstance' === node.name.text) {
++            const declaration = declarationFor(node.expression);
++            return void 0 !== declaration && ast.isNamespaceImport(declaration) && runtimeImport(declaration);
++        }
++        const declaration = declarationFor(node);
++        if (!declaration) return false;
++        if (ast.isBindingElement(declaration)) return dynamicGetter(declaration);
++        if (ast.isImportSpecifier(declaration)) return !declaration.isTypeOnly && 'getInstance' === (declaration.propertyName ?? declaration.name).text && runtimeImport(declaration);
++        if (!ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        return getter(declaration.initializer, seen);
++    };
++    const receiver = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration || !ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        const initializer = unwrap(declaration.initializer);
++        return ast.isCallExpression(initializer) ? getter(initializer.expression) && pureSelector(initializer) : ast.isIdentifier(initializer) && receiver(initializer, seen);
++    };
++    const pureSelector = (call)=>{
++        if (0 === call.arguments.length) return true;
++        if (1 !== call.arguments.length) return false;
++        const selector = unwrap(call.arguments[0]);
++        if (!ast.isArrowFunction(selector) || ast.isBlock(selector.body) || selector.modifiers?.some((modifier)=>modifier.kind === ast.SyntaxKind.AsyncKeyword) || 1 !== selector.parameters.length || !ast.isIdentifier(selector.parameters[0].name) || selector.parameters[0].initializer || selector.parameters[0].dotDotDotToken) return false;
++        let pure = true;
++        const visit = (node)=>{
++            if (ast.isCallExpression(node) || ast.isNewExpression(node) || ast.isTaggedTemplateExpression(node) || ast.isDeleteExpression(node) || ast.isAwaitExpression(node) || ast.isYieldExpression(node) || ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken)) pure = false;
++            node.forEachChild(visit);
++        };
++        visit(selector.body);
++        return pure;
++    };
++    for (const value of returnValues)if (!nativeProducerReturn(value)) escapeValue(value);
++    return (node)=>{
++        if (!node || !ast.isCallExpression(node) || !ast.isPropertyAccessExpression(node.expression)) return false;
++        return [
++            'loadRemote',
++            'loadShare'
++        ].includes(node.expression.name.text) && receiver(node.expression.expression);
++    };
++}
++exports.createNativeFederationLoadingProof = __webpack_exports__.createNativeFederationLoadingProof;
++for(var __rspack_i in __webpack_exports__)if (-1 === [
++    "createNativeFederationLoadingProof"
++].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
++Object.defineProperty(exports, '__esModule', {
++    value: true
++});
+diff --git a/dist/cjs/ultramodern-workspace/write-app.cjs b/dist/cjs/ultramodern-workspace/write-app.cjs
+index d4b1e65841ceafcb458bc28b5d04dfda1d7c80db..bf22157844a22f18f9cf3cd58d12f643a7f9de4e 100644
+--- a/dist/cjs/ultramodern-workspace/write-app.cjs
++++ b/dist/cjs/ultramodern-workspace/write-app.cjs
+@@ -102,7 +102,7 @@ function writeAppFederationConfigFiles({ targetDir, scope, resolvedApp, emitsUi,
+     if (emitsUi) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/module-federation.config.ts`, 'shell' === resolvedApp.kind ? (0, external_module_federation_cjs_namespaceObject.createShellModuleFederationConfig)(scope, resolvedApp, remotes) : (0, external_module_federation_cjs_namespaceObject.createRemoteModuleFederationConfig)(scope, resolvedApp, remotes));
+     if ((0, external_descriptors_cjs_namespaceObject.appHasApi)(resolvedApp)) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/backend-federation.config.ts`, (0, external_module_federation_cjs_namespaceObject.createBackendModuleFederationConfig)(resolvedApp));
+ }
+-function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, remotes, availableRemotes, publicWeb, writeAppFile }) {
++function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, remotes, publicWeb, writeAppFile }) {
+     if (!emitsUi) return;
+     if ((resolvedApp.verticalRefs?.length ?? 0) > 0) {
+         writeAppFile('src/federated-components.tsx', (0, external_demo_components_cjs_namespaceObject.createFederatedComponentsRegistry)(scope, resolvedApp, remotes));
+@@ -116,7 +116,6 @@ function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, re
+         writeAppFile('src/routes/vertical-components.tsx', (0, external_demo_components_cjs_namespaceObject.createShellRemoteComponents)(resolvedApp, remotes.filter(external_descriptors_cjs_namespaceObject.appEmitsBrowserUi)));
+         writeAppFile('src/routes/vertical-components.worker.tsx', (0, external_demo_components_cjs_namespaceObject.createShellWorkerRemoteComponents)(resolvedApp, remotes.filter(external_descriptors_cjs_namespaceObject.appEmitsBrowserUi)));
+         writeAppFile('src/routes/shell-frame.tsx', (0, external_app_files_cjs_namespaceObject.createShellFrameComponent)(resolvedApp));
+-        (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/src/api/vertical-clients.ts`, (0, external_api_cjs_namespaceObject.createShellApiClient)(scope, availableRemotes));
+     } else for (const expose of (0, external_descriptors_cjs_namespaceObject.distributedSsrExposes)(resolvedApp))writeAppFile(`src/routes/[lang]/_mf/fragment/${(0, external_descriptors_cjs_namespaceObject.distributedSsrFragmentSlug)(expose)}/page.tsx`, (0, external_demo_components_cjs_namespaceObject.createRemoteExposeFragmentPage)(resolvedApp, expose));
+ }
+ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
+diff --git a/dist/esm/ultramodern-workspace/add-vertical/execute.js b/dist/esm/ultramodern-workspace/add-vertical/execute.js
+index 03a8a20c9fe87f39b03b4645b990ca609647f551..0cf126787936dec4ca9aba503e00176f48a53edb 100644
+--- a/dist/esm/ultramodern-workspace/add-vertical/execute.js
++++ b/dist/esm/ultramodern-workspace/add-vertical/execute.js
+@@ -135,11 +135,8 @@ function executeAddUltramodernVertical(options, logicalWorkspaceRoot = options.w
+         ...updatedVerticals,
+         ...nextAdditionalShells
+     ])}\n`);
+-    for (const shellToRefresh of [
+-        nextPrimaryShell,
+-        ...nextAdditionalShells
+-    ])rewriteShellAppFiles(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, shellToRefresh.id === nextTargetShell.id ? nextTargetShell : shellToRefresh, configuredDevPorts, {
+-        shell: previousProjection(previousApps).find((app)=>app.id === shellToRefresh.id),
++    rewriteShellAppFiles(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, nextTargetShell, configuredDevPorts, {
++        shell: previousProjection(previousApps).find((app)=>app.id === nextTargetShell.id),
+         remotes: existingVerticals,
+         devPorts: previousDevPorts,
+         enableTailwind: previousTailwind
+diff --git a/dist/esm/ultramodern-workspace/add-vertical/shell-files.js b/dist/esm/ultramodern-workspace/add-vertical/shell-files.js
+index c8afbb23380fdfbc50bdb1241ce7abfbcd02107b..719faf1237544a940e567e57500120c8357f237a 100644
+--- a/dist/esm/ultramodern-workspace/add-vertical/shell-files.js
++++ b/dist/esm/ultramodern-workspace/add-vertical/shell-files.js
+@@ -1,6 +1,5 @@
+ import node_fs from "node:fs";
+ import node_path from "node:path";
+-import { createShellApiClient } from "../api.js";
+ import { createAppEnvDts, createAppRuntimeConfig, createShellFrameComponent } from "../app-files.js";
+ import { createShellPage, createShellRemoteComponents, createShellWorkerRemoteComponents } from "../demo-components.js";
+ import { appEmitsBrowserUi, appI18nNamespace, resolveRemoteRefs, shellApp } from "../descriptors.js";
+@@ -60,8 +59,7 @@ function shellAppArtifacts(scope, packageSource, enableTailwind, remotes, bridge
+         [`${shellHost.directory}/src/routes/[lang]/page.tsx`]: createShellPage(shellHost, uiRemotes),
+         [`${shellHost.directory}/src/routes/vertical-components.tsx`]: createShellRemoteComponents(shellHost, uiRemotes),
+         [`${shellHost.directory}/src/routes/vertical-components.worker.tsx`]: createShellWorkerRemoteComponents(shellHost, uiRemotes),
+-        [`${shellHost.directory}/src/routes/shell-frame.tsx`]: createShellFrameComponent(shellHost),
+-        [`${shellHost.directory}/src/api/vertical-clients.ts`]: createShellApiClient(scope, remotes)
++        [`${shellHost.directory}/src/routes/shell-frame.tsx`]: createShellFrameComponent(shellHost)
+     };
+     return {
+         shellHost,
+diff --git a/dist/esm/ultramodern-workspace/api/client.js b/dist/esm/ultramodern-workspace/api/client.js
+index 3a74e5de87f91feff4d8ae6de22c3fdf3ff1875a..99859b129beb97f65b838da74cc63a38aa2f4674 100644
+--- a/dist/esm/ultramodern-workspace/api/client.js
++++ b/dist/esm/ultramodern-workspace/api/client.js
+@@ -1,6 +1,6 @@
+-import { resolveApiProtocol, resolveApiStem, verticalApiApps } from "../descriptors.js";
+-import { packageName, toPascalCase } from "../naming.js";
+-import { createCheckoutCartClientExports, serviceHasCheckoutCartState } from "./checkout-cart.js";
++import { resolveApiStem } from "../descriptors.js";
++import { toPascalCase } from "../naming.js";
++import { createCheckoutCartClientExports } from "./checkout-cart.js";
+ import { verticalApiErrorStem, verticalApiExport, verticalApiGroupName, verticalApiNotFoundErrorExport } from "./names.js";
+ function createApiClient(service, contractImportPath, options) {
+     const apiExport = verticalApiExport(service);
+@@ -148,36 +148,4 @@ export const ${createName} = (
+   );${checkoutCartClientExports}
+ `;
+ }
+-function createShellApiClient(scope, remotes = []) {
+-    const exports = verticalApiApps(remotes).map((remote)=>{
+-        const stem = resolveApiStem(remote);
+-        const pascalStem = toPascalCase(stem);
+-        const rpc = 'rpc' === resolveApiProtocol(remote);
+-        const pascalSingular = toPascalCase(verticalApiErrorStem(remote));
+-        const checkoutCartExports = !rpc && serviceHasCheckoutCartState(remote) ? `  addCheckoutCartItem,
+-  clearCheckoutCart,
+-  getCheckoutCart,
+-  removeCheckoutCartItem,
+-  type CheckoutAddCartItemInput,
+-  type CheckoutCart,
+-  type CheckoutCartLine,
+-` : '';
+-        if (rpc) return `export {
+-  get${pascalStem}Rpc,
+-  list${pascalStem}Rpc,
+-  make${pascalStem}RpcClient,
+-  type ${pascalStem}RpcClientOptions,
+-} from '${packageName(scope, remote.packageSuffix)}/api/rpc-client';`;
+-        return `export {
+-${checkoutCartExports}  create${pascalSingular},
+-  create${pascalStem}Client,
+-  get${pascalSingular},
+-  get${pascalStem}Readiness,
+-  list${pascalStem},
+-  type ${pascalStem}ClientOptions,
+-} from '${packageName(scope, remote.packageSuffix)}/api/client';`;
+-    }).join('\n\n');
+-    return exports ? `${exports}\n` : `export const ultramodernVerticalClients = [] as const;
+-`;
+-}
+-export { createApiClient, createShellApiClient };
++export { createApiClient };
+diff --git a/dist/esm/ultramodern-workspace/api.js b/dist/esm/ultramodern-workspace/api.js
+index fec430d98bb2dd7b7fd82b4c410bcd7cc45347e3..f7353299e98813dbfc811025d5f0e02871fd8f69 100644
+--- a/dist/esm/ultramodern-workspace/api.js
++++ b/dist/esm/ultramodern-workspace/api.js
+@@ -1,4 +1,4 @@
+-export { createApiClient, createShellApiClient } from "./api/client.js";
++export { createApiClient } from "./api/client.js";
+ export { apiTopologyMetadata } from "./api/contracts.js";
+ export { verticalApiCreatePayloadSchemaExport, verticalApiErrorStem, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport } from "./api/names.js";
+ export { createRpcApiServiceEntry, createRpcClientFile, createRpcContractFile, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./api/rpc.js";
+diff --git a/dist/esm/ultramodern-workspace/package-json.js b/dist/esm/ultramodern-workspace/package-json.js
+index ba734258982ca646c8bc24ce1289c975f998e266..86213278d3466a5eee63bc915f0fac0b6f84d873 100644
+--- a/dist/esm/ultramodern-workspace/package-json.js
++++ b/dist/esm/ultramodern-workspace/package-json.js
+@@ -1,5 +1,5 @@
+ import { ULTRAMODERN_CREATE_PACKAGE, WORKSPACE_PACKAGE_VERSION } from "../ultramodern-package-source.js";
+-import { appHasApi, remoteDependencyAlias, resolveApiProtocol, resolveRemoteRefs, shellApp, verticalApiApps, zephyrRemoteDependency } from "./descriptors.js";
++import { appHasApi, remoteDependencyAlias, resolveApiProtocol, resolveRemoteRefs, shellApp, zephyrRemoteDependency } from "./descriptors.js";
+ import { readFileTemplate } from "./fs-io.js";
+ import { packageName, relativeRootFor } from "./naming.js";
+ import { ULTRAMODERN_WORKSPACE_POLICY } from "./policy.js";
+@@ -29,7 +29,6 @@ function appDependencies(scope, packageSource, app, remotes = [], bridge) {
+         dependencies['@modern-js/boundary-debugger'] = frameworkRequest(packageSource);
+         dependencies['@modern-js/plugin-bff'] = frameworkRequest(packageSource);
+         Object.assign(dependencies, ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies);
+-        for (const remote of verticalApiApps(remotes))dependencies[packageName(scope, remote.packageSuffix)] = WORKSPACE_PACKAGE_VERSION;
+     }
+     for (const remote of appRemotes)dependencies[packageName(scope, remote.packageSuffix)] = WORKSPACE_PACKAGE_VERSION;
+     if (appHasApi(app)) {
+@@ -185,9 +184,7 @@ function createAppPackage(scope, app, packageSource, enableTailwind, remotes = [
+             './api': './shared/api.ts',
+             './api/client': `./${clientDirectory}/${app.api.stem}-client.ts`
+         });
+-    } else if ('shell' === app.kind) Object.assign(packageExports, {
+-        './api/clients': './src/api/vertical-clients.ts'
+-    });
++    }
+     if (Object.keys(packageExports).length > 0) packageJson.exports = packageExports;
+     return packageJson;
+ }
+diff --git a/dist/esm/ultramodern-workspace/validation/architecture.js b/dist/esm/ultramodern-workspace/validation/architecture.js
+index 2894a1f3bef8328a616d87132d99d74b779661e5..ef8defaa82dfe29f881ae56c4167bca41a9cb92a 100644
+--- a/dist/esm/ultramodern-workspace/validation/architecture.js
++++ b/dist/esm/ultramodern-workspace/validation/architecture.js
+@@ -2,6 +2,8 @@ import node_fs from "node:fs";
+ import { createRequire } from "node:module";
+ import node_path from "node:path";
+ import { assert, sameJson, selfCheckFailure } from "./assertions.js";
++import { createNativeBuildTargetProof, isNativeBrowserCompilerDefine, isNativeModernCompilerOwner } from "./native-build-target.js";
++import { createNativeFederationLoadingProof } from "./native-federation-loading.js";
+ function assertCompilerArchitecture(root, workspaceValidationContract) {
+     const fullStackVerticals = workspaceValidationContract.apps.filter((app)=>'shell' !== app.kind);
+     const tailwindEnabled = workspaceValidationContract.tailwindEnabled;
+@@ -283,12 +285,38 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                 ...shellRouteDirectories.flatMap(collectCompilerInputs),
+                 ...configFiles.map((relativePath)=>node_path.join(root, relativePath)).filter((absolutePath)=>node_fs.existsSync(absolutePath))
+             ]);
++            const nativeCompilerSourceDirectories = new Set();
++            const nativeBrowserDefineSourceDirectories = new Set();
++            for (const appPath of appPaths){
++                const configPath = node_path.join(root, appPath, 'modern.config.ts');
++                if (!node_fs.existsSync(configPath)) continue;
++                const configProject = compilerSnapshot?.getDefaultProjectForFile(configPath);
++                const configSource = configProject?.program.getSourceFile(configPath);
++                if (void 0 !== configProject && void 0 !== configSource && isNativeModernCompilerOwner(typescript, configProject.checker, configSource, readJson(`${appPath}/package.json`))) {
++                    nativeCompilerSourceDirectories.add(node_path.join(root, appPath, 'src') + node_path.sep);
++                    if (isNativeBrowserCompilerDefine(typescript, configProject.checker, configSource)) nativeBrowserDefineSourceDirectories.add(node_path.join(root, appPath, 'src') + node_path.sep);
++                }
++            }
+             for (const absolutePath of checkedFiles){
+                 const sourceFile = parseCompilerInput(absolutePath);
+                 const isShellRoute = shellRouteDirectories.some((relativeDirectory)=>{
+                     const absoluteDirectory = node_path.join(root, relativeDirectory);
+                     return absolutePath.startsWith(absoluteDirectory + node_path.sep);
+                 });
++                let nativeFederationLoading;
++                let nativeBuildTarget;
++                if (isShellRoute) {
++                    const project = compilerSnapshot?.getDefaultProjectForFile(absolutePath);
++                    assert(void 0 !== project, `Native compiler project is missing: ${absolutePath}`);
++                    const compilerOwned = [
++                        ...nativeCompilerSourceDirectories
++                    ].some((directory)=>absolutePath.startsWith(directory));
++                    const browserDefineOwned = [
++                        ...nativeBrowserDefineSourceDirectories
++                    ].some((directory)=>absolutePath.startsWith(directory));
++                    nativeBuildTarget = createNativeBuildTargetProof(typescript, project.checker, sourceFile, compilerOwned, browserDefineOwned);
++                    nativeFederationLoading = createNativeFederationLoadingProof(typescript, project.checker, sourceFile, compilerOwned, browserDefineOwned);
++                }
+                 const moduleFederationAppPath = moduleFederationConfigAppPaths.get(absolutePath);
+                 const tailwindFactories = new Set();
+                 const presetFactories = new Set();
+@@ -318,7 +346,7 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                     if (sameJson(accessPath, [
+                         'process',
+                         'env'
+-                    ])) compilerFailure(sourceFile, node, 'framework config API direct-process-env-access', 'Generated config must use the framework config environment API instead of process.env.', 'use getBuildConfigEnvironment');
++                    ]) && !nativeBuildTarget?.environmentAccess(node)) compilerFailure(sourceFile, node, 'framework config API direct-process-env-access', 'Generated config must use the framework config environment API instead of process.env.', 'use getBuildConfigEnvironment');
+                     if (typescript.isIdentifier(node) && 'ULTRAMODERN_ZEPHYR' === node.text) compilerFailure(sourceFile, node, 'zephyr gating ultramodern-zephyr-environment-gate', 'Generated Zephyr integration must not be gated through ULTRAMODERN_ZEPHYR.', 'use Zephyr native deploy-token behavior');
+                     if (typescript.isPropertyAssignment(node)) {
+                         const property = nodeName(node.name);
+@@ -330,7 +358,7 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                             'hydrateRoot',
+                             'loadRemote',
+                             'loadShare'
+-                        ]))) compilerFailure(sourceFile, node, 'module federation native loading', 'Shell routing must use framework Module Federation loading primitives.', 'remove manual hydration or remote-loading wrappers');
++                        ])) && !nativeFederationLoading?.(node)) compilerFailure(sourceFile, node, 'module federation native loading', 'Shell routing must use framework Module Federation loading primitives.', 'remove manual hydration or remote-loading wrappers');
+                         if (typescript.isBinaryExpression(node) && node.operatorToken.kind === typescript.SyntaxKind.EqualsToken && propertyAccessPath(node.left)?.slice(0, 2).join('.') === 'window.location' || typescript.isCallExpression(node) && propertyAccessPath(node.expression)?.slice(0, 2).join('.') === 'window.location') compilerFailure(sourceFile, node, 'shell routing window-location-navigation', 'Shell routing must use router navigation instead of window.location.', 'use the router navigation primitive');
+                     }
+                     node.forEachChild(visit);
+diff --git a/dist/esm/ultramodern-workspace/validation/native-build-target.js b/dist/esm/ultramodern-workspace/validation/native-build-target.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..78788b36ac3767fa4c47156dac979022c6ea9b78
+--- /dev/null
++++ b/dist/esm/ultramodern-workspace/validation/native-build-target.js
+@@ -0,0 +1,210 @@
++function isNativeModernCompilerOwner(ast, checker, config, manifest) {
++    if (!manifest || 'object' != typeof manifest) return false;
++    const metadata = manifest;
++    const dependencies = metadata.dependencies;
++    const devDependencies = metadata.devDependencies;
++    const scripts = metadata.scripts;
++    if (!scripts || 'object' != typeof scripts) return false;
++    const build = scripts.build;
++    if ('string' != typeof build || !/^modern[ \t]+build(?:[ \t]|$)/u.test(build)) return false;
++    const ownsPackage = (name)=>[
++            dependencies,
++            devDependencies
++        ].some((values)=>{
++            if (!values || 'object' != typeof values) return false;
++            const version = values[name];
++            return 'string' == typeof version && version.length > 0;
++        });
++    if (!ownsPackage('@modern-js/app-tools') || !ownsPackage('@modern-js/runtime')) return false;
++    const factories = new Set();
++    for (const statement of config.statements){
++        if (!ast.isImportDeclaration(statement) || statement.importClause?.phaseModifier === ast.SyntaxKind.TypeKeyword || !ast.isStringLiteralLikeNode(statement.moduleSpecifier) || '@modern-js/app-tools' !== statement.moduleSpecifier.text) continue;
++        const bindings = statement.importClause?.namedBindings;
++        if (bindings && ast.isNamedImports(bindings)) for (const binding of bindings.elements){
++            if (binding.isTypeOnly || 'defineConfig' !== (binding.propertyName ?? binding.name).text) continue;
++            const id = checker.getSymbolAtLocation(binding.name)?.id;
++            if (void 0 !== id) factories.add(id);
++        }
++    }
++    return config.statements.some((statement)=>{
++        if (!ast.isExportAssignment(statement) || statement.isExportEquals || !ast.isCallExpression(statement.expression) || !ast.isIdentifier(statement.expression.expression)) return false;
++        const id = checker.getSymbolAtLocation(statement.expression.expression)?.id;
++        return void 0 !== id && factories.has(id);
++    });
++}
++function isNativeBrowserCompilerDefine(ast, checker, config) {
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const sameBinding = (node, binding)=>ast.isIdentifier(node) && checker.getSymbolAtLocation(node)?.id !== void 0 && checker.getSymbolAtLocation(node)?.id === checker.getSymbolAtLocation(binding)?.id;
++    const property = (node, name)=>ast.isPropertyAccessExpression(node) && void 0 === node.questionDotToken && node.name.text === name;
++    const declaration = (name, bindings)=>{
++        const element = bindings.elements.find((element)=>!element.dotDotDotToken && !element.initializer && void 0 !== element.name && ast.isIdentifier(element.name) && (element.propertyName ? ast.isIdentifier(element.propertyName) && element.propertyName.text === name : element.name.text === name));
++        return element?.name && ast.isIdentifier(element.name) ? element.name : void 0;
++    };
++    const exported = config.statements.find((statement)=>ast.isExportAssignment(statement) && !statement.isExportEquals);
++    if (!exported || !ast.isExportAssignment(exported)) return false;
++    let found = false;
++    const visit = (node)=>{
++        if (found) return;
++        if (ast.isPropertyAssignment(node) && ast.isIdentifier(node.name) && 'rspack' === node.name.text && ast.isObjectLiteralExpression(node.parent) && ast.isPropertyAssignment(node.parent.parent) && ast.isIdentifier(node.parent.parent.name) && 'tools' === node.parent.parent.name.text) {
++            const tools = node.parent.parent;
++            if (!ast.isObjectLiteralExpression(tools.parent)) return;
++            for (const selected of [
++                node,
++                tools
++            ]){
++                if (!ast.isObjectLiteralExpression(selected.parent)) return;
++                const following = selected.parent.properties.slice(selected.parent.properties.indexOf(selected) + 1);
++                if (following.some((property)=>ast.isSpreadAssignment(property) || ast.isPropertyAssignment(property) && (ast.isIdentifier(property.name) || ast.isStringLiteralLikeNode(property.name)) && property.name.text === (selected === node ? 'rspack' : 'tools'))) return;
++            }
++            let owner = tools.parent;
++            while(owner !== exported.expression){
++                const parent = owner.parent;
++                if ((ast.isParenthesizedExpression(parent) || ast.isSatisfiesExpression(parent)) && parent.expression === owner) owner = parent;
++                else {
++                    if (!(ast.isCallExpression(parent) && parent.arguments.some((argument)=>argument === owner))) return;
++                    owner = parent;
++                }
++            }
++            const hook = unwrap(node.initializer);
++            if (!ast.isArrowFunction(hook) || 2 !== hook.parameters.length || !ast.isBlock(hook.body)) return;
++            const [configParameter, context] = hook.parameters;
++            if (!ast.isIdentifier(configParameter.name) || configParameter.initializer || configParameter.dotDotDotToken || !ast.isObjectBindingPattern(context.name) || context.initializer || context.dotDotDotToken) return;
++            const environment = declaration('environment', context.name);
++            const isServer = declaration('isServer', context.name);
++            const rspack = declaration('rspack', context.name);
++            if (!environment || !isServer || !rspack) return;
++            const statement = hook.body.statements[0];
++            if (!statement || !ast.isExpressionStatement(statement) || !ast.isCallExpression(statement.expression)) return;
++            const push = statement.expression;
++            if (!property(push.expression, 'push') || !property(push.expression.expression, 'plugins') || !sameBinding(push.expression.expression.expression, configParameter.name) || 1 !== push.arguments.length) return;
++            const plugin = push.arguments[0];
++            if (!ast.isNewExpression(plugin) || !property(plugin.expression, 'DefinePlugin') || !sameBinding(plugin.expression.expression, rspack) || plugin.arguments?.length !== 1 || !ast.isObjectLiteralExpression(plugin.arguments[0]) || 1 !== plugin.arguments[0].properties.length) return;
++            const definition = plugin.arguments[0].properties[0];
++            if (!ast.isPropertyAssignment(definition) || !ast.isIdentifier(definition.name) || '__ONTOS_BROWSER_BUILD__' !== definition.name.text) return;
++            const negation = definition.initializer;
++            if (!ast.isPrefixUnaryExpression(negation) || negation.operator !== ast.SyntaxKind.ExclamationToken) return;
++            const server = unwrap(negation.operand);
++            if (!ast.isBinaryExpression(server) || server.operatorToken.kind !== ast.SyntaxKind.BarBarToken || !sameBinding(server.left, isServer)) return;
++            const worker = server.right;
++            let replaced = false;
++            const pluginTarget = (value)=>{
++                value = unwrap(value);
++                if (property(value, 'plugins') && sameBinding(value.expression, configParameter.name)) return true;
++                return (ast.isPropertyAccessExpression(value) || ast.isElementAccessExpression(value)) && pluginTarget(value.expression);
++            };
++            const retainsPlugin = (value)=>{
++                if (ast.isBinaryExpression(value) && value.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && value.operatorToken.kind <= ast.SyntaxKind.LastAssignment && pluginTarget(value.left) || ast.isDeleteExpression(value) && pluginTarget(value.expression) || ast.isCallExpression(value) && ast.isPropertyAccessExpression(value.expression) && pluginTarget(value.expression.expression) && 'push' !== value.expression.name.text || ast.isReturnStatement(value) && void 0 !== value.expression && !sameBinding(value.expression, configParameter.name)) replaced = true;
++                value.forEachChild(retainsPlugin);
++            };
++            for (const statement of hook.body.statements.slice(1))retainsPlugin(statement);
++            if (replaced) return;
++            found = ast.isBinaryExpression(worker) && worker.operatorToken.kind === ast.SyntaxKind.EqualsEqualsEqualsToken && property(worker.left, 'name') && sameBinding(worker.left.expression, environment) && ast.isStringLiteralLikeNode(worker.right) && 'workerSSR' === worker.right.text;
++            return;
++        }
++        node.forEachChild(visit);
++    };
++    visit(exported.expression);
++    return found;
++}
++function createNativeBuildTargetProof(ast, checker, sourceFile, compilerOwned, browserDefineOwned) {
++    const localBindings = new Set();
++    const collectBindings = (node)=>{
++        if ((ast.isVariableDeclaration(node) || ast.isParameterDeclaration(node) || ast.isBindingElement(node) || ast.isImportClause(node) || ast.isImportEqualsDeclaration(node) || ast.isImportSpecifier(node) || ast.isNamespaceImport(node) || ast.isFunctionDeclaration(node) || ast.isFunctionExpression(node) || ast.isClassDeclaration(node) || ast.isClassExpression(node) || ast.isEnumDeclaration(node) || ast.isModuleDeclaration(node)) && void 0 !== node.name && ast.isIdentifier(node.name)) {
++            const id = checker.getSymbolAtLocation(node.name)?.id;
++            if (void 0 !== id) localBindings.add(id);
++        }
++        node.forEachChild(collectBindings);
++    };
++    collectBindings(sourceFile);
++    const globalIdentifier = (node, name)=>{
++        if (!ast.isIdentifier(node) || node.text !== name) return false;
++        const id = checker.getSymbolAtLocation(node)?.id;
++        return void 0 === id || !localBindings.has(id);
++    };
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isAsExpression(node) || ast.isTypeAssertion(node) || ast.isNonNullExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const globalContainer = (node)=>[
++            'globalThis',
++            'global',
++            'window',
++            'self'
++        ].some((name)=>globalIdentifier(unwrap(node), name));
++    const processValue = (node)=>{
++        node = unwrap(node);
++        if (globalIdentifier(node, 'process')) return true;
++        if (!ast.isPropertyAccessExpression(node) && !ast.isElementAccessExpression(node)) return false;
++        const name = ast.isPropertyAccessExpression(node) ? node.name.text : ast.isStringLiteralLikeNode(node.argumentExpression) ? node.argumentExpression.text : void 0;
++        if ('env' === name) return processValue(node.expression);
++        return 'process' === name && globalContainer(node.expression);
++    };
++    const escapesProcess = (node)=>{
++        node = unwrap(node);
++        if (processValue(node) || globalContainer(node)) return true;
++        if (ast.isPropertyAssignment(node)) return escapesProcess(node.initializer) || ast.isComputedPropertyName(node.name) && escapesProcess(node.name.expression);
++        if (ast.isShorthandPropertyAssignment(node)) {
++            if (!ast.isIdentifier(node.name) || 'process' !== node.name.text) return false;
++            const id = checker.getShorthandAssignmentValueSymbol(node)?.id;
++            return void 0 === id || !localBindings.has(id);
++        }
++        if (ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node) || ast.isCallExpression(node) || ast.isNewExpression(node) || ast.isArrowFunction(node) || ast.isFunctionExpression(node) || ast.isMethodDeclaration(node) || ast.isGetAccessorDeclaration(node) || ast.isSetAccessorDeclaration(node)) return false;
++        let escaped = false;
++        node.forEachChild((child)=>{
++            if (escapesProcess(child)) escaped = true;
++        });
++        return escaped;
++    };
++    let immutableProcess = true;
++    let immutableBrowserDefine = true;
++    const mutationTarget = (node)=>{
++        node = unwrap(node);
++        if (processValue(node)) return true;
++        if (ast.isElementAccessExpression(node) && globalContainer(node.expression) && !ast.isStringLiteralLikeNode(node.argumentExpression)) return true;
++        if (ast.isArrayLiteralExpression(node)) return node.elements.some(mutationTarget);
++        if (ast.isObjectLiteralExpression(node)) return node.properties.some(mutationTarget);
++        if (ast.isPropertyAssignment(node)) return mutationTarget(node.initializer);
++        if (ast.isShorthandPropertyAssignment(node)) {
++            if (!ast.isIdentifier(node.name)) return false;
++            const id = checker.getShorthandAssignmentValueSymbol(node)?.id;
++            return 'process' === node.name.text && (void 0 === id || !localBindings.has(id));
++        }
++        if (ast.isSpreadAssignment(node) || ast.isSpreadElement(node)) return mutationTarget(node.expression);
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind === ast.SyntaxKind.EqualsToken) return mutationTarget(node.left);
++        while(ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node)){
++            node = unwrap(node.expression);
++            if (processValue(node)) return true;
++        }
++        return false;
++    };
++    const collectMutations = (node)=>{
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment && globalIdentifier(unwrap(node.left), '__ONTOS_BROWSER_BUILD__') || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken) && globalIdentifier(unwrap(node.operand), '__ONTOS_BROWSER_BUILD__') || ast.isDeleteExpression(node) && globalIdentifier(unwrap(node.expression), '__ONTOS_BROWSER_BUILD__')) immutableBrowserDefine = false;
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment && (mutationTarget(node.left) || escapesProcess(node.right)) || ast.isDeleteExpression(node) && mutationTarget(node.expression) || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken) && mutationTarget(node.operand) || (ast.isCallExpression(node) || ast.isNewExpression(node)) && (node.arguments ?? []).some(escapesProcess) || ast.isVariableDeclaration(node) && void 0 !== node.initializer && escapesProcess(node.initializer) || ast.isParameterDeclaration(node) && void 0 !== node.initializer && escapesProcess(node.initializer) || ast.isReturnStatement(node) && void 0 !== node.expression && escapesProcess(node.expression) || ast.isArrowFunction(node) && !ast.isBlock(node.body) && escapesProcess(node.body)) immutableProcess = false;
++        node.forEachChild(collectMutations);
++    };
++    collectMutations(sourceFile);
++    const comparison = (node, target)=>{
++        if (compilerOwned && browserDefineOwned && immutableBrowserDefine && 'node' !== target && globalIdentifier(node, '__ONTOS_BROWSER_BUILD__') && (ast.isIfStatement(node.parent) && node.parent.expression === node || ast.isConditionalExpression(node.parent) && node.parent.condition === node)) return true;
++        if (!compilerOwned || !immutableProcess || !ast.isBinaryExpression(node) || node.operatorToken.kind !== ast.SyntaxKind.EqualsEqualsEqualsToken || !ast.isStringLiteralLikeNode(node.right) || ![
++            'browser',
++            'node'
++        ].includes(node.right.text) || void 0 !== target && node.right.text !== target) return false;
++        const parent = node.parent;
++        if (!(ast.isIfStatement(parent) && parent.expression === node || ast.isConditionalExpression(parent) && parent.condition === node)) return false;
++        const value = node.left;
++        if (!ast.isPropertyAccessExpression(value) || void 0 !== value.questionDotToken || 'MODERN_TARGET' !== value.name.text) return false;
++        const environment = value.expression;
++        return ast.isPropertyAccessExpression(environment) && void 0 === environment.questionDotToken && 'env' === environment.name.text && globalIdentifier(environment.expression, 'process');
++    };
++    return {
++        comparison,
++        environmentAccess: (node)=>{
++            const value = node.parent;
++            return ast.isPropertyAccessExpression(value) && value.expression === node && comparison(value.parent);
++        }
++    };
++}
++export { createNativeBuildTargetProof, isNativeBrowserCompilerDefine, isNativeModernCompilerOwner };
+diff --git a/dist/esm/ultramodern-workspace/validation/native-federation-loading.js b/dist/esm/ultramodern-workspace/validation/native-federation-loading.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..b1cf8dd98e2eaa02bcc2a3da9606a54a4f0489dd
+--- /dev/null
++++ b/dist/esm/ultramodern-workspace/validation/native-federation-loading.js
+@@ -0,0 +1,281 @@
++import { createNativeBuildTargetProof } from "./native-build-target.js";
++const FEDERATION_RUNTIME = '@module-federation/modern-js-v3/runtime';
++function createNativeFederationLoadingProof(ast, checker, sourceFile, compilerOwned, browserDefineOwned) {
++    const nativeBuildTarget = createNativeBuildTargetProof(ast, checker, sourceFile, compilerOwned, browserDefineOwned);
++    const literalRuntimeImport = (node)=>ast.isCallExpression(node) && node.expression.kind === ast.SyntaxKind.ImportKeyword && 1 === node.arguments.length && ast.isStringLiteralLikeNode(node.arguments[0]) && node.arguments[0].text === FEDERATION_RUNTIME;
++    let hasProvider = sourceFile.statements.some((statement)=>{
++        if (!ast.isImportDeclaration(statement) || statement.importClause?.phaseModifier === ast.SyntaxKind.TypeKeyword || !ast.isStringLiteralLikeNode(statement.moduleSpecifier) || statement.moduleSpecifier.text !== FEDERATION_RUNTIME) return false;
++        const bindings = statement.importClause?.namedBindings;
++        return void 0 !== bindings && (ast.isNamespaceImport(bindings) || ast.isNamedImports(bindings) && bindings.elements.some((binding)=>!binding.isTypeOnly && 'getInstance' === (binding.propertyName ?? binding.name).text));
++    });
++    const findDynamicProvider = (node)=>{
++        if (hasProvider) return;
++        if (literalRuntimeImport(node)) hasProvider = true;
++        else node.forEachChild(findDynamicProvider);
++    };
++    if (!hasProvider) findDynamicProvider(sourceFile);
++    if (!hasProvider) return ()=>false;
++    const declarations = new Map();
++    const mutated = new Set();
++    const returnValues = [];
++    const symbols = new Map();
++    const symbolId = (node)=>{
++        if (!symbols.has(node)) symbols.set(node, checker.getSymbolAtLocation(node)?.id);
++        return symbols.get(node);
++    };
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isAsExpression(node) || ast.isTypeAssertion(node) || ast.isNonNullExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const isConst = (node)=>ast.isVariableDeclarationList(node.parent) && (node.parent.flags & ast.NodeFlags.Const) !== 0;
++    const collect = (node)=>{
++        if ((ast.isVariableDeclaration(node) || ast.isParameterDeclaration(node) || ast.isBindingElement(node) || ast.isImportClause(node) || ast.isImportEqualsDeclaration(node) || ast.isImportSpecifier(node) || ast.isNamespaceImport(node) || ast.isFunctionDeclaration(node) || ast.isFunctionExpression(node) || ast.isClassDeclaration(node) || ast.isClassExpression(node) || ast.isEnumDeclaration(node) || ast.isModuleDeclaration(node)) && void 0 !== node.name && ast.isIdentifier(node.name)) {
++            const id = symbolId(node.name);
++            if (void 0 !== id) declarations.set(id, node);
++        }
++        node.forEachChild(collect);
++    };
++    collect(sourceFile);
++    const markSymbolMutated = (id, seen = new Set())=>{
++        if (void 0 === id || seen.has(id)) return;
++        seen.add(id);
++        mutated.add(id);
++        const declaration = declarations.get(id);
++        if (declaration && ast.isVariableDeclaration(declaration) && isConst(declaration) && declaration.initializer) {
++            const initializer = unwrap(declaration.initializer);
++            if (ast.isIdentifier(initializer)) markSymbolMutated(symbolId(initializer), seen);
++        }
++    };
++    const markMutated = (node)=>{
++        node = unwrap(node);
++        while(ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node))node = unwrap(node.expression);
++        if (ast.isIdentifier(node)) markSymbolMutated(symbolId(node));
++    };
++    const escapeValue = (node)=>{
++        if (!node) return;
++        const value = unwrap(node);
++        if (ast.isIdentifier(value)) return void markMutated(value);
++        if (ast.isCallExpression(value) || ast.isNewExpression(value) || ast.isArrowFunction(value) || ast.isFunctionExpression(value) || ast.isMethodDeclaration(value)) return;
++        if (ast.isPropertyAccessExpression(value) || ast.isElementAccessExpression(value)) return;
++        if (ast.isConditionalExpression(value)) {
++            escapeValue(value.whenTrue);
++            escapeValue(value.whenFalse);
++            return;
++        }
++        if (ast.isBinaryExpression(value)) {
++            if (value.operatorToken.kind === ast.SyntaxKind.AmpersandAmpersandToken || value.operatorToken.kind === ast.SyntaxKind.BarBarToken || value.operatorToken.kind === ast.SyntaxKind.QuestionQuestionToken || value.operatorToken.kind === ast.SyntaxKind.CommaToken) {
++                escapeValue(value.left);
++                escapeValue(value.right);
++            }
++            return;
++        }
++        if (ast.isShorthandPropertyAssignment(value)) return void markSymbolMutated(checker.getShorthandAssignmentValueSymbol(value)?.id);
++        if (ast.isPropertyAssignment(value)) return void escapeValue(value.initializer);
++        value.forEachChild(escapeValue);
++    };
++    const collectMutations = (node)=>{
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment) {
++            markMutated(node.left);
++            escapeValue(node.right);
++        }
++        if ((ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken)) markMutated(node.operand);
++        if (ast.isDeleteExpression(node)) markMutated(node.expression);
++        if (ast.isCallExpression(node) || ast.isNewExpression(node)) for (const argument of node.arguments ?? [])escapeValue(argument);
++        if (ast.isVariableDeclaration(node) && node.initializer) {
++            const initializer = unwrap(node.initializer);
++            if (!isConst(node) || !ast.isIdentifier(node.name) || !ast.isIdentifier(initializer) && !ast.isCallExpression(initializer)) escapeValue(initializer);
++        }
++        if (ast.isTemplateExpression(node) || ast.isTaggedTemplateExpression(node)) escapeValue(node);
++        if (ast.isPropertyAssignment(node)) escapeValue(node.initializer);
++        if (ast.isShorthandPropertyAssignment(node)) markSymbolMutated(checker.getShorthandAssignmentValueSymbol(node)?.id);
++        if (ast.isArrayLiteralExpression(node)) for (const element of node.elements)escapeValue(element);
++        if (ast.isReturnStatement(node) && node.expression) returnValues.push(node.expression);
++        if (ast.isArrowFunction(node) && !ast.isBlock(node.body)) returnValues.push(node.body);
++        node.forEachChild(collectMutations);
++    };
++    collectMutations(sourceFile);
++    const declarationFor = (node)=>{
++        node = unwrap(node);
++        if (!ast.isIdentifier(node)) return;
++        const id = symbolId(node);
++        return void 0 === id || mutated.has(id) ? void 0 : declarations.get(id);
++    };
++    const runtimeImport = (declaration, packageName = FEDERATION_RUNTIME)=>{
++        let node = declaration;
++        while(!ast.isImportDeclaration(node) && !ast.isSourceFile(node))node = node.parent;
++        return ast.isImportDeclaration(node) && node.importClause?.phaseModifier !== ast.SyntaxKind.TypeKeyword && ast.isStringLiteralLikeNode(node.moduleSpecifier) && node.moduleSpecifier.text === packageName;
++    };
++    const nativeEffect = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration) return false;
++        if (ast.isImportSpecifier(declaration)) return !declaration.isTypeOnly && 'Effect' === (declaration.propertyName ?? declaration.name).text && runtimeImport(declaration, 'effect');
++        if (!ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        return nativeEffect(declaration.initializer, seen);
++    };
++    const effectMethod = (node, method)=>{
++        node = unwrap(node);
++        return ast.isPropertyAccessExpression(node) && node.name.text === method && nativeEffect(node.expression);
++    };
++    const plainArrow = (node)=>ast.isArrowFunction(node) && !node.modifiers?.some((modifier)=>modifier.kind === ast.SyntaxKind.AsyncKeyword);
++    const nativeImportFactory = (node)=>{
++        node = unwrap(node);
++        return plainArrow(node) && 0 === node.parameters.length && !ast.isBlock(node.body) && literalRuntimeImport(unwrap(node.body));
++    };
++    const lazyModuleEffect = (node, depth = 0)=>{
++        if (depth > 128) return false;
++        node = unwrap(node);
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'tryPromise')) return 1 === node.arguments.length && nativeImportFactory(node.arguments[0]);
++        return ast.isPropertyAccessExpression(node.expression) && 'pipe' === node.expression.name.text && lazyModuleEffect(node.expression.expression, depth + 1) && node.arguments.every((stage)=>{
++            const value = unwrap(stage);
++            return ast.isCallExpression(value) && effectMethod(value.expression, 'timeout') && 1 === value.arguments.length;
++        });
++    };
++    const guardedModuleEffect = (node)=>{
++        node = unwrap(node);
++        return ast.isConditionalExpression(node) && nativeBuildTarget.comparison(node.condition, 'browser') && lazyModuleEffect(node.whenTrue) && effectMethod(node.whenFalse, 'interrupt');
++    };
++    const hoistedModuleValue = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration || !ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        const initializer = unwrap(declaration.initializer);
++        if (ast.isIdentifier(initializer)) return hoistedModuleValue(initializer, seen);
++        return ast.isVariableStatement(declaration.parent.parent) && declaration.parent.parent.parent === sourceFile && guardedModuleEffect(initializer);
++    };
++    const nativeProducerReturn = (value)=>{
++        let callback = value.parent;
++        while(!ast.isArrowFunction(callback) && !ast.isFunctionExpression(callback) && !ast.isFunctionDeclaration(callback) && !ast.isMethodDeclaration(callback) && !ast.isSourceFile(callback))callback = callback.parent;
++        if (!plainArrow(callback)) return false;
++        let node = callback;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const call = node.parent;
++        return ast.isCallExpression(call) && effectMethod(call.expression, 'flatMap') && (1 === call.arguments.length && unwrap(call.arguments[0]) === callback || 2 === call.arguments.length && unwrap(call.arguments[1]) === callback) && hoistedModuleValue(value);
++    };
++    const producerCallback = (node, seen)=>{
++        node = unwrap(node);
++        if (!plainArrow(node)) return false;
++        if (!ast.isBlock(node.body)) return moduleEffect(node.body, seen);
++        const last = node.body.statements.at(-1);
++        if (!last || !ast.isReturnStatement(last)) return false;
++        let hasModule = false;
++        let valid = true;
++        const returns = (statement)=>{
++            if (ast.isArrowFunction(statement) || ast.isFunctionExpression(statement) || ast.isFunctionDeclaration(statement) || ast.isMethodDeclaration(statement)) return;
++            if (ast.isReturnStatement(statement)) {
++                if (statement.expression) {
++                    if (moduleEffect(statement.expression, seen)) hasModule = true;
++                    else if (!effectMethod(statement.expression, 'interrupt')) valid = false;
++                } else valid = false;
++                return;
++            }
++            statement.forEachChild(returns);
++        };
++        returns(node.body);
++        return valid && hasModule;
++    };
++    const pipelineStage = (previous, node, seen)=>{
++        node = unwrap(node);
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'flatMap') && 1 === node.arguments.length) return producerCallback(node.arguments[0], seen);
++        return previous && effectMethod(node.expression, 'timeout') && 1 === node.arguments.length;
++    };
++    const moduleEffect = (node, seen = new Set())=>{
++        node = unwrap(node);
++        if (seen.has(node) || seen.size > 128) return false;
++        seen = new Set(seen).add(node);
++        if (ast.isConditionalExpression(node)) return guardedModuleEffect(node);
++        if (ast.isIdentifier(node)) {
++            const declaration = declarationFor(node);
++            return void 0 !== declaration && ast.isVariableDeclaration(declaration) && isConst(declaration) && void 0 !== declaration.initializer && moduleEffect(declaration.initializer, seen);
++        }
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'tryPromise')) return 1 === node.arguments.length && nativeImportFactory(node.arguments[0]);
++        if (effectMethod(node.expression, 'flatMap') && 2 === node.arguments.length) return producerCallback(node.arguments[1], seen);
++        if (ast.isPropertyAccessExpression(node.expression) && 'pipe' === node.expression.name.text) {
++            let result = moduleEffect(node.expression.expression, seen);
++            if (!result) return false;
++            for (const stage of node.arguments)result = pipelineStage(result, stage, seen);
++            return result;
++        }
++        return false;
++    };
++    const callbackInput = (callback)=>{
++        let node = callback;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const stage = node.parent;
++        if (!stage || !ast.isCallExpression(stage) || !effectMethod(stage.expression, 'flatMap')) return false;
++        if (2 === stage.arguments.length && unwrap(stage.arguments[1]) === callback) return moduleEffect(stage.arguments[0]);
++        if (1 !== stage.arguments.length || unwrap(stage.arguments[0]) !== callback) return false;
++        node = stage;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const pipeline = node.parent;
++        if (!pipeline || !ast.isCallExpression(pipeline) || !ast.isPropertyAccessExpression(pipeline.expression) || 'pipe' !== pipeline.expression.name.text) return false;
++        let input = moduleEffect(pipeline.expression.expression);
++        if (!input) return false;
++        for (const argument of pipeline.arguments){
++            if (unwrap(argument) === stage) return input;
++            input = pipelineStage(input, argument, new Set());
++        }
++        return false;
++    };
++    const dynamicGetter = (binding)=>{
++        const name = binding.propertyName ?? binding.name;
++        const pattern = binding.parent;
++        const parameter = pattern.parent;
++        const callback = parameter.parent;
++        return !binding.dotDotDotToken && !binding.initializer && void 0 !== name && ast.isIdentifier(name) && 'getInstance' === name.text && ast.isObjectBindingPattern(pattern) && ast.isParameterDeclaration(parameter) && !parameter.initializer && !parameter.dotDotDotToken && plainArrow(callback) && 1 === callback.parameters.length && callback.parameters[0] === parameter && callbackInput(callback);
++    };
++    const getter = (node, seen = new Set())=>{
++        node = unwrap(node);
++        if (ast.isPropertyAccessExpression(node) && 'getInstance' === node.name.text) {
++            const declaration = declarationFor(node.expression);
++            return void 0 !== declaration && ast.isNamespaceImport(declaration) && runtimeImport(declaration);
++        }
++        const declaration = declarationFor(node);
++        if (!declaration) return false;
++        if (ast.isBindingElement(declaration)) return dynamicGetter(declaration);
++        if (ast.isImportSpecifier(declaration)) return !declaration.isTypeOnly && 'getInstance' === (declaration.propertyName ?? declaration.name).text && runtimeImport(declaration);
++        if (!ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        return getter(declaration.initializer, seen);
++    };
++    const receiver = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration || !ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        const initializer = unwrap(declaration.initializer);
++        return ast.isCallExpression(initializer) ? getter(initializer.expression) && pureSelector(initializer) : ast.isIdentifier(initializer) && receiver(initializer, seen);
++    };
++    const pureSelector = (call)=>{
++        if (0 === call.arguments.length) return true;
++        if (1 !== call.arguments.length) return false;
++        const selector = unwrap(call.arguments[0]);
++        if (!ast.isArrowFunction(selector) || ast.isBlock(selector.body) || selector.modifiers?.some((modifier)=>modifier.kind === ast.SyntaxKind.AsyncKeyword) || 1 !== selector.parameters.length || !ast.isIdentifier(selector.parameters[0].name) || selector.parameters[0].initializer || selector.parameters[0].dotDotDotToken) return false;
++        let pure = true;
++        const visit = (node)=>{
++            if (ast.isCallExpression(node) || ast.isNewExpression(node) || ast.isTaggedTemplateExpression(node) || ast.isDeleteExpression(node) || ast.isAwaitExpression(node) || ast.isYieldExpression(node) || ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken)) pure = false;
++            node.forEachChild(visit);
++        };
++        visit(selector.body);
++        return pure;
++    };
++    for (const value of returnValues)if (!nativeProducerReturn(value)) escapeValue(value);
++    return (node)=>{
++        if (!node || !ast.isCallExpression(node) || !ast.isPropertyAccessExpression(node.expression)) return false;
++        return [
++            'loadRemote',
++            'loadShare'
++        ].includes(node.expression.name.text) && receiver(node.expression.expression);
++    };
++}
++export { createNativeFederationLoadingProof };
+diff --git a/dist/esm/ultramodern-workspace/write-app.js b/dist/esm/ultramodern-workspace/write-app.js
+index a088df6f5ada150436a4a22b3694e0b7f363aa2b..c096e1182415b7beff5348603e7b9786177211fe 100644
+--- a/dist/esm/ultramodern-workspace/write-app.js
++++ b/dist/esm/ultramodern-workspace/write-app.js
+@@ -1,4 +1,4 @@
+-import { createApiClient, createApiServiceEntry, createBackendEffectApiExpose, createSharedApi, createShellApiClient } from "./api.js";
++import { createApiClient, createApiServiceEntry, createBackendEffectApiExpose, createSharedApi } from "./api.js";
+ import { createRpcClientFile, createRpcContractFile } from "./api/rpc.js";
+ import { createAppEnvDts, createAppRuntimeConfig, createAppStyles, createShellFrameComponent, createTailwindConfig } from "./app-files.js";
+ import { createBackendFederationContractFile } from "./backend-federation.js";
+@@ -69,7 +69,7 @@ function writeAppFederationConfigFiles({ targetDir, scope, resolvedApp, emitsUi,
+     if (emitsUi) writeFile(targetDir, `${resolvedApp.directory}/module-federation.config.ts`, 'shell' === resolvedApp.kind ? createShellModuleFederationConfig(scope, resolvedApp, remotes) : createRemoteModuleFederationConfig(scope, resolvedApp, remotes));
+     if (appHasApi(resolvedApp)) writeFile(targetDir, `${resolvedApp.directory}/backend-federation.config.ts`, createBackendModuleFederationConfig(resolvedApp));
+ }
+-function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, remotes, availableRemotes, publicWeb, writeAppFile }) {
++function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, remotes, publicWeb, writeAppFile }) {
+     if (!emitsUi) return;
+     if ((resolvedApp.verticalRefs?.length ?? 0) > 0) {
+         writeAppFile('src/federated-components.tsx', createFederatedComponentsRegistry(scope, resolvedApp, remotes));
+@@ -83,7 +83,6 @@ function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, re
+         writeAppFile('src/routes/vertical-components.tsx', createShellRemoteComponents(resolvedApp, remotes.filter(appEmitsBrowserUi)));
+         writeAppFile('src/routes/vertical-components.worker.tsx', createShellWorkerRemoteComponents(resolvedApp, remotes.filter(appEmitsBrowserUi)));
+         writeAppFile('src/routes/shell-frame.tsx', createShellFrameComponent(resolvedApp));
+-        writeFile(targetDir, `${resolvedApp.directory}/src/api/vertical-clients.ts`, createShellApiClient(scope, availableRemotes));
+     } else for (const expose of distributedSsrExposes(resolvedApp))writeAppFile(`src/routes/[lang]/_mf/fragment/${distributedSsrFragmentSlug(expose)}/page.tsx`, createRemoteExposeFragmentPage(resolvedApp, expose));
+ }
+ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
+diff --git a/dist/esm-node/ultramodern-workspace/add-vertical/execute.js b/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
+index 84dd46012ffe2a416c4525412ae50322a94f66b9..31368dbf6724b646189e8a77acc4f8bf1c80caef 100644
+--- a/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
++++ b/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
+@@ -136,11 +136,8 @@ function executeAddUltramodernVertical(options, logicalWorkspaceRoot = options.w
+         ...updatedVerticals,
+         ...nextAdditionalShells
+     ])}\n`);
+-    for (const shellToRefresh of [
+-        nextPrimaryShell,
+-        ...nextAdditionalShells
+-    ])rewriteShellAppFiles(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, shellToRefresh.id === nextTargetShell.id ? nextTargetShell : shellToRefresh, configuredDevPorts, {
+-        shell: previousProjection(previousApps).find((app)=>app.id === shellToRefresh.id),
++    rewriteShellAppFiles(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, nextTargetShell, configuredDevPorts, {
++        shell: previousProjection(previousApps).find((app)=>app.id === nextTargetShell.id),
+         remotes: existingVerticals,
+         devPorts: previousDevPorts,
+         enableTailwind: previousTailwind
+diff --git a/dist/esm-node/ultramodern-workspace/add-vertical/shell-files.js b/dist/esm-node/ultramodern-workspace/add-vertical/shell-files.js
+index e7e848b125f8113728baa6ff223bf10891f2337a..7d2cee0f4b093065c73f83da33ef0d336c63b714 100644
+--- a/dist/esm-node/ultramodern-workspace/add-vertical/shell-files.js
++++ b/dist/esm-node/ultramodern-workspace/add-vertical/shell-files.js
+@@ -1,7 +1,6 @@
+ import "node:module";
+ import node_fs from "node:fs";
+ import node_path from "node:path";
+-import { createShellApiClient } from "../api.js";
+ import { createAppEnvDts, createAppRuntimeConfig, createShellFrameComponent } from "../app-files.js";
+ import { createShellPage, createShellRemoteComponents, createShellWorkerRemoteComponents } from "../demo-components.js";
+ import { appEmitsBrowserUi, appI18nNamespace, resolveRemoteRefs, shellApp } from "../descriptors.js";
+@@ -61,8 +60,7 @@ function shellAppArtifacts(scope, packageSource, enableTailwind, remotes, bridge
+         [`${shellHost.directory}/src/routes/[lang]/page.tsx`]: createShellPage(shellHost, uiRemotes),
+         [`${shellHost.directory}/src/routes/vertical-components.tsx`]: createShellRemoteComponents(shellHost, uiRemotes),
+         [`${shellHost.directory}/src/routes/vertical-components.worker.tsx`]: createShellWorkerRemoteComponents(shellHost, uiRemotes),
+-        [`${shellHost.directory}/src/routes/shell-frame.tsx`]: createShellFrameComponent(shellHost),
+-        [`${shellHost.directory}/src/api/vertical-clients.ts`]: createShellApiClient(scope, remotes)
++        [`${shellHost.directory}/src/routes/shell-frame.tsx`]: createShellFrameComponent(shellHost)
+     };
+     return {
+         shellHost,
+diff --git a/dist/esm-node/ultramodern-workspace/api/client.js b/dist/esm-node/ultramodern-workspace/api/client.js
+index 2130262836ce84891529d286060ce7a32801a24c..de5ace1fee8affea201b93bd6fa63eb3b8279cbe 100644
+--- a/dist/esm-node/ultramodern-workspace/api/client.js
++++ b/dist/esm-node/ultramodern-workspace/api/client.js
+@@ -1,7 +1,7 @@
+ import "node:module";
+-import { resolveApiProtocol, resolveApiStem, verticalApiApps } from "../descriptors.js";
+-import { packageName, toPascalCase } from "../naming.js";
+-import { createCheckoutCartClientExports, serviceHasCheckoutCartState } from "./checkout-cart.js";
++import { resolveApiStem } from "../descriptors.js";
++import { toPascalCase } from "../naming.js";
++import { createCheckoutCartClientExports } from "./checkout-cart.js";
+ import { verticalApiErrorStem, verticalApiExport, verticalApiGroupName, verticalApiNotFoundErrorExport } from "./names.js";
+ function createApiClient(service, contractImportPath, options) {
+     const apiExport = verticalApiExport(service);
+@@ -149,36 +149,4 @@ export const ${createName} = (
+   );${checkoutCartClientExports}
+ `;
+ }
+-function createShellApiClient(scope, remotes = []) {
+-    const exports = verticalApiApps(remotes).map((remote)=>{
+-        const stem = resolveApiStem(remote);
+-        const pascalStem = toPascalCase(stem);
+-        const rpc = 'rpc' === resolveApiProtocol(remote);
+-        const pascalSingular = toPascalCase(verticalApiErrorStem(remote));
+-        const checkoutCartExports = !rpc && serviceHasCheckoutCartState(remote) ? `  addCheckoutCartItem,
+-  clearCheckoutCart,
+-  getCheckoutCart,
+-  removeCheckoutCartItem,
+-  type CheckoutAddCartItemInput,
+-  type CheckoutCart,
+-  type CheckoutCartLine,
+-` : '';
+-        if (rpc) return `export {
+-  get${pascalStem}Rpc,
+-  list${pascalStem}Rpc,
+-  make${pascalStem}RpcClient,
+-  type ${pascalStem}RpcClientOptions,
+-} from '${packageName(scope, remote.packageSuffix)}/api/rpc-client';`;
+-        return `export {
+-${checkoutCartExports}  create${pascalSingular},
+-  create${pascalStem}Client,
+-  get${pascalSingular},
+-  get${pascalStem}Readiness,
+-  list${pascalStem},
+-  type ${pascalStem}ClientOptions,
+-} from '${packageName(scope, remote.packageSuffix)}/api/client';`;
+-    }).join('\n\n');
+-    return exports ? `${exports}\n` : `export const ultramodernVerticalClients = [] as const;
+-`;
+-}
+-export { createApiClient, createShellApiClient };
++export { createApiClient };
+diff --git a/dist/esm-node/ultramodern-workspace/api.js b/dist/esm-node/ultramodern-workspace/api.js
+index d031b785e09cb02b9bcfe57ba5555508ede2d995..8799aa8f7592f2cdef962b7f854d0bd83b342d70 100644
+--- a/dist/esm-node/ultramodern-workspace/api.js
++++ b/dist/esm-node/ultramodern-workspace/api.js
+@@ -1,5 +1,5 @@
+ import "node:module";
+-export { createApiClient, createShellApiClient } from "./api/client.js";
++export { createApiClient } from "./api/client.js";
+ export { apiTopologyMetadata } from "./api/contracts.js";
+ export { verticalApiCreatePayloadSchemaExport, verticalApiErrorStem, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport } from "./api/names.js";
+ export { createRpcApiServiceEntry, createRpcClientFile, createRpcContractFile, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./api/rpc.js";
+diff --git a/dist/esm-node/ultramodern-workspace/package-json.js b/dist/esm-node/ultramodern-workspace/package-json.js
+index 3ca791c80522aa987881e6e2cf2c68ddeee0e34b..ad573d8a8959ae19f747866a35bc61ba817d0124 100644
+--- a/dist/esm-node/ultramodern-workspace/package-json.js
++++ b/dist/esm-node/ultramodern-workspace/package-json.js
+@@ -1,6 +1,6 @@
+ import "node:module";
+ import { ULTRAMODERN_CREATE_PACKAGE, WORKSPACE_PACKAGE_VERSION } from "../ultramodern-package-source.js";
+-import { appHasApi, remoteDependencyAlias, resolveApiProtocol, resolveRemoteRefs, shellApp, verticalApiApps, zephyrRemoteDependency } from "./descriptors.js";
++import { appHasApi, remoteDependencyAlias, resolveApiProtocol, resolveRemoteRefs, shellApp, zephyrRemoteDependency } from "./descriptors.js";
+ import { readFileTemplate } from "./fs-io.js";
+ import { packageName, relativeRootFor } from "./naming.js";
+ import { ULTRAMODERN_WORKSPACE_POLICY } from "./policy.js";
+@@ -30,7 +30,6 @@ function appDependencies(scope, packageSource, app, remotes = [], bridge) {
+         dependencies['@modern-js/boundary-debugger'] = frameworkRequest(packageSource);
+         dependencies['@modern-js/plugin-bff'] = frameworkRequest(packageSource);
+         Object.assign(dependencies, ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies);
+-        for (const remote of verticalApiApps(remotes))dependencies[packageName(scope, remote.packageSuffix)] = WORKSPACE_PACKAGE_VERSION;
+     }
+     for (const remote of appRemotes)dependencies[packageName(scope, remote.packageSuffix)] = WORKSPACE_PACKAGE_VERSION;
+     if (appHasApi(app)) {
+@@ -186,9 +185,7 @@ function createAppPackage(scope, app, packageSource, enableTailwind, remotes = [
+             './api': './shared/api.ts',
+             './api/client': `./${clientDirectory}/${app.api.stem}-client.ts`
+         });
+-    } else if ('shell' === app.kind) Object.assign(packageExports, {
+-        './api/clients': './src/api/vertical-clients.ts'
+-    });
++    }
+     if (Object.keys(packageExports).length > 0) packageJson.exports = packageExports;
+     return packageJson;
+ }
+diff --git a/dist/esm-node/ultramodern-workspace/validation/architecture.js b/dist/esm-node/ultramodern-workspace/validation/architecture.js
+index 3841fc7d052286545b37a749b3a2cb9dd90528f7..36a404ff45f52115f9ca46f0ca8aebd2d5429355 100644
+--- a/dist/esm-node/ultramodern-workspace/validation/architecture.js
++++ b/dist/esm-node/ultramodern-workspace/validation/architecture.js
+@@ -3,6 +3,8 @@ import node_fs from "node:fs";
+ import { createRequire } from "node:module";
+ import node_path from "node:path";
+ import { assert, sameJson, selfCheckFailure } from "./assertions.js";
++import { createNativeBuildTargetProof, isNativeBrowserCompilerDefine, isNativeModernCompilerOwner } from "./native-build-target.js";
++import { createNativeFederationLoadingProof } from "./native-federation-loading.js";
+ function assertCompilerArchitecture(root, workspaceValidationContract) {
+     const fullStackVerticals = workspaceValidationContract.apps.filter((app)=>'shell' !== app.kind);
+     const tailwindEnabled = workspaceValidationContract.tailwindEnabled;
+@@ -284,12 +286,38 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                 ...shellRouteDirectories.flatMap(collectCompilerInputs),
+                 ...configFiles.map((relativePath)=>node_path.join(root, relativePath)).filter((absolutePath)=>node_fs.existsSync(absolutePath))
+             ]);
++            const nativeCompilerSourceDirectories = new Set();
++            const nativeBrowserDefineSourceDirectories = new Set();
++            for (const appPath of appPaths){
++                const configPath = node_path.join(root, appPath, 'modern.config.ts');
++                if (!node_fs.existsSync(configPath)) continue;
++                const configProject = compilerSnapshot?.getDefaultProjectForFile(configPath);
++                const configSource = configProject?.program.getSourceFile(configPath);
++                if (void 0 !== configProject && void 0 !== configSource && isNativeModernCompilerOwner(typescript, configProject.checker, configSource, readJson(`${appPath}/package.json`))) {
++                    nativeCompilerSourceDirectories.add(node_path.join(root, appPath, 'src') + node_path.sep);
++                    if (isNativeBrowserCompilerDefine(typescript, configProject.checker, configSource)) nativeBrowserDefineSourceDirectories.add(node_path.join(root, appPath, 'src') + node_path.sep);
++                }
++            }
+             for (const absolutePath of checkedFiles){
+                 const sourceFile = parseCompilerInput(absolutePath);
+                 const isShellRoute = shellRouteDirectories.some((relativeDirectory)=>{
+                     const absoluteDirectory = node_path.join(root, relativeDirectory);
+                     return absolutePath.startsWith(absoluteDirectory + node_path.sep);
+                 });
++                let nativeFederationLoading;
++                let nativeBuildTarget;
++                if (isShellRoute) {
++                    const project = compilerSnapshot?.getDefaultProjectForFile(absolutePath);
++                    assert(void 0 !== project, `Native compiler project is missing: ${absolutePath}`);
++                    const compilerOwned = [
++                        ...nativeCompilerSourceDirectories
++                    ].some((directory)=>absolutePath.startsWith(directory));
++                    const browserDefineOwned = [
++                        ...nativeBrowserDefineSourceDirectories
++                    ].some((directory)=>absolutePath.startsWith(directory));
++                    nativeBuildTarget = createNativeBuildTargetProof(typescript, project.checker, sourceFile, compilerOwned, browserDefineOwned);
++                    nativeFederationLoading = createNativeFederationLoadingProof(typescript, project.checker, sourceFile, compilerOwned, browserDefineOwned);
++                }
+                 const moduleFederationAppPath = moduleFederationConfigAppPaths.get(absolutePath);
+                 const tailwindFactories = new Set();
+                 const presetFactories = new Set();
+@@ -319,7 +347,7 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                     if (sameJson(accessPath, [
+                         'process',
+                         'env'
+-                    ])) compilerFailure(sourceFile, node, 'framework config API direct-process-env-access', 'Generated config must use the framework config environment API instead of process.env.', 'use getBuildConfigEnvironment');
++                    ]) && !nativeBuildTarget?.environmentAccess(node)) compilerFailure(sourceFile, node, 'framework config API direct-process-env-access', 'Generated config must use the framework config environment API instead of process.env.', 'use getBuildConfigEnvironment');
+                     if (typescript.isIdentifier(node) && 'ULTRAMODERN_ZEPHYR' === node.text) compilerFailure(sourceFile, node, 'zephyr gating ultramodern-zephyr-environment-gate', 'Generated Zephyr integration must not be gated through ULTRAMODERN_ZEPHYR.', 'use Zephyr native deploy-token behavior');
+                     if (typescript.isPropertyAssignment(node)) {
+                         const property = nodeName(node.name);
+@@ -331,7 +359,7 @@ function assertCompilerArchitecture(root, workspaceValidationContract) {
+                             'hydrateRoot',
+                             'loadRemote',
+                             'loadShare'
+-                        ]))) compilerFailure(sourceFile, node, 'module federation native loading', 'Shell routing must use framework Module Federation loading primitives.', 'remove manual hydration or remote-loading wrappers');
++                        ])) && !nativeFederationLoading?.(node)) compilerFailure(sourceFile, node, 'module federation native loading', 'Shell routing must use framework Module Federation loading primitives.', 'remove manual hydration or remote-loading wrappers');
+                         if (typescript.isBinaryExpression(node) && node.operatorToken.kind === typescript.SyntaxKind.EqualsToken && propertyAccessPath(node.left)?.slice(0, 2).join('.') === 'window.location' || typescript.isCallExpression(node) && propertyAccessPath(node.expression)?.slice(0, 2).join('.') === 'window.location') compilerFailure(sourceFile, node, 'shell routing window-location-navigation', 'Shell routing must use router navigation instead of window.location.', 'use the router navigation primitive');
+                     }
+                     node.forEachChild(visit);
+diff --git a/dist/esm-node/ultramodern-workspace/validation/native-build-target.js b/dist/esm-node/ultramodern-workspace/validation/native-build-target.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..f9c4d2593d3a2eab74dd9d52417a189792dddd0c
+--- /dev/null
++++ b/dist/esm-node/ultramodern-workspace/validation/native-build-target.js
+@@ -0,0 +1,211 @@
++import "node:module";
++function isNativeModernCompilerOwner(ast, checker, config, manifest) {
++    if (!manifest || 'object' != typeof manifest) return false;
++    const metadata = manifest;
++    const dependencies = metadata.dependencies;
++    const devDependencies = metadata.devDependencies;
++    const scripts = metadata.scripts;
++    if (!scripts || 'object' != typeof scripts) return false;
++    const build = scripts.build;
++    if ('string' != typeof build || !/^modern[ \t]+build(?:[ \t]|$)/u.test(build)) return false;
++    const ownsPackage = (name)=>[
++            dependencies,
++            devDependencies
++        ].some((values)=>{
++            if (!values || 'object' != typeof values) return false;
++            const version = values[name];
++            return 'string' == typeof version && version.length > 0;
++        });
++    if (!ownsPackage('@modern-js/app-tools') || !ownsPackage('@modern-js/runtime')) return false;
++    const factories = new Set();
++    for (const statement of config.statements){
++        if (!ast.isImportDeclaration(statement) || statement.importClause?.phaseModifier === ast.SyntaxKind.TypeKeyword || !ast.isStringLiteralLikeNode(statement.moduleSpecifier) || '@modern-js/app-tools' !== statement.moduleSpecifier.text) continue;
++        const bindings = statement.importClause?.namedBindings;
++        if (bindings && ast.isNamedImports(bindings)) for (const binding of bindings.elements){
++            if (binding.isTypeOnly || 'defineConfig' !== (binding.propertyName ?? binding.name).text) continue;
++            const id = checker.getSymbolAtLocation(binding.name)?.id;
++            if (void 0 !== id) factories.add(id);
++        }
++    }
++    return config.statements.some((statement)=>{
++        if (!ast.isExportAssignment(statement) || statement.isExportEquals || !ast.isCallExpression(statement.expression) || !ast.isIdentifier(statement.expression.expression)) return false;
++        const id = checker.getSymbolAtLocation(statement.expression.expression)?.id;
++        return void 0 !== id && factories.has(id);
++    });
++}
++function isNativeBrowserCompilerDefine(ast, checker, config) {
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const sameBinding = (node, binding)=>ast.isIdentifier(node) && checker.getSymbolAtLocation(node)?.id !== void 0 && checker.getSymbolAtLocation(node)?.id === checker.getSymbolAtLocation(binding)?.id;
++    const property = (node, name)=>ast.isPropertyAccessExpression(node) && void 0 === node.questionDotToken && node.name.text === name;
++    const declaration = (name, bindings)=>{
++        const element = bindings.elements.find((element)=>!element.dotDotDotToken && !element.initializer && void 0 !== element.name && ast.isIdentifier(element.name) && (element.propertyName ? ast.isIdentifier(element.propertyName) && element.propertyName.text === name : element.name.text === name));
++        return element?.name && ast.isIdentifier(element.name) ? element.name : void 0;
++    };
++    const exported = config.statements.find((statement)=>ast.isExportAssignment(statement) && !statement.isExportEquals);
++    if (!exported || !ast.isExportAssignment(exported)) return false;
++    let found = false;
++    const visit = (node)=>{
++        if (found) return;
++        if (ast.isPropertyAssignment(node) && ast.isIdentifier(node.name) && 'rspack' === node.name.text && ast.isObjectLiteralExpression(node.parent) && ast.isPropertyAssignment(node.parent.parent) && ast.isIdentifier(node.parent.parent.name) && 'tools' === node.parent.parent.name.text) {
++            const tools = node.parent.parent;
++            if (!ast.isObjectLiteralExpression(tools.parent)) return;
++            for (const selected of [
++                node,
++                tools
++            ]){
++                if (!ast.isObjectLiteralExpression(selected.parent)) return;
++                const following = selected.parent.properties.slice(selected.parent.properties.indexOf(selected) + 1);
++                if (following.some((property)=>ast.isSpreadAssignment(property) || ast.isPropertyAssignment(property) && (ast.isIdentifier(property.name) || ast.isStringLiteralLikeNode(property.name)) && property.name.text === (selected === node ? 'rspack' : 'tools'))) return;
++            }
++            let owner = tools.parent;
++            while(owner !== exported.expression){
++                const parent = owner.parent;
++                if ((ast.isParenthesizedExpression(parent) || ast.isSatisfiesExpression(parent)) && parent.expression === owner) owner = parent;
++                else {
++                    if (!(ast.isCallExpression(parent) && parent.arguments.some((argument)=>argument === owner))) return;
++                    owner = parent;
++                }
++            }
++            const hook = unwrap(node.initializer);
++            if (!ast.isArrowFunction(hook) || 2 !== hook.parameters.length || !ast.isBlock(hook.body)) return;
++            const [configParameter, context] = hook.parameters;
++            if (!ast.isIdentifier(configParameter.name) || configParameter.initializer || configParameter.dotDotDotToken || !ast.isObjectBindingPattern(context.name) || context.initializer || context.dotDotDotToken) return;
++            const environment = declaration('environment', context.name);
++            const isServer = declaration('isServer', context.name);
++            const rspack = declaration('rspack', context.name);
++            if (!environment || !isServer || !rspack) return;
++            const statement = hook.body.statements[0];
++            if (!statement || !ast.isExpressionStatement(statement) || !ast.isCallExpression(statement.expression)) return;
++            const push = statement.expression;
++            if (!property(push.expression, 'push') || !property(push.expression.expression, 'plugins') || !sameBinding(push.expression.expression.expression, configParameter.name) || 1 !== push.arguments.length) return;
++            const plugin = push.arguments[0];
++            if (!ast.isNewExpression(plugin) || !property(plugin.expression, 'DefinePlugin') || !sameBinding(plugin.expression.expression, rspack) || plugin.arguments?.length !== 1 || !ast.isObjectLiteralExpression(plugin.arguments[0]) || 1 !== plugin.arguments[0].properties.length) return;
++            const definition = plugin.arguments[0].properties[0];
++            if (!ast.isPropertyAssignment(definition) || !ast.isIdentifier(definition.name) || '__ONTOS_BROWSER_BUILD__' !== definition.name.text) return;
++            const negation = definition.initializer;
++            if (!ast.isPrefixUnaryExpression(negation) || negation.operator !== ast.SyntaxKind.ExclamationToken) return;
++            const server = unwrap(negation.operand);
++            if (!ast.isBinaryExpression(server) || server.operatorToken.kind !== ast.SyntaxKind.BarBarToken || !sameBinding(server.left, isServer)) return;
++            const worker = server.right;
++            let replaced = false;
++            const pluginTarget = (value)=>{
++                value = unwrap(value);
++                if (property(value, 'plugins') && sameBinding(value.expression, configParameter.name)) return true;
++                return (ast.isPropertyAccessExpression(value) || ast.isElementAccessExpression(value)) && pluginTarget(value.expression);
++            };
++            const retainsPlugin = (value)=>{
++                if (ast.isBinaryExpression(value) && value.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && value.operatorToken.kind <= ast.SyntaxKind.LastAssignment && pluginTarget(value.left) || ast.isDeleteExpression(value) && pluginTarget(value.expression) || ast.isCallExpression(value) && ast.isPropertyAccessExpression(value.expression) && pluginTarget(value.expression.expression) && 'push' !== value.expression.name.text || ast.isReturnStatement(value) && void 0 !== value.expression && !sameBinding(value.expression, configParameter.name)) replaced = true;
++                value.forEachChild(retainsPlugin);
++            };
++            for (const statement of hook.body.statements.slice(1))retainsPlugin(statement);
++            if (replaced) return;
++            found = ast.isBinaryExpression(worker) && worker.operatorToken.kind === ast.SyntaxKind.EqualsEqualsEqualsToken && property(worker.left, 'name') && sameBinding(worker.left.expression, environment) && ast.isStringLiteralLikeNode(worker.right) && 'workerSSR' === worker.right.text;
++            return;
++        }
++        node.forEachChild(visit);
++    };
++    visit(exported.expression);
++    return found;
++}
++function createNativeBuildTargetProof(ast, checker, sourceFile, compilerOwned, browserDefineOwned) {
++    const localBindings = new Set();
++    const collectBindings = (node)=>{
++        if ((ast.isVariableDeclaration(node) || ast.isParameterDeclaration(node) || ast.isBindingElement(node) || ast.isImportClause(node) || ast.isImportEqualsDeclaration(node) || ast.isImportSpecifier(node) || ast.isNamespaceImport(node) || ast.isFunctionDeclaration(node) || ast.isFunctionExpression(node) || ast.isClassDeclaration(node) || ast.isClassExpression(node) || ast.isEnumDeclaration(node) || ast.isModuleDeclaration(node)) && void 0 !== node.name && ast.isIdentifier(node.name)) {
++            const id = checker.getSymbolAtLocation(node.name)?.id;
++            if (void 0 !== id) localBindings.add(id);
++        }
++        node.forEachChild(collectBindings);
++    };
++    collectBindings(sourceFile);
++    const globalIdentifier = (node, name)=>{
++        if (!ast.isIdentifier(node) || node.text !== name) return false;
++        const id = checker.getSymbolAtLocation(node)?.id;
++        return void 0 === id || !localBindings.has(id);
++    };
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isAsExpression(node) || ast.isTypeAssertion(node) || ast.isNonNullExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const globalContainer = (node)=>[
++            'globalThis',
++            'global',
++            'window',
++            'self'
++        ].some((name)=>globalIdentifier(unwrap(node), name));
++    const processValue = (node)=>{
++        node = unwrap(node);
++        if (globalIdentifier(node, 'process')) return true;
++        if (!ast.isPropertyAccessExpression(node) && !ast.isElementAccessExpression(node)) return false;
++        const name = ast.isPropertyAccessExpression(node) ? node.name.text : ast.isStringLiteralLikeNode(node.argumentExpression) ? node.argumentExpression.text : void 0;
++        if ('env' === name) return processValue(node.expression);
++        return 'process' === name && globalContainer(node.expression);
++    };
++    const escapesProcess = (node)=>{
++        node = unwrap(node);
++        if (processValue(node) || globalContainer(node)) return true;
++        if (ast.isPropertyAssignment(node)) return escapesProcess(node.initializer) || ast.isComputedPropertyName(node.name) && escapesProcess(node.name.expression);
++        if (ast.isShorthandPropertyAssignment(node)) {
++            if (!ast.isIdentifier(node.name) || 'process' !== node.name.text) return false;
++            const id = checker.getShorthandAssignmentValueSymbol(node)?.id;
++            return void 0 === id || !localBindings.has(id);
++        }
++        if (ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node) || ast.isCallExpression(node) || ast.isNewExpression(node) || ast.isArrowFunction(node) || ast.isFunctionExpression(node) || ast.isMethodDeclaration(node) || ast.isGetAccessorDeclaration(node) || ast.isSetAccessorDeclaration(node)) return false;
++        let escaped = false;
++        node.forEachChild((child)=>{
++            if (escapesProcess(child)) escaped = true;
++        });
++        return escaped;
++    };
++    let immutableProcess = true;
++    let immutableBrowserDefine = true;
++    const mutationTarget = (node)=>{
++        node = unwrap(node);
++        if (processValue(node)) return true;
++        if (ast.isElementAccessExpression(node) && globalContainer(node.expression) && !ast.isStringLiteralLikeNode(node.argumentExpression)) return true;
++        if (ast.isArrayLiteralExpression(node)) return node.elements.some(mutationTarget);
++        if (ast.isObjectLiteralExpression(node)) return node.properties.some(mutationTarget);
++        if (ast.isPropertyAssignment(node)) return mutationTarget(node.initializer);
++        if (ast.isShorthandPropertyAssignment(node)) {
++            if (!ast.isIdentifier(node.name)) return false;
++            const id = checker.getShorthandAssignmentValueSymbol(node)?.id;
++            return 'process' === node.name.text && (void 0 === id || !localBindings.has(id));
++        }
++        if (ast.isSpreadAssignment(node) || ast.isSpreadElement(node)) return mutationTarget(node.expression);
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind === ast.SyntaxKind.EqualsToken) return mutationTarget(node.left);
++        while(ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node)){
++            node = unwrap(node.expression);
++            if (processValue(node)) return true;
++        }
++        return false;
++    };
++    const collectMutations = (node)=>{
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment && globalIdentifier(unwrap(node.left), '__ONTOS_BROWSER_BUILD__') || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken) && globalIdentifier(unwrap(node.operand), '__ONTOS_BROWSER_BUILD__') || ast.isDeleteExpression(node) && globalIdentifier(unwrap(node.expression), '__ONTOS_BROWSER_BUILD__')) immutableBrowserDefine = false;
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment && (mutationTarget(node.left) || escapesProcess(node.right)) || ast.isDeleteExpression(node) && mutationTarget(node.expression) || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken) && mutationTarget(node.operand) || (ast.isCallExpression(node) || ast.isNewExpression(node)) && (node.arguments ?? []).some(escapesProcess) || ast.isVariableDeclaration(node) && void 0 !== node.initializer && escapesProcess(node.initializer) || ast.isParameterDeclaration(node) && void 0 !== node.initializer && escapesProcess(node.initializer) || ast.isReturnStatement(node) && void 0 !== node.expression && escapesProcess(node.expression) || ast.isArrowFunction(node) && !ast.isBlock(node.body) && escapesProcess(node.body)) immutableProcess = false;
++        node.forEachChild(collectMutations);
++    };
++    collectMutations(sourceFile);
++    const comparison = (node, target)=>{
++        if (compilerOwned && browserDefineOwned && immutableBrowserDefine && 'node' !== target && globalIdentifier(node, '__ONTOS_BROWSER_BUILD__') && (ast.isIfStatement(node.parent) && node.parent.expression === node || ast.isConditionalExpression(node.parent) && node.parent.condition === node)) return true;
++        if (!compilerOwned || !immutableProcess || !ast.isBinaryExpression(node) || node.operatorToken.kind !== ast.SyntaxKind.EqualsEqualsEqualsToken || !ast.isStringLiteralLikeNode(node.right) || ![
++            'browser',
++            'node'
++        ].includes(node.right.text) || void 0 !== target && node.right.text !== target) return false;
++        const parent = node.parent;
++        if (!(ast.isIfStatement(parent) && parent.expression === node || ast.isConditionalExpression(parent) && parent.condition === node)) return false;
++        const value = node.left;
++        if (!ast.isPropertyAccessExpression(value) || void 0 !== value.questionDotToken || 'MODERN_TARGET' !== value.name.text) return false;
++        const environment = value.expression;
++        return ast.isPropertyAccessExpression(environment) && void 0 === environment.questionDotToken && 'env' === environment.name.text && globalIdentifier(environment.expression, 'process');
++    };
++    return {
++        comparison,
++        environmentAccess: (node)=>{
++            const value = node.parent;
++            return ast.isPropertyAccessExpression(value) && value.expression === node && comparison(value.parent);
++        }
++    };
++}
++export { createNativeBuildTargetProof, isNativeBrowserCompilerDefine, isNativeModernCompilerOwner };
+diff --git a/dist/esm-node/ultramodern-workspace/validation/native-federation-loading.js b/dist/esm-node/ultramodern-workspace/validation/native-federation-loading.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..9fd2cda6fb498e553901b6e0be83c98e6c4a110e
+--- /dev/null
++++ b/dist/esm-node/ultramodern-workspace/validation/native-federation-loading.js
+@@ -0,0 +1,282 @@
++import "node:module";
++import { createNativeBuildTargetProof } from "./native-build-target.js";
++const FEDERATION_RUNTIME = '@module-federation/modern-js-v3/runtime';
++function createNativeFederationLoadingProof(ast, checker, sourceFile, compilerOwned, browserDefineOwned) {
++    const nativeBuildTarget = createNativeBuildTargetProof(ast, checker, sourceFile, compilerOwned, browserDefineOwned);
++    const literalRuntimeImport = (node)=>ast.isCallExpression(node) && node.expression.kind === ast.SyntaxKind.ImportKeyword && 1 === node.arguments.length && ast.isStringLiteralLikeNode(node.arguments[0]) && node.arguments[0].text === FEDERATION_RUNTIME;
++    let hasProvider = sourceFile.statements.some((statement)=>{
++        if (!ast.isImportDeclaration(statement) || statement.importClause?.phaseModifier === ast.SyntaxKind.TypeKeyword || !ast.isStringLiteralLikeNode(statement.moduleSpecifier) || statement.moduleSpecifier.text !== FEDERATION_RUNTIME) return false;
++        const bindings = statement.importClause?.namedBindings;
++        return void 0 !== bindings && (ast.isNamespaceImport(bindings) || ast.isNamedImports(bindings) && bindings.elements.some((binding)=>!binding.isTypeOnly && 'getInstance' === (binding.propertyName ?? binding.name).text));
++    });
++    const findDynamicProvider = (node)=>{
++        if (hasProvider) return;
++        if (literalRuntimeImport(node)) hasProvider = true;
++        else node.forEachChild(findDynamicProvider);
++    };
++    if (!hasProvider) findDynamicProvider(sourceFile);
++    if (!hasProvider) return ()=>false;
++    const declarations = new Map();
++    const mutated = new Set();
++    const returnValues = [];
++    const symbols = new Map();
++    const symbolId = (node)=>{
++        if (!symbols.has(node)) symbols.set(node, checker.getSymbolAtLocation(node)?.id);
++        return symbols.get(node);
++    };
++    const unwrap = (node)=>{
++        while(ast.isParenthesizedExpression(node) || ast.isAsExpression(node) || ast.isTypeAssertion(node) || ast.isNonNullExpression(node) || ast.isSatisfiesExpression(node))node = node.expression;
++        return node;
++    };
++    const isConst = (node)=>ast.isVariableDeclarationList(node.parent) && (node.parent.flags & ast.NodeFlags.Const) !== 0;
++    const collect = (node)=>{
++        if ((ast.isVariableDeclaration(node) || ast.isParameterDeclaration(node) || ast.isBindingElement(node) || ast.isImportClause(node) || ast.isImportEqualsDeclaration(node) || ast.isImportSpecifier(node) || ast.isNamespaceImport(node) || ast.isFunctionDeclaration(node) || ast.isFunctionExpression(node) || ast.isClassDeclaration(node) || ast.isClassExpression(node) || ast.isEnumDeclaration(node) || ast.isModuleDeclaration(node)) && void 0 !== node.name && ast.isIdentifier(node.name)) {
++            const id = symbolId(node.name);
++            if (void 0 !== id) declarations.set(id, node);
++        }
++        node.forEachChild(collect);
++    };
++    collect(sourceFile);
++    const markSymbolMutated = (id, seen = new Set())=>{
++        if (void 0 === id || seen.has(id)) return;
++        seen.add(id);
++        mutated.add(id);
++        const declaration = declarations.get(id);
++        if (declaration && ast.isVariableDeclaration(declaration) && isConst(declaration) && declaration.initializer) {
++            const initializer = unwrap(declaration.initializer);
++            if (ast.isIdentifier(initializer)) markSymbolMutated(symbolId(initializer), seen);
++        }
++    };
++    const markMutated = (node)=>{
++        node = unwrap(node);
++        while(ast.isPropertyAccessExpression(node) || ast.isElementAccessExpression(node))node = unwrap(node.expression);
++        if (ast.isIdentifier(node)) markSymbolMutated(symbolId(node));
++    };
++    const escapeValue = (node)=>{
++        if (!node) return;
++        const value = unwrap(node);
++        if (ast.isIdentifier(value)) return void markMutated(value);
++        if (ast.isCallExpression(value) || ast.isNewExpression(value) || ast.isArrowFunction(value) || ast.isFunctionExpression(value) || ast.isMethodDeclaration(value)) return;
++        if (ast.isPropertyAccessExpression(value) || ast.isElementAccessExpression(value)) return;
++        if (ast.isConditionalExpression(value)) {
++            escapeValue(value.whenTrue);
++            escapeValue(value.whenFalse);
++            return;
++        }
++        if (ast.isBinaryExpression(value)) {
++            if (value.operatorToken.kind === ast.SyntaxKind.AmpersandAmpersandToken || value.operatorToken.kind === ast.SyntaxKind.BarBarToken || value.operatorToken.kind === ast.SyntaxKind.QuestionQuestionToken || value.operatorToken.kind === ast.SyntaxKind.CommaToken) {
++                escapeValue(value.left);
++                escapeValue(value.right);
++            }
++            return;
++        }
++        if (ast.isShorthandPropertyAssignment(value)) return void markSymbolMutated(checker.getShorthandAssignmentValueSymbol(value)?.id);
++        if (ast.isPropertyAssignment(value)) return void escapeValue(value.initializer);
++        value.forEachChild(escapeValue);
++    };
++    const collectMutations = (node)=>{
++        if (ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment) {
++            markMutated(node.left);
++            escapeValue(node.right);
++        }
++        if ((ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken)) markMutated(node.operand);
++        if (ast.isDeleteExpression(node)) markMutated(node.expression);
++        if (ast.isCallExpression(node) || ast.isNewExpression(node)) for (const argument of node.arguments ?? [])escapeValue(argument);
++        if (ast.isVariableDeclaration(node) && node.initializer) {
++            const initializer = unwrap(node.initializer);
++            if (!isConst(node) || !ast.isIdentifier(node.name) || !ast.isIdentifier(initializer) && !ast.isCallExpression(initializer)) escapeValue(initializer);
++        }
++        if (ast.isTemplateExpression(node) || ast.isTaggedTemplateExpression(node)) escapeValue(node);
++        if (ast.isPropertyAssignment(node)) escapeValue(node.initializer);
++        if (ast.isShorthandPropertyAssignment(node)) markSymbolMutated(checker.getShorthandAssignmentValueSymbol(node)?.id);
++        if (ast.isArrayLiteralExpression(node)) for (const element of node.elements)escapeValue(element);
++        if (ast.isReturnStatement(node) && node.expression) returnValues.push(node.expression);
++        if (ast.isArrowFunction(node) && !ast.isBlock(node.body)) returnValues.push(node.body);
++        node.forEachChild(collectMutations);
++    };
++    collectMutations(sourceFile);
++    const declarationFor = (node)=>{
++        node = unwrap(node);
++        if (!ast.isIdentifier(node)) return;
++        const id = symbolId(node);
++        return void 0 === id || mutated.has(id) ? void 0 : declarations.get(id);
++    };
++    const runtimeImport = (declaration, packageName = FEDERATION_RUNTIME)=>{
++        let node = declaration;
++        while(!ast.isImportDeclaration(node) && !ast.isSourceFile(node))node = node.parent;
++        return ast.isImportDeclaration(node) && node.importClause?.phaseModifier !== ast.SyntaxKind.TypeKeyword && ast.isStringLiteralLikeNode(node.moduleSpecifier) && node.moduleSpecifier.text === packageName;
++    };
++    const nativeEffect = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration) return false;
++        if (ast.isImportSpecifier(declaration)) return !declaration.isTypeOnly && 'Effect' === (declaration.propertyName ?? declaration.name).text && runtimeImport(declaration, 'effect');
++        if (!ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        return nativeEffect(declaration.initializer, seen);
++    };
++    const effectMethod = (node, method)=>{
++        node = unwrap(node);
++        return ast.isPropertyAccessExpression(node) && node.name.text === method && nativeEffect(node.expression);
++    };
++    const plainArrow = (node)=>ast.isArrowFunction(node) && !node.modifiers?.some((modifier)=>modifier.kind === ast.SyntaxKind.AsyncKeyword);
++    const nativeImportFactory = (node)=>{
++        node = unwrap(node);
++        return plainArrow(node) && 0 === node.parameters.length && !ast.isBlock(node.body) && literalRuntimeImport(unwrap(node.body));
++    };
++    const lazyModuleEffect = (node, depth = 0)=>{
++        if (depth > 128) return false;
++        node = unwrap(node);
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'tryPromise')) return 1 === node.arguments.length && nativeImportFactory(node.arguments[0]);
++        return ast.isPropertyAccessExpression(node.expression) && 'pipe' === node.expression.name.text && lazyModuleEffect(node.expression.expression, depth + 1) && node.arguments.every((stage)=>{
++            const value = unwrap(stage);
++            return ast.isCallExpression(value) && effectMethod(value.expression, 'timeout') && 1 === value.arguments.length;
++        });
++    };
++    const guardedModuleEffect = (node)=>{
++        node = unwrap(node);
++        return ast.isConditionalExpression(node) && nativeBuildTarget.comparison(node.condition, 'browser') && lazyModuleEffect(node.whenTrue) && effectMethod(node.whenFalse, 'interrupt');
++    };
++    const hoistedModuleValue = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration || !ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        const initializer = unwrap(declaration.initializer);
++        if (ast.isIdentifier(initializer)) return hoistedModuleValue(initializer, seen);
++        return ast.isVariableStatement(declaration.parent.parent) && declaration.parent.parent.parent === sourceFile && guardedModuleEffect(initializer);
++    };
++    const nativeProducerReturn = (value)=>{
++        let callback = value.parent;
++        while(!ast.isArrowFunction(callback) && !ast.isFunctionExpression(callback) && !ast.isFunctionDeclaration(callback) && !ast.isMethodDeclaration(callback) && !ast.isSourceFile(callback))callback = callback.parent;
++        if (!plainArrow(callback)) return false;
++        let node = callback;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const call = node.parent;
++        return ast.isCallExpression(call) && effectMethod(call.expression, 'flatMap') && (1 === call.arguments.length && unwrap(call.arguments[0]) === callback || 2 === call.arguments.length && unwrap(call.arguments[1]) === callback) && hoistedModuleValue(value);
++    };
++    const producerCallback = (node, seen)=>{
++        node = unwrap(node);
++        if (!plainArrow(node)) return false;
++        if (!ast.isBlock(node.body)) return moduleEffect(node.body, seen);
++        const last = node.body.statements.at(-1);
++        if (!last || !ast.isReturnStatement(last)) return false;
++        let hasModule = false;
++        let valid = true;
++        const returns = (statement)=>{
++            if (ast.isArrowFunction(statement) || ast.isFunctionExpression(statement) || ast.isFunctionDeclaration(statement) || ast.isMethodDeclaration(statement)) return;
++            if (ast.isReturnStatement(statement)) {
++                if (statement.expression) {
++                    if (moduleEffect(statement.expression, seen)) hasModule = true;
++                    else if (!effectMethod(statement.expression, 'interrupt')) valid = false;
++                } else valid = false;
++                return;
++            }
++            statement.forEachChild(returns);
++        };
++        returns(node.body);
++        return valid && hasModule;
++    };
++    const pipelineStage = (previous, node, seen)=>{
++        node = unwrap(node);
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'flatMap') && 1 === node.arguments.length) return producerCallback(node.arguments[0], seen);
++        return previous && effectMethod(node.expression, 'timeout') && 1 === node.arguments.length;
++    };
++    const moduleEffect = (node, seen = new Set())=>{
++        node = unwrap(node);
++        if (seen.has(node) || seen.size > 128) return false;
++        seen = new Set(seen).add(node);
++        if (ast.isConditionalExpression(node)) return guardedModuleEffect(node);
++        if (ast.isIdentifier(node)) {
++            const declaration = declarationFor(node);
++            return void 0 !== declaration && ast.isVariableDeclaration(declaration) && isConst(declaration) && void 0 !== declaration.initializer && moduleEffect(declaration.initializer, seen);
++        }
++        if (!ast.isCallExpression(node)) return false;
++        if (effectMethod(node.expression, 'tryPromise')) return 1 === node.arguments.length && nativeImportFactory(node.arguments[0]);
++        if (effectMethod(node.expression, 'flatMap') && 2 === node.arguments.length) return producerCallback(node.arguments[1], seen);
++        if (ast.isPropertyAccessExpression(node.expression) && 'pipe' === node.expression.name.text) {
++            let result = moduleEffect(node.expression.expression, seen);
++            if (!result) return false;
++            for (const stage of node.arguments)result = pipelineStage(result, stage, seen);
++            return result;
++        }
++        return false;
++    };
++    const callbackInput = (callback)=>{
++        let node = callback;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const stage = node.parent;
++        if (!stage || !ast.isCallExpression(stage) || !effectMethod(stage.expression, 'flatMap')) return false;
++        if (2 === stage.arguments.length && unwrap(stage.arguments[1]) === callback) return moduleEffect(stage.arguments[0]);
++        if (1 !== stage.arguments.length || unwrap(stage.arguments[0]) !== callback) return false;
++        node = stage;
++        while(node.parent && unwrap(node.parent) === node)node = node.parent;
++        const pipeline = node.parent;
++        if (!pipeline || !ast.isCallExpression(pipeline) || !ast.isPropertyAccessExpression(pipeline.expression) || 'pipe' !== pipeline.expression.name.text) return false;
++        let input = moduleEffect(pipeline.expression.expression);
++        if (!input) return false;
++        for (const argument of pipeline.arguments){
++            if (unwrap(argument) === stage) return input;
++            input = pipelineStage(input, argument, new Set());
++        }
++        return false;
++    };
++    const dynamicGetter = (binding)=>{
++        const name = binding.propertyName ?? binding.name;
++        const pattern = binding.parent;
++        const parameter = pattern.parent;
++        const callback = parameter.parent;
++        return !binding.dotDotDotToken && !binding.initializer && void 0 !== name && ast.isIdentifier(name) && 'getInstance' === name.text && ast.isObjectBindingPattern(pattern) && ast.isParameterDeclaration(parameter) && !parameter.initializer && !parameter.dotDotDotToken && plainArrow(callback) && 1 === callback.parameters.length && callback.parameters[0] === parameter && callbackInput(callback);
++    };
++    const getter = (node, seen = new Set())=>{
++        node = unwrap(node);
++        if (ast.isPropertyAccessExpression(node) && 'getInstance' === node.name.text) {
++            const declaration = declarationFor(node.expression);
++            return void 0 !== declaration && ast.isNamespaceImport(declaration) && runtimeImport(declaration);
++        }
++        const declaration = declarationFor(node);
++        if (!declaration) return false;
++        if (ast.isBindingElement(declaration)) return dynamicGetter(declaration);
++        if (ast.isImportSpecifier(declaration)) return !declaration.isTypeOnly && 'getInstance' === (declaration.propertyName ?? declaration.name).text && runtimeImport(declaration);
++        if (!ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        return getter(declaration.initializer, seen);
++    };
++    const receiver = (node, seen = new Set())=>{
++        const declaration = declarationFor(node);
++        if (!declaration || !ast.isVariableDeclaration(declaration) || !isConst(declaration) || !declaration.initializer) return false;
++        const id = symbolId(declaration.name);
++        if (void 0 === id || seen.has(id) || seen.size > 128) return false;
++        seen.add(id);
++        const initializer = unwrap(declaration.initializer);
++        return ast.isCallExpression(initializer) ? getter(initializer.expression) && pureSelector(initializer) : ast.isIdentifier(initializer) && receiver(initializer, seen);
++    };
++    const pureSelector = (call)=>{
++        if (0 === call.arguments.length) return true;
++        if (1 !== call.arguments.length) return false;
++        const selector = unwrap(call.arguments[0]);
++        if (!ast.isArrowFunction(selector) || ast.isBlock(selector.body) || selector.modifiers?.some((modifier)=>modifier.kind === ast.SyntaxKind.AsyncKeyword) || 1 !== selector.parameters.length || !ast.isIdentifier(selector.parameters[0].name) || selector.parameters[0].initializer || selector.parameters[0].dotDotDotToken) return false;
++        let pure = true;
++        const visit = (node)=>{
++            if (ast.isCallExpression(node) || ast.isNewExpression(node) || ast.isTaggedTemplateExpression(node) || ast.isDeleteExpression(node) || ast.isAwaitExpression(node) || ast.isYieldExpression(node) || ast.isBinaryExpression(node) && node.operatorToken.kind >= ast.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ast.SyntaxKind.LastAssignment || (ast.isPrefixUnaryExpression(node) || ast.isPostfixUnaryExpression(node)) && (node.operator === ast.SyntaxKind.PlusPlusToken || node.operator === ast.SyntaxKind.MinusMinusToken)) pure = false;
++            node.forEachChild(visit);
++        };
++        visit(selector.body);
++        return pure;
++    };
++    for (const value of returnValues)if (!nativeProducerReturn(value)) escapeValue(value);
++    return (node)=>{
++        if (!node || !ast.isCallExpression(node) || !ast.isPropertyAccessExpression(node.expression)) return false;
++        return [
++            'loadRemote',
++            'loadShare'
++        ].includes(node.expression.name.text) && receiver(node.expression.expression);
++    };
++}
++export { createNativeFederationLoadingProof };
+diff --git a/dist/esm-node/ultramodern-workspace/write-app.js b/dist/esm-node/ultramodern-workspace/write-app.js
+index d4b148e9904eb663e7a04b64c894c7dd20ef6f03..347202223343221ecb4c986d9594fe490bc9a303 100644
+--- a/dist/esm-node/ultramodern-workspace/write-app.js
++++ b/dist/esm-node/ultramodern-workspace/write-app.js
+@@ -1,5 +1,5 @@
+ import "node:module";
+-import { createApiClient, createApiServiceEntry, createBackendEffectApiExpose, createSharedApi, createShellApiClient } from "./api.js";
++import { createApiClient, createApiServiceEntry, createBackendEffectApiExpose, createSharedApi } from "./api.js";
+ import { createRpcClientFile, createRpcContractFile } from "./api/rpc.js";
+ import { createAppEnvDts, createAppRuntimeConfig, createAppStyles, createShellFrameComponent, createTailwindConfig } from "./app-files.js";
+ import { createBackendFederationContractFile } from "./backend-federation.js";
+@@ -70,7 +70,7 @@ function writeAppFederationConfigFiles({ targetDir, scope, resolvedApp, emitsUi,
+     if (emitsUi) writeFile(targetDir, `${resolvedApp.directory}/module-federation.config.ts`, 'shell' === resolvedApp.kind ? createShellModuleFederationConfig(scope, resolvedApp, remotes) : createRemoteModuleFederationConfig(scope, resolvedApp, remotes));
+     if (appHasApi(resolvedApp)) writeFile(targetDir, `${resolvedApp.directory}/backend-federation.config.ts`, createBackendModuleFederationConfig(resolvedApp));
+ }
+-function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, remotes, availableRemotes, publicWeb, writeAppFile }) {
++function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, remotes, publicWeb, writeAppFile }) {
+     if (!emitsUi) return;
+     if ((resolvedApp.verticalRefs?.length ?? 0) > 0) {
+         writeAppFile('src/federated-components.tsx', createFederatedComponentsRegistry(scope, resolvedApp, remotes));
+@@ -84,7 +84,6 @@ function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, re
+         writeAppFile('src/routes/vertical-components.tsx', createShellRemoteComponents(resolvedApp, remotes.filter(appEmitsBrowserUi)));
+         writeAppFile('src/routes/vertical-components.worker.tsx', createShellWorkerRemoteComponents(resolvedApp, remotes.filter(appEmitsBrowserUi)));
+         writeAppFile('src/routes/shell-frame.tsx', createShellFrameComponent(resolvedApp));
+-        writeFile(targetDir, `${resolvedApp.directory}/src/api/vertical-clients.ts`, createShellApiClient(scope, availableRemotes));
+     } else for (const expose of distributedSsrExposes(resolvedApp))writeAppFile(`src/routes/[lang]/_mf/fragment/${distributedSsrFragmentSlug(expose)}/page.tsx`, createRemoteExposeFragmentPage(resolvedApp, expose));
+ }
+ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
+diff --git a/dist/types/ultramodern-workspace/api/client.d.ts b/dist/types/ultramodern-workspace/api/client.d.ts
+index f3d332aaeeede471d4cd6c7e1457c0da7de4e0df..4bb005a2f9ef0ab936862abe9248934686fc7f59 100644
+--- a/dist/types/ultramodern-workspace/api/client.d.ts
++++ b/dist/types/ultramodern-workspace/api/client.d.ts
+@@ -1,8 +1,7 @@
+-import type { WorkspaceApi, WorkspaceApp } from '../types.js';
++import type { WorkspaceApi } from '../types.js';
+ export declare function createApiClient(service: {
+     id: string;
+     api?: WorkspaceApi;
+ }, contractImportPath: string, options?: {
+     readonly scope: string;
+ }): string;
+-export declare function createShellApiClient(scope: string, remotes?: WorkspaceApp[]): string;
+diff --git a/dist/types/ultramodern-workspace/api.d.ts b/dist/types/ultramodern-workspace/api.d.ts
+index e4fa4c992169a7bba102f93b1344140f80d9d475..d422cdc2a0915ea0071ea12e7d4933a6cf22ea05 100644
+--- a/dist/types/ultramodern-workspace/api.d.ts
++++ b/dist/types/ultramodern-workspace/api.d.ts
+@@ -1,4 +1,4 @@
+-export { createApiClient, createShellApiClient } from './api/client.js';
++export { createApiClient } from './api/client.js';
+ export { apiTopologyMetadata } from './api/contracts.js';
+ export { verticalApiCreatePayloadSchemaExport, verticalApiErrorStem, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport, } from './api/names.js';
+ export { createRpcApiServiceEntry, createRpcClientFile, createRpcContractFile, rpcPath, verticalRpcContractExport, verticalRpcGroupExport, } from './api/rpc.js';
+diff --git a/dist/types/ultramodern-workspace/validation/native-build-target.d.ts b/dist/types/ultramodern-workspace/validation/native-build-target.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..db8d9d46d127e0ffe4f51a0fabb3ed4aabdb64ad
+--- /dev/null
++++ b/dist/types/ultramodern-workspace/validation/native-build-target.d.ts
+@@ -0,0 +1,11 @@
++import type * as ts from 'typescript/unstable/ast';
++import type { Checker } from 'typescript/unstable/sync';
++/** Checks the compiler owner, rather than trusting a matching source filename. */
++export declare function isNativeModernCompilerOwner(ast: typeof import('typescript/unstable/ast'), checker: Checker, config: ts.SourceFile, manifest: unknown): boolean;
++/** Proves the exact per-environment native DefinePlugin producer used by the Shell. */
++export declare function isNativeBrowserCompilerDefine(ast: typeof import('typescript/unstable/ast'), checker: Checker, config: ts.SourceFile): boolean;
++/** Modern's exact define must remain visible to its native source compiler. */
++export declare function createNativeBuildTargetProof(ast: typeof import('typescript/unstable/ast'), checker: Checker, sourceFile: ts.SourceFile, compilerOwned: boolean, browserDefineOwned: boolean): {
++    comparison: (node: ts.Node, target?: 'browser' | 'node') => boolean;
++    environmentAccess: (node: ts.Node) => boolean;
++};
+diff --git a/dist/types/ultramodern-workspace/validation/native-federation-loading.d.ts b/dist/types/ultramodern-workspace/validation/native-federation-loading.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..051848ebdfdf4a8a1bc219a113fb6b3bc5c149ee
+--- /dev/null
++++ b/dist/types/ultramodern-workspace/validation/native-federation-loading.d.ts
+@@ -0,0 +1,4 @@
++import type * as ts from 'typescript/unstable/ast';
++import type { Checker } from 'typescript/unstable/sync';
++/** Proves native instance provenance; application admission remains a separate boundary. */
++export declare function createNativeFederationLoadingProof(ast: typeof import('typescript/unstable/ast'), checker: Checker, sourceFile: ts.SourceFile, compilerOwned: boolean, browserDefineOwned: boolean): (node: ts.Node | undefined) => boolean;
+diff --git a/templates/workspace-scripts/proof-workerd-ssr.mjs b/templates/workspace-scripts/proof-workerd-ssr.mjs
+index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..16417d5ea6de27426fb5a401a31ffb3fd5f786c8 100644
+--- a/templates/workspace-scripts/proof-workerd-ssr.mjs
++++ b/templates/workspace-scripts/proof-workerd-ssr.mjs
+@@ -219,14 +219,22 @@ const readDevVars = (outputRoot) => {
+   return fs.existsSync(devVarsPath) ? parseEnv(fs.readFileSync(devVarsPath, "utf8")) : {};
+ };
+ 
+-const loadApps = (workspaceRoot, topology, overlay) => {
++const loadApps = (topology, overlay, artifactRoot) => {
+   const { plans, rawApps } = planWorkerdSsrProof(topology);
+   return rawApps.map((rawApp, index) => {
+     const plan = plans[index];
+     const hasApiSurface = plan.kind === "vertical" && rawApp.surfaceProfile !== "ui-only";
+     const appPath = rawApp.path;
+     assert(typeof appPath === "string" && appPath.length > 0, `${plan.id} topology path is missing`);
+-    const outputRoot = path.join(workspaceRoot, appPath, ".output");
++    const outputRoot = path.resolve(artifactRoot, appPath, ".output");
++    const relativeOutput = path.relative(artifactRoot, outputRoot);
++    assert(
++      !path.posix.isAbsolute(normalizePath(appPath)) &&
++        !normalizePath(appPath).split("/").includes("..") &&
++        relativeOutput !== "" && !relativeOutput.startsWith(`..${path.sep}`) &&
++        !path.isAbsolute(relativeOutput),
++      `${plan.id} topology output path escapes the selected artifact root`,
++    );
+     const wranglerPath = path.join(outputRoot, "wrangler.json");
+     assert(
+       fs.existsSync(wranglerPath),
+@@ -308,6 +316,87 @@ const createLocalHyperdrives = (app) => {
+   );
+ };
+ 
++// The workspace supplies runtime data through its own publisher. This proof
++// knows only native KV seeds, approved HTTPS origins and Shell request mounts;
++// it must not reconstruct an application's composition schema from topology.
++export const validateWorkerdProofFixture = (fixture, apps) => {
++  assert(
++    fixture?.schemaVersion === 1 && Array.isArray(fixture.kvSeeds) &&
++      Array.isArray(fixture.ownerTargets) && Array.isArray(fixture.shellApiTargets),
++    "Invalid Workerd proof fixture",
++  );
++  const byId = new Map(apps.map((app) => [app.id, app]));
++  const seeds = new Set();
++  const sharedValues = new Map();
++  for (const seed of fixture.kvSeeds) {
++    const app = byId.get(seed?.appId);
++    const namespace = app?.wrangler.kv_namespaces?.find((candidate) => candidate.binding === seed?.binding);
++    assert(
++      app && typeof seed.binding === "string" &&
++        namespace &&
++        Array.isArray(seed.entries),
++      "Workerd proof KV seed must name an executed Worker's declared binding",
++    );
++    for (const entry of seed.entries) {
++      const identity = JSON.stringify([seed.appId, seed.binding, entry?.key]);
++      assert(
++        typeof entry?.key === "string" && entry.key.length > 0 &&
++          typeof entry.value === "string" && !seeds.has(identity),
++        "Workerd proof KV seeds must contain unique string keys and unchanged string values",
++      );
++      seeds.add(identity);
++      const sharedIdentity = JSON.stringify([namespace.id, entry.key]);
++      assert(
++        !sharedValues.has(sharedIdentity) || sharedValues.get(sharedIdentity) === entry.value,
++        "Workerd proof KV seeds must not conflict in a shared native namespace",
++      );
++      sharedValues.set(sharedIdentity, entry.value);
++    }
++  }
++  const origins = new Set();
++  const owners = new Set();
++  for (const target of fixture.ownerTargets) {
++    const app = byId.get(target?.appId);
++    const url = typeof target?.baseUrl === "string" ? URL.parse(target.baseUrl) : null;
++    assert(
++      app?.kind === "vertical" && url?.protocol === "https:" &&
++        url.username === "" && url.password === "" && url.search === "" &&
++        url.hash === "" && target.baseUrl === `${url.origin}/` &&
++        !origins.has(url.origin) && !owners.has(target.appId),
++      "Workerd proof owner targets must be unique executed MicroVerticals at canonical HTTPS origins",
++    );
++    origins.add(url.origin);
++    owners.add(target.appId);
++  }
++  const routes = new Set();
++  for (const target of fixture.shellApiTargets) {
++    const shell = byId.get(target?.shellId);
++    const app = byId.get(target?.appId);
++    const routeIdentity = JSON.stringify([target?.shellId, target?.appId]);
++    assert(
++      shell?.kind === "shell" && app?.hasApiSurface && owners.has(app.id) &&
++        typeof target.routePrefix === "string" && target.routePrefix.startsWith("/") &&
++        !target.routePrefix.endsWith("/") &&
++        !/[?#\\\\]|%(?:2f|5c)/iu.test(target.routePrefix) &&
++        !target.routePrefix.split("/").some((segment) => segment === "." || segment === "..") &&
++        target.headers && typeof target.headers === "object" && !Array.isArray(target.headers) &&
++        Object.entries(target.headers).every(([key, value]) =>
++          /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(key) && typeof value === "string" &&
++          !/[\r\n]/u.test(value)) && !routes.has(routeIdentity),
++      "Workerd proof Shell API targets must name one approved owner, explicit mount and string headers",
++    );
++    routes.add(routeIdentity);
++  }
++  return fixture;
++};
++
++const readWorkerdProofFixture = (apps) => {
++  const location = process.env.ULTRAMODERN_WORKERD_PROOF_FIXTURE;
++  return location === undefined
++    ? { schemaVersion: 1, kvSeeds: [], ownerTargets: [], shellApiTargets: [] }
++    : validateWorkerdProofFixture(readJson(path.resolve(location)), apps);
++};
++
+ const createWorkerOptions = (app, workspaceRoot, extra = {}) => {
+   const main = typeof app.wrangler.main === "string" ? app.wrangler.main : "server/index.mjs";
+   const assets =
+@@ -380,6 +469,14 @@ const createWorkerOptions = (app, workspaceRoot, extra = {}) => {
+     compatibilityFlags: app.wrangler.compatibility_flags,
+     bindings: { ...app.wrangler.vars, ...app.devVars },
+     hyperdrives: createLocalHyperdrives(app),
++    kvNamespaces: Object.fromEntries((app.wrangler.kv_namespaces ?? []).map((namespace) => {
++      assert(
++        typeof namespace.binding === "string" && typeof namespace.id === "string" &&
++          namespace.id.length > 0,
++        `${app.id} has an invalid native KV namespace`,
++      );
++      return [namespace.binding, namespace.id];
++    })),
+     assets: {
+       binding: typeof assets.binding === "string" ? assets.binding : "ASSETS",
+       directory: path.resolve(app.outputRoot, directory),
+@@ -418,7 +515,7 @@ const findReleaseMarkers = (value, markers = []) => {
+ const jsonPathValue = (value, key) =>
+   String(key).split(".").reduce((current, segment) => current?.[segment], value);
+ 
+-const responseEvidence = async (app, response, check) => {
++const responseEvidence = async (app, response, check, phase) => {
+   const bytes = Buffer.from(await response.arrayBuffer());
+   let body;
+   try {
+@@ -426,7 +523,25 @@ const responseEvidence = async (app, response, check) => {
+   } catch (error) {
+     throw new Error(`${app.id} API response is not JSON: ${error.message}`);
+   }
+-  assert(response.ok, `${app.id} API response returned HTTP ${response.status}`);
++  const problem = {};
++  for (const key of ["type", "title", "code", "_tag"]) {
++    if (typeof body?.[key] === "string") {
++      problem[key] = body[key].slice(0, 200);
++    }
++  }
++  if (typeof body?.status === "number" && Number.isFinite(body.status)) {
++    problem.status = body.status;
++  }
++  assert(
++    response.ok,
++    `${app.id} API response returned HTTP ${response.status}: ${JSON.stringify({
++      phase,
++      status: response.status,
++      contentType: response.headers.get("content-type"),
++      sha256: sha256(bytes),
++      problem,
++    })}`,
++  );
+   let marker;
+   if (app.apiProtocol === "rpc") {
+     assert(
+@@ -455,6 +570,7 @@ const responseEvidence = async (app, response, check) => {
+   return {
+     bodyBase64: bytes.toString("base64"),
+     byteLength: bytes.byteLength,
++    contentType: response.headers.get("content-type"),
+     ...(marker ? { releaseMarker: marker } : {}),
+     sha256: sha256(bytes),
+     status: response.status,
+@@ -488,7 +604,7 @@ const resolveApiSmokeChecks = (app, shell) => {
+   return [...uniqueChecks.values()];
+ };
+ 
+-const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
++const runApiProofs = async (apps, miniflare, shell, executionByAppId, fixture, recorders) => {
+   const results = [];
+   for (const app of apps.filter((candidate) => candidate.hasApiSurface)) {
+     const jsonSmokeChecks = resolveApiSmokeChecks(app, shell);
+@@ -496,17 +612,18 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+       jsonSmokeChecks.length > 0,
+       `${app.id} has no real Cloudflare API smoke check`,
+     );
+-    const binding = (shell.wrangler.services ?? []).find(
+-      (candidate) => candidate.service === workerName(app),
++    const shellTarget = fixture.shellApiTargets.find(
++      (candidate) => candidate.shellId === shell.id && candidate.appId === app.id,
+     );
++    const ownerTarget = fixture.ownerTargets.find((candidate) => candidate.appId === app.id);
+     assert(
+-      binding || (app.apiOnly && !shell.verticalRefs.includes(app.id)),
+-      `${shell.id} has no service binding for ${app.id}`,
++      shellTarget || (app.apiOnly && !shell.verticalRefs.includes(app.id)),
++      `${shell.id} has no explicit native API target for ${app.id}`,
+     );
+     for (const check of jsonSmokeChecks) {
+       const method = String(check.method ?? "GET").toUpperCase();
+       const headers = {};
+-      const init = { method, headers };
++      const init = { method, headers, redirect: "manual" };
+       if (check.body !== undefined) {
+         headers["content-type"] = "application/json";
+         init.body = JSON.stringify(check.body);
+@@ -517,21 +634,39 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+           await miniflare.getWorker(workerName(app))
+         ).fetch(`https://${workerName(app)}.invalid${check.route}`, init),
+         check,
++        "direct",
+       );
+-      const throughShell = binding
++      const outboundStart = recorders.outboundRequests.length;
++      const shellRoute = shellTarget ? `${shellTarget.routePrefix}${check.route}` : undefined;
++      const throughShell = shellTarget
+         ? await responseEvidence(
+             app,
+             await miniflare.dispatchFetch(
+-              `https://${workerName(shell)}.invalid${check.route}`,
+-              init,
++              `https://${workerName(shell)}.invalid${shellRoute}`,
++              {
++                ...init,
++                headers: { ...headers, ...shellTarget?.headers },
++              },
+             ),
+             check,
++            "through-shell",
+           )
+         : undefined;
+       if (throughShell) {
+         assert(
+-          direct.sha256 === throughShell.sha256,
+-          `${app.id} direct and service-binding API responses differ`,
++          direct.status === throughShell.status && direct.sha256 === throughShell.sha256 &&
++            direct.contentType === throughShell.contentType,
++          `${app.id} direct and Shell API responses differ`,
++        );
++      }
++      const outboundRequests = recorders.outboundRequests.slice(outboundStart);
++      if (shellTarget) {
++        const expectedUrl = new URL(check.route, ownerTarget.baseUrl).href;
++        assert(
++          outboundRequests.some((request) => request.callerId === shell.id &&
++            request.targetAppId === app.id && request.url === expectedUrl &&
++            request.method === method && request.response?.status === throughShell.status),
++          `${app.id} Shell API proof did not reach its approved HTTPS owner`,
+         );
+       }
+       const target = {
+@@ -542,8 +677,8 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+       results.push({
+         appId: app.id,
+         shellId: shell.id,
+-        ...(binding
+-          ? { binding: binding.binding, bindingTarget: target, throughShell }
++        ...(shellTarget
++          ? { httpsTarget: { ...target, baseUrl: ownerTarget.baseUrl }, shellRoute, throughShell, outboundRequests }
+           : { directTarget: target }),
+         direct,
+         id: check.id,
+@@ -582,6 +717,7 @@ const startWorkerdTargetServers = async (
+   miniflare,
+   failedServices,
+   workerConfigurations,
++  fixture,
+ ) => {
+   const servers = [];
+   const isolatedVerticalRuntimes = [];
+@@ -594,7 +730,7 @@ const startWorkerdTargetServers = async (
+       );
+       const runtime =
+         app.kind === "vertical"
+-          ? createIsolatedRuntime(workerConfigurations[index])
++          ? await createIsolatedRuntime(workerConfigurations[index], app, apps, fixture)
+           : miniflare;
+       if (runtime !== miniflare) {
+         isolatedVerticalRuntimes.push(runtime);
+@@ -747,13 +883,45 @@ const decodeDistributedSsrFragmentRequest = (request) => {
+ // requested MicroVertical its own runtime so its static assets and MF manifest
+ // cannot resolve from a sibling Worker. Its service bindings still resolve
+ // through the shared composition runtime.
+-const createIsolatedRuntime = (workerOptions) =>
+-  new Miniflare(
++const seedWorkerdProofKv = async (miniflare, runtimeApps, allApps, fixture) => {
++  const sources = new Map();
++  for (const seed of fixture.kvSeeds) {
++    const app = allApps.find((candidate) => candidate.id === seed.appId);
++    const id = app.wrangler.kv_namespaces.find((namespace) => namespace.binding === seed.binding).id;
++    const entries = sources.get(id) ?? new Map();
++    for (const entry of seed.entries) entries.set(entry.key, entry.value);
++    sources.set(id, entries);
++  }
++  const seeded = new Set();
++  for (const app of runtimeApps) {
++    for (const binding of app.wrangler.kv_namespaces ?? []) {
++      const entries = sources.get(binding.id);
++      if (!entries || entries.size === 0 || seeded.has(binding.id)) continue;
++      const namespace = await miniflare.getKVNamespace(binding.binding, workerName(app));
++      for (const [key, value] of entries) {
++        await namespace.put(key, value);
++        assert(await namespace.get(key) === value, `${app.id} native KV fixture changed its seeded bytes`);
++      }
++      seeded.add(binding.id);
++    }
++  }
++};
++
++const createIsolatedRuntime = async (workerOptions, app, allApps, fixture) => {
++  const miniflare = new Miniflare(
+     convertV4MiniflareOptions({
+       log: new Log(LogLevel.ERROR),
+       workers: [workerOptions],
+     }),
+   );
++  try {
++    await seedWorkerdProofKv(miniflare, [app], allApps, fixture);
++    return miniflare;
++  } catch (error) {
++    await miniflare.dispose();
++    throw error;
++  }
++};
+ 
+ const createServiceBindings = (
+   caller,
+@@ -928,15 +1096,17 @@ const writeReport = (reportPath, report) => {
+ 
+ const main = async () => {
+   const workspaceRoot = path.resolve(process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd());
++  const artifactRoot = path.resolve(process.env.ULTRAMODERN_WORKERD_ARTIFACT_ROOT ?? workspaceRoot);
+   const reportPath = path.join(workspaceRoot, reportRelativePath);
+   const keepWorkerd = process.env.ULTRAMODERN_KEEP_WORKERD === "1";
+   const apps = loadApps(
+-    workspaceRoot,
+     readJson(path.join(workspaceRoot, "topology/reference-topology.json")),
+     readJson(path.join(workspaceRoot, "topology/local-overlays/development.json")),
++    artifactRoot,
+   );
+   const shells = apps.filter((app) => app.kind === "shell");
+   assert(!keepWorkerd || shells.length === 1, "Browser workerd proof requires exactly one shell");
++  const fixture = readWorkerdProofFixture(apps);
+ 
+   const recorders = {
+     apiBindingRequests: [],
+@@ -950,10 +1120,32 @@ const main = async () => {
+       serviceBindings: createServiceBindings(app, { ...recorders, composition, failedServices }),
+       async outboundService(request) {
+         const requestUrl = new URL(request.url);
+-        recorders.outboundRequests.push({ callerId: app.id, url: requestUrl.href });
+-        return new Response("External network disabled by SSR proof", {
+-          status: 502,
+-        });
++        const target = fixture.ownerTargets.find(
++          (candidate) => new URL(candidate.baseUrl).origin === requestUrl.origin,
++        );
++        const recorded = {
++          callerId: app.id,
++          url: requestUrl.href,
++          method: request.method,
++          requestBody: {
++            contentLength: request.headers.get("content-length"),
++            contentType: request.headers.get("content-type"),
++            present: request.body !== null,
++          },
++        };
++        recorders.outboundRequests.push(recorded);
++        const owner = target ? apps.find((candidate) => candidate.id === target.appId) : undefined;
++        if (!owner || failedServices.has(workerName(owner))) {
++          return new Response("Unapproved or unavailable HTTPS owner in SSR proof", { status: 502 });
++        }
++        recorded.targetAppId = target.appId;
++        const worker = await composition.miniflare.getWorker(workerName(owner));
++        const response = await worker.fetch(request);
++        recorded.response = {
++          contentType: response.headers.get("content-type"),
++          status: response.status,
++        };
++        return response;
+       },
+     }),
+   );
+@@ -972,6 +1164,7 @@ const main = async () => {
+   const report = { executions, apiProofs: [], proofs: [], verticalProofs: [] };
+ 
+   try {
++    await seedWorkerdProofKv(miniflare, apps, apps, fixture);
+     for (const shell of shells) {
+       // Shell routes compose declared server-rendered boundaries through the
+       // shell's entry Worker exactly as a browser request would.
+@@ -1006,7 +1199,7 @@ const main = async () => {
+         );
+       }
+       report.apiProofs.push(
+-        ...(await runApiProofs(apps, miniflare, shell, executionByAppId)),
++        ...(await runApiProofs(apps, miniflare, shell, executionByAppId, fixture, recorders)),
+       );
+     }
+ 
+@@ -1016,7 +1209,7 @@ const main = async () => {
+       if (vertical.kind !== "vertical" || vertical.ssrRoutes.length === 0) {
+         continue;
+       }
+-      const runtime = createIsolatedRuntime(workers[index]);
++      const runtime = await createIsolatedRuntime(workers[index], vertical, apps, fixture);
+       try {
+         for (const route of vertical.ssrRoutes) {
+           report.verticalProofs.push({
+@@ -1042,6 +1235,7 @@ const main = async () => {
+         miniflare,
+         failedServices,
+         workers,
++        fixture,
+       );
+       console.log(`WORKERD_TARGET_URLS=${JSON.stringify(targetServers.targetUrls)}`);
+       console.log(`WORKERD_URL=${targetServers.targetUrls[shells[0].id]}`);

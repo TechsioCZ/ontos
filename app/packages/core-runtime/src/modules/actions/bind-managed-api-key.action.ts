@@ -32,6 +32,7 @@ const handle = Effect.fn('BindManagedApiKeyAction.handle')(function* bindManaged
   >,
 ) {
   const result = yield* context.services.bind({
+    createdByInvocationId: context.actionInvocationId,
     managed: true,
     principalId: payload.principalId,
     providerSubjectId: payload.providerSubjectId,
@@ -81,8 +82,8 @@ export const bindManagedApiKeyAction = defineAction(
     tenantPermission: () => 'manage_identity',
   },
   handle,
-  (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+  (transaction, scope) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({ bind: repository.bindApiKey });
   },
 );

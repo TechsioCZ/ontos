@@ -5,6 +5,7 @@ import type {
   ScopedRoutineInvoker,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
+import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { Effect, DateTime, Layer, Predicate, Schema } from 'effect';
 
 import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
@@ -304,7 +305,9 @@ const buyerPermission = Effect.fn('PurchaseApprovalCurrentnessPersistence.buyerP
       });
       const owner = yield* lockingCurrentOwnerAccessForTransaction(transaction, {
         legalEntityId: scope.legalEntityId,
-        tenantId: scope.tenantId,
+        tenantId: yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
+          Effect.mapError(mapCurrentnessError('The trusted Tenant scope is malformed')),
+        ),
       })({
         counterpartyRef: counterparty,
         legalEntityId: scope.legalEntityId,

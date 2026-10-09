@@ -8,8 +8,8 @@ export interface AuthConfigValue {
   readonly privateJwk: Redacted.Redacted<string>;
 }
 
-export const AuthSecret = Config.redacted('BETTER_AUTH_SECRET');
-export const SpiceDbKey = Config.redacted('SPICEDB_PRESHARED_KEY');
+export const AuthSecret = Config.Redacted('BETTER_AUTH_SECRET');
+export const SpiceDbKey = Config.Redacted('SPICEDB_PRESHARED_KEY');
 
 export const CredentialSchema = Schema.Struct({
   clientSecret: Schema.Redacted(Schema.String),

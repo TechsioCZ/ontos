@@ -1,5 +1,10 @@
-import { ActionTransactionError, IdentityTargetInvalidError, PrincipalBindingMissingError } from '@app/core-runtime';
-import { Effect, Redacted, Predicate } from 'effect';
+import {
+  ActionTransactionError,
+  IdentityTargetInvalidError,
+  PrincipalBindingMissingError,
+  TrustedPrincipalContextSchema,
+} from '@app/core-runtime';
+import { Effect, Redacted, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -17,13 +22,14 @@ import {
 } from '../support/action-runtime-double.ts';
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 
-const principal = {
+const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000002',
   authContextRef: 'better-auth-session:identity-lifecycle-test',
-  authMethod: 'session' as const,
+  authenticationNamespaceId: 'test.staff.better-auth.v1',
+  authMethod: 'session',
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
-};
+});
 const issued = {
   createdAt: '2026-08-09T00:00:00.000Z',
   enabled: true,
@@ -222,7 +228,7 @@ it.effect('returns a secret only after bind succeeds and strips the private prov
       principal,
       requestHeaders: new Headers(),
     });
-    expect(result.secret).toBe('ontos-secret');
+    expect(Redacted.value(result.secret)).toBe('ontos-secret');
     expect(Object.hasOwn(result, 'providerKeyId')).toBe(false);
   }),
 );
@@ -300,7 +306,7 @@ it.effect('returns the replacement secret when both old closure and replacement 
       reason: 'Scheduled credential rotation',
       requestHeaders: new Headers(),
     });
-    expect(result.secret).toBe('ontos-secret');
+    expect(Redacted.value(result.secret)).toBe('ontos-secret');
     expect(result.cleanupPending).toBe(true);
     expect(actionRuntime.invocationCount()).toBe(3);
   }),
@@ -352,7 +358,7 @@ it.effect('returns the replacement secret when old Core closure committed but pr
       requestHeaders: new Headers(),
     });
 
-    expect(result.secret).toBe('ontos-secret');
+    expect(Redacted.value(result.secret)).toBe('ontos-secret');
     expect(result.cleanupPending).toBe(true);
     expect(actionRuntime.invocationCount()).toBe(2);
     expect(resolverCalls).toBe(2);
@@ -577,7 +583,7 @@ it.effect('reconciles a provider key left pending by failed bind compensation be
       requestHeaders: new Headers(),
     });
 
-    expect(result.secret).toBe('ontos-secret');
+    expect(Redacted.value(result.secret)).toBe('ontos-secret');
     expect(disabled).toEqual(['orphan-provider-key-id']);
     expect(cleared).toEqual(['orphan-provider-key-id', 'private-provider-key-id']);
   }),

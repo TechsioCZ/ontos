@@ -1,0 +1,80 @@
+{
+  "name": "@app/pricing-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pricing-owned public currency-support, Price, and decision contracts.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./current-pricing-decision": "./src/apis/current-pricing-decision.ts",
+    "./current-pricing-decision/client": "./src/api/current-pricing-decision-client.ts",
+    "./current-supported-currencies": "./src/apis/current-supported-currencies.ts",
+    "./current-supported-currencies/client": "./src/api/current-supported-currencies-client.ts",
+    "./domain/accepted-order-handoff": "./src/domain/accepted-order-handoff.ts",
+    "./domain/broken-explicit-input": "./src/domain/broken-explicit-input.ts",
+    "./domain/catalog-price-target": "./src/domain/catalog-price-target.ts",
+    "./domain/commercial-total": "./src/domain/commercial-total.ts",
+    "./domain/commitment-confirmation": "./src/domain/commitment-confirmation.ts",
+    "./domain/contractual-discount-set": "./src/domain/contractual-discount-set.ts",
+    "./domain/currency-support": "./src/domain/currency-support.ts",
+    "./domain/commercial-fee": "./src/domain/commercial-fee.ts",
+    "./domain/discount": "./src/domain/discount.ts",
+    "./domain/discount-composition": "./src/domain/discount-composition.ts",
+    "./domain/discount-fee-allocation": "./src/domain/discount-fee-allocation.ts",
+    "./domain/exact-decimal": "./src/domain/exact-decimal.ts",
+    "./domain/exact-price-lookup": "./src/domain/exact-price-lookup.ts",
+    "./domain/exact-price-resolution": "./src/domain/exact-price-resolution.ts",
+    "./domain/line-composition": "./src/domain/line-composition.ts",
+    "./domain/material-change": "./src/domain/material-change.ts",
+    "./domain/material-evidence": "./src/domain/material-evidence.ts",
+    "./domain/price-definition": "./src/domain/price-definition.ts",
+    "./domain/price-group-fallback": "./src/domain/price-group-fallback.ts",
+    "./domain/price-group-interpretation": "./src/domain/price-group-interpretation.ts",
+    "./domain/price-reconfirmation": "./src/domain/price-reconfirmation.ts",
+    "./domain/price-schedule": "./src/domain/price-schedule.ts",
+    "./domain/price-source-provenance": "./src/domain/price-source-provenance.ts",
+    "./domain/price-source-ref": "./src/domain/price-source-ref.ts",
+    "./domain/pricing-commercial-scope": "./src/domain/pricing-commercial-scope.ts",
+    "./domain/pricing-owner-handoff": "./src/domain/pricing-owner-handoff.ts",
+    "./domain/promotion-contribution": "./src/domain/promotion-contribution.ts",
+    "./domain/quotation": "./src/domain/quotation.ts",
+    "./domain/promotion-composition": "./src/domain/promotion-composition.ts",
+    "./domain/quantity-tier": "./src/domain/quantity-tier.ts",
+    "./domain/quantity-tier-aggregation": "./src/domain/quantity-tier-aggregation.ts",
+    "./domain/quantity-unit-package-basis": "./src/domain/quantity-unit-package-basis.ts",
+    "./domain/rounding-boundary": "./src/domain/rounding-boundary.ts",
+    "./domain/source-revision-evidence": "./src/domain/source-revision-evidence.ts",
+    "./domain/unit-price-calculation": "./src/domain/unit-price-calculation.ts",
+    "./price-definition": "./src/apis/price-definition.ts",
+    "./price-definition/client": "./src/api/price-definition-client.ts",
+    "./resources/price": "./src/resources/price.ts",
+    "./pricing-decision": "./src/domain/pricing-decision.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/catalog": "workspace:*",
+    "@app/core-runtime": "workspace:*",
+    "@app/party-registry": "workspace:*",
+    "@app/price-group-catalog-contracts": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.0-rc.117"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.11.12",
+    "@types/node": "20.19.43",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597"
+  },
+  "ontosContractOwner": {
+    "appId": "pricing",
+    "moduleApis": [
+      "current-pricing-decision",
+      "current-supported-currencies",
+      "price-definition"
+    ],
+    "moduleId": "commerce.pricing",
+    "packageName": "@app/pricing"
+  }
+}

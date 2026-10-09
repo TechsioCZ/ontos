@@ -1,0 +1,78 @@
+name: Initial Application Composition Cutover
+
+# This is an explicit operator action: delete the reviewed old Node runtime services and the
+# reviewed old public Worker executables. It never selects installed modules or promotes a release.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected environment whose old executables must be quiesced.
+        type: choice
+        options: [stage, production]
+        default: stage
+      inventory-file:
+        description: Reviewed execution inventory under app/topology, relative to app.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  quiesce:
+    name: Retire and verify the reviewed legacy execution inventory
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ inputs.environment == 'stage' && 'stage-edge' || inputs.environment }}
+      deployment: false
+    concurrency:
+      group: zerops-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      EXECUTION_INVENTORY_FILE: ${{ inputs.inventory-file }}
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout reviewed main revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Delete and independently verify the reviewed old runtime executables
+        working-directory: app
+        env:
+          CUTOVER_RECEIPT_FILE: ${{ runner.temp }}/initial-composition-cutover-receipt.json
+        run: mise exec -- pnpm active-composition:publish quiesce-initial-cutover --environment "$DEPLOY_ENVIRONMENT" --inventory-file "$EXECUTION_INVENTORY_FILE" --receipt-file "$CUTOVER_RECEIPT_FILE"
+
+      - name: Preserve the inventory-bound native quiescence receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: initial-composition-cutover-receipt
+          path: ${{ runner.temp }}/initial-composition-cutover-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Configure the native composition source before the first runtime deployment
+        working-directory: app
+        env:
+          ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: mise exec -- pnpm active-composition:publish configure-source

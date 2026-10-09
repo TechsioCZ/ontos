@@ -482,3 +482,28 @@ it.effect('maps only schema-declared owner failures to concrete public Problems'
     }
   }),
 );
+
+it.effect('uses the configured receiver audience instead of an HTTP audience header', () =>
+  Effect.gen(function* receiverAudience() {
+    observed.length = 0;
+    const handler = makeGovernedReadHttpHandler({
+      audience: 'test.receiver.api',
+      authenticatePrincipal: () => Effect.succeed(principal),
+      problems,
+      registration,
+    });
+    yield* handler({
+      payload: { query: 'fixture' },
+      request: {
+        headers: Headers.fromInput({
+          audience: 'untrusted-request-audience',
+          'x-correlation-id': 'receiver-audience-test',
+        }),
+      },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(observed.map((input) => input.audience)).toEqual(['test.receiver.api']);
+  }),
+);

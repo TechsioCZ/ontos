@@ -14,6 +14,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface SetDefaultBillingAddressActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -38,6 +39,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: SetDefaultBillingAddressActionApi,
       credential,
       defaultApiPrefix: '/commerce-customer-context-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -50,12 +52,7 @@ export const executeSetDefaultBillingAddressWithAuthorization = (
   Schema.encodeUnknownEffect(SetDefaultBillingAddressPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.setDefaultBillingAddressAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.setDefaultBillingAddressAction.execute({ payload: encoded })),
       ),
     ),
   );
@@ -65,6 +62,11 @@ export const executeSetDefaultBillingAddress = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) => executeSetDefaultBillingAddressWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeSetDefaultBillingAddressWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

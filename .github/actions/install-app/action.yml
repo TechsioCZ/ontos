@@ -1,0 +1,74 @@
+name: Install the app workspace
+description: Install the app/.mise.toml toolchain and the frozen app/ dependency graph from a lockfile-keyed pnpm store.
+
+inputs:
+  install-args:
+    description: Extra `pnpm install` arguments.
+    default: ""
+  mise-env:
+    description: Export the app/.mise.toml environment.
+    default: "true"
+  save-store:
+    description: Save a missed pnpm store on main. Exactly one job sets this, so parallel jobs never race to save.
+    default: "false"
+  restore-typescript-build:
+    description: >-
+      Restore the newest TS-Go typecheck build (app/node_modules/.cache/tsgo) saved on main for this
+      toolchain and lockfile. TS-Go rechecks every file whose content changed, so a stale build only costs time.
+    default: "false"
+
+outputs:
+  typescript-build-key:
+    description: The cache key this commit's TS-Go typecheck build saves under.
+    value: ${{ steps.typescript-build.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup mise
+      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      with:
+        working_directory: app
+        env: ${{ inputs.mise-env }}
+
+    - name: Locate the pnpm store
+      id: store
+      shell: bash
+      working-directory: app
+      run: echo "path=$(mise exec -- pnpm store path)" >> "$GITHUB_OUTPUT"
+
+    # The key covers the pinned pnpm (app/.mise.toml) and the lockfile; there are no restore-keys, so a
+    # stale store never masquerades as a hit.
+    - name: Restore the pnpm store
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}
+
+    - name: Install dependencies from the frozen lockfile
+      shell: bash
+      working-directory: app
+      run: mise exec -- pnpm install --frozen-lockfile ${{ inputs.install-args }}
+
+    - name: Save the pnpm store
+      if: inputs.save-store == 'true' && github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: ${{ steps.restore.outputs.cache-primary-key }}
+
+    # Restored after the install, which creates app/node_modules. The key names this commit, so the
+    # restore takes the newest build saved for this toolchain and lockfile.
+    - name: Name the TS-Go typecheck build
+      id: typescript-build
+      shell: bash
+      run: echo "key=tsgo-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the TS-Go typecheck build
+      if: inputs.restore-typescript-build == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: app/node_modules/.cache/tsgo
+        key: ${{ steps.typescript-build.outputs.key }}
+        restore-keys: tsgo-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}-

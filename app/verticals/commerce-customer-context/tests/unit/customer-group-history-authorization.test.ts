@@ -38,6 +38,9 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
   let groupRoutineCalls = 0;
   const queriedContextPermissions: string[] = [];
   const query = (text: string) => {
+    if (text.includes('transaction_timestamp')) {
+      return Effect.succeed([{ operation_at: new Date('2026-09-21T10:00:00.000Z') }]);
+    }
     if (text.includes('data_access_events')) {
       dataAccessEvidence += 1;
       return Effect.succeed([]);

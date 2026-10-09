@@ -56,10 +56,9 @@ export const ApplicabilityDecisionsApi = HttpApi.make('ApplicabilityDecisionsApi
         ApplicabilityDecisionsUnavailableProblemSchema,
         ApplicabilityDecisionsInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: ApplicabilityDecisionsRequestSchema,
-      query: {},
+
       success: ApplicabilityDecisionsResponseSchema,
     }),
   ),

@@ -7,7 +7,7 @@
 // even when the initialiser is provably an object literal of string literals.
 //
 // Nothing below reads any environment. `env` is a module constant whose every value is written
-// here in the source. There is no `Config.string(...)` to declare and no ConfigProvider that could
+// here in the source. There is no `Config.String(...)` to declare and no ConfigProvider that could
 // ever supply these, so every diagnostic on this file is spurious.
 const env = {
 	API_VERSION: 'v2',

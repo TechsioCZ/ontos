@@ -56,10 +56,9 @@ export const ResponsibilityAssignmentsApi = HttpApi.make('ResponsibilityAssignme
         ResponsibilityAssignmentsUnavailableProblemSchema,
         ResponsibilityAssignmentsInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: ResponsibilityAssignmentsRequestSchema,
-      query: {},
+
       success: ResponsibilityAssignmentsResponseSchema,
     }),
   ),

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerGroupDetailClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerGroupDetailAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executeCustomerGroupDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerGroupDetailAuthorizedInvocation
 ) =>
   customerGroupDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.customerGroupDetail.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.customerGroupDetail.execute({ payload })),
   );
 
 export const executeCustomerGroupDetail = (
   payload: CustomerGroupDetailRequest,
   ...[requestCorrelation, options = {}]: CustomerGroupDetailOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerGroupDetailWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerGroupDetailWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -11,10 +11,6 @@ import {
 
 export { SetDefaultDeliveryDestinationPayloadSchema } from '../actions/set-default-delivery-destination.ts';
 
-const SetDefaultDeliveryDestinationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetDefaultDeliveryDestinationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetDefaultDeliveryDestinationActionInvalidProblem',
   400,
@@ -138,15 +134,39 @@ const actionErrors = [
   SetDefaultDeliveryDestinationActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const setDefaultDeliveryDestinationActionGroupDefinition = HttpApiGroup.make(
+  'setDefaultDeliveryDestinationAction',
+)
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/set-default-delivery-destination', {
+      error: actionErrors,
+      payload: Schema.toEncoded(SetDefaultDeliveryDestinationPayloadSchema),
+      success: SetDefaultDeliveryDestinationResultSchema,
+    }),
+  )
+  .middleware(SetDefaultDeliveryDestinationActionSchemaErrorMiddleware);
+
+export type SetDefaultDeliveryDestinationActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'setDefaultDeliveryDestinationAction',
+  HttpApiGroup.Endpoints<typeof setDefaultDeliveryDestinationActionGroupDefinition>
+>;
+
+const SetDefaultDeliveryDestinationActionGroup: SetDefaultDeliveryDestinationActionGroupContract =
+  setDefaultDeliveryDestinationActionGroupDefinition;
+
 export const SetDefaultDeliveryDestinationActionApi = HttpApi.make('SetDefaultDeliveryDestinationActionApi').add(
-  HttpApiGroup.make('setDefaultDeliveryDestinationAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/set-default-delivery-destination', {
-        error: actionErrors,
-        headers: SetDefaultDeliveryDestinationActionHeadersSchema,
-        payload: Schema.toEncoded(SetDefaultDeliveryDestinationPayloadSchema),
-        success: SetDefaultDeliveryDestinationResultSchema,
-      }),
-    )
-    .middleware(SetDefaultDeliveryDestinationActionSchemaErrorMiddleware),
+  SetDefaultDeliveryDestinationActionGroup,
 );

@@ -119,6 +119,7 @@ it.effect('delegates entitlement validation atomically and records a changed pre
       actionInvocationId: '77777777-7777-4777-8777-777777777777',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,

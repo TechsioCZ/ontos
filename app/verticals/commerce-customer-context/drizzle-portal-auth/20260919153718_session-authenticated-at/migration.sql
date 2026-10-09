@@ -1,0 +1,1 @@
+ALTER TABLE "commerce_auth"."session" ADD COLUMN "authenticated_at" timestamp with time zone;

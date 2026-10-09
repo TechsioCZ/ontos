@@ -11,10 +11,6 @@ import {
 
 export { MigrateCustomerPriceGroupPayloadSchema } from '../actions/migrate-customer-price-group.ts';
 
-const MigrateCustomerPriceGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const MigrateCustomerPriceGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'MigrateCustomerPriceGroupActionInvalidProblem',
   400,
@@ -136,15 +132,37 @@ const actionErrors = [
   MigrateCustomerPriceGroupActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const migrateCustomerPriceGroupActionGroupDefinition = HttpApiGroup.make('migrateCustomerPriceGroupAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/migrate-customer-price-group', {
+      error: actionErrors,
+      payload: Schema.toEncoded(MigrateCustomerPriceGroupPayloadSchema),
+      success: MigrateCustomerPriceGroupResultSchema,
+    }),
+  )
+  .middleware(MigrateCustomerPriceGroupActionSchemaErrorMiddleware);
+
+export type MigrateCustomerPriceGroupActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'migrateCustomerPriceGroupAction',
+  HttpApiGroup.Endpoints<typeof migrateCustomerPriceGroupActionGroupDefinition>
+>;
+
+const MigrateCustomerPriceGroupActionGroup: MigrateCustomerPriceGroupActionGroupContract =
+  migrateCustomerPriceGroupActionGroupDefinition;
+
 export const MigrateCustomerPriceGroupActionApi = HttpApi.make('MigrateCustomerPriceGroupActionApi').add(
-  HttpApiGroup.make('migrateCustomerPriceGroupAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/migrate-customer-price-group', {
-        error: actionErrors,
-        headers: MigrateCustomerPriceGroupActionHeadersSchema,
-        payload: Schema.toEncoded(MigrateCustomerPriceGroupPayloadSchema),
-        success: MigrateCustomerPriceGroupResultSchema,
-      }),
-    )
-    .middleware(MigrateCustomerPriceGroupActionSchemaErrorMiddleware),
+  MigrateCustomerPriceGroupActionGroup,
 );

@@ -28,6 +28,7 @@ export default defineConfig({
     {
       name: 'integration',
       testEnvironment: 'node',
+      setupFiles: ['./tests/integration/application-composition.setup.ts'],
       include: ['tests/integration/**/*.test.ts'],
       testTimeout: 30_000,
     },

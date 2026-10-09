@@ -1,0 +1,2 @@
+ALTER TABLE "catalog"."controlled_attribute_value_revisions" ADD COLUMN "color_details" jsonb;--> statement-breakpoint
+ALTER TABLE "catalog"."controlled_attribute_values" ADD COLUMN "color_details" jsonb;

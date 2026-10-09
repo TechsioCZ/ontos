@@ -40,6 +40,7 @@ const payload: OutboxPayload = {
 const context: OutboxWorkerHandlerContext = {
   attemptNumber: 1,
   claimId: 'claim:1',
+  compositionRevision: 'test-composition',
   consumerModuleKey: 'commerce.customer-context',
   deliveryId: 'delivery:1',
   domainEventId: 'event:1',

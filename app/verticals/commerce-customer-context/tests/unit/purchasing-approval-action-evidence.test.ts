@@ -71,21 +71,25 @@ const buyerId = '10000000-0000-4000-8000-000000000002';
 const approverId = '10000000-0000-4000-8000-000000000003';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const storefrontId = 'storefront-eu';
+const compositionRevision = 'a'.repeat(64);
 const atText = '2026-09-09T12:00:00.000Z';
 const expiresAtText = '2026-09-09T13:00:00.000Z';
 const at = Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(atText);
 const expiresAt = Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(expiresAtText);
 
-const scope: OperationalScope = trustVerifiedGatewayPrincipalContext({
-  authBindingId: '30000000-0000-4000-8000-000000000001',
-  authContextRef: 'better-auth-api-key:commerce-order-owner',
-  authMethod: 'api_key' as const,
-  correlationId: 'purchasing-approval-action-evidence',
-  legalEntityId,
-  principalId: buyerId,
-  tenantId,
-  trustedStorefrontId: storefrontId,
-});
+const scope: OperationalScope = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: '30000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-api-key:commerce-order-owner',
+    authMethod: 'api_key' as const,
+    correlationId: 'purchasing-approval-action-evidence',
+    legalEntityId,
+    principalId: buyerId,
+    tenantId,
+    trustedStorefrontId: storefrontId,
+  },
+  compositionRevision,
+);
 
 const counterpartyRef = Schema.decodeUnknownSync(CoreSearchResourceRefSchema)({
   moduleId: 'party.registry',
@@ -393,6 +397,7 @@ const contextFor = <DomainEvents extends DomainEventContractMap>(
   actionInvocationId,
   addDomainEvent: collector.addDomainEvent,
   addOutboxMessage: collector.addOutboxMessage,
+  compositionRevision,
   recordAuditEvidence: collector.recordAuditEvidence,
   recordDataAccess: collector.recordDataAccess,
   scope,

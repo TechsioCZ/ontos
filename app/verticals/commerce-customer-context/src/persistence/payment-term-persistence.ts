@@ -1309,7 +1309,6 @@ export const makeCustomerPaymentTermEntitlementReadServices = (
         _tag: 'CUSTOMER_PAYMENT_TERMS' as const,
         ...projectCustomerPaymentTermsAt(state, input.asOf, input.includeHistorical),
       })),
-      /* oxlint-disable sonarjs/function-name -- Effect.catchTags keys intentionally match the schema-owned failure tags; expires: 2027-03-31. */
       Effect.catchTags({
         PERSISTENCE_UNAVAILABLE: ({ reason }) => Effect.fail(readUnavailable(reason)),
         PROFILE_COUNTERPARTY_MISMATCH: () =>
@@ -1330,7 +1329,6 @@ export const makeCustomerPaymentTermEntitlementReadServices = (
             profileRef: input.profileRef,
           }),
       }),
-      /* oxlint-enable sonarjs/function-name */
     );
   },
 });

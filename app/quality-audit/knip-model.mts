@@ -16,6 +16,7 @@ const WorkspaceSchema = Schema.Struct({
   drizzle: Schema.optional(PluginSchema),
   entry: Schema.optional(Strings),
   ignoreDependencies: Schema.optional(Strings),
+  ignoreIssues: Schema.optional(Schema.Record(Schema.String, Strings)),
   lefthook: Schema.optional(Schema.Boolean),
   node: Schema.optional(Schema.Boolean),
   playwright: Schema.optional(PluginSchema),
@@ -38,6 +39,8 @@ const PackageSchema = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   exports: Schema.optional(ExportsSchema),
+  name: Schema.optional(Schema.String),
+  scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   modernjs: Schema.optional(
     Schema.Struct({
       ontosModule: Schema.optional(
@@ -56,6 +59,7 @@ class KnipModelError extends Schema.TaggedError<KnipModelError>()('KnipModelErro
 }) {}
 
 const unprovenResolver = { kind: 'resolver-unproven' } as const;
+const playwrightPackageName = '@playwright/test';
 
 export const KnipModelEvidenceSchema = Schema.Struct({
   anchor: Schema.optional(Schema.String),
@@ -65,6 +69,8 @@ export const KnipModelEvidenceSchema = Schema.Struct({
     'file',
     'dependency',
     'export',
+    'type',
+    'alias',
     'resolver',
     unprovenResolver.kind,
     'compiler-option',
@@ -346,6 +352,589 @@ const evidenceAt = (
   workspace,
 });
 
+const staticObjectFields = (node: Node | undefined): ReadonlyMap<string, Node> | undefined => {
+  if (node?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const fields = new Map<string, Node>();
+  for (const property of node.properties) {
+    if (property.type !== 'Property' || property.computed || property.kind !== 'init' || property.method) {
+      return undefined;
+    }
+    const name = propertyName(property.key);
+    if (name === undefined || fields.has(name)) {
+      return undefined;
+    }
+    fields.set(name, property.value);
+  }
+  return fields;
+};
+
+const isSingleLineCommand = (command: string): boolean => !/[\r\n\u2028\u2029]/u.test(command);
+
+interface ExportedBinding {
+  readonly kind: 'export' | 'type';
+  readonly name: string;
+  readonly offset: number;
+}
+
+const identifierName = (node: Node | undefined): string | undefined =>
+  node?.type === 'Identifier' ? node.name : undefined;
+
+const exportedBindings = ({ program }: SourceFacts): readonly ExportedBinding[] =>
+  program.body.flatMap((node) => {
+    if (node.type !== 'ExportNamedDeclaration') {
+      return [];
+    }
+    if (node.declaration?.type === 'VariableDeclaration') {
+      return node.declaration.declarations.flatMap((declaration) => {
+        const name = identifierName(declaration.id ?? undefined);
+        return name === undefined ? [] : [{ kind: 'export' as const, name, offset: declaration.start }];
+      });
+    }
+    if (
+      node.declaration?.type === 'FunctionDeclaration' ||
+      node.declaration?.type === 'ClassDeclaration' ||
+      node.declaration?.type === 'TSEnumDeclaration'
+    ) {
+      const name = identifierName(node.declaration.id);
+      return name === undefined ? [] : [{ kind: 'export' as const, name, offset: node.declaration.start }];
+    }
+    if (node.declaration?.type === 'TSTypeAliasDeclaration' || node.declaration?.type === 'TSInterfaceDeclaration') {
+      return [{ kind: 'type' as const, name: node.declaration.id.name, offset: node.declaration.start }];
+    }
+    return node.specifiers.flatMap((specifier) => {
+      const name = identifierName(specifier.exported);
+      return name === undefined
+        ? []
+        : [
+            {
+              kind:
+                node.exportKind === 'type' || specifier.exportKind === 'type' ? ('type' as const) : ('export' as const),
+              name,
+              offset: specifier.start,
+            },
+          ];
+    });
+  });
+
+/** Modern's file router consumes splat components and paired client data outside the import graph. */
+const modernRouteEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  manifest: typeof PackageSchema.Type,
+  prefix: string,
+  workspace: string,
+): KnipModelEvidence[] => {
+  if (
+    (manifest.dependencies?.['@modern-js/runtime'] ?? manifest.devDependencies?.['@modern-js/runtime']) === undefined
+  ) {
+    return [];
+  }
+  const configured = [...factsByPath.values()].some((facts) => {
+    if (!/^modern\.config\.[cm]?[jt]s$/u.test(facts.file.slice(prefix.length))) {
+      return false;
+    }
+    const factories = new Set(
+      facts.program.body.flatMap((node) =>
+        node.type === 'ImportDeclaration' && node.importKind !== 'type' && node.source.value === '@modern-js/app-tools'
+          ? node.specifiers.flatMap((specifier) =>
+              specifier.type === 'ImportSpecifier' && propertyName(specifier.imported) === 'defineConfig'
+                ? [specifier.local.name]
+                : [],
+            )
+          : [],
+      ),
+    );
+    const exported = facts.program.body.find((node) => node.type === 'ExportDefaultDeclaration');
+    const configuration = unwrap(exported?.declaration, facts.variables);
+    return (
+      configuration?.type === 'CallExpression' &&
+      configuration.callee.type === 'Identifier' &&
+      factories.has(configuration.callee.name)
+    );
+  });
+  if (!configured) {
+    return [];
+  }
+  const sourceAt = (base: string): SourceFacts | undefined =>
+    ['ts', 'tsx', 'js', 'jsx'].flatMap((extension) => factsByPath.get(`${base}.${extension}`) ?? [])[0];
+  return [...factsByPath.values()].flatMap((facts) => {
+    const relative = facts.file.slice(prefix.length);
+    if (!relative.startsWith('src/routes/')) {
+      return [];
+    }
+    const match = /^(?<base>.*\/)(?<name>\$|(?:page|layout|\$)\.data\.client)\.[jt]sx?$/u.exec(relative);
+    const { base, name } = match?.groups ?? {};
+    if (base === undefined || name === undefined) {
+      return [];
+    }
+    const [component] = name.split('.');
+    if (component === undefined || sourceAt(`${prefix}${base}${component}`) === undefined) {
+      return [];
+    }
+    const data = sourceAt(`${prefix}${base}${component}.data`);
+    const loader = sourceAt(`${prefix}${base}${component}.loader`);
+    if (name !== '$' && data === undefined && loader === undefined) {
+      return [];
+    }
+    const evidence = [evidenceAt(facts, workspace, 'file', relative, 0, 'Modern native file-system route consumer')];
+    const inlineNames = new Set(data === undefined ? [] : exportedBindings(data).map((binding) => binding.name));
+    const consumed =
+      name === '$' || data === undefined
+        ? facts.program.body.flatMap((node) =>
+            node.type === 'ExportDefaultDeclaration' ? [{ name: 'default', offset: node.start }] : [],
+          )
+        : exportedBindings(facts).filter(
+            (binding) =>
+              binding.kind === 'export' &&
+              (binding.name === 'loader' || binding.name === 'action') &&
+              inlineNames.has(binding.name),
+          );
+    for (const binding of consumed) {
+      evidence.push(
+        evidenceAt(
+          facts,
+          workspace,
+          'export',
+          `${facts.file}#${binding.name}`,
+          binding.offset,
+          'Modern native route renderer or client-data loader consumes this export',
+        ),
+      );
+    }
+    return evidence;
+  });
+};
+
+const generatedActionContractEvidence = (facts: SourceFacts, workspace: string): KnipModelEvidence[] => {
+  if (!facts.source.startsWith('// @generated by OntOS Codesmith Action v1\n')) {
+    return [];
+  }
+  const owner = /^\/\/ @ontos-action-owner (?<owner>[a-z][a-z0-9.-]+)$/mu.exec(facts.source)?.groups?.owner;
+  const slug = /^\/\/ @ontos-action-slug (?<slug>[a-z][a-z0-9-]+)$/mu.exec(facts.source)?.groups?.slug;
+  if (owner === undefined || slug === undefined || !facts.file.endsWith(`/src/actions/${slug}.action.ts`)) {
+    return [];
+  }
+  const slotStart = facts.source.indexOf('// <generated-outbox-message-exports>');
+  const slotEnd = facts.source.indexOf('// </generated-outbox-message-exports>');
+  return facts.program.body.flatMap((node) => {
+    if (node.type !== 'ExportNamedDeclaration' || node.source?.type !== 'Literal' || !isString(node.source.value)) {
+      return [];
+    }
+    const fromSharedContract = /^\.\.\/\.\.\/shared\/actions\/[a-z0-9-]+\.ts$/u.test(node.source.value);
+    const fromGeneratedOutboxSlot =
+      slotStart >= 0 &&
+      slotEnd > slotStart &&
+      node.start > slotStart &&
+      node.end < slotEnd &&
+      /^\.\/[a-z0-9-]+\.outbox-message\.ts$/u.test(node.source.value);
+    if (!fromSharedContract && !fromGeneratedOutboxSlot) {
+      return [];
+    }
+    return node.specifiers.flatMap((specifier) => {
+      const name = identifierName(specifier.exported);
+      return name === undefined
+        ? []
+        : [
+            evidenceAt(
+              facts,
+              workspace,
+              node.exportKind === 'type' || specifier.exportKind === 'type' ? 'type' : 'export',
+              `${facts.file}#${name}`,
+              specifier.start,
+              fromSharedContract
+                ? 'Generated Action public payload/result contract re-export'
+                : 'Generated Outbox Message public action alias',
+            ),
+          ];
+    });
+  });
+};
+
+const generatedModuleApiEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  prefix: string,
+  workspace: string,
+): KnipModelEvidence[] => {
+  const sharedApi = factsByPath.get(`${prefix}shared/api.ts`);
+  if (sharedApi === undefined) {
+    return [];
+  }
+  return sharedApi.program.body.flatMap((node) => {
+    if (
+      node.type !== 'ImportDeclaration' ||
+      !node.source.value.startsWith('./apis/') ||
+      !node.source.value.endsWith('.ts')
+    ) {
+      return [];
+    }
+    const apiName = node.specifiers.flatMap((specifier) => {
+      if (specifier.type !== 'ImportSpecifier') {
+        return [];
+      }
+      const name = identifierName(specifier.imported);
+      return name?.endsWith('Api') === true ? [name.slice(0, -3)] : [];
+    })[0];
+    const target = factsByPath.get(`${prefix}shared/${node.source.value.slice(2)}`);
+    if (
+      apiName === undefined ||
+      target === undefined ||
+      !target.source.startsWith('// @generated by OntOS Codesmith module-api v1\n')
+    ) {
+      return [];
+    }
+    const publicContractName = new RegExp(`^${apiName}(?:Request|Response|Endpoint|Group)$`, 'u');
+    return exportedBindings(target).flatMap((binding) =>
+      publicContractName.test(binding.name)
+        ? [
+            evidenceAt(
+              sharedApi,
+              workspace,
+              binding.kind,
+              `${target.file}#${binding.name}`,
+              node.start,
+              'Generated module API public contract composed by shared/api.ts',
+            ),
+          ]
+        : [],
+    );
+  });
+};
+
+const pascalCase = (value: string): string =>
+  value
+    .split(/[-.]/u)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join('');
+
+const generatedOutboxMessageEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  manifest: typeof PackageSchema.Type,
+  prefix: string,
+  workspace: string,
+): KnipModelEvidence[] => {
+  const declaredContracts = new Set(exportLeaves(manifest.exports));
+  return [...factsByPath.values()].flatMap((facts) => {
+    if (!facts.source.startsWith('// @generated by OntOS Codesmith Outbox Message v2\n')) {
+      return [];
+    }
+    const action = /^\/\/ @ontos-outbox-action [a-z][a-z0-9.-]+\.(?<action>[a-z][a-z0-9-]+)$/mu.exec(facts.source)
+      ?.groups?.action;
+    const topic = /^\/\/ @ontos-outbox-topic (?<topic>[a-z][a-z0-9.-]+)$/mu.exec(facts.source)?.groups?.topic;
+    if (action === undefined || topic === undefined) {
+      return [];
+    }
+    const topicSlug = topic.replaceAll('.', '-');
+    const relativeMessage = `src/actions/${action}-${topicSlug}.outbox-message.ts`;
+    if (facts.file !== `${prefix}${relativeMessage}` || !declaredContracts.has(`./shared/outbox/${topicSlug}.ts`)) {
+      return [];
+    }
+    const actionFacts = factsByPath.get(`${prefix}src/actions/${action}.action.ts`);
+    const creator = `create${pascalCase(action)}${pascalCase(topicSlug)}OutboxMessage`;
+    const runtimeImport = actionFacts?.program.body.some(
+      (node) =>
+        node.type === 'ImportDeclaration' &&
+        node.source.value === `./${action}-${topicSlug}.outbox-message.ts` &&
+        node.specifiers.some(
+          (specifier) => specifier.type === 'ImportSpecifier' && identifierName(specifier.imported) === creator,
+        ),
+    );
+    if (runtimeImport !== true) {
+      return [];
+    }
+    const base = `${pascalCase(action)}${pascalCase(topicSlug)}Outbox`;
+    const publicNames = new Set([`${base}Payload`, `${base}PayloadSchema`, `${base}ProducerModuleKey`, `${base}Topic`]);
+    return exportedBindings(facts).flatMap((binding) =>
+      publicNames.has(binding.name)
+        ? [
+            evidenceAt(
+              facts,
+              workspace,
+              binding.kind,
+              `${facts.file}#${binding.name}`,
+              binding.offset,
+              'Generated Outbox Message alias backed by a declared package contract and runtime action import',
+            ),
+          ]
+        : [],
+    );
+  });
+};
+
+const importedBindingsByFile = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  path: Path.Path,
+): ReadonlyMap<string, ReadonlySet<string>> => {
+  const imported = new Map<string, Set<string>>();
+  for (const consumer of factsByPath.values()) {
+    for (const node of consumer.program.body) {
+      if (node.type !== 'ImportDeclaration' || !node.source.value.startsWith('.')) {
+        continue;
+      }
+      const target = path.normalize(path.join(path.dirname(consumer.file), node.source.value)).replaceAll('\\', '/');
+      const names = imported.get(target) ?? new Set<string>();
+      for (const specifier of node.specifiers) {
+        if (specifier.type === 'ImportSpecifier') {
+          const name = identifierName(specifier.imported);
+          if (name !== undefined) {
+            names.add(name);
+          }
+        }
+      }
+      imported.set(target, names);
+    }
+  }
+  return imported;
+};
+
+interface LocalDeclaration {
+  readonly exportedType: boolean;
+  readonly offset: number;
+  readonly source: string;
+}
+
+const localDeclarations = (facts: SourceFacts): ReadonlyMap<string, LocalDeclaration> => {
+  const declarations = new Map<string, LocalDeclaration>();
+  for (const statement of facts.program.body) {
+    const exported = statement.type === 'ExportNamedDeclaration';
+    const node = exported ? statement.declaration : statement;
+    if (node?.type === 'VariableDeclaration') {
+      for (const declaration of node.declarations) {
+        const name = identifierName(declaration.id);
+        if (name !== undefined) {
+          declarations.set(name, {
+            exportedType: false,
+            offset: declaration.start,
+            source: facts.source.slice(declaration.start, declaration.end),
+          });
+        }
+      }
+    } else if (
+      node?.type === 'FunctionDeclaration' ||
+      node?.type === 'ClassDeclaration' ||
+      node?.type === 'TSTypeAliasDeclaration' ||
+      node?.type === 'TSInterfaceDeclaration'
+    ) {
+      const name = identifierName(node.id ?? undefined);
+      if (name !== undefined) {
+        declarations.set(name, {
+          exportedType: exported && (node.type === 'TSTypeAliasDeclaration' || node.type === 'TSInterfaceDeclaration'),
+          offset: node.start,
+          source: facts.source.slice(node.start, node.end),
+        });
+      }
+    }
+  }
+  return declarations;
+};
+
+const declarationClosure = (
+  declarations: ReadonlyMap<string, LocalDeclaration>,
+  seeds: Iterable<string>,
+): ReadonlySet<string> => {
+  const queue = [...seeds];
+  const reached = new Set<string>();
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (name === undefined || reached.has(name)) {
+      continue;
+    }
+    reached.add(name);
+    const declaration = declarations.get(name);
+    if (declaration === undefined) {
+      continue;
+    }
+    for (const dependency of declarations.keys()) {
+      if (dependency !== name && new RegExp(`\\b${dependency}\\b`, 'u').test(declaration.source)) {
+        queue.push(dependency);
+      }
+    }
+  }
+  return reached;
+};
+
+const declarationSurfaceEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  const imported = importedBindingsByFile(factsByPath, path);
+  const evidence: KnipModelEvidence[] = [];
+  for (const facts of factsByPath.values()) {
+    const declarations = localDeclarations(facts);
+    const exported = new Map(exportedBindings(facts).map((binding) => [binding.name, binding]));
+    const seeds = imported.get(facts.file) ?? new Set<string>();
+    const reached = declarationClosure(declarations, seeds);
+    for (const name of reached) {
+      const binding = exported.get(name);
+      if (binding !== undefined && !seeds.has(name)) {
+        evidence.push(
+          evidenceAt(
+            facts,
+            workspace,
+            binding.kind,
+            `${facts.file}#${name}`,
+            binding.offset,
+            'Exported declaration dependency is reachable from an imported public surface',
+          ),
+        );
+      }
+    }
+  }
+  return evidence;
+};
+
+const catalogReadBindingEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+): KnipModelEvidence[] => {
+  if (workspace !== 'verticals/catalog') {
+    return [];
+  }
+  return [...factsByPath.values()].flatMap((facts) => {
+    if (
+      !facts.file.startsWith('verticals/catalog/src/api/') ||
+      !facts.file.endsWith('.read.ts') ||
+      !facts.source.startsWith('// @generated by OntOS Codesmith module-api v1\n')
+    ) {
+      return [];
+    }
+    const declarations = localDeclarations(facts);
+    const roots = facts.program.body.flatMap((statement) => {
+      if (statement.type !== 'ExportNamedDeclaration' || statement.declaration?.type !== 'VariableDeclaration') {
+        return [];
+      }
+      return statement.declaration.declarations.flatMap((declaration) =>
+        declaration.init?.type === 'CallExpression' &&
+        declaration.init.callee.type === 'Identifier' &&
+        declaration.init.callee.name === 'defineRead'
+          ? [facts.source.slice(declaration.start, declaration.end)]
+          : [],
+      );
+    });
+    if (roots.length === 0) {
+      return [];
+    }
+    const seeds = [...declarations.keys()].filter((name) =>
+      roots.some((root) => new RegExp(`\\b${name}\\b`, 'u').test(root)),
+    );
+    const reached = declarationClosure(declarations, seeds);
+    return exportedBindings(facts).flatMap((binding) => {
+      const declaration = declarations.get(binding.name);
+      const composedReadBinding = reached.has(binding.name);
+      const injectedServiceBinding =
+        declaration?.source.includes('Context.Service') === true && reached.has(`${binding.name}Port`);
+      return composedReadBinding || injectedServiceBinding
+        ? [
+            evidenceAt(
+              facts,
+              workspace,
+              binding.kind,
+              `${facts.file}#${binding.name}`,
+              binding.offset,
+              composedReadBinding
+                ? 'Generated Catalog read binding is composed into its registered defineRead implementation'
+                : 'Generated Catalog injection service backs a port composed into its registered defineRead implementation',
+            ),
+          ]
+        : [];
+    });
+  });
+};
+
+const catalogSharedContractEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+): KnipModelEvidence[] => {
+  if (workspace !== 'verticals/catalog') {
+    return [];
+  }
+  return [...factsByPath.values()].flatMap((facts) =>
+    /^verticals\/catalog\/shared\/(?:actions|apis|domain|outbox|resources)\/.+\.[cm]?[jt]sx?$/u.test(facts.file)
+      ? exportedBindings(facts).map((binding) =>
+          evidenceAt(
+            facts,
+            workspace,
+            binding.kind,
+            `${facts.file}#${binding.name}`,
+            binding.offset,
+            'Catalog shared contract leaf is externally consumable across the package boundary',
+          ),
+        )
+      : [],
+  );
+};
+
+const catalogAliasEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  manifest: typeof PackageSchema.Type,
+  prefix: string,
+  workspace: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  if (workspace !== 'verticals/catalog') {
+    return [];
+  }
+  const publicEntries = new Set(
+    exportLeaves(manifest.exports).map((target) =>
+      path.normalize(path.join(prefix, target)).replaceAll('\\', '/').replace(`${prefix}/`, prefix),
+    ),
+  );
+  const imported = importedBindingsByFile(factsByPath, path);
+  const evidence: KnipModelEvidence[] = [];
+  for (const facts of factsByPath.values()) {
+    const exported = new Set(exportedBindings(facts).map(({ name }) => name));
+    const externalNames = imported.get(facts.file) ?? new Set<string>();
+    for (const node of facts.program.body) {
+      if (node.type === 'ExportNamedDeclaration' && node.declaration?.type === 'VariableDeclaration') {
+        for (const declaration of node.declaration.declarations) {
+          const alias = identifierName(declaration.id);
+          const target = identifierName(declaration.init ?? undefined);
+          if (
+            alias !== undefined &&
+            target !== undefined &&
+            exported.has(target) &&
+            ((alias.endsWith('Schema') && target.endsWith('Schema')) || alias === `${target}Schema`) &&
+            (publicEntries.has(facts.file) || (externalNames.has(alias) && externalNames.has(target)))
+          ) {
+            evidence.push(
+              evidenceAt(
+                facts,
+                workspace,
+                'alias',
+                `${facts.file}#${alias}=${target}`,
+                declaration.start,
+                publicEntries.has(facts.file)
+                  ? 'Catalog semantic schema alias declared by the package public surface'
+                  : 'Catalog semantic schema alias with both bindings imported by runtime consumers',
+              ),
+            );
+          }
+        }
+      }
+      if (
+        node.type === 'ExportDefaultDeclaration' &&
+        facts.source.startsWith('// @generated by OntOS Codesmith public-component v1\n') &&
+        node.declaration.type === 'Identifier' &&
+        exported.has(node.declaration.name) &&
+        publicEntries.has(facts.file)
+      ) {
+        evidence.push(
+          evidenceAt(
+            facts,
+            workspace,
+            'alias',
+            `${facts.file}#default=${node.declaration.name}`,
+            node.start,
+            'Generated package public component exposes the framework default alias',
+          ),
+        );
+      }
+    }
+  }
+  return evidence;
+};
+
 const generatedActionGatewayEvidence = (facts: SourceFacts, workspace: string): KnipModelEvidence[] => {
   if (
     !facts.file.endsWith('/src/api/action-gateway.ts') ||
@@ -353,7 +942,7 @@ const generatedActionGatewayEvidence = (facts: SourceFacts, workspace: string): 
   ) {
     return [];
   }
-  const requiredExports = new Set(['ACTION_GATEWAY_AUDIENCE', 'makeOperationGateway']);
+  const requiredExports = new Set(['ACTION_GATEWAY_AUDIENCE', 'makeOperationGateway', 'operationGateway']);
   return facts.program.body.flatMap((node) => {
     if (node.type !== 'ExportNamedDeclaration' || node.declaration?.type !== 'VariableDeclaration') {
       return [];
@@ -373,6 +962,53 @@ const generatedActionGatewayEvidence = (facts: SourceFacts, workspace: string): 
         : [],
     );
   });
+};
+
+const generatedActionPrincipalEvidence = (facts: SourceFacts, workspace: string): KnipModelEvidence[] => {
+  if (
+    !facts.file.endsWith('/api/auth/action-principal.ts') ||
+    !facts.source.startsWith('// @generated by OntOS Codesmith MicroVertical Action Boundary v1\n') ||
+    !/^\/\/ @ontos-action-boundary-owner [a-z][a-z0-9.-]+$/mu.test(facts.source) ||
+    !/^\/\/ @ontos-action-boundary-audience [a-z][a-z0-9.-]+$/mu.test(facts.source)
+  ) {
+    return [];
+  }
+  const requiredExports = new Set([
+    'ACTION_PRINCIPAL_BEARER_CHALLENGE',
+    'ActionPrincipalConfigurationErrorSchema',
+    'ActionPrincipalExpiredErrorSchema',
+    'ActionPrincipalInvalidErrorSchema',
+    'ActionPrincipalMissingErrorSchema',
+    'ActionPrincipalScopeErrorSchema',
+    'ActionPrincipalUnavailableErrorSchema',
+    'ActionPrincipalConfigurationError',
+    'ActionPrincipalError',
+    'ActionPrincipalExpiredError',
+    'ActionPrincipalInvalidError',
+    'ActionPrincipalMissingError',
+    'ActionPrincipalScopeError',
+    'ActionPrincipalUnavailableError',
+    'ACTION_GATEWAY_AUDIENCE',
+    'ActionPrincipalVerifier',
+    'ActionPrincipalVerifierLive',
+    'ActionPrincipalVerificationOptions',
+    'verifyActionPrincipal',
+    'authenticateOperationPrincipal',
+  ]);
+  return exportedBindings(facts).flatMap((binding) =>
+    requiredExports.has(binding.name)
+      ? [
+          evidenceAt(
+            facts,
+            workspace,
+            binding.kind,
+            `${facts.file}#${binding.name}`,
+            binding.offset,
+            'Generated action-principal boundary exposes this exact verifier contract binding',
+          ),
+        ]
+      : [],
+  );
 };
 
 const federationFieldEvidence = (
@@ -416,188 +1052,370 @@ const federationEvidence = (facts: SourceFacts, workspace: string): KnipModelEvi
 
 const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string, Node> => {
   const variables = new Map(facts.variables);
+  const blockBinding = (binding: Node) => {
+    if (binding.type === 'Identifier') variables.set(binding.name, binding);
+    else if (binding.type === 'AssignmentPattern') blockBinding(binding.left);
+    else if (binding.type === 'RestElement') blockBinding(binding.argument);
+    else if (binding.type === 'ObjectPattern') {
+      for (const property of binding.properties) {
+        blockBinding(property.type === 'Property' ? property.value : property.argument);
+      }
+    } else if (binding.type === 'ArrayPattern') {
+      for (const element of binding.elements) if (element !== null) blockBinding(element);
+    }
+  };
+  const recordDeclaration = (declaration: Node) => {
+    if (declaration.type === 'VariableDeclaration') {
+      for (const binding of declaration.declarations) {
+        if (binding.id.type === 'Identifier' && binding.init !== null) variables.set(binding.id.name, binding.init);
+        else blockBinding(binding.id);
+      }
+    } else if (
+      (declaration.type === 'FunctionDeclaration' || declaration.type === 'ClassDeclaration') &&
+      declaration.id !== null
+    ) {
+      blockBinding(declaration.id);
+    }
+  };
+  for (const statement of facts.program.body) {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (declaration !== null) recordDeclaration(declaration);
+  }
+  const recordParameters = (
+    node: Extract<Node, { type: 'FunctionDeclaration' | 'FunctionExpression' | 'ArrowFunctionExpression' }>,
+  ) => {
+    if (node.start <= offset && offset < node.end) {
+      for (const parameter of node.params) {
+        if (parameter.type === 'AssignmentPattern' && parameter.left.type === 'Identifier') {
+          variables.set(parameter.left.name, parameter);
+        } else blockBinding(parameter);
+      }
+    }
+  };
   const recordBlock = (node: Extract<Node, { type: 'BlockStatement' }>) => {
     if (node.start <= offset && offset < node.end) {
       for (const statement of node.body) {
-        if (statement.type !== 'VariableDeclaration') {
-          continue;
-        }
-        for (const declaration of statement.declarations) {
-          if (declaration.id.type === 'Identifier' && declaration.init !== null) {
-            variables.set(declaration.id.name, declaration.init);
-          }
-        }
+        recordDeclaration(statement);
       }
     }
   };
-  new Visitor({ BlockStatement: recordBlock }).visit(facts.program);
+  new Visitor({
+    ArrowFunctionExpression: recordParameters,
+    BlockStatement: recordBlock,
+    CatchClause: (node) => {
+      if (node.param !== null && node.start <= offset && offset < node.end) blockBinding(node.param);
+    },
+    FunctionDeclaration: recordParameters,
+    FunctionExpression: recordParameters,
+  }).visit(facts.program);
   return variables;
 };
 
-const requiredSourceEvidence = (facts: SourceFacts): KnipModelEvidence[] => {
-  const evidence: KnipModelEvidence[] = [];
-  const requiredPaths = unwrap(facts.variables.get('requiredPaths'), facts.variables);
-  if (requiredPaths?.type === 'ArrayExpression') {
-    for (const element of requiredPaths.elements) {
-      const target = staticString(element ?? undefined, facts.variables);
-      if (target !== undefined && sourceExtension.test(target)) {
-        evidence.push(
-          evidenceAt(
-            facts,
-            '.',
-            'file',
-            target,
-            element?.start ?? 0,
-            'Workspace validator requiredPaths checks this source file; named exports remain audited',
-          ),
-        );
-      }
-    }
-  }
-  return evidence;
-};
+const importsPlaywrightDefineConfig = (facts: SourceFacts, name: string): boolean =>
+  facts.program.body.some(
+    (node) =>
+      node.type === 'ImportDeclaration' &&
+      node.importKind !== 'type' &&
+      node.source.value === playwrightPackageName &&
+      node.specifiers.some(
+        (binding) =>
+          binding.type === 'ImportSpecifier' &&
+          binding.importKind !== 'type' &&
+          propertyName(binding.imported) === 'defineConfig' &&
+          binding.local.name === name,
+      ),
+  );
 
-const isAppBuildTemplate = (argument: Node | undefined): boolean =>
-  argument?.type === 'TemplateLiteral' &&
-  argument.expressions.length === 1 &&
-  argument.expressions[0]?.type === 'Identifier' &&
-  argument.expressions[0].name === 'appPath' &&
-  argument.quasis[1]?.value.cooked === '/shared/ultramodern-build.ts';
-
-const configuredBuildDirectories = (facts: SourceFacts, field: string): string[] => {
-  const contract = objectExpression(facts.variables.get('workspaceValidationContractDefinition'), facts.variables);
-  const topology = objectExpression(objectValue(contract, 'topology'), facts.variables);
-  const compact = objectExpression(objectValue(topology, 'compactConfig'), facts.variables);
-  const collection = field === 'apps' ? objectValue(compact, 'apps') : objectValue(contract, field);
-  const array = unwrap(collection, facts.variables);
-  if (array?.type !== 'ArrayExpression') {
-    return [];
-  }
-  return array.elements.flatMap((element) => {
-    const target = staticString(
-      objectValue(objectExpression(element ?? undefined, facts.variables), 'path'),
-      facts.variables,
-    );
-    return target === undefined ? [] : [target];
-  });
-};
-
-const buildSourceScope = (source: Node | undefined, variables: ReadonlyMap<string, Node>): Node | undefined => {
-  const reader = unwrap(source, variables);
-  if (reader?.type !== 'CallExpression' || reader.callee.type !== 'Identifier' || reader.callee.name !== 'readText') {
+const playwrightConfigFields = (facts: SourceFacts): ReadonlyMap<string, Node> | undefined => {
+  const exported = facts.program.body.find((node) => node.type === 'ExportDefaultDeclaration');
+  const call = exported?.type === 'ExportDefaultDeclaration' ? exported.declaration : undefined;
+  if (call?.type !== 'CallExpression' || call.optional || call.arguments.length !== 1) {
     return undefined;
   }
-  const [argument] = reader.arguments;
-  if (argument?.type !== 'TemplateLiteral' || argument.quasis[1]?.value.cooked !== '/shared/ultramodern-build.ts') {
-    return undefined;
-  }
-  return argument.expressions[0];
-};
-
-const buildSourceDirectories = (
-  source: Node | undefined,
-  variables: ReadonlyMap<string, Node>,
-  facts: SourceFacts,
-): string[] => {
-  const expression = buildSourceScope(source, variables);
-  if (expression?.type === 'Identifier' && expression.name === 'appPath') {
-    return configuredBuildDirectories(facts, 'apps');
-  }
+  const { callee } = call;
   if (
-    expression?.type !== 'MemberExpression' ||
-    expression.computed ||
-    propertyName(expression.property) !== 'path' ||
-    expression.object.type !== 'Identifier'
+    callee.type !== 'Identifier' ||
+    scopedVariables(facts, call.start).has(callee.name) ||
+    !importsPlaywrightDefineConfig(facts, callee.name)
+  ) {
+    return undefined;
+  }
+  let modifiedDefineConfig = false;
+  new Visitor({
+    AssignmentExpression: (node) => {
+      if (node.left.type === 'Identifier' && node.left.name === callee.name) {
+        modifiedDefineConfig = true;
+      }
+    },
+    UpdateExpression: (node) => {
+      if (node.argument.type === 'Identifier' && node.argument.name === callee.name) {
+        modifiedDefineConfig = true;
+      }
+    },
+  }).visit(facts.program);
+  return modifiedDefineConfig ? undefined : staticObjectFields(call.arguments[0]);
+};
+
+const nodeCommandSource = (command: string | undefined): string | undefined => {
+  if (command === undefined || !isSingleLineCommand(command)) {
+    return undefined;
+  }
+  const script = /^[ \t]*node(?:[ \t]+--experimental-strip-types)?[ \t]+(?<script>[\w./@-]+\.[cm]?[jt]s)[ \t]*$/u.exec(
+    command,
+  )?.groups?.script;
+  return script?.startsWith('-') === false ? script : undefined;
+};
+
+const playwrightNodeSource = (
+  facts: SourceFacts,
+  server: Node | undefined,
+  manifestFile: string,
+  workspace: string,
+  ownerRoot: string,
+  path: Path.Path,
+): KnipModelEvidence | undefined => {
+  const fields = staticObjectFields(server);
+  const commandNode = fields?.get('command');
+  const script = nodeCommandSource(staticString(commandNode, new Map()));
+  const cwdNode = fields?.get('cwd');
+  const cwd = cwdNode === undefined ? '' : staticString(cwdNode, new Map());
+  if (script === undefined || cwd === undefined) {
+    return undefined;
+  }
+  const target = path.relative(ownerRoot, path.resolve(ownerRoot, cwd, script)).replaceAll('\\', '/');
+  if (target.startsWith('../') || path.isAbsolute(target)) {
+    return undefined;
+  }
+  return {
+    ...evidenceAt(
+      facts,
+      workspace,
+      'file',
+      target,
+      commandNode?.start ?? 0,
+      'Native Playwright webServer.command executes this source in its owning workspace',
+    ),
+    owningManifest: manifestFile,
+  };
+};
+
+/** Playwright starts webServer commands; Knip's native plugin discovers only tests and setup hooks. */
+const playwrightWebServerEvidence = (
+  facts: SourceFacts,
+  manifest: typeof PackageSchema.Type,
+  manifestFile: string,
+  workspace: string,
+  appRoot: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  const ownerRoot = path.resolve(appRoot, path.dirname(manifestFile));
+  const configuration = path.relative(ownerRoot, path.resolve(appRoot, facts.file));
+  if (
+    !/^playwright\.config\.[cm]?[jt]s$/u.test(configuration) ||
+    (manifest.dependencies?.[playwrightPackageName] === undefined &&
+      manifest.devDependencies?.[playwrightPackageName] === undefined) ||
+    !Object.values(manifest.scripts ?? {}).some(
+      (command) => isSingleLineCommand(command) && /^playwright[ \t]+test[ \t]*$/u.test(command),
+    )
   ) {
     return [];
   }
-  const collections = new Map([
-    ['vertical', 'fullStackVerticals'],
-    ['shell', 'additionalShells'],
-  ]);
-  const collection = collections.get(expression.object.name);
-  return collection === undefined ? [] : configuredBuildDirectories(facts, collection);
-};
-
-const validatedBuildExport = (
-  node: Extract<Node, { type: 'CallExpression' }>,
-  variables: ReadonlyMap<string, Node>,
-): { name: string; source: Node } | undefined => {
-  if (node.callee.type === 'Identifier' && node.callee.name === 'assertBuildFacadeExport') {
-    const name = staticString(node.arguments[1], variables);
-    const [source] = node.arguments;
-    return name === undefined || source === undefined ? undefined : { name, source };
-  }
-  if (node.callee.type !== 'MemberExpression' || propertyName(node.callee.property) !== 'includes') {
-    return undefined;
-  }
-  const expected = staticString(node.arguments[0], variables);
-  const { name } = expected?.match(/^export const (?<name>[A-Za-z_$][A-Za-z0-9_$]*)\b/u)?.groups ?? {};
-  return name === undefined ? undefined : { name, source: node.callee.object };
-};
-
-const namedBuildEvidence = (facts: SourceFacts): KnipModelEvidence[] => {
-  const evidence: KnipModelEvidence[] = [];
-  const recordBuildExport = (node: Extract<Node, { type: 'CallExpression' }>) => {
-    const variables = scopedVariables(facts, node.start);
-    const contract = validatedBuildExport(node, variables);
-    if (contract === undefined) {
-      return;
-    }
-    for (const directory of buildSourceDirectories(contract.source, variables, facts)) {
-      evidence.push(
-        evidenceAt(
-          facts,
-          '.',
-          'export',
-          `${directory}/shared/ultramodern-build.ts#${contract.name}`,
-          node.start,
-          'Workspace validator verifies this exact named build facade export',
-        ),
-      );
-    }
-  };
-  new Visitor({ CallExpression: recordBuildExport }).visit(facts.program);
-  return evidence;
-};
-
-const validatorEvidence = (facts: SourceFacts): KnipModelEvidence[] => {
-  if (facts.file !== 'scripts/validate-ultramodern-workspace.mts') {
+  const webServer = playwrightConfigFields(facts)?.get('webServer');
+  const servers = webServer?.type === 'ArrayExpression' ? webServer.elements : [webServer];
+  if (servers.some((server) => server?.type !== 'ObjectExpression')) {
     return [];
   }
-  const evidence = [...requiredSourceEvidence(facts), ...namedBuildEvidence(facts)];
-  const appPaths = configuredBuildDirectories(facts, 'apps');
-  const recordValidatorCall = (node: Extract<Node, { type: 'CallExpression' }>) => {
-    if (node.callee.type !== 'Identifier') {
-      return;
+  const evidence: KnipModelEvidence[] = [];
+  for (const server of servers) {
+    const fact = playwrightNodeSource(facts, server ?? undefined, manifestFile, workspace, ownerRoot, path);
+    if (fact !== undefined) {
+      evidence.push(fact);
     }
-    const [argument] = node.arguments;
-    if (node.callee.name !== 'readText' || !isAppBuildTemplate(argument)) {
-      return;
-    }
-    for (const appPath of appPaths) {
-      evidence.push(
-        evidenceAt(
-          facts,
-          '.',
-          'file',
-          `${appPath}/shared/ultramodern-build.ts`,
-          node.start,
-          'Workspace validator reads build source for each declared topology.compactConfig.apps path',
-        ),
-      );
-    }
-  };
-  new Visitor({ CallExpression: recordValidatorCall }).visit(facts.program);
+  }
   return evidence;
 };
 
-const isChildProcessMake = (node: Node): boolean =>
-  node.type === 'MemberExpression' &&
-  !node.computed &&
-  node.object.type === 'Identifier' &&
-  node.object.name === 'ChildProcess' &&
-  propertyName(node.property) === 'make';
+const nativeSubprocessEvidence = (
+  facts: SourceFacts,
+  workspace: string,
+  appRoot: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  const imports = new Map<string, string>();
+  for (const node of facts.program.body) {
+    if (node.type !== 'ImportDeclaration' || node.importKind === 'type') continue;
+    const moduleName = node.source.value.replace(/^node:/u, '');
+    for (const specifier of node.specifiers) {
+      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue;
+      const member = specifier.type === 'ImportSpecifier' ? propertyName(specifier.imported) : '*';
+      imports.set(specifier.local.name, `${moduleName}:${member}`);
+    }
+  }
+  const providers = new Set(
+    [...imports].flatMap(([name, origin]) =>
+      /^(?:child_process|effect\/unstable\/process):/u.test(origin) ? [name] : [],
+    ),
+  );
+  if (providers.size === 0) return [];
+  const possibleFactory = (node: Node | undefined, seen = new Set<string>()): boolean => {
+    if (node?.type === 'MemberExpression') return possibleFactory(node.object, seen);
+    if (node?.type !== 'Identifier' || seen.has(node.name)) return false;
+    seen.add(node.name);
+    return providers.has(node.name) || possibleFactory(facts.variables.get(node.name), seen);
+  };
+  const mutable = new Set<string>();
+  const calls: Extract<Node, { type: 'CallExpression' }>[] = [];
+  const invalidate = (node: Node) => {
+    if (node.type === 'Identifier') mutable.add(node.name);
+    else if (node.type === 'MemberExpression') invalidate(node.object);
+    else new Visitor({ Identifier: (identifier) => mutable.add(identifier.name) }).visit(node);
+  };
+  new Visitor({
+    AssignmentExpression: (node) => invalidate(node.left),
+    CallExpression: (node) => calls.push(node),
+    UpdateExpression: (node) => invalidate(node.argument),
+    VariableDeclaration: (node) => {
+      if (node.kind !== 'const') {
+        for (const declaration of node.declarations) invalidate(declaration.id);
+      }
+    },
+  }).visit(facts.program);
+  const parameters = new Map<Node, { name: string; owner: Node; index: number }>();
+  for (const [name, owner] of facts.variables) {
+    if (owner.type !== 'ArrowFunctionExpression' || mutable.has(name)) continue;
+    owner.params.forEach((parameter, index) => {
+      if (parameter.type === 'AssignmentPattern') parameters.set(parameter, { name, owner, index });
+    });
+  }
+  const values = (raw: Node | undefined, variables: ReadonlyMap<string, Node>, seen = new Set<Node>()): Node[] => {
+    if (raw === undefined || seen.has(raw)) return [];
+    const visited = new Set(seen).add(raw);
+    if (raw.type === 'Identifier') {
+      return mutable.has(raw.name) ? [] : values(variables.get(raw.name), variables, visited);
+    }
+    if (raw.type === 'TSAsExpression' || raw.type === 'TSSatisfiesExpression' || raw.type === 'TSNonNullExpression') {
+      return values(raw.expression, variables, visited);
+    }
+    if (raw.type !== 'AssignmentPattern') return [raw];
+    const parameter = parameters.get(raw);
+    if (parameter === undefined) return [];
+    return calls.flatMap((call) => {
+      if (call.callee.type !== 'Identifier' || call.callee.name !== parameter.name) return [];
+      const scope = scopedVariables(facts, call.start);
+      if (scope.get(parameter.name) !== parameter.owner) return [];
+      const argument = call.arguments[parameter.index];
+      const candidates =
+        argument === undefined ? values(raw.right, facts.variables, visited) : values(argument, scope, visited);
+      return candidates.filter((candidate) => staticString(candidate, new Map()) !== undefined);
+    });
+  };
+  const ownerRoot = path.resolve(appRoot, workspace === '.' ? '' : workspace);
+  const sourceFile = path.resolve(appRoot, facts.file);
+  const evidence: KnipModelEvidence[] = [];
+  const record = (call: Extract<Node, { type: 'CallExpression' }>) => {
+    if (!possibleFactory(call.callee)) return;
+    const variables = scopedVariables(facts, call.start);
+    const immutableValue = (raw: Node | undefined): Node | undefined => {
+      const candidates = values(raw, variables);
+      return candidates.length === 1 ? candidates[0] : undefined;
+    };
+    const literalStrings = (raw: Node | undefined): string[] =>
+      values(raw, variables).flatMap((value) => {
+        const literal = staticString(value, new Map());
+        return literal === undefined ? [] : [literal];
+      });
+    const identity = (raw: Node | undefined, seen = new Set<string>()): string | undefined => {
+      if (raw?.type === 'Identifier') {
+        if (mutable.has(raw.name) || seen.has(raw.name)) return undefined;
+        seen.add(raw.name);
+        return variables.has(raw.name)
+          ? identity(variables.get(raw.name), seen)
+          : (imports.get(raw.name) ??
+              (raw.name === 'process' || raw.name === 'URL' ? `global:${raw.name}` : undefined));
+      }
+      if (raw?.type !== 'MemberExpression' || (raw.computed && raw.property.type !== 'Literal')) return undefined;
+      const host = identity(raw.object, seen);
+      const member = propertyName(raw.property);
+      return host === undefined || member === undefined ? undefined : `${host}.${member}`;
+    };
+    const factory = identity(call.callee);
+    if (
+      !['child_process:spawn', 'child_process:*.spawn', 'effect/unstable/process:ChildProcess.make'].includes(
+        factory ?? '',
+      )
+    )
+      return;
+    if (!['global:process.execPath', 'process:*.execPath'].includes(identity(call.arguments[0]) ?? '')) return;
+    const argv = immutableValue(call.arguments[1]);
+    if (argv?.type !== 'ArrayExpression') return;
+    const resolvePaths = (raw: Node | undefined, cwd: string): string[] =>
+      values(raw, variables).flatMap((value) => {
+        const literal = staticString(value, new Map());
+        if (literal !== undefined) return [path.resolve(cwd, literal)];
+        if (value.type === 'MemberExpression' && !value.computed && propertyName(value.property) === 'pathname') {
+          const url = value.object;
+          if (
+            url.type !== 'NewExpression' ||
+            identity(url.callee) !== 'global:URL' ||
+            !importedUrlBase(url.arguments[1])
+          )
+            return [];
+          return literalStrings(url.arguments[0]).map((target) => path.resolve(path.dirname(sourceFile), target));
+        }
+        if (
+          value.type !== 'CallExpression' ||
+          !['path:*.resolve', 'path:resolve', 'path:*.join', 'path:join'].includes(identity(value.callee) ?? '')
+        )
+          return [];
+        const segments = value.arguments.map((argument) => literalStrings(argument));
+        if (!segments.every((segment) => segment.length === 1)) return [];
+        const parts = segments.flat();
+        const operation = identity(value.callee);
+        return [
+          operation?.endsWith('.join') || operation === 'path:join'
+            ? path.resolve(cwd, path.join(...parts))
+            : path.resolve(cwd, ...parts),
+        ];
+      });
+    const optionsValue = immutableValue(call.arguments[2]);
+    const options = optionsValue?.type === 'ObjectExpression' ? optionsValue : undefined;
+    if (call.arguments[2] !== undefined && options === undefined) return;
+    if (options?.properties.some((property) => property.type !== 'Property' || property.computed)) return;
+    const cwdProperty = options?.properties.findLast(
+      (property) => property.type === 'Property' && propertyName(property.key) === 'cwd',
+    );
+    if (cwdProperty?.type === 'Property' && cwdProperty.kind !== 'init') return;
+    const directories = cwdProperty?.type === 'Property' ? resolvePaths(cwdProperty.value, ownerRoot) : [ownerRoot];
+    if (directories.length === 0) return;
+    for (const argument of argv.elements) {
+      const options = literalStrings(argument ?? undefined);
+      if (
+        options.length === 1 &&
+        ['--experimental-strip-types', '--enable-source-maps', '--no-warnings'].includes(options[0])
+      )
+        continue;
+      if (options.some((option) => option.startsWith('-'))) return;
+      for (const cwd of directories) {
+        for (const target of resolvePaths(argument ?? undefined, cwd)) {
+          if (/\.[cm]?[jt]s$/u.test(target))
+            evidence.push(
+              evidenceAt(
+                facts,
+                workspace,
+                'file',
+                path.relative(ownerRoot, target),
+                call.start,
+                'Native Node subprocess executes this source with its declared working directory',
+              ),
+            );
+        }
+      }
+      return;
+    }
+  };
+  new Visitor({ CallExpression: record }).visit(facts.program);
+  return evidence;
+};
 
 const isJoinedSourceSpecifier = (
   node: Node | undefined,
@@ -617,11 +1435,14 @@ const sourceEvidence = (
   workspace: string,
   directory: string,
   path: Path.Path,
+  appRoot: string,
 ): KnipModelEvidence[] => {
   const result = [
     ...federationEvidence(facts, workspace),
+    ...generatedActionContractEvidence(facts, workspace),
+    ...generatedActionPrincipalEvidence(facts, workspace),
     ...generatedActionGatewayEvidence(facts, workspace),
-    ...validatorEvidence(facts),
+    ...nativeSubprocessEvidence(facts, workspace, appRoot, path),
   ];
   const manualCommand = `Usage: node ${facts.file} `;
   if (
@@ -655,40 +1476,6 @@ const sourceEvidence = (
           'Static source URL consumed relative to import.meta.url',
         ),
       );
-    }
-  };
-  const recordSubprocess = (node: Extract<Node, { type: 'CallExpression' }>) => {
-    if (isChildProcessMake(node.callee)) {
-      const [, args] = node.arguments;
-      if (args?.type === 'ArrayExpression') {
-        for (const argument of args.elements) {
-          const target = staticString(argument ?? undefined, facts.variables);
-          if (target !== undefined && sourceExtension.test(target)) {
-            result.push(evidenceAt(facts, workspace, 'file', target, node.start, 'Node subprocess source argument'));
-          }
-        }
-      }
-    }
-  };
-  const recordConfiguredFile = (node: Extract<Node, { type: 'CallExpression' }>) => {
-    if (
-      facts.file === 'scripts/validate-ultramodern-workspace.mts' &&
-      node.callee.type === 'Identifier' &&
-      node.callee.name === 'readText'
-    ) {
-      const target = staticString(node.arguments[0], scopedVariables(facts, node.start));
-      if (target !== undefined) {
-        result.push(
-          evidenceAt(
-            facts,
-            workspace,
-            'file',
-            target,
-            node.start,
-            'Workspace validator reads source text; exports are not marked used',
-          ),
-        );
-      }
     }
   };
   const recordLintConfig = (node: Extract<Node, { type: 'CallExpression' }>) => {
@@ -743,8 +1530,6 @@ const sourceEvidence = (
     );
   };
   const recordCall = (node: Extract<Node, { type: 'CallExpression' }>) => {
-    recordSubprocess(node);
-    recordConfiguredFile(node);
     recordLintConfig(node);
   };
   new Visitor({
@@ -785,53 +1570,137 @@ const drizzleFactories = (facts: SourceFacts): ReadonlySet<string> => {
   );
 };
 
+const drizzleTableReceiver = (callee: Extract<Node, { type: 'MemberExpression' }>): Node | undefined => {
+  if (propertyName(callee.property) === 'table') {
+    return callee.object;
+  }
+  if (
+    propertyName(callee.property) === 'withRLS' &&
+    callee.object.type === 'MemberExpression' &&
+    propertyName(callee.object.property) === 'table'
+  ) {
+    return callee.object.object;
+  }
+  return undefined;
+};
+
+const importedDrizzleDeclaration = (
+  facts: SourceFacts,
+  localName: string,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  path: Path.Path,
+): { readonly facts: SourceFacts; readonly node: Node | undefined } | undefined => {
+  const statement = facts.program.body.find(
+    (candidate) =>
+      candidate.type === 'ImportDeclaration' &&
+      candidate.source.value.startsWith('.') &&
+      candidate.specifiers.some(
+        (specifier) => specifier.type === 'ImportSpecifier' && specifier.local.name === localName,
+      ),
+  );
+  if (statement?.type !== 'ImportDeclaration') {
+    return undefined;
+  }
+  const imported = statement.specifiers.find(
+    (specifier) => specifier.type === 'ImportSpecifier' && specifier.local.name === localName,
+  );
+  if (imported?.type !== 'ImportSpecifier') {
+    return undefined;
+  }
+  const targetPath = path.normalize(path.join(path.dirname(facts.file), statement.source.value)).replaceAll('\\', '/');
+  const target = factsByPath.get(targetPath);
+  const importedName = propertyName(imported.imported);
+  return target === undefined || importedName === undefined
+    ? undefined
+    : { facts: target, node: target.variables.get(importedName) };
+};
+
 const isDrizzleDeclaration = (
   node: Node | undefined,
-  variables: ReadonlyMap<string, Node>,
-  factories: ReadonlySet<string>,
+  facts: SourceFacts,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  path: Path.Path,
   depth = 0,
 ): boolean => {
-  const expression = unwrap(node, variables);
+  const expression = unwrap(node, facts.variables);
   if (expression?.type !== 'CallExpression' || depth > 5) {
     return false;
   }
   if (expression.callee.type === 'Identifier') {
-    return factories.has(expression.callee.name);
+    return drizzleFactories(facts).has(expression.callee.name);
   }
-  if (expression.callee.type === 'MemberExpression' && propertyName(expression.callee.property) === 'table') {
-    return isDrizzleDeclaration(expression.callee.object, variables, factories, depth + 1);
+  if (expression.callee.type !== 'MemberExpression') {
+    return false;
   }
-  return false;
+  const receiver = drizzleTableReceiver(expression.callee);
+  if (receiver === undefined) {
+    return false;
+  }
+  const schema =
+    receiver.type === 'Identifier' && !facts.variables.has(receiver.name)
+      ? receiver
+      : unwrap(receiver, facts.variables);
+  if (schema?.type === 'CallExpression') {
+    return isDrizzleDeclaration(schema, facts, factsByPath, path, depth + 1);
+  }
+  if (schema?.type !== 'Identifier') {
+    return false;
+  }
+  const imported = importedDrizzleDeclaration(facts, schema.name, factsByPath, path);
+  return imported !== undefined && isDrizzleDeclaration(imported.node, imported.facts, factsByPath, path, depth + 1);
 };
 
-const reflectedDrizzleExports = (facts: SourceFacts, workspace: string, configSource: string): KnipModelEvidence[] => {
-  const factories = drizzleFactories(facts);
-  const result: KnipModelEvidence[] = [];
-  for (const node of facts.program.body) {
-    if (node.type !== 'ExportNamedDeclaration' || node.declaration?.type !== 'VariableDeclaration') {
-      continue;
-    }
-    for (const declaration of node.declaration.declarations) {
-      if (
-        declaration.id.type === 'Identifier' &&
-        declaration.init !== null &&
-        isDrizzleDeclaration(declaration.init, facts.variables, factories)
-      ) {
-        result.push(
-          evidenceAt(
-            facts,
-            workspace,
-            'export',
-            `${facts.file}#${declaration.id.name}`,
-            declaration.start,
-            `Drizzle reflective schema consumer configured by ${configSource}`,
-          ),
-        );
-      }
-    }
+const reflectedDrizzleExport = (
+  facts: SourceFacts,
+  node: Node,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+  configSource: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  if (node.type !== 'ExportNamedDeclaration') {
+    return [];
   }
-  return result;
+  const reason = `Drizzle reflective schema consumer configured by ${configSource}`;
+  if (node.declaration?.type === 'VariableDeclaration') {
+    return node.declaration.declarations.flatMap((declaration) =>
+      declaration.id.type === 'Identifier' &&
+      declaration.init !== null &&
+      isDrizzleDeclaration(declaration.init, facts, factsByPath, path)
+        ? [evidenceAt(facts, workspace, 'export', `${facts.file}#${declaration.id.name}`, declaration.start, reason)]
+        : [],
+    );
+  }
+  if (node.source?.type !== 'Literal' || !isString(node.source.value) || !node.source.value.startsWith('.')) {
+    return [];
+  }
+  const targetPath = path.normalize(path.join(path.dirname(facts.file), node.source.value)).replaceAll('\\', '/');
+  const target = factsByPath.get(targetPath);
+  if (target === undefined) {
+    return [];
+  }
+  return node.specifiers.flatMap((specifier) => {
+    const importedName = propertyName(specifier.local);
+    const exportedName = propertyName(specifier.exported);
+    return specifier.type === 'ExportSpecifier' &&
+      node.exportKind !== 'type' &&
+      specifier.exportKind !== 'type' &&
+      importedName !== undefined &&
+      exportedName !== undefined &&
+      isDrizzleDeclaration(target.variables.get(importedName), target, factsByPath, path)
+      ? [evidenceAt(facts, workspace, 'export', `${facts.file}#${exportedName}`, specifier.start, reason)]
+      : [];
+  });
 };
+
+const reflectedDrizzleExports = (
+  facts: SourceFacts,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+  configSource: string,
+  path: Path.Path,
+): KnipModelEvidence[] =>
+  facts.program.body.flatMap((node) => reflectedDrizzleExport(facts, node, factsByPath, workspace, configSource, path));
 
 const resolver = createRequire(import.meta.url);
 const packageName = (specifier: string): string =>
@@ -1004,6 +1873,7 @@ const drizzleEvidence = (
   factsByPath: ReadonlyMap<string, SourceFacts>,
   prefix: string,
   workspace: string,
+  path: Path.Path,
 ): KnipModelEvidence[] => {
   const evidence: KnipModelEvidence[] = [];
   for (const facts of factsByPath.values()) {
@@ -1013,7 +1883,7 @@ const drizzleEvidence = (
     const schema = staticString(objectValue(exportedObject(facts), 'schema'), facts.variables);
     const target = schema === undefined ? undefined : factsByPath.get(`${prefix}${schema.replace(/^\.\//u, '')}`);
     if (target !== undefined) {
-      evidence.push(...reflectedDrizzleExports(target, workspace, facts.file));
+      evidence.push(...reflectedDrizzleExports(target, factsByPath, workspace, facts.file, path));
     }
   }
   return evidence;
@@ -1186,16 +2056,40 @@ const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* bu
       }
     }
     const directory = path.dirname(path.relative(path.resolve(appRoot, prefix), path.resolve(appRoot, file)));
-    for (const fact of sourceEvidence(facts, workspace, directory, path)) {
+    for (const fact of playwrightWebServerEvidence(facts, manifest, manifestFile, workspace, appRoot, path)) {
+      add(fact);
+    }
+    for (const fact of sourceEvidence(facts, workspace, directory, path, appRoot)) {
       add(fact);
     }
   }
-  evidence.push(...drizzleEvidence(factsByPath, prefix, workspace));
+  evidence.push(
+    ...declarationSurfaceEvidence(factsByPath, workspace, path),
+    ...modernRouteEvidence(factsByPath, manifest, prefix, workspace),
+    ...catalogReadBindingEvidence(factsByPath, workspace),
+    ...catalogSharedContractEvidence(factsByPath, workspace),
+    ...catalogAliasEvidence(factsByPath, manifest, prefix, workspace, path),
+    ...generatedModuleApiEvidence(factsByPath, prefix, workspace),
+    ...generatedOutboxMessageEvidence(factsByPath, manifest, prefix, workspace),
+    ...drizzleEvidence(factsByPath, prefix, workspace, path),
+  );
+  const aliasFiles = new Set(
+    evidence
+      .filter((fact) => fact.kind === 'alias')
+      .map((fact) =>
+        path.relative(path.resolve(appRoot, prefix), path.resolve(appRoot, fact.source)).replaceAll('\\', '/'),
+      ),
+  );
+  const ignoreIssues = { ...current.ignoreIssues };
+  for (const file of aliasFiles) {
+    ignoreIssues[file] = [...new Set([...(ignoreIssues[file] ?? []), 'duplicates'])];
+  }
   return {
     config: {
       ...current,
       entry: [...entries],
       ignoreDependencies: [...dependencies],
+      ignoreIssues,
     },
     evidence,
   };
@@ -1250,25 +2144,61 @@ export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function*
   }
   const runtime = yield* buildKnipRuntimeEvidence(appRoot);
   mergeRuntimeEvidence(workspaces, evidence, runtime);
-  const reflected = evidence.filter(
-    (fact) =>
-      fact.kind === 'export' ||
-      fact.kind === 'file' ||
-      (fact.kind === 'dependency' && fact.workspace === '.' && fact.reason !== 'Module Federation remotes consumer'),
-  );
-  const consumerSource = reflected
-    .map((fact, index) => {
-      if (fact.kind === 'dependency') {
-        return `import {} from ${JSON.stringify(fact.target)};`;
-      }
-      if (fact.kind === 'file') {
-        const owner = fact.workspace === '.' ? '' : fact.workspace;
-        return `import {} from ${JSON.stringify(path.resolve(appRoot, owner, fact.target))};`;
-      }
-      const [file, name] = fact.target.split('#');
-      return `import { ${name} as consumed${index} } from ${JSON.stringify(path.resolve(appRoot, file ?? ''))};\nvoid consumed${index};`;
-    })
-    .join('\n');
+  const reflected = [
+    ...new Map(
+      evidence
+        .filter(
+          (fact) =>
+            fact.kind === 'export' ||
+            fact.kind === 'type' ||
+            fact.kind === 'file' ||
+            (fact.kind === 'dependency' &&
+              fact.workspace === '.' &&
+              fact.reason !== 'Module Federation remotes consumer'),
+        )
+        .map((fact) => [`${fact.kind}:${fact.target}`, fact]),
+    ).values(),
+  ];
+  const directConsumers: string[] = [];
+  const bindingsByFile = new Map<string, { types: string[]; values: string[] }>();
+  for (const [index, fact] of reflected.entries()) {
+    if (fact.kind === 'dependency') {
+      directConsumers.push(`import {} from ${JSON.stringify(fact.target)};`);
+      continue;
+    }
+    if (fact.kind === 'file') {
+      const owner = fact.workspace === '.' ? '' : fact.workspace;
+      directConsumers.push(`import {} from ${JSON.stringify(path.resolve(appRoot, owner, fact.target))};`);
+      continue;
+    }
+    const [file, name] = fact.target.split('#');
+    const resolved = path.resolve(appRoot, file ?? '');
+    const bindings = bindingsByFile.get(resolved) ?? { types: [], values: [] };
+    if (fact.kind === 'type') {
+      bindings.types.push(`${name} as Consumed${index}`);
+    } else {
+      bindings.values.push(`${name} as consumed${index}`);
+    }
+    bindingsByFile.set(resolved, bindings);
+  }
+  const bindingConsumers = [...bindingsByFile].flatMap(([file, bindings], group) => {
+    const specifiers = [...bindings.values, ...bindings.types.map((binding) => `type ${binding}`)];
+    const statements = [`import { ${specifiers.join(', ')} } from ${JSON.stringify(file)};`];
+    if (bindings.values.length > 0) {
+      statements.push(
+        `void [${bindings.values.map((binding) => binding.slice(binding.lastIndexOf(' as ') + 4)).join(', ')}];`,
+      );
+    }
+    if (bindings.types.length > 0) {
+      statements.push(
+        `type KnipConsumedGroup${group} = [${bindings.types
+          .map((binding) => binding.slice(binding.lastIndexOf(' as ') + 4))
+          .join(', ')}];`,
+      );
+    }
+    return statements;
+  });
+  const consumerSource = [...directConsumers, ...bindingConsumers].join('\n');
   if (consumerPath !== undefined && reflected.length > 0 && workspaces['.'] !== undefined) {
     workspaces['.'] = {
       ...workspaces['.'],

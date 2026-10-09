@@ -65,12 +65,14 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'verticals/*/api/index.ts',
         'packages/core-runtime/src/outbox/process.ts',
         'packages/core-runtime/src/db/client.ts',
+        // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
+        'packages/core-runtime/src/permissions/spicedb-transport.workerd.ts',
         'apps/shell-super-app/api/auth/db/client.ts',
         'verticals/party-registry/src/db/client.ts',
         'packages/core-runtime/src/testing/actions.ts',
         // This CLI composes administrative Auth/Core database Layers for local initialization.
         'scripts/initialize-local-development.mts',
-        'apps/shell-super-app/scripts/bootstrap-stage-demo.mts',
+        'apps/shell-super-app/scripts/bootstrap-stage-accounts.mts',
       ],
     },
   ],
@@ -104,6 +106,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'packages/core-runtime/src/search/persistence.ts',
         'packages/core-runtime/src/search/worker-snapshot.ts',
         'packages/core-runtime/src/install/stage-context-bootstrap.ts',
+        // The Outbox Worker process exit seam names a failed exit by tag, defect, or interruption.
+        'packages/core-runtime/src/outbox/process.ts',
       ],
     },
   ],
@@ -184,6 +188,8 @@ export default defineConfig({
     '.modernjs',
     '**/modern-tanstack/**',
     '**/routeTree.gen.*',
+    // Framework output of `ultramodern-create ultramodern routes-generate`; route.meta.ts files are the linted source.
+    '**/src/routes/ultramodern-route-metadata.ts',
     'tools/oxlint/anti-slop/**',
     'tools/oxlint/effect-native/tests/fixtures/**',
   ],
@@ -244,6 +250,389 @@ export default defineConfig({
       },
     },
     {
+      // These owner persistence tests emulate the small fluent Drizzle surface accepted by
+      // the scoped transaction executor. The test doubles need an intentionally narrower type.
+      files: [
+        'verticals/assortment/tests/integration/commitment-confirmation-persistence-postgres.test.ts',
+        'verticals/assortment/tests/unit/boundary-administration-actions.test.ts',
+        'verticals/assortment/tests/unit/governed-configuration-read-persistence.test.ts',
+        'verticals/assortment/tests/unit/owner-authorization-current.test.ts',
+      ],
+      rules: {
+        'anti-slop/no-chained-type-assertions': 'off',
+        'anti-slop/require-safety-comment-for-type-assertion': 'off',
+        'typescript/no-unsafe-type-assertion': 'off',
+      },
+    },
+    {
+      // The malformed evidence fixture must reach the runtime validator with a compile-time
+      // owner type; accepting the cast is the assertion under test.
+      files: ['verticals/assortment/tests/unit/decision-evaluation.test.ts'],
+      rules: {
+        // The recursive freeze helper distinguishes nested objects from primitives.
+        'anti-slop/no-runtime-typeof': 'off',
+        'typescript/no-unsafe-type-assertion': 'off',
+      },
+    },
+    {
+      // The generated Assortment read adapters translate Effect's typed error callback into
+      // the public read error. This is an Effect combinator, not a Promise callback.
+      files: ['verticals/assortment/src/api/purchase.read.ts', 'verticals/assortment/src/api/visibility.read.ts'],
+      rules: {
+        'promise/prefer-await-to-callbacks': 'off',
+      },
+    },
+    {
+      // The published generated client owns caller-specific transport metadata and the
+      // compatibility browser runner; the caller supplies the W3C correlation header.
+      files: ['verticals/assortment/src/api/assortment-client.ts'],
+      rules: {
+        'effect-native/no-per-operation-http-api-client': 'off',
+        'effect-native/no-scattered-browser-effect-run': 'off',
+        'effect-native/no-threaded-correlation-parameter': 'off',
+      },
+    },
+    {
+      // The generated Assortment page invokes its published browser client.
+      files: ['verticals/assortment/src/routes/**/page.tsx'],
+      rules: {
+        'effect-native/no-scattered-browser-effect-run': 'off',
+      },
+    },
+    {
+      // The generated read factory injects these owner-local ports and the trusted read
+      // correlation ID. The boundary validator accepts unknown data before schema decoding.
+      files: ['verticals/assortment/shared/domain/ports/decision-evaluation.ts'],
+      rules: {
+        'anti-slop/no-unknown-parameters': 'off',
+        'effect-native/no-dependency-parameters': 'off',
+        'effect-native/no-threaded-correlation-parameter': 'off',
+        'effect-native/no-wide-factory-signature': 'off',
+        'effect-native/require-context-service-for-service-interface': 'off',
+      },
+    },
+    {
+      // These owner-local ports are supplied by scoped Action or Read runtime factories.
+      files: [
+        'verticals/assortment/src/services/boundary-administration.service.ts',
+        'verticals/assortment/src/services/decision-explanation-read.service.ts',
+        'verticals/assortment/src/services/governed-configuration-read.service.ts',
+      ],
+      rules: {
+        'effect-native/require-context-service-for-service-interface': 'off',
+      },
+    },
+    {
+      // This transaction-scoped factory composes its owner evidence source and repository.
+      files: ['verticals/assortment/src/services/decision-evidence.repository.ts'],
+      rules: {
+        'anti-slop-effect/no-service-constructor-imports': 'off',
+      },
+    },
+    {
+      // The Action factory supplies transaction-scoped evaluation and persistence ports to
+      // one issuance; these dependencies are explicit in the existing issuer contract.
+      files: ['verticals/assortment/src/services/assortment-commitment-confirmation.service.ts'],
+      rules: {
+        'effect-native/no-dependency-parameters': 'off',
+        'effect-native/no-wide-factory-signature': 'off',
+        'effect-native/require-context-service-for-service-interface': 'off',
+      },
+    },
+    {
+      // These exact Pricing composition roots construct owner-local services behind Context-backed exports; the test support file only builds deterministic evidence.
+      files: [
+        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts',
+        'verticals/pricing/src/integrations/current-pricing-decision-whole-evaluation-adapters.ts',
+        'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
+        'verticals/pricing/src/services/exact-price-resolution.service.ts',
+        'verticals/pricing/tests/unit/support/issue-788-confirmation.fixture.ts',
+      ],
+      rules: {
+        'anti-slop-effect/no-service-constructor-imports': 'off',
+      },
+    },
+    {
+      // These focused tests use inert scoped-transaction identities only to verify owner-scope forwarding; no transaction method is reached.
+      files: [
+        'verticals/pricing/tests/unit/current-pricing-decision-read.test.ts',
+        'verticals/pricing/tests/unit/current-pricing-decision-scoped-final-fence-wiring-issue-790.test.ts',
+        'verticals/pricing/tests/unit/current-pricing-decision-whole-evaluation-adapters.test.ts',
+      ],
+      rules: {
+        'anti-slop/no-chained-type-assertions': 'off',
+      },
+    },
+    {
+      // These owner adapters accept raw JSONB or observation payloads only at an immediate Schema decode boundary.
+      files: [
+        'verticals/pricing/src/integrations/broken-explicit-input-observation.ts',
+        'verticals/pricing/src/persistence/currency-support-persistence.ts',
+      ],
+      rules: {
+        'anti-slop/no-unknown-parameters': 'off',
+      },
+    },
+    {
+      // This malformed generated-client fixture must cross the inferred success type before runtime validation rejects it.
+      files: ['verticals/pricing/tests/unit/commercial-fee-management-actions-issue-797.test.ts'],
+      rules: {
+        'anti-slop/require-safety-comment-for-type-assertion': 'off',
+      },
+    },
+    {
+      // These two evidence fixtures are closed domain matrices whose branches must remain visible as one coherent proof.
+      files: [
+        'verticals/pricing/src/services/current-pricing-decision-whole-evaluation.service.ts',
+        'verticals/pricing/tests/unit/support/issue-779-line-value.fixture.ts',
+      ],
+      rules: {
+        complexity: 'off',
+      },
+    },
+    {
+      // These exact deterministic Pricing constructors have matching Context-backed production composition and do not leak collaborators through public service methods.
+      files: [
+        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        'verticals/pricing/src/integrations/broken-explicit-input-observation.ts',
+        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts',
+        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence.ts',
+        'verticals/pricing/src/integrations/customer-context-subject-authority.ts',
+        'verticals/pricing/src/services/commitment-confirmation-renewal.service.ts',
+        'verticals/pricing/src/services/current-backed-accepted-handoff.service.ts',
+        'verticals/pricing/src/services/current-backed-confirmation-issuance.service.ts',
+        'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
+        'verticals/pricing/src/services/current-pricing-decision-whole-evaluation.service.ts',
+        'verticals/pricing/src/services/exact-price-resolution.service.ts',
+        'verticals/pricing/src/services/ordinary-current-pricing-evaluation.service.ts',
+        'verticals/pricing/src/services/price-group-interpretation.service.ts',
+        'verticals/pricing/src/services/pricing-authority-selection.service.ts',
+        'verticals/pricing/src/services/quotation-backed-confirmation-issuance.service.ts',
+        'verticals/pricing/src/services/quotation-revalidation.service.ts',
+      ],
+      rules: {
+        'effect-native/no-dependency-parameters': 'off',
+      },
+    },
+    {
+      // These exact files are owner composition roots that capture request- or transaction-scoped services behind exported Layers and ports.
+      files: [
+        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        'verticals/pricing/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
+      ],
+      rules: {
+        'effect-native/no-effect-provide-in-library': 'off',
+      },
+    },
+    {
+      // This owner read deliberately maps parser details to one stable fail-closed public outcome.
+      files: ['verticals/commerce-customer-context/src/services/pricing-purchase-context-owner-authority.ts'],
+      rules: {
+        'effect-native/no-failure-discarding-error-callback': 'off',
+      },
+    },
+    {
+      // These named decoded Pricing aggregates prevent TS7056 declaration overflow while their schemas remain the runtime authority.
+      files: [
+        'packages/pricing-contracts/src/domain/accepted-order-handoff.ts',
+        'packages/pricing-contracts/src/domain/commercial-total.ts',
+        'packages/pricing-contracts/src/domain/commitment-confirmation.ts',
+        'packages/pricing-contracts/src/domain/line-composition.ts',
+        'packages/pricing-contracts/src/domain/material-evidence.ts',
+        'packages/pricing-contracts/src/domain/quotation.ts',
+        'packages/pricing-contracts/src/domain/rounding-boundary.ts',
+        'packages/pricing-contracts/src/domain/unit-price-calculation.ts',
+      ],
+      rules: {
+        'effect-native/no-interface-first-codec': 'off',
+      },
+    },
+    {
+      // This database settlement seam narrows only native SqlError and preserves every other defect unchanged.
+      files: ['verticals/pricing/src/auth/gateway-assertion-redemption-runtime.ts'],
+      rules: {
+        'effect-native/no-local-defect-seam': 'off',
+      },
+    },
+    {
+      // These exact external/database contracts preserve JSON null as the published open-interval or unknown-revision wire value.
+      files: [
+        'packages/pricing-contracts/src/domain/commercial-fee.ts',
+        'packages/pricing-contracts/src/domain/currency-support.ts',
+        'packages/pricing-contracts/src/domain/discount.ts',
+        'packages/pricing-contracts/src/domain/material-evidence.ts',
+        'packages/pricing-contracts/src/domain/price-group-interpretation.ts',
+        'packages/pricing-contracts/src/domain/price-schedule.ts',
+        'packages/pricing-contracts/src/domain/quantity-tier.ts',
+        'packages/pricing-contracts/src/domain/source-revision-evidence.ts',
+        'verticals/commerce-customer-context/shared/apis/pricing-purchase-context-verification.ts',
+        'verticals/pricing/src/persistence/currency-support-persistence.ts',
+      ],
+      rules: {
+        'effect-native/no-nullable-schema-field': 'off',
+      },
+    },
+    {
+      // Canonical encoding must succeed before replay-state lookup, so these yields are intentionally ordered.
+      files: ['verticals/pricing/src/actions/manage-quotation.action.ts'],
+      rules: {
+        'effect-native/no-sequential-independent-yields': 'off',
+      },
+    },
+    {
+      // These schemas mirror already-branded owner wire references; rebranding would create an incompatible identity type.
+      files: ['packages/pricing-contracts/src/domain/price-group-interpretation.ts'],
+      rules: {
+        'effect-native/no-unbranded-identifier-schema': 'off',
+      },
+    },
+    {
+      // These exact deterministic constructors expose owner-local test seams; matching production Layers acquire collaborators from Context.
+      files: [
+        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        'verticals/pricing/src/integrations/broken-explicit-input-observation.ts',
+        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence.ts',
+        'verticals/pricing/src/services/commitment-confirmation-renewal.service.ts',
+        'verticals/pricing/src/services/current-backed-confirmation-issuance.service.ts',
+        'verticals/pricing/src/services/exact-price-resolution.service.ts',
+        'verticals/pricing/src/services/ordinary-current-pricing-evaluation.service.ts',
+        'verticals/pricing/src/services/price-group-interpretation.service.ts',
+        'verticals/pricing/src/services/pricing-authority-selection.service.ts',
+        'verticals/pricing/src/services/quotation-backed-confirmation-issuance.service.ts',
+        'verticals/pricing/src/services/quotation-revalidation.service.ts',
+      ],
+      rules: {
+        'effect-native/no-wide-factory-signature': 'off',
+      },
+    },
+    {
+      // These scoped owner-client ports are constructed inside the owning Action factory and never provided independently as Layers.
+      files: [
+        'verticals/pricing/src/integrations/commercial-fee-catalog-target-evidence.ts',
+        'verticals/pricing/src/integrations/product-commercial-fee-bulk-catalog-snapshot.ts',
+      ],
+      rules: {
+        'effect-native/require-context-service-for-service-interface': 'off',
+      },
+    },
+    {
+      // These exact action and evidence functions encode closed fail-closed lifecycle decision tables whose branches must remain colocated.
+      files: [
+        'verticals/pricing/src/actions/manage-quantity-tier.action.ts',
+        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        'verticals/pricing/src/actions/revise-commercial-fee.action.ts',
+        'verticals/pricing/src/actions/revise-price.action.ts',
+        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence.ts',
+        'verticals/pricing/src/services/price-source-provenance.service.ts',
+        'verticals/pricing/src/services/zero-floor-authorization-administration.service.ts',
+      ],
+      rules: {
+        'eslint/complexity': 'off',
+      },
+    },
+    {
+      // These files own cohesive Effect tagged-error vocabularies; splitting the classes would separate each error from its single boundary contract.
+      files: [
+        'packages/pricing-contracts/src/domain/exact-decimal.ts',
+        'packages/pricing-contracts/src/domain/material-evidence.ts',
+        'packages/pricing-contracts/src/domain/unit-price-calculation.ts',
+        'verticals/pricing/src/actions/define-commercial-fee.action.ts',
+        'verticals/pricing/src/actions/manage-commitment-confirmation.action.ts',
+        'verticals/pricing/src/actions/manage-contractual-discount.action.ts',
+        'verticals/pricing/src/actions/manage-quantity-tier.action.ts',
+        'verticals/pricing/src/actions/manage-quotation.action.ts',
+        'verticals/pricing/src/actions/manage-zero-floor-authorization.action.ts',
+        'verticals/pricing/src/actions/revise-commercial-fee.action.ts',
+        'verticals/pricing/src/actions/revise-price.action.ts',
+        'verticals/pricing/src/actions/set-supported-currencies.action.ts',
+        'verticals/pricing/src/integrations/material-evidence-owner-final-fence.ts',
+        'verticals/pricing/src/services/broken-explicit-input.service.ts',
+        'verticals/pricing/src/services/catalog-target-administration.service.ts',
+        'verticals/pricing/src/services/commitment-confirmation-verification.service.ts',
+        'verticals/pricing/src/services/currency-support-recovery.service.ts',
+        'verticals/pricing/src/services/current-backed-confirmation-issuance-errors.ts',
+        'verticals/pricing/src/services/external-price-input-boundary.service.ts',
+        'verticals/pricing/src/services/guest-quotation-authority.service.ts',
+        'verticals/pricing/src/services/price-group-fallback.service.ts',
+        'verticals/pricing/src/services/quotation-authenticity.service.ts',
+        'verticals/pricing/src/services/quotation-binding-revalidation.service.ts',
+        'verticals/pricing/src/services/quotation-issuance.service.ts',
+        'verticals/pricing/src/services/quotation-persistence.service.ts',
+        'verticals/pricing/src/services/quotation-validity.service.ts',
+      ],
+      rules: {
+        'eslint/max-classes-per-file': 'off',
+      },
+    },
+    {
+      // These files own cohesive Context service/failure vocabularies for one atomic owner boundary.
+      files: [
+        'verticals/commerce-customer-context/src/services/pricing-purchase-context-owner-authority.ts',
+        'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
+        'verticals/pricing/src/services/current-pricing-decision-subject-authority.service.ts',
+        'verticals/pricing/src/services/current-pricing-decision-whole-evaluation.service.ts',
+        'verticals/pricing/src/services/external-owner-evidence-validation.service.ts',
+        'verticals/pricing/src/services/material-evidence-final-validation.service.ts',
+        'verticals/pricing/src/services/ordinary-current-pricing-evaluation.service.ts',
+        'verticals/pricing/src/services/price-group-interpretation.service.ts',
+      ],
+      rules: {
+        'max-classes-per-file': 'off',
+      },
+    },
+    {
+      // Codesmith owns these generated Pricing aggregate entrypoints and their canonical public export slots.
+      files: ['verticals/pricing/shared/resources/price.ts', 'verticals/pricing/src/api/pricing-client.ts'],
+      rules: {
+        'oxc/no-barrel-file': 'off',
+      },
+    },
+    {
+      // Codesmith requires the literal governed module identity beside each generated Catalog read descriptor.
+      files: [
+        'verticals/catalog/src/api/pricing-purpose-equivalence.read.ts',
+        'verticals/catalog/src/api/quantity-basis-compatibility.read.ts',
+      ],
+      rules: {
+        'sonarjs/no-duplicate-string': 'off',
+      },
+    },
+    {
+      // Codesmith owns these generated Pricing aggregate entrypoints and their canonical public export slots.
+      files: ['verticals/pricing/shared/resources/price.ts', 'verticals/pricing/src/api/pricing-client.ts'],
+      rules: {
+        'sonarjs/no-wildcard-import': 'off',
+      },
+    },
+    {
+      // These aliases name stable public line-composition semantics independently of their current representation.
+      files: ['packages/pricing-contracts/src/domain/line-composition.ts'],
+      rules: {
+        'sonarjs/redundant-type-aliases': 'off',
+      },
+    },
+    {
+      // These focused tests deliberately cross owner types with inert or malformed fixtures and validate the behavior immediately.
+      files: [
+        'verticals/pricing/tests/unit/commercial-fee-management-actions-issue-797.test.ts',
+        'verticals/pricing/tests/unit/current-pricing-decision-read.test.ts',
+        'verticals/pricing/tests/unit/current-pricing-decision-scoped-final-fence-wiring-issue-790.test.ts',
+        'verticals/pricing/tests/unit/current-pricing-decision-whole-evaluation-adapters.test.ts',
+      ],
+      rules: {
+        'typescript/no-unsafe-type-assertion': 'off',
+      },
+    },
+    {
+      // This Action prerequisite uses explicit undefined to mean that no blocking assessment exists.
+      files: ['verticals/pricing/src/actions/define-price.action.ts'],
+      rules: {
+        'unicorn/no-useless-undefined': 'off',
+      },
+    },
+    {
       files: ['**/*.{js,jsx,mjs,cjs}'],
       rules: {
         'no-undef': 'error',
@@ -254,13 +643,6 @@ export default defineConfig({
       files: ['**/scripts/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'],
       rules: {
         'no-console': 'off',
-      },
-    },
-    {
-      // Zerops runs this bootstrap before workspace dependencies exist.
-      files: ['scripts/reset-workspace-dependencies.mjs'],
-      rules: {
-        'effect-native/no-direct-node-io-in-scripts': 'off',
       },
     },
     {
@@ -336,9 +718,7 @@ export default defineConfig({
       files: [
         '**/route.meta.ts',
         'apps/shell-super-app/shared/ultramodern-build.ts',
-        'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
         'verticals/party-registry/shared/ultramodern-build.ts',
-        'verticals/party-registry/src/routes/ultramodern-route-metadata.ts',
         'verticals/party-registry/vertical.manifest.ts',
       ],
       rules: {
@@ -417,7 +797,7 @@ export default defineConfig({
       // replacing it with null would change exact-optional and fixture contracts.
       files: [
         'apps/shell-super-app/api/modules/installed-module-catalog.ts',
-        'apps/shell-super-app/tests/unit/stage-demo-bootstrap.test.ts',
+        'apps/shell-super-app/tests/unit/stage-accounts-bootstrap.test.ts',
         'packages/core-runtime/src/actions/runtime.ts',
         'packages/core-runtime/tests/integration/action-permission.test.ts',
         'packages/core-runtime/tests/integration/action-runtime.test.ts',
@@ -432,10 +812,21 @@ export default defineConfig({
       },
     },
     {
-      // React component names are intentionally PascalCase, contrary to SonarJS's function-name default.
-      files: ['**/*.tsx', 'apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts'],
+      // workerd's binding declarations mirror its KV API, whose text read resolves null for a missing key.
+      files: ['packages/core-runtime/src/cloudflare-workers.d.ts'],
       rules: {
-        'sonarjs/function-name': 'off',
+        'effect-native/no-nullable-service-outcome': 'off',
+      },
+    },
+    {
+      // Modern.js defines '$.tsx' and paired '$.data(.client).ts' / 'page.data.client.ts' route files.
+      // Keep the naming rule enabled while admitting those exact framework spellings.
+      files: ['apps/shell-super-app/src/routes/**/*.ts', 'apps/shell-super-app/src/routes/**/*.tsx'],
+      rules: {
+        'github/filenames-match-regex': [
+          'error',
+          String.raw`^(?:\$(?:\.data(?:\.client)?)?|page\.data\.client|[a-z0-9-]+(?:\.[a-z0-9-]+)?)$`,
+        ],
       },
     },
     {
@@ -505,14 +896,50 @@ export default defineConfig({
       },
     },
     {
-      // These files define intentionally non-production demo/test credentials.
+      // Drizzle column declaration order is the physical Assortment schema contract.
+      files: ['verticals/assortment/src/database/schema.ts'],
+      rules: { 'perfectionist/sort-objects': 'off' },
+    },
+    {
+      // Codesmith emits these exact owner shims as re-exports of canonical public contracts.
+      // The module API boundary checker verifies their generated source and target specifier.
       files: [
-        'apps/shell-super-app/api/auth/stage-demo-bootstrap-contract.ts',
+        'verticals/commerce-customer-context/shared/apis/market-affected-use-assessment.ts',
+        'verticals/commerce-customer-context/shared/apis/market-subject-restrictions-current.ts',
+        'verticals/commerce-customer-context/shared/apis/payment-term-affected-use-assessment.ts',
+        'verticals/commerce-customer-context/src/api/market-affected-use-assessment-client.ts',
+        'verticals/commerce-customer-context/src/api/market-subject-restrictions-current-client.ts',
+        'verticals/commerce-customer-context/src/api/payment-term-affected-use-assessment-client.ts',
+        'verticals/payment-term-catalog/shared/apis/current-payment-terms.ts',
+        'verticals/payment-term-catalog/src/api/current-payment-terms-client.ts',
+        'verticals/price-group-catalog/shared/apis/price-group-definition.ts',
+        'verticals/price-group-catalog/shared/apis/validate-price-group-compatibility.ts',
+        'verticals/price-group-catalog/src/api/price-group-definition-client.ts',
+        'verticals/price-group-catalog/src/api/validate-price-group-compatibility-client.ts',
+        'verticals/pricing/shared/apis/current-pricing-decision.ts',
+        'verticals/pricing/shared/apis/current-supported-currencies.ts',
+        'verticals/pricing/shared/apis/price-definition.ts',
+        'verticals/pricing/src/api/current-pricing-decision-client.ts',
+        'verticals/pricing/src/api/current-supported-currencies-client.ts',
+        'verticals/pricing/src/api/price-definition-client.ts',
+        'verticals/storefront-registry/shared/apis/current-storefront-application.ts',
+        'verticals/storefront-registry/shared/apis/verify-current-storefront-application-v1.ts',
+        'verticals/storefront-registry/src/api/current-storefront-application-client.ts',
+        'verticals/storefront-registry/src/api/verify-current-storefront-application-v1-client.ts',
+      ],
+      rules: {
+        'oxc/no-barrel-file': 'off',
+        'sonarjs/no-wildcard-import': 'off',
+      },
+    },
+    {
+      // These files define intentionally non-production test credentials.
+      files: [
         'apps/shell-super-app/tests/e2e/auth-fixture.ts',
         'apps/shell-super-app/tests/integration/auth-runtime.test.ts',
         'apps/shell-super-app/tests/integration/identity-modes-runtime.test.ts',
         'apps/shell-super-app/tests/unit/auth-contract.test.ts',
-        'apps/shell-super-app/tests/unit/stage-demo-bootstrap.test.ts',
+        'apps/shell-super-app/tests/unit/stage-accounts-bootstrap.test.ts',
       ],
       rules: {
         'sonarjs/no-hardcoded-passwords': 'off',
@@ -852,6 +1279,7 @@ export default defineConfig({
       // can normalize declaration ordering and test doubles without mixing that churn into Issue 179.
       files: ['verticals/party-registry/**/*.ts'],
       rules: {
+        'effect-native/no-unbranded-identifier-schema': 'off',
         'github/filenames-match-regex': 'off',
         'github/js-class-name': 'off',
         'import/export': 'off',
@@ -862,8 +1290,6 @@ export default defineConfig({
         'react-doctor/js-combine-iterations': 'off',
         'react-doctor/js-index-maps': 'off',
         'react-doctor/js-set-map-lookups': 'off',
-        'effect-native/no-unbranded-identifier-schema': 'off',
-        'sonarjs/function-name': 'off',
         'sonarjs/no-duplicate-string': 'off',
         'sonarjs/no-identical-functions': 'off',
         'sonarjs/no-nested-assignment': 'off',
@@ -895,8 +1321,8 @@ export default defineConfig({
     },
   ],
   rules: {
-    'effect-native/no-instanceof': 'error',
     '@nkzw/require-use-effect-arguments': 'error',
+    'effect-native/no-instanceof': 'error',
     // Ultracite core already enforces these policies through Unicorn and Promise rules.
     'github/array-foreach': 'off',
     'github/no-then': 'off',
@@ -916,6 +1342,9 @@ export default defineConfig({
     'sort-keys': 'off',
     // Effect error channels are intentionally explicit tagged unions; two members is not a useful ceiling.
     'sonarjs/max-union-size': 'off',
+    // Property keys name domain vocabulary, not functions: React components are PascalCase,
+    // Match.tags keys are Effect tags, and discriminator maps mirror encoded snake_case values.
+    'sonarjs/function-name': 'off',
     // Keep one authoritative rule for each concern instead of emitting duplicate diagnostics.
     'sonarjs/cognitive-complexity': 'off',
     'sonarjs/expression-complexity': 'off',

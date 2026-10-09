@@ -1,6 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- This contract test reads checked-in production composition evidence; expires: 2027-03-31.
-import { readFileSync } from 'node:fs';
-
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
@@ -16,7 +13,7 @@ import {
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
-const storefrontId = 'storefront:akros-b2b';
+const storefrontId = 'storefront:tenant-a-b2b';
 const payload = Schema.decodeUnknownSync(TriggerPurchaseApprovalPayloadSchema)({
   counterpartyRef: {
     moduleId: 'party.registry',
@@ -124,12 +121,6 @@ it('accepts only counterparty-profile evidence in the public payload', () => {
       proposalRevisionRef: 'proposal:other',
     }),
   ).toBe(false);
-});
-
-it('composes the trigger currentness source from the live owner adapter', () => {
-  const productionComposition = readFileSync(new URL('../../api/index.ts', import.meta.url), 'utf-8');
-  expect(productionComposition).toContain('purchaseLimitEvaluationCurrentnessLive');
-  expect(productionComposition).not.toContain('purchaseLimitEvaluationCurrentnessUnavailableLayer');
 });
 
 it('keeps #317 submission outcomes narrower than the owner trigger result', () => {

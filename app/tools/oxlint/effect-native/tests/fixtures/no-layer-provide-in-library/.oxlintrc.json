@@ -21,6 +21,7 @@
           "verticals/*/api/index.tsx",
           "apps/*/src/entry.*.ts",
           "apps/*/src/entry.*.tsx",
+          "verticals/*/src/worker-host/entry.ts",
           "**/fixtures/no-layer-provide-in-library/valid/root-*.ts",
           "**/fixtures/no-layer-provide-in-library/valid/root-*.tsx"
         ],

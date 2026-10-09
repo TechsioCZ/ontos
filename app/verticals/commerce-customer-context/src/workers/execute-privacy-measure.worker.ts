@@ -76,10 +76,10 @@ export const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeas
   const gateway = yield* PrivacyMeasureOwnerGateway;
   const correlation = context.correlationId ?? context.messageId;
   const fingerprint = fingerprintPrivacyMeasureHandoff(payload.handoff);
-  const receipt = yield* gateway.load(payload.handoff, legalEntityId, correlation);
+  const receipt = yield* gateway.load(payload.handoff, legalEntityId, correlation, context.compositionRevision);
   let outcome: OwnerExecutionOutcome;
   if (Option.isNone(receipt)) {
-    outcome = yield* gateway.execute(payload.handoff, legalEntityId, correlation);
+    outcome = yield* gateway.execute(payload.handoff, legalEntityId, correlation, context.compositionRevision);
   } else {
     const { handoffFingerprint, outcome: durableOutcome } = receipt.value;
     if (handoffFingerprint !== fingerprint) {
@@ -90,7 +90,7 @@ export const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeas
   if (!outcomeMatches(payload, outcome)) {
     return yield* conflict('The owner outcome does not exactly partition the approved resource scope');
   }
-  yield* gateway.report(outcome, legalEntityId, correlation);
+  yield* gateway.report(outcome, legalEntityId, correlation, context.compositionRevision);
   return yield* Effect.void;
 });
 

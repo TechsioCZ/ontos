@@ -1,0 +1,1 @@
+ALTER TABLE "assortment"."assortment_commitment_confirmations" ADD CONSTRAINT "assortment_commitment_confirmations_invocation_uk" UNIQUE("tenant_id","legal_entity_id","action_invocation_id");

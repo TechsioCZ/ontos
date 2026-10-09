@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
@@ -11,6 +10,7 @@ import { and, eq, or } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
 import { account, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
@@ -35,7 +35,7 @@ import {
   selectBootstrapPrincipals,
   selectBootstrapAuthBindings,
 } from '../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/client.ts';
+import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { parseSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import {
   toLegalEntityAccessObjectId,
@@ -48,8 +48,8 @@ export interface LocalDevelopmentEnvironment {
   readonly BETTER_AUTH_URL?: string;
   readonly DATABASE_ADMIN_URL?: string;
   readonly DATABASE_URL?: string;
+  readonly SPICEDB_CA_CERT?: string;
   readonly SPICEDB_ENDPOINT?: string;
-  readonly SPICEDB_INSECURE?: string;
   readonly SPICEDB_PRESHARED_KEY?: string;
   readonly ULTRAMODERN_DEPLOYMENT_ENVIRONMENT?: string;
 }
@@ -58,23 +58,33 @@ type ExactRecord = Readonly<Record<string, Comparable>>;
 
 const localDevelopmentPassword = Redacted.make(['password', '1234'].join(''));
 
+/**
+ * Party Registry's governed reads answer from the tenant's `read_party_identity` permission, which
+ * module access alone does not grant; the local principal reads the parties it works with.
+ */
+const PARTY_REGISTRY_MODULE_ID = 'party.registry';
+
 export const LOCAL_DEVELOPMENT_CONTEXT = Object.freeze({
   authBindingId: '73000000-0000-4000-8000-000000000010',
   defaultLocale: 'cs',
   email: 'demo@test.com',
   legalEntityId: '71000000-0000-4000-8000-000000000010',
-  legalName: 'TechsioCZ',
+  legalName: 'Local Legal Entity',
   password: localDevelopmentPassword,
-  principalDisplayName: 'Techsio Demo',
+  principalDisplayName: 'Local User',
   principalId: '72000000-0000-4000-8000-000000000010',
   registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-TECHSIOCZ',
+  registrationNumber: 'LOCAL-0001',
   tenantId: '70000000-0000-4000-8000-000000000010',
-  tenantName: 'Techsio',
-  tenantSlug: 'techsio',
+  tenantName: 'Local Tenant',
+  tenantSlug: 'local',
 });
 
-export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['party-registry'] as const);
+export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze([
+  'party-registry',
+  'commerce-market-catalog',
+  'commerce-customer-context',
+] as const);
 
 export interface LocalDevelopmentConfiguration {
   readonly authBaseUrl: string;
@@ -83,8 +93,8 @@ export interface LocalDevelopmentConfiguration {
   readonly email: string;
   readonly password: Redacted.Redacted;
   readonly principalDisplayName: string;
+  readonly spiceDbCaCertificate: string;
   readonly spiceDbEndpoint: string;
-  readonly spiceDbInsecureLocal: boolean;
   readonly spiceDbPreSharedKey: Redacted.Redacted;
 }
 
@@ -112,6 +122,7 @@ export class LocalDevelopmentInitializationError extends Schema.TaggedError<Loca
       'local_configuration_invalid',
       'local_contract_invalid',
       'local_conflict',
+      'local_owner_dependency_missing',
       'local_persistence_failed',
     ]),
     reason: Schema.String,
@@ -122,6 +133,63 @@ const failure = (
   code: LocalDevelopmentInitializationError['code'],
   reason: string,
 ): LocalDevelopmentInitializationError => new LocalDevelopmentInitializationError({ code, reason });
+
+export const LOCAL_DEVELOPMENT_OWNER_INITIALIZATION_ORDER = Object.freeze([
+  'storefront-registry',
+  'commerce-market-catalog',
+  'catalog',
+  'pricing-currency-support',
+  'payment-term-catalog',
+  'market-subject-restrictions',
+  'customer-commerce-policy',
+] as const);
+
+export type LocalDevelopmentOwnerInitializationStep = (typeof LOCAL_DEVELOPMENT_OWNER_INITIALIZATION_ORDER)[number];
+
+export interface LocalDevelopmentOwnerInitializationRequest {
+  readonly idempotencyKey: string;
+  readonly legalEntityId: string;
+  readonly owner: LocalDevelopmentOwnerInitializationStep;
+  readonly tenantId: string;
+}
+
+export type LocalDevelopmentOwnerReconciler = (
+  request: LocalDevelopmentOwnerInitializationRequest,
+) => Effect.Effect<void, LocalDevelopmentInitializationError>;
+
+export type LocalDevelopmentOwnerReconcilers = Readonly<
+  Partial<Record<LocalDevelopmentOwnerInitializationStep, LocalDevelopmentOwnerReconciler>>
+>;
+
+const ownerInitializationRequest = (
+  owner: LocalDevelopmentOwnerInitializationStep,
+): LocalDevelopmentOwnerInitializationRequest => ({
+  idempotencyKey: `ontos-local-owner:${LOCAL_DEVELOPMENT_CONTEXT.tenantId}:${owner}:v1`,
+  legalEntityId: LOCAL_DEVELOPMENT_CONTEXT.legalEntityId,
+  owner,
+  tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+});
+
+/**
+ * Reconciles local owner facts in dependency order through owner-provided entrypoints.
+ *
+ * Each owner receives a stable idempotency key, so a complete reconciliation can be
+ * retried without inventing new facts. Missing entrypoints fail before any dependent
+ * owner is invoked; owner-specific adapters remain responsible for mapping their
+ * typed failure into LocalDevelopmentInitializationError.
+ */
+export const initializeLocalDevelopmentOwners = Effect.fn('LocalDevelopment.initializeOwners')(
+  function* initializeOwners(
+    reconcilers: LocalDevelopmentOwnerReconcilers,
+  ): Effect.fn.Return<void, LocalDevelopmentInitializationError> {
+    for (const owner of LOCAL_DEVELOPMENT_OWNER_INITIALIZATION_ORDER) {
+      const reconcile = reconcilers[owner];
+      yield* reconcile === undefined
+        ? failure('local_owner_dependency_missing', `The ${owner} local owner reconciler is unavailable`)
+        : reconcile(ownerInitializationRequest(owner));
+    }
+  },
+);
 
 const loopbackHosts = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);
 
@@ -142,15 +210,15 @@ const TrimmedNonEmptyString = Schema.Trim.check(Schema.isNonEmpty());
 
 const localDevelopmentConfigSource = Config.all({
   authBaseUrl: Config.schema(TrimmedNonEmptyString, 'BETTER_AUTH_URL'),
-  authSecret: Config.redacted('BETTER_AUTH_SECRET'),
+  authSecret: Config.Redacted('BETTER_AUTH_SECRET'),
   databaseAdminUrl: Config.schema(TrimmedNonEmptyString, 'DATABASE_ADMIN_URL'),
   databaseUrl: Config.schema(TrimmedNonEmptyString, 'DATABASE_URL'),
   deploymentEnvironment: Config.schema(Schema.Trim, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
     Config.withDefault('development'),
   ),
+  spiceDbCaCertificate: Config.schema(TrimmedNonEmptyString, 'SPICEDB_CA_CERT'),
   spiceDbEndpoint: Config.schema(TrimmedNonEmptyString, 'SPICEDB_ENDPOINT'),
-  spiceDbInsecure: Config.schema(Schema.Trim, 'SPICEDB_INSECURE'),
-  spiceDbPreSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY'),
+  spiceDbPreSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY'),
 });
 
 const environmentProvider = (environment: LocalDevelopmentEnvironment) => ConfigProvider.fromUnknown(environment);
@@ -181,18 +249,14 @@ const parseLocalDevelopmentConfigurationFromProvider = (provider: ConfigProvider
     }
     const spiceDbPreSharedKey = Redacted.make(Redacted.value(source.spiceDbPreSharedKey).trim());
     const spiceDb = yield* parseSpiceDbConfig({
+      SPICEDB_CA_CERT: source.spiceDbCaCertificate,
       SPICEDB_ENDPOINT: source.spiceDbEndpoint,
-      SPICEDB_INSECURE: source.spiceDbInsecure,
       SPICEDB_PRESHARED_KEY: Redacted.value(spiceDbPreSharedKey),
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: source.deploymentEnvironment,
     }).pipe(Effect.mapError((error) => failure('local_configuration_invalid', error.reason)));
     const parsedSpiceDbEndpoint = URL.parse(`http://${spiceDb.endpoint}`);
-    if (
-      parsedSpiceDbEndpoint === null ||
-      !loopbackHosts.has(parsedSpiceDbEndpoint.hostname) ||
-      !spiceDb.insecureLocal
-    ) {
-      return yield* failure('local_configuration_invalid', 'SpiceDB must use insecure transport on a local endpoint');
+    if (parsedSpiceDbEndpoint === null || !loopbackHosts.has(parsedSpiceDbEndpoint.hostname)) {
+      return yield* failure('local_configuration_invalid', 'SpiceDB must be a local endpoint');
     }
     const authBaseUrl = yield* validateLoopbackHttpOrigin(source.authBaseUrl);
     return {
@@ -202,8 +266,8 @@ const parseLocalDevelopmentConfigurationFromProvider = (provider: ConfigProvider
       email: LOCAL_DEVELOPMENT_CONTEXT.email,
       password: LOCAL_DEVELOPMENT_CONTEXT.password,
       principalDisplayName: LOCAL_DEVELOPMENT_CONTEXT.principalDisplayName,
+      spiceDbCaCertificate: source.spiceDbCaCertificate,
       spiceDbEndpoint: spiceDb.endpoint,
-      spiceDbInsecureLocal: spiceDb.insecureLocal,
       spiceDbPreSharedKey,
     };
   });
@@ -266,9 +330,7 @@ export const deriveActivatedModuleIds = (
     const topologySource = yield* fileSystem
       .readFileString(pathService.join(workspaceRoot, 'topology/reference-topology.json'))
       .pipe(Effect.mapError(() => failure('local_contract_invalid', 'The authoritative topology could not be read')));
-    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema), {
-      onExcessProperty: 'preserve',
-    })(topologySource).pipe(
+    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema))(topologySource).pipe(
       Effect.mapError(() => failure('local_contract_invalid', 'The authoritative topology is invalid')),
     );
     if (topology.verticals.length === 0) {
@@ -356,6 +418,15 @@ export const buildLocalDevelopmentRelationships = Effect.fn('LocalDevelopment.bu
         subjectType: 'principal',
       },
     ];
+    if (moduleIds.includes(PARTY_REGISTRY_MODULE_ID)) {
+      shared.push({
+        relation: 'party_identity_reader',
+        resourceId: context.tenantId,
+        resourceType: 'tenant',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      });
+    }
     for (const moduleId of moduleIds) {
       const moduleObjectId = toModuleAccessObjectId(context.tenantId, context.legalEntityId, moduleId);
       if (moduleObjectId === undefined) {
@@ -553,11 +624,17 @@ export const reconcileCoreContext = (
           yield* transaction.insert(principals).values(expectedPrincipal);
         }
 
-        const bindingCandidates = yield* selectBootstrapAuthBindings(transaction, context, authUserId);
+        const bindingCandidates = yield* selectBootstrapAuthBindings(
+          transaction,
+          context,
+          authUserId,
+          STAFF_AUTHENTICATION_NAMESPACE_ID,
+        );
         if (bindingCandidates.length > 1) {
           return yield* failure('local_conflict', 'The local authentication binding conflicts');
         }
         const expectedBinding = {
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           principalAuthBindingId: context.authBindingId,
           principalId: context.principalId,
           provider: 'better_auth',
@@ -592,17 +669,12 @@ const acquireSpiceDbClient = (configuration: LocalDevelopmentConfiguration) =>
   Effect.acquireRelease(
     Effect.try({
       catch: () => failure('local_persistence_failed', 'The local authorization client could not be created'),
-      try: () => {
-        const preSharedKey = Redacted.value(configuration.spiceDbPreSharedKey);
-        return v1.NewClient(
-          preSharedKey,
-          configuration.spiceDbEndpoint,
-          spiceDbClientSecurity({
-            endpoint: configuration.spiceDbEndpoint,
-            insecureLocal: configuration.spiceDbInsecureLocal,
-          }),
-        );
-      },
+      try: () =>
+        newSpiceDbGrpcClient({
+          caCertificate: configuration.spiceDbCaCertificate,
+          endpoint: configuration.spiceDbEndpoint,
+          preSharedKey: Redacted.value(configuration.spiceDbPreSharedKey),
+        }),
     }),
     (client) => Effect.sync(() => client.close()),
   );

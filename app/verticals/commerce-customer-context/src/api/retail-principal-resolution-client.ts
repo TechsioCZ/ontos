@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetailPrincipalResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetailPrincipalResolutionAuthorizedInvocation = readonly [
@@ -40,15 +41,17 @@ export const executeRetailPrincipalResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetailPrincipalResolutionAuthorizedInvocation
 ) =>
   retailPrincipalResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.retailPrincipalResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.retailPrincipalResolution.execute({ payload })),
   );
 
 export const executeRetailPrincipalResolution = (
   payload: RetailPrincipalResolutionRequest,
   ...[requestCorrelation, options = {}]: RetailPrincipalResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetailPrincipalResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetailPrincipalResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

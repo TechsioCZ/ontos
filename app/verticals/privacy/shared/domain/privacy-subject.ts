@@ -1,5 +1,5 @@
 /* eslint-disable effect-native/no-string-timestamp-schema -- Privacy protocols expose canonical UTC `Z` timestamps on JSON wires; this shared codec rejects offsets and malformed values before domain ordering. expires: 2027-03-31. */
-import { PrincipalRefSchema } from '@app/core-runtime';
+import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { DateTime, Option, Schema } from 'effect';
 
 import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';

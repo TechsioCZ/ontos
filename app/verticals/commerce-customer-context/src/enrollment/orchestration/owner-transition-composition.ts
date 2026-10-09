@@ -1,0 +1,465 @@
+import { Effect, Layer, Option, Result, Schema } from 'effect';
+
+import { CommercePortalAuthAccountLookupService } from '../../../api/portal-auth/provider/account-lookup-service.ts';
+import type { CommercePortalAuthAccountLookup } from '../../../api/portal-auth/provider/account-lookup-service.ts';
+import { CommercePortalAuthAccountCreationReconciliationService } from '../../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
+import type { CommercePortalAuthAccountCreationReconciliation } from '../../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
+import {
+  EnrollmentEvidenceReferenceSchema,
+  EnrollmentModuleKeySchema,
+  EnrollmentProviderSubjectIdSchema,
+  EnrollmentTransitionKeySchema,
+  isEnrollmentAttemptTerminal,
+} from '../../../shared/enrollment-contracts.ts';
+import type { EnrollmentAttemptSnapshot } from '../../../shared/enrollment-contracts.ts';
+import type { CommerceEnrollmentOwnerScope } from '../attempts/attempt-persistence.ts';
+import { attemptUnavailable } from '../attempts/errors.ts';
+import type { CommerceEnrollmentAttemptError } from '../attempts/errors.ts';
+import {
+  CommerceEnrollmentOwnerTransactionRunner,
+  commerceEnrollmentOwnerAttemptStoreForRun,
+  commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts,
+} from './owner-transition-production.ts';
+import type { CommerceEnrollmentOwnerPreparationPort } from './owner-transition-production.ts';
+import { CommerceEnrollmentOwnerTransitionSchema } from './owner-transition-driver.ts';
+import type {
+  CommerceEnrollmentOwnerAttemptStore,
+  CommerceEnrollmentOwnerReconciliationInput,
+  CommerceEnrollmentOwnerTransition,
+} from './owner-transition-driver.ts';
+import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../journeys/existing-account.ts';
+import { retailSelfEnrollmentPrepareStep } from '../journeys/retail-self-enrollment-preparation.ts';
+import { retailSelfEnrollmentStepPlan } from '../journeys/retail-self-enrollment-contracts.ts';
+import type { JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
+import { CommerceEnrollmentPreparationSubjectResolver } from './preparation-subject.ts';
+import type { CommerceEnrollmentPreparationSubjectResolve } from './preparation-subject.ts';
+import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from './provider-owner-effect.ts';
+import type { CommerceEnrollmentProviderOwnerReconciliationObservation } from './provider-owner-effect.ts';
+import {
+  CommerceEnrollmentOwnerEffectRejected,
+  CommerceEnrollmentOwnerEffectUnavailable,
+} from './owner-transition-errors.ts';
+import {
+  CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY,
+  CommerceEnrollmentOwnerTransitionPreparation,
+  PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+  PORTAL_AUTH_OWNER_MODULE_KEY,
+  ownerPreparationDenied as denied,
+  ownerPreparationUnavailable as unavailable,
+} from './prepared-owner-authority.ts';
+import type {
+  CommerceEnrollmentOwnerTransitionPreparationResult,
+  CommerceEnrollmentPreparedOwnerBinding,
+} from './prepared-owner-authority.ts';
+
+/** Module-owned literals, decoded once at load rather than on every request. */
+const decodeModuleKey = (value: string): CommerceEnrollmentPreparedOwnerBinding['ownerModuleKey'] =>
+  Result.getOrThrow(Schema.decodeResult(EnrollmentModuleKeySchema)(value));
+const decodeTransitionKey = (value: string): CommerceEnrollmentPreparedOwnerBinding['transitionKey'] =>
+  Result.getOrThrow(Schema.decodeResult(EnrollmentTransitionKeySchema)(value));
+
+const PORTAL_ACCOUNT_TRANSITION_IDENTITY = {
+  ownerModuleKey: decodeModuleKey(PORTAL_AUTH_OWNER_MODULE_KEY),
+  transitionKey: decodeTransitionKey(PORTAL_ACCOUNT_CREATION_TRANSITION_KEY),
+} as const;
+
+const PORTAL_ACCOUNT_VERIFICATION_TRANSITION_IDENTITY = {
+  ownerModuleKey: decodeModuleKey(PORTAL_AUTH_OWNER_MODULE_KEY),
+  transitionKey: decodeTransitionKey(PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY),
+} as const;
+
+interface RetailPreparationStep {
+  readonly ownerModuleKey: CommerceEnrollmentPreparedOwnerBinding['ownerModuleKey'];
+  readonly step: JourneyTransitionSpec;
+  readonly transitionKey: CommerceEnrollmentPreparedOwnerBinding['transitionKey'];
+}
+
+const RETAIL_PREPARATION_STEPS: readonly RetailPreparationStep[] = retailSelfEnrollmentStepPlan().map((step) => ({
+  ownerModuleKey: decodeModuleKey(step.ownerModuleKey),
+  step,
+  transitionKey: decodeTransitionKey(step.transitionKey),
+}));
+
+const preparationFailure = (
+  error: CommerceEnrollmentAttemptError,
+): CommerceEnrollmentOwnerTransitionPreparationResult => (error.retryable ? unavailable : denied);
+
+/**
+ * The owner phases are authorized inside PostgreSQL from the Tenant the preflight already verified.
+ * Nothing here is derived from the request payload.
+ */
+const ownerScopeFor = (binding: CommerceEnrollmentPreparedOwnerBinding): CommerceEnrollmentOwnerScope => ({
+  tenantId: binding.tenantId,
+});
+
+const evidenceReferenceOf = (
+  attempt: EnrollmentAttemptSnapshot,
+): Effect.Effect<typeof EnrollmentEvidenceReferenceSchema.Type, CommerceEnrollmentAttemptError> =>
+  Schema.decodeEffect(EnrollmentEvidenceReferenceSchema)(String(attempt.portalEnrollmentAttemptId)).pipe(
+    Effect.mapError((cause) =>
+      attemptUnavailable(
+        'The durable Enrollment Attempt identity is not a usable owner evidence reference',
+        attempt.portalEnrollmentAttemptId,
+        cause,
+      ),
+    ),
+  );
+
+const reconciliationUnavailable = (
+  reason: string,
+  cause?: unknown,
+): InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable> =>
+  cause === undefined
+    ? new CommerceEnrollmentOwnerEffectUnavailable({ code: 'provider_account_reconciliation_unavailable', reason })
+    : Object.defineProperty(
+        new CommerceEnrollmentOwnerEffectUnavailable({ code: 'provider_account_reconciliation_unavailable', reason }),
+        'cause',
+        { configurable: false, enumerable: false, value: cause },
+      );
+
+/**
+ * The subject the provider itself correlated to this exact owner invocation, inside the very call
+ * that committed the account. It is read only when the Attempt journalled none — the lost-answer
+ * case — and it is decoded here, because a correlation row that cannot name a provider subject is
+ * a provider fault to retry, never an absent account.
+ */
+const correlatedProviderSubject = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.correlatedSubject')(
+  function* correlatedProviderSubjectEffect(
+    accountLookup: CommercePortalAuthAccountLookup,
+    ownerInvocationId: CommerceEnrollmentOwnerReconciliationInput['ownerInvocationId'],
+  ): Effect.fn.Return<
+    Option.Option<typeof EnrollmentProviderSubjectIdSchema.Type>,
+    InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
+  > {
+    const correlated = yield* accountLookup
+      .subjectForOwnerInvocation({ ownerInvocationId })
+      .pipe(
+        Effect.mapError((failure) =>
+          reconciliationUnavailable(
+            'The Commerce portal account creation correlation could not be read for owner reconciliation',
+            failure,
+          ),
+        ),
+      );
+    if (Option.isNone(correlated)) {
+      return Option.none();
+    }
+    const providerSubjectId = yield* Schema.decodeEffect(EnrollmentProviderSubjectIdSchema)(correlated.value).pipe(
+      Effect.mapError((cause) =>
+        reconciliationUnavailable('The Commerce portal account creation correlation names no usable subject', cause),
+      ),
+    );
+    return Option.some(providerSubjectId);
+  },
+);
+
+/**
+ * The exact owner lookup used after an unknown provider outcome. It is keyed only by a stable
+ * account subject — the one the durable Attempt already recorded, or, when the provider committed
+ * and its answer was lost before the Attempt could journal one, the one the provider itself
+ * correlated to this exact owner invocation inside that same call. Either key is then confirmed
+ * against the provider's own directory; email continuity and a fresh sign-up retry are deliberately
+ * outside this lookup, so a lost provider response can never be resolved from a login identifier.
+ */
+export const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.providerObservation')(
+  function* providerObservationEffect(
+    attempt: EnrollmentAttemptSnapshot,
+    accountLookup: CommercePortalAuthAccountLookup,
+    ownerInvocationId: CommerceEnrollmentOwnerReconciliationInput['ownerInvocationId'],
+  ): Effect.fn.Return<
+    CommerceEnrollmentProviderOwnerReconciliationObservation,
+    InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
+  > {
+    const evidenceRef = yield* evidenceReferenceOf(attempt).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CommerceEnrollmentOwnerEffectUnavailable({
+            code: 'provider_account_reconciliation_unavailable',
+            reason: cause.reason,
+          }),
+      ),
+    );
+    const { accountSubject } = attempt;
+    const recordedSubject =
+      accountSubject === undefined
+        ? yield* correlatedProviderSubject(accountLookup, ownerInvocationId)
+        : Option.some(accountSubject.providerSubjectId);
+    if (Option.isNone(recordedSubject)) {
+      // Neither the Attempt nor the provider correlates a subject to this invocation, so no account
+      // ever committed under it: the unique correlation index is authoritative for that absence.
+      // Reported as NOT_FOUND, the transition fails closed and its owner invocation stays reclaimable.
+      return { evidenceRef, outcome: 'NOT_FOUND' as const };
+    }
+    const providerSubjectId = recordedSubject.value;
+    const persisted = yield* accountLookup
+      .existsByProviderSubject({ providerSubjectId })
+      .pipe(
+        Effect.mapError((failure) =>
+          reconciliationUnavailable(
+            'The Commerce portal account directory could not be read for owner reconciliation',
+            failure,
+          ),
+        ),
+      );
+    return persisted
+      ? { evidenceRef, outcome: 'FOUND' as const, providerSubjectId }
+      : { evidenceRef, outcome: 'NOT_FOUND' as const };
+  },
+);
+
+/** Account creation is complete only after the correlated account's verification email is reissued. */
+export const providerAccountCreationObservationFor = Effect.fn(
+  'CommerceEnrollmentPortalAuthOwnerPreparation.providerAccountCreationObservation',
+)(function* providerAccountCreationObservationEffect(
+  attempt: EnrollmentAttemptSnapshot,
+  reconciliation: CommercePortalAuthAccountCreationReconciliation,
+  ownerInvocationId: CommerceEnrollmentOwnerReconciliationInput['ownerInvocationId'],
+): Effect.fn.Return<
+  CommerceEnrollmentProviderOwnerReconciliationObservation,
+  InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
+> {
+  const evidenceRef = yield* evidenceReferenceOf(attempt).pipe(
+    Effect.mapError(
+      (cause) =>
+        new CommerceEnrollmentOwnerEffectUnavailable({
+          code: 'provider_account_reconciliation_unavailable',
+          reason: cause.reason,
+        }),
+    ),
+  );
+  // Keep provider delivery behind the local Attempt decode: malformed durable evidence must fail
+  // closed before reconciliation performs an externally visible email send.
+  // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Evidence validation intentionally gates verification delivery and fixes their failure ordering.
+  const reissued = yield* reconciliation
+    .reissueVerificationEmail({ ownerInvocationId })
+    .pipe(
+      Effect.mapError((failure) =>
+        reconciliationUnavailable(
+          'The Commerce portal verification email could not be reissued for account reconciliation',
+          failure,
+        ),
+      ),
+    );
+  if (Option.isNone(reissued)) {
+    return { evidenceRef, outcome: 'NOT_FOUND' as const };
+  }
+  const providerSubjectId = yield* Schema.decodeEffect(EnrollmentProviderSubjectIdSchema)(
+    reissued.value.providerSubjectId,
+  ).pipe(
+    Effect.mapError((cause) =>
+      reconciliationUnavailable('The reconciled Commerce portal account names no usable subject', cause),
+    ),
+  );
+  return { evidenceRef, outcome: 'FOUND' as const, providerSubjectId };
+});
+
+/** Rebuild the immutable owner transition identity from the durable operation, never the payload. */
+const ownerTransitionFor = (
+  binding: CommerceEnrollmentPreparedOwnerBinding,
+  requestDigest: string,
+  compositionRevision: EnrollmentAttemptSnapshot['compositionRevision'],
+): Effect.Effect<CommerceEnrollmentOwnerTransition, CommerceEnrollmentAttemptError> =>
+  Schema.decodeEffect(CommerceEnrollmentOwnerTransitionSchema)({
+    actorPrincipalId: binding.actorPrincipalId,
+    compositionRevision,
+    correlationId: `commerce-enrollment-owner:${binding.actionInvocationId}`,
+    expectedRevision: binding.expectedRevision,
+    ownerInvocationId: binding.ownerInvocationId,
+    ownerModuleKey: binding.ownerModuleKey,
+    portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId,
+    requestDigest,
+    tenantId: binding.tenantId,
+    transitionKey: binding.transitionKey,
+  }).pipe(
+    Effect.mapError((cause) =>
+      attemptUnavailable(
+        'The owner transition identity could not be rebuilt from the durable operation',
+        binding.portalEnrollmentAttemptId,
+        cause,
+      ),
+    ),
+  );
+
+const prepareClaim = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.prepareClaim')(
+  function* prepareClaimEffect(
+    store: CommerceEnrollmentOwnerAttemptStore,
+    binding: CommerceEnrollmentPreparedOwnerBinding,
+  ): Effect.fn.Return<CommerceEnrollmentOwnerTransitionPreparationResult, CommerceEnrollmentAttemptError> {
+    const attempt = yield* store.read({
+      portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId,
+      tenantId: binding.tenantId,
+    });
+    if (isEnrollmentAttemptTerminal(attempt.state) || attempt.state === 'RECONCILIATION_REQUIRED') {
+      return denied;
+    }
+    if (attempt.revision !== binding.expectedRevision) {
+      return denied;
+    }
+    const evidenceRef = yield* evidenceReferenceOf(attempt);
+    return { evidenceRef, outcome: 'prepared' as const };
+  },
+);
+
+const prepareRecord = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.prepareRecord')(
+  function* prepareRecordEffect(
+    store: CommerceEnrollmentOwnerAttemptStore,
+    accountLookup: CommercePortalAuthAccountLookup,
+    accountCreationReconciliation: CommercePortalAuthAccountCreationReconciliation,
+    binding: CommerceEnrollmentPreparedOwnerBinding,
+  ): Effect.fn.Return<CommerceEnrollmentOwnerTransitionPreparationResult, CommerceEnrollmentAttemptError> {
+    const { attempt, operation } = yield* Effect.all(
+      {
+        attempt: store.read({
+          portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId,
+          tenantId: binding.tenantId,
+        }),
+        operation: store.readOwnerOperation({
+          ownerModuleKey: binding.ownerModuleKey,
+          portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId,
+          tenantId: binding.tenantId,
+          transitionKey: binding.transitionKey,
+        }),
+      },
+      { concurrency: 2 },
+    );
+    if (
+      operation.ownerInvocationId !== binding.ownerInvocationId ||
+      operation.actorPrincipalId !== binding.actorPrincipalId ||
+      attempt.revision !== binding.expectedRevision
+    ) {
+      return denied;
+    }
+    if (operation.status !== 'INDETERMINATE' && operation.status !== 'RECONCILIATION_REQUIRED') {
+      // A still-leased, already succeeded or already failed owner operation has nothing to
+      // reconcile; the Action must observe the durable state instead of recording a second one.
+      return operation.status === 'IN_PROGRESS' ? unavailable : denied;
+    }
+    const transition = yield* ownerTransitionFor(binding, operation.requestDigest, attempt.compositionRevision);
+    const reconciliationInput: CommerceEnrollmentOwnerReconciliationInput =
+      operation.resultReference === undefined
+        ? { ...transition, observedRevision: attempt.revision, ownerOperationRevision: operation.revision }
+        : {
+            ...transition,
+            observedRevision: attempt.revision,
+            ownerOperationRevision: operation.revision,
+            ownerResultReference: operation.resultReference,
+          };
+    const owner = commerceEnrollmentPortalAuthOwnerReconciliationForLookup((reconciliation) =>
+      binding.transitionKey === PORTAL_ACCOUNT_TRANSITION_IDENTITY.transitionKey
+        ? providerAccountCreationObservationFor(
+            attempt,
+            accountCreationReconciliation,
+            reconciliation.ownerInvocationId,
+          )
+        : providerObservationFor(attempt, accountLookup, reconciliation.ownerInvocationId),
+    );
+    return yield* owner.reconcile(reconciliationInput).pipe(
+      Effect.match({
+        onFailure: (failure): CommerceEnrollmentOwnerTransitionPreparationResult =>
+          Schema.is(CommerceEnrollmentOwnerEffectRejected)(failure) ? denied : unavailable,
+        onSuccess: (resolution): CommerceEnrollmentOwnerTransitionPreparationResult => ({
+          evidenceRef: resolution.reconciliationRef,
+          outcome: 'prepared' as const,
+          resolution,
+        }),
+      }),
+    );
+  },
+);
+
+/**
+ * The installed Commerce portal owner port for `provider.account.create`. Claim preparation is an
+ * owner-authoritative durable read of the exact Attempt; record preparation is the owner's exact
+ * reconciliation of an indeterminate transition. Both open their own transactions through the
+ * runner, so no owner work happens inside the governed Action transaction, and neither path can
+ * reach the private account-creation capability.
+ *
+ * Neither preparation reads the transition key for anything but the journal row it addresses, so
+ * the very same port serves the Existing-account ownership proof; `portalAuthPreparationPorts`
+ * publishes it under both identities.
+ */
+export const makeCommerceEnrollmentPortalAuthOwnerPreparationPort = Effect.fn(
+  'CommerceEnrollmentPortalAuthOwnerPreparation.make',
+)(function* makePortalAuthOwnerPreparationPort(): Effect.fn.Return<
+  CommerceEnrollmentOwnerPreparationPort,
+  never,
+  | CommerceEnrollmentOwnerTransactionRunner
+  | CommercePortalAuthAccountLookupService
+  | CommercePortalAuthAccountCreationReconciliationService
+> {
+  const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
+  const accountLookup = yield* CommercePortalAuthAccountLookupService;
+  const accountCreationReconciliation = yield* CommercePortalAuthAccountCreationReconciliationService;
+  const prepare = (
+    input: CommerceEnrollmentPreparedOwnerBinding,
+  ): Effect.Effect<CommerceEnrollmentOwnerTransitionPreparationResult> => {
+    const store = commerceEnrollmentOwnerAttemptStoreForRun(ownerScopeFor(input), runner.run);
+    const prepared =
+      input.actionKey === CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY
+        ? prepareClaim(store, input)
+        : prepareRecord(store, accountLookup, accountCreationReconciliation, input);
+    return prepared.pipe(Effect.match({ onFailure: preparationFailure, onSuccess: (result) => result }));
+  };
+  return { ...PORTAL_ACCOUNT_TRANSITION_IDENTITY, prepare };
+});
+
+/**
+ * Both portal-auth transitions of one deployment, over a single owner port. A transition no port
+ * declares fails closed, so the Existing-account ownership proof needs its own entry here or its
+ * governed claim could never be authorized.
+ */
+const portalAuthPreparationPorts = (
+  port: CommerceEnrollmentOwnerPreparationPort,
+): readonly CommerceEnrollmentOwnerPreparationPort[] => [
+  port,
+  { ...port, ...PORTAL_ACCOUNT_VERIFICATION_TRANSITION_IDENTITY },
+];
+
+/**
+ * The Retail self-enrollment ports, bound to the durable Attempt rather than to a subject a caller
+ * supplied. Each port captures the exact step it was built for and resolves the journey subject
+ * for the Attempt named in the binding, so the digest a port vouches for is always derived from
+ * Attempt state that survived a crash.
+ */
+const prepareRetailStep = (
+  resolveSubject: CommerceEnrollmentPreparationSubjectResolve,
+  step: JourneyTransitionSpec,
+  binding: CommerceEnrollmentPreparedOwnerBinding,
+): Effect.Effect<CommerceEnrollmentOwnerTransitionPreparationResult> =>
+  resolveSubject({ portalEnrollmentAttemptId: binding.portalEnrollmentAttemptId, tenantId: binding.tenantId }).pipe(
+    Effect.flatMap((subject) => retailSelfEnrollmentPrepareStep(subject, step, binding)),
+    Effect.match({ onFailure: preparationFailure, onSuccess: (result) => result }),
+  );
+
+/** One journey-derived port per declared Retail self-enrollment step. */
+const retailPreparationPorts = (
+  resolveSubject: CommerceEnrollmentPreparationSubjectResolve,
+): readonly CommerceEnrollmentOwnerPreparationPort[] =>
+  RETAIL_PREPARATION_STEPS.map(({ ownerModuleKey, step, transitionKey }) => ({
+    ownerModuleKey,
+    prepare: (binding: CommerceEnrollmentPreparedOwnerBinding) => prepareRetailStep(resolveSubject, step, binding),
+    transitionKey,
+  }));
+
+/**
+ * The deployed preparation authority: the Commerce portal owner port for the two transitions that
+ * vertical owns — the provider account creation and the Existing-account ownership proof — plus one
+ * port per declared Retail self-enrollment transition. Every other owner module or transition key
+ * still fails closed through the router.
+ *
+ * The portal account-creation pair is declared by the Retail journey too. Listing the portal-auth
+ * port first is what keeps it: it is the owner-authoritative one — it reads the durable claim and
+ * reconciles an indeterminate provider effect — and the registry never lets a later,
+ * journey-derived digest check shadow an earlier port.
+ */
+export const commerceEnrollmentOwnerTransitionPreparationLive = Layer.effect(
+  CommerceEnrollmentOwnerTransitionPreparation,
+  Effect.gen(function* makePreparationAuthority() {
+    const resolver = yield* CommerceEnrollmentPreparationSubjectResolver;
+    const portalAuthPort = yield* makeCommerceEnrollmentPortalAuthOwnerPreparationPort();
+    return commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts([
+      ...portalAuthPreparationPorts(portalAuthPort),
+      ...retailPreparationPorts(resolver.resolve),
+    ]);
+  }),
+);

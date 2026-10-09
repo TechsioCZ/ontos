@@ -1,64 +1,45 @@
-import fs from 'node:fs';
-
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { DeploymentAllowlistTopologySchema } from '../../api/modules/deployment-allowlist.ts';
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import {
-  deriveInstalledVerticalIds,
-  InstalledVerticalTopologyError,
-  installedVerticalIds,
-} from '../../api/verticals/installed-verticals.ts';
+  InstalledModuleCatalogUnavailableError,
+  makeInstalledModuleCatalogLayer,
+} from '../../api/modules/installed-module-catalog.ts';
+import { installedVerticalIds } from '../../api/verticals/installed-verticals.ts';
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
-it.effect('derives installed vertical IDs from the injected topology without hardcoded registrations', () =>
-  Effect.gen(function* verifyCase1() {
-    const topology = Schema.decodeUnknownSync(DeploymentAllowlistTopologySchema)(
-      JSON.parse(fs.readFileSync(new URL('../../../../topology/reference-topology.json', import.meta.url), 'utf-8')),
-    );
-    const expectedInstalledIds = yield* deriveInstalledVerticalIds(topology);
-
-    expect([...expectedInstalledIds]).toEqual([
-      'party-registry',
-      'commerce-customer-context',
-      'payment-term-catalog',
-      'privacy',
+it.effect('admits deployment IDs from the approved release independently of placement and module IDs', () =>
+  Effect.gen(function* approvedDeploymentIds() {
+    const first = yield* makeCompositionSnapshot([
+      makeModuleContractFixture({ appId: 'property-registry', moduleId: 'property.registry' }),
     ]);
-    expect(expectedInstalledIds.has('party.registry')).toBe(false);
-    expect([...(yield* installedVerticalIds)]).toEqual([...expectedInstalledIds]);
-    const valid = yield* deriveInstalledVerticalIds({
-      sharedPackages: [{ id: 'shared-contracts', kind: 'package' }],
-      shell: { id: 'shell-super-app', kind: 'shell' },
-      verticals: [
-        { id: 'property-registry', kind: 'vertical' },
-        { id: 'future-generated', kind: 'vertical' },
-      ],
-    });
-    expect([...valid]).toEqual(['property-registry', 'future-generated']);
-    expect(valid.has('property.registry')).toBe(false);
+    const next = yield* makeCompositionSnapshot([
+      makeModuleContractFixture({ appId: 'property-registry', moduleId: 'property.registry' }),
+      makeModuleContractFixture({ appId: 'future-generated', moduleId: 'future.generated' }),
+    ]);
+    let current = first;
+    const layer = makeInstalledModuleCatalogLayer(Effect.sync(() => current));
+    const firstIds = yield* installedVerticalIds.pipe(Effect.provide(layer));
+    expect([...firstIds]).toEqual(['property-registry']);
+    expect(firstIds.has('property.registry')).toBe(false);
+    current = next;
+    expect([...(yield* installedVerticalIds.pipe(Effect.provide(layer)))]).toEqual([
+      'future-generated',
+      'property-registry',
+    ]);
   }),
 );
 
-it.effect('rejects malformed, non-vertical, invalid, and duplicate installed entries', () =>
-  Effect.gen(function* verifyCase2() {
-    const inputs = [
-      {},
-      { verticals: [{ id: 'shell-super-app', kind: 'shell' }] },
-      { verticals: [{ id: '../inventory', kind: 'vertical' }] },
-      {
-        verticals: [
-          { id: 'inventory-stock', kind: 'vertical' },
-          { id: 'inventory-stock', kind: 'vertical' },
-        ],
-      },
-    ];
-    const errors = yield* Effect.all(
-      inputs.map((input) =>
-        Effect.gen(function* verifyCase3() {
-          return yield* Effect.flip(deriveInstalledVerticalIds(input));
-        }),
-      ),
-      { concurrency: 'unbounded' },
+it.effect('refuses gateway admission when the approved bundle is incomplete or contradictory', () =>
+  Effect.gen(function* invalidDeploymentIds() {
+    const snapshot = yield* makeCompositionSnapshot([
+      makeModuleContractFixture({ appId: 'property-registry', moduleId: 'property.registry' }),
+      makeModuleContractFixture({ appId: 'duplicate-property', moduleId: 'property.registry' }),
+    ]);
+    const error = yield* Effect.flip(
+      installedVerticalIds.pipe(Effect.provide(makeInstalledModuleCatalogLayer(Effect.succeed(snapshot)))),
     );
-    expect(errors.every(Schema.is(InstalledVerticalTopologyError))).toBe(true);
+    expect(error).toBeInstanceOf(InstalledModuleCatalogUnavailableError);
   }),
 );

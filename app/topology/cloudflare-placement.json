@@ -1,0 +1,38 @@
+{
+  "buildEnvironment": {
+    "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID": "d51f044c49bc4757a5613c61b19b46d8",
+    "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID": "372fc29c7f034f41b0e7844a69724069",
+    "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID": "01a0f130-b075-7a93-8670-cb7adf78a1ef",
+    "ULTRAMODERN_MF_DEV_ORIGIN": "https://ontos-stage.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_ASSORTMENT": "https://ontos-stage-assortment.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_AVAILABILITY": "https://ontos-stage-availability.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_CATALOG": "https://ontos-stage-catalog.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT": "https://ontos-stage-commerce-customer-context.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG": "https://ontos-stage-commerce-market-catalog.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_INVENTORY": "https://ontos-stage-inventory.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY": "https://ontos-stage-party-registry.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG": "https://ontos-stage-payment-term-catalog.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG": "https://ontos-stage-price-group-catalog.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_PRICING": "https://ontos-stage-pricing.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_PRIVACY": "https://ontos-stage-privacy.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP": "https://ontos-stage.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY": "https://ontos-stage-storefront-registry.bleeding.dev"
+  },
+  "retiredWorkers": [],
+  "schemaVersion": 1,
+  "units": [
+    "availability",
+    "assortment",
+    "party-registry",
+    "commerce-customer-context",
+    "payment-term-catalog",
+    "commerce-market-catalog",
+    "catalog",
+    "pricing",
+    "storefront-registry",
+    "price-group-catalog",
+    "inventory",
+    "privacy",
+    "shell-super-app"
+  ]
+}

@@ -14,6 +14,7 @@ export const counterpartyProfileReadPermission = defineBusinessPermission({
   owningCapability: 'commerce.customer-context.profile',
   protectedEntrypoints: [
     'commerce.customer-context.api.customer-profile-read',
+    'commerce.customer-context.api.market-subject-restrictions-current',
     'commerce.customer-context.api.purchase-currency-resolution',
   ],
   schemaVersion: '1',

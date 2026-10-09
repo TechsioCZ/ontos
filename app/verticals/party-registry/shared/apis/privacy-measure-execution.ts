@@ -72,10 +72,9 @@ export const PrivacyMeasureExecutionApi = HttpApi.make('PrivacyMeasureExecutionA
         PrivacyMeasureExecutionUnavailableProblemSchema,
         PrivacyMeasureExecutionInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: PrivacyMeasureExecutionRequestSchema,
-      query: {},
+
       success: PrivacyMeasureExecutionResponseSchema,
     }),
   ),

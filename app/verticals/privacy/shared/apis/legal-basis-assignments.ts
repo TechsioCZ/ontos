@@ -56,10 +56,9 @@ export const LegalBasisAssignmentsApi = HttpApi.make('LegalBasisAssignmentsApi')
         LegalBasisAssignmentsUnavailableProblemSchema,
         LegalBasisAssignmentsInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: LegalBasisAssignmentsRequestSchema,
-      query: {},
+
       success: LegalBasisAssignmentsResponseSchema,
     }),
   ),

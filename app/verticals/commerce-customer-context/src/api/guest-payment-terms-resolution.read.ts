@@ -30,6 +30,7 @@ import { resolveGuestPaymentTerms } from '../../shared/domain/payment-terms.ts';
 import type { PaymentTermsPolicyDecision, PaymentTermsPolicyResolution } from '../../shared/domain/payment-terms.ts';
 import { customerCommercePaymentTermsPolicyResolver } from '../integrations/customer-commerce-payment-terms-policy.ts';
 import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
+import { customerCommercePolicyAdministrationServiceFactory } from '../services/customer-commerce-policy-administration.service.ts';
 
 const moduleKey = 'commerce.customer-context' as const;
 
@@ -91,7 +92,13 @@ export const handleGuestPaymentTermsResolution = (
     const currentAt = yield* context.services.currentInstant;
     const currentInput = { ...input, at: currentAt };
     const policy = yield* context.services.resolvePolicy(currentInput).pipe(Effect.mapError(unavailable));
-    if (Predicate.isTagged(policy, 'INCONSISTENT_CONFIGURATION')) {
+    if (
+      Predicate.isTagged(policy, 'INCONSISTENT_CONFIGURATION') ||
+      Predicate.isTagged(policy, 'MISSING_PAYMENT_TERM_POLICY') ||
+      Predicate.isTagged(policy, 'INCONSISTENT_PAYMENT_TERM_POLICY') ||
+      Predicate.isTagged(policy, 'BROKEN_PAYMENT_TERM_POLICY') ||
+      Predicate.isTagged(policy, 'PAYMENT_TERM_POLICY_UNVERIFIABLE')
+    ) {
       return { evidence: { resultCount: 1 }, result: policy };
     }
     const candidateReferences = new Map<string, PaymentTermReference>();
@@ -139,7 +146,17 @@ export const guestPaymentTermsResolutionEntrypoint = defineTenantModuleEntrypoin
 });
 
 export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTermsResolutionRead.makeServices')(
-  function* makeGuestPaymentTermResolutionServices(_transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+  function* guestPaymentTermResolutionServices(
+    _transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    compositionRevision: string | undefined,
+  ) {
+    if (compositionRevision === undefined) {
+      return yield* new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Cross-owner Read credentials require a verified composition revision',
+      });
+    }
     const { legalEntityId, trustedStorefrontId } = scope;
     if (legalEntityId === undefined || trustedStorefrontId === undefined) {
       return yield* new OperationContextUnavailable({
@@ -148,13 +165,24 @@ export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTe
       });
     }
     const catalog = yield* paymentTermCatalogPortFromEnvironment({
+      compositionRevision,
       legalEntityId,
       requestCorrelation: scope.correlationId,
     });
-    const policy = customerCommercePaymentTermsPolicyResolver('GUEST', {
-      tenantId: scope.tenantId,
-      trustedStorefrontId,
-    });
+    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Deterministic owner-port construction; neither constructor performs the governed read.
+    const policyService = yield* customerCommercePolicyAdministrationServiceFactory(
+      _transaction,
+      scope,
+      compositionRevision,
+    );
+    const policy = customerCommercePaymentTermsPolicyResolver(
+      'GUEST',
+      {
+        tenantId: scope.tenantId,
+        trustedStorefrontId,
+      },
+      policyService,
+    );
     return {
       currentInstant: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
       resolveDefinitions: (references, at) =>

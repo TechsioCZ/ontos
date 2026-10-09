@@ -22,7 +22,7 @@ const VerticalNameSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]*
 const prepareDevModuleContractCommand = Command.make(
   'prepare-dev-module-contract',
   {
-    vertical: Argument.string('vertical').pipe(Argument.withSchema(VerticalNameSchema)),
+    vertical: Argument.String('vertical').pipe(Argument.withSchema(VerticalNameSchema)),
   },
   ({ vertical }) =>
     Effect.gen(function* prepareDevModuleContractProgram() {

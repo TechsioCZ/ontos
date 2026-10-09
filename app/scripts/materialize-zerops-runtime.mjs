@@ -7,39 +7,34 @@ import { Config, Effect, FileSystem, Layer, Path, Predicate, Schema } from 'effe
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
+import { lockedRegistryOverrides } from './locked-registry-overrides.mjs';
+
 const packageJsonFile = 'package.json';
 const workspacePackageDirectories = ['packages', 'apps', 'verticals'];
 const DependencyMapSchema = Schema.Record(Schema.String, Schema.String);
 const PlatformFieldSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
-const RuntimePackageSchema = Schema.Struct({
-  cpu: Schema.optional(PlatformFieldSchema),
-  dependencies: Schema.optional(DependencyMapSchema),
-  exports: Schema.optional(Schema.Json),
-  name: Schema.optional(Schema.String),
-  optionalDependencies: Schema.optional(DependencyMapSchema),
-  os: Schema.optional(PlatformFieldSchema),
-  private: Schema.optional(Schema.Boolean),
-  scripts: Schema.optional(DependencyMapSchema),
-  version: Schema.optional(Schema.String),
+// Unknown manifest fields (type, main, engines, ...) must survive the rewrite of package.json.
+const RuntimePackageSchema = Schema.StructWithRest(
+  Schema.Struct({
+    cpu: Schema.optional(PlatformFieldSchema),
+    dependencies: Schema.optional(DependencyMapSchema),
+    exports: Schema.optional(Schema.Json),
+    name: Schema.optional(Schema.String),
+    optionalDependencies: Schema.optional(DependencyMapSchema),
+    os: Schema.optional(PlatformFieldSchema),
+    private: Schema.optional(Schema.Boolean),
+    scripts: Schema.optional(DependencyMapSchema),
+    version: Schema.optional(Schema.String),
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
+const ReleaseCohortSchema = Schema.Struct({
+  aliases: Schema.Record(Schema.String, Schema.String),
+  release: Schema.Struct({ version: Schema.String }),
 });
-const CompactConfigSchema = Schema.Struct({
-  packageSource: Schema.optional(
-    Schema.Struct({
-      aliasPackageNamePrefix: Schema.optional(Schema.String),
-      aliasScope: Schema.optional(Schema.String),
-      modernPackageVersion: Schema.optional(Schema.String),
-    }),
-  ),
-});
-const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema, {
-  onExcessProperty: 'preserve',
-});
-const decodeRuntimePackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePackageSchema), {
-  onExcessProperty: 'preserve',
-});
-const decodeCompactConfigJson = Schema.decodeUnknownEffect(Schema.fromJsonString(CompactConfigSchema), {
-  onExcessProperty: 'preserve',
-});
+const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema);
+const decodeRuntimePackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePackageSchema));
+const decodeReleaseCohortJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseCohortSchema));
 /** @typedef {typeof Schema.Json.Type} JsonValue */
 /** @type {import('effect/Schema').Codec<JsonValue, JsonValue>} */
 const JsonValueSchema = Schema.suspend(() =>
@@ -58,7 +53,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(JsonValueSchema, { 
 const isJsonRecord = Schema.is(JsonRecordSchema);
 
 /** @typedef {typeof RuntimePackageSchema.Type} RuntimePackage */
-/** @typedef {typeof CompactConfigSchema.Type} CompactConfig */
+/** @typedef {typeof ReleaseCohortSchema.Type} ReleaseCohort */
 
 class MaterializationError extends Error {
   /** @param {string} message - Error message. */
@@ -114,15 +109,15 @@ const readOptionalRuntimePackage = (filePath) =>
   });
 
 /** @param {string} filePath - Optional compact configuration path. */
-const readOptionalCompactConfig = (filePath) =>
-  Effect.gen(function* readOptionalCompactConfigEffect() {
+const readOptionalReleaseCohort = (filePath) =>
+  Effect.gen(function* readOptionalReleaseCohortEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const exists = yield* fileSystem.exists(filePath);
     if (!exists) {
       return null;
     }
     const source = yield* fileSystem.readFileString(filePath);
-    return yield* decodeCompactConfigJson(source);
+    return yield* decodeReleaseCohortJson(source);
   });
 
 /**
@@ -138,26 +133,42 @@ const writeJson = (filePath, json) =>
 
 /**
  * @param {Readonly<Record<string, string>> | undefined} dependencies - Dependency section.
- * @param {string} aliasPrefix - Generated package alias prefix.
- * @param {string} modernPackageVersion - Modern.js package version.
+ * @param {ReleaseCohort | null} cohort - Installed producer-owned package identities.
  */
-const normalizeDependencySection = (dependencies, aliasPrefix, modernPackageVersion) => {
-  if (dependencies === undefined) {
-    return null;
-  }
-  return Object.fromEntries(
-    Object.entries(dependencies).flatMap(([dependencyName, dependencyVersion]) => {
-      if (!dependencyName.startsWith(aliasPrefix)) {
-        return [[dependencyName, dependencyVersion]];
+const normalizeDependencySection = (dependencies, cohort) =>
+  Effect.gen(function* normalizeDependencySectionEffect() {
+    if (dependencies === undefined) {
+      return null;
+    }
+    /** @type {Record<string, string>} */
+    const normalized = {};
+    for (const [dependencyName, dependencyVersion] of Object.entries(dependencies)) {
+      const targetPackageName = cohort?.aliases[dependencyName];
+      const officialPackageName = Object.entries(cohort?.aliases ?? {}).find(
+        ([, target]) => target === dependencyName,
+      )?.[0];
+      const catalogDependency = dependencyVersion.startsWith('catalog:');
+      if (
+        catalogDependency &&
+        (dependencyVersion !== 'catalog:ultramodern' ||
+          cohort === null ||
+          (targetPackageName === undefined && officialPackageName === undefined))
+      ) {
+        return yield* fail(
+          `Runtime dependency ${dependencyName} has no installed release identity for ${dependencyVersion}`,
+        );
       }
-      const officialPackageName = `@modern-js/${dependencyName.slice(aliasPrefix.length)}`;
-      return [
-        [dependencyName, modernPackageVersion],
-        [officialPackageName, `npm:${dependencyName}@${modernPackageVersion}`],
-      ];
-    }),
-  );
-};
+      if (catalogDependency && targetPackageName !== undefined && cohort !== null) {
+        normalized[dependencyName] = `npm:${targetPackageName}@${cohort.release.version}`;
+      } else if (officialPackageName !== undefined && cohort !== null) {
+        normalized[dependencyName] = cohort.release.version;
+        normalized[officialPackageName] = `npm:${dependencyName}@${cohort.release.version}`;
+      } else {
+        normalized[dependencyName] = dependencyVersion;
+      }
+    }
+    return normalized;
+  });
 
 /**
  * @param {RuntimePackage} runtimeManifest - Runtime package manifest.
@@ -166,23 +177,11 @@ const normalizeDependencySection = (dependencies, aliasPrefix, modernPackageVers
  */
 const normalizeRuntimePackageDependencies = (runtimeManifest, workspaceRoot, pathService) =>
   Effect.gen(function* normalizeRuntimePackageDependenciesEffect() {
-    const compactConfig = yield* readOptionalCompactConfig(
-      pathService.join(workspaceRoot, '.modernjs/ultramodern.json'),
+    const cohort = yield* readOptionalReleaseCohort(
+      pathService.join(workspaceRoot, 'node_modules/@modern-js/ultramodern-create/release-cohort.json'),
     );
-    const modernPackageVersion = compactConfig?.packageSource?.modernPackageVersion;
-    const aliasScope = compactConfig?.packageSource?.aliasScope;
-    const aliasPackageNamePrefix = compactConfig?.packageSource?.aliasPackageNamePrefix;
-    if (modernPackageVersion === undefined || aliasScope === undefined || aliasPackageNamePrefix === undefined) {
-      return runtimeManifest;
-    }
-
-    const aliasPrefix = `@${aliasScope}/${aliasPackageNamePrefix}`;
-    const dependencies = normalizeDependencySection(runtimeManifest.dependencies, aliasPrefix, modernPackageVersion);
-    const optionalDependencies = normalizeDependencySection(
-      runtimeManifest.optionalDependencies,
-      aliasPrefix,
-      modernPackageVersion,
-    );
+    const dependencies = yield* normalizeDependencySection(runtimeManifest.dependencies, cohort);
+    const optionalDependencies = yield* normalizeDependencySection(runtimeManifest.optionalDependencies, cohort);
     const normalizedManifest = { ...runtimeManifest };
     if (dependencies !== null) {
       normalizedManifest.dependencies = dependencies;
@@ -548,7 +547,20 @@ const installRuntimeDependencies = (runtimeManifest, appId, runtimeDir, workspac
     });
     const workspacePackages = yield* collectWorkspacePackages(workspaceRoot, pathService);
     const { installPackage, localDependencies } = removeWorkspaceDependencies(runtimeManifest, workspacePackages);
-    yield* writeJson(pathService.join(installDir, packageJsonFile), installPackage);
+    const lockfilePath = pathService.join(workspaceRoot, 'pnpm-lock.yaml');
+    // Without the lockfile the install would float to the newest matching versions again, so fail loudly.
+    const lockfileText = yield* fileSystem
+      .readFileString(lockfilePath)
+      .pipe(Effect.mapError((cause) => new MaterializationError(`Unable to read ${lockfilePath}: ${String(cause)}`)));
+    const directDependencies = new Set([
+      ...Object.keys(installPackage.dependencies ?? {}),
+      ...Object.keys(installPackage.optionalDependencies ?? {}),
+    ]);
+    // npm rejects an override that restates a direct dependency, and direct dependencies are already exact.
+    const overrides = Object.fromEntries(
+      Object.entries(lockedRegistryOverrides(lockfileText)).filter(([name]) => !directDependencies.has(name)),
+    );
+    yield* writeJson(pathService.join(installDir, packageJsonFile), { ...installPackage, overrides });
     const installCommand = ChildProcess.make(
       process.platform === 'win32' ? 'npm.cmd' : 'npm',
       ['install', '--omit=dev', '--no-audit', '--fund=false', '--legacy-peer-deps'],
@@ -581,22 +593,37 @@ const installRuntimeDependencies = (runtimeManifest, appId, runtimeDir, workspac
 const materializeCommand = Command.make(
   'materialize-zerops-runtime',
   {
-    appId: Flag.string('app'),
-    packageDir: Flag.string('package-dir'),
-    packageName: Flag.string('package'),
-    worker: Flag.boolean('worker').pipe(Flag.withDefault(false)),
+    appId: Flag.String('app'),
+    packageDir: Flag.String('package-dir'),
+    packageName: Flag.String('package'),
+    worker: Flag.Boolean('worker').pipe(Flag.withDefault(false)),
   },
   ({ appId, packageDir, packageName, worker }) =>
     Effect.gen(function* materializeCommandEffect() {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const workspaceRoot = pathService.resolve(
-        yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(process.cwd())),
+        yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(process.cwd())),
       );
       yield* assertRelativePath('--package-dir', packageDir, pathService);
       const appRoot = pathService.resolve(workspaceRoot, packageDir);
       const appOutputDir = pathService.join(appRoot, '.output');
-      const runtimeDir = pathService.join(workspaceRoot, '.zerops/runtime', worker ? `${appId}-worker` : appId);
+      const outboxWorkerModule = worker
+        ? yield* Effect.tryPromise({
+            catch: (cause) => new MaterializationError(String(cause)),
+            try: async () => await import('./materialize-outbox-worker.mjs'),
+          })
+        : undefined;
+      // A worker's runtime directory is its service: an owner's dedicated worker or the Outbox Worker host.
+      const runtimeName =
+        outboxWorkerModule === undefined
+          ? appId
+          : (yield* Effect.tryPromise({
+              catch: (cause) => new MaterializationError(String(cause)),
+              try: async () =>
+                await outboxWorkerModule.resolveOutboxWorker({ appId, packageDir, packageName, workspaceRoot }),
+            })).serviceId;
+      const runtimeDir = pathService.join(workspaceRoot, '.zerops/runtime', runtimeName);
       yield* Effect.all(
         [
           assertInsideWorkspace('package directory', appRoot, workspaceRoot, pathService),
@@ -635,11 +662,7 @@ const materializeCommand = Command.make(
       const packageJsonPath = pathService.join(runtimeDir, packageJsonFile);
       /** @type {RuntimePackage} */
       let runtimePackage = (yield* readOptionalRuntimePackage(packageJsonPath)) ?? {};
-      if (worker) {
-        const outboxWorkerModule = yield* Effect.tryPromise({
-          catch: (cause) => new MaterializationError(String(cause)),
-          try: async () => await import('./materialize-outbox-worker.mjs'),
-        });
+      if (outboxWorkerModule !== undefined) {
         runtimePackage = yield* Effect.tryPromise({
           catch: (cause) => new MaterializationError(String(cause)),
           try: async () =>

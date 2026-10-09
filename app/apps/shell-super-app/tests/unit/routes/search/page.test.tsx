@@ -11,8 +11,8 @@ import {
   ResourceIdSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
-import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
-import type { SearchPageModel } from '../../../../src/routes/[lang]/search/page.data.ts';
+import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
+import type { SearchPageModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
 import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
@@ -58,6 +58,7 @@ const translations = new Map(
     'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
     'shell.dashboard.unavailable': 'Dashboard unavailable',
     'shell.modules.state.readOnly': 'Read only',
+    'shell.moduleTarget.reload_required': 'Reload this page to continue',
     'shell.search.empty': 'No results',
     'shell.search.label': 'Search this legal entity',
     'shell.search.selection_required': 'Select a legal entity first',
@@ -94,7 +95,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  browserRuntime: { runPromise: browserRunPromiseMock },
+  browserRuntime: { runPromise: browserRunPromiseMock, runSyncExit: browserRuntime.runSyncExit },
 }));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');
@@ -107,6 +108,7 @@ const plainResourceId = Schema.decodeUnknownSync(ResourceIdSchema)('unit-1');
 const awkwardResourceId = Schema.decodeUnknownSync(ResourceIdSchema)('unit #1/2');
 
 const authenticatedShell = (): HomePageModel => ({
+  compositionRevision: '1'.repeat(64),
   contextState: 'authenticated',
   identity: {
     displayName: 'Ada Lovelace',
@@ -254,4 +256,17 @@ test('a closed shell state exposes no navigable affordance at all', () => {
   expect(screen.getByText('Dashboard unavailable')).toBeTruthy();
   expect(screen.queryAllByRole('link')).toHaveLength(0);
   expect(localizedLinkCalls).toHaveLength(0);
+});
+
+test('a stale search release exposes only the reload message', () => {
+  useLoaderDataMock.mockReturnValue({
+    query: 'unit',
+    shell: { state: 'reload_required' },
+    state: 'reload_required',
+  } satisfies SearchPageModel);
+  render(<SearchPage />);
+
+  expect(screen.getByText('Reload this page to continue')).toBeTruthy();
+  expect(screen.queryAllByRole('link')).toHaveLength(0);
+  expect(resourceLinkCalls()).toHaveLength(0);
 });

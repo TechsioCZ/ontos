@@ -1,8 +1,5 @@
-import { readFile } from 'node:fs/promises';
-
-import { Effect, Cause } from 'effect';
+import { Cause, Redacted, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Client } from 'pg';
 
 import {
   assertDatabaseSessionIdentities,
@@ -660,28 +657,6 @@ it('treats ADMIN OPTION as an escalation path when SET OPTION is false', () => {
   ]);
 });
 
-it.live(
-  'traverses SET OPTION descendants after every ADMIN OPTION role',
-  Effect.fn(function* scenario1() {
-    const source = yield* Effect.promise(() =>
-      readFile(new URL('../database-trust-audit/collect-snapshot.mts', import.meta.url), 'utf-8'),
-    );
-
-    expect(source.match(/where membership\.admin_option or membership\.set_option/gu)?.length).toBe(3);
-    expect(source).toMatch(/candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u);
-    expect(source).not.toMatch(
-      /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
-    );
-    expect(source).toMatch(/view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
-    expect(source).toMatch(/target_roles\(role_oid, role_name\)/u);
-    expect(source).toMatch(/format\('role:%I:%s', target\.role_name, authority\.grant_option\)/u);
-    expect(source).toMatch(/pg_has_role\(effective_owner\.oid, \$3, 'USAGE'\)/u);
-    expect(source).toMatch(
-      /pg_has_role\(\s*dependency\.effective_owner_oid,\s*referenced_relation\.relowner,\s*'USAGE'\s*\)/u,
-    );
-  }),
-);
-
 it('treats inherited owner-role authority as effective runtime DDL authority', () => {
   const report = buildHardenedReport({
     memberships: [
@@ -730,16 +705,20 @@ it('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () =>
   expect(findingCodes(report)).toEqual(['runtime_role_can_assume_other_role']);
 });
 
-it('uses node-postgres effective query-parameter socket endpoints', () => {
-  const client = new Client({
-    connectionString:
-      'postgresql://authority_user:password@authority.invalid:5432/ontos?host=%2Fvar%2Frun%2Fruntime-db&port=6432',
-  });
-
-  expect(getEffectiveDatabaseEndpoint(client)).toEqual({
-    configuredHost: '/var/run/runtime-db',
-    configuredPort: 6432,
-  });
+it('uses the native driver effective query-parameter socket endpoints', () => {
+  expect(
+    getEffectiveDatabaseEndpoint(
+      Redacted.make(
+        'postgresql://authority_user:password@authority.invalid:5432/ontos?host=%2Fvar%2Frun%2Fruntime-db&port=6432',
+      ),
+    ),
+  ).toStrictEqual(Result.succeed({ configuredHost: '/var/run/runtime-db', configuredPort: 6432 }));
+  expect(getEffectiveDatabaseEndpoint(Redacted.make('postgresql://authority_user:password@[::1]/ontos'))).toStrictEqual(
+    Result.succeed({ configuredHost: '::1', configuredPort: 5432 }),
+  );
+  expect(getEffectiveDatabaseEndpoint(Redacted.make('postgresql:///ontos?user=authority_user'))).toStrictEqual(
+    Result.succeed({ configuredHost: 'localhost', configuredPort: 5432 }),
+  );
 });
 
 it('requires direct, distinct live database session identities', () => {

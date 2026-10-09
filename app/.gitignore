@@ -14,10 +14,14 @@ build/
 .modernjs/agent-reference-repos-tmp/
 .codex/reports/
 .zerops/runtime/
+# Development SpiceDB TLS pair (scripts/local-spicedb-tls.mts).
+.spicedb-tls/
 
 **/.env.*
 !**/.env.example
 .output/
 **/.output/
+# Transient module-contract bundles; a concurrent unit build reads the worktree as its release source.
+**/.ontos-contract-*/
 **/src/modern-tanstack/
 **/.tsgo.*.resolved.json

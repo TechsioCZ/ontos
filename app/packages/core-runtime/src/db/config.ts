@@ -1,3 +1,4 @@
+import { databaseRuntime } from '#database-runtime';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 
 import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
@@ -51,10 +52,8 @@ export interface LoadDatabaseConfigOptions {
   readonly envPath?: string;
 }
 
-const configFailure = (reason: string, cause?: unknown): DatabaseConfigError => {
-  const failure = new DatabaseConfigError({ reason });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-};
+const configFailure = (reason: string, cause?: unknown): DatabaseConfigError =>
+  new DatabaseConfigError({ cause, reason });
 
 interface ReadDatabaseUrlOptions {
   readonly configKey: string;
@@ -175,9 +174,14 @@ const loadWithProvider = <Value>(
   );
 };
 
+/** Loads the runtime role's connection, which a Worker takes from its `HYPERDRIVE` binding. */
 export const loadDatabaseConfig = (
   options: LoadDatabaseConfigOptions = {},
-): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> => loadWithProvider(parseDatabaseConfigWith, options);
+): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
+  loadWithProvider(
+    (provider) => databaseRuntime.runtimeDatabaseProvider(provider).pipe(Effect.flatMap(parseDatabaseConfigWith)),
+    options,
+  );
 
 export const loadDatabaseConnectionPair = (
   options: LoadDatabaseConfigOptions = {},

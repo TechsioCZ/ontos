@@ -8,10 +8,6 @@ import { AssignDsrResolverPayloadSchema, AssignDsrResolverResultSchema } from '.
 
 export { AssignDsrResolverPayloadSchema } from '../actions/assign-dsr-resolver.ts';
 
-const AssignDsrResolverActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AssignDsrResolverActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignDsrResolverActionInvalidProblem',
   400,
@@ -125,15 +121,34 @@ const actionErrors = [
   AssignDsrResolverActionInternalProblemSchema,
 ] as const;
 
-export const AssignDsrResolverActionApi = HttpApi.make('AssignDsrResolverActionApi').add(
-  HttpApiGroup.make('assignDsrResolverAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/assign-dsr-resolver', {
-        error: actionErrors,
-        headers: AssignDsrResolverActionHeadersSchema,
-        payload: Schema.toEncoded(AssignDsrResolverPayloadSchema),
-        success: AssignDsrResolverResultSchema,
-      }),
-    )
-    .middleware(AssignDsrResolverActionSchemaErrorMiddleware),
-);
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const assignDsrResolverActionGroupDefinition = HttpApiGroup.make('assignDsrResolverAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/assign-dsr-resolver', {
+      error: actionErrors,
+      payload: Schema.toEncoded(AssignDsrResolverPayloadSchema),
+      success: AssignDsrResolverResultSchema,
+    }),
+  )
+  .middleware(AssignDsrResolverActionSchemaErrorMiddleware);
+
+export type AssignDsrResolverActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'assignDsrResolverAction',
+  HttpApiGroup.Endpoints<typeof assignDsrResolverActionGroupDefinition>
+>;
+
+const AssignDsrResolverActionGroup: AssignDsrResolverActionGroupContract = assignDsrResolverActionGroupDefinition;
+
+export const AssignDsrResolverActionApi = HttpApi.make('AssignDsrResolverActionApi').add(AssignDsrResolverActionGroup);

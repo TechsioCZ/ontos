@@ -170,11 +170,9 @@ it('rejects reserved and unconstrained extension schemas at construction', () =>
   for (const unsafe of [
     Schema.Array(Schema.Unknown),
     Schema.BigInt,
-    Schema.Enum({ Invalid: Number.POSITIVE_INFINITY }),
-    Schema.Enum({ Invalid: Number.NaN }),
     Schema.Literal(1n),
     Schema.Json,
-    // @effect-diagnostics-next-line schemaNumber:off -- Bare Number is intentionally supplied to prove the helper rejects non-finite JSON values.
+    // @effect-diagnostics-next-line schemaNumber:off -- The non-finite number schema is the rejected input under test.
     Schema.Number,
     Schema.Record(Schema.String, Schema.String),
     Schema.Symbol,

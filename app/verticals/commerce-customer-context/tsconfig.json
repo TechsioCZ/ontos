@@ -2,6 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
+    "types": [
+      "node",
+      "bun-types/sqlite"
+    ],
     "declaration": true,
     "declarationMap": false,
     "emitDeclarationOnly": true,
@@ -23,16 +27,28 @@
   ],
   "references": [
     {
+      "path": "../catalog"
+    },
+    {
       "path": "../../packages/core-runtime"
     },
     {
-      "path": "../../packages/customer-payment-term-contracts"
+      "path": "../../packages/better-auth-effect-drizzle"
     },
     {
       "path": "../../packages/gateway-principal-verifier"
     },
     {
+      "path": "../../packages/customer-payment-term-contracts"
+    },
+    {
+      "path": "../../packages/customer-market-retirement-contracts"
+    },
+    {
       "path": "../../packages/payment-term-catalog-contracts"
+    },
+    {
+      "path": "../../packages/pricing-contracts"
     },
     {
       "path": "../../packages/shared-contracts"
@@ -44,7 +60,7 @@
       "path": "../party-registry"
     },
     {
-      "path": "../privacy"
+      "path": "../../packages/email-delivery"
     }
   ]
 }

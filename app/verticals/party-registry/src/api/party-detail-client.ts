@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PartyDetailClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PartyDetailAuthorizedInvocation = readonly [
@@ -38,20 +39,17 @@ export const executePartyDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PartyDetailAuthorizedInvocation
 ) =>
   partyDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.partyDetail.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.partyDetail.execute({ payload })),
   );
 
 export const executePartyDetail = (
   payload: PartyDetailRequest,
   ...[requestCorrelation, options = {}]: PartyDetailOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePartyDetailWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePartyDetailWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

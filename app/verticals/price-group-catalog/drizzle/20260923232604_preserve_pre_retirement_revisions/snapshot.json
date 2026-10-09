@@ -1,0 +1,2628 @@
+{
+  "id": "73a19745-4c45-47e4-b39d-5b69dd262e50",
+  "prevIds": [
+    "acd3f7a8-5183-40a7-a844-a7ddbf23a3ff"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "price_group_catalog",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "price_group_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "price_group_catalog_ledger",
+      "entityType": "tables",
+      "schema": "price_group_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "price_group_compatibility_support",
+      "entityType": "tables",
+      "schema": "price_group_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "price_group_containment_projection_intents",
+      "entityType": "tables",
+      "schema": "price_group_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "price_group_definition_effective_intervals",
+      "entityType": "tables",
+      "schema": "price_group_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "price_group_definition_revisions",
+      "entityType": "tables",
+      "schema": "price_group_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "price_group_retirements",
+      "entityType": "tables",
+      "schema": "price_group_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "price_groups",
+      "entityType": "tables",
+      "schema": "price_group_catalog"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "redeemed_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "catalog_ledger_entry_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expected_catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation_kind",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_group_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "definition_revision_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "trusted_effective_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "compatibility_support_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_group_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "definition_revision_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "contract_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "contract_version",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "declared_at_catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "mutation_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_group_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "definition_revision_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "definition_catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_action_invocation_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "catalog_version",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'PENDING'",
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "requested_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "completed_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "definition_effective_interval_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_group_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "definition_revision_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "schedule_catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "definition_revision_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_group_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "previous_definition_revision_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "compared_definition_revision_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "semantic_continuity_decision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "display_name",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "description",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "classification_purpose",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "meaning_fingerprint",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "accepted_catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "price_group_retirement_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_group_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "current_definition_revision_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expected_catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "accepted_catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "price_group_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "canonical_meaning",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "business_code",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "meaning_fingerprint",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'ACTIVE'",
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_state",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active_from",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retired_effective_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "current_definition_schedule_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at_catalog_revision",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_action_invocation_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_principal_id",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "creation_reason",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "price_group_catalog_gateway_assertion_redemptions_expiry_idx",
+      "entityType": "indexes",
+      "schema": "price_group_catalog",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "price_group_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "catalog_revision",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "price_group_catalog_ledger_group_idx",
+      "entityType": "indexes",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "price_group_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "contract_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "contract_version",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "definition_revision_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "price_group_catalog_compatibility_lookup_idx",
+      "entityType": "indexes",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "state",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "requested_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "price_group_catalog_containment_intents_pending_idx",
+      "entityType": "indexes",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "price_group_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "schedule_catalog_revision",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "effective_from",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "effective_to",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "price_group_catalog_intervals_current_lookup_idx",
+      "entityType": "indexes",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "price_group_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "revision_number",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "price_group_catalog_definitions_history_idx",
+      "entityType": "indexes",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "lifecycle_state",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "price_group_catalog_groups_lifecycle_idx",
+      "entityType": "indexes",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_definition_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_compatibility_definition_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "declared_at_catalog_revision"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_catalog_ledger",
+      "columnsTo": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_compatibility_ledger_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_definition_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_containment_intents_definition_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "definition_catalog_revision"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_catalog_ledger",
+      "columnsTo": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_containment_intents_ledger_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_definition_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_intervals_definition_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "schedule_catalog_revision"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_catalog_ledger",
+      "columnsTo": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_intervals_schedule_ledger_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "accepted_catalog_revision"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_catalog_ledger",
+      "columnsTo": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_definitions_ledger_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_groups",
+      "columnsTo": [
+        "tenant_id",
+        "price_group_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_retirements_group_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "current_definition_revision_id"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_definition_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_retirements_definition_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "expected_catalog_revision"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_catalog_ledger",
+      "columnsTo": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_retirements_expected_ledger_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "accepted_catalog_revision"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_catalog_ledger",
+      "columnsTo": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_retirements_ledger_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "current_definition_schedule_revision"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_catalog_ledger",
+      "columnsTo": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_groups_current_schedule_ledger_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "created_at_catalog_revision"
+      ],
+      "schemaTo": "price_group_catalog",
+      "tableTo": "price_group_catalog_ledger",
+      "columnsTo": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "price_group_catalog_groups_creation_ledger_fk",
+      "entityType": "fks",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "columns": [
+        "catalog_ledger_entry_id"
+      ],
+      "nameExplicit": false,
+      "name": "price_group_catalog_ledger_pkey",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "compatibility_support_id"
+      ],
+      "nameExplicit": false,
+      "name": "price_group_compatibility_support_pkey",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "mutation_id"
+      ],
+      "nameExplicit": false,
+      "name": "price_group_containment_projection_intents_pkey",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "definition_effective_interval_id"
+      ],
+      "nameExplicit": false,
+      "name": "price_group_definition_effective_intervals_pkey",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "definition_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "price_group_definition_revisions_pkey",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "price_group_retirement_id"
+      ],
+      "nameExplicit": false,
+      "name": "price_group_retirements_pkey",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "price_group_id"
+      ],
+      "nameExplicit": false,
+      "name": "price_groups_pkey",
+      "schema": "price_group_catalog",
+      "table": "price_groups",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_gateway_assertion_redemptions_identity_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "catalog_revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_ledger_scope_revision_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_ledger_scope_invocation_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id",
+        "contract_id",
+        "contract_version"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_compatibility_exact_contract_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "mutation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_containment_intents_scope_mutation_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "source_action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_containment_intents_scope_action_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_containment_intents_scope_group_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "definition_effective_interval_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_intervals_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "schedule_catalog_revision",
+        "definition_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_intervals_revision_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "schedule_catalog_revision",
+        "effective_from"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_intervals_effective_start_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "definition_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_definitions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_definitions_number_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_definitions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_retirements_group_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_retirements_invocation_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "price_group_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_groups_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "business_code"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_groups_scope_code_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "canonical_meaning"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_groups_scope_canonical_meaning_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "meaning_fingerprint"
+      ],
+      "nullsNotDistinct": false,
+      "name": "price_group_catalog_groups_scope_meaning_uk",
+      "entityType": "uniques",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "value": "\"expected_catalog_revision\" >= 0 and \"catalog_revision\" = \"expected_catalog_revision\" + 1",
+      "name": "price_group_catalog_ledger_revision_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "value": "\"operation_kind\" in ('CREATE_PRICE_GROUP', 'CREATE_DEFINITION_REVISION', 'RETIRE_PRICE_GROUP')",
+      "name": "price_group_catalog_ledger_operation_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "price_group_catalog_ledger_reason_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "value": "\"contract_id\" ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$' and length(\"contract_id\") between 1 and 160",
+      "name": "price_group_catalog_compatibility_contract_id_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "value": "\"contract_version\" > 0",
+      "name": "price_group_catalog_compatibility_contract_version_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "price_group_catalog_compatibility_reason_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "value": "\"operation\" = 'TOUCH_CONTAINMENT'",
+      "name": "price_group_catalog_containment_intents_operation_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "value": "\"catalog_version\" = '1'",
+      "name": "price_group_catalog_containment_intents_catalog_version_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "value": "\"state\" in ('PENDING', 'APPLIED')",
+      "name": "price_group_catalog_containment_intents_state_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "value": "(\"state\" = 'PENDING' and \"completed_at\" is null) or (\"state\" = 'APPLIED' and \"completed_at\" is not null and \"completed_at\" >= \"requested_at\")",
+      "name": "price_group_catalog_containment_intents_completion_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "value": "\"effective_to\" is null or \"effective_to\" > \"effective_from\"",
+      "name": "price_group_catalog_intervals_period_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "price_group_catalog_intervals_reason_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "value": "\"revision_number\" > 0",
+      "name": "price_group_catalog_definitions_revision_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "value": "(\"revision_number\" = 1 and \"previous_definition_revision_id\" is null) or (\"revision_number\" > 1 and \"previous_definition_revision_id\" is not null and \"previous_definition_revision_id\" <> \"definition_revision_id\")",
+      "name": "price_group_catalog_definitions_predecessor_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "value": "(\"revision_number\" = 1 and \"compared_definition_revision_id\" is null and \"semantic_continuity_decision\" is null) or (\"revision_number\" > 1 and \"semantic_continuity_decision\" = 'SAME_MEANING' and \"compared_definition_revision_id\" = \"previous_definition_revision_id\")",
+      "name": "price_group_catalog_definitions_continuity_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "value": "\"display_name\" = btrim(\"display_name\") and length(\"display_name\") between 1 and 160 and \"description\" = btrim(\"description\") and length(\"description\") between 1 and 2000",
+      "name": "price_group_catalog_definitions_display_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "value": "\"classification_purpose\" = btrim(\"classification_purpose\") and length(\"classification_purpose\") between 1 and 1000",
+      "name": "price_group_catalog_definitions_purpose_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "value": "\"meaning_fingerprint\" ~ '^[0-9a-f]{64}$'",
+      "name": "price_group_catalog_definitions_fingerprint_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "price_group_catalog_definitions_reason_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "value": "\"expected_catalog_revision\" > 0 and \"accepted_catalog_revision\" = \"expected_catalog_revision\" + 1",
+      "name": "price_group_catalog_retirements_fence_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "price_group_catalog_retirements_reason_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "value": "\"business_code\" ~ '^[A-Z][A-Z0-9_]{0,63}$'",
+      "name": "price_group_catalog_groups_code_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "value": "\"canonical_meaning\" = regexp_replace(lower(btrim(\"canonical_meaning\")), '[[:space:]]+', ' ', 'g') and length(\"canonical_meaning\") between 1 and 1000",
+      "name": "price_group_catalog_groups_canonical_meaning_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "value": "\"meaning_fingerprint\" ~ '^[0-9a-f]{64}$'",
+      "name": "price_group_catalog_groups_fingerprint_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "value": "\"lifecycle_state\" in ('ACTIVE', 'RETIRED')",
+      "name": "price_group_catalog_groups_lifecycle_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "value": "(\"lifecycle_state\" = 'ACTIVE' and \"retired_effective_at\" is null) or (\"lifecycle_state\" = 'RETIRED' and \"retired_effective_at\" is not null and \"retired_effective_at\" >= \"active_from\")",
+      "name": "price_group_catalog_groups_retirement_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "value": "\"creation_reason\" = btrim(\"creation_reason\") and length(\"creation_reason\") between 1 and 1000",
+      "name": "price_group_catalog_groups_creation_reason_ck",
+      "entityType": "checks",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_catalog_ledger\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_ledger_scope_select",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"price_group_catalog\".\"price_group_catalog_ledger\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_ledger_scope_insert",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_catalog_ledger\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"price_group_catalog\".\"price_group_catalog_ledger\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_ledger_scope_update",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_catalog_ledger\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_ledger_scope_delete",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_catalog_ledger"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_compatibility_support\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_compatibility_scope_select",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"price_group_catalog\".\"price_group_compatibility_support\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_compatibility_scope_insert",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_compatibility_support\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"price_group_catalog\".\"price_group_compatibility_support\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_compatibility_scope_update",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_compatibility_support\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_compatibility_scope_delete",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_compatibility_support"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_containment_projection_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_containment_intents_scope_select",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"price_group_catalog\".\"price_group_containment_projection_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_containment_intents_scope_insert",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_containment_projection_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"price_group_catalog\".\"price_group_containment_projection_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_containment_intents_scope_update",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_containment_projection_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_containment_intents_scope_delete",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_containment_projection_intents"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_definition_effective_intervals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_intervals_scope_select",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"price_group_catalog\".\"price_group_definition_effective_intervals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_intervals_scope_insert",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_definition_effective_intervals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"price_group_catalog\".\"price_group_definition_effective_intervals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_intervals_scope_update",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_definition_effective_intervals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_intervals_scope_delete",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_effective_intervals"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_definitions_scope_select",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"price_group_catalog\".\"price_group_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_definitions_scope_insert",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"price_group_catalog\".\"price_group_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_definitions_scope_update",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_definitions_scope_delete",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_definition_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_retirements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_retirements_scope_select",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"price_group_catalog\".\"price_group_retirements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_retirements_scope_insert",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_retirements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"price_group_catalog\".\"price_group_retirements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_retirements_scope_update",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_group_retirements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_retirements_scope_delete",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_group_retirements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_groups\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_groups_scope_select",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"price_group_catalog\".\"price_groups\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_groups_scope_insert",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_groups\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"price_group_catalog\".\"price_groups\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "price_group_catalog_groups_scope_update",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"price_group_catalog\".\"price_groups\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "price_group_catalog_groups_scope_delete",
+      "entityType": "policies",
+      "schema": "price_group_catalog",
+      "table": "price_groups"
+    }
+  ],
+  "renames": []
+}

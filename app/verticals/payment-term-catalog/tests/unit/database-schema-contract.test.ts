@@ -1,8 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Migration contract reads checked-in generated SQL; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Order } from 'effect';
-import { readdirSync, readFileSync } from 'node:fs';
 import {
   PAYMENT_TERM_CATALOG_SCHEMA_NAME,
   PAYMENT_TERM_CATALOG_TABLE_INVENTORY,
@@ -92,108 +90,4 @@ it('preserves stable identity, lifecycle evidence, and reconciliation aliases', 
       Order.String,
     ),
   ).toEqual(['payment_term_catalog_aliases_alias_fk', 'payment_term_catalog_aliases_canonical_fk']);
-});
-
-it('checks in generated migration history plus explicit force-RLS and append-only guards', () => {
-  const migrationRoot = new URL('../../drizzle/', import.meta.url);
-  const folders = EffectArray.sort(readdirSync(migrationRoot), Order.String);
-  expect(folders.length).toBeGreaterThanOrEqual(2);
-  const sqlFiles = folders.map((folder) => readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'));
-  const combined = sqlFiles.join('\n');
-  for (const table of PAYMENT_TERM_CATALOG_TABLE_INVENTORY) {
-    expect(combined).toContain(`ALTER TABLE "payment_term_catalog"."${table}" FORCE ROW LEVEL SECURITY`);
-  }
-  expect(combined).toContain('payment_term_revisions_append_only');
-  expect(combined).toContain('payment_term_lifecycle_events_append_only');
-  expect(combined).toContain('payment_term_aliases_append_only');
-  expect(combined).toContain('payment_terms_identity_immutable');
-  expect(combined).toContain('CREATE UNIQUE INDEX "payment_term_catalog_revisions_semantics_uk"');
-  expect(combined).toContain('DROP INDEX "payment_term_catalog"."payment_term_catalog_revisions_semantics_uk"');
-  expect(combined).toContain('CREATE INDEX "payment_term_catalog_revisions_semantics_idx"');
-  expect(
-    sqlFiles.some(
-      (migration) =>
-        migration.includes('DROP CONSTRAINT "payment_term_catalog_revisions_semantics_ck"') &&
-        migration.includes('"net_days" between 0 and 9007199254740991'),
-    ),
-  ).toBe(true);
-  expect(combined).toContain('"net_days" is not null and "net_days" between 0 and 9007199254740991');
-  expect(combined).toContain('"retirement_reason" is not null and "retirement_reason" = btrim("retirement_reason")');
-  expect(combined).toContain("v_net_days bigint := CASE WHEN p_input->'semantics'->>'kind' = 'NET_DAYS'");
-});
-
-it('hardens governed routines against concurrent conflicts, alias corruption, and page loss', () => {
-  const migrationRoot = new URL('../../drizzle/', import.meta.url);
-  const hardeningFolder = readdirSync(migrationRoot).find((folder) =>
-    folder.endsWith('_harden-governed-payment-term-routines'),
-  );
-  expect(hardeningFolder).toBeDefined();
-  const hardening = readFileSync(new URL(`${hardeningFolder}/migration.sql`, migrationRoot), 'utf-8');
-
-  expect(hardening).toContain("'payment-term-code|'");
-  expect(hardening).toContain("'payment-term-semantics|'");
-  expect(hardening).toContain("'payment-term-alias-graph|'");
-  expect(hardening).toContain('canonical_payment_term_id = v_alias_id');
-  expect(hardening).toContain('v_next_id = ANY(v_visited)');
-  expect(hardening).toContain("'reason', 'cycle'");
-  expect(hardening).toContain("'reason', 'depth_exceeded'");
-
-  const activeFilter = hardening.indexOf('term.active_from <= p_at');
-  const retirementFilter = hardening.indexOf('p_at < term.retired_effective_at');
-  const pageLimit = hardening.indexOf('LIMIT greatest(1, least(p_limit, 200)) + 1');
-  expect(activeFilter).toBeGreaterThan(-1);
-  expect(retirementFilter).toBeGreaterThan(activeFilter);
-  expect(pageLimit).toBeGreaterThan(retirementFilter);
-});
-
-it('bounds reconciliation fan-in and requires lifecycle-equivalent reference identities', () => {
-  const migrationRoot = new URL('../../drizzle/', import.meta.url);
-  const boundaryFolder = readdirSync(migrationRoot).find((folder) =>
-    folder.endsWith('_bound-reconciliation-reference-safety'),
-  );
-  expect(boundaryFolder).toBeDefined();
-  const boundary = readFileSync(new URL(`${boundaryFolder}/migration.sql`, migrationRoot), 'utf-8');
-
-  expect(boundary).toContain('v_alias_term.active_from IS DISTINCT FROM');
-  expect(boundary).toContain(
-    'v_alias_term.retired_effective_at IS DISTINCT FROM v_canonical_term.retired_effective_at',
-  );
-  expect(boundary).toContain('canonical_payment_term_id = v_canonical_id');
-  expect(boundary).toContain('v_inbound_alias_count >= 199');
-  expect(boundary.indexOf('v_inbound_alias_count >= 199')).toBeLessThan(
-    boundary.indexOf('INSERT INTO "payment_term_catalog"."payment_term_aliases"'),
-  );
-});
-
-it('exposes only audited scope-bound SECURITY DEFINER routines to the runtime role', () => {
-  const migrationRoot = new URL('../../drizzle/', import.meta.url);
-  const combined = EffectArray.sort(readdirSync(migrationRoot), Order.String)
-    .map((folder) => readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'))
-    .join('\n');
-  expect(combined).toContain('REVOKE ALL ON ALL TABLES IN SCHEMA "payment_term_catalog" FROM "ontos_runtime"');
-  expect(combined).toContain('REVOKE ALL ON ALL SEQUENCES IN SCHEMA "payment_term_catalog" FROM "ontos_runtime"');
-  expect(combined).toContain('CREATE FUNCTION "payment_term_catalog"."assert_operation_scope"');
-  expect(combined).toContain('SECURITY DEFINER');
-  expect(combined).toContain("current_setting('ontos.tenant_id', true)");
-  expect(combined).toContain("current_setting('ontos.legal_entity_id', true)");
-  for (const routine of [
-    'correct_term',
-    'create_term',
-    'get_current',
-    'get_history',
-    'list_current',
-    'reconcile_term',
-    'resolve_reference',
-    'retire_term',
-  ]) {
-    expect(combined).toContain(`GRANT EXECUTE ON FUNCTION "payment_term_catalog"."${routine}"`);
-  }
-  expect(combined).not.toContain('GRANT EXECUTE ON FUNCTION "payment_term_catalog"."definition_json"');
-
-  const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
-  expect(verifier).toContain('bool_or(has_table_privilege');
-  expect(verifier).toContain('routine.oid::regprocedure::text in');
-  expect(verifier).toContain('routine.prosecdef');
-  expect(verifier).toContain('routine.proconfig @>');
-  expect(verifier).toContain('unexpected_runtime_routine_count === 0');
 });

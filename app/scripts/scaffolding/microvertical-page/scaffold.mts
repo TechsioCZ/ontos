@@ -66,11 +66,8 @@ const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
 const staticRouteSegmentPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const parameterRouteSegmentPattern = /^:(?<name>[a-z][A-Za-z0-9]*)$/u;
 const pageStarterLocales = new Set(['cs', 'en']);
-const SHELL_PAGE_CLIENT_SLOT_START = '// @ontos-codegen-start shell-page-clients';
-const SHELL_PAGE_CLIENT_SLOT_END = '// @ontos-codegen-end shell-page-clients';
 const SHELL_APP_ID = 'shell-super-app';
 const PAGE_FILE_NAME = 'page.tsx';
-const PAGE_LOADER_FILE_NAME = 'page.data.ts';
 const ROUTE_METADATA_FILE_NAME = 'route.meta.ts';
 
 class PageScaffoldError extends Schema.TaggedError<PageScaffoldError>()('PageScaffoldError', {
@@ -288,6 +285,17 @@ const discoverPageVertical = (
     if (!(yield* fileExists(routeHeadPath))) {
       return yield* pageScaffoldFailure(`vertical ${vertical.slug} generated UltramodernRouteHead is missing`);
     }
+    const routeStylesPath = resolveContainedPath(
+      workspaceRoot,
+      'verticals',
+      vertical.slug,
+      'src',
+      'routes',
+      'index.css',
+    );
+    if (!(yield* fileExists(routeStylesPath))) {
+      return yield* pageScaffoldFailure(`vertical ${vertical.slug} generated route stylesheet is missing`);
+    }
     const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
     const resourcesPath = resolveContainedPath(
       workspaceRoot,
@@ -317,6 +325,8 @@ const discoverPageVertical = (
 
 const renderPage = (vertical: PageVerticalMetadata, page: string, route: PageRoute): string => {
   const componentName = `${toPascalCase(page)}Page`;
+  const contentComponentName = `${componentName}Content`;
+  const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const prefix = vertical.tailwindPrefix;
   const schemaImport = route.isDynamic ? `import { Schema } from 'effect';\n` : '';
@@ -336,11 +346,19 @@ interface ${componentName}Props {
 `
     : '';
   const declaration = route.isDynamic
-    ? `export const ${componentName} = ({ routeParams }: ${componentName}Props) => {
+    ? `const ${contentComponentName} = ({ routeParams }: ${componentName}Props) => {
   void routeParams;`
-    : `export const ${componentName} = () => {`;
-  return `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+    : `const ${contentComponentName} = () => {`;
+  const ownerDeclaration = route.isDynamic
+    ? `export const ${componentName} = ({ routeParams }: ${componentName}Props) => (`
+    : `export const ${componentName} = () => (`;
+  const content = route.isDynamic
+    ? `<${contentComponentName} routeParams={routeParams} />`
+    : `<${contentComponentName} />`;
+  return `import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 ${schemaImport}import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
+import { ${resourcesName} } from '${relativeFromRoute(route, 'i18n/resources', 2)}';
+import '${relativeFromRoute(route, 'index.css', 1)}';
 
 ${props}${declaration}
   const { t } = useModernI18n();
@@ -363,6 +381,17 @@ ${props}${declaration}
     </>
   );
 };
+
+${ownerDeclaration}
+  <FederatedI18nBoundary
+    defaultNamespace="${vertical.namespace}"
+    fallbackLanguage="en"
+    resources={${resourcesName}}
+    supportedLanguages={['en', 'cs']}
+  >
+    ${content}
+  </FederatedI18nBoundary>
+);
 
 export default ${componentName};
 `;
@@ -409,50 +438,9 @@ const pageWiring = (
     manifestNavigation: route.isDynamic
       ? undefined
       : `navigationContribution({ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' }),`,
-    manifestPage: `pageContribution({ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, routePath: '${route.canonicalPath}' }),`,
+    manifestPage: `pageContribution({ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, expose: './Page${toPascalCase(page)}', routePath: '${route.canonicalPath}' }),`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
-    shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${toCamelCase(vertical.appId)}/Page${toPascalCase(page)}') },`,
   } as const;
-};
-
-const renderFederatedPage = (vertical: PageVerticalMetadata, page: string, route: PageRoute): string => {
-  const componentName = `${toPascalCase(page)}Page`;
-  const federatedComponentName = `${toPascalCase(page)}FederatedPage`;
-  const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
-  const props = route.isDynamic
-    ? `interface ${federatedComponentName}Props {
-  readonly routeParams: ${componentName}RouteParams;
-}
-
-`
-    : '';
-  const declaration = route.isDynamic
-    ? `const ${federatedComponentName} = ({ routeParams }: ${federatedComponentName}Props) => (`
-    : `const ${federatedComponentName} = () => (`;
-  const ownerPage = route.isDynamic ? `<${componentName} routeParams={routeParams} />` : `<${componentName} />`;
-  const ownerPageImport = route.isDynamic
-    ? `import {
-  ${componentName},
-  type ${componentName}RouteParams,
-} from '../routes/[lang]/${route.relativePath}/page';`
-    : `import { ${componentName} } from '../routes/[lang]/${route.relativePath}/page';`;
-  return `import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
-import { ${resourcesName} } from '../i18n/resources';
-${ownerPageImport}
-
-${props}${declaration}
-  <FederatedI18nBoundary
-    defaultNamespace="${vertical.namespace}"
-    fallbackLanguage="en"
-    resources={${resourcesName}}
-    supportedLanguages={['en', 'cs']}
-  >
-    ${ownerPage}
-  </FederatedI18nBoundary>
-);
-
-export default ${federatedComponentName};
-`;
 };
 
 interface PageOwnerWiring {
@@ -515,7 +503,7 @@ const renderRouteMetadata = (
 ): string => {
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '${route.canonicalPath}',`).join('\n');
-  return `import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+  return `import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
 
 const routeMeta = {
   canonicalPath: '${route.canonicalPath}',
@@ -539,90 +527,6 @@ ${localisedPaths}
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: '${keyRoot}.title',
-} as const;
-
-export default routeMeta;
-export { routeMeta };
-`;
-};
-
-const renderShellConnectorPage = (route: PageRoute): string =>
-  `export { default } from '${relativeFromRoute(route, 'modules/[moduleId]/page.tsx')}';
-`;
-
-const renderShellConnectorLoader = (vertical: PageVerticalMetadata, page: string, route: PageRoute): string => {
-  const loaderImport = route.isDynamic
-    ? `{
-  loader as loadModuleTarget,
-  selectRouteParams,
-}`
-    : '{ loader as loadModuleTarget }';
-  const parameterNames = route.parameterNames.map((name) => `'${name}'`).join(', ');
-  const loaderArguments = route.isDynamic
-    ? `interface ShellPageLoaderArguments {
-  readonly params: Readonly<Record<string, string | undefined>>;
-  readonly request: Request;
-}
-
-const routeParameterNames = [${parameterNames}] as const;
-
-export const loader = ({ params, request }: ShellPageLoaderArguments) =>
-  loadModuleTarget({
-    params: {
-      entrypointKey: '${vertical.moduleId}.page.${page}',
-      moduleId: '${vertical.moduleId}',
-    },
-    request,
-    routeParams: selectRouteParams(params, routeParameterNames),
-  });`
-    : `interface ShellPageLoaderArguments {
-  readonly request: Request;
-}
-
-export const loader = ({ request }: ShellPageLoaderArguments) =>
-  loadModuleTarget({
-    params: {
-      entrypointKey: '${vertical.moduleId}.page.${page}',
-      moduleId: '${vertical.moduleId}',
-    },
-    request,
-  });`;
-  return `import ${loaderImport} from '${relativeFromRoute(route, 'modules/[moduleId]/page.data.ts')}';
-
-${loaderArguments}
-`;
-};
-
-const renderShellConnectorMetadata = (
-  vertical: PageVerticalMetadata,
-  page: string,
-  route: PageRoute,
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
-): string => {
-  const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '${route.canonicalPath}',`).join('\n');
-  return `import { defineSystemModuleEntrypoint } from '@app/core-runtime';
-
-const routeMeta = {
-  canonicalPath: '${route.canonicalPath}',
-  descriptionKey: 'shell.moduleTarget.seoDescription',
-  entrypoint: defineSystemModuleEntrypoint({
-    access: 'read',
-    authorization: ${renderReadAuthorization(config)},
-    entrypointKey: 'shell-super-app.page.${vertical.appId}-${page}',
-    moduleKey: 'shell-super-app',
-    role: 'page',
-  }),
-  id: 'shell-${vertical.appId}-${page}',
-  indexable: false,
-  localisedPaths: {
-${localisedPaths}
-  },
-  mfBoundaryId: 'shellSuperApp',
-  namespace: 'shell',
-  ownerAppId: 'shell-super-app',
-  public: false,
-  publicSurface: 'private-app-screen',
-  titleKey: 'shell.moduleTarget.title',
 } as const;
 
 export default routeMeta;
@@ -750,16 +654,74 @@ const routeCollisionIdentity = (routePath: string): string =>
     .map((segment) => (parameterRouteSegmentPattern.test(segment) ? ':parameter' : segment))
     .join('/');
 
-const assertShellRouteSiblingsAreAvailable = (entries: readonly DirectoryEntry[], segment: string, route: PageRoute) =>
+const nativeShellRouteHasSuffix = (
+  directory: string,
+  index: number,
+  route: PageRoute,
+): Effect.Effect<boolean, PageScaffoldError, FileSystem.FileSystem> =>
+  Effect.gen(function* nativeShellRouteHasSuffixEffect() {
+    const segment = route.filesystemSegments[index];
+    if (segment === undefined) {
+      const markers = yield* Effect.all([
+        fileExists(resolveContainedPath(directory, PAGE_FILE_NAME)),
+        fileExists(resolveContainedPath(directory, ROUTE_METADATA_FILE_NAME)),
+      ]);
+      return markers.some(Boolean);
+    }
+    const entries = yield* readDirectoryEntries(directory);
+    const matches = yield* Effect.all(
+      entries
+        .filter(
+          (entry) =>
+            entry.isDirectory &&
+            (entry.name === segment || isDynamicShellRouteSegment(segment) || isDynamicShellRouteSegment(entry.name)),
+        )
+        .map((entry) => {
+          const isCatchAll = entry.name === '$' || entry.name.startsWith('*') || entry.name.startsWith('[...');
+          return nativeShellRouteHasSuffix(
+            resolveContainedPath(directory, entry.name),
+            isCatchAll ? route.filesystemSegments.length : index + 1,
+            route,
+          );
+        }),
+      { concurrency: 'unbounded' },
+    );
+    return matches.some(Boolean);
+  });
+
+const assertShellRouteSiblingsAreAvailable = (
+  parent: string,
+  entries: readonly DirectoryEntry[],
+  segment: string,
+  index: number,
+  route: PageRoute,
+  registeredDynamicPrefix: boolean,
+) =>
   Effect.gen(function* assertShellRouteSiblingsAreAvailableEffect() {
     const desiredSegmentIsDynamic = isDynamicShellRouteSegment(segment);
     const siblingCollision = entries.find(
-      (entry) => entry.isDirectory && (desiredSegmentIsDynamic || isDynamicShellRouteSegment(entry.name)),
+      (entry) =>
+        entry.isDirectory &&
+        (isDynamicShellRouteSegment(entry.name) || (desiredSegmentIsDynamic && !registeredDynamicPrefix)),
     );
-    if (siblingCollision !== undefined) {
-      const collisionKind = isDynamicShellRouteSegment(siblingCollision.name) ? 'dynamic' : 'static';
+    const suffixCollisions =
+      siblingCollision === undefined && desiredSegmentIsDynamic && registeredDynamicPrefix
+        ? yield* Effect.all(
+            entries
+              .filter((entry) => entry.isDirectory)
+              .map((entry) =>
+                nativeShellRouteHasSuffix(resolveContainedPath(parent, entry.name), index + 1, route).pipe(
+                  Effect.map((matches) => (matches ? entry : undefined)),
+                ),
+              ),
+            { concurrency: 'unbounded' },
+          )
+        : [];
+    const collision = siblingCollision ?? suffixCollisions.find((entry) => entry !== undefined);
+    if (collision !== undefined) {
+      const collisionKind = isDynamicShellRouteSegment(collision.name) ? 'dynamic' : 'static';
       yield* pageScaffoldFailure(
-        `Shell route ${route.canonicalPath} collides with ${collisionKind} route segment ${siblingCollision.name}`,
+        `Shell route ${route.canonicalPath} collides with ${collisionKind} route segment ${collision.name}`,
       );
     }
   });
@@ -775,10 +737,13 @@ const assertShellRouteSegmentIsAvailable = (
     if (segment === undefined || !(yield* fileExists(parent))) {
       return;
     }
-    const entries = yield* readDirectoryEntries(parent);
+    const directoryEntries = yield* readDirectoryEntries(parent);
+    const entries = index === 0 ? directoryEntries.filter((entry) => entry.name !== '$') : directoryEntries;
     const childEntry = entries.find((entry) => entry.name === segment);
+    const prefix = `/${route.canonicalSegments.slice(0, index + 1).join('/')}`;
+    const ownsPrefix = registeredRoutes.has(routeCollisionIdentity(prefix));
     if (childEntry === undefined) {
-      yield* assertShellRouteSiblingsAreAvailable(entries, segment, route);
+      yield* assertShellRouteSiblingsAreAvailable(parent, entries, segment, index, route, ownsPrefix);
       return;
     }
     const child = resolveContainedPath(parent, segment);
@@ -788,8 +753,6 @@ const assertShellRouteSegmentIsAvailable = (
     if (!childEntry.isDirectory) {
       yield* pageScaffoldFailure(`Shell route ${route.canonicalPath} collides with reserved route content`);
     }
-    const prefix = `/${route.canonicalSegments.slice(0, index + 1).join('/')}`;
-    const ownsPrefix = registeredRoutes.has(prefix);
     const [pageRouteExists, routeMetadataExists] = yield* Effect.all(
       [
         fileExists(resolveContainedPath(child, PAGE_FILE_NAME)),
@@ -797,7 +760,7 @@ const assertShellRouteSegmentIsAvailable = (
       ],
       { concurrency: 'unbounded' },
     );
-    if ((pageRouteExists || routeMetadataExists) && !ownsPrefix) {
+    if (pageRouteExists || routeMetadataExists) {
       yield* pageScaffoldFailure(`Shell route ${route.canonicalPath} uses reserved route prefix ${prefix}`);
     }
     yield* assertShellRouteSegmentIsAvailable(child, index + 1, route, registeredRoutes);
@@ -848,7 +811,6 @@ const generatedWiringContentMatches = (
   vertical: PageVerticalMetadata,
   page: string,
   wiring: ReturnType<typeof pageWiring>,
-  shellClients: string,
   navigationMatches: boolean,
 ): boolean =>
   generatedWiringEntryMatches(
@@ -879,17 +841,9 @@ const generatedWiringContentMatches = (
     MODULE_REGISTRATION_PAGE_SLOT_END,
     wiring.registrationPage,
     new RegExp(`["']page-${page}["']\\s*:`, 'u'),
-  ) &&
-  generatedWiringEntryMatches(
-    shellClients,
-    SHELL_PAGE_CLIENT_SLOT_START,
-    SHELL_PAGE_CLIENT_SLOT_END,
-    wiring.shellClient,
-    new RegExp(`\\bcomponentKey\\s*:\\s*["']${vertical.moduleId}\\.page-${page}["']`, 'u'),
   );
 
 const generatedWiringMatches = (
-  workspaceRoot: string,
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
@@ -898,46 +852,11 @@ const generatedWiringMatches = (
   Effect.gen(function* generatedWiringMatchesEffect() {
     const wiring = pageWiring(vertical, page, route, config);
     const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
-    const [federation, shellClients] = yield* Effect.all(
-      [
-        readTextFile(federationPath),
-        readTextFile(resolveContainedPath(workspaceRoot, 'apps', SHELL_APP_ID, 'src', 'api', 'vertical-clients.ts')),
-      ],
-      { concurrency: 'unbounded' },
-    );
-    const shellRouteDirectory = resolveContainedPath(
-      workspaceRoot,
-      'apps',
-      SHELL_APP_ID,
-      'src',
-      'routes',
-      '[lang]',
-      ...route.filesystemSegments,
-    );
-    const expectedShellFiles = [
-      [PAGE_FILE_NAME, renderShellConnectorPage(route)],
-      [PAGE_LOADER_FILE_NAME, renderShellConnectorLoader(vertical, page, route)],
-      [ROUTE_METADATA_FILE_NAME, renderShellConnectorMetadata(vertical, page, route, config)],
-    ] as const;
-    const shellRouteMatches = yield* Effect.all(
-      expectedShellFiles.map(([fileName, expected]) =>
-        generatedFileMatches(resolveContainedPath(shellRouteDirectory, fileName), expected),
-      ),
-      { concurrency: 'unbounded' },
-    );
-    const shellRouteEntries = yield* readDirectoryEntries(shellRouteDirectory);
-    const shellRouteInventoryMatches =
-      shellRouteEntries.length === expectedShellFiles.length &&
-      shellRouteEntries.every(
-        (entry) => entry.isFile && expectedShellFiles.some(([expectedName]) => expectedName === entry.name),
-      );
+    const federation = yield* readTextFile(federationPath);
     const exposureKey = `./Page${toPascalCase(page)}`;
-    const expectedExposureSource = `./src/federation/page-${page}.tsx`;
+    const expectedExposureSource = `./src/routes/[lang]/${route.relativePath}/page.tsx`;
     const exposureSource = moduleFederationExposureSource(federation, exposureKey);
-    const federatedPagePath = resolveContainedPath(vertical.directory, expectedExposureSource);
-    const federationMatches =
-      exposureSource === expectedExposureSource &&
-      (yield* generatedFileMatches(federatedPagePath, renderFederatedPage(vertical, page, route)));
+    const federationMatches = exposureSource === expectedExposureSource;
     const escapedModuleId = vertical.moduleId.replaceAll('.', String.raw`\.`);
     const navigationMatches =
       wiring.manifestNavigation === undefined
@@ -958,12 +877,7 @@ const generatedWiringMatches = (
             wiring.manifestNavigation,
             new RegExp(`\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.navigation\\.${page}["']`, 'u'),
           );
-    return (
-      generatedWiringContentMatches(vertical, page, wiring, shellClients, navigationMatches) &&
-      federationMatches &&
-      shellRouteMatches.every(Boolean) &&
-      shellRouteInventoryMatches
-    );
+    return generatedWiringContentMatches(vertical, page, wiring, navigationMatches) && federationMatches;
   });
 
 const generatedLocaleState = (
@@ -1030,7 +944,7 @@ const generatedPageState = (
     if (!localeStates.every((state) => state === 'current')) {
       return 'invalid';
     }
-    return (yield* generatedWiringMatches(workspaceRoot, vertical, page, route, config)) ? 'current' : 'invalid';
+    return (yield* generatedWiringMatches(vertical, page, route, config)) ? 'current' : 'invalid';
   });
 
 const planPageScaffold = (
@@ -1056,15 +970,6 @@ const planPageScaffold = (
     );
     const pagePath = resolveContainedPath(routeDirectory, PAGE_FILE_NAME);
     const routeMetadataPath = resolveContainedPath(routeDirectory, ROUTE_METADATA_FILE_NAME);
-    const shellRouteDirectory = resolveContainedPath(
-      workspaceRoot,
-      'apps',
-      SHELL_APP_ID,
-      'src',
-      'routes',
-      '[lang]',
-      ...route.filesystemSegments,
-    );
     if (yield* fileExists(routeDirectory)) {
       const state = yield* generatedPageState(
         workspaceRoot,
@@ -1108,19 +1013,10 @@ const planPageScaffold = (
     yield* assertShellRouteIsAvailable(
       workspaceRoot,
       route,
-      new Set(registeredRoutes.map((registered) => registered.routePath)),
+      new Set(registeredRoutes.map((registered) => routeCollisionIdentity(registered.routePath))),
     );
     const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
-    const federatedPagePath = resolveContainedPath(vertical.directory, 'src', 'federation', `page-${page}.tsx`);
-    const shellClientsPath = resolveContainedPath(
-      workspaceRoot,
-      'apps',
-      SHELL_APP_ID,
-      'src',
-      'api',
-      'vertical-clients.ts',
-    );
-    const [pageMutation, routeMutation, localeMutations, federationContent, shellClientsContent] = yield* Effect.all(
+    const [pageMutation, routeMutation, localeMutations, federationContent] = yield* Effect.all(
       [
         createMutationEffect(pagePath, renderPage(vertical, page, route), 'page route could not be created'),
         createMutationEffect(
@@ -1133,7 +1029,6 @@ const planPageScaffold = (
           { concurrency: 'unbounded' },
         ),
         readTextFile(federationPath),
-        readTextFile(shellClientsPath),
       ],
       { concurrency: 'unbounded' },
     );
@@ -1144,50 +1039,14 @@ const planPageScaffold = (
       vertical.registrationContent,
       wiring.registration,
     );
-    const federatedPageMutation = yield* createMutationEffect(
-      federatedPagePath,
-      renderFederatedPage(vertical, page, route),
-      'federated page could not be created',
-    );
     const federationMutation = updateMutation(
       federationPath,
       federationContent,
       insertModuleFederationExposure(
         federationContent,
         `./Page${toPascalCase(page)}`,
-        `./src/federation/page-${page}.tsx`,
+        `./src/routes/[lang]/${route.relativePath}/page.tsx`,
       ),
-    );
-    const shellClientsMutation = updateMutation(
-      shellClientsPath,
-      shellClientsContent,
-      insertSortedSlot(
-        shellClientsContent,
-        SHELL_PAGE_CLIENT_SLOT_START,
-        SHELL_PAGE_CLIENT_SLOT_END,
-        [pageWiring(vertical, page, route, config).shellClient],
-        (candidate) => candidate.endsWith(','),
-      ),
-    );
-    const [shellPageMutation, shellLoaderMutation, shellRouteMetadataMutation] = yield* Effect.all(
-      [
-        createMutationEffect(
-          resolveContainedPath(shellRouteDirectory, PAGE_FILE_NAME),
-          renderShellConnectorPage(route),
-          'Shell page connector could not be created',
-        ),
-        createMutationEffect(
-          resolveContainedPath(shellRouteDirectory, PAGE_LOADER_FILE_NAME),
-          renderShellConnectorLoader(vertical, page, route),
-          'Shell page loader could not be created',
-        ),
-        createMutationEffect(
-          resolveContainedPath(shellRouteDirectory, ROUTE_METADATA_FILE_NAME),
-          renderShellConnectorMetadata(vertical, page, route, config),
-          'Shell route metadata could not be created',
-        ),
-      ],
-      { concurrency: 'unbounded' },
     );
     const mutations = [
       pageMutation,
@@ -1195,12 +1054,7 @@ const planPageScaffold = (
       ...localeMutations,
       manifestMutation,
       registrationMutation,
-      federatedPageMutation,
       federationMutation,
-      shellClientsMutation,
-      shellPageMutation,
-      shellLoaderMutation,
-      shellRouteMetadataMutation,
     ].filter((mutation) => mutation !== undefined);
     ensureUniqueMutationPaths(mutations);
     return {

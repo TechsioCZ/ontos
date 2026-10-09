@@ -193,6 +193,7 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
             role: 'public_component',
             scope: 'tenant',
           },
+          expose: './Widget',
         }),
         // </generated-module-shell-components>
       ],

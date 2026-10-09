@@ -6,9 +6,13 @@ import { PaymentTermsDependencyUnavailable } from './payment-term-errors.ts';
 export interface PaymentTermCatalogGatewayCredentialIssuer {
   readonly issue: (input: {
     readonly audience: 'payment-term-catalog';
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
-  }) => Effect.Effect<Redacted.Redacted, PaymentTermsDependencyUnavailable>;
+  }) => Effect.Effect<
+    { readonly baseUrl: URL; readonly credential: Redacted.Redacted },
+    PaymentTermsDependencyUnavailable
+  >;
 }
 
 export class PaymentTermCatalogGatewayCredentialService extends Context.Service<

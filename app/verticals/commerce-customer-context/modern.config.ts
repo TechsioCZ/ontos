@@ -1,13 +1,14 @@
-/* oxlint-disable sonarjs/no-duplicate-string -- Modern.js BFF routing requires the deployment prefix in the shared build, locale exclusion and runtime sections; remove-when: the config API accepts one shared prefix value. */
+import { COMMERCE_CUSTOMER_CONTEXT_API_PREFIX } from './shared/deployment-paths.ts';
 import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
-import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
+import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 
 import {
+  CLOUDFLARE_WORKER_CPU_MS,
   createModernBuildContext,
   createModernConfig,
   installGlobalRequire,
@@ -22,6 +23,7 @@ const build = createModernBuildContext({
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT',
   cloudflareWorkerName,
   defaultPort: 4101,
+  deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,
   portEnvironmentVariable: 'VERTICAL_COMMERCE_CUSTOMER_CONTEXT_PORT',
 });
@@ -30,10 +32,12 @@ export default defineConfig(
   presetUltramodern(
     {
       ...createModernConfig({
+        apiOnly: true,
         appId,
-        bffPrefix: '/commerce-customer-context-api',
+        bffPrefix: COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
         build,
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_COMMERCE_CUSTOMER_CONTEXT_LOADED_CHUNKS__',
+        cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
         cloudflareWorkerName,
         moduleUrl: import.meta.url,
         plugins: [
@@ -51,7 +55,7 @@ export default defineConfig(
                 '/@mf-types',
                 '/assets',
                 '/bundles',
-                '/commerce-customer-context-api',
+                COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
                 '/locales',
                 '/mf-manifest.json',
                 '/mf-stats.json',
@@ -78,7 +82,7 @@ export default defineConfig(
           openapi: { path: '/openapi.json' },
           strictEffectApproach: true,
         },
-        prefix: '/commerce-customer-context-api',
+        prefix: COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
         runtimeFramework: 'effect',
       },
     } satisfies AppToolsUserConfig,

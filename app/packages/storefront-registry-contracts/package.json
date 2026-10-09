@@ -1,0 +1,36 @@
+{
+  "name": "@app/storefront-registry-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Storefront Registry-owned public Current Storefront Application contract and generated Effect client.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./current-storefront-application": "./src/apis/current-storefront-application.ts",
+    "./current-storefront-application/client": "./src/api/current-storefront-application-client.ts",
+    "./verify-current-storefront-application-v1": "./src/apis/verify-current-storefront-application-v1.ts",
+    "./verify-current-storefront-application-v1/client": "./src/api/verify-current-storefront-application-v1-client.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.0-rc.117"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.11.12",
+    "@types/node": "20.19.43",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597"
+  },
+  "ontosContractOwner": {
+    "appId": "storefront-registry",
+    "moduleApis": [
+      "current-storefront-application",
+      "verify-current-storefront-application-v1"
+    ],
+    "moduleId": "commerce.storefront-registry",
+    "packageName": "@app/storefront-registry"
+  }
+}

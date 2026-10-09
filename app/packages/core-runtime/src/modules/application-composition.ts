@@ -1,14 +1,40 @@
-import { Effect, Order, Predicate, Result, Schema } from 'effect';
+import { Effect, Order, Predicate, Redacted, Result, Schema } from 'effect';
 
+import { moduleReleaseWorkerName } from '../http/module-release-identity.ts';
+import { ApplicationCompositionBackendSchema, isLoopbackHostname } from './application-composition-backend.ts';
+import type { ApplicationCompositionBackend } from './application-composition-backend.ts';
+import {
+  ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
+  ONTOS_APPLICATION_COMPOSITION_VALIDATION_TIMEOUT_MS,
+} from './application-composition-limits.ts';
 import { OntosComponentContractSchema, OntosDeploymentIdentitySchema, OntosModuleIdSchema } from './manifest.ts';
 
-export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '1' as const;
+export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '2' as const;
+
+export {
+  ApplicationCompositionBackendSchema,
+  ApplicationCompositionCloudflareWorkerBackendSchema,
+} from './application-composition-backend.ts';
+export type { ApplicationCompositionBackend } from './application-composition-backend.ts';
+
+export {
+  ONTOS_APPLICATION_COMPOSITION_MAX_BYTES,
+  ONTOS_APPLICATION_COMPOSITION_MAX_CONTRACT_BYTES,
+  ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
+  ONTOS_APPLICATION_COMPOSITION_VALIDATION_TIMEOUT_MS,
+} from './application-composition-limits.ts';
+
+/** Versioned Shell contribution ABI that Core defines and every deployed Shell reports at runtime. */
+export const ONTOS_SHELL_CONTRIBUTION_ABI = Object.freeze({
+  id: 'ontos.shell-contributions',
+  version: '1',
+} as const);
+
+/** Root-relative location where a deployed Shell serves its runtime compatibility claims. */
+export const ONTOS_SHELL_RUNTIME_CONTRACT_PATH = '/.well-known/ontos-shell-runtime.json' as const;
 
 const sha256 = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
 const version = Schema.String.check(Schema.isPattern(/^[0-9]+(?:\.[0-9]+){0,2}$/u));
-const isLoopbackHostname = (hostname: string): boolean =>
-  ['localhost', '127.0.0.1', '[::1]'].includes(hostname) || hostname.endsWith('.localhost');
-
 const artifactUrl = Schema.String.check(
   Schema.makeFilter((value) => {
     const url = URL.parse(value);
@@ -41,60 +67,100 @@ export const ApplicationCompositionSingletonSchema = Schema.Struct({
   version: Schema.NonEmptyString,
 });
 
+const ApplicationCompositionShellDeploymentSchema = Schema.Struct({
+  appId: Schema.Literal('shell-super-app'),
+  buildMarker: OntosDeploymentIdentitySchema.fields.buildMarker,
+});
+
+/** A module whose browser UI the Shell may load through its immutable Module Federation manifest. */
+export const ApplicationCompositionBrowserFederationSchema = Schema.Struct({
+  execution: Schema.Literal('browser'),
+  exposes: Schema.Array(Schema.NonEmptyString).check(Schema.isMaxLength(4096)),
+  manifest: ApplicationCompositionArtifactReferenceSchema,
+  remoteName: OntosComponentContractSchema.fields.mfBoundaryId,
+});
+
+/** A module that ships no browser remote; it is installed only through its server deployment contract. */
+export const ApplicationCompositionServerOnlyFederationSchema = Schema.Struct({
+  execution: Schema.Literal('server'),
+});
+
 export const ApplicationCompositionModuleSchema = Schema.Struct({
-  allowedContributions: Schema.Array(OntosModuleIdSchema),
+  allowedContributions: Schema.Array(OntosModuleIdSchema).check(Schema.isMaxLength(4096)),
+  backend: ApplicationCompositionBackendSchema,
   contract: ApplicationCompositionArtifactReferenceSchema,
-  dependencies: Schema.Array(OntosModuleIdSchema),
+  /** Exact UTF-8 deployment contract document approved under this revision. */
+  contractDocument: Schema.NonEmptyString,
+  dependencies: Schema.Array(OntosModuleIdSchema).check(Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES)),
   deployment: OntosDeploymentIdentitySchema,
-  federation: Schema.Struct({
-    execution: Schema.Literal('browser'),
-    exposes: Schema.Array(Schema.NonEmptyString),
-    manifest: ApplicationCompositionArtifactReferenceSchema,
-    remoteName: OntosComponentContractSchema.fields.mfBoundaryId,
-  }),
+  federation: Schema.Union([
+    ApplicationCompositionBrowserFederationSchema,
+    ApplicationCompositionServerOnlyFederationSchema,
+  ]),
   moduleId: OntosModuleIdSchema,
   publicContract: Schema.Struct({
     id: Schema.NonEmptyString,
     sha256,
     version,
   }),
-  requiredCoreCapabilities: Schema.Array(ApplicationCompositionVersionedIdentitySchema),
+  requiredCoreCapabilities: Schema.Array(ApplicationCompositionVersionedIdentitySchema).check(Schema.isMaxLength(128)),
   requiredShellAbi: ApplicationCompositionVersionedIdentitySchema,
-  sharedSingletons: Schema.Array(ApplicationCompositionSingletonSchema),
+  sharedSingletons: Schema.Array(ApplicationCompositionSingletonSchema).check(Schema.isMaxLength(128)),
 });
 
 export const ApplicationCompositionSchema = Schema.Struct({
-  modules: Schema.Array(ApplicationCompositionModuleSchema),
+  modules: Schema.Array(ApplicationCompositionModuleSchema).check(
+    Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES),
+  ),
   revision: sha256,
   schemaVersion: Schema.Literal(ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION),
   shell: Schema.Struct({
     contributionAbi: ApplicationCompositionVersionedIdentitySchema,
-    coreCapabilities: Schema.Array(ApplicationCompositionVersionedIdentitySchema),
-    sharedSingletons: Schema.Array(ApplicationCompositionSingletonSchema),
+    coreCapabilities: Schema.Array(ApplicationCompositionVersionedIdentitySchema).check(Schema.isMaxLength(128)),
+    deployment: ApplicationCompositionShellDeploymentSchema,
+    federationManifest: ApplicationCompositionArtifactReferenceSchema,
+    runtimeContract: ApplicationCompositionArtifactReferenceSchema,
+    sharedSingletons: Schema.Array(ApplicationCompositionSingletonSchema).check(Schema.isMaxLength(128)),
   }),
 });
 
 export type ApplicationComposition = typeof ApplicationCompositionSchema.Type;
+
+/**
+ * Runtime compatibility claims a deployed Shell serves at ONTOS_SHELL_RUNTIME_CONTRACT_PATH. Its strict
+ * shared singletons are observed from the Shell's own Module Federation manifest, not restated here.
+ */
+export const OntosShellRuntimeContractSchema = Schema.Struct({
+  contributionAbi: ApplicationCompositionVersionedIdentitySchema,
+  coreCapabilities: Schema.Array(ApplicationCompositionVersionedIdentitySchema),
+  deployment: ApplicationCompositionShellDeploymentSchema,
+  schemaVersion: Schema.Literal('2'),
+});
+export type OntosShellRuntimeContract = typeof OntosShellRuntimeContractSchema.Type;
 export type ApplicationCompositionModule = typeof ApplicationCompositionModuleSchema.Type;
+export type ApplicationCompositionBrowserFederation = typeof ApplicationCompositionBrowserFederationSchema.Type;
 export type ApplicationCompositionVersionedIdentity = typeof ApplicationCompositionVersionedIdentitySchema.Type;
 
 const observedContractSchema = Schema.Struct({
   contractUrl: artifactUrl,
   contributionKeys: ApplicationCompositionModuleSchema.fields.allowedContributions,
   deployment: OntosDeploymentIdentitySchema,
-  federationExposes: ApplicationCompositionModuleSchema.fields.federation.fields.exposes,
-  mfBoundaryId: OntosComponentContractSchema.fields.mfBoundaryId,
+  /** Exposes of the public components the deployment contract declares; a server-only contract has none. */
+  federationExposes: ApplicationCompositionBrowserFederationSchema.fields.exposes,
+  /** Module Federation boundary named by the declared components; absent when the contract declares none. */
+  mfBoundaryId: Schema.optionalKey(OntosComponentContractSchema.fields.mfBoundaryId),
   moduleId: OntosModuleIdSchema,
   publicContract: ApplicationCompositionModuleSchema.fields.publicContract,
   sha256,
 });
 const observedFederationSchema = Schema.Struct({
-  exposes: ApplicationCompositionModuleSchema.fields.federation.fields.exposes,
+  exposes: ApplicationCompositionBrowserFederationSchema.fields.exposes,
   remoteName: OntosComponentContractSchema.fields.mfBoundaryId,
   sha256,
   sharedSingletons: ApplicationCompositionModuleSchema.fields.sharedSingletons,
 });
 const candidateEvidenceSchema = Schema.Struct({
+  backends: Schema.Record(Schema.String, ApplicationCompositionBackendSchema),
   contracts: Schema.Record(Schema.String, observedContractSchema),
   environment: Schema.optionalKey(Schema.NonEmptyString),
   federationManifests: Schema.Record(Schema.String, observedFederationSchema),
@@ -108,6 +174,7 @@ export type ApplicationCompositionCandidateEvidence = typeof candidateEvidenceSc
 export class ApplicationCompositionValidationError extends Schema.TaggedError<ApplicationCompositionValidationError>()(
   'ApplicationCompositionValidationError',
   {
+    cause: Schema.optionalKey(Schema.Defect()),
     code: Schema.tag('application_composition_invalid'),
     reason: Schema.String,
   },
@@ -122,6 +189,8 @@ const singletonOrder = Order.Struct({
   version: Order.String,
 });
 const sameDeployment = Schema.toEquivalence(OntosDeploymentIdentitySchema);
+const sameBackend = Schema.toEquivalence(ApplicationCompositionBackendSchema);
+const sameArtifact = Schema.toEquivalence(ApplicationCompositionArtifactReferenceSchema);
 const samePublicContract = Schema.toEquivalence(ApplicationCompositionModuleSchema.fields.publicContract);
 
 const sameUniqueStrings = (left: readonly string[], right: readonly string[]): boolean => {
@@ -193,12 +262,13 @@ const assertAcyclicDependencies = Effect.fnUntraced(function* checkCycles(
   return yield* Effect.void;
 });
 
-const freeze = <Value>(value: Value): Value => {
-  if (!Predicate.isObjectKeyword(value) || value === null || Object.isFrozen(value)) {
+/** Recursively freeze approved plain artifacts so a decoded projection cannot drift after validation. */
+export const freezeApplicationCompositionArtifact = <Value>(value: Value): Value => {
+  if (!Predicate.isObjectKeyword(value) || value === null) {
     return value;
   }
   for (const nested of Object.values(value)) {
-    freeze(nested);
+    freezeApplicationCompositionArtifact(nested);
   }
   return Object.freeze(value);
 };
@@ -274,6 +344,30 @@ const matchesObservedArtifact = (
   contract.sha256 === module.contract.sha256 &&
   sameDeployment(contract.deployment, module.deployment);
 
+/**
+ * A browser module pins its complete observed expose surface; every public component its contract
+ * declares must be part of that surface under the same Federation boundary. A server-only module's
+ * contract declares no browser components and joins no shared browser singleton scope.
+ */
+const matchesObservedFederation = (
+  module: ApplicationCompositionModule,
+  contract: ObservedApplicationCompositionContract,
+): boolean => {
+  const declaredExposes = new Set(contract.federationExposes);
+  if (declaredExposes.size !== contract.federationExposes.length) {
+    return false;
+  }
+  if (module.federation.execution === 'server') {
+    return declaredExposes.size === 0 && contract.mfBoundaryId === undefined && module.sharedSingletons.length === 0;
+  }
+  const exposes = new Set(module.federation.exposes);
+  const boundaryMatches =
+    contract.mfBoundaryId === undefined
+      ? declaredExposes.size === 0
+      : contract.mfBoundaryId === module.federation.remoteName;
+  return boundaryMatches && contract.federationExposes.every((expose) => exposes.has(expose));
+};
+
 const assertObservedDeployment = Effect.fnUntraced(function* checkDeployment(
   module: ApplicationCompositionModule,
   contract: ObservedApplicationCompositionContract | undefined,
@@ -282,11 +376,10 @@ const assertObservedDeployment = Effect.fnUntraced(function* checkDeployment(
     contract === undefined ||
     !matchesObservedArtifact(module, contract) ||
     contract.moduleId !== module.moduleId ||
-    contract.mfBoundaryId !== module.federation.remoteName ||
     !samePublicContract(contract.publicContract, module.publicContract) ||
     module.publicContract.id !== module.moduleId ||
     !sameUniqueStrings(module.allowedContributions, contract.contributionKeys) ||
-    !sameUniqueStrings(module.federation.exposes, contract.federationExposes)
+    !matchesObservedFederation(module, contract)
   ) {
     return yield* new ApplicationCompositionValidationError({
       reason: `module ${module.moduleId} does not match its observed deployment contract`,
@@ -295,8 +388,45 @@ const assertObservedDeployment = Effect.fnUntraced(function* checkDeployment(
   return yield* Effect.void;
 });
 
-const assertObservedFederationManifest = Effect.fnUntraced(function* checkFederation(
+const assertObservedBackend = Effect.fnUntraced(function* checkBackend(
   module: ApplicationCompositionModule,
+  observed: ApplicationCompositionBackend | undefined,
+) {
+  if (observed === undefined || !sameBackend(module.backend, observed)) {
+    return yield* new ApplicationCompositionValidationError({
+      reason: `module ${module.moduleId} does not match its observed backend placement`,
+    });
+  }
+  if (module.backend.transport === 'cloudflare-worker') {
+    const workerName = yield* moduleReleaseWorkerName(module.deployment.appId, module.deployment.buildMarker).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ApplicationCompositionValidationError({
+            cause: Redacted.make(cause),
+            reason: `module ${module.moduleId} backend release identity could not be verified`,
+          }),
+      ),
+      Effect.timeoutOrElse({
+        duration: ONTOS_APPLICATION_COMPOSITION_VALIDATION_TIMEOUT_MS,
+        orElse: () =>
+          Effect.fail(
+            new ApplicationCompositionValidationError({
+              reason: 'backend placement validation exceeded its time budget',
+            }),
+          ),
+      }),
+    );
+    if (module.backend.workerName !== workerName) {
+      return yield* new ApplicationCompositionValidationError({
+        reason: `module ${module.moduleId} backend does not identify its exact deployment release`,
+      });
+    }
+  }
+  return yield* Effect.void;
+});
+
+const assertObservedFederationManifest = Effect.fnUntraced(function* checkFederation(
+  module: ApplicationCompositionModule & { readonly federation: ApplicationCompositionBrowserFederation },
   manifest: ObservedModuleFederationManifest | undefined,
 ) {
   if (
@@ -319,6 +449,9 @@ const assertObservedRuntime = Effect.fnUntraced(function* checkRuntime(
 ) {
   if (
     identityKey(shell.contributionAbi) !== identityKey(runtime.contributionAbi) ||
+    !sameDeployment(shell.deployment, runtime.deployment) ||
+    !sameArtifact(shell.runtimeContract, runtime.runtimeContract) ||
+    !sameArtifact(shell.federationManifest, runtime.federationManifest) ||
     !sameVersionClaims(shell.coreCapabilities, runtime.coreCapabilities, ({ id }) => id) ||
     !sameVersionClaims(shell.sharedSingletons, runtime.sharedSingletons, ({ packageName }) => packageName)
   ) {
@@ -342,10 +475,10 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
         ...module,
         allowedContributions: module.allowedContributions.toSorted(),
         dependencies: module.dependencies.toSorted(),
-        federation: {
-          ...module.federation,
-          exposes: module.federation.exposes.toSorted(),
-        },
+        federation:
+          module.federation.execution === 'browser'
+            ? { ...module.federation, exposes: module.federation.exposes.toSorted() }
+            : module.federation,
         requiredCoreCapabilities: module.requiredCoreCapabilities.toSorted(identityOrder),
         sharedSingletons: module.sharedSingletons.toSorted(singletonOrder),
       }))
@@ -372,7 +505,7 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
       ),
     ),
   );
-  const observed = yield* Schema.decodeEffect(candidateEvidenceSchema)(evidence).pipe(
+  const observed = yield* Schema.decodeEffect(candidateEvidenceSchema, { onExcessProperty: 'error' })(evidence).pipe(
     Effect.catchTag('SchemaError', () =>
       Effect.fail(
         new ApplicationCompositionValidationError({
@@ -387,6 +520,7 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
   const claimedModuleIds = new Set<string>();
   const contributionKeys = new Set<string>();
   const remoteNames = new Set<string>();
+  const backendDestinations = new Set<string>();
   const shellCapabilities = new Set(composition.shell.coreCapabilities.map(identityKey));
   const shellSingletons = new Map(
     composition.shell.sharedSingletons.map(({ packageName, version: singletonVersion }) => [
@@ -407,24 +541,56 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
     { concurrency: 1, discard: true },
   );
   yield* assertObservedRuntime(composition.shell, observed.runtime);
+  yield* claim(appIds, composition.shell.deployment.appId, 'deployment app ID');
+  if (
+    observed.environment !== 'development' &&
+    [composition.shell.runtimeContract.url, composition.shell.federationManifest.url].some(
+      (url) => new URL(url).protocol !== 'https:',
+    )
+  ) {
+    return yield* new ApplicationCompositionValidationError({
+      reason: 'Shell artifact URLs must use HTTPS outside development',
+    });
+  }
+  yield* Effect.forEach(
+    [composition.shell.runtimeContract, composition.shell.federationManifest],
+    ({ url }) => claim(artifactUrls, new URL(url).href, 'artifact URL'),
+    { concurrency: 1, discard: true },
+  );
 
   yield* Effect.forEach(
     composition.modules,
     Effect.fnUntraced(function* validateModule(module) {
-      const manifestUrl = module.federation.manifest.url;
+      const { federation } = module;
+      const manifestUrl = federation.execution === 'browser' ? federation.manifest.url : undefined;
+      const artifactUrlsOfModule =
+        manifestUrl === undefined ? [module.contract.url] : [module.contract.url, manifestUrl];
       if (
         observed.environment !== 'development' &&
-        [module.contract.url, manifestUrl].some((url) => new URL(url).protocol !== 'https:')
+        artifactUrlsOfModule.some((url) => new URL(url).protocol !== 'https:')
       ) {
         return yield* new ApplicationCompositionValidationError({
           reason: 'artifact URLs must use HTTPS outside development',
         });
       }
+      if (
+        observed.environment !== 'development' &&
+        module.backend.transport === 'node-http' &&
+        new URL(module.backend.baseUrl).protocol !== 'https:'
+      ) {
+        return yield* new ApplicationCompositionValidationError({
+          reason: 'backend URLs must use HTTPS outside development',
+        });
+      }
       yield* claim(appIds, module.deployment.appId, 'deployment app ID');
-      yield* claim(artifactUrls, new URL(module.contract.url).href, 'artifact URL');
-      yield* claim(artifactUrls, new URL(manifestUrl).href, 'artifact URL');
+      yield* Effect.forEach(artifactUrlsOfModule, (url) => claim(artifactUrls, new URL(url).href, 'artifact URL'), {
+        concurrency: 1,
+        discard: true,
+      });
       yield* claim(claimedModuleIds, module.moduleId, 'module ID');
-      yield* claim(remoteNames, module.federation.remoteName, 'Module Federation remote');
+      if (federation.execution === 'browser') {
+        yield* claim(remoteNames, federation.remoteName, 'Module Federation remote');
+      }
       yield* Effect.forEach(
         module.allowedContributions,
         (contributionKey) => claim(contributionKeys, contributionKey, 'Shell contribution'),
@@ -433,7 +599,11 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
       yield* assertDependenciesPresent(module, moduleIds);
       yield* assertShellCompatibility(module, composition.shell, shellCapabilities, shellSingletons);
       yield* assertObservedDeployment(module, observed.contracts[module.deployment.appId]);
-      yield* assertObservedFederationManifest(module, observed.federationManifests[manifestUrl]);
+      yield* assertObservedBackend(module, observed.backends[module.deployment.appId]);
+      yield* claim(backendDestinations, module.backend.baseUrl, 'backend destination');
+      if (federation.execution === 'browser' && manifestUrl !== undefined) {
+        yield* assertObservedFederationManifest({ ...module, federation }, observed.federationManifests[manifestUrl]);
+      }
       return yield* Effect.void;
     }),
     { concurrency: 1, discard: true },
@@ -441,5 +611,5 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
 
   yield* assertAcyclicDependencies(composition.modules);
 
-  return freeze(composition);
+  return freezeApplicationCompositionArtifact(composition);
 });

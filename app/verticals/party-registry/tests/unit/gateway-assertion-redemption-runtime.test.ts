@@ -1,13 +1,14 @@
+// @effect-diagnostics strictEffectProvide:off -- Test-owned scripted database entrypoint; expires: 2026-12-31.
 import { GatewayAssertionRedemptionUnavailableError, GatewayAssertionReplayError } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
-import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Cause, Clock, Effect, Exit, Schema } from 'effect';
+import { Cause, Clock, Effect, Exit, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
+import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { partyRelations } from '../../src/db/schema.ts';
@@ -25,17 +26,13 @@ const makeRedemptionFixture = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) =>
   Effect.gen(function* makeRedemptionFixtureEffect() {
-    const connection = testSqlConnection(execute);
-    const reactivity = yield* Reactivity.make;
-    const client = yield* PgClient.makeWith({
-      acquirer: Effect.succeed(connection),
-      config: {},
-      listenAcquirer: Effect.die('The fixture does not support notifications'),
-      transactionAcquirer: Effect.succeed(connection),
-    }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
     const executor = yield* makeWithDefaults({
       relations: partyRelations,
-    }).pipe(Effect.provideService(PgClient.PgClient, client));
+    }).pipe(
+      Effect.provide(
+        scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
+      ),
+    );
     const clock = yield* TestClock.make();
     yield* clock.setTime(expiryWithSkewMs - 1);
     return { clock, redemption: makeGatewayAssertionRedemption(executor) };

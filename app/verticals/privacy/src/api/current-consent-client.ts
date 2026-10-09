@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CurrentConsentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CurrentConsentAuthorizedInvocation = readonly [
@@ -37,13 +38,17 @@ export const executeCurrentConsentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CurrentConsentAuthorizedInvocation
 ) =>
   currentConsentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.currentConsent.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.currentConsent.execute({ payload })),
   );
 
 export const executeCurrentConsent = (
   payload: CurrentConsentRequest,
   ...[requestCorrelation, options = {}]: CurrentConsentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCurrentConsentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCurrentConsentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

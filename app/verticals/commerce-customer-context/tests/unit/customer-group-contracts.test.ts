@@ -23,6 +23,8 @@ import { customerGroupDetailRead } from '../../src/api/customer-group-detail.rea
 import { customerGroupHistoryRead } from '../../src/api/customer-group-history.read.ts';
 import { customerGroupMembersRead } from '../../src/api/customer-group-members.read.ts';
 import { effectiveCustomerGroupMembershipsRead } from '../../src/api/effective-customer-group-memberships.read.ts';
+import { effectiveCustomerGroupMembershipSetV1Read } from '../../src/api/effective-customer-group-membership-set-v1.read.ts';
+import { verifyEffectiveCustomerGroupMembershipSetV1Read } from '../../src/api/verify-effective-customer-group-membership-set-v1.read.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const groupRef = {
@@ -140,6 +142,10 @@ describe('Commerce Customer Group contracts', () => {
       permission: 'customer.group.history.read',
     });
     expect(effectiveCustomerGroupMembershipsRead.descriptor.permissionTarget).toBe('resource');
+    expect(effectiveCustomerGroupMembershipSetV1Read.descriptor.permissionTarget).toBe('resource');
+    expect(effectiveCustomerGroupMembershipSetV1Read.descriptor.entrypoint.access).toBe('historical_read');
+    expect(verifyEffectiveCustomerGroupMembershipSetV1Read.descriptor.permissionTarget).toBe('resource');
+    expect(verifyEffectiveCustomerGroupMembershipSetV1Read.descriptor.entrypoint.access).toBe('historical_read');
 
     expect(customerGroupDetailRead.descriptor.accessKind).toBe('detail');
     expect(customerGroupMembersRead.descriptor.permissionTarget).toBe('resource');

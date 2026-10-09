@@ -6,6 +6,7 @@ import {
 } from '@app/core-runtime';
 import type { OutboxMessage, OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -63,9 +64,11 @@ const identifier: PartySearchSourceValue = {
   validFrom: '2026-01-01T00:00:00.000Z',
   value: 'CZ12345678',
 };
-const baseContext: OutboxWorkerHandlerContext = {
+const baseContextInput: OutboxWorkerHandlerContext = {
   attemptNumber: 1,
   claimId: 'claim-1',
+  compositionRevision: 'a'.repeat(64),
+  consumerModuleKey: 'party.registry',
   deliveryId: 'delivery-1',
   domainEventId: 'event-1',
   messageId: 'message-1',
@@ -75,6 +78,7 @@ const baseContext: OutboxWorkerHandlerContext = {
   topic: 'party.registry.party-updated.v1',
   workerKey: 'party.registry.project-party-updated-to-search',
 };
+const baseContext = attestOutboxWorkerHandlerContext(baseContextInput);
 
 const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
   let canonical: PartySearchSourceSnapshot = {
@@ -122,20 +126,26 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
       if (message.topic === 'party.registry.official-identifier-added.v1') {
         const { descriptor } = projectOfficialIdentifierAddedToSearchWorker;
         const payload = yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)(message.payloadJson);
-        yield* handleProjectOfficialIdentifierAddedToSearch(payload, {
-          ...baseContext,
-          topic: message.topic,
-          workerKey: descriptor.workerKey,
-        }).pipe(Effect.provideService(PartySearchProjector, projector));
+        yield* handleProjectOfficialIdentifierAddedToSearch(
+          payload,
+          attestOutboxWorkerHandlerContext({
+            ...baseContextInput,
+            topic: message.topic,
+            workerKey: descriptor.workerKey,
+          }),
+        ).pipe(Effect.provideService(PartySearchProjector, projector));
       } else {
         expect(message.topic).toBe('party.registry.official-identifier-updated.v1');
         const { descriptor } = projectOfficialIdentifierUpdatedToSearchWorker;
         const payload = yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)(message.payloadJson);
-        yield* handleProjectOfficialIdentifierUpdatedToSearch(payload, {
-          ...baseContext,
-          topic: message.topic,
-          workerKey: descriptor.workerKey,
-        }).pipe(Effect.provideService(PartySearchProjector, projector));
+        yield* handleProjectOfficialIdentifierUpdatedToSearch(
+          payload,
+          attestOutboxWorkerHandlerContext({
+            ...baseContextInput,
+            topic: message.topic,
+            workerKey: descriptor.workerKey,
+          }),
+        ).pipe(Effect.provideService(PartySearchProjector, projector));
       }
     });
   return {

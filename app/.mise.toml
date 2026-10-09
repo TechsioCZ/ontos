@@ -1,6 +1,3 @@
-[tool_alias]
-pnpm = "npm:pnpm"
-
 [tools]
 node = "26.7.0"
 pnpm = { version = "12.4.2", allow_builds = ["pnpm"] }

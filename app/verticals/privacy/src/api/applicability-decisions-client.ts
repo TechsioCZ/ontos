@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ApplicabilityDecisionsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ApplicabilityDecisionsAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executeApplicabilityDecisionsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ApplicabilityDecisionsAuthorizedInvocation
 ) =>
   applicabilityDecisionsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.applicabilityDecisions.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.applicabilityDecisions.execute({ payload })),
   );
 
 export const executeApplicabilityDecisions = (
   payload: ApplicabilityDecisionsRequest,
   ...[requestCorrelation, options = {}]: ApplicabilityDecisionsOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeApplicabilityDecisionsWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeApplicabilityDecisionsWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

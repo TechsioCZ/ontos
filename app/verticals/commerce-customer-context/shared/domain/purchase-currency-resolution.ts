@@ -1,10 +1,12 @@
-import { Schema } from 'effect';
+import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
+import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
+import { DateTime, Schema } from 'effect';
 import {
   CustomerProfileRefSchema,
   PurchaseCurrencyAuthorizationSubjectSchema,
   isPurchaseCurrencyAuthorizationSubjectCompatible,
 } from './customer-profile-ref.ts';
-import { AKROS_LAUNCH_CURRENCY, CurrencyCodeSchema, CurrencyCodeSetSchema } from './currency.ts';
+import { CurrencyCodeSchema, CurrencyCodeSetSchema } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import { ProfileInstantSchema } from './profile-contracts.ts';
 
@@ -46,12 +48,8 @@ const PolicyRevisionSchema = StableReferenceSchema.pipe(
   Schema.brand('PurchaseCurrencyPolicyRevision'),
   Schema.decodeTo(Schema.String),
 );
-const PricingRevisionSchema = StableReferenceSchema.pipe(
-  Schema.brand('PurchaseCurrencyPricingRevision'),
-  Schema.decodeTo(Schema.String),
-);
 
-const PurchaseCurrencySubjectSchema = Schema.Union([
+export const PurchaseCurrencySubjectSchema = Schema.Union([
   Schema.Struct({
     guestEvidenceRef: GuestEvidenceRefSchema,
     guestSessionRef: GuestSessionRefSchema,
@@ -89,24 +87,126 @@ export const PurchaseCurrencyResolutionRequestSchema = Schema.Struct({
 );
 export type PurchaseCurrencyResolutionRequest = typeof PurchaseCurrencyResolutionRequestSchema.Type;
 
+const PurchaseCurrencyPolicyCompletenessEvidenceSchema = Schema.toEncoded(
+  OwnerVerifiableSetCompletenessEvidenceSchema,
+).check(
+  Schema.makeFilter((evidence) =>
+    evidence.ownerRevision.startsWith('PURCHASE_CURRENCY:') &&
+    evidence.scope.predicateRef === 'commerce.customer-context.policy.purchase_currency.current'
+      ? undefined
+      : 'Completeness evidence must identify the Current Purchase Currency policy field',
+  ),
+);
+
 const CurrencyPolicyDecisionSchema = Schema.Struct({
+  allowedCurrencies: CurrencyCodeSetSchema,
+  completeness: PurchaseCurrencyPolicyCompletenessEvidenceSchema,
   defaultCurrency: Schema.Union([CurrencyCodeSchema, Schema.Null]),
-  explicitChoiceEnabled: Schema.Boolean,
-  policyRevision: PolicyRevisionSchema,
-  supportedCurrencies: CurrencyCodeSetSchema,
+  policyRevisionIds: Schema.Array(PolicyRevisionSchema).check(
+    Schema.isMinLength(1),
+    Schema.makeFilter((revisionIds) =>
+      new Set(revisionIds).size === revisionIds.length ? undefined : 'Policy revision IDs must be unique',
+    ),
+  ),
 });
 export type CurrencyPolicyDecision = typeof CurrencyPolicyDecisionSchema.Type;
 
-const PricingCurrencySupportSchema = Schema.Struct({
-  pricingRevision: PricingRevisionSchema,
-  supportedCurrencies: CurrencyCodeSetSchema,
-});
+const currentPricingSupportFields = CurrentSupportedCurrenciesSuccessSchema.fields;
+const instantFallsInPeriod = (instant: number, effectiveFrom: number, effectiveTo: number | undefined): boolean =>
+  instant >= effectiveFrom && (effectiveTo === undefined || instant < effectiveTo);
+
+const pricingSupportTemporalEvidenceIsValid = (support: {
+  readonly currentnessEvidence: typeof currentPricingSupportFields.currentnessEvidence.Type;
+  readonly effectiveAt: typeof currentPricingSupportFields.effectiveAt.Type;
+  readonly effectivePeriod: typeof currentPricingSupportFields.effectivePeriod.Type;
+  readonly nextApplicabilityBoundary?: typeof currentPricingSupportFields.nextApplicabilityBoundary.Type;
+}): boolean => {
+  const evaluationBindsRequest =
+    support.currentnessEvidence.evaluationMode === 'HISTORICAL_AS_OF'
+      ? support.currentnessEvidence.evaluatedAt === support.effectiveAt
+      : support.effectiveAt <= support.currentnessEvidence.evaluatedAt;
+  const effectiveAt = DateTime.toEpochMillis(DateTime.makeUnsafe(support.effectiveAt));
+  const evaluatedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(support.currentnessEvidence.evaluatedAt));
+  const effectiveFrom = DateTime.toEpochMillis(DateTime.makeUnsafe(support.effectivePeriod.effectiveFrom));
+  const effectiveTo =
+    support.effectivePeriod.effectiveTo === null
+      ? undefined
+      : DateTime.toEpochMillis(DateTime.makeUnsafe(support.effectivePeriod.effectiveTo));
+  const nextBoundary =
+    support.nextApplicabilityBoundary === undefined
+      ? undefined
+      : DateTime.toEpochMillis(DateTime.makeUnsafe(support.nextApplicabilityBoundary));
+  return (
+    evaluationBindsRequest &&
+    instantFallsInPeriod(effectiveAt, effectiveFrom, effectiveTo) &&
+    instantFallsInPeriod(evaluatedAt, effectiveFrom, effectiveTo) &&
+    (nextBoundary === undefined || evaluatedAt < nextBoundary)
+  );
+};
+
+export const PricingCurrencySupportSchema = Schema.Struct({
+  completenessEvidence: currentPricingSupportFields.completenessEvidence,
+  currentnessEvidence: currentPricingSupportFields.currentnessEvidence,
+  effectiveAt: currentPricingSupportFields.effectiveAt,
+  effectivePeriod: currentPricingSupportFields.effectivePeriod,
+  factProofs: currentPricingSupportFields.factProofs,
+  generation: currentPricingSupportFields.generation,
+  nextApplicabilityBoundary: currentPricingSupportFields.nextApplicabilityBoundary,
+  observedAt: currentPricingSupportFields.observedAt,
+  pricingRevision: currentPricingSupportFields.pricingRevision,
+  scheduleRevision: currentPricingSupportFields.scheduleRevision,
+  supportedCurrencies: currentPricingSupportFields.supportedCurrencies,
+  supportRevisionRef: currentPricingSupportFields.supportRevisionRef,
+  supportRootRef: currentPricingSupportFields.supportRootRef,
+  tenantId: currentPricingSupportFields.tenantId,
+  verificationRef: currentPricingSupportFields.verificationRef,
+}).check(
+  Schema.makeFilter((support) => {
+    const rootId = support.supportRootRef.resourceId;
+    const revisionId = support.supportRevisionRef.resourceId;
+    if (
+      support.supportRootRef.tenantId !== support.tenantId ||
+      support.supportRevisionRef.tenantId !== support.tenantId ||
+      support.supportRevisionRef.supportRootId !== rootId
+    ) {
+      return 'Pricing Currency Support evidence must bind one Tenant support root';
+    }
+    if (
+      support.completenessEvidence.ownerRevision !== revisionId ||
+      support.completenessEvidence.observedAt !== support.observedAt ||
+      support.completenessEvidence.nextApplicabilityBoundary !== support.nextApplicabilityBoundary
+    ) {
+      return 'Pricing Currency Support completeness evidence must bind the exact observed Revision';
+    }
+    const [factProof] = support.factProofs;
+    if (
+      factProof === undefined ||
+      factProof.factRef !== rootId ||
+      factProof.factRevisionRef !== revisionId ||
+      factProof.verificationRef !== support.verificationRef
+    ) {
+      return 'Pricing Currency Support fact proof must bind the exact root, Revision, and owner receipt';
+    }
+    if (
+      support.currentnessEvidence.supportRootRef.resourceId !== rootId ||
+      support.currentnessEvidence.supportRevisionRef.resourceId !== revisionId ||
+      support.currentnessEvidence.scheduleRevision !== support.scheduleRevision ||
+      support.currentnessEvidence.observedAt !== support.observedAt
+    ) {
+      return 'Pricing Currency Support currentness evidence must bind the exact evaluation';
+    }
+    return pricingSupportTemporalEvidenceIsValid(support)
+      ? undefined
+      : 'Pricing Currency Support request and owner evaluation must fall inside the proven interval';
+  }),
+);
 export type PricingCurrencySupport = typeof PricingCurrencySupportSchema.Type;
 
 const resolutionEvidenceFields = {
   contextRevision: ContextRevisionSchema,
-  policyRevision: PolicyRevisionSchema,
-  pricingRevision: PricingRevisionSchema,
+  policyCompleteness: PurchaseCurrencyPolicyCompletenessEvidenceSchema,
+  policyRevisionIds: Schema.Array(PolicyRevisionSchema).check(Schema.isMinLength(1)),
+  pricingSupport: PricingCurrencySupportSchema,
   requestedAt: ProfileInstantSchema,
 } as const;
 
@@ -121,7 +221,7 @@ type PurchaseCurrencyResolved = typeof PurchaseCurrencyResolvedSchema.Type;
 
 export const ExplicitPurchaseCurrencyChoiceInvalid = Schema.TaggedStruct('EXPLICIT_CHOICE_INVALID', {
   currencyCode: CurrencyCodeSchema,
-  reason: Schema.Literals(['EXPLICIT_CHOICE_DISABLED', 'POLICY_UNSUPPORTED', 'PRICING_UNSUPPORTED']),
+  reason: Schema.Literals(['POLICY_UNSUPPORTED', 'PRICING_UNSUPPORTED']),
 });
 
 export const NoUsablePurchaseCurrency = Schema.TaggedStruct('NO_USABLE_CURRENCY', {
@@ -165,7 +265,7 @@ const supported = (
   policy: CurrencyPolicyDecision,
   pricing: PricingCurrencySupport,
 ): 'POLICY_UNSUPPORTED' | 'PRICING_UNSUPPORTED' | 'SUPPORTED' => {
-  if (!policy.supportedCurrencies.includes(code)) {
+  if (!policy.allowedCurrencies.includes(code)) {
     return 'POLICY_UNSUPPORTED';
   }
   return pricing.supportedCurrencies.includes(code) ? 'SUPPORTED' : 'PRICING_UNSUPPORTED';
@@ -173,8 +273,9 @@ const supported = (
 
 const evidence = (input: PurchaseCurrencyResolutionInput) => ({
   contextRevision: input.request.contextRevision,
-  policyRevision: input.policy.policyRevision,
-  pricingRevision: input.pricing.pricingRevision,
+  policyCompleteness: input.policy.completeness,
+  policyRevisionIds: input.policy.policyRevisionIds,
+  pricingSupport: input.pricing,
   requestedAt: input.request.requestedAt,
 });
 
@@ -192,9 +293,10 @@ const resolved = (
 export const resolvePurchaseCurrency = (input: PurchaseCurrencyResolutionInput): PurchaseCurrencyResolutionOutcome => {
   const { policy, pricing, request } = input;
   if (
-    new Set(policy.supportedCurrencies).size !== policy.supportedCurrencies.length ||
+    new Set(policy.allowedCurrencies).size !== policy.allowedCurrencies.length ||
     new Set(pricing.supportedCurrencies).size !== pricing.supportedCurrencies.length ||
-    (policy.defaultCurrency !== null && !policy.supportedCurrencies.includes(policy.defaultCurrency))
+    policy.allowedCurrencies.length === 0 ||
+    (policy.defaultCurrency !== null && !policy.allowedCurrencies.includes(policy.defaultCurrency))
   ) {
     return InconsistentPurchaseCurrencyPolicy.make({
       reason: 'Currency policy contains duplicates or a default outside its supported set',
@@ -202,12 +304,6 @@ export const resolvePurchaseCurrency = (input: PurchaseCurrencyResolutionInput):
   }
 
   if (request.explicitChoice !== undefined) {
-    if (!policy.explicitChoiceEnabled) {
-      return ExplicitPurchaseCurrencyChoiceInvalid.make({
-        currencyCode: request.explicitChoice,
-        reason: 'EXPLICIT_CHOICE_DISABLED',
-      });
-    }
     const support = supported(request.explicitChoice, policy, pricing);
     return support === 'SUPPORTED'
       ? resolved(input, request.explicitChoice, 'EXPLICIT_CHOICE')
@@ -228,15 +324,3 @@ export const resolvePurchaseCurrency = (input: PurchaseCurrencyResolutionInput):
     reason: 'No explicit choice or valid unambiguous policy default exists',
   });
 };
-
-export const AKROS_LAUNCH_CURRENCY_POLICY: CurrencyPolicyDecision = Object.freeze({
-  defaultCurrency: AKROS_LAUNCH_CURRENCY,
-  explicitChoiceEnabled: true,
-  policyRevision: 'akros-launch-czk-v1',
-  supportedCurrencies: Object.freeze([AKROS_LAUNCH_CURRENCY]),
-});
-
-export const AKROS_LAUNCH_PRICING_CURRENCY_SUPPORT: PricingCurrencySupport = Object.freeze({
-  pricingRevision: 'akros-launch-czk-v1',
-  supportedCurrencies: Object.freeze([AKROS_LAUNCH_CURRENCY]),
-});

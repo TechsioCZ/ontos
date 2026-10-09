@@ -2,10 +2,15 @@ import { randomUUID } from 'node:crypto';
 
 import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
+import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import * as FastCheck from 'fast-check';
+import { Arbitrary } from 'effect/unstable/arbitrary';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
@@ -41,6 +46,13 @@ const commaSeparatedHeader = (value: string | null): readonly string[] =>
 const makeAssertion = () =>
   Effect.gen(function* signRuntimeAssemblyAssertion() {
     const issuer = 'https://shell.runtime-assembly.test';
+    const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+      [ultramodernApiMarker.appId],
+      ultramodernApiMarker.buildMarker,
+    );
+    const compositionDocument = yield* Schema.encodeEffect(
+      Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+    )(compositionSnapshot);
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -49,7 +61,12 @@ const makeAssertion = () =>
       use: 'sig',
     };
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal, ver: 1 })
+      new SignJWT({
+        compositionRevision: compositionSnapshot.composition.revision,
+        principal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({
           alg: 'EdDSA',
           kid: 'party-runtime-assembly-test',
@@ -64,6 +81,8 @@ const makeAssertion = () =>
         .sign(privateKey),
     );
     return {
+      compositionDocument,
+      compositionSnapshot,
       issuer,
       publicJwks: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
         keys: [publicJwk],
@@ -125,6 +144,7 @@ it.live(
       let partySearchCalls = 0;
       let readCalls = 0;
       let searchLayerLoads = 0;
+      let compositionLoads = 0;
       const actionRuntime: ActionRuntimeService = {
         resolveActionCommit: () =>
           Effect.suspend(() => {
@@ -202,13 +222,39 @@ it.live(
             }),
           ),
       };
-      const actionRuntimeLayer = Layer.mergeAll(
-        Layer.succeed(ActionRuntime, actionRuntime),
+      const assertionConfigurationLive = Layer.mergeAll(
+        Layer.succeed(FetchHttpClient.Fetch, (input, init) => {
+          const request = new Request(input, init);
+          expect(request.url).toBe('https://composition.runtime-assembly.test/active');
+          compositionLoads += 1;
+          return Promise.resolve(
+            new Response(assertion.compositionDocument, { headers: { 'content-type': 'application/json' } }),
+          );
+        }),
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
+            ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'https://composition.runtime-assembly.test/active',
             ONTOS_GATEWAY_ISSUER: assertion.issuer,
             ONTOS_GATEWAY_PUBLIC_JWKS: assertion.publicJwks,
           }),
+        ),
+      );
+      const compositionSourceContext = yield* Layer.build(
+        ActiveApplicationCompositionSourceLive.pipe(
+          Layer.provide(
+            FetchHttpClient.layer.pipe(
+              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+            ),
+          ),
+          Layer.provide(assertionConfigurationLive),
+        ),
+      );
+      const actionRuntimeLayer = Layer.mergeAll(
+        Layer.succeed(ActionRuntime, actionRuntime),
+        assertionConfigurationLive,
+        Layer.succeed(
+          ActiveApplicationCompositionSource,
+          Context.get(compositionSourceContext, ActiveApplicationCompositionSource),
         ),
       );
       const aresSubjectLayer = Layer.effect(
@@ -269,6 +315,7 @@ it.live(
         authorization: `Bearer ${assertion.token}`,
         'content-type': 'application/json',
         'x-correlation-id': 'runtime-assembly-proof',
+        'x-ontos-composition-revision': assertion.compositionSnapshot.composition.revision,
       };
       const counterpartyRef = {
         moduleId: 'party.registry',
@@ -332,27 +379,28 @@ it.live(
       expect(actionCalls).toBe(0);
       expect(redemptionCalls).toBe(0);
       const manualPayloads = {
+        '/reads/privacy-measure-execution': { idempotencyKey: 'runtime-test:1' },
         '/party-registry/actions/execute-privacy-measure': {
           handoff: {
             contentScopeRefs: ['party.registry.counterparty.lifecycle'],
-            controllerObligationRef: 'controller-obligation:runtime-proof',
-            dispositionDecision: null,
-            expectedEvidenceRefs: ['party.registry.counterparty.archived'],
-            idempotencyKey: 'privacy-measure:runtime-proof',
+            controllerObligationRef: 'obligation:runtime-test',
+            dispositionDecision: 'RESTRICT',
+            expectedEvidenceRefs: ['party.registry.counterparty.restricted'],
+            idempotencyKey: 'runtime-test:1',
             kind: 'RESTRICT',
-            measureId: 'privacy-measure:runtime-proof',
+            measureId: 'measure:runtime-test',
             owningCapability: 'party.registry',
-            preconditionRefs: ['privacy-decision:runtime-proof'],
-            requestedAt: '2026-09-07T00:00:00.000Z',
-            requestedResult: 'ARCHIVED',
+            preconditionRefs: ['decision:runtime-test'],
+            requestedAt: '2026-09-14T10:00:00.000Z',
+            requestedResult: 'RESTRICTED',
             resourceRefs: [
-              'party.registry|party.registry.counterparty|a5000000-0000-4000-8000-000000000001|a9000000-0000-4000-8000-000000000001',
+              'party.registry|party.registry.counterparty|a5000000-0000-4000-8000-000000000001|a6000000-0000-4000-8000-000000000001',
             ],
-            right: 'RESTRICTION',
-            sourceDecisionRef: 'privacy-decision:runtime-proof',
+            right: null,
+            sourceDecisionRef: 'decision:runtime-test',
             sourceDecisionRevision: 1,
-            subjectRef: 'privacy-subject:runtime-proof',
-            taskId: 'privacy-task:runtime-proof',
+            subjectRef: 'subject:runtime-test',
+            taskId: 'task:runtime-test',
             tenantId: principal.tenantId,
           },
         },
@@ -386,12 +434,32 @@ it.live(
           validTo: '2026-09-07T00:00:00.000Z',
         },
         '/party-registry/actions/create-party': { candidate },
+        // Sampled DateTimeUtc values include extended years that the canonical ISO wire format rejects.
+        '/party-registry/actions/create-party-relationship': {
+          fromPartyRef: partyRef,
+          provenance: { method: 'TEST', source: 'runtime-assembly-proof' },
+          relationshipType: 'CONTACT_PERSON_OF',
+          toPartyRef: { ...partyRef, resourceId: 'ab000000-0000-4000-8000-000000000001' },
+          validFrom: '2026-09-07T00:00:00.000Z',
+          validTo: null,
+        },
         '/party-registry/actions/end-contact-point': {
           contactPointRef,
           effectiveEnd: '2026-09-07T00:00:00.000Z',
           provenance: contactPointProvenance,
           reason: 'Runtime assembly proof',
           target: { type: 'WHOLE_CONTACT_POINT' },
+        },
+        '/party-registry/actions/end-party-relationship': {
+          effectiveAt: '2026-09-07T00:00:00.000Z',
+          expectedRevision: 1,
+          provenance: { method: 'TEST', source: 'runtime-assembly-proof' },
+          relationshipRef: {
+            moduleId: 'party.registry',
+            resourceId: 'aa000000-0000-4000-8000-000000000001',
+            resourceType: 'party.registry.party-relationship',
+            tenantId: principal.tenantId,
+          },
         },
         '/party-registry/actions/match-party': { candidate },
         '/party-registry/actions/update-party': {
@@ -450,10 +518,10 @@ it.live(
             ? undefined
             : (manualPayload ??
               (yield* Schema.encodeEffect(payloadSchema)(
-                FastCheck.sample(Schema.toArbitrary(payloadSchema)(FastCheck), {
-                  numRuns: 1,
+                (yield* Arbitrary.sampleEffect(Arbitrary.schema(payloadSchema), {
+                  count: 1,
                   seed: index + 1,
-                })[0],
+                }))[0],
               )));
         const request =
           payload === undefined
@@ -487,6 +555,7 @@ it.live(
           ).toBe(callsBefore + 1);
         }
       }
+      expect(compositionLoads).toBe(1);
       assert.isOk(redemptionCalls > 0);
       assert.isOk(actionCalls > 0);
       expect(actionCommitCalls).toBe(1);
@@ -496,11 +565,20 @@ it.live(
       expect(partySearchCalls).toBe(1);
       expect(counterpartySearchCalls).toBe(1);
       expect(searchLayerLoads).toBe(1);
+      const callsBeforePreflight = {
+        actionCalls,
+        actionCommitCalls,
+        aresCalls,
+        counterpartySearchCalls,
+        partySearchCalls,
+        readCalls,
+        redemptionCalls,
+      };
       const preflight = yield* Effect.promise(() =>
         runtime.handler(
           new Request('http://localhost/party-registry/readiness', {
             headers: {
-              'access-control-request-headers': 'Authorization, X-Correlation-Id',
+              'access-control-request-headers': 'Authorization, X-Correlation-Id, X-Ontos-Composition-Revision',
               'access-control-request-method': 'GET',
               origin: 'http://localhost:3020',
             },
@@ -516,6 +594,18 @@ it.live(
       expect(commaSeparatedHeader(preflight.headers.get('access-control-allow-headers'))).toEqual(
         [...partyRegistryCorsAllowedHeaders].toSorted(),
       );
+      expect(commaSeparatedHeader(preflight.headers.get('access-control-allow-headers'))).toContain(
+        'X-Ontos-Composition-Revision',
+      );
+      expect({
+        actionCalls,
+        actionCommitCalls,
+        aresCalls,
+        counterpartySearchCalls,
+        partySearchCalls,
+        readCalls,
+        redemptionCalls,
+      }).toEqual(callsBeforePreflight);
       expect(preflight.headers.get('access-control-max-age')).toBe('600');
       const loopbackPreflight = yield* Effect.promise(() =>
         runtime.handler(
@@ -542,5 +632,5 @@ it.live(
       );
       expect(foreignPreflight.headers.get('access-control-allow-origin')).toBe(null);
     }),
-  30_000,
+  15_000,
 );

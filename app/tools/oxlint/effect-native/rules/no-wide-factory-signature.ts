@@ -6,7 +6,8 @@
  * Effect bodies require scope-resolved import/member calls, including aliases and point-free
  * forms; comments, text literals and unrelated Node stream .pipe are not evidence.
  * Proven local scalar/data parameter shapes are excluded: B4 is dependency vocabulary, not
- * a ban on URL builders or CRUD request options. Unknown/imported types and untyped wide
+ * a ban on URL builders or CRUD request options. Native service factories also own the required
+ * transaction, scope, and composition revision arguments. Unknown/imported types and untyped wide
  * signatures remain heuristic; this AST-only rule cannot prove all such parameters are services.
  * Configurable naming and width controls intentionally cover only part of B4. Report only.
  */
@@ -15,6 +16,7 @@ import type { ESTree } from '@oxlint/plugins';
 
 import { keyName as staticKeyName, parentOf, unwrapBinding } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
+import { isCoreReadTestHarnessCallback, isNativeServiceFactoryCallback } from '../shared/native-service-factory.ts';
 import { booleanOption, compile, positiveInteger, stringList } from '../shared/options.ts';
 import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
@@ -396,12 +398,16 @@ export const rule = defineRule({
 
     const inspect = (fn: AnyNode, identity: FactoryName | null, hasBody: boolean): void => {
       if (identity === null) return;
+      if (isCoreReadTestHarnessCallback(context, fn)) {
+        return;
+      }
       if (!options.factoryNamePattern.test(identity.name)) return;
       if (options.ignoreNames.has(identity.name)) return;
       const params = (fn as { params?: readonly AnyNode[] }).params ?? [];
       const count = countPositionalParameters(params);
       if (
         count > options.maxPositionalParams &&
+        !isNativeServiceFactoryCallback(context, fn) &&
         !params.every((param) => dataType((unwrapBinding(param) as any).typeAnnotation))
       ) {
         context.report({

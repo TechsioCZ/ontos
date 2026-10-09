@@ -8,10 +8,6 @@ import { RecordLegalHoldPayloadSchema, RecordLegalHoldResultSchema } from '../ac
 
 export { RecordLegalHoldPayloadSchema } from '../actions/record-legal-hold.ts';
 
-const RecordLegalHoldActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecordLegalHoldActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordLegalHoldActionInvalidProblem',
   400,
@@ -125,15 +121,34 @@ const actionErrors = [
   RecordLegalHoldActionInternalProblemSchema,
 ] as const;
 
-export const RecordLegalHoldActionApi = HttpApi.make('RecordLegalHoldActionApi').add(
-  HttpApiGroup.make('recordLegalHoldAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/record-legal-hold', {
-        error: actionErrors,
-        headers: RecordLegalHoldActionHeadersSchema,
-        payload: Schema.toEncoded(RecordLegalHoldPayloadSchema),
-        success: RecordLegalHoldResultSchema,
-      }),
-    )
-    .middleware(RecordLegalHoldActionSchemaErrorMiddleware),
-);
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const recordLegalHoldActionGroupDefinition = HttpApiGroup.make('recordLegalHoldAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/record-legal-hold', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RecordLegalHoldPayloadSchema),
+      success: RecordLegalHoldResultSchema,
+    }),
+  )
+  .middleware(RecordLegalHoldActionSchemaErrorMiddleware);
+
+export type RecordLegalHoldActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'recordLegalHoldAction',
+  HttpApiGroup.Endpoints<typeof recordLegalHoldActionGroupDefinition>
+>;
+
+const RecordLegalHoldActionGroup: RecordLegalHoldActionGroupContract = recordLegalHoldActionGroupDefinition;
+
+export const RecordLegalHoldActionApi = HttpApi.make('RecordLegalHoldActionApi').add(RecordLegalHoldActionGroup);

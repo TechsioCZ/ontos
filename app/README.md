@@ -58,21 +58,21 @@ Then generate its MicroVertical module contract before its business artifacts. G
 
 ## Sources of truth
 
-| Fact                                      | Source                                                      |
-| ----------------------------------------- | ----------------------------------------------------------- |
-| Workspace packages and scripts            | `package.json`, `pnpm-workspace.yaml`                       |
-| Node and pnpm versions                    | `.mise.toml`, `package.json#packageManager`                 |
-| Package-source and generated profile data | `.modernjs/ultramodern.json`                                |
-| Deployments, remotes, ports, and owners   | `topology/` and generated ownership metadata                |
-| Agent skill sources and install target    | `.agents/skills-lock.json` and its bootstrap script         |
-| CI and stage delivery                     | `../.github/workflows/ultramodern-workspace-gates.yml`      |
-| Local database defaults                   | `.env.example`, Compose configuration, and database scripts |
+| Fact                                    | Source                                                                                         |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Workspace packages and scripts          | `package.json`, `pnpm-workspace.yaml`                                                          |
+| Node and pnpm versions                  | `.mise.toml`, `package.json#packageManager`                                                    |
+| Framework release and package aliases   | `pnpm-workspace.yaml#catalogs.ultramodern` and the installed generator's `release-cohort.json` |
+| Deployments, remotes, ports, and owners | `topology/` and generated ownership metadata                                                   |
+| Agent skill sources and install target  | `.agents/skills-lock.json` and its bootstrap script                                            |
+| CI and stage delivery                   | `../.github/workflows/ultramodern-workspace-gates.yml`                                         |
+| Local database defaults                 | `.env.example`, Compose configuration, and database scripts                                    |
 
 Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
 
 ## Private-first routes and public output
 
-Generated routes are private and non-indexable by default. Colocated `src/routes/**/route.meta.ts` files own route metadata; the scaffold derives `src/routes/ultramodern-route-metadata.ts` and public output from them. A route emits discovery output only when metadata explicitly marks it `public && indexable`. JSON-LD is explicit, never inferred, and uses the generated helpers for supported schema types. Dynamic public routes may provide a Node-safe `route.sitemap.mjs`. Generated public files belong in `dist/public` and `.output/public`, not hand-authored source directories.
+Generated routes are private and non-indexable by default. Colocated `src/routes/**/route.meta.ts` files own route metadata; `ultramodern-create ultramodern routes-generate` derives `src/routes/ultramodern-route-metadata.ts` from them, and the build derives public output. A route emits discovery output only when metadata explicitly marks it `public && indexable`. JSON-LD is explicit, never inferred, and uses the generated helpers for supported schema types. Dynamic public routes may provide a Node-safe `route.sitemap.mjs`. Generated public files belong in `dist/public` and `.output/public`, not hand-authored source directories.
 
 Use [Frontend Architecture](docs/frontend/FRONTEND.md) for user-facing behavior and [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md) for governed page resolution, dynamic parameters, and lazy remote loading.
 
@@ -152,7 +152,7 @@ Use the source-owned operator evidence commands:
 mise exec -- pnpm authorization:inventory:check
 mise exec -- pnpm authorization:impact:report -- .codex/reports/authorization/would-deny.json
 mise exec -- pnpm authorization:readiness:check -- stage
-mise exec -- pnpm deployment-impact:plan -- --authorization-environment stage
+mise exec -- pnpm deployment-impact:plan -- --authorization-environment stage --outbox-worker-mode host
 mise exec -- pnpm test:scripts
 ```
 
@@ -196,10 +196,10 @@ Run `mise exec -- pnpm build` when build output, routes, public surfaces, Module
 | Symptom                      | First source or check                                                           |
 | ---------------------------- | ------------------------------------------------------------------------------- |
 | Toolchain mismatch           | `.mise.toml`, `package.json#packageManager`, then `mise install`                |
-| Package cohort mismatch      | `.modernjs/ultramodern.json`, workspace policy, then a frozen install           |
+| Package cohort mismatch      | `pnpm-workspace.yaml`, installed generator cohort, then a frozen install        |
 | Old API path                 | `mise exec -- pnpm api:check`                                                   |
 | Type, lint, or contract fail | Run the matching primitive script from `package.json` before the aggregate gate |
-| Missing public URL           | The app key generated in `.modernjs/ultramodern.json`                           |
+| Missing public URL           | The app key in `topology/reference-topology.json`                               |
 | Asset or CSS 404             | Rebuild and inspect emitted asset paths; do not hardcode URLs                   |
 | Federation failure           | Build host and remote, then verify each configured `mf-manifest.json`           |
 | Deployment or rollback issue | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                          |

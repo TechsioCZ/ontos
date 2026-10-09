@@ -29,7 +29,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
-    './PageContacts': './src/federation/page-contacts.tsx',
+    './PageContacts': './src/routes/[lang]/contacts/page.tsx',
   },
   filename: 'remoteEntry.js',
   manifest: {

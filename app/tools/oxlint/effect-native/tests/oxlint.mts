@@ -9,7 +9,10 @@ export const pluginDirectory = resolve(testsDirectory, '..');
 export const appRoot = resolve(pluginDirectory, '..', '..', '..');
 export const fixturesDirectory = join(testsDirectory, 'fixtures');
 // Rstest bundles this harness through Rspack, which has no `import.meta.resolve`.
-const oxlintEntryPoint = join(dirname(createRequire(import.meta.url).resolve('oxlint/package.json')), 'bin/oxlint');
+export const oxlintEntryPoint = join(
+  dirname(createRequire(import.meta.url).resolve('oxlint/package.json')),
+  'bin/oxlint',
+);
 
 interface Diagnostic {
   readonly code: string;

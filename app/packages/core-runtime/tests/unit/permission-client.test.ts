@@ -1,21 +1,18 @@
 import { v1 } from '@authzed/authzed-node';
-import { Cause, Effect, Fiber, Predicate, Schema } from 'effect';
+import { Cause, Effect, Fiber, Predicate } from 'effect';
 import { expect, it, rstest } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
-import {
-  SpiceDbPermissionClientError,
-  createSpiceDbPermissionClient,
-  SPICEDB_CHECK_TIMEOUT_MS,
-} from '../../src/permissions/client.ts';
+import { createSpiceDbPermissionClient, SPICEDB_CHECK_TIMEOUT_MS } from '../../src/permissions/client.ts';
+import { SPICEDB_TEST_CERTIFICATE } from '../support/spicedb-test-certificate.ts';
 
 type PermissionRpcError = NonNullable<
   Parameters<NonNullable<Parameters<v1.PermissionsServiceClient['checkPermission']>[3]>>[0]
 >;
 
 const configuration = {
+  caCertificate: SPICEDB_TEST_CERTIFICATE,
   endpoint: 'localhost:50051',
-  insecureLocal: true,
   preSharedKey: 'test-key',
 } as const;
 
@@ -78,9 +75,9 @@ it.effect('SDK rejections become typed permission failures without leaking diagn
       (acquiredClient) => Effect.sync(() => acquiredClient.close()),
     );
     const failure = yield* Effect.flip(client.checkPermission(v1.CheckPermissionRequest.create({})));
-    expect(Schema.is(SpiceDbPermissionClientError)(failure)).toBe(true);
+    expect(Predicate.isTagged(failure, 'SpiceDbPermissionClientError')).toBe(true);
     expect(failure.reason.includes(cause.message)).toBe(false);
-    expect(Object.getOwnPropertyDescriptor(failure, 'cause')?.value).toBe(cause);
+    expect(failure.cause).toBe(cause);
   }),
 );
 
@@ -101,7 +98,7 @@ it.effect('an SDK call that never replies is bounded by the permission deadline'
     );
     yield* TestClock.adjust(SPICEDB_CHECK_TIMEOUT_MS);
     const failure = yield* Fiber.join(fiber);
-    expect(Schema.is(SpiceDbPermissionClientError)(failure)).toBe(true);
-    expect(Cause.isTimeoutError(Object.getOwnPropertyDescriptor(failure, 'cause')?.value)).toBe(true);
+    expect(Predicate.isTagged(failure, 'SpiceDbPermissionClientError')).toBe(true);
+    expect(Cause.isTimeoutError(failure.cause)).toBe(true);
   }),
 );

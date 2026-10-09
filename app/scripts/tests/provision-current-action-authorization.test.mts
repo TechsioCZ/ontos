@@ -12,26 +12,33 @@ import {
   ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
   ActionAuthorizationProvisioningError,
   buildActionAuthorizationRelationships,
+  buildExplicitActionGrantRelationships,
+  deriveExplicitActionAuthorization,
   provisionActionAuthorization,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type {
   ActionAuthorizationContext,
   ActionAuthorizationProvisioningClient,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { parseStageAccountsFile } from '../../packages/core-runtime/src/install/stage-accounts-file.ts';
 import type { SpiceDbConfigValue } from '../../packages/core-runtime/src/permissions/config.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from '../generate-ontos-module-contract.mts';
 import { LOCAL_DEVELOPMENT_CONTEXT } from '../initialize-local-development.mts';
 import {
-  buildExplicitActionAssertions,
   formatActionAuthorizationProvisioningFailure,
   runCurrentActionAuthorizationProvisioning,
   selectActionAuthorizationProvisioningTarget,
+  stageAccountsAuthorization,
 } from '../provision-current-action-authorization.mts';
-import type { discoverCurrentActionKeys as DiscoverCurrentActionKeys } from '../provision-current-action-authorization.mts';
+import type {
+  discoverCurrentActionKeys as DiscoverCurrentActionKeys,
+  StageAccountsAuthorization,
+} from '../provision-current-action-authorization.mts';
 
 const attachPersonEngagementAction = 'party.registry.attach-person-engagement';
 const restrictedAction = 'core.identity.restricted';
+const changePrincipalBindingStatusAction = 'core.identity.change-principal-binding-status';
 const testPreSharedKey = 'not-a-real-secret';
 const ProvisioningFailureCauseSchema = Schema.Struct({ cause: Schema.Unknown });
 const decodeProvisioningFailureCause = Schema.decodeUnknownSync(ProvisioningFailureCauseSchema);
@@ -78,9 +85,106 @@ const currentActionKeys = [
 ] as const;
 
 const addedVerticalActionKeys = [
+  'commerce.catalog.activate-local-override',
+  'commerce.catalog.activate-package-definition',
+  'commerce.catalog.activate-package-option',
+  'commerce.catalog.add-product-category-assignment',
+  'commerce.catalog.assert-size-equivalence',
+  'commerce.catalog.assign-catalog-media',
+  'commerce.catalog.assign-sku',
+  'commerce.catalog.change-local-override',
+  'commerce.catalog.change-product-manufacturer',
+  'commerce.catalog.change-product-relationship',
+  'commerce.catalog.change-variant',
+  'commerce.catalog.confirm-gtin',
+  'commerce.catalog.confirm-variant-combination',
+  'commerce.catalog.correct-gtin',
+  'commerce.catalog.correct-product',
+  'commerce.catalog.correct-sku',
+  'commerce.catalog.create-attribute-definition',
+  'commerce.catalog.create-brand',
+  'commerce.catalog.create-configuration-unit',
+  'commerce.catalog.create-controlled-attribute-value',
+  'commerce.catalog.create-package-definition',
+  'commerce.catalog.create-product',
+  'commerce.catalog.create-product-category',
+  'commerce.catalog.create-product-relationship',
+  'commerce.catalog.create-product-type',
+  'commerce.catalog.create-product-unit',
+  'commerce.catalog.create-set-composition',
+  'commerce.catalog.create-variant',
+  'commerce.catalog.decide-product-type-unnecessary',
+  'commerce.catalog.govern-product-attribute-applicability',
+  'commerce.catalog.govern-variant-allowed-values',
+  'commerce.catalog.govern-variant-axes',
+  'commerce.catalog.import-source-assertion',
+  'commerce.catalog.mark-gtin-unresolved',
+  'commerce.catalog.move-product-category',
+  'commerce.catalog.promote-package-definition',
+  'commerce.catalog.publish-product-configuration',
+  'commerce.catalog.reactivate-brand',
+  'commerce.catalog.reactivate-controlled-attribute-value',
+  'commerce.catalog.reactivate-product',
+  'commerce.catalog.reactivate-variant',
+  'commerce.catalog.release-local-override',
+  'commerce.catalog.remove-catalog-media',
+  'commerce.catalog.remove-product-attribute-values',
+  'commerce.catalog.remove-product-category-assignment',
+  'commerce.catalog.remove-product-localized-facts',
+  'commerce.catalog.remove-product-manufacturer',
+  'commerce.catalog.remove-product-relationship',
+  'commerce.catalog.remove-variant-attribute-override',
+  'commerce.catalog.remove-variant-localized-facts',
+  'commerce.catalog.rename-attribute-definition',
+  'commerce.catalog.rename-brand',
+  'commerce.catalog.rename-controlled-attribute-value',
+  'commerce.catalog.rename-product-category',
+  'commerce.catalog.rename-sku',
+  'commerce.catalog.reorder-catalog-media',
+  'commerce.catalog.replace-product-sizes',
+  'commerce.catalog.retire-brand',
+  'commerce.catalog.retire-configuration-unit',
+  'commerce.catalog.retire-controlled-attribute-value',
+  'commerce.catalog.retire-gtin',
+  'commerce.catalog.retire-package-definition',
+  'commerce.catalog.retire-package-option',
+  'commerce.catalog.retire-product',
+  'commerce.catalog.retire-product-category',
+  'commerce.catalog.retire-product-unit',
+  'commerce.catalog.retire-variant',
+  'commerce.catalog.revise-attribute-definition',
+  'commerce.catalog.revise-configuration-unit',
+  'commerce.catalog.revise-package-definition',
+  'commerce.catalog.revise-product-type',
+  'commerce.catalog.revise-product-unit',
+  'commerce.catalog.revise-set-composition',
+  'commerce.catalog.set-product-attribute-values',
+  'commerce.catalog.set-product-brand',
+  'commerce.catalog.set-product-localized-facts',
+  'commerce.catalog.set-product-manufacturer',
+  'commerce.catalog.set-product-type',
+  'commerce.catalog.set-product-unit-target-divisibility',
+  'commerce.catalog.set-variant-attribute-override',
+  'commerce.catalog.set-variant-localized-facts',
+  'commerce.catalog.update-product',
+  'commerce.assortment.create-applicability-binding',
+  'commerce.assortment.create-closed-assortment-boundary',
+  'commerce.assortment.create-rule',
+  'commerce.assortment.create-rule-revision',
+  'commerce.assortment.end-applicability-binding',
+  'commerce.assortment.end-closed-assortment-boundary',
+  'commerce.assortment.issue-assortment-commitment-confirmation',
+  'commerce.assortment.replace-applicability-binding',
+  'commerce.assortment.replace-closed-assortment-boundary',
+  'commerce.assortment.retire-rule',
   'commerce.customer-context.add-saved-address',
+  'commerce.customer-context.administer-commerce-quantity-rule',
+  'commerce.customer-context.administer-market-bootstrap-policy',
+  'commerce.customer-context.administer-payment-term-policy',
+  'commerce.customer-context.administer-purchase-currency-policy',
   'commerce.customer-context.archive-customer-group',
   'commerce.customer-context.archive-customer-profile',
+  'commerce.customer-context.assign-commerce-quantity-rule',
   'commerce.customer-context.assign-counterparty-price-group',
   'commerce.customer-context.assign-customer-group',
   'commerce.customer-context.assign-customer-price-group',
@@ -102,7 +206,6 @@ const addedVerticalActionKeys = [
   'commerce.customer-context.create-purchase-proposal-revision',
   'commerce.customer-context.decide-purchase-approval-request',
   'commerce.customer-context.ensure-retail-customer-profile',
-  'commerce.customer-context.execute-privacy-measure',
   'commerce.customer-context.grant-counterparty-commerce-access',
   'commerce.customer-context.migrate-counterparty-price-group',
   'commerce.customer-context.migrate-customer-price-group',
@@ -119,6 +222,7 @@ const addedVerticalActionKeys = [
   'commerce.customer-context.repeat-retail-order',
   'commerce.customer-context.reroute-purchase-approval-request',
   'commerce.customer-context.resend-counterparty-access-invitation',
+  'commerce.customer-context.reserve-market-retirement',
   'commerce.customer-context.reserve-payment-term-retirement',
   'commerce.customer-context.resolve-profile-reconciliation',
   'commerce.customer-context.revalidate-purchase-approval',
@@ -132,52 +236,76 @@ const addedVerticalActionKeys = [
   'commerce.customer-context.trigger-purchase-approval',
   'commerce.customer-context.update-customer-group',
   'commerce.customer-context.update-saved-address',
+  'commerce.inventory.create-inventory-reservation',
+  'commerce.market-catalog.activate-market',
+  'commerce.market-catalog.associate-storefront',
+  'commerce.market-catalog.create-market',
+  'commerce.market-catalog.remove-storefront-association',
+  'commerce.market-catalog.retire-market',
+  'commerce.market-catalog.revise-market-definition',
+  'commerce.market-catalog.revise-storefront-association',
+  'commerce.market-catalog.suspend-market',
+  'commerce.pricing.define-price',
+  'commerce.pricing.set-supported-currencies',
+  'commerce.storefront-registry.register-storefront-application',
+  'commerce.storefront-registry.revise-storefront-application',
   'payment.term-catalog.correct-payment-term',
   'payment.term-catalog.create-payment-term',
   'payment.term-catalog.reconcile-payment-term-reference',
   'payment.term-catalog.retire-payment-term',
-  'party.registry.execute-privacy-measure',
-  'privacy.core.add-processing-purpose-version',
-  'privacy.core.assign-dsr-resolver',
-  'privacy.core.assign-legal-basis',
-  'privacy.core.assign-privacy-responsibility',
-  'privacy.core.consent-self-service',
-  'privacy.core.create-dsr-case',
-  'privacy.core.create-notice-version',
-  'privacy.core.create-privacy-subject',
-  'privacy.core.create-processing-activity',
-  'privacy.core.create-processing-purpose',
-  'privacy.core.dispatch-privacy-measure',
-  'privacy.core.enqueue-retention-evaluation',
-  'privacy.core.evaluate-processing-eligibility',
-  'privacy.core.issue-dsr-delivery-access',
-  'privacy.core.record-anti-resurrection-protection',
-  'privacy.core.record-applicability-policy',
-  'privacy.core.record-consent-decision',
-  'privacy.core.record-disposition-decision',
-  'privacy.core.record-dsr-deadline',
-  'privacy.core.record-dsr-delivery-evidence',
-  'privacy.core.record-dsr-response',
-  'privacy.core.record-dsr-substantive-decision',
-  'privacy.core.record-dsr-verification',
-  'privacy.core.record-external-obligation',
-  'privacy.core.record-legal-hold',
-  'privacy.core.record-notice-provision',
-  'privacy.core.record-owner-contribution',
-  'privacy.core.record-owner-execution-outcome',
-  'privacy.core.record-privacy-applicability',
-  'privacy.core.record-privacy-representation',
-  'privacy.core.record-processing-intervention',
-  'privacy.core.record-retention-exception',
-  'privacy.core.transition-processing-activity',
-  'privacy.core.update-dsr-case',
-  'privacy.core.upsert-dsr-owner-task',
-  'privacy.core.upsert-retention-rule',
-  'privacy.core.upsert-temporary-dsr-export',
+  'pricing.price-group-catalog.create-price-group',
+  'pricing.price-group-catalog.create-price-group-definition-revision',
+  'pricing.price-group-catalog.retire-price-group',
 ] as const;
 
-// oxlint-disable-next-line unicorn/no-array-sort -- The spread creates a private aggregate before sorting it.
-const completeCurrentActionKeys = [...addedVerticalActionKeys, ...currentActionKeys].sort();
+// These Actions are provisioned as 'explicit' (not Tenant-membership default), so they are discovered
+// alongside currentActionKeys/addedVerticalActionKeys but excluded from the tenant-membership fixtures below.
+const explicitlyProvisionedActionKeys = [
+  'commerce.customer-context.claim-portal-enrollment-transition',
+  'commerce.customer-context.record-portal-enrollment-outcome',
+  'commerce.customer-context.start-portal-enrollment',
+  'commerce.customer-context.terminate-portal-enrollment',
+  'commerce.inventory.change-stock-sharing-eligibility',
+  'commerce.inventory.compensate-inventory-pre-commit',
+  'commerce.inventory.correct-catalog-to-stock-binding',
+  'commerce.inventory.correct-external-stock-correlation',
+  'commerce.inventory.correct-stock-position',
+  'commerce.inventory.end-catalog-to-stock-binding',
+  'commerce.inventory.end-external-stock-correlation',
+  'commerce.inventory.end-stock-sharing-eligibility',
+  'commerce.inventory.establish-catalog-to-stock-binding',
+  'commerce.inventory.establish-commitment-protection',
+  'commerce.inventory.establish-external-stock-correlation',
+  'commerce.inventory.establish-stock-sharing-eligibility',
+  'commerce.inventory.import-source-assertion',
+  'commerce.inventory.recover-inventory-effect',
+  'commerce.inventory.release-inventory-reservation',
+  'commerce.inventory.resolve-inventory-source-conflict',
+  'commerce.inventory.select-inventory-backend',
+  'commerce.inventory.stock-issue',
+  'commerce.inventory.stock-receipt',
+  'commerce.pricing.compensate-currency-support-recovery',
+  'commerce.pricing.define-commercial-fee',
+  'commerce.pricing.manage-commitment-confirmation',
+  'commerce.pricing.manage-contractual-discount',
+  'commerce.pricing.manage-product-commercial-fees-bulk',
+  'commerce.pricing.manage-product-prices-bulk',
+  'commerce.pricing.manage-quantity-tier',
+  'commerce.pricing.manage-quotation',
+  'commerce.pricing.manage-zero-floor-authorization',
+  'commerce.pricing.revise-commercial-fee',
+  'commerce.pricing.revise-price',
+  'core.identity.activate-principal-binding',
+  changePrincipalBindingStatusAction,
+  'core.identity.reserve-principal-binding',
+] as const;
+
+const completeCurrentActionKeys = [...addedVerticalActionKeys, ...currentActionKeys, ...explicitlyProvisionedActionKeys]
+  // This top-level scripts/tests file resolves against the root tsconfig (no scripts-scoped project), whose
+  // default lib lacks the ES2023 toSorted() overload that real tsc + Node accept at runtime; sorting the
+  // freshly spread array in place is equivalent and side-effect-free.
+  // oxlint-disable-next-line unicorn/no-array-sort -- See comment above.
+  .sort();
 
 const currentActions = currentActionKeys.map((actionKey) => ({
   actionKey,
@@ -187,16 +315,74 @@ const currentActions = currentActionKeys.map((actionKey) => ({
 const developmentConfiguration: SpiceDbConfigValue = {
   deploymentEnvironment: 'development',
   endpoint: 'localhost:50051',
-  insecureLocal: true,
   preSharedKey: testPreSharedKey,
 };
 
 const stageConfiguration: SpiceDbConfigValue = {
   deploymentEnvironment: 'stage',
   endpoint: 'spicedb:50051',
-  insecureLocal: true,
   preSharedKey: testPreSharedKey,
 };
+
+const stageFixtureAccount = (tenant: string, index: number, explicitActions: 'all' | readonly string[]) => ({
+  authBindingId: `30000000-0000-4000-8000-0000000000${tenant}${index}`,
+  displayName: `Tenant ${tenant.toUpperCase()} account ${index}`,
+  email: `account-${tenant}-${index}@example.invalid`,
+  grants: { explicitActions, tenantRelations: [] },
+  password: `fixture-${tenant}-${index}-password`,
+  principalId: `20000000-0000-4000-8000-0000000000${tenant}${index}`,
+});
+
+const stageFixtureTenant = (tenant: string) => ({
+  accounts: [stageFixtureAccount(tenant, 1, []), stageFixtureAccount(tenant, 2, 'all')] as const,
+  defaultLocale: 'cs',
+  displayName: `Tenant ${tenant.toUpperCase()}`,
+  legalEntity: {
+    legalEntityId: `11000000-0000-4000-8000-0000000000${tenant}0`,
+    legalName: `Tenant ${tenant.toUpperCase()} Legal`,
+    registrationCountry: 'CZ',
+    registrationNumber: `FIXTURE-${tenant.toUpperCase()}`,
+  },
+  moduleStateId: `40000000-0000-4000-8000-0000000000${tenant}0`,
+  slug: `tenant-${tenant}`,
+  tenantId: `10000000-0000-4000-8000-0000000000${tenant}0`,
+});
+
+/** Synthetic operator accounts file: two Tenants, each with one account that holds every explicit Action. */
+const stageAccountsFileSource = JSON.stringify({
+  retiredAccountEmails: [],
+  retiredTenants: [],
+  schemaVersion: 2,
+  tenants: [stageFixtureTenant('a'), stageFixtureTenant('b')],
+});
+
+const stageFixturePrincipal = (tenant: string, index: number) => `20000000-0000-4000-8000-0000000000${tenant}${index}`;
+const stageFixtureTenantId = (tenant: string) => `10000000-0000-4000-8000-0000000000${tenant}0`;
+
+/** The Action authorization inputs the synthetic accounts file projects onto. */
+const stageAuthorization: StageAccountsAuthorization = {
+  contexts: ['a', 'b'].flatMap((tenant) =>
+    [1, 2].map((index) => ({
+      principalId: stageFixturePrincipal(tenant, index),
+      tenantId: stageFixtureTenantId(tenant),
+    })),
+  ),
+  explicitAccountGrants: ['a', 'b'].flatMap((tenant) => [
+    { explicitActions: [], principalId: stageFixturePrincipal(tenant, 1) },
+    { explicitActions: 'all' as const, principalId: stageFixturePrincipal(tenant, 2) },
+  ]),
+};
+
+const grantedPrincipalIds = (contexts: readonly ActionAuthorizationContext[]) =>
+  contexts.flatMap(({ principalId }) =>
+    stageAuthorization.explicitAccountGrants.some(
+      (grant) => grant.principalId === principalId && grant.explicitActions === 'all',
+    )
+      ? [principalId]
+      : [],
+  );
+const ungrantedPrincipalIds = (contexts: readonly ActionAuthorizationContext[]) =>
+  contexts.flatMap(({ principalId }) => (grantedPrincipalIds(contexts).includes(principalId) ? [] : [principalId]));
 
 const response = (permissionship: v1.CheckPermissionResponse_Permissionship) =>
   v1.CheckPermissionResponse.create({ permissionship });
@@ -228,9 +414,13 @@ it.effect(
       },
     ]);
 
-    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
     expect(stage.environment).toBe('stage');
-    expect(stage.contexts.length).toBe(2);
+    expect(stage.contexts.length).toBe(4);
+    expect(stage.explicitAccountGrants).toHaveLength(4);
+    expect(new Set(stage.contexts.map(({ tenantId }) => tenantId)).size).toBe(2);
+    expect(JSON.stringify(stage)).not.toMatch(/password|example\.invalid/u);
+    expect(development.explicitAccountGrants).toEqual([]);
 
     const { deploymentEnvironment: _environment, ...withoutEnvironment } = developmentConfiguration;
     const implicitDevelopment = yield* selectActionAuthorizationProvisioningTarget(withoutEnvironment);
@@ -249,12 +439,12 @@ it.effect(
         {
           ...developmentConfiguration,
           endpoint: 'spicedb.example.com:50051',
-          insecureLocal: false,
         },
         { ...withoutEnvironment, endpoint: 'spicedb.example.com:50051' },
         { ...withoutEnvironment, endpoint: 'spicedb:50051' },
+        stageConfiguration,
         { ...stageConfiguration, endpoint: 'localhost:50051' },
-        { ...stageConfiguration, insecureLocal: false },
+        { ...stageConfiguration, endpoint: 'spicedb:50052' },
       ].map((configuration) =>
         Effect.gen(function* testEffect3() {
           const error = yield* failureOf(selectActionAuthorizationProvisioningTarget(configuration));
@@ -313,9 +503,13 @@ it.effect(
     expect(currentActionKeys.filter((key) => key.startsWith('core.')).length).toBe(8);
     expect(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length).toBe(30);
     expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
+    expect(completeCurrentActionKeys).toHaveLength(246);
+    expect(completeCurrentActionKeys.filter((key) => key.startsWith('commerce.pricing.'))).toHaveLength(13);
     expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
+    expect(completeCurrentActionKeys).toContain('commerce.catalog.publish-product-configuration');
+    expect(completeCurrentActionKeys).toContain('commerce.assortment.replace-closed-assortment-boundary');
     expect(completeCurrentActionKeys).toContain('payment.term-catalog.retire-payment-term');
-    expect(completeCurrentActionKeys).toContain('privacy.core.record-consent-decision');
+    expect(completeCurrentActionKeys).toContain('pricing.price-group-catalog.retire-price-group');
   }),
 );
 
@@ -323,7 +517,7 @@ it.effect(
   'builds lossless, deterministic Tenant-membership grants for development and stage',
   Effect.fn(function* testEffect8() {
     const development = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
-    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
     const developmentRelationships = buildActionAuthorizationRelationships(currentActionKeys, development.contexts);
     const stageRelationships = buildActionAuthorizationRelationships(currentActionKeys, stage.contexts);
 
@@ -440,30 +634,6 @@ it.effect(
     expect(state.updates.length).toBe(76);
     expect(state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
     expect(![...state.grants].some((grant) => grant.includes(ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID))).toBe(true);
-  }),
-);
-
-it.effect(
-  'derives recorded allowed and denied assertions for every explicit Action',
-  Effect.fn(function* testEffect9ExplicitAssertions() {
-    const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
-    expect(
-      buildExplicitActionAssertions(
-        [
-          { actionKey: 'core.identity.default', provisioning: 'tenant_membership_default' },
-          { actionKey: restrictedAction, provisioning: 'explicit' },
-        ],
-        target.contexts,
-      ),
-    ).toEqual([
-      {
-        actionKey: restrictedAction,
-        assertions: [
-          { expected: 'allowed', principalId: target.contexts[0]?.principalId },
-          { expected: 'denied', principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID },
-        ],
-      },
-    ]);
   }),
 );
 
@@ -744,10 +914,10 @@ it.effect(
       path: 'verticals/example',
     };
     yield* writeInventory(root, [vertical]);
-    const incomplete: typeof deriveOntosModuleDeploymentContract = () =>
+    const incomplete: typeof deriveOntosModuleDeploymentContract = (_options) =>
       Effect.succeed({
         ...currentContract,
-        deployment: { ...currentContract.deployment, appId: 'example' },
+        deployment: { ...currentContract.deployment, appId: 'wrong-deployment' },
         manifest: {
           ...currentContract.manifest,
           publicSurface: {
@@ -763,6 +933,18 @@ it.effect(
     expect(Schema.decodeUnknownSync(NativeProvisioningError)(incompleteError).code).toBe(
       'action_authorization_discovery_failed',
     );
+
+    const foundation: typeof deriveOntosModuleDeploymentContract = (options) =>
+      incomplete(options).pipe(
+        Effect.map((contract) => ({
+          ...contract,
+          deployment: { ...contract.deployment, appId: 'example' },
+        })),
+      );
+    const foundationActions = yield* discoverCurrentActionKeys(root, foundation).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(foundationActions).toEqual(completeCurrentActionKeys.filter((key) => key.startsWith('core.')));
 
     const duplicate: typeof deriveOntosModuleDeploymentContract = () =>
       Effect.succeed({
@@ -807,5 +989,169 @@ it.effect(
     );
     expect(error.code).toBe('action_authorization_configuration_invalid');
     expect(error.reason).toMatch(/no command-line arguments/u);
+  }),
+);
+
+const stageExplicitActions = [
+  { actionKey: attachPersonEngagementAction, provisioning: 'tenant_membership_default' as const },
+  { actionKey: restrictedAction, provisioning: 'explicit' as const },
+  { actionKey: changePrincipalBindingStatusAction, provisioning: 'explicit' as const },
+];
+
+it.effect(
+  'grants each explicit Action to the accounts whose grant data lists it and records every other denial',
+  Effect.fn(function* testEffect21() {
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
+    const granted = grantedPrincipalIds(stage.contexts);
+    const ungranted = ungrantedPrincipalIds(stage.contexts);
+    const derived = yield* deriveExplicitActionAuthorization(
+      stageExplicitActions,
+      stage.contexts,
+      stage.explicitAccountGrants,
+    );
+    expect(derived.explicitActionGrants.map(({ actionKey }) => actionKey)).toEqual([
+      restrictedAction,
+      changePrincipalBindingStatusAction,
+    ]);
+    for (const { assertions } of derived.explicitActionAssertions) {
+      expect(assertions.filter(({ expected }) => expected === 'allowed').map(({ principalId }) => principalId)).toEqual(
+        granted,
+      );
+      expect(assertions.filter(({ expected }) => expected === 'denied').map(({ principalId }) => principalId)).toEqual([
+        ...ungranted,
+        ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
+      ]);
+    }
+    const grantRelationships = buildExplicitActionGrantRelationships(derived.explicitActionGrants);
+    expect(grantRelationships.length).toBe(4);
+    for (const relationship of grantRelationships) {
+      expect(relationship.subject?.object?.objectType).toBe('principal');
+      expect(relationship.subject?.optionalRelation ?? '').toBe('');
+      expect(granted).toContain(relationship.subject?.object?.objectId);
+    }
+
+    const { client, state } = makeProvisioningClient(stage.contexts);
+    const input = { actions: stageExplicitActions, contexts: stage.contexts, ...derived };
+    const first = yield* provisionActionAuthorization(client, input);
+    const second = yield* provisionActionAuthorization(client, input);
+    expect(first).toEqual({ actionCount: 3, grantCount: 6, tenantCount: 2 });
+    expect(second).toEqual(first);
+    expect(state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
+    expect([...state.grants].some((grant) => ungranted.some((principalId) => grant.endsWith(`:${principalId}`)))).toBe(
+      false,
+    );
+
+    const noGrants = yield* deriveExplicitActionAuthorization(
+      stageExplicitActions,
+      stage.contexts,
+      stage.explicitAccountGrants.map(({ principalId }) => ({ explicitActions: [], principalId })),
+    );
+    expect(noGrants.explicitActionGrants).toEqual([]);
+
+    const listed = yield* deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, [
+      { explicitActions: [restrictedAction], principalId: ungranted[0] ?? '' },
+    ]);
+    expect(listed.explicitActionGrants).toEqual([{ actionKey: restrictedAction, principalIds: [ungranted[0]] }]);
+  }),
+);
+
+it.effect(
+  'fails stage provisioning when a fixed Principal can access the other fixed Tenant',
+  Effect.fn(function* testEffect22() {
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
+    const derived = yield* deriveExplicitActionAuthorization(
+      stageExplicitActions,
+      stage.contexts,
+      stage.explicitAccountGrants,
+    );
+    const { client, state } = makeProvisioningClient(stage.contexts);
+    const [leaking] = stage.contexts;
+    const leakingClient: ActionAuthorizationProvisioningClient = {
+      ...client,
+      checkPermission: (request) =>
+        request.permission === 'access' && request.subject?.object?.objectId === leaking?.principalId
+          ? Effect.succeed(permissionResponse(true))
+          : client.checkPermission(request),
+    };
+    const error = yield* failureOf(
+      provisionActionAuthorization(leakingClient, {
+        actions: stageExplicitActions,
+        contexts: stage.contexts,
+        ...derived,
+      }),
+    );
+    expect(error.code).toBe('action_authorization_verification_failed');
+    expect(state.relationshipWriteCount).toBe(0);
+  }),
+);
+
+it.effect(
+  'rejects explicit grants for non-fixed Principals or Principals without an allowed assertion',
+  Effect.fn(function* testEffect23() {
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
+    const derived = yield* deriveExplicitActionAuthorization(
+      stageExplicitActions,
+      stage.contexts,
+      stage.explicitAccountGrants,
+    );
+    const ungranted = ungrantedPrincipalIds(stage.contexts)[0] ?? '';
+    yield* Effect.all(
+      [
+        [{ actionKey: restrictedAction, principalIds: ['00000000-0000-4000-8000-000000000099'] }],
+        [{ actionKey: restrictedAction, principalIds: [ungranted] }],
+        [{ actionKey: attachPersonEngagementAction, principalIds: [ungranted] }],
+        [{ actionKey: restrictedAction, principalIds: [] }],
+      ].map((explicitActionGrants) =>
+        Effect.gen(function* testEffect24() {
+          const { client, state } = makeProvisioningClient(stage.contexts);
+          const error = yield* failureOf(
+            provisionActionAuthorization(client, {
+              actions: stageExplicitActions,
+              contexts: stage.contexts,
+              explicitActionAssertions: derived.explicitActionAssertions,
+              explicitActionGrants,
+            }),
+          );
+          expect(error.code).toBe('action_authorization_input_invalid');
+          expect(state.schemaWriteCount).toBe(0);
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);
+
+it.effect(
+  'projects the parsed operator accounts file onto sorted contexts and per-account grants',
+  Effect.fn(function* projectsAccountsFile() {
+    const file = yield* parseStageAccountsFile({ mode: 0o600, source: stageAccountsFileSource });
+    expect(stageAccountsAuthorization(file)).toEqual(stageAuthorization);
+  }),
+);
+
+it.effect(
+  'rejects explicit grant data for unknown Principals or Actions outside the explicit set',
+  Effect.fn(function* testEffect25() {
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
+    const [first] = stage.contexts;
+    yield* Effect.all(
+      [
+        [{ explicitActions: 'all' as const, principalId: '00000000-0000-4000-8000-000000000099' }],
+        [{ explicitActions: [attachPersonEngagementAction], principalId: first?.principalId ?? '' }],
+        [{ explicitActions: ['core.identity.unknown'], principalId: first?.principalId ?? '' }],
+        [
+          { explicitActions: 'all' as const, principalId: first?.principalId ?? '' },
+          { explicitActions: [], principalId: first?.principalId ?? '' },
+        ],
+      ].map((accountGrants) =>
+        Effect.gen(function* testEffect26() {
+          const error = yield* failureOf(
+            deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, accountGrants),
+          );
+          expect(error.code).toBe('action_authorization_input_invalid');
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
   }),
 );

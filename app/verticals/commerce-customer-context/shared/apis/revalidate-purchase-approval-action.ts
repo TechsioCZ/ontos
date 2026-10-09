@@ -11,10 +11,6 @@ import {
 
 export { RevalidatePurchaseApprovalPayloadSchema } from '../actions/revalidate-purchase-approval.ts';
 
-const RevalidatePurchaseApprovalActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RevalidatePurchaseApprovalActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RevalidatePurchaseApprovalActionInvalidProblem',
   400,
@@ -155,15 +151,37 @@ const actionErrors = [
   RevalidatePurchaseApprovalActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const revalidatePurchaseApprovalActionGroupDefinition = HttpApiGroup.make('revalidatePurchaseApprovalAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/revalidate-purchase-approval', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RevalidatePurchaseApprovalPayloadSchema),
+      success: RevalidatePurchaseApprovalResultSchema,
+    }),
+  )
+  .middleware(RevalidatePurchaseApprovalActionSchemaErrorMiddleware);
+
+export type RevalidatePurchaseApprovalActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'revalidatePurchaseApprovalAction',
+  HttpApiGroup.Endpoints<typeof revalidatePurchaseApprovalActionGroupDefinition>
+>;
+
+const RevalidatePurchaseApprovalActionGroup: RevalidatePurchaseApprovalActionGroupContract =
+  revalidatePurchaseApprovalActionGroupDefinition;
+
 export const RevalidatePurchaseApprovalActionApi = HttpApi.make('RevalidatePurchaseApprovalActionApi').add(
-  HttpApiGroup.make('revalidatePurchaseApprovalAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/revalidate-purchase-approval', {
-        error: actionErrors,
-        headers: RevalidatePurchaseApprovalActionHeadersSchema,
-        payload: Schema.toEncoded(RevalidatePurchaseApprovalPayloadSchema),
-        success: RevalidatePurchaseApprovalResultSchema,
-      }),
-    )
-    .middleware(RevalidatePurchaseApprovalActionSchemaErrorMiddleware),
+  RevalidatePurchaseApprovalActionGroup,
 );

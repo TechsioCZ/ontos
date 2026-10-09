@@ -3,7 +3,11 @@ import { expect, it } from 'effect-rstest';
 
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { CoreSearchProjectionUnavailable } from '../../src/search/projection.ts';
-import { makeCoreSearchWorkerSnapshot, retryCoreSearchSnapshot } from '../../src/search/worker-snapshot.ts';
+import {
+  CoreSearchSnapshotGenerationConflict,
+  makeCoreSearchWorkerSnapshot,
+  retryCoreSearchSnapshot,
+} from '../../src/search/worker-snapshot.ts';
 import type {
   CoreSearchSnapshotBackend,
   CoreSearchSnapshotReadExecutor,
@@ -15,6 +19,7 @@ const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const context = {
   attemptNumber: 1,
   claimId: 'claim-1',
+  compositionRevision: 'a'.repeat(64),
   correlationId: 'correlation-1',
   deliveryId: 'delivery-1',
   domainEventId: 'event-1',
@@ -247,6 +252,28 @@ it.effect('snapshot generation retries serialization conflicts only and bounds r
     );
     expect(nonSerialization.message).toMatch(/not serialization/u);
     expect(attempts).toBe(1);
+  });
+});
+
+it.effect('a lost generation claim retries the complete coherent snapshot within the same bound', () => {
+  let attempts = 0;
+  return Effect.gen(function* retryGenerationCompareAndSwap() {
+    const snapshot = yield* Effect.suspend(() => {
+      attempts += 1;
+      return attempts < 3
+        ? Effect.fail(new CoreSearchSnapshotGenerationConflict())
+        : Effect.succeed('fresh owner read');
+    }).pipe(retryCoreSearchSnapshot);
+    expect(snapshot).toBe('fresh owner read');
+    expect(attempts).toBe(3);
+    attempts = 0;
+    yield* Effect.flip(
+      Effect.suspend(() => {
+        attempts += 1;
+        return Effect.fail(new CoreSearchSnapshotGenerationConflict());
+      }).pipe(retryCoreSearchSnapshot),
+    );
+    expect(attempts).toBe(4);
   });
 });
 

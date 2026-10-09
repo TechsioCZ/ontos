@@ -208,9 +208,20 @@ test('loads localized English and Czech Contacts pages only after login', async 
   await expect(page.getByRole('heading', { name: 'Contacts' })).toHaveCount(0);
 
   await login(page, 'cs', authentication.credentials);
-  await expect(page.getByText('Nasazení modulu je dočasně nedostupné.')).toHaveCount(0);
+  // The module links and the unavailable deployments render together from one composition, so the
+  // Party Registry link is the point where the deployment list is final. Asserting before it checked
+  // whatever had rendered yet. This browser stack serves Party Registry and Inventory only, so the other
+  // allowlisted deployments are listed unavailable; the module under test must not be among them.
+  const dashboardNavigation = page.getByRole('navigation', { name: 'Navigace přehledu' });
+  const contactsLink = dashboardNavigation.getByRole('link', { name: 'Party Registry' });
+  await expect(contactsLink).toBeVisible();
+  await expect(
+    dashboardNavigation
+      .getByRole('listitem')
+      .filter({ hasText: 'Nasazení modulu je dočasně nedostupné.' })
+      .filter({ hasText: 'party-registry' }),
+  ).toHaveCount(0);
 
-  const contactsLink = page.locator('a[href="/cs/contacts"]');
   await expect(contactsLink).toHaveAttribute('href', '/cs/contacts');
   await contactsLink.click();
 
@@ -492,11 +503,13 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   );
 
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeInViewport();
-  await expect(page.locator('header[aria-label="Dashboard header"]')).toBeInViewport();
-  await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
-  await expect(page.getByRole('region', { name: 'Authenticated identity' })).toBeInViewport();
   await expect(page.getByRole('link', { name: 'Home' })).toBeInViewport();
+  const dashboardHeader = page.locator('header[aria-label="Dashboard header"]');
+  await dashboardHeader.scrollIntoViewIfNeeded();
+  await expect(dashboardHeader).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
+  await tenant.scrollIntoViewIfNeeded();
   await expect(tenant).toBeInViewport();
   await tenant.click();
   const secondTenant = page.getByRole('option', {
@@ -506,6 +519,9 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await secondTenant.click();
   await expect(page.getByText('Tenant switching failed. Try again.')).toBeInViewport();
   await expect(tenant).toContainText(authentication.tenants.first.name);
+  const authenticatedIdentity = page.getByRole('region', { name: 'Authenticated identity' });
+  await authenticatedIdentity.scrollIntoViewIfNeeded();
+  await expect(authenticatedIdentity).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
     true,
   );

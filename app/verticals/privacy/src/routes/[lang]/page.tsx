@@ -16,7 +16,7 @@ const PrivacyHome = () => {
             className="privacy:rounded-full privacy:border privacy:border-stone-900/15 privacy:bg-white privacy:px-4 privacy:py-2 privacy:text-sm privacy:font-bold privacy:text-stone-950 privacy:no-underline"
             key={code}
             params={{ lang: code }}
-            to="/$lang"
+            to="/$lang/"
           >
             {t(`privacy.language.${code}`)}
           </Link>

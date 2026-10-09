@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface GuestPartyResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type GuestPartyResolutionAuthorizedInvocation = readonly [
@@ -41,13 +42,17 @@ export const executeGuestPartyResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: GuestPartyResolutionAuthorizedInvocation
 ) =>
   guestPartyResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.guestPartyResolution.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.guestPartyResolution.execute({ payload })),
   );
 
 export const executeGuestPartyResolution = (
   payload: GuestPartyResolutionRequest,
   ...[requestCorrelation, options = {}]: GuestPartyResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeGuestPartyResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeGuestPartyResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

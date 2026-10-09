@@ -111,6 +111,7 @@ it.effect('replaying the same authorized rebuild request queues only once', () =
 const workerContext: OutboxWorkerHandlerContext = {
   attemptNumber: 1,
   claimId: 'claim-1',
+  compositionRevision: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   deliveryId: 'delivery-1',
   domainEventId: 'event-1',
   messageId: 'message-1',
@@ -131,6 +132,7 @@ it.effect('rebuild worker uses its trusted committed context, and failures remai
       Effect.provideService(PartySearchProjector, {
         project: (context, target) => {
           expect(context).toBe(workerContext);
+          expect(context.compositionRevision).toBe('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
           expect(target).toEqual({ rebuild: true });
           return Effect.fail(unavailable);
         },

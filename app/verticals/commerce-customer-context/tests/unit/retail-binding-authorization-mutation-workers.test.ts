@@ -83,6 +83,7 @@ const contextFor = (transition: 'activation' | 'recovery' | 'revocation') =>
     actorPrincipalId: principalRef.resourceId,
     attemptNumber: 1,
     claimId: 'claim-1',
+    compositionRevision: 'a'.repeat(64),
     consumerModuleKey: 'commerce.customer-context',
     deliveryId: 'delivery-1',
     domainEventId: 'event-1',

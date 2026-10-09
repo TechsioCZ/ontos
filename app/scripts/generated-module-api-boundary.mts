@@ -1007,45 +1007,17 @@ const hasInvocationClosure = (tokens: readonly GovernedClientToken[], start: num
     ),
   );
 
-const generatedInvocationPayloads = (
-  kind: GovernedClientExpectation['invocationKind'],
-): readonly (readonly ExpectedToken[])[] =>
-  kind === MODULE_API_INVOCATION_KIND
-    ? ([false, true] as const).map(
-        (hasTrailingComma) =>
-          [
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.Identifier, 'headers'],
-            [SyntaxKind.ColonToken],
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.CloseBraceToken],
-            [SyntaxKind.CommaToken],
-            [SyntaxKind.Identifier, 'params'],
-            [SyntaxKind.ColonToken],
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.CloseBraceToken],
-            [SyntaxKind.CommaToken],
-            [SyntaxKind.Identifier, 'payload'],
-            [SyntaxKind.CommaToken],
-            [SyntaxKind.Identifier, 'query'],
-            [SyntaxKind.ColonToken],
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.CloseBraceToken],
-            ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
-            [SyntaxKind.CloseBraceToken],
-            [SyntaxKind.CloseParenToken],
-          ] satisfies readonly ExpectedToken[],
-      )
-    : ([false, true] as const).map(
-        (hasTrailingComma) =>
-          [
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.Identifier, 'payload'],
-            ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
-            [SyntaxKind.CloseBraceToken],
-            [SyntaxKind.CloseParenToken],
-          ] satisfies readonly ExpectedToken[],
-      );
+/** Every governed client sends only its payload; contracts declare no empty header/path/query codecs. */
+const generatedInvocationPayloads: readonly (readonly ExpectedToken[])[] = ([false, true] as const).map(
+  (hasTrailingComma) =>
+    [
+      [SyntaxKind.OpenBraceToken],
+      [SyntaxKind.Identifier, 'payload'],
+      ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+      [SyntaxKind.CloseBraceToken],
+      [SyntaxKind.CloseParenToken],
+    ] satisfies readonly ExpectedToken[],
+);
 
 const clientHelperShadowsImports = (
   tokens: readonly GovernedClientToken[],
@@ -1103,7 +1075,6 @@ const exportedOperationsUseClientHelperAndGateway = (
   if (authorizedArrow === undefined || operationArrow === undefined) {
     return false;
   }
-  const invocationPayloads = generatedInvocationPayloads(expectation.invocationKind);
   const authorizedInvocation = [
     [SyntaxKind.Identifier, helper.name],
     [SyntaxKind.OpenParenToken],
@@ -1137,7 +1108,7 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.OpenParenToken],
   ] satisfies readonly ExpectedToken[];
   const authorizedInvocationEnd = authorizedArrow + 1 + authorizedInvocation.length;
-  const authorizedInvocationTail = matchingSequenceEnd(tokens, authorizedInvocationEnd, invocationPayloads);
+  const authorizedInvocationTail = matchingSequenceEnd(tokens, authorizedInvocationEnd, generatedInvocationPayloads);
   const authorizedUsesHelper =
     matchesSequence(tokens, authorizedArrow + 1, authorizedInvocation) &&
     hasInvocationClosure(tokens, authorizedInvocationTail);
@@ -1148,6 +1119,12 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.OpenParenToken],
     [SyntaxKind.OpenParenToken],
     [SyntaxKind.Identifier, 'credential'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.Identifier, 'apiBaseUrl'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'compositionRevision'],
+    [SyntaxKind.CloseBraceToken],
     [SyntaxKind.CloseParenToken],
     [SyntaxKind.EqualsGreaterThanToken],
     [SyntaxKind.Identifier, expectation.authorizedOperation],
@@ -1158,12 +1135,28 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.CommaToken],
     [SyntaxKind.Identifier, 'requestCorrelation'],
     [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'options'],
   ] satisfies readonly ExpectedToken[];
   const gatewayInvocationEnd = operationArrow + 1 + gatewayInvocation.length;
+  const targetOptions = (trailingComma: boolean) =>
+    [
+      [SyntaxKind.OpenBraceToken],
+      [SyntaxKind.DotDotDotToken],
+      [SyntaxKind.Identifier, 'options'],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'baseUrl'],
+      [SyntaxKind.ColonToken],
+      [SyntaxKind.Identifier, 'apiBaseUrl'],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'compositionRevision'],
+      ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+      [SyntaxKind.CloseBraceToken],
+    ] satisfies readonly ExpectedToken[];
+  const targetOptionsEnd = matchingSequenceEnd(tokens, gatewayInvocationEnd, [
+    targetOptions(false),
+    targetOptions(true),
+  ]);
   const operationUsesGateway =
-    matchesSequence(tokens, operationArrow + 1, gatewayInvocation) &&
-    hasInvocationClosure(tokens, gatewayInvocationEnd);
+    matchesSequence(tokens, operationArrow + 1, gatewayInvocation) && hasInvocationClosure(tokens, targetOptionsEnd);
   const helperShadowsImports = clientHelperShadowsImports(tokens, helper, expectation);
   const shadowsBindings = operationParametersShadowBindings(
     tokens,
@@ -1643,6 +1636,194 @@ const objectStringProperty = (
     : undefined;
 };
 
+/** Locate declaration context through balanced expressions/generic constraints.
+ * A value initializer or statement boundary ends this proof.
+ */
+const permissionDeclarationPrefixKind = (
+  tokens: readonly GovernedClientToken[],
+  opening: number,
+): SyntaxKind | undefined => {
+  const depth = new DelimiterDepth();
+  const reverseDelimiter = new Map([
+    ['}', '{'],
+    [')', '('],
+    [']', '['],
+    ['{', '}'],
+    ['(', ')'],
+    ['[', ']'],
+  ]);
+  for (let cursor = opening - 1; cursor >= 0; cursor -= 1) {
+    const kind = tokenKind(tokens, cursor);
+    const delimiter = kind === undefined ? undefined : tokenDelimiter.get(kind);
+    depth.update(delimiter === undefined ? undefined : reverseDelimiter.get(delimiter));
+    if (depth.hasUnmatchedClose()) {
+      return undefined;
+    }
+    if (
+      depth.isTopLevel() &&
+      [
+        SyntaxKind.FunctionKeyword,
+        SyntaxKind.ClassKeyword,
+        SyntaxKind.InterfaceKeyword,
+        SyntaxKind.EqualsToken,
+        SyntaxKind.SemicolonToken,
+      ].includes(kind ?? SyntaxKind.Unknown)
+    ) {
+      return kind;
+    }
+  }
+  return undefined;
+};
+
+const permissionContainerIsBinding = (
+  tokens: readonly GovernedClientToken[],
+  opening: number,
+  closing: number,
+  delimiter: string,
+  parentBrace: number | undefined,
+): boolean => {
+  const after = tokenKind(tokens, closing + 1);
+  const before = tokenKind(tokens, opening - 1);
+  // Targets may be arbitrarily nested arrays, objects or groups. Typed targets
+  // and assertion/non-null suffixes remain unproven rather than bypassing validation.
+  if (
+    [
+      SyntaxKind.EqualsToken,
+      SyntaxKind.InKeyword,
+      SyntaxKind.OfKeyword,
+      SyntaxKind.ColonToken,
+      SyntaxKind.AsKeyword,
+      SyntaxKind.SatisfiesKeyword,
+      SyntaxKind.ExclamationToken,
+    ].includes(after ?? SyntaxKind.Unknown) ||
+    [SyntaxKind.ConstKeyword, SyntaxKind.LetKeyword, SyntaxKind.VarKeyword].includes(before ?? SyntaxKind.Unknown)
+  ) {
+    return true;
+  }
+  if (delimiter !== '(') {
+    return false;
+  }
+  // Function, arrow, method and catch parameters are bindings. Defaults are
+  // deliberately unproven; bodyless function signatures still introduce bindings.
+  if ([SyntaxKind.OpenBraceToken, SyntaxKind.EqualsGreaterThanToken].includes(after ?? SyntaxKind.Unknown)) {
+    return true;
+  }
+  const prefix = permissionDeclarationPrefixKind(tokens, opening);
+  return (
+    prefix === SyntaxKind.FunctionKeyword ||
+    (prefix !== SyntaxKind.EqualsToken &&
+      parentBrace !== undefined &&
+      [SyntaxKind.ClassKeyword, SyntaxKind.InterfaceKeyword].includes(
+        permissionDeclarationPrefixKind(tokens, parentBrace) ?? SyntaxKind.Unknown,
+      ))
+  );
+};
+
+/** Every enclosing container participates: a property-shaped token in any nested
+ * binding/assignment target is not a read. Malformed structure fails closed.
+ */
+const permissionAliasIsObjectRead = (tokens: readonly GovernedClientToken[], index: number): boolean => {
+  const containers: { readonly delimiter: string; readonly opening: number }[] = [];
+  const openingForClose = new Map([
+    ['}', '{'],
+    [')', '('],
+    [']', '['],
+  ]);
+  for (let cursor = 0; cursor < tokens.length; cursor += 1) {
+    const kind = tokenKind(tokens, cursor);
+    const delimiter = kind === undefined ? undefined : tokenDelimiter.get(kind);
+    if (delimiter !== undefined) {
+      const expectedOpening = openingForClose.get(delimiter);
+      if (expectedOpening === undefined) {
+        containers.push({ delimiter, opening: cursor });
+      } else {
+        const container = containers.pop();
+        if (container === undefined || container.delimiter !== expectedOpening) {
+          return false;
+        }
+        let parentBrace: number | undefined;
+        for (let parent = containers.length - 1; parent >= 0; parent -= 1) {
+          const candidate = containers[parent];
+          if (candidate?.delimiter === '{') {
+            parentBrace = candidate.opening;
+            break;
+          }
+        }
+        if (
+          container.opening < index &&
+          cursor > index &&
+          permissionContainerIsBinding(tokens, container.opening, cursor, container.delimiter, parentBrace)
+        ) {
+          return false;
+        }
+      }
+    }
+  }
+  return containers.length === 0;
+};
+
+/** Permission aliases are closed literal bindings, never executable expressions or ambient names. */
+const immutablePermissionAlias = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+): string | undefined => {
+  const valueStart = findObjectPropertyValue(tokens, open, close, 'permission');
+  const alias = valueStart === undefined ? undefined : tokenValue(tokens, valueStart);
+  if (
+    alias === undefined ||
+    valueStart === undefined ||
+    tokenKind(tokens, valueStart) !== SyntaxKind.Identifier ||
+    !hasExactObjectPropertyValue(tokens, valueStart, [[SyntaxKind.Identifier, alias]])
+  ) {
+    return undefined;
+  }
+  const declaration = [
+    [SyntaxKind.ConstKeyword],
+    [SyntaxKind.Identifier, alias],
+    [SyntaxKind.EqualsToken],
+    [SyntaxKind.StringLiteral],
+  ] satisfies readonly ExpectedToken[];
+  const start = findSequenceAtBraceDepth(tokens, declaration, 0, tokens.length, 0);
+  if (
+    start === undefined ||
+    sequenceOccurrencesAtBraceDepth(tokens, declaration, 0) !== 1 ||
+    !(
+      tokenKind(tokens, start + 4) === SyntaxKind.SemicolonToken ||
+      matchesSequence(tokens, start + 4, [
+        [SyntaxKind.AsKeyword],
+        [SyntaxKind.ConstKeyword],
+        [SyntaxKind.SemicolonToken],
+      ])
+    )
+  ) {
+    return undefined;
+  }
+  const declarationDepth = new DelimiterDepth();
+  for (let index = 0; index < start; index += 1) {
+    const kind = tokenKind(tokens, index);
+    declarationDepth.update(kind === undefined ? undefined : tokenDelimiter.get(kind));
+  }
+  if (!declarationDepth.isTopLevel() || declarationDepth.hasUnmatchedClose()) {
+    return undefined;
+  }
+  // Admit only the one declaration and direct permission property reads. Any rebinding,
+  // shadowing, shorthand, mutation, or use inside an expression remains unproven.
+  const safeUses = tokens.every(
+    (token, index) =>
+      token.kind !== SyntaxKind.Identifier ||
+      token.value !== alias ||
+      index === start + 1 ||
+      (permissionAliasIsObjectRead(tokens, index) &&
+        tokenValue(tokens, index - 2) === 'permission' &&
+        tokenKind(tokens, index - 1) === SyntaxKind.ColonToken &&
+        [SyntaxKind.CommaToken, SyntaxKind.CloseBraceToken].includes(
+          tokenKind(tokens, index + 1) ?? SyntaxKind.Unknown,
+        )),
+  );
+  return safeUses ? tokenValue(tokens, start + 3) : undefined;
+};
+
 const authorizationObject = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -1651,7 +1832,8 @@ const authorizationObject = (
   const kind = objectStringProperty(tokens, open, close, 'kind');
   const properties = directObjectPropertyNames(tokens, open, close);
   if (kind === 'context_permission') {
-    const permission = objectStringProperty(tokens, open, close, 'permission');
+    const permission =
+      objectStringProperty(tokens, open, close, 'permission') ?? immutablePermissionAlias(tokens, open, close);
     return permission !== undefined &&
       /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(permission) &&
       hasExactProperties(properties, new Set(['kind', 'permission']))
@@ -1678,7 +1860,7 @@ const nestedObjectRange = (
   return end === undefined ? undefined : [value, end];
 };
 
-const generatedReadAuthorization = (
+export const readGeneratedReadAuthorization = (
   tokens: readonly GovernedClientToken[],
   open: number,
   close: number,
@@ -1720,7 +1902,7 @@ const hasGeneratedReadContract = (
     directObjectHasNoSpread(tokens, entrypointOpen, entrypointClose) &&
     directObjectHasNoSpread(tokens, readOpen, readClose) &&
     matchesGeneratedReadAuthorization(
-      generatedReadAuthorization(tokens, entrypointOpen, entrypointClose),
+      readGeneratedReadAuthorization(tokens, entrypointOpen, entrypointClose),
       authorization,
     ) &&
     matchesSequence(tokens, entrypointClose + 1, [[SyntaxKind.CloseParenToken], [SyntaxKind.SemicolonToken]]) &&
@@ -1814,8 +1996,8 @@ export const hasMatchingGeneratedProviderAuthorization = (
   if (manifestEntrypoint === undefined) {
     return false;
   }
-  const providerAuthorization = generatedReadAuthorization(providerTokens, entrypoint[0], entrypoint[1]);
-  const manifestAuthorization = generatedReadAuthorization(shellTokens, ...manifestEntrypoint);
+  const providerAuthorization = readGeneratedReadAuthorization(providerTokens, entrypoint[0], entrypoint[1]);
+  const manifestAuthorization = readGeneratedReadAuthorization(shellTokens, ...manifestEntrypoint);
   return matchesGeneratedReadAuthorization(providerAuthorization, manifestAuthorization);
 };
 
@@ -1851,7 +2033,7 @@ const hasGeneratedModuleApiEntrypointContract = (
   return (
     directObjectHasNoSpread(tokens, entrypoint[0], entrypoint[1]) &&
     matchesGeneratedReadAuthorization(
-      generatedReadAuthorization(tokens, entrypoint[0], entrypoint[1]),
+      readGeneratedReadAuthorization(tokens, entrypoint[0], entrypoint[1]),
       authorization,
     ) &&
     ['read', 'historical_read'].some((value) =>

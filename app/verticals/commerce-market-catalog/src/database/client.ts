@@ -1,0 +1,58 @@
+/* oxlint-disable effect-native/no-effect-provide-in-library -- Native Drizzle executor construction is this owner database factory boundary; expires: 2027-03-31. */
+import type { DatabasePoolDeadlines } from '@app/core-runtime';
+import { DatabaseConfig, configureDatabasePool } from '@app/core-runtime';
+import { PgClient } from '@effect/sql-pg';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import type { Scope } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
+import { commerceMarketCatalogRelations } from './schema.ts';
+import { CommerceMarketCatalogDatabaseConnectionError } from './connection-error.ts';
+import type { CommerceMarketCatalogDatabaseExecutor } from './types.ts';
+
+export class CommerceMarketCatalogDatabase extends Context.Service<
+  CommerceMarketCatalogDatabase,
+  { readonly executor: CommerceMarketCatalogDatabaseExecutor }
+>()('@app/commerce-market-catalog/database/client/CommerceMarketCatalogDatabase') {}
+
+const connectionFailure = (cause: unknown): CommerceMarketCatalogDatabaseConnectionError =>
+  new CommerceMarketCatalogDatabaseConnectionError({
+    cause,
+    reason: 'Unable to initialize the Commerce Market Catalog PostgreSQL client',
+  });
+
+type ContextServiceContract<Service> =
+  Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
+
+const makeCommerceMarketCatalogDatabase = Effect.fn('CommerceMarketCatalogDatabase.make')(function* makeDatabase(
+  configuration: ContextServiceContract<typeof DatabaseConfig> & {
+    readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
+  },
+): Effect.fn.Return<
+  ContextServiceContract<typeof CommerceMarketCatalogDatabase>,
+  CommerceMarketCatalogDatabaseConnectionError,
+  Scope.Scope
+> {
+  const poolConfiguration = yield* configureDatabasePool(
+    Redacted.make(configuration.connectionString),
+    configuration.poolDeadlines,
+  ).pipe(Effect.mapError((error) => new CommerceMarketCatalogDatabaseConnectionError({ reason: error.reason })));
+  const reactivity = yield* Reactivity.make;
+  const client = yield* PgClient.make(poolConfiguration).pipe(
+    Effect.provideService(Reactivity.Reactivity, reactivity),
+    Effect.mapError(connectionFailure),
+  );
+  return {
+    executor: yield* makeWithDefaults({ relations: commerceMarketCatalogRelations }).pipe(
+      Effect.provideService(PgClient.PgClient, client),
+    ),
+  };
+});
+
+export const CommerceMarketCatalogDatabaseLive = Layer.effect(
+  CommerceMarketCatalogDatabase,
+  Effect.gen(function* makeDatabaseService() {
+    const configuration = yield* DatabaseConfig;
+    return yield* makeCommerceMarketCatalogDatabase(configuration);
+  }),
+);

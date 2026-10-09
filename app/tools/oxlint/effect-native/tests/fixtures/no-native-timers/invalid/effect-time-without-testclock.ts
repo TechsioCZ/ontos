@@ -1,5 +1,6 @@
 // expect-count: 6
 import { Clock, DateTime, Effect, Schedule } from 'effect';
+import { it } from 'effect-rstest';
 
 export const program = Effect.gen(function* () {
 	yield* Effect.sleep('50 millis');
@@ -9,3 +10,5 @@ export const program = Effect.gen(function* () {
 	const stamp = yield* DateTime.now;
 	return { now, stamp };
 });
+
+it.effect('uses time without owning a test clock', () => program);

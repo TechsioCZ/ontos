@@ -1,6 +1,8 @@
 import { NodeServices } from '@effect/platform-node';
 import { Array as EffectArray, Console, Effect, Exit, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
+import { parseSync, Visitor } from 'oxc-parser';
+import type { ImportDeclaration, ParamPattern, Span, TSTypeAnnotation, TSTypeReference } from 'oxc-parser';
 
 export interface DatabaseAccessViolation {
   readonly file: string;
@@ -63,13 +65,20 @@ const importedSpecifier = new RegExp(`${importPrefix}['"](?<specifier>[^'"]+)['"
 const isTestSource = (relative: string): boolean =>
   /(?:^|\/)(?:tests?|__tests__)\//u.test(relative) || relative.startsWith('packages/core-runtime/src/testing/');
 const hiddenCapability =
-  /\b(?:CoreDatabase|CoreDatabaseExecutor|CoreTransaction|ScopedTransactionExecutor|ActionTransactionExecutor|coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
+  /\b(?:CoreDatabase|CoreDatabaseExecutor|CoreTransaction|ActionTransactionExecutor|coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
 const hiddenCoreSchema = /\b(?:coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
+const scopedTransactionExecutor = /\bScopedTransactionExecutor\b/u;
 const isVerticalOwnerSource = (relative: string): boolean => /(?:^|\/)verticals\/[^/]+\/src\//u.test(relative);
 const importsCoreDatabaseSchema = new RegExp(`${importPrefix}['"]@app\\/core-runtime\\/db\\/schema['"]`, 'u');
 const importSpecifier = new RegExp(`${importPrefix}['"](?<specifier>[^'"]+)['"]`, 'u');
-const globalDatabaseImplementationImport =
-  /(?:import\s+(?!type\b)[^;]*?\s+from\s+|import\s*\(\s*|import\s+|export\s+(?!type\b)[^;]*?\s+from\s+)['"](?:pg|drizzle-orm\/node-postgres|@app\/core-runtime\/db\/client|[^'"]*\/db\/client(?:\.[^'"]*)?)['"]/u;
+const valueImportPrefix = String.raw`(?:import\s+(?!type\b)[^;]*?\s+from\s+|import\s*\(\s*|import\s+|export\s+(?!type\b)[^;]*?\s+from\s+)`;
+const postgresDriver = String.raw`pg|drizzle-orm\/node-postgres`;
+const globalDatabaseImplementationImport = new RegExp(
+  String.raw`${valueImportPrefix}['"](?:${postgresDriver}|@app\/core-runtime\/db\/client|[^'"]*\/db\/client(?:\.[^'"]*)?)['"]`,
+  'u',
+);
+// The native Effect client is the only PostgreSQL driver; a second one opens a second pool per owner.
+const secondPostgresDriverImport = new RegExp(String.raw`${valueImportPrefix}['"](?:${postgresDriver})['"]`, 'gu');
 
 const candidatesFor = (path: Path.Path, unresolved: string): readonly string[] => {
   const extension = path.extname(unresolved);
@@ -124,50 +133,164 @@ const resolveLocalSource = (
   return candidates.find((candidate) => sourceFiles.has(candidate));
 };
 
-const containsGlobalDatabaseCapability = (source: string): boolean =>
-  globalDatabaseImplementationImport.test(source) || hiddenCapability.test(source);
+const typeReferenceNamed = (annotation: TSTypeAnnotation | null | undefined, name: string): boolean => {
+  const type = annotation?.typeAnnotation;
+  return type?.type === 'TSTypeReference' && type.typeName.type === 'Identifier' && type.typeName.name === name;
+};
 
-const importsGlobalDatabaseCapability = (
-  file: string,
+const parameterNamed = (parameter: ParamPattern, name: string, typeName: string): boolean =>
+  parameter.type === 'Identifier' && parameter.name === name && typeReferenceNamed(parameter.typeAnnotation, typeName);
+
+const scopedFactoryTransactionSpan = (
+  parameters: readonly ParamPattern[],
+  executorNames: ReadonlySet<string>,
+): Span | undefined => {
+  const hasOperationalScope = parameters.some((parameter) => parameterNamed(parameter, 'scope', 'OperationalScope'));
+  if (!hasOperationalScope) {
+    return undefined;
+  }
+  for (const parameter of parameters) {
+    if (
+      parameter.type === 'Identifier' &&
+      parameter.name === 'transaction' &&
+      parameter.typeAnnotation?.typeAnnotation.type === 'TSTypeReference' &&
+      parameter.typeAnnotation.typeAnnotation.typeName.type === 'Identifier' &&
+      executorNames.has(parameter.typeAnnotation.typeAnnotation.typeName.name)
+    ) {
+      return parameter.typeAnnotation.typeAnnotation;
+    }
+  }
+  return undefined;
+};
+
+const executorImport = (
+  declaration: ImportDeclaration,
+): { readonly localName: string; readonly span: Span; readonly typeOnly: boolean } | undefined => {
+  const specifier = declaration.specifiers.find(
+    (candidate) =>
+      candidate.type === 'ImportSpecifier' &&
+      candidate.imported.type === 'Identifier' &&
+      candidate.imported.name === 'ScopedTransactionExecutor',
+  );
+  if (specifier?.type !== 'ImportSpecifier') {
+    return undefined;
+  }
+  return {
+    localName: specifier.local.name,
+    span: specifier,
+    typeOnly: declaration.importKind === 'type' || specifier.importKind === 'type',
+  };
+};
+
+/**
+ * Core passes the scoped executor only to a private owner service factory. The factory may name that
+ * input in its `(transaction, scope)` signature, but the executor must never become handler services.
+ */
+const scopedTransactionExposureIndexes = (file: string, source: string): readonly number[] => {
+  if (!scopedTransactionExecutor.test(source)) {
+    return [];
+  }
+  const parsed = parseSync(file, source, {
+    astType: 'ts',
+    lang: file.endsWith('.tsx') ? 'tsx' : 'ts',
+    sourceType: 'module',
+  });
+  if (parsed.errors.length > 0) {
+    return [...source.matchAll(new RegExp(scopedTransactionExecutor, 'gu'))].map((match) => match.index);
+  }
+
+  const executorNames = new Set(['ScopedTransactionExecutor']);
+  const invalidImportSpans: Span[] = [];
+  for (const statement of parsed.program.body) {
+    if (statement.type !== 'ImportDeclaration') {
+      continue;
+    }
+    const imported = executorImport(statement);
+    if (imported !== undefined) {
+      executorNames.add(imported.localName);
+      if (!imported.typeOnly) {
+        invalidImportSpans.push(imported.span);
+      }
+    }
+  }
+
+  const allowedFactoryParameters: Span[] = [];
+  const allowScopedFactoryParameter = (parameters: readonly ParamPattern[]): void => {
+    const span = scopedFactoryTransactionSpan(parameters, executorNames);
+    if (span !== undefined) {
+      allowedFactoryParameters.push(span);
+    }
+  };
+  new Visitor({
+    ArrowFunctionExpression: (node) => allowScopedFactoryParameter(node.params),
+    FunctionDeclaration: (node) => allowScopedFactoryParameter(node.params),
+    FunctionExpression: (node) => allowScopedFactoryParameter(node.params),
+    TSFunctionType: (node) => allowScopedFactoryParameter(node.params),
+  }).visit(parsed.program);
+
+  const invalidReferences: number[] = invalidImportSpans.map((span) => span.start);
+  const recordExecutorReference = (reference: TSTypeReference): void => {
+    if (
+      reference.typeName.type === 'Identifier' &&
+      executorNames.has(reference.typeName.name) &&
+      !allowedFactoryParameters.some((span) => span.start <= reference.start && reference.end <= span.end)
+    ) {
+      invalidReferences.push(reference.start);
+    }
+  };
+  new Visitor({ TSTypeReference: recordExecutorReference }).visit(parsed.program);
+  return EffectArray.sort([...new Set(invalidReferences)], Order.Number);
+};
+
+const containsGlobalDatabaseCapability = (file: string, source: string): boolean =>
+  globalDatabaseImplementationImport.test(source) ||
+  hiddenCapability.test(source) ||
+  scopedTransactionExposureIndexes(file, source).length > 0;
+
+const globalDatabaseCapabilityClosure = (
   sources: ReadonlyMap<string, string>,
   sourceFiles: ReadonlySet<string>,
   path: Path.Path,
   root: string,
-  visiting: ReadonlySet<string> = new Set(),
-): boolean => {
-  if (visiting.has(file)) {
-    return false;
-  }
-  const source = sources.get(file);
-  if (source === undefined) {
-    return false;
-  }
-  const relative = path.relative(root, file).split(path.sep).join('/');
-  // Core's public runtime modules are the sanctioned governed-operation boundary.
-  // Direct Core database imports and named hidden capabilities are checked at the
-  // owning source line; recursively treating every safe Core type dependency as a
-  // database leak makes generated Action and Read registrations impossible.
-  if (relative.startsWith(coreRuntimeSourcePrefix)) {
-    return false;
-  }
-  if (containsGlobalDatabaseCapability(source)) {
-    return true;
-  }
-  const nextVisiting = new Set(visiting).add(file);
-  for (const match of source.matchAll(importedSpecifier)) {
-    const specifier = match.groups?.specifier;
-    if (specifier === undefined) {
-      continue;
-    }
-    const dependency = resolveLocalSource(sourceFiles, path, root, file, specifier);
-    if (
-      dependency !== undefined &&
-      importsGlobalDatabaseCapability(dependency, sources, sourceFiles, path, root, nextVisiting)
-    ) {
-      return true;
+): ReadonlySet<string> => {
+  const importersByDependency = new Map<string, Set<string>>();
+  const closure = new Set<string>();
+  const pending: string[] = [];
+  for (const [file, source] of sources) {
+    const relative = path.relative(root, file).split(path.sep).join('/');
+    // Core's public runtime modules are the sanctioned governed-operation boundary.
+    // Direct Core database imports and named hidden capabilities are checked at the
+    // owning source line; recursively treating every safe Core type dependency as a
+    // database leak makes generated Action and Read registrations impossible.
+    if (!relative.startsWith(coreRuntimeSourcePrefix)) {
+      if (containsGlobalDatabaseCapability(file, source)) {
+        closure.add(file);
+        pending.push(file);
+      }
+      for (const match of source.matchAll(importedSpecifier)) {
+        const specifier = match.groups?.specifier;
+        const dependency =
+          specifier === undefined ? undefined : resolveLocalSource(sourceFiles, path, root, file, specifier);
+        if (dependency !== undefined) {
+          const importers = importersByDependency.get(dependency) ?? new Set<string>();
+          importers.add(file);
+          importersByDependency.set(dependency, importers);
+        }
+      }
     }
   }
-  return false;
+  while (pending.length > 0) {
+    const dependency = pending.pop();
+    if (dependency !== undefined) {
+      for (const importer of importersByDependency.get(dependency) ?? []) {
+        if (!closure.has(importer)) {
+          closure.add(importer);
+          pending.push(importer);
+        }
+      }
+    }
+  }
+  return closure;
 };
 
 const crossOwnerPrivateImport = (
@@ -198,6 +321,7 @@ const crossOwnerPrivateImport = (
 
 interface SourceCheckContext {
   readonly file: string;
+  readonly globalDatabaseCapabilityFiles: ReadonlySet<string>;
   readonly governedAdapter: boolean;
   readonly path: Path.Path;
   readonly record: (violation: DatabaseAccessViolation) => void;
@@ -205,7 +329,6 @@ interface SourceCheckContext {
   readonly root: string;
   readonly source: string;
   readonly sourceFiles: ReadonlySet<string>;
-  readonly sources: ReadonlyMap<string, string>;
 }
 
 const sourceLine = (source: string, index: number): number => source.slice(0, index).split('\n').length;
@@ -247,10 +370,7 @@ const recordTransitiveDatabaseCapabilities = (context: SourceCheckContext): void
       continue;
     }
     const dependency = resolveLocalSource(context.sourceFiles, context.path, context.root, context.file, specifier);
-    if (
-      dependency !== undefined &&
-      importsGlobalDatabaseCapability(dependency, context.sources, context.sourceFiles, context.path, context.root)
-    ) {
+    if (dependency !== undefined && context.globalDatabaseCapabilityFiles.has(dependency)) {
       context.record({
         file: context.relative,
         line: sourceLine(context.source, match.index),
@@ -307,6 +427,34 @@ const recordLineDatabaseViolations = (context: SourceCheckContext): void => {
   }
 };
 
+const recordScopedTransactionExposure = (context: SourceCheckContext): void => {
+  if (!context.governedAdapter) {
+    return;
+  }
+  for (const index of scopedTransactionExposureIndexes(context.file, context.source)) {
+    context.record({
+      file: context.relative,
+      line: sourceLine(context.source, index),
+      reason: 'database capability exposed through governed handler requirements',
+    });
+  }
+};
+
+const recordSecondPostgresDriver = (context: SourceCheckContext): void => {
+  // Governed handlers and adapters already reject every database import.
+  if (isTestSource(context.relative) || context.governedAdapter) {
+    return;
+  }
+  for (const match of context.source.matchAll(secondPostgresDriverImport)) {
+    context.record({
+      file: context.relative,
+      line: sourceLine(context.source, match.index),
+      reason:
+        'second PostgreSQL driver: build the owner database on @effect/sql-pg with drizzle-orm/effect-postgres instead of pg or drizzle-orm/node-postgres',
+    });
+  }
+};
+
 const compareViolations = (left: DatabaseAccessViolation, right: DatabaseAccessViolation): -1 | 0 | 1 => {
   const fileOrder = left.file.localeCompare(right.file);
   if (fileOrder < 0) {
@@ -345,6 +493,7 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
     );
     const sources = new Map(sourcePairs);
     const sourceFiles = new Set(files);
+    const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(sources, sourceFiles, path, root);
     const recorded = new Set<string>();
     const record = (violation: DatabaseAccessViolation): void => {
       const key = `${violation.file}:${violation.line}:${violation.reason}`;
@@ -358,6 +507,7 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
       const relative = path.relative(root, file).split(path.sep).join('/');
       const context: SourceCheckContext = {
         file,
+        globalDatabaseCapabilityFiles,
         governedAdapter: isGovernedAdapter(relative, source),
         path,
         record,
@@ -365,12 +515,13 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
         root,
         source,
         sourceFiles,
-        sources,
       };
       recordProductionTestingImports(context);
       recordTransitiveDatabaseCapabilities(context);
       recordMultilineDatabaseImports(context);
       recordLineDatabaseViolations(context);
+      recordScopedTransactionExposure(context);
+      recordSecondPostgresDriver(context);
     }
     return EffectArray.sort(violations, ViolationOrder);
   });

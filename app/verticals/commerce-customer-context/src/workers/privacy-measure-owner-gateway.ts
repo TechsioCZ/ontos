@@ -25,7 +25,7 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 const configuration = Config.all({
-  apiKey: Config.redacted('ONTOS_PRIVACY_MEASURE_WORKER_API_KEY'),
+  apiKey: Config.Redacted('ONTOS_PRIVACY_MEASURE_WORKER_API_KEY'),
   ownerBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL'),
   privacyBaseUrl: Config.schema(httpUrl, 'ONTOS_PRIVACY_API_BASE_URL'),
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
@@ -36,16 +36,19 @@ export interface PrivacyMeasureOwnerGatewayService {
     handoff: PrivacyMeasureHandoff,
     legalEntityId: string,
     requestCorrelation: string,
+    compositionRevision: string,
   ) => Effect.Effect<OwnerExecutionOutcome, ExecutePrivacyMeasureWorkerRejected>;
   readonly load: (
     handoff: PrivacyMeasureHandoff,
     legalEntityId: string,
     requestCorrelation: string,
+    compositionRevision: string,
   ) => Effect.Effect<Option.Option<PrivacyMeasureExecutionReceipt>, ExecutePrivacyMeasureWorkerRejected>;
   readonly report: (
     outcome: OwnerExecutionOutcome,
     legalEntityId: string,
     requestCorrelation: string,
+    compositionRevision: string,
   ) => Effect.Effect<void, ExecutePrivacyMeasureWorkerRejected>;
 }
 
@@ -85,39 +88,45 @@ const makeGateway = (configured: {
   readonly privacyBaseUrl: URL;
   readonly shellBaseUrl: URL;
 }): PrivacyMeasureOwnerGatewayService => {
-  const credential = (audience: 'commerce-customer-context' | 'privacy', legalEntityId: string, correlation: string) =>
+  const credential = (
+    audience: 'commerce-customer-context' | 'privacy',
+    legalEntityId: string,
+    correlation: string,
+    compositionRevision: string,
+  ) =>
     issueApiKeyGatewayContext(
-      { audience, legalEntityId },
+      { audience, compositionRevision, legalEntityId },
       { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: correlation },
     ).pipe(
       Effect.map(({ token }) => `Bearer ${token}`),
       Effect.mapError((cause) => workerFailure(cause, 'Credential issuance')),
     );
   return {
-    execute: (handoff, legalEntityId, correlation) =>
-      credential('commerce-customer-context', legalEntityId, correlation).pipe(
+    execute: (handoff, legalEntityId, correlation, compositionRevision) =>
+      credential('commerce-customer-context', legalEntityId, correlation, compositionRevision).pipe(
         Effect.flatMap((authorization) =>
           executeExecutePrivacyMeasureWithAuthorization({ handoff }, authorization, correlation, {
             baseUrl: configured.ownerBaseUrl,
+            compositionRevision,
             idempotencyKey: handoff.idempotencyKey,
           }),
         ),
         Effect.mapError((cause) => workerFailure(cause, 'Commerce Privacy Measure Action')),
       ),
-    load: (handoff, legalEntityId, correlation) =>
-      credential('commerce-customer-context', legalEntityId, correlation).pipe(
+    load: (handoff, legalEntityId, correlation, compositionRevision) =>
+      credential('commerce-customer-context', legalEntityId, correlation, compositionRevision).pipe(
         Effect.flatMap((authorization) =>
           executePrivacyMeasureExecutionWithAuthorization(
             { idempotencyKey: handoff.idempotencyKey },
             authorization,
             correlation,
-            { baseUrl: configured.ownerBaseUrl },
+            { baseUrl: configured.ownerBaseUrl, compositionRevision },
           ),
         ),
         Effect.mapError((cause) => workerFailure(cause, 'Commerce receipt read')),
       ),
-    report: (outcome, legalEntityId, correlation) =>
-      credential('privacy', legalEntityId, correlation).pipe(
+    report: (outcome, legalEntityId, correlation, compositionRevision) =>
+      credential('privacy', legalEntityId, correlation, compositionRevision).pipe(
         Effect.flatMap((authorization) =>
           executeRecordOwnerExecutionOutcomeWithAuthorization(
             { request: { attempt: outcome.attempt, measureId: outcome.measureId, taskId: outcome.taskId } },
@@ -125,6 +134,7 @@ const makeGateway = (configured: {
             correlation,
             {
               baseUrl: configured.privacyBaseUrl,
+              compositionRevision,
               idempotencyKey: reportIdempotencyKey(outcome),
             },
           ),

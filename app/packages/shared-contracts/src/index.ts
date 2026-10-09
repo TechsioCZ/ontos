@@ -1,9 +1,63 @@
 import { Schema } from 'effect';
 
+export { ExternalIdentityApi, ExternalIdentityApiGroup, externalIdentityProblems } from './external-identity.ts';
+
 export { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
 export type { ProblemDetailsStatus } from './problem-details.ts';
 
 export {
+  OwnerVerifiableSetCompletenessEvidenceSchema,
+  OwnerVerifiableSetCompletenessScopeSchema,
+} from './owner-verifiable-set-completeness.ts';
+export type {
+  OwnerVerifiableSetCompletenessEvidence,
+  OwnerVerifiableSetCompletenessEvidenceEncoded,
+  OwnerVerifiableSetCompletenessScope,
+} from './owner-verifiable-set-completeness.ts';
+
+export {
+  AntiResurrectionProtectionKindSchema,
+  AntiResurrectionProtectionSchema,
+  PrivacyMeasureIntendedOutcomeSchema,
+  PrivacyMeasureSchema,
+  PrivacyOwnerContentStatusSchema,
+  PrivacyOwnerCoveragePartSchema,
+  PrivacyOwnerCoverageResultSchema,
+  PrivacyOwnerCoverageStatusSchema,
+  PrivacyOwnerExecutionOutcomeSchema,
+  PrivacyOwnerExecutionStatusSchema,
+  PrivacyOwnerReconciliationResultSchema,
+  PrivacyOwnerReconciliationStatusSchema,
+  PrivacyOwnerScopeSchema,
+  PrivacySubjectSchema,
+} from './privacy-owner-contract.ts';
+export type {
+  AntiResurrectionProtection,
+  AntiResurrectionProtectionEncoded,
+  AntiResurrectionProtectionKind,
+  PrivacyMeasure,
+  PrivacyMeasureEncoded,
+  PrivacyMeasureIntendedOutcome,
+  PrivacyOwnerContentStatus,
+  PrivacyOwnerCoveragePart,
+  PrivacyOwnerCoveragePartEncoded,
+  PrivacyOwnerCoverageResult,
+  PrivacyOwnerCoverageResultEncoded,
+  PrivacyOwnerCoverageStatus,
+  PrivacyOwnerExecutionOutcome,
+  PrivacyOwnerExecutionOutcomeEncoded,
+  PrivacyOwnerExecutionStatus,
+  PrivacyOwnerReconciliationResult,
+  PrivacyOwnerReconciliationResultEncoded,
+  PrivacyOwnerReconciliationStatus,
+  PrivacyOwnerScope,
+  PrivacyOwnerScopeEncoded,
+  PrivacySubject,
+  PrivacySubjectEncoded,
+} from './privacy-owner-contract.ts';
+
+export {
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
@@ -13,13 +67,17 @@ export {
   GatewayContextApi,
   GatewayContextApiGroup,
   GatewayContextClaimsSchema,
+  GatewayContextV2ClaimsSchema,
+  SupportedGatewayContextClaimsSchema,
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
   GatewayInternalProblemSchema,
+  GatewayReloadRequiredProblemSchema,
   GatewayTrustedPrincipalContextSchema,
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
+  decodeSupportedGatewayContextClaims,
   decodeGatewayContextProtectedHeader,
   issueGatewayContext,
   shellGatewayContextContract,
@@ -31,11 +89,14 @@ export type {
   GatewayContextClientError,
   GatewayContextClientOptions,
   GatewayContextClaims,
+  GatewayContextV2Claims,
+  SupportedGatewayContextClaims,
   GatewayContextProblem,
   GatewayContextProtectedHeader,
   GatewayContextRequest,
   GatewayContextResponse,
   GatewayInternalProblem,
+  GatewayReloadRequiredProblem,
   GatewayTrustedPrincipalContext,
   GatewayUnavailableProblem,
 } from './gateway-context.ts';
@@ -55,6 +116,11 @@ export type {
 } from '@modern-js/bff-effect/microvertical-api';
 export { makeOperationGateway } from './operation-gateway.ts';
 export type { OperationGateway, OperationGatewayAttempt, OperationGatewayIssuer } from './operation-gateway.ts';
+export {
+  DocumentCompositionRevisionError,
+  getDocumentCompositionRevision,
+  pinDocumentCompositionRevision,
+} from './document-composition-revision.ts';
 
 export const UltramodernPublicSitemapChangeFrequencySchema = Schema.Literals([
   'always',

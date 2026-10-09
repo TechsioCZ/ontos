@@ -43,7 +43,7 @@
  * - **The shared harness itself** and any other path listed in `allowPaths`, so one repository-owned
  *   in-memory adapter may exist in one place if the harness ever needs it.
  * - **Non-test files.** Production and `scripts/` code is out of scope here; the D-tier “Node process
- *   entrypoint” adapters (`scripts/proof-workerd-ssr.mts`) are explicitly blessed by the audit.
+ *   entrypoint” adapters are explicitly blessed by the audit.
  * - Named client/utility imports (`request`, `Agent`, `isIP`) do not construct servers.
  * - Anything that only *looks* like a server: `net.isIP(...)`, `new Server()` from a first-party
  *   module, `app.listen(...)` on a value that is not a tracked factory result.

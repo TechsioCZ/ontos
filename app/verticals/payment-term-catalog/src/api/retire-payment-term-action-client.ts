@@ -14,6 +14,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface RetirePaymentTermActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -38,6 +39,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: RetirePaymentTermActionApi,
       credential,
       defaultApiPrefix: '/payment-term-catalog-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -50,12 +52,7 @@ export const executeRetirePaymentTermWithAuthorization = (
   Schema.encodeUnknownEffect(RetirePaymentTermPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.retirePaymentTermAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.retirePaymentTermAction.execute({ payload: encoded })),
       ),
     ),
   );
@@ -65,6 +62,11 @@ export const executeRetirePaymentTerm = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) => executeRetirePaymentTermWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeRetirePaymentTermWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

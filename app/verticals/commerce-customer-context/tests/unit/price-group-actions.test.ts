@@ -42,6 +42,7 @@ import type {
   PriceGroupCatalogPort,
 } from '../../shared/domain/price-group-ports.ts';
 
+const compositionRevision = 'a'.repeat(64);
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const profile = {
   kind: 'RETAIL',
@@ -293,6 +294,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444441',
           addDomainEvent: assignCollector.addDomainEvent,
           addOutboxMessage: assignCollector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: assignCollector.recordAuditEvidence,
           recordDataAccess: assignCollector.recordDataAccess,
           scope: temporalScope,
@@ -324,6 +326,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444442',
           addDomainEvent: removeCollector.addDomainEvent,
           addOutboxMessage: removeCollector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: removeCollector.recordAuditEvidence,
           recordDataAccess: removeCollector.recordDataAccess,
           scope: temporalScope,
@@ -357,6 +360,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444443',
           addDomainEvent: migrateCollector.addDomainEvent,
           addOutboxMessage: migrateCollector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: migrateCollector.recordAuditEvidence,
           recordDataAccess: migrateCollector.recordDataAccess,
           scope: temporalScope,
@@ -372,7 +376,7 @@ describe('customer PriceGroup Actions', () => {
     }),
   );
 
-  it.effect('threads one validated scheduled instant through profile, catalog, and persistence', () =>
+  it.effect('keeps scheduling time separate from Current catalog verification time', () =>
     Effect.gen(function* threadsScheduledInstant() {
       const effectiveFrom = '2027-02-01T00:00:00.000Z';
       const recordedAt = '2027-01-01T00:00:00.000Z';
@@ -390,6 +394,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444444',
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: collector.recordDataAccess,
           scope: temporalScope,
@@ -401,9 +406,17 @@ describe('customer PriceGroup Actions', () => {
                   _tag: 'USABLE',
                   compatibility: {
                     catalogRevision: 1,
-                    contractId: 'commerce.customer-price-group-assignment.v1',
-                    contractRevision: 1,
-                    definitionRevision: 1,
+                    definitionEffectivePeriod: { effectiveFrom: recordedAt, effectiveTo: null },
+                    definitionRevisionId: '55555555-5555-4555-8555-555555555555',
+                    definitionRevisionNumber: 1,
+                    meaningFingerprint: 'a'.repeat(64),
+                    priceGroupRef,
+                    requiredContract: {
+                      contractId: 'commerce.customer-price-group-assignment.v1',
+                      version: 1,
+                    },
+                    trustedOperationAt: recordedAt,
+                    verifiedAt: recordedAt,
                   },
                   priceGroupRef,
                 });
@@ -449,7 +462,7 @@ describe('customer PriceGroup Actions', () => {
       );
       expect(observed).toEqual([
         `profile:${effectiveFrom}`,
-        `catalog:${effectiveFrom}`,
+        `catalog:${recordedAt}`,
         `store:${effectiveFrom}:${recordedAt}`,
       ]);
     }),
@@ -493,6 +506,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444445',
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: (evidence) => {
             accesses.push(evidence.queryHash ?? '');
@@ -506,9 +520,20 @@ describe('customer PriceGroup Actions', () => {
                   _tag: 'USABLE',
                   compatibility: {
                     catalogRevision: 1,
-                    contractId: 'commerce.customer-price-group-assignment.v1',
-                    contractRevision: 1,
-                    definitionRevision: 1,
+                    definitionEffectivePeriod: {
+                      effectiveFrom: '2027-02-01T00:00:00.000Z',
+                      effectiveTo: null,
+                    },
+                    definitionRevisionId: '66666666-6666-4666-8666-666666666666',
+                    definitionRevisionNumber: 1,
+                    meaningFingerprint: 'b'.repeat(64),
+                    priceGroupRef: targetPriceGroupRef,
+                    requiredContract: {
+                      contractId: 'commerce.customer-price-group-assignment.v1',
+                      version: 1,
+                    },
+                    trustedOperationAt: '2027-02-01T00:00:00.000Z',
+                    verifiedAt: '2027-02-01T00:00:00.000Z',
                   },
                   priceGroupRef: targetPriceGroupRef,
                 }),

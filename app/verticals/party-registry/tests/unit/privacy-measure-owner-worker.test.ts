@@ -34,6 +34,7 @@ const payload: OutboxPayload = {
   },
 };
 const context: OutboxWorkerHandlerContext = {
+  compositionRevision: 'test-composition',
   attemptNumber: 1,
   claimId: 'claim:1',
   consumerModuleKey: 'party.registry',

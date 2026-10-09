@@ -1,9 +1,11 @@
 import { Context, Effect, Layer, Schema } from 'effect';
+import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 
 import {
   CoreSearchProjectionInvalid,
   CoreSearchProjectionMutationSchema,
   CoreSearchProjectionStore,
+  validateCoreSearchProjectionWorkerContext,
 } from './projection.ts';
 import type { CoreSearchProjectionStoreService } from './projection.ts';
 
@@ -105,6 +107,7 @@ const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid =
 export interface CoreSearchIngestionService {
   readonly ingest: (
     input: UnparsedCoreSearchIngestionObservation,
+    context: OutboxWorkerHandlerContext,
   ) => ReturnType<CoreSearchProjectionStoreService['apply']>;
 }
 
@@ -114,40 +117,49 @@ export class CoreSearchIngestion extends Context.Service<CoreSearchIngestion, Co
 ) {}
 
 export const makeCoreSearchIngestion = (store: CoreSearchProjectionMutationSink): CoreSearchIngestionService => ({
-  ingest: (input) =>
-    Schema.decodeUnknownEffect(CoreSearchIngestionObservationSchema)(input).pipe(
+  ingest: Effect.fn('makeCoreSearchIngestion.ingest')(function* ingestVerifiedObservation(
+    input: UnparsedCoreSearchIngestionObservation,
+    context: OutboxWorkerHandlerContext,
+  ) {
+    const observation = yield* Schema.decodeUnknownEffect(CoreSearchIngestionObservationSchema)(input).pipe(
       Effect.mapError((cause) => invalid('Core Search ingestion observation is invalid', cause)),
-      Effect.flatMap((observation) => {
-        const registered = CORE_SEARCH_INGESTION_REGISTRATIONS.some(
-          (registration) =>
-            registration.consumerModuleKey === observation.consumerModuleKey &&
-            registration.producerModuleKey === observation.producerModuleKey &&
-            registration.topic === observation.topic &&
-            registration.workerKey === observation.workerKey,
-        );
-        const mutationTenantId =
-          observation.mutation.kind === 'upsert'
-            ? observation.mutation.document.ref.tenantId
-            : observation.mutation.ref.tenantId;
-        const mutationModuleId =
-          observation.mutation.kind === 'upsert'
-            ? observation.mutation.document.ref.moduleId
-            : observation.mutation.ref.moduleId;
-        const mutationVersion =
-          observation.mutation.kind === 'upsert'
-            ? observation.mutation.document.projectionVersion
-            : observation.mutation.projectionVersion;
-        if (
-          !registered ||
-          mutationTenantId !== observation.tenantId ||
-          mutationModuleId !== observation.producerModuleKey ||
-          mutationVersion !== observation.projectionVersion
-        ) {
-          return Effect.fail(invalid('Core Search ingestion identity does not match its post-commit observation'));
-        }
-        return store.apply(observation.mutation);
-      }),
-    ),
+    );
+    yield* validateCoreSearchProjectionWorkerContext(context, {
+      moduleId: observation.producerModuleKey,
+      tenantId: observation.tenantId,
+    });
+    const registered = CORE_SEARCH_INGESTION_REGISTRATIONS.some(
+      (registration) =>
+        registration.consumerModuleKey === observation.consumerModuleKey &&
+        registration.producerModuleKey === observation.producerModuleKey &&
+        registration.topic === observation.topic &&
+        registration.workerKey === observation.workerKey,
+    );
+    const mutationTenantId =
+      observation.mutation.kind === 'upsert'
+        ? observation.mutation.document.ref.tenantId
+        : observation.mutation.ref.tenantId;
+    const mutationModuleId =
+      observation.mutation.kind === 'upsert'
+        ? observation.mutation.document.ref.moduleId
+        : observation.mutation.ref.moduleId;
+    const mutationVersion =
+      observation.mutation.kind === 'upsert'
+        ? observation.mutation.document.projectionVersion
+        : observation.mutation.projectionVersion;
+    if (
+      !registered ||
+      mutationTenantId !== observation.tenantId ||
+      mutationModuleId !== observation.producerModuleKey ||
+      mutationVersion !== observation.projectionVersion ||
+      context.consumerModuleKey !== observation.consumerModuleKey ||
+      context.topic !== observation.topic ||
+      context.workerKey !== observation.workerKey
+    ) {
+      return yield* invalid('Core Search ingestion identity does not match its post-commit observation');
+    }
+    return yield* store.apply(observation.mutation, context);
+  }),
 });
 
 export const CoreSearchIngestionLive = Layer.effect(

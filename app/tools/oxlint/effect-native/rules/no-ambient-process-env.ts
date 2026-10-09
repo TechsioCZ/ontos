@@ -54,8 +54,13 @@
  *
  * Report-only: no fixers, no suggestions.
  */
+import { readFileSync } from 'node:fs';
+import nodePath from 'node:path';
+
 import { defineRule } from '@oxlint/plugins';
-import type { Context, ESTree } from '@oxlint/plugins';
+import type { Context, ESTree, Scope } from '@oxlint/plugins';
+import { Result, Schema } from 'effect';
+import { parseSync } from 'oxc-parser';
 
 import { keyName as sharedKeyName, memberName, parentOf, skipWrappers, unwrapNode as unwrap } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolveVariable } from '../shared/bindings.ts';
@@ -64,6 +69,7 @@ import { includesRuleFile } from '../shared/paths.ts';
 import { snippet } from '../shared/reporting.ts';
 
 type AnyNode = ESTree.Node;
+type IdentifierNode = Extract<ESTree.Node, { type: 'Identifier' }>;
 
 /** Modules whose default/namespace export *is* the process object. */
 const PROCESS_MODULES = new Set(['process', 'node:process']);
@@ -81,6 +87,99 @@ const MUTATING_CALLS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
 ]);
 
 const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
+
+const ModernCompilerPackage = Schema.Struct({
+  dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  scripts: Schema.Struct({ build: Schema.String }),
+});
+
+/** The native compiler owns this define only in an application's compiled source tree. */
+const hasModernCompilerOwner = (filename: string): boolean => {
+  let directory = nodePath.dirname(filename);
+  while (nodePath.basename(directory) !== 'src') {
+    const parent = nodePath.dirname(directory);
+    if (parent === directory) {
+      return false;
+    }
+    directory = parent;
+  }
+  const owner = nodePath.dirname(directory);
+  try {
+    const decoded = Schema.decodeUnknownResult(Schema.fromJsonString(ModernCompilerPackage))(
+      readFileSync(nodePath.join(owner, 'package.json'), 'utf-8'),
+    );
+    if (Result.isFailure(decoded)) {
+      return false;
+    }
+    const manifest = decoded.success;
+    const dependencies = { ...manifest.dependencies, ...manifest.devDependencies };
+    if (
+      !dependencies['@modern-js/app-tools'] ||
+      !dependencies['@modern-js/runtime'] ||
+      !/^modern[ \t]+build(?:[ \t]|$)/u.test(manifest.scripts.build)
+    ) {
+      return false;
+    }
+    const configuration = parseSync(
+      nodePath.join(owner, 'modern.config.ts'),
+      readFileSync(nodePath.join(owner, 'modern.config.ts'), 'utf-8'),
+    );
+    if (configuration.errors.length > 0) {
+      return false;
+    }
+    const factories = new Set(
+      configuration.program.body.flatMap((statement) =>
+        statement.type === 'ImportDeclaration' &&
+        statement.importKind !== 'type' &&
+        statement.source.value === '@modern-js/app-tools'
+          ? statement.specifiers.flatMap((specifier) =>
+              specifier.type === 'ImportSpecifier' &&
+              specifier.importKind !== 'type' &&
+              specifier.imported.type === 'Identifier' &&
+              specifier.imported.name === 'defineConfig'
+                ? [specifier.local.name]
+                : [],
+            )
+          : [],
+      ),
+    );
+    return configuration.program.body.some(
+      (statement) =>
+        statement.type === 'ExportDefaultDeclaration' &&
+        statement.declaration.type === 'CallExpression' &&
+        statement.declaration.callee.type === 'Identifier' &&
+        factories.has(statement.declaration.callee.name),
+    );
+  } catch {
+    return false;
+  }
+};
+
+/** Modern's SSR builder replaces exactly this expression with 'browser' or 'node'. */
+const modernCompilerProcess = (context: Context, target: ESTree.Node): IdentifierNode | null => {
+  if (
+    target.type !== 'MemberExpression' ||
+    target.computed ||
+    target.optional ||
+    target.property.type !== 'Identifier' ||
+    target.property.name !== 'MODERN_TARGET'
+  ) {
+    return null;
+  }
+  const environment = target.object;
+  if (
+    environment.type !== 'MemberExpression' ||
+    environment.computed ||
+    environment.optional ||
+    environment.property.type !== 'Identifier' ||
+    environment.property.name !== 'env'
+  ) {
+    return null;
+  }
+  const process = environment.object;
+  return process.type === 'Identifier' && isUnshadowedGlobal(context, process, 'process') ? process : null;
+};
 
 interface RuleOptions {
   readonly allowPaths: readonly string[];
@@ -176,6 +275,45 @@ function isMutation(context: Context, parent: AnyNode | null, reference: AnyNode
   }
 }
 
+const isImmutableModernProcess = (context: Context, process: IdentifierNode): boolean => {
+  let scope: Scope | null = context.sourceCode.getScope(process);
+  while (scope !== null) {
+    for (const reference of [...scope.references, ...scope.through]) {
+      if (!isUnshadowedGlobal(context, reference.identifier, 'process')) {
+        continue;
+      }
+      let current = skipWrappers(reference.identifier);
+      while (current.parent?.type === 'MemberExpression' && current.parent.object === current.node) {
+        current = skipWrappers(current.parent);
+      }
+      if (isMutation(context, current.parent, current.node)) {
+        return false;
+      }
+    }
+    scope = scope.upper;
+  }
+  return true;
+};
+
+/** Modern's SSR builder replaces exactly this expression with 'browser' or 'node'. */
+export const isModernCompilerTargetComparison = (context: Context, node: ESTree.Node): boolean => {
+  if (node.type !== 'BinaryExpression' || node.operator !== '===') {
+    return false;
+  }
+  const process = modernCompilerProcess(context, node.left);
+  if (process === null) {
+    return false;
+  }
+  if (node.right.type !== 'Literal' || (node.right.value !== 'browser' && node.right.value !== 'node')) {
+    return false;
+  }
+  const parent = parentOf(node);
+  if (!((parent?.type === 'IfStatement' || parent?.type === 'ConditionalExpression') && parent.test === node)) {
+    return false;
+  }
+  return isImmutableModernProcess(context, process) && hasModernCompilerOwner(context.filename);
+};
+
 function patternSource(node: AnyNode): AnyNode | null {
   const parent = parentOf(node);
   switch (parent?.type) {
@@ -210,7 +348,7 @@ export const rule = defineRule({
     },
     messages: {
       ambientEnvRead:
-        'Audit A3: `{{expression}}` reads the ambient environment, so the requirement never appears in the Layer graph and the value is neither typed nor redactable. Declare it once as `Config.string`/`Config.integer`/`Config.redacted` (or `Config.schema` over the application configuration Schema), consume it with `yield* AppConfig`, and provide the values from the single root `ConfigProvider` composed at startup; tests use `ConfigProvider.fromMap`.',
+        'Audit A3: `{{expression}}` reads the ambient environment, so the requirement never appears in the Layer graph and the value is neither typed nor redactable. Declare it once as `Config.String`/`Config.Int`/`Config.Redacted` (or `Config.schema` over the application configuration Schema), consume it with `yield* AppConfig`, and provide the values from the single root `ConfigProvider` composed at startup; tests use `ConfigProvider.fromMap`.',
       ambientEnvMutation:
         'Audit A3/B2: `{{expression}}` mutates the ambient environment, so this code configures itself through a process-global side effect that leaks across tests and cannot be typed or redacted. Provide the values through a map-backed `ConfigProvider` test Layer (`Layer.setConfigProvider(ConfigProvider.fromMap(new Map([...])))`) instead of writing to or deleting from `process.env`.',
     },
@@ -332,6 +470,11 @@ export const rule = defineRule({
       MemberExpression(node) {
         if (staticPropertyName(node) !== 'env') return;
         if (!isEnvHost(node.object as AnyNode)) return;
+        const target = parentOf(node);
+        const comparison = target?.type === 'MemberExpression' ? parentOf(target) : null;
+        if (comparison !== null && isModernCompilerTargetComparison(context, comparison)) {
+          return;
+        }
         report(node as unknown as AnyNode, classify(node as unknown as AnyNode));
       },
 

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SavedAddressListClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SavedAddressListAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executeSavedAddressListWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SavedAddressListAuthorizedInvocation
 ) =>
   savedAddressListClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.savedAddressList.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.savedAddressList.execute({ payload })),
   );
 
 export const executeSavedAddressList = (
   payload: SavedAddressListRequest,
   ...[requestCorrelation, options = {}]: SavedAddressListOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSavedAddressListWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSavedAddressListWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -1,0 +1,3364 @@
+{
+  "id": "7eec464f-33c9-4b7a-abb8-577c58467340",
+  "prevIds": [
+    "057374c4-5093-4488-9250-f3394f8bdcb6"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "assortment",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_admission_set_entries",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_admission_sets",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_applicability_binding_end_facts",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_applicability_bindings",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_closed_boundaries",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_closed_boundary_end_facts",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_collection_revisions",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_rule_retirement_facts",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_rule_revisions",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "assortment_stable_rules",
+      "entityType": "tables",
+      "schema": "assortment"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "admission_set_entry_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "admission_set_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "coverage_kind",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_type",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ordinal",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "admission_set_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "closed_boundary_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purpose",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "set_kind",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "collection_revision_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "applicability_binding_end_fact_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "applicability_binding_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "applicability_binding_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rule_revision_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "binding_kind",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_group_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_kind",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "channel_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "closed_boundary_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_kind",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purpose",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "channel_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "closed_boundary_end_fact_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "closed_boundary_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "collection_revision_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "collection_kind",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "aggregate_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purpose",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "member_count",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "completeness",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "content_hash",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "rule_retirement_fact_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stable_rule_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "rule_revision_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stable_rule_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purpose",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effect",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selector_kind",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selector_target_resource_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selector_target_resource_type",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "semantic_fingerprint",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "stable_rule_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stable_code",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "binding_kind",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "channel_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "market_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "storefront_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "effective_from",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "assortment_bindings_current_idx",
+      "entityType": "indexes",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_kind",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "purpose",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "channel_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "market_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "storefront_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "effective_from",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "assortment_closed_boundaries_current_idx",
+      "entityType": "indexes",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stable_rule_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "assortment_rule_revisions_current_idx",
+      "entityType": "indexes",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "admission_set_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_admission_sets",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "admission_set_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_admission_entries_set_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_closed_boundaries",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_admission_sets_boundary_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "collection_revision_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_collection_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "collection_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_admission_sets_collection_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "applicability_binding_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_applicability_bindings",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "applicability_binding_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_binding_end_facts_binding_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "rule_revision_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_rule_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "rule_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_bindings_rule_revision_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_closed_boundaries",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_boundary_end_facts_boundary_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "aggregate_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_closed_boundaries",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_collection_revisions_boundary_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stable_rule_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_stable_rules",
+      "columnsTo": [
+        "tenant_id",
+        "stable_rule_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_rule_retirement_facts_rule_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stable_rule_id"
+      ],
+      "schemaTo": "assortment",
+      "tableTo": "assortment_stable_rules",
+      "columnsTo": [
+        "tenant_id",
+        "stable_rule_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "assortment_rule_revisions_stable_rule_fk",
+      "entityType": "fks",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "columns": [
+        "admission_set_entry_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_admission_set_entries_pkey",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "admission_set_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_admission_sets_pkey",
+      "schema": "assortment",
+      "table": "assortment_admission_sets",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "applicability_binding_end_fact_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_applicability_binding_end_facts_pkey",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "applicability_binding_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_applicability_bindings_pkey",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "closed_boundary_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_closed_boundaries_pkey",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "closed_boundary_end_fact_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_closed_boundary_end_facts_pkey",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "collection_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_collection_revisions_pkey",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "rule_retirement_fact_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_rule_retirement_facts_pkey",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "rule_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_rule_revisions_pkey",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "stable_rule_id"
+      ],
+      "nameExplicit": false,
+      "name": "assortment_stable_rules_pkey",
+      "schema": "assortment",
+      "table": "assortment_stable_rules",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "admission_set_entry_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_admission_entries_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "admission_set_id",
+        "ordinal"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_admission_entries_position_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "admission_set_id",
+        "coverage_kind",
+        "target_resource_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_admission_entries_semantics_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "admission_set_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_admission_sets_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_admission_sets_boundary_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "collection_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_admission_sets_collection_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_admission_sets_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "applicability_binding_end_fact_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_binding_end_facts_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "applicability_binding_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_binding_end_facts_binding_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_binding_end_facts_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "applicability_binding_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_bindings_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_bindings_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_closed_boundaries_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_closed_boundaries_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_end_fact_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_boundary_end_facts_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "closed_boundary_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_boundary_end_facts_boundary_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_boundary_end_facts_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "collection_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_collection_revisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "collection_kind",
+        "aggregate_id",
+        "revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_collection_revisions_aggregate_revision_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_collection_revisions_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "rule_retirement_fact_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_rule_retirement_facts_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stable_rule_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_rule_retirement_facts_rule_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_rule_retirement_facts_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "rule_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_rule_revisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stable_rule_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_rule_revisions_stable_number_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_rule_revisions_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stable_rule_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_stable_rules_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stable_code"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_stable_rules_code_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "assortment_stable_rules_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "value": "\"coverage_kind\" in ('ALL', 'CATEGORY', 'PRODUCT', 'VARIANT', 'PACKAGE_OPTION')",
+      "name": "assortment_admission_entries_kind_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "value": "\"ordinal\" >= 0",
+      "name": "assortment_admission_entries_ordinal_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "value": "(\"coverage_kind\" = 'ALL' and \"target_resource_id\" is null and \"target_resource_type\" is null) or (\"coverage_kind\" <> 'ALL' and \"target_resource_id\" is not null and \"target_resource_type\" is not null)",
+      "name": "assortment_admission_entries_target_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "value": "\"purpose\" in ('VISIBILITY', 'PURCHASE')",
+      "name": "assortment_admission_sets_purpose_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "value": "\"set_kind\" in ('EMPTY', 'ENTRIES')",
+      "name": "assortment_admission_sets_kind_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "value": "\"binding_kind\" in ('SHARED', 'COMMERCE_CUSTOMER_GROUP', 'SUBJECT')",
+      "name": "assortment_bindings_kind_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "value": "(\"binding_kind\" = 'SHARED' and \"customer_group_resource_id\" is null and \"subject_kind\" is null and \"subject_resource_id\" is null) or (\"binding_kind\" = 'COMMERCE_CUSTOMER_GROUP' and \"customer_group_resource_id\" is not null and \"subject_kind\" is null and \"subject_resource_id\" is null) or (\"binding_kind\" = 'SUBJECT' and \"customer_group_resource_id\" is null and \"subject_kind\" in ('RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY') and \"subject_resource_id\" is not null)",
+      "name": "assortment_bindings_audience_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "value": "\"channel_resource_id\" = btrim(\"channel_resource_id\") and length(\"channel_resource_id\") between 1 and 1000",
+      "name": "assortment_bindings_channel_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "value": "\"subject_kind\" in ('RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY') and \"subject_resource_id\" = btrim(\"subject_resource_id\") and length(\"subject_resource_id\") > 0",
+      "name": "assortment_closed_boundaries_subject_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "value": "\"purpose\" in ('VISIBILITY', 'PURCHASE')",
+      "name": "assortment_closed_boundaries_purpose_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "value": "\"channel_resource_id\" = btrim(\"channel_resource_id\") and length(\"channel_resource_id\") between 1 and 1000",
+      "name": "assortment_closed_boundaries_channel_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "value": "\"collection_kind\" = 'CLOSED_BOUNDARY_ADMISSION_SET'",
+      "name": "assortment_collection_revisions_kind_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "value": "\"purpose\" in ('VISIBILITY', 'PURCHASE')",
+      "name": "assortment_collection_revisions_purpose_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "value": "\"revision\" > 0",
+      "name": "assortment_collection_revisions_revision_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "value": "\"member_count\" >= 0",
+      "name": "assortment_collection_revisions_member_count_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "value": "\"completeness\" = 'COMPLETE'",
+      "name": "assortment_collection_revisions_completeness_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "value": "\"content_hash\" ~ '^[0-9a-f]{64}$'",
+      "name": "assortment_collection_revisions_hash_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "value": "\"provenance_ref\" = btrim(\"provenance_ref\") and length(\"provenance_ref\") between 1 and 1000",
+      "name": "assortment_rule_retirement_facts_provenance_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "value": "\"revision_number\" > 0",
+      "name": "assortment_rule_revisions_number_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "value": "\"purpose\" in ('VISIBILITY', 'PURCHASE')",
+      "name": "assortment_rule_revisions_purpose_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "value": "\"effect\" in ('ALLOW', 'DENY')",
+      "name": "assortment_rule_revisions_effect_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "value": "\"selector_kind\" in ('ALL', 'CATEGORY', 'PRODUCT', 'VARIANT', 'PACKAGE_OPTION') and ((\"selector_kind\" = 'ALL' and \"selector_target_resource_id\" is null and \"selector_target_resource_type\" is null) or (\"selector_kind\" <> 'ALL' and \"selector_target_resource_id\" is not null and \"selector_target_resource_type\" is not null))",
+      "name": "assortment_rule_revisions_selector_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "value": "\"purpose\" = 'PURCHASE' or \"selector_kind\" in ('ALL', 'CATEGORY', 'PRODUCT')",
+      "name": "assortment_rule_revisions_purpose_selector_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "value": "\"semantic_fingerprint\" ~ '^[0-9a-f]{64}$'",
+      "name": "assortment_rule_revisions_fingerprint_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "value": "\"provenance_ref\" = btrim(\"provenance_ref\") and length(\"provenance_ref\") between 1 and 1000",
+      "name": "assortment_rule_revisions_provenance_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "value": "\"stable_code\" ~ '^[a-z][a-z0-9._-]{0,127}$'",
+      "name": "assortment_stable_rules_code_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "value": "\"provenance_ref\" = btrim(\"provenance_ref\") and length(\"provenance_ref\") between 1 and 1000",
+      "name": "assortment_stable_rules_provenance_ck",
+      "entityType": "checks",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_admission_set_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_set_entries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_admission_entries_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_admission_set_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_set_entries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_admission_entries_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_admission_set_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_set_entries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_admission_set_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_set_entries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_admission_entries_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_admission_set_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_set_entries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_admission_entries_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_admission_set_entries"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_admission_sets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_sets\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_admission_sets_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_admission_sets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_sets\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_admission_sets_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_admission_sets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_sets\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_admission_sets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_sets\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_admission_sets_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_admission_sets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_admission_sets\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_admission_sets_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_admission_sets"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_applicability_binding_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_binding_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_binding_end_facts_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_applicability_binding_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_binding_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_binding_end_facts_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_applicability_binding_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_binding_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_applicability_binding_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_binding_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_binding_end_facts_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_applicability_binding_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_binding_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_binding_end_facts_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_applicability_binding_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_applicability_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_bindings\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_bindings_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_applicability_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_bindings\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_bindings_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_applicability_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_bindings\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_applicability_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_bindings\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_bindings_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_applicability_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_applicability_bindings\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_bindings_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_applicability_bindings"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_closed_boundaries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundaries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_closed_boundaries_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_closed_boundaries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundaries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_closed_boundaries_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_closed_boundaries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundaries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_closed_boundaries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundaries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_closed_boundaries_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_closed_boundaries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundaries\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_closed_boundaries_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_closed_boundaries"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_closed_boundary_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundary_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_boundary_end_facts_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_closed_boundary_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundary_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_boundary_end_facts_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_closed_boundary_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundary_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_closed_boundary_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundary_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_boundary_end_facts_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_closed_boundary_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_closed_boundary_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_boundary_end_facts_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_closed_boundary_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_collection_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_collection_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_collection_revisions_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_collection_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_collection_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_collection_revisions_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_collection_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_collection_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_collection_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_collection_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "assortment_collection_revisions_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_collection_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"assortment\".\"assortment_collection_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_collection_revisions_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_collection_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_rule_retirement_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_rule_retirement_facts_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_rule_retirement_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "assortment_rule_retirement_facts_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_rule_retirement_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_rule_retirement_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "assortment_rule_retirement_facts_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_rule_retirement_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_rule_retirement_facts_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_rule_retirement_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_rule_revisions_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "assortment_rule_revisions_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "assortment_rule_revisions_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_rule_revisions_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_rule_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_stable_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_stable_rules_scope_select",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"assortment\".\"assortment_stable_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "assortment_stable_rules_scope_insert",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_stable_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"assortment\".\"assortment_stable_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "assortment_stable_rules_scope_update",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"assortment\".\"assortment_stable_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "assortment_stable_rules_scope_delete",
+      "entityType": "policies",
+      "schema": "assortment",
+      "table": "assortment_stable_rules"
+    }
+  ],
+  "renames": []
+}

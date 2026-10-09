@@ -1,0 +1,354 @@
+{
+  "capturedAt": "2026-09-30T19:44:05.679Z",
+  "projectId": "t1ljmn3DRDafgi8AuPvhdQ",
+  "schemaVersion": 1,
+  "services": [
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "PORT",
+          "SHELL_SUPER_APP_PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "BETTER_AUTH_SECRET",
+          "BETTER_AUTH_TRUSTED_ORIGINS",
+          "BETTER_AUTH_URL",
+          "ONTOS_GATEWAY_PRIVATE_JWK"
+        ]
+      },
+      "hostname": "shellsuperapp",
+      "importEntry": {
+        "hostname": "shellsuperapp",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "E6Wy3B08Rn60XqS6T666fg",
+      "serviceIdVariable": "ZEROPS_SHELL_SERVICE_ID",
+      "setup": "shellsuperapp",
+      "status": "ACTIVE"
+    },
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE",
+          "VERTICAL_PARTY_REGISTRY_PORT"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "ONTOS_GATEWAY_PUBLIC_JWKS"
+        ]
+      },
+      "hostname": "partyregistry",
+      "importEntry": {
+        "hostname": "partyregistry",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "cxNTAHZJSbiJr3xTqkypOg",
+      "serviceIdVariable": "ZEROPS_PARTY_REGISTRY_SERVICE_ID",
+      "setup": "party-registry",
+      "status": "ACTIVE"
+    },
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "ONTOS_PRICE_GROUP_CATALOG_BASE_URL",
+          "PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE",
+          "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_PORT"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "ONTOS_GATEWAY_PUBLIC_JWKS"
+        ]
+      },
+      "hostname": "commercecustomercontext",
+      "importEntry": {
+        "hostname": "commercecustomercontext",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "omIBMTDCR7iARcXTt4SqJw",
+      "serviceIdVariable": "ZEROPS_COMMERCE_CUSTOMER_CONTEXT_SERVICE_ID",
+      "setup": "commerce-customer-context",
+      "status": "ACTIVE"
+    },
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE",
+          "VERTICAL_PAYMENT_TERM_CATALOG_PORT"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "ONTOS_GATEWAY_PUBLIC_JWKS"
+        ]
+      },
+      "hostname": "paymenttermcatalog",
+      "importEntry": {
+        "hostname": "paymenttermcatalog",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "2FgvrWn9RzCJrfbMapwM6Q",
+      "serviceIdVariable": "ZEROPS_PAYMENT_TERM_CATALOG_SERVICE_ID",
+      "setup": "payment-term-catalog",
+      "status": "ACTIVE"
+    },
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE",
+          "VERTICAL_COMMERCE_MARKET_CATALOG_PORT"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "ONTOS_GATEWAY_PUBLIC_JWKS"
+        ]
+      },
+      "hostname": "commercemarketcatalog",
+      "importEntry": {
+        "hostname": "commercemarketcatalog",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "7nJtt1fnQMKsGRDTl6Wv1w",
+      "serviceIdVariable": "ZEROPS_COMMERCE_MARKET_CATALOG_SERVICE_ID",
+      "setup": "commerce-market-catalog",
+      "status": "ACTIVE"
+    },
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE",
+          "VERTICAL_CATALOG_PORT"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "ONTOS_GATEWAY_PUBLIC_JWKS"
+        ]
+      },
+      "hostname": "catalog",
+      "importEntry": {
+        "hostname": "catalog",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "IGOF5E9vQ7izD4ygQgoNiQ",
+      "serviceIdVariable": "ZEROPS_CATALOG_SERVICE_ID",
+      "setup": "catalog",
+      "status": "ACTIVE"
+    },
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE",
+          "VERTICAL_PRICING_PORT"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "ONTOS_GATEWAY_PUBLIC_JWKS"
+        ]
+      },
+      "hostname": "pricing",
+      "importEntry": {
+        "hostname": "pricing",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "ll1Dd1AiRiKSLlB1QKDhQw",
+      "serviceIdVariable": "ZEROPS_PRICING_SERVICE_ID",
+      "setup": "pricing",
+      "status": "ACTIVE"
+    },
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE",
+          "VERTICAL_STOREFRONT_REGISTRY_PORT"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "ONTOS_GATEWAY_PUBLIC_JWKS"
+        ]
+      },
+      "hostname": "storefrontregistry",
+      "importEntry": {
+        "hostname": "storefrontregistry",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "t9lSg7HFRne0DJblYFwXbg",
+      "serviceIdVariable": "ZEROPS_STOREFRONT_REGISTRY_SERVICE_ID",
+      "setup": "storefront-registry",
+      "status": "ACTIVE"
+    },
+    {
+      "environmentKeys": {
+        "fromZeropsYaml": [
+          "DATABASE_URL",
+          "NODE_ENV",
+          "PORT",
+          "SPICEDB_CA_CERT",
+          "SPICEDB_ENDPOINT",
+          "SPICEDB_PRESHARED_KEY",
+          "ULTRAMODERN_DEPLOYMENT_ENVIRONMENT",
+          "ULTRAMODERN_ZEROPS_SERVICE",
+          "VERTICAL_PRICE_GROUP_CATALOG_PORT"
+        ],
+        "inheritedFromProject": [
+          "MODERN_PUBLIC_SITE_URL",
+          "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON",
+          "ONTOS_GATEWAY_ISSUER",
+          "ULTRAMODERN_MF_DEV_ORIGIN",
+          "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
+          "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
+          "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
+          "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP"
+        ],
+        "serviceSecrets": [
+          "ONTOS_GATEWAY_PUBLIC_JWKS"
+        ]
+      },
+      "hostname": "pricegroupcatalog",
+      "importEntry": {
+        "hostname": "pricegroupcatalog",
+        "type": "nodejs@24",
+        "enableSubdomainAccess": true
+      },
+      "serviceId": "aHab72wuSDS4AjkgxNbHDw",
+      "serviceIdVariable": "ZEROPS_PRICE_GROUP_CATALOG_SERVICE_ID",
+      "setup": "price-group-catalog",
+      "status": "ACTIVE"
+    }
+  ],
+  "sourceRevision": "fd8bfa96ff769a7144ec69c5f370d2bd96b25078"
+}

@@ -1,0 +1,2 @@
+ALTER TABLE "commerce_auth"."rate_limit" ADD COLUMN "id" text DEFAULT gen_random_uuid() NOT NULL;--> statement-breakpoint
+ALTER TABLE "commerce_auth"."rate_limit" ADD CONSTRAINT "rate_limit_id_key" UNIQUE("id");

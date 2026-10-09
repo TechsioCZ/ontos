@@ -1,4 +1,5 @@
 import { ActionRuntime } from '@app/core-runtime';
+import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Redacted, Schema } from 'effect';
@@ -49,14 +50,15 @@ const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(function
     Requirements
   >,
   payload: PayloadSchema['Type'],
-  idempotencyKey: string | undefined,
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const correlationId = request.headers['x-correlation-id'];
   if (correlationId !== undefined && correlationId.length > 200) {
     return yield* Effect.fail(partyCommandProblem.invalid());
   }
-  const traceId = request.headers['x-trace-id'];
+  const endpointHeaders = yield* decodeActionEndpointHeaders(request.headers).pipe(
+    Effect.mapError(partyCommandProblem.invalid),
+  );
   return yield* runActionHttp<
     PayloadSchema,
     ResultSchema,
@@ -69,10 +71,7 @@ const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(function
     ReturnType<typeof partyCommandProblem.invalid>,
     ReturnType<typeof partyCommandProblem.internal>
   >({
-    endpointHeaders: {
-      idempotencyKey,
-      traceId,
-    },
+    endpointHeaders,
     internalProblem: partyCommandProblem.internal,
     invalidCorrelationProblem: partyCommandProblem.invalid,
     mapError: mapPartyActionProblem,
@@ -105,7 +104,6 @@ const runWirePayloadPartyCommand = Effect.fn('PartyCommandServer.runWirePayloadP
       Requirements
     >,
     payload: PayloadSchema['Encoded'],
-    idempotencyKey: string | undefined,
     request: HttpServerRequest.HttpServerRequest,
   ) {
     const decodedPayload = yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)(payload).pipe(
@@ -119,123 +117,83 @@ const runWirePayloadPartyCommand = Effect.fn('PartyCommandServer.runWirePayloadP
       Owner,
       Services,
       Requirements
-    >(registration, decodedPayload, idempotencyKey, request);
+    >(registration, decodedPayload, request);
   },
 );
 
 export const partyRegistryCommandsLive = HttpApiBuilder.group(partyRegistryApi, 'partyCommands', (handlers) =>
   handlers
-    .handle('addContactPoint', ({ payload, headers, request }) =>
-      runWirePayloadPartyCommand(
-        partyCommandRegistrations.addContactPoint,
-        payload,
-        headers['idempotency-key'],
-        request,
-      ),
+    .handle('addContactPoint', ({ payload, request }) =>
+      runWirePayloadPartyCommand(partyCommandRegistrations.addContactPoint, payload, request),
     )
-    .handle('addPartyOfficialIdentifier', ({ payload, headers, request }) =>
-      runWirePayloadPartyCommand(
-        partyCommandRegistrations.addPartyOfficialIdentifier,
-        payload,
-        headers['idempotency-key'],
-        request,
-      ),
+    .handle('addPartyOfficialIdentifier', ({ payload, request }) =>
+      runWirePayloadPartyCommand(partyCommandRegistrations.addPartyOfficialIdentifier, payload, request),
     )
-    .handle('archiveParty', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.archiveParty, payload, headers['idempotency-key'], request),
+    .handle('archiveParty', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.archiveParty, payload, request),
     )
-    .handle('confirmDuplicateParties', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.confirmDuplicateParties, payload, headers['idempotency-key'], request),
+    .handle('confirmDuplicateParties', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.confirmDuplicateParties, payload, request),
     )
-    .handle('correctPartyFact', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.correctPartyFact, payload, headers['idempotency-key'], request),
+    .handle('correctPartyFact', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.correctPartyFact, payload, request),
     )
-    .handle('counterpartyCreate', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.counterpartyCreate, payload, headers['idempotency-key'], request),
+    .handle('counterpartyCreate', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.counterpartyCreate, payload, request),
     )
-    .handle('counterpartyRoleAdd', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.counterpartyRoleAdd, payload, headers['idempotency-key'], request),
+    .handle('counterpartyRoleAdd', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.counterpartyRoleAdd, payload, request),
     )
-    .handle('counterpartyRoleEnd', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.counterpartyRoleEnd, payload, headers['idempotency-key'], request),
+    .handle('counterpartyRoleEnd', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.counterpartyRoleEnd, payload, request),
     )
-    .handle('createParty', ({ payload, headers, request }) =>
-      runWirePayloadPartyCommand(partyCommandRegistrations.createParty, payload, headers['idempotency-key'], request),
+    .handle('createParty', ({ payload, request }) =>
+      runWirePayloadPartyCommand(partyCommandRegistrations.createParty, payload, request),
     )
-    .handle('createPartyRelationship', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.createPartyRelationship, payload, headers['idempotency-key'], request),
+    .handle('createPartyRelationship', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.createPartyRelationship, payload, request),
     )
-    .handle('dismissDuplicateCandidate', ({ payload, headers, request }) =>
-      runPartyCommand(
-        partyCommandRegistrations.dismissDuplicateCandidate,
-        payload,
-        headers['idempotency-key'],
-        request,
-      ),
+    .handle('dismissDuplicateCandidate', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.dismissDuplicateCandidate, payload, request),
     )
-    .handle('endContactPoint', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.endContactPoint, payload, headers['idempotency-key'], request),
+    .handle('endContactPoint', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.endContactPoint, payload, request),
     )
-    .handle('endPartyOfficialIdentifier', ({ payload, headers, request }) =>
-      runPartyCommand(
-        partyCommandRegistrations.endPartyOfficialIdentifier,
-        payload,
-        headers['idempotency-key'],
-        request,
-      ),
+    .handle('endPartyOfficialIdentifier', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.endPartyOfficialIdentifier, payload, request),
     )
-    .handle('endPartyRelationship', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.endPartyRelationship, payload, headers['idempotency-key'], request),
+    .handle('endPartyRelationship', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.endPartyRelationship, payload, request),
     )
-    .handle('markDuplicateCandidateNeedsEvidence', ({ payload, headers, request }) =>
-      runPartyCommand(
-        partyCommandRegistrations.markDuplicateCandidateNeedsEvidence,
-        payload,
-        headers['idempotency-key'],
-        request,
-      ),
+    .handle('markDuplicateCandidateNeedsEvidence', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.markDuplicateCandidateNeedsEvidence, payload, request),
     )
-    .handle('matchParty', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.matchParty, payload, headers['idempotency-key'], request),
+    .handle('matchParty', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.matchParty, payload, request),
     )
-    .handle('requestSearchRebuild', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.requestSearchRebuild, payload, headers['idempotency-key'], request),
+    .handle('requestSearchRebuild', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.requestSearchRebuild, payload, request),
     )
-    .handle('resolveDuplicateCandidateCreate', ({ payload, headers, request }) =>
-      runPartyCommand(
-        partyCommandRegistrations.resolveDuplicateCandidateCreate,
-        payload,
-        headers['idempotency-key'],
-        request,
-      ),
+    .handle('resolveDuplicateCandidateCreate', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.resolveDuplicateCandidateCreate, payload, request),
     )
-    .handle('resolveDuplicateCandidateMatch', ({ payload, headers, request }) =>
-      runPartyCommand(
-        partyCommandRegistrations.resolveDuplicateCandidateMatch,
-        payload,
-        headers['idempotency-key'],
-        request,
-      ),
+    .handle('resolveDuplicateCandidateMatch', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.resolveDuplicateCandidateMatch, payload, request),
     )
-    .handle('unarchiveParty', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.unarchiveParty, payload, headers['idempotency-key'], request),
+    .handle('unarchiveParty', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.unarchiveParty, payload, request),
     )
-    .handle('updateContactPoint', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.updateContactPoint, payload, headers['idempotency-key'], request),
+    .handle('updateContactPoint', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.updateContactPoint, payload, request),
     )
-    .handle('updateParty', ({ payload, headers, request }) =>
-      runWirePayloadPartyCommand(partyCommandRegistrations.updateParty, payload, headers['idempotency-key'], request),
+    .handle('updateParty', ({ payload, request }) =>
+      runWirePayloadPartyCommand(partyCommandRegistrations.updateParty, payload, request),
     )
-    .handle('updatePartyOfficialIdentifier', ({ payload, headers, request }) =>
-      runPartyCommand(
-        partyCommandRegistrations.updatePartyOfficialIdentifier,
-        payload,
-        headers['idempotency-key'],
-        request,
-      ),
+    .handle('updatePartyOfficialIdentifier', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.updatePartyOfficialIdentifier, payload, request),
     )
-    .handle('updatePartyRelationship', ({ payload, headers, request }) =>
-      runPartyCommand(partyCommandRegistrations.updatePartyRelationship, payload, headers['idempotency-key'], request),
+    .handle('updatePartyRelationship', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.updatePartyRelationship, payload, request),
     ),
 ).pipe(Layer.provide(partyCommandSchemaErrorLive));
 

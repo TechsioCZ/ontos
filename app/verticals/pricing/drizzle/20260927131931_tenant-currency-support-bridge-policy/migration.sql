@@ -1,0 +1,1 @@
+CREATE POLICY "pricing_currency_support_tenant_read_bridge" ON "pricing"."currency_support_revisions" AS PERMISSIVE FOR SELECT TO "pricing_currency_support_bridge_reader" USING ("pricing"."currency_support_revisions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid);

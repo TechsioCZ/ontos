@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
 
-import { v1 } from '@authzed/authzed-node';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as EffectArray,
   Cause,
+  Config,
   Console,
   Duration,
   Effect,
@@ -20,18 +20,24 @@ import { Command } from 'effect/unstable/cli';
 
 import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
 import {
-  ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
   ActionAuthorizationProvisioningError,
+  deriveExplicitActionAuthorization,
   provisionActionAuthorization,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type {
   ActionAuthorizationContext,
+  ActionAuthorizationExplicitAccountGrant,
   ActionAuthorizationProvisioningAction,
   ActionAuthorizationProvisioningClient,
   ActionAuthorizationProvisioningResult,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { STAGE_CONTEXTS } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
-import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/client.ts';
+import {
+  STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
+  parseStageAccountsFile,
+  readStageAccountsFileContents,
+} from '../packages/core-runtime/src/install/stage-accounts-file.ts';
+import type { StageAccountsFile } from '../packages/core-runtime/src/install/stage-accounts-file.ts';
+import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
@@ -63,6 +69,14 @@ export interface ActionAuthorizationProvisioningTarget {
   readonly configuration: SpiceDbConfigValue;
   readonly contexts: readonly ActionAuthorizationContext[];
   readonly environment: 'development' | 'stage';
+  /** Per-account explicit Action grant data; empty outside stage. */
+  readonly explicitAccountGrants: readonly ActionAuthorizationExplicitAccountGrant[];
+}
+
+/** The authorization slice of the operator stage accounts file: who exists and what each holds. */
+export interface StageAccountsAuthorization {
+  readonly contexts: readonly ActionAuthorizationContext[];
+  readonly explicitAccountGrants: readonly ActionAuthorizationExplicitAccountGrant[];
 }
 
 const failure = (
@@ -77,18 +91,53 @@ const failure = (
 const isLoopbackSpiceDb = (configuration: SpiceDbConfigValue): boolean => {
   try {
     const parsed = new URL(`http://${configuration.endpoint}`);
-    return (
-      configuration.insecureLocal &&
-      parsed.port.length > 0 &&
-      ['127.0.0.1', '[::1]', 'localhost'].includes(parsed.hostname)
-    );
+    return parsed.port.length > 0 && ['127.0.0.1', '[::1]', 'localhost'].includes(parsed.hostname);
   } catch {
     return false;
   }
 };
 
+/** Projects the operator stage accounts file onto Action authorization inputs; passwords are dropped. */
+export const stageAccountsAuthorization = (file: StageAccountsFile): StageAccountsAuthorization => {
+  const accounts = file.tenants.flatMap(({ accounts: tenantAccounts, tenantId }) =>
+    tenantAccounts.map(({ grants, principalId }) => ({
+      explicitActions: grants.explicitActions,
+      principalId,
+      tenantId,
+    })),
+  );
+  return {
+    contexts: EffectArray.sortWith(
+      accounts.map(({ principalId, tenantId }) => ({ principalId, tenantId })),
+      ({ principalId }) => principalId,
+      Order.String,
+    ),
+    explicitAccountGrants: accounts.map(({ explicitActions, principalId }) => ({ explicitActions, principalId })),
+  };
+};
+
+/** Loads the operator stage accounts file named by {@link STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY}. */
+export const loadStageAccountsAuthorization = (): Effect.Effect<
+  StageAccountsAuthorization,
+  ActionAuthorizationProvisioningError,
+  FileSystem.FileSystem
+> =>
+  Config.schema(Schema.Trim.check(Schema.isNonEmpty()), STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY).pipe(
+    Effect.mapError(() =>
+      failure('action_authorization_configuration_invalid', `${STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY} is required`),
+    ),
+    Effect.flatMap((filePath) =>
+      readStageAccountsFileContents(filePath).pipe(
+        Effect.flatMap(parseStageAccountsFile),
+        Effect.mapError(({ reason }) => failure('action_authorization_configuration_invalid', reason)),
+      ),
+    ),
+    Effect.map(stageAccountsAuthorization),
+  );
+
 export const selectActionAuthorizationProvisioningTarget = (
   configuration: SpiceDbConfigValue,
+  stageAuthorization?: StageAccountsAuthorization,
 ): Effect.Effect<ActionAuthorizationProvisioningTarget, ActionAuthorizationProvisioningError> => {
   if (
     (configuration.deploymentEnvironment === undefined || configuration.deploymentEnvironment === 'development') &&
@@ -103,22 +152,15 @@ export const selectActionAuthorizationProvisioningTarget = (
         },
       ],
       environment: 'development',
+      explicitAccountGrants: [],
     });
   }
   if (
     configuration.deploymentEnvironment === 'stage' &&
     configuration.endpoint === 'spicedb:50051' &&
-    configuration.insecureLocal
+    stageAuthorization !== undefined
   ) {
-    const contexts = EffectArray.sortWith(
-      [STAGE_CONTEXTS.techsio, STAGE_CONTEXTS.siampark].map(({ principalId, tenantId }) => ({
-        principalId,
-        tenantId,
-      })),
-      ({ tenantId }) => tenantId,
-      Order.String,
-    );
-    return Effect.succeed({ configuration, contexts, environment: 'stage' });
+    return Effect.succeed({ configuration, environment: 'stage', ...stageAuthorization });
   }
   return Effect.fail(
     failure(
@@ -142,12 +184,12 @@ const decodeRepositoryInventory = (workspaceRoot: string) =>
       ],
       { concurrency: 'unbounded' },
     ).pipe(Effect.mapError(discoveryFailure));
-    const ownership = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OwnershipSchema), {
-      onExcessProperty: 'preserve',
-    })(ownershipSource).pipe(Effect.mapError(discoveryFailure));
-    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema), {
-      onExcessProperty: 'preserve',
-    })(topologySource).pipe(Effect.mapError(discoveryFailure));
+    const ownership = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OwnershipSchema))(ownershipSource).pipe(
+      Effect.mapError(discoveryFailure),
+    );
+    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema))(topologySource).pipe(
+      Effect.mapError(discoveryFailure),
+    );
     return { ownership, topology };
   });
 
@@ -194,7 +236,9 @@ export const discoverCurrentActions = (
     const collectVerticalActions = Effect.gen(function* collectVerticalActionsEffect() {
       const verticalActions: ActionAuthorizationProvisioningAction[] = [];
       for (const { contract, id } of contracts) {
-        if (contract.deployment.appId !== id || contract.manifest.publicSurface.actions.length === 0) {
+        // A validated foundation/read-only vertical can publish no Actions. Its deployment
+        // identity and every Action it does publish still have to match the governed contract.
+        if (contract.deployment.appId !== id) {
           return yield* discoveryFailure();
         }
         for (const { actionKey, entrypoint } of contract.manifest.publicSurface.actions) {
@@ -264,7 +308,7 @@ const callProvisioningClient = <Value,>(operation: () => PromiseLike<Value>) =>
   );
 
 const createProvisioningClient = (configuration: SpiceDbConfigValue): CloseableProvisioningClient => {
-  const client = v1.NewClient(configuration.preSharedKey, configuration.endpoint, spiceDbClientSecurity(configuration));
+  const client = newSpiceDbGrpcClient(configuration);
   return {
     checkPermission: (request) =>
       callProvisioningClient(client.promises.checkPermission.bind(client.promises, request)).pipe(
@@ -290,20 +334,6 @@ const acquireProvisioningClient = (configuration: SpiceDbConfigValue) =>
     (client) => Effect.sync(() => client.close()),
   );
 
-export const buildExplicitActionAssertions = (
-  actions: readonly ActionAuthorizationProvisioningAction[],
-  contexts: readonly ActionAuthorizationContext[],
-) =>
-  actions
-    .filter(({ provisioning }) => provisioning === 'explicit')
-    .map(({ actionKey }) => ({
-      actionKey,
-      assertions: [
-        ...contexts.map(({ principalId }) => ({ expected: 'allowed' as const, principalId })),
-        { expected: 'denied' as const, principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID },
-      ],
-    }));
-
 const runCurrentActionAuthorizationProvisioningWithServices = (
   workspaceRoot: string,
   commandArguments: readonly string[] = [],
@@ -326,13 +356,19 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
         failure('action_authorization_configuration_invalid', 'The SpiceDB provisioning configuration is invalid'),
       ),
     );
-    const target = yield* selectActionAuthorizationProvisioningTarget(configuration);
+    const stageAuthorization =
+      configuration.deploymentEnvironment === 'stage' ? yield* loadStageAccountsAuthorization() : undefined;
+    const target = yield* selectActionAuthorizationProvisioningTarget(configuration, stageAuthorization);
     const actions = yield* discoverCurrentActions(workspaceRoot);
+    const explicitAuthorization =
+      target.environment === 'stage'
+        ? yield* deriveExplicitActionAuthorization(actions, target.contexts, target.explicitAccountGrants)
+        : {};
     const client = yield* acquireProvisioningClient(target.configuration);
     const result = yield* provisionActionAuthorization(client, {
       actions,
       contexts: target.contexts,
-      explicitActionAssertions: buildExplicitActionAssertions(actions, target.contexts),
+      ...explicitAuthorization,
     });
     return { ...result, environment: target.environment };
   }).pipe(Effect.scoped);
@@ -379,17 +415,18 @@ const command = Command.make('authorization-provision-current-actions', {}, () =
       Effect.tapError((cause) => Console.error(formatActionAuthorizationProvisioningFailure(cause))),
     );
     yield* Console.log(
-      `Provisioned ${result.grantCount} explicit Action grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`,
+      `Provisioned ${result.grantCount} Action executor grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`,
     );
   }),
 );
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   NodeRuntime.runMain(
-    Layer.effectDiscard(Command.run(command, { version: '0.1.0' })).pipe(
-      Layer.provide(NodeServices.layer),
-      Layer.launch,
-    ),
-    { disableErrorReporting: true },
+    Layer.build(
+      Layer.effectDiscard(Command.run(command, { version: '0.1.0' })).pipe(Layer.provide(NodeServices.layer)),
+    ).pipe(Effect.scoped),
+    {
+      disableErrorReporting: true,
+    },
   );
 }

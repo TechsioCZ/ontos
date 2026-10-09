@@ -16,8 +16,8 @@ export const stopImpersonation = (headers: Headers) =>
   });
 
 export const bootstrap = (configuration: string, accounts: readonly string[]) =>
-  Effect.gen(function* bootstrapStageDemoEffect() {
-    const techsioAuthUser = yield* reconcileAuthUser(configuration, accounts[0] ?? '');
-    const siamparkAuthUser = yield* reconcileAuthUser(configuration, accounts[1] ?? '');
-    return { siamparkAuthUser, techsioAuthUser };
+  Effect.gen(function* bootstrapStageAccountsEffect() {
+    const firstAuthUser = yield* reconcileAuthUser(configuration, accounts[0] ?? '');
+    const secondAuthUser = yield* reconcileAuthUser(configuration, accounts[1] ?? '');
+    return { secondAuthUser, firstAuthUser };
   });

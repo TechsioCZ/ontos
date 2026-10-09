@@ -1,12 +1,17 @@
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import {
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';
 import { updateContactPointAction } from '../../src/actions/update-contact-point.action.ts';
 
-const tenantId = '20000000-0000-4000-8000-000000000001';
+const tenantId = Schema.decodeSync(TenantIdSchema)('20000000-0000-4000-8000-000000000001');
+const principalId = Schema.decodeSync(PrincipalIdSchema)('50000000-0000-4000-8000-000000000001');
 const originalContactPointRef = {
   moduleId: 'party.registry' as const,
   resourceId: '30000000-0000-4000-8000-000000000001',
@@ -80,6 +85,7 @@ it.effect('correction publishes the corrected stable ref while returning the val
       },
       {
         actionInvocationId: '40000000-0000-4000-8000-000000000001',
+        compositionRevision: 'a'.repeat(64),
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
         recordAuditEvidence: collector.recordAuditEvidence,
@@ -87,7 +93,7 @@ it.effect('correction publishes the corrected stable ref while returning the val
         scope: {
           authMethod: 'system',
           correlationId: 'correction-test',
-          principalId: '50000000-0000-4000-8000-000000000001',
+          principalId,
           tenantId,
         },
         services: { update: () => Effect.succeed(replacement) },

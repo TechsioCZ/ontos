@@ -40,7 +40,7 @@
  *      A read at module scope marks the module itself.
  *   2. it declares a parameter whose type names an environment record — a `TSTypeReference`
  *      (or qualified name) matching `environmentTypeNames`, e.g. `Environment`, `ProcessEnv`,
- *      `NodeJS.ProcessEnv`, `StageDemoEnvironment`.
+ *      `NodeJS.ProcessEnv`, `StageAccountsEnvironment`.
  *   3. it declares an optional-string dictionary parameter, including renamed/destructured forms:
  *      `Readonly<Record<string, string | undefined>>`, `Partial<Record<string, string>>`, or an
  *      optional-string index signature. Total header/translation maps are not evidence by themselves.
@@ -101,7 +101,7 @@ function keyName(key: AnyNode): string | null {
 const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 
 /** Spec default: alias names that stand for "the environment record". */
-const DEFAULT_ENVIRONMENT_TYPE_NAMES = '(^|\\.)(Environment|ProcessEnv|StageDemoEnvironment)$';
+const DEFAULT_ENVIRONMENT_TYPE_NAMES = '(^|\\.)(Environment|ProcessEnv|StageAccountsEnvironment)$';
 
 /** Binding names that stand for an environment bag (`environment['X']`, `env.PORT`). */
 const DEFAULT_ENVIRONMENT_IDENTIFIERS =
@@ -280,7 +280,7 @@ export const rule = defineRule({
       throwInConfigurationParser:
         'Audit A3: configuration parsers must not throw. This `throw` sits in a function that reads the ' +
         'environment (or takes an environment record), so missing or malformed values are signalled synchronously rather than through Config. Model the value with ' +
-        '`Config.string`/`Config.integer`/`Config.redacted`/`Config.schema(...)` so absence and malformation ' +
+        '`Config.String`/`Config.Int`/`Config.Redacted`/`Config.schema(...)` so absence and malformation ' +
         'are typed `ConfigError`s decoded by the root `ConfigProvider`, or return ' +
         '`Effect.fail(new XConfigError({ reason: ... }))` from an `Effect`-returning parser.',
       throwInConfigurationHelper:
@@ -322,7 +322,7 @@ export const rule = defineRule({
           environmentTypeNames: {
             type: 'string',
             description:
-              "Regular expression matched against a parameter's type name (default: (^|\\.)(Environment|ProcessEnv|StageDemoEnvironment)$).",
+              "Regular expression matched against a parameter's type name (default: (^|\\.)(Environment|ProcessEnv|StageAccountsEnvironment)$).",
           },
           followLocalHelpers: {
             type: 'boolean',

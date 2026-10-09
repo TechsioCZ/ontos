@@ -8,6 +8,9 @@ import {
   CreatePaymentTermPayloadSchema,
   createPaymentTermAction,
 } from '../../src/actions/create-payment-term.action.ts';
+import { CreatePaymentTermResultSchema } from '../../shared/actions/create-payment-term.ts';
+import { executeCreatePaymentTerm } from '../../src/api/create-payment-term-action-client.ts';
+import { executeCreatePaymentTerm as exportedExecuteCreatePaymentTerm } from '../../src/api/payment-term-catalog-client.ts';
 import {
   CorrectPaymentTermPayloadSchema,
   correctPaymentTermAction,
@@ -49,6 +52,25 @@ const scope = {
 };
 
 describe('Payment Term mutation contracts', () => {
+  it('exposes an idempotent owner entrypoint with independent definition revisions', () => {
+    const result = Schema.decodeUnknownSync(CreatePaymentTermResultSchema)({
+      compatibilityId: 'net_days.invoice_issued_at.calendar_days_utc.v1',
+      definitionRevisionId: '55555555-5555-4555-8555-555555555555',
+      metadataRevision: 1,
+      paymentTermRef: first,
+      semanticRevisionId: '66666666-6666-4666-8666-666666666666',
+    });
+
+    expect(createPaymentTermAction.descriptor.idempotency).toBe('required');
+    expect(exportedExecuteCreatePaymentTerm).toBe(executeCreatePaymentTerm);
+    expect(result).toMatchObject({
+      definitionRevisionId: '55555555-5555-4555-8555-555555555555',
+      metadataRevision: 1,
+      paymentTermRef: first,
+      semanticRevisionId: '66666666-6666-4666-8666-666666666666',
+    });
+  });
+
   it('rejects blank and padded user-facing text', () => {
     const create = {
       activeFrom: '2026-01-01T00:00:00.000Z',

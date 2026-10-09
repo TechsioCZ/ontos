@@ -589,13 +589,17 @@ export const customerGroupPersistenceForTransaction = (
       .pipe(
         Effect.mapError(unavailable),
         Effect.flatMap((rows) => requireRow(rows, effectiveMembershipsRoutine.routineKey)),
-        Effect.flatMap((row) =>
-          row.outcome === 'PROFILE_NOT_FOUND'
-            ? Effect.succeed(Option.none<EffectiveCustomerGroupMembershipsResult>())
-            : decodeMemberships(row.items_json).pipe(
-                Effect.map((items) => Option.some({ effectiveAt: query.effectiveAt, items, profile: query.profile })),
-              ),
-        ),
+        Effect.flatMap((row) => {
+          if (Option.isSome(row.next_cursor)) {
+            return Effect.fail(unavailable('The effective Customer Group Membership routine returned a partial set'));
+          }
+          if (row.outcome === 'PROFILE_NOT_FOUND') {
+            return Effect.succeed(Option.none<EffectiveCustomerGroupMembershipsResult>());
+          }
+          return decodeMemberships(row.items_json).pipe(
+            Effect.map((items) => Option.some({ effectiveAt: query.effectiveAt, items, profile: query.profile })),
+          );
+        }),
       );
   },
   history: (query) => {

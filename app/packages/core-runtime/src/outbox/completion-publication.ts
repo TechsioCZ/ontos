@@ -73,7 +73,7 @@ export interface OutboxWorkerCompletionPublisher {
 export interface PersistOutboxWorkerCompletionInput {
   readonly completionId: string;
   readonly eventType: string;
-  readonly legalEntityId: string;
+  readonly legalEntityId: string | null;
   readonly occurredAt: Date;
   readonly payloadJson: unknown;
   readonly producerModuleKey: string;
@@ -89,8 +89,9 @@ export type PersistOutboxWorkerCompletion = (
   input: PersistOutboxWorkerCompletionInput,
 ) => Effect.Effect<OutboxWorkerCompletionPublicationResult, OutboxWorkerCompletionPublicationError>;
 
-const invalid = (reason: string): OutboxWorkerCompletionPublicationError =>
+const invalid = (reason: string, cause?: unknown): OutboxWorkerCompletionPublicationError =>
   new OutboxWorkerCompletionPublicationError({
+    cause,
     code: 'outbox_worker_completion_invalid',
     reason,
     retryable: false,
@@ -103,20 +104,13 @@ const conflict = (): OutboxWorkerCompletionPublicationError =>
     retryable: false,
   });
 
-const unavailable = (cause?: unknown): OutboxWorkerCompletionPublicationError => {
-  const error = new OutboxWorkerCompletionPublicationError({
+const unavailable = (cause?: unknown): OutboxWorkerCompletionPublicationError =>
+  new OutboxWorkerCompletionPublicationError({
+    cause,
     code: 'outbox_worker_completion_unavailable',
     reason: 'The worker completion could not be published durably',
     retryable: true,
   });
-  return cause === undefined
-    ? error
-    : Object.defineProperty(error, 'cause', {
-        configurable: false,
-        enumerable: false,
-        value: cause,
-      });
-};
 
 export const defineOutboxWorkerCompletion = <PayloadSchema extends Schema.ConstraintDecoder<unknown>>(
   input: OutboxWorkerCompletionDefinitionInput<PayloadSchema>,
@@ -157,29 +151,27 @@ const validInput = (input: OutboxWorkerCompletionInput<unknown>): boolean =>
 export const outboxWorkerCompletionPublisherFor = (
   dependencies: Readonly<{
     context: OutboxWorkerHandlerContext;
-    legalEntityId: string;
+    legalEntityId: string | null;
     persist: PersistOutboxWorkerCompletion;
   }>,
 ): OutboxWorkerCompletionPublisher => ({
   publish: (definition, input) => {
     const { context, legalEntityId, persist } = dependencies;
+    const legalEntityScope = context.legalEntityScope ?? 'required';
+    const hasExactOperationalScope =
+      (legalEntityScope === 'forbidden' && legalEntityId === null) ||
+      (legalEntityScope === 'required' && legalEntityId !== null && uuidPattern.test(legalEntityId));
     if (
       !isVerifiedOutboxWorkerHandlerContext(context) ||
       !uuidPattern.test(context.tenantId) ||
-      !uuidPattern.test(legalEntityId) ||
+      !hasExactOperationalScope ||
       !validDefinition(definition, context) ||
       !validInput(input)
     ) {
       return Effect.fail(invalid('The worker completion scope or identity is invalid'));
     }
-    return Schema.decodeUnknownEffect(definition.payloadSchema)(input.payloadJson).pipe(
-      Effect.mapError((cause) =>
-        Object.defineProperty(invalid('The worker completion payload is invalid'), 'cause', {
-          configurable: false,
-          enumerable: false,
-          value: cause,
-        }),
-      ),
+    return Schema.decodeUnknownEffect(definition.payloadSchema, { onExcessProperty: 'error' })(input.payloadJson).pipe(
+      Effect.mapError((cause) => invalid('The worker completion payload is invalid', cause)),
       Effect.flatMap((payloadJson) =>
         persist({
           completionId: input.completionId,
@@ -205,11 +197,12 @@ const epochMillis = (value: Date): number | undefined =>
 
 const sameInstant = (left: Date, right: Date): boolean => epochMillis(left) === epochMillis(right);
 
-const sourceInvocationIsEligible = (
-  sourceInvocation: Readonly<{ legalEntityId: string | null; status: string }> | undefined,
+export const isOutboxWorkerCompletionSourceEligible = (
+  sourceInvocation: Readonly<{ legalEntityId: string | null; status: string; tenantId: string }> | undefined,
   input: PersistOutboxWorkerCompletionInput,
 ): boolean =>
   sourceInvocation !== undefined &&
+  sourceInvocation.tenantId === input.tenantId &&
   sourceInvocation.legalEntityId === input.legalEntityId &&
   sourceInvocation.status === 'succeeded';
 
@@ -264,6 +257,7 @@ export const persistOutboxWorkerCompletion = (transaction: CoreTransaction): Per
         actionInvocationId: actionInvocations.actionInvocationId,
         legalEntityId: actionInvocations.legalEntityId,
         status: actionInvocations.status,
+        tenantId: actionInvocations.tenantId,
       })
       .from(actionInvocations)
       .where(
@@ -274,8 +268,8 @@ export const persistOutboxWorkerCompletion = (transaction: CoreTransaction): Per
       )
       .limit(1)
       .pipe(Effect.mapError(unavailable));
-    if (!sourceInvocationIsEligible(sourceInvocation, input)) {
-      return yield* invalid('The completion source Action is not durably succeeded in the exact Legal Entity scope');
+    if (!isOutboxWorkerCompletionSourceEligible(sourceInvocation, input)) {
+      return yield* invalid('The completion source Action is not durably succeeded in the exact operational scope');
     }
 
     const [lockedTenant] = yield* transaction

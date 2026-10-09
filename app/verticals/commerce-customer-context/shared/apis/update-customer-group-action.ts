@@ -8,10 +8,6 @@ import { UpdateCustomerGroupPayloadSchema, UpdateCustomerGroupResultSchema } fro
 
 export { UpdateCustomerGroupPayloadSchema } from '../actions/update-customer-group.ts';
 
-const UpdateCustomerGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const UpdateCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateCustomerGroupActionInvalidProblem',
   400,
@@ -132,15 +128,35 @@ const actionErrors = [
   UpdateCustomerGroupActionInternalProblemSchema,
 ] as const;
 
-export const UpdateCustomerGroupActionApi = HttpApi.make('UpdateCustomerGroupActionApi').add(
-  HttpApiGroup.make('updateCustomerGroupAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/update-customer-group', {
-        error: actionErrors,
-        headers: UpdateCustomerGroupActionHeadersSchema,
-        payload: Schema.toEncoded(UpdateCustomerGroupPayloadSchema),
-        success: UpdateCustomerGroupResultSchema,
-      }),
-    )
-    .middleware(UpdateCustomerGroupActionSchemaErrorMiddleware),
-);
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const updateCustomerGroupActionGroupDefinition = HttpApiGroup.make('updateCustomerGroupAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/update-customer-group', {
+      error: actionErrors,
+      payload: Schema.toEncoded(UpdateCustomerGroupPayloadSchema),
+      success: UpdateCustomerGroupResultSchema,
+    }),
+  )
+  .middleware(UpdateCustomerGroupActionSchemaErrorMiddleware);
+
+export type UpdateCustomerGroupActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'updateCustomerGroupAction',
+  HttpApiGroup.Endpoints<typeof updateCustomerGroupActionGroupDefinition>
+>;
+
+const UpdateCustomerGroupActionGroup: UpdateCustomerGroupActionGroupContract = updateCustomerGroupActionGroupDefinition;
+
+export const UpdateCustomerGroupActionApi =
+  HttpApi.make('UpdateCustomerGroupActionApi').add(UpdateCustomerGroupActionGroup);

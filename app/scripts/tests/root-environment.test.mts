@@ -44,7 +44,15 @@ it('all server configuration resolves the app-root .env from any invocation dire
   const probe = new URL('server-environment-paths.fixture.mts', import.meta.url);
   const child = spawnSync(
     '/usr/bin/env',
-    ['-u', 'ULTRAMODERN_WORKSPACE_ROOT', `INIT_CWD=${repositoryRoot}`, process.execPath, fileURLToPath(probe)],
+    [
+      '-u',
+      'APP_ENV_PATH',
+      '-u',
+      'ULTRAMODERN_WORKSPACE_ROOT',
+      `INIT_CWD=${repositoryRoot}`,
+      process.execPath,
+      fileURLToPath(probe),
+    ],
     {
       cwd: '/',
       encoding: 'utf-8',
@@ -58,6 +66,35 @@ it('all server configuration resolves the app-root .env from any invocation dire
     expectedEnvironmentPath,
   ]);
 });
+
+for (const { environmentPath, expectedPath, name } of [
+  { environmentPath: '/dev/null', expectedPath: '/dev/null', name: 'absolute' },
+  {
+    environmentPath: 'fixtures/isolated-environment',
+    expectedPath: path.join(appRoot, 'fixtures/isolated-environment'),
+    name: 'workspace-relative',
+  },
+  { environmentPath: '', expectedPath: expectedEnvironmentPath, name: 'empty' },
+]) {
+  it(`all server configuration honors the ${name} APP_ENV_PATH input`, () => {
+    const probe = new URL('server-environment-paths.fixture.mts', import.meta.url);
+    const child = spawnSync(
+      '/usr/bin/env',
+      [
+        '-u',
+        'ULTRAMODERN_WORKSPACE_ROOT',
+        `APP_ENV_PATH=${environmentPath}`,
+        `INIT_CWD=${repositoryRoot}`,
+        process.execPath,
+        fileURLToPath(probe),
+      ],
+      { cwd: '/', encoding: 'utf-8' },
+    );
+
+    expect(child.status, child.stderr).toBe(0);
+    expect(JSON.parse(child.stdout.trim())).toEqual([expectedPath, expectedPath, expectedPath]);
+  });
+}
 
 it('Drizzle configuration remains bundleable as CommonJS', () => {
   const outputDirectory = mkdtempSync(path.join(tmpdir(), 'ontos-drizzle-cjs-'));

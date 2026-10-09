@@ -48,6 +48,7 @@ import {
   raiseScaffoldFailure,
   readGeneratedSlotEntries,
   requireCanonicalSlug,
+  replaceGeneratedSlotEntry,
   resolveContainedPath,
   scaffoldFailure,
   stabilizeGovernedHttpApiAdditionSlot,
@@ -84,8 +85,6 @@ const PUBLIC_COMPONENT_KIND = 'public-component';
 const REPORT_KIND = 'report';
 const SEARCH_PROVIDER_KIND = 'search-provider';
 const WORKSPACE_DEPENDENCY = 'workspace:*';
-const PUBLIC_CONTRACT_SHIM_LINT =
-  '/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- This generated owner shim preserves one canonical public contract source without copying schemas; expires: 2027-03-31. */';
 const ContractOwnerAppIdSchema = Schema.String.pipe(Schema.brand('ContractOwnerAppId'));
 const ContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('ContractOwnerModuleId'));
 
@@ -340,7 +339,7 @@ const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.di
 );
 
 const renderPublicContractShim = (specifier: string): string =>
-  `${generatedHeader(MODULE_API_KIND)}\n// @ontos-public-contract ${specifier}\n${PUBLIC_CONTRACT_SHIM_LINT}\nexport * from '${specifier}';\n`;
+  `${generatedHeader(MODULE_API_KIND)}\n// @ontos-public-contract ${specifier}\nexport * from '${specifier}';\n`;
 
 const renderApiContract = (name: string): string => {
   const type = toPascalCase(name);
@@ -353,7 +352,6 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi'
 export const ${type}RequestSchema = Schema.Struct({});
 export type ${type}Request = typeof ${type}RequestSchema.Type;
 export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
-export type ${type}Response = typeof ${type}ResponseSchema.Type;
 
 export const ${type}AuthenticationProblemSchema = makeProblemDetailsSchema(
   '${type}AuthenticationProblem',
@@ -386,10 +384,7 @@ export const ${value} = HttpApi.make('${value}').add(
         ${type}UnavailableProblemSchema,
         ${type}InternalProblemSchema,
       ],
-      headers: {},
-      params: {},
       payload: ${type}RequestSchema,
-      query: {},
       success: ${type}ResponseSchema,
     }),
   ),
@@ -430,7 +425,7 @@ import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { ${type}RequestSchema, ${type}ResponseSchema } from '../../shared/apis/${name}.ts';
 
-export const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
+const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: ${renderReadAuthorization(config)},
   entrypointKey: '${vertical.moduleId}.api.${name}',
@@ -502,6 +497,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ${optionsType} {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ${authorizedInvocationType} = readonly [
@@ -523,7 +519,7 @@ export const execute${type}WithAuthorization = (
 ) =>
   ${clientName}(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
-      client.${toCamelCase(name)}.execute({ headers: {}, params: {}, payload, query: {} }),
+      client.${toCamelCase(name)}.execute({ payload }),
     ),
   );
 
@@ -531,8 +527,12 @@ export const execute${type} = (
   payload: ${type}Request,
   ...[requestCorrelation, options = {}]: ${operationInvocationType}
 ) =>
-  operationGateway.invoke((credential) =>
-    execute${type}WithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    execute${type}WithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );
 `;
 };
@@ -558,7 +558,7 @@ import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { ${inputSchema}, ${resultSchema} } from '../../shared/apis/${contract}.ts';
 import type { ${inputType}, ${resultType} } from '../../shared/apis/${contract}.ts';
 
-export const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
+const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: ${renderReadAuthorization(config)},
   entrypointKey: '${vertical.moduleId}.${role}.${name}',
@@ -619,6 +619,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ${optionsType} {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ${invocationTypePrefix}AuthorizedInvocation = readonly [
@@ -646,8 +647,12 @@ export const load${type}Client = (
   payload: ${type}ProviderRequest,
   ...[requestCorrelation, options = {}]: ${invocationTypePrefix}OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    load${type}ClientWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    load${type}ClientWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );
 `;
 };
@@ -955,7 +960,7 @@ const slotLine = (
         [
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START,
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
-          `publicComponentContribution({ componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' } }),`,
+          `publicComponentContribution({ componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' }, expose: './${toPascalCase(name)}' }),`,
         ],
       ],
       registration: [
@@ -1154,6 +1159,9 @@ const patchSlots = (
       (structurallyMatchesGeneratedEntry(identityMatch.entry, line) ||
         acceptsAdaptedProviderDescriptor(start, identityMatch.entry, line))
     ) {
+      if (start === MODULE_MANIFEST_API_SLOT_START) {
+        return replaceGeneratedSlotEntry(current, start, end, identityMatch.entry, line);
+      }
       return current;
     }
     if (identityMatch !== undefined) {

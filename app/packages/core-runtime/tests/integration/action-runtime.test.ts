@@ -1,21 +1,35 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq } from 'drizzle-orm';
-import { Cause, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
+import { and, eq, sql } from 'drizzle-orm';
+import { Cause, DateTime, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
-import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
+import {
+  ActionInvocationPersistenceError,
+  ActionPolicyDenied,
+  ActionTransactionError,
+  createActionInvocationPersistenceErrorWithCause,
+} from '../../src/actions/errors.ts';
 import { createDomainEventReference } from '../../src/actions/events.ts';
 import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { loadDatabaseConfig } from '../../src/db/config.ts';
+import {
+  AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
+} from '../../src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../src/auth/external-identity/verifier.ts';
+import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
+  applicationCompositionAuthority,
   auditEvents,
   dataAccessEvents,
   domainEvents,
@@ -29,6 +43,11 @@ import {
 } from '../../src/db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
+import {
+  drainApplicationCompositionAuthority,
+  lockApplicationCompositionAuthority,
+  lockApplicationCompositionPublication,
+} from '../../src/modules/application-composition-authority.ts';
 import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import type { OntosModuleDeploymentContract } from '../../src/modules/manifest.ts';
@@ -40,9 +59,12 @@ import {
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
+import { injectStatementFaults } from '../support/database-faults.ts';
+import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
+import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
 
 const TestPersistenceErrorContract = Schema.TaggedStruct('TestPersistenceError', {
   reason: Schema.String,
@@ -68,6 +90,44 @@ const ActionPolicyDeniedFailureSchema = Schema.TaggedStruct('ActionPolicyDenied'
 const decodeActionPolicyDeniedFailure = Schema.decodeUnknownOption(ActionPolicyDeniedFailureSchema);
 
 const tenantId = randomUUID();
+const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['core-runtime-test'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'test-provider',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
+const testOperationalScopeResolver: OperationalScopeResolverService = {
+  resolve: (input) =>
+    Effect.gen(function* registeredTestOperationalScope() {
+      const namespaceId = input.principal.authenticationNamespaceId;
+      if (namespaceId !== undefined) {
+        const registration = yield* authenticationNamespaceRegistry
+          .lookup(AuthenticationNamespaceIdSchema.make(namespaceId))
+          .pipe(
+            Effect.mapError(
+              () =>
+                new OperationContextUnavailable({
+                  code: 'operation_context_unavailable',
+                  reason: 'The test authentication namespace registry is unavailable',
+                }),
+            ),
+          );
+        if (Option.isNone(registration)) {
+          return yield* new OperationAuthenticationRequired({
+            code: 'operation_authentication_required',
+            reason: 'The test authentication namespace is not registered',
+          });
+        }
+      }
+      return yield* baseTestOperationalScopeResolver.resolve(input);
+    }),
+};
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
 const authBindingId = randomUUID();
@@ -75,6 +135,7 @@ const authBindingId = randomUUID();
 const principal = {
   authBindingId,
   authContextRef: `better-auth-session:${authBindingId}`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   legalEntityId,
   principalId,
@@ -124,7 +185,7 @@ const withDatabase = <Value, Error, Requirements>(
   Effect.scoped(
     Effect.gen(function* databaseScope() {
       const configuration = yield* loadDatabaseConfig();
-      const database = yield* makeFaultInjectableCoreDatabase(configuration);
+      const database = yield* makeCoreDatabase(configuration);
       return yield* execute(database);
     }),
   );
@@ -193,7 +254,7 @@ const withEvidencePersistenceFailure = (
             ? 'update "core"."action_invocations" set "status" = $1, "completed_at"'
             : `insert into "core"."${table}"`;
         return transactionBody(transaction).pipe(
-          Effect.provideService(TestQueryHook, (statement) =>
+          injectStatementFaults((statement) =>
             statement.startsWith(statementPrefix)
               ? Effect.fail(
                   new SqlError({
@@ -246,6 +307,7 @@ const prepare = (() =>
         tenantId,
       });
       yield* database.executor.insert(principalAuthBindings).values({
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         principalAuthBindingId: authBindingId,
         principalId,
         provider: 'better_auth',
@@ -299,7 +361,7 @@ interface RegistrationOptions {
   readonly completionGate?: Deferred.Deferred<null>;
   readonly mode?: 'commit-reject' | 'orphan-outbox' | 'reject' | 'success';
   readonly moduleStateKey: string;
-  readonly onExecute?: () => void;
+  readonly onExecute?: (context: TestActionContext) => void;
   readonly onExecuteEffect?: Effect.Effect<unknown>;
   readonly policies?: readonly ActionPolicy<{ readonly value: string }, 'core.shell'>[];
 }
@@ -345,7 +407,7 @@ const makeRegistration = ({
       schemaVersion: '1',
     },
     Effect.fn(function* integrationHandler(payload, context: TestActionContext) {
-      onExecute?.();
+      onExecute?.(context);
       if (onExecuteEffect !== undefined) {
         yield* onExecuteEffect;
       }
@@ -1119,11 +1181,11 @@ const testProgram8 = () =>
         transport: transport(key),
       };
       const first = yield* Effect.exit(runtime.runAction(input));
-      const retry = yield* Effect.exit(runtime.runAction(input));
+      const retry = yield* Effect.flip(runtime.runAction(input));
       const { audits, invocation } = yield* invocationEvidence(database, key);
 
       expect(hasFailure(first, 'ActionPolicyDenied')).toBe(true);
-      expect(hasFailure(retry, 'ActionInvocationStateError')).toBe(true);
+      expect(Schema.is(ActionPolicyDenied)(retry) && retry.policyReasonCode).toBe('terminal_rejection');
       expect(evaluations).toBe(1);
       expect(handlerExecutions).toBe(0);
       expect(invocation.status).toBe('rejected');
@@ -1418,7 +1480,7 @@ const testProgram11 = () =>
             transport: transport('sequence-second', secondModule),
           })
           .pipe(
-            Effect.provideService(TestQueryHook, () => Deferred.succeed(secondInsertStarted, null).pipe(Effect.asVoid)),
+            injectStatementFaults(() => Deferred.succeed(secondInsertStarted, null).pipe(Effect.asVoid)),
             Effect.ensuring(
               Effect.sync(() => {
                 secondCompleted = true;
@@ -1718,9 +1780,203 @@ const testProgram13 = () =>
     }),
   );
 
-it.layer(Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))), {
-  excludeTestServices: true,
-})('Action runtime', (suite) => {
+const fixtureOwnerConnectionFailure = (cause: unknown) =>
+  createActionInvocationPersistenceErrorWithCause(
+    {
+      code: 'action_invocation_persistence_failed',
+      reason: 'Unable to observe the fixture owner connection',
+    },
+    cause,
+  );
+
+const testCompositionTransactionFence = () =>
+  withDatabase(
+    Effect.fn(function* nativeCompositionTransactionFence(database) {
+      const configuration = yield* loadDatabaseConnectionPair();
+      const adminDatabase = yield* makeCoreDatabase({ ...configuration.admin, maxConnections: 3 });
+      const revision = 'a'.repeat(64);
+      const [clock] = yield* adminDatabase.executor.execute<{ readonly now: Date }>(
+        sql`select clock_timestamp() as now`,
+        'objects',
+      );
+      const now = DateTime.makeUnsafe(Option.getOrThrow(Option.fromNullishOr(clock)).now);
+      yield* Effect.acquireRelease(
+        adminDatabase.executor.transaction(
+          Effect.fn(function* seedFixtureComposition(transaction) {
+            yield* lockApplicationCompositionPublication(transaction);
+            const [previous] = yield* transaction
+              .select()
+              .from(applicationCompositionAuthority)
+              .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+            const values = {
+              authorityKey: 'active',
+              phase: 'active' as const,
+              revision,
+              subscriptionsJson: [],
+              updatedAt: DateTime.toDateUtc(now),
+              validUntil: DateTime.toDateUtc(DateTime.add(now, { hours: 1 })),
+            };
+            yield* transaction.insert(applicationCompositionAuthority).values(values).onConflictDoUpdate({
+              set: values,
+              target: applicationCompositionAuthority.authorityKey,
+            });
+            return previous;
+          }),
+        ),
+        (previous) =>
+          adminDatabase.executor
+            .transaction(
+              Effect.fn(function* restoreFixtureComposition(transaction) {
+                yield* lockApplicationCompositionPublication(transaction);
+                yield* previous === undefined
+                  ? transaction
+                      .delete(applicationCompositionAuthority)
+                      .where(eq(applicationCompositionAuthority.authorityKey, 'active'))
+                  : transaction.insert(applicationCompositionAuthority).values(previous).onConflictDoUpdate({
+                      set: previous,
+                      target: applicationCompositionAuthority.authorityKey,
+                    });
+              }),
+            )
+            .pipe(Effect.orDie),
+      );
+
+      const handlerStarted = yield* Deferred.make<null>();
+      const handlerRelease = yield* Deferred.make<null>();
+      const ownerBackend = yield* Deferred.make<number>();
+      const drainStarted = yield* Deferred.make<null>();
+      const repository = makeActionRepository();
+      let handlerExecutions = 0;
+      let invocationLocks = 0;
+      const runtime = makeActionRuntime(
+        database,
+        {
+          ...repository,
+          lockInvocation: (transaction, invocationId) =>
+            Effect.gen(function* observeOwnerConnection() {
+              invocationLocks += 1;
+              const [backend] = yield* transaction
+                .execute<{ readonly pid: number }>(sql`select pg_backend_pid() as pid`, 'objects')
+                .pipe(Effect.mapError(fixtureOwnerConnectionFailure));
+              yield* Deferred.succeed(ownerBackend, Option.getOrThrow(Option.fromNullishOr(backend)).pid);
+              return yield* repository.lockInvocation(transaction, invocationId);
+            }),
+        },
+        allowedPermission,
+        testOperationalScopeResolver,
+        {
+          ...openActionRuntimeOptions,
+          lockCompositionAuthority: lockApplicationCompositionAuthority,
+          resolveCompositionRevision: () => Effect.succeed(revision),
+        },
+      );
+      const key = `composition-owner-${randomUUID()}`;
+      const moduleStateKey = `core.composition-owner-${randomUUID()}`;
+      const registration = makeRegistration({
+        actionKey: 'shell.test.composition-write',
+        completionGate: handlerRelease,
+        moduleStateKey,
+        onExecute: (context) => {
+          expect(context.compositionRevision).toBe(revision);
+          handlerExecutions += 1;
+        },
+        onExecuteEffect: Deferred.succeed(handlerStarted, null),
+      });
+
+      yield* Effect.gen(function* verifyNativeFence() {
+        const owner = yield* runtime
+          .runAction({ payload: { value: 'approved' }, principal, registration, transport: transport(key) })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(handlerStarted);
+        const ownerPid = yield* Deferred.await(ownerBackend);
+        const drain = yield* adminDatabase.executor
+          .transaction(
+            Effect.fn(function* drainWhileOwnerIsActive(transaction) {
+              yield* Deferred.succeed(drainStarted, null);
+              yield* drainApplicationCompositionAuthority(transaction, revision);
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(drainStarted);
+        let blocked = false;
+        for (let observation = 0; observation < 1000 && !blocked; observation += 1) {
+          const [status] = yield* adminDatabase.executor.execute<{ readonly blocked: boolean }>(
+            sql`select exists (
+              select 1 from pg_locks
+              where locktype = 'advisory' and not granted
+                and ${ownerPid} = any(pg_blocking_pids(pid))
+            ) as blocked`,
+            'objects',
+          );
+          blocked = status?.blocked === true;
+        }
+        expect(blocked).toBe(true);
+        expect(drain.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(handlerRelease, null);
+        expect((yield* Fiber.join(owner)).value).toBe('approved');
+        yield* Fiber.join(drain);
+
+        const { invocation } = yield* invocationEvidence(database, key);
+        expect(invocation.status).toBe('succeeded');
+        const committedOutbox = yield* database.executor
+          .select({ messageId: outboxMessages.outboxMessageId })
+          .from(outboxMessages)
+          .innerJoin(domainEvents, eq(outboxMessages.domainEventId, domainEvents.domainEventId))
+          .where(and(eq(domainEvents.tenantId, tenantId), eq(domainEvents.subjectResourceId, moduleStateKey)));
+        expect(committedOutbox).toHaveLength(1);
+        const [authority] = yield* adminDatabase.executor.select().from(applicationCompositionAuthority);
+        expect(authority?.phase).toBe('draining');
+
+        const drainingFailure = yield* Effect.flip(
+          runtime.runAction({
+            payload: { value: 'draining' },
+            principal,
+            registration,
+            transport: transport(`composition-draining-${randomUUID()}`),
+          }),
+        );
+        expect(Schema.is(ActionTransactionError)(drainingFailure)).toBe(true);
+
+        // Seed the authority identity of a later approved release to test stale admissions.
+        // Publication's complete-bundle and queued-work checks have their own native suite.
+        yield* adminDatabase.executor.transaction(
+          Effect.fn(function* seedLaterFixtureRelease(transaction) {
+            yield* lockApplicationCompositionPublication(transaction);
+            yield* transaction
+              .update(applicationCompositionAuthority)
+              .set({ phase: 'active', revision: 'b'.repeat(64) })
+              .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+          }),
+        );
+        const staleFailure = yield* Effect.flip(
+          runtime.runAction({
+            payload: { value: 'superseded' },
+            principal,
+            registration,
+            transport: transport(`composition-stale-${randomUUID()}`),
+          }),
+        );
+        expect(Schema.is(ActionTransactionError)(staleFailure)).toBe(true);
+        expect(handlerExecutions).toBe(1);
+        expect(invocationLocks).toBe(1);
+      }).pipe(Effect.ensuring(Deferred.succeed(handlerRelease, null)));
+    }),
+  );
+
+it.layer(
+  Layer.merge(
+    Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))),
+    Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+  ),
+  {
+    excludeTestServices: true,
+  },
+)('Action runtime', (suite) => {
+  suite.effect(
+    'fences release draining behind committed owner writes and their Outbox evidence',
+    testCompositionTransactionFence,
+  );
+
   suite.effect('rechecks business module state under the tenant lock and retries after Core recovery', testProgram1);
 
   suite.effect('atomically commits business state, all success evidence, and the succeeded marker', testProgram2);

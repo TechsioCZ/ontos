@@ -1,0 +1,5 @@
+ALTER TABLE "pricing"."price_source_assertions" DROP CONSTRAINT "pricing_price_source_assertions_corrected_fk";--> statement-breakpoint
+ALTER TABLE "pricing"."price_source_assertions" DROP CONSTRAINT "pricing_price_source_assertions_superseded_fk";--> statement-breakpoint
+ALTER TABLE "pricing"."price_source_assertions" ADD CONSTRAINT "pricing_price_source_assertions_lineage_id_uk" UNIQUE("tenant_id","legal_entity_id","source_assertion_id");--> statement-breakpoint
+ALTER TABLE "pricing"."price_source_assertions" ADD CONSTRAINT "pricing_price_source_assertions_corrected_fk" FOREIGN KEY ("tenant_id","legal_entity_id","corrected_source_assertion_id") REFERENCES "pricing"."price_source_assertions"("tenant_id","legal_entity_id","source_assertion_id") ON DELETE RESTRICT;--> statement-breakpoint
+ALTER TABLE "pricing"."price_source_assertions" ADD CONSTRAINT "pricing_price_source_assertions_superseded_fk" FOREIGN KEY ("tenant_id","legal_entity_id","superseded_source_assertion_id") REFERENCES "pricing"."price_source_assertions"("tenant_id","legal_entity_id","source_assertion_id") ON DELETE RESTRICT;

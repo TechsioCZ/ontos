@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
 import {
   bindApiKey,
@@ -14,19 +13,20 @@ import {
 } from '../../src/auth/principal-management.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
+
+const staffAuthenticationNamespaceId = 'test.staff.better-auth.v1';
 
 it.live('persists managed key lifecycle without credential material and enforces global key cardinality', () =>
   Effect.gen(function* principalManagement1() {
     const tenantId = randomUUID();
     const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
     const configuration = yield* loadDatabaseConfig();
-    const pool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-      (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie),
+    const database = yield* makeTestDatabaseFromClient(
+      yield* makeTestPgClient(configuration.connectionString),
+      coreRelations,
     );
-    const database = yield* makeTestDatabaseFromPool(pool, coreRelations);
     const cleanup = purgeFixtureRows([
       database.delete(principalAuthBindings).where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
       database.delete(principals).where(eq(principals.tenantId, tenantId)),
@@ -47,7 +47,10 @@ it.live('persists managed key lifecycle without credential material and enforces
         kind: 'integration',
         tenantId,
       }).pipe(
-        Effect.provideService(PrincipalManagementRepository, principalManagementRepositoryFromTransaction(transaction)),
+        Effect.provideService(
+          PrincipalManagementRepository,
+          principalManagementRepositoryFromTransaction(transaction, staffAuthenticationNamespaceId),
+        ),
       ),
     );
     const second = yield* database.transaction((transaction) =>
@@ -56,7 +59,10 @@ it.live('persists managed key lifecycle without credential material and enforces
         kind: 'service',
         tenantId,
       }).pipe(
-        Effect.provideService(PrincipalManagementRepository, principalManagementRepositoryFromTransaction(transaction)),
+        Effect.provideService(
+          PrincipalManagementRepository,
+          principalManagementRepositoryFromTransaction(transaction, staffAuthenticationNamespaceId),
+        ),
       ),
     );
     const binding = yield* database.transaction((transaction) =>
@@ -66,7 +72,10 @@ it.live('persists managed key lifecycle without credential material and enforces
         providerSubjectId: providerKeyId,
         tenantId,
       }).pipe(
-        Effect.provideService(PrincipalManagementRepository, principalManagementRepositoryFromTransaction(transaction)),
+        Effect.provideService(
+          PrincipalManagementRepository,
+          principalManagementRepositoryFromTransaction(transaction, staffAuthenticationNamespaceId),
+        ),
       ),
     );
     const duplicate = yield* database.transaction((transaction) =>
@@ -79,7 +88,7 @@ it.live('persists managed key lifecycle without credential material and enforces
         }).pipe(
           Effect.provideService(
             PrincipalManagementRepository,
-            principalManagementRepositoryFromTransaction(transaction),
+            principalManagementRepositoryFromTransaction(transaction, staffAuthenticationNamespaceId),
           ),
         ),
       ),
@@ -98,7 +107,7 @@ it.live('persists managed key lifecycle without credential material and enforces
         }).pipe(
           Effect.provideService(
             PrincipalManagementRepository,
-            principalManagementRepositoryFromTransaction(transaction),
+            principalManagementRepositoryFromTransaction(transaction, staffAuthenticationNamespaceId),
           ),
         ),
       ),
@@ -115,13 +124,17 @@ it.live('persists managed key lifecycle without credential material and enforces
         reason: 'Integration lifecycle proof',
         tenantId,
       }).pipe(
-        Effect.provideService(PrincipalManagementRepository, principalManagementRepositoryFromTransaction(transaction)),
+        Effect.provideService(
+          PrincipalManagementRepository,
+          principalManagementRepositoryFromTransaction(transaction, staffAuthenticationNamespaceId),
+        ),
       ),
     );
     const [stored] = yield* database
       .select()
       .from(principalAuthBindings)
       .where(eq(principalAuthBindings.principalAuthBindingId, binding.authBindingId));
+    expect(stored?.authenticationNamespaceId).toBe(staffAuthenticationNamespaceId);
     expect(stored?.status).toBe('revoked');
     expect((yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(stored)).includes('secret')).toBe(false);
   }),

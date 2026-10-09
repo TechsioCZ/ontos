@@ -5,6 +5,7 @@ import {
   decodeActionPayload,
   decodeActionResult,
   defineAction,
+  defineActionAssortmentPermissions,
   defineActionBusinessPermission,
   defineActionResourcePermission,
   validateActionDescriptorInput,
@@ -119,6 +120,49 @@ it('accepts conjunctive business and Resource permission declarations', () => {
       owningModuleKey: 'commerce.customer-context',
       policies: [],
       resourcePermission,
+    }),
+  ).not.toThrow();
+});
+
+it('keeps plural Assortment permission declarations typed and immutable', () => {
+  const declaration = defineActionAssortmentPermissions((_payload, _scope) => [
+    {
+      binding: {
+        moduleId: 'commerce.assortment',
+        resourceId: 'binding-1',
+        resourceType: 'commerce.assortment.applicability-binding',
+      },
+      kind: 'assortment_binding',
+      mode: 'end',
+      permission: 'assortment.binding.end',
+    },
+    {
+      boundary: {
+        moduleId: 'commerce.assortment',
+        resourceId: 'boundary-1',
+        resourceType: 'commerce.assortment.closed-assortment-boundary',
+      },
+      kind: 'assortment_boundary',
+      mode: 'end',
+      permission: 'assortment.boundary.end',
+    },
+  ]);
+  const entrypoint = defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    entrypointKey: 'commerce.assortment.replace',
+    moduleKey: 'commerce.assortment',
+    role: 'action',
+  });
+
+  expect(Object.isFrozen(declaration)).toBe(true);
+  expect(() =>
+    validateActionDescriptorInput({
+      assortmentPermissions: declaration,
+      entrypoint,
+      legalEntityScope: 'required',
+      owningModuleKey: 'commerce.assortment',
+      policies: [],
     }),
   ).not.toThrow();
 });

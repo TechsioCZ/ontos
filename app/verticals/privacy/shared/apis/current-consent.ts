@@ -41,10 +41,9 @@ export const CurrentConsentApi = HttpApi.make('CurrentConsentApi').add(
         CurrentConsentUnavailableProblemSchema,
         CurrentConsentInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: CurrentConsentRequestSchema,
-      query: {},
+
       success: CurrentConsentResponseSchema,
     }),
   ),

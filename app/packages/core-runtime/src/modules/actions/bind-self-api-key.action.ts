@@ -30,6 +30,7 @@ const handle = Effect.fn('BindSelfApiKeyAction.handle')(function* bindSelfApiKey
   context: ActionHandlerContext<Readonly<Record<never, never>>, { readonly bind: (input: Input) => Result }>,
 ) {
   const result = yield* context.services.bind({
+    createdByInvocationId: context.actionInvocationId,
     managed: false,
     principalId: context.scope.principalId,
     providerSubjectId: payload.providerSubjectId,
@@ -78,8 +79,8 @@ export const bindSelfApiKeyAction = defineAction(
     schemaVersion: '1',
   },
   handle,
-  (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+  (transaction, scope) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({ bind: repository.bindApiKey });
   },
 );

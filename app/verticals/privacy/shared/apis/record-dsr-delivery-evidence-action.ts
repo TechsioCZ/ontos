@@ -11,10 +11,6 @@ import {
 
 export { RecordDsrDeliveryEvidencePayloadSchema } from '../actions/record-dsr-delivery-evidence.ts';
 
-const RecordDsrDeliveryEvidenceActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecordDsrDeliveryEvidenceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordDsrDeliveryEvidenceActionInvalidProblem',
   400,
@@ -128,15 +124,37 @@ const actionErrors = [
   RecordDsrDeliveryEvidenceActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const recordDsrDeliveryEvidenceActionGroupDefinition = HttpApiGroup.make('recordDsrDeliveryEvidenceAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/record-dsr-delivery-evidence', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RecordDsrDeliveryEvidencePayloadSchema),
+      success: RecordDsrDeliveryEvidenceResultSchema,
+    }),
+  )
+  .middleware(RecordDsrDeliveryEvidenceActionSchemaErrorMiddleware);
+
+export type RecordDsrDeliveryEvidenceActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'recordDsrDeliveryEvidenceAction',
+  HttpApiGroup.Endpoints<typeof recordDsrDeliveryEvidenceActionGroupDefinition>
+>;
+
+const RecordDsrDeliveryEvidenceActionGroup: RecordDsrDeliveryEvidenceActionGroupContract =
+  recordDsrDeliveryEvidenceActionGroupDefinition;
+
 export const RecordDsrDeliveryEvidenceActionApi = HttpApi.make('RecordDsrDeliveryEvidenceActionApi').add(
-  HttpApiGroup.make('recordDsrDeliveryEvidenceAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/record-dsr-delivery-evidence', {
-        error: actionErrors,
-        headers: RecordDsrDeliveryEvidenceActionHeadersSchema,
-        payload: Schema.toEncoded(RecordDsrDeliveryEvidencePayloadSchema),
-        success: RecordDsrDeliveryEvidenceResultSchema,
-      }),
-    )
-    .middleware(RecordDsrDeliveryEvidenceActionSchemaErrorMiddleware),
+  RecordDsrDeliveryEvidenceActionGroup,
 );

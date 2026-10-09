@@ -1,0 +1,126 @@
+{
+  "artifactId": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "generatedAt": "2026-09-22T10:00:00.000Z",
+  "schemaVersion": 1,
+  "records": [
+    {
+      "affectedJourneys": ["VISIBILITY"],
+      "classification": {
+        "evidenceRefs": [],
+        "proposedDisposition": "RETIRE",
+        "reason": "Historical product publication and import candidate; no Assortment policy meaning is proven",
+        "disposition": "UNRESOLVED"
+      },
+      "correlations": [],
+      "factFamily": "historical.symmy.product-batch-publication",
+      "gaps": [
+        "CANONICAL_IDENTITY",
+        "COMMERCIAL_SCOPE",
+        "COMPLETENESS",
+        "EFFECT",
+        "LIFECYCLE",
+        "OWNER_EVIDENCE",
+        "PURPOSE",
+        "SUBJECT"
+      ],
+      "ownerEvidenceRefs": [],
+      "source": {
+        "datasetId": "historical-code-candidate",
+        "observedAt": "2026-09-22T10:00:00.000Z",
+        "sourceOwner": "unverified-historical-source",
+        "sourceRecordDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "sourceRevision": "inspection-2026-09-22",
+        "sourceSystemId": "historical-repository"
+      }
+    },
+    {
+      "affectedJourneys": ["VISIBILITY", "PURCHASE"],
+      "classification": {
+        "evidenceRefs": [],
+        "reason": "Historical customer-group membership candidate; policy purpose, scope, and complete owner membership proof are absent",
+        "disposition": "UNRESOLVED"
+      },
+      "correlations": [],
+      "factFamily": "historical.symmy.customer-group-membership",
+      "gaps": [
+        "CANONICAL_IDENTITY",
+        "COMMERCIAL_SCOPE",
+        "COMPLETENESS",
+        "EFFECT",
+        "LIFECYCLE",
+        "OWNER_EVIDENCE",
+        "PURPOSE",
+        "SUBJECT"
+      ],
+      "ownerEvidenceRefs": [],
+      "source": {
+        "datasetId": "historical-code-candidate",
+        "observedAt": "2026-09-22T10:00:00.000Z",
+        "sourceOwner": "unverified-historical-source",
+        "sourceRecordDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "sourceRevision": "inspection-2026-09-22",
+        "sourceSystemId": "historical-repository"
+      }
+    },
+    {
+      "affectedJourneys": ["VISIBILITY"],
+      "classification": {
+        "evidenceRefs": [],
+        "proposedDisposition": "RETIRE",
+        "reason": "Historical category ancestry and seed whitelist candidate; it is not proven to be an Assortment rule",
+        "disposition": "UNRESOLVED"
+      },
+      "correlations": [],
+      "factFamily": "historical.seed.category-ancestry-filter",
+      "gaps": [
+        "CANONICAL_IDENTITY",
+        "COMMERCIAL_SCOPE",
+        "COMPLETENESS",
+        "EFFECT",
+        "LIFECYCLE",
+        "OWNER_EVIDENCE",
+        "PURPOSE",
+        "SUBJECT"
+      ],
+      "ownerEvidenceRefs": [],
+      "source": {
+        "datasetId": "historical-code-candidate",
+        "observedAt": "2026-09-22T10:00:00.000Z",
+        "sourceOwner": "unverified-historical-source",
+        "sourceRecordDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "sourceRevision": "inspection-2026-09-22",
+        "sourceSystemId": "historical-repository"
+      }
+    },
+    {
+      "affectedJourneys": ["VISIBILITY"],
+      "classification": {
+        "evidenceRefs": [],
+        "proposedDisposition": "RETIRE",
+        "reason": "Historical catalog publication candidate; publication status is not Assortment authority",
+        "disposition": "UNRESOLVED"
+      },
+      "correlations": [],
+      "factFamily": "historical.store.product-publication",
+      "gaps": [
+        "CANONICAL_IDENTITY",
+        "COMMERCIAL_SCOPE",
+        "COMPLETENESS",
+        "EFFECT",
+        "LIFECYCLE",
+        "OWNER_EVIDENCE",
+        "PURPOSE",
+        "SUBJECT"
+      ],
+      "ownerEvidenceRefs": [],
+      "source": {
+        "datasetId": "historical-code-candidate",
+        "observedAt": "2026-09-22T10:00:00.000Z",
+        "sourceOwner": "unverified-historical-source",
+        "sourceRecordDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+        "sourceRevision": "inspection-2026-09-22",
+        "sourceSystemId": "historical-repository"
+      }
+    }
+  ]
+}

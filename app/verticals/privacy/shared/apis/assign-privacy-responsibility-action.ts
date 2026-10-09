@@ -11,10 +11,6 @@ import {
 
 export { AssignPrivacyResponsibilityPayloadSchema } from '../actions/assign-privacy-responsibility.ts';
 
-const AssignPrivacyResponsibilityActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AssignPrivacyResponsibilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignPrivacyResponsibilityActionInvalidProblem',
   400,
@@ -128,15 +124,37 @@ const actionErrors = [
   AssignPrivacyResponsibilityActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const assignPrivacyResponsibilityActionGroupDefinition = HttpApiGroup.make('assignPrivacyResponsibilityAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/assign-privacy-responsibility', {
+      error: actionErrors,
+      payload: Schema.toEncoded(AssignPrivacyResponsibilityPayloadSchema),
+      success: AssignPrivacyResponsibilityResultSchema,
+    }),
+  )
+  .middleware(AssignPrivacyResponsibilityActionSchemaErrorMiddleware);
+
+export type AssignPrivacyResponsibilityActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'assignPrivacyResponsibilityAction',
+  HttpApiGroup.Endpoints<typeof assignPrivacyResponsibilityActionGroupDefinition>
+>;
+
+const AssignPrivacyResponsibilityActionGroup: AssignPrivacyResponsibilityActionGroupContract =
+  assignPrivacyResponsibilityActionGroupDefinition;
+
 export const AssignPrivacyResponsibilityActionApi = HttpApi.make('AssignPrivacyResponsibilityActionApi').add(
-  HttpApiGroup.make('assignPrivacyResponsibilityAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/assign-privacy-responsibility', {
-        error: actionErrors,
-        headers: AssignPrivacyResponsibilityActionHeadersSchema,
-        payload: Schema.toEncoded(AssignPrivacyResponsibilityPayloadSchema),
-        success: AssignPrivacyResponsibilityResultSchema,
-      }),
-    )
-    .middleware(AssignPrivacyResponsibilityActionSchemaErrorMiddleware),
+  AssignPrivacyResponsibilityActionGroup,
 );

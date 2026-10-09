@@ -4,7 +4,6 @@ import { NodeCrypto } from '@effect/platform-node';
 import { betterAuth } from 'better-auth';
 import { eq, inArray } from 'drizzle-orm';
 import { Crypto, Effect, Redacted, Schema } from 'effect';
-import { Pool } from 'pg';
 
 import { configureDatabasePool } from '../../../../packages/core-runtime/src/db/pool-configuration.ts';
 import {
@@ -17,24 +16,30 @@ import {
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  acquireOutlivingCleanup,
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { loadAuthConfig } from '../../api/auth/config.ts';
-import { acquirePoolResource, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';
 
 const contactsModuleId = 'party.registry';
 const shellModuleId = 'core.shell';
 
 // Real server deadlines are what bound this fixture's finalizers: a stuck statement would
-// otherwise keep a client checked out and hold `pool.end()` open past the acquisition
-// deadline. Keep the shared connection bound and shorten the statement bound below that
-// deadline. Never use query_timeout or a Promise race -- neither cancels server work.
+// otherwise keep a pooled connection busy and hold the client scope open. Keep the shared
+// connect bound and shorten the statement bound so PostgreSQL cancels stuck work itself.
+// Never use query_timeout or a Promise race -- neither cancels server work.
 const e2ePoolDeadlines = {
-  connectionTimeoutMillis: 5000,
+  connectTimeoutMillis: 5000,
   statement_timeout: 10_000,
 } as const;
 
@@ -69,15 +74,7 @@ const provisionContactsAccess = Effect.fn('provisionContactsAccess')(function* p
     );
   }
   const client = yield* Effect.acquireRelease(
-    Effect.sync(() =>
-      v1.NewClient(
-        configuration.preSharedKey,
-        configuration.endpoint,
-        configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-        undefined,
-        { interceptors: [deadlineInterceptor(5000)] },
-      ),
-    ),
+    Effect.sync(() => newSpiceDbGrpcClient(configuration, { interceptors: [deadlineInterceptor(5000)] })),
     (acquired) => Effect.sync(() => acquired.close()),
   );
   const relationships = yield* Effect.forEach(
@@ -151,12 +148,13 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     });
     const { baseUrl: baseURL, connectionString, secret } = yield* loadAuthConfig({ envPath: APP_ENV_PATH });
 
-    const corePoolConfiguration = yield* configureDatabasePool(Redacted.make(connectionString), e2ePoolDeadlines);
-    const corePool = yield* acquirePoolResource(() => new Pool(corePoolConfiguration));
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
-    const { adapter, executor: authDatabase } = yield* makeAuthDatabase({
-      connectionString,
-    });
+    const { connectTimeout, startupParameters } = yield* configureDatabasePool(
+      Redacted.make(connectionString),
+      e2ePoolDeadlines,
+    );
+    const coreClient = yield* makeTestPgClient(connectionString, { connectTimeout, startupParameters });
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
+    const { adapter, executor: authDatabase } = yield* acquireOutlivingCleanup(makeAuthDatabase({ connectionString }));
     const authentication = betterAuth({
       baseURL,
       database: adapter,
@@ -272,6 +270,7 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     ]);
     yield* coreDatabase.insert(principalAuthBindings).values([
       {
+        authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
         principalId: e2eTenants.first.principalId,
         provider: 'better_auth',
@@ -281,6 +280,7 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
         tenantId: e2eTenants.first.tenantId,
       },
       {
+        authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         createdAt: new Date('2026-02-01T00:00:00.000Z'),
         principalId: e2eTenants.second.principalId,
         provider: 'better_auth',

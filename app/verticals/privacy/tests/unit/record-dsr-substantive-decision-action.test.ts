@@ -84,6 +84,7 @@ const contextFor = (authorityService: DsrSubstantiveDecisionAuthorityService) =>
       actionInvocationId,
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: 'test-composition',
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,

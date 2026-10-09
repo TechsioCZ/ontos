@@ -14,6 +14,7 @@ const contactsEventsWorkerEntrypoint = 'contacts.worker.events';
 const contactsOwner = 'contacts.core';
 
 const inventory: ProtectedEntrypointInventory = {
+  businessPermissions: [],
   entries: [
     {
       authorization: {
@@ -48,7 +49,7 @@ const inventory: ProtectedEntrypointInventory = {
     },
   ],
   inventoryHash: 'a'.repeat(64),
-  schemaVersion: 1,
+  schemaVersion: 2,
   sourceRevision: 'revision',
 };
 

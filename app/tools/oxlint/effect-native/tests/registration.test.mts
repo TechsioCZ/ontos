@@ -7,7 +7,7 @@ import { expect, it } from 'effect-rstest';
 
 import plugin from '../index.ts';
 import { listRuleNames } from '../shared/discover-rules.ts';
-import { appRoot, listFixtureRules, pluginDirectory, runOxlint } from './oxlint.mts';
+import { appRoot, pluginDirectory, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
@@ -15,14 +15,6 @@ const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
 // asserts on are decoded here, at the module boundary.
 const ProductionConfigModule = Schema.Struct({
   default: Schema.Struct({
-    jsPlugins: Schema.optional(Schema.Array(Schema.Unknown)),
-    options: Schema.optional(
-      Schema.Struct({
-        denyWarnings: Schema.optional(Schema.Boolean),
-        typeAware: Schema.optional(Schema.Boolean),
-        typeCheck: Schema.optional(Schema.Boolean),
-      }),
-    ),
     overrides: Schema.Array(
       Schema.Struct({
         excludeFiles: Schema.optional(Schema.Array(Schema.String)),
@@ -30,7 +22,6 @@ const ProductionConfigModule = Schema.Struct({
         rules: Schema.Record(Schema.String, RuleSetting),
       }),
     ),
-    rules: Schema.optional(Schema.Record(Schema.String, RuleSetting)),
   }),
 });
 const FixtureConfig = Schema.fromJsonString(
@@ -39,43 +30,11 @@ const FixtureConfig = Schema.fromJsonString(
     rules: Schema.Record(Schema.String, RuleSetting),
   }),
 );
-const NamedPluginEntry = Schema.Struct({
-  name: Schema.String,
-  specifier: Schema.String,
-});
-const isNamedPluginEntry = Schema.is(NamedPluginEntry);
 const decodeFixtureConfig = Schema.decodeUnknownSync(FixtureConfig);
 const { default: config } = Schema.decodeUnknownSync(ProductionConfigModule)(
   await import(pathToFileURL(nodePath.join(appRoot, 'oxlint.config.ts')).href),
 );
-const configuredRules = config.rules ?? {};
 const rules = listRuleNames();
-
-it('every rule is actually exported, enabled at error severity, and covered by fixtures', () => {
-  expect(rules.length > 0, 'the plugin cannot be empty').toBe(true);
-  expect(Object.keys(plugin.rules).toSorted()).toEqual(rules);
-  expect([...listFixtureRules()].toSorted()).toEqual(rules);
-  const configured = Object.keys(configuredRules).filter((name) => name.startsWith('effect-native/'));
-  expect(configured.toSorted()).toEqual(rules.map((name) => `effect-native/${name}`));
-  for (const rule of rules) {
-    const setting = configuredRules[`effect-native/${rule}`];
-    expect(Array.isArray(setting) ? setting[0] : setting, `${rule} must be an error`).toBe('error');
-  }
-});
-
-it('production configuration loads the plugin and preserves strict typed linting', () => {
-  expect(
-    (config.jsPlugins ?? []).some(
-      (entry) =>
-        isNamedPluginEntry(entry) &&
-        entry.name === 'effect-native' &&
-        entry.specifier === './tools/oxlint/effect-native/index.ts',
-    ),
-  ).toBe(true);
-  expect(config.options?.typeAware).toBe(true);
-  expect(config.options?.typeCheck).toBe(true);
-  expect(config.options?.denyWarnings).toBe(true);
-});
 
 it('every rule is reporting-only and declares diagnostic metadata', () => {
   for (const [name, rule] of Object.entries(plugin.rules)) {

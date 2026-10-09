@@ -305,9 +305,7 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     const relativePath = vertical.path;
     const verticalDirectory = path.join(workspaceRoot, relativePath);
     const packageSource = yield* fileSystem.readFileString(path.join(verticalDirectory, 'package.json'));
-    const packageJson = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ModulePackageSchema), {
-      onExcessProperty: 'preserve',
-    })(packageSource);
+    const packageJson = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ModulePackageSchema))(packageSource);
     const manifestPath = path.join(verticalDirectory, 'vertical.manifest.ts');
     const registrationPath = path.join(verticalDirectory, 'vertical.registration.ts');
     const [manifestModuleId, registrationModuleId] = yield* Effect.all([
@@ -355,16 +353,12 @@ const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
     const topologySource = yield* fileSystem.readFileString(
       path.join(workspaceRoot, 'topology/reference-topology.json'),
     );
-    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema), {
-      onExcessProperty: 'preserve',
-    })(topologySource);
+    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema))(topologySource);
     yield* assertNoPrivateDeploymentImports(workspaceRoot, topology.verticals);
     const overlaySource = yield* fileSystem.readFileString(
       path.join(workspaceRoot, 'topology/local-overlays/development.json'),
     );
-    const overlay = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(DevelopmentOverlaySchema), {
-      onExcessProperty: 'preserve',
-    })(overlaySource);
+    const overlay = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(DevelopmentOverlaySchema))(overlaySource);
     const appIds = topology.verticals.map((vertical) => vertical.id);
     const allowlistKeys = Object.keys(overlay.ontosModuleManifests);
     const keysMatch =

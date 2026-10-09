@@ -54,6 +54,7 @@ import type {
   RetireContributionScaffoldConfig,
   RetireContributionScaffoldResult,
   GovernedContributionScaffoldConfig,
+  CoreReadScaffoldConfig,
   GovernedContributionScaffoldResult,
   SearchProviderAccessScaffoldConfig,
   SearchProviderAccessScaffoldResult,
@@ -118,6 +119,7 @@ type GeneratorConfig =
   | ExternalHttpAdapterScaffoldConfig
   | ModuleContractScaffoldConfig
   | GovernedContributionScaffoldConfig
+  | CoreReadScaffoldConfig
   | OutboxScaffoldConfig
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
@@ -152,6 +154,7 @@ interface ParsedScaffoldFlags {
   readonly accessFiltering: string | undefined;
   readonly action: string | undefined;
   readonly authorizationMode: string | undefined;
+  readonly core: boolean;
   readonly kind: string | undefined;
   readonly legalEntityScope: string | undefined;
   readonly module: string | undefined;
@@ -278,12 +281,12 @@ const defineCommand = <Config extends GeneratorConfig, Result extends GeneratorR
 
 const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
   Effect.gen(function* defaultRouteRefreshEffect() {
-    const script = path.join(workspaceRoot, 'scripts', 'generate-tanstack-routes.mts');
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const exitCode = yield* spawner
       .exitCode(
-        ChildProcess.make(process.execPath, [script, '--app', appId], {
+        ChildProcess.make('pnpm', ['exec', 'ultramodern-create', 'ultramodern', 'routes-generate', '--app', appId], {
           cwd: workspaceRoot,
+          shell: path.sep === '\\',
           stderr: 'inherit',
           stdin: 'inherit',
           stdout: 'inherit',
@@ -501,7 +504,6 @@ Options:
           return options.routeRefresh(input);
         };
         yield* refresh({ appId: result.appId, workspaceRoot });
-        yield* refresh({ appId: 'shell-super-app', workspaceRoot });
         return yield* Effect.void;
       }),
     flags: ['authorization', 'page', 'permission', 'url', 'vertical'],
@@ -534,14 +536,17 @@ Example:
       }),
   }),
   'module-api': defineCommand({
-    flags: ['authorization', 'name', 'permission', 'vertical'],
+    flags: ['authorization', 'core', 'module', 'name', 'permission', 'vertical'],
     generator: moduleApiGenerator,
     help: `Usage: pnpm scaffold:module-api -- --vertical <vertical> --name <name> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
+  pnpm scaffold:module-api -- --core --module <core.module> --name <name> --authorization <authenticated_principal|context_permission> [--permission <permission>]
 
 Generate one typed owner-local module API contract and generated Effect client adapter.
 
 Required flags:
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --vertical <vertical>  Existing generated vertical folder; required without --core
+  --core                 Core-owned governed READ; exclusive with --vertical
+  --module <core.module> Stable Core module key, required with --core
   --name <name>          API name (lower-kebab-case)
   --authorization       Explicit API authorization classification
   --permission <value>  Required only with context_permission
@@ -549,10 +554,19 @@ Required flags:
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['authorization', 'name', 'vertical'],
+    requiredFlags: ['authorization', 'name'],
     toConfig: (flags) =>
       Effect.gen(function* moduleApiConfigEffect() {
         const authorization = yield* requireReadAuthorization(flags);
+        if (flags.core) {
+          if (flags.vertical !== undefined || flags.module === undefined) {
+            return yield* failScaffolding('--core requires --module and forbids --vertical');
+          }
+          return { ...authorization, core: true as const, module: flags.module, name: flags.name ?? '' };
+        }
+        if (flags.vertical === undefined || flags.module !== undefined) {
+          return yield* failScaffolding('--vertical is required and --module is valid only with --core');
+        }
         return {
           ...authorization,
           name: flags.name ?? '',
@@ -582,26 +596,44 @@ Options:
       }),
   }),
   'outbox-message': defineCommand({
-    flags: ['action', 'topic', 'vertical'],
+    flags: ['action', 'module', 'scope', 'topic', 'vertical'],
     generator: outboxMessageGenerator,
-    help: `Usage: pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>
+    help: `Usage:
+  pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>
+  pnpm scaffold:outbox-message -- --scope core --module <core.module> --action <action> --topic <topic>
 
-Generate one typed Outbox Message factory owned by a generated Action.
+Generate one typed Outbox Message factory and schema owned by a generated Action.
+MicroVertical messages are owned by a tenant-scoped Action; Core messages are owned by a system-scoped Action.
 
 Required flags:
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --action <action>      Existing generated Action name (lower-kebab-case)
   --topic <topic>        Stable lowercase dot-separated topic
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case); exclusive with Core ownership
+  --scope core           Required only for Core ownership; forbidden with --vertical
+  --module <core.module> Stable core.* module key; required only with --scope core
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['action', 'topic', 'vertical'],
+    requiredFlags: ['action', 'topic'],
     toConfig: (flags) =>
-      Effect.succeed({
-        action: flags.action ?? '',
-        topic: flags.topic ?? '',
-        vertical: flags.vertical ?? '',
+      Effect.gen(function* outboxMessageConfigEffect() {
+        const action = flags.action ?? '';
+        const topic = flags.topic ?? '';
+        const { module, scope, vertical } = flags;
+        if (vertical !== undefined) {
+          if (scope !== undefined || module !== undefined) {
+            return yield* failScaffolding('--vertical is mutually exclusive with --scope and --module');
+          }
+          return { action, topic, vertical };
+        }
+        if (scope !== 'core') {
+          return yield* failScaffolding('--scope core is required when --vertical is not supplied');
+        }
+        if (module === undefined) {
+          return yield* failScaffolding('--module is required for Core Outbox Message ownership');
+        }
+        return { action, module, scope, topic };
       }),
   }),
   'outbox-worker': defineCommand({
@@ -639,15 +671,15 @@ Options:
   permission: defineCommand({
     flags: ['permission', 'scope', 'vertical'],
     generator: permissionGenerator,
-    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <retail.*|counterparty.*> --scope <retail_profile|counterparty|counterparty_storefront>
+    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <stable.lowercase.code> --scope <module|retail_profile|counterparty|counterparty_storefront|inventory_resource|pricing_catalog|price_group|assortment_configuration|assortment_decision|assortment_rule|assortment_binding|assortment_boundary>
 
-Generate one versioned, fail-closed business Permission declaration and register it in the module manifest.
+Generate one versioned, fail-closed Permission declaration and register it in the module manifest.
 Generated Permissions start non-delegable and with no authority-group or protected-entrypoint membership.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
-  --permission <code>    Stable lowercase retail.* or counterparty.* Permission code
-  --scope <scope>        Exact business target scope
+  --permission <code>    Stable lowercase dotted Permission code
+  --scope <scope>        Exact module or compatible business target scope
 
 Options:
   --help                 Show this help without writing
@@ -656,8 +688,23 @@ Options:
     toConfig: (flags) =>
       Effect.gen(function* permissionConfigEffect() {
         const { scope } = flags;
-        if (scope !== 'retail_profile' && scope !== 'counterparty' && scope !== 'counterparty_storefront') {
-          return yield* failScaffolding('--scope must be retail_profile, counterparty, or counterparty_storefront');
+        if (
+          scope !== 'retail_profile' &&
+          scope !== 'counterparty' &&
+          scope !== 'counterparty_storefront' &&
+          scope !== 'inventory_resource' &&
+          scope !== 'module' &&
+          scope !== 'pricing_catalog' &&
+          scope !== 'price_group' &&
+          scope !== 'assortment_configuration' &&
+          scope !== 'assortment_decision' &&
+          scope !== 'assortment_rule' &&
+          scope !== 'assortment_binding' &&
+          scope !== 'assortment_boundary'
+        ) {
+          return yield* failScaffolding(
+            '--scope must be module, retail_profile, counterparty, counterparty_storefront, inventory_resource, pricing_catalog, price_group, assortment_configuration, assortment_decision, assortment_rule, assortment_binding, or assortment_boundary',
+          );
         }
         return {
           permission: flags.permission ?? '',
@@ -758,7 +805,7 @@ Options:
 Generate one public Effect Schema-backed ResourceRef and register its conservative descriptor.
 
 Required flags:
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --vertical <vertical>  Existing generated vertical folder or core for Core-owned references
   --resource <resource>  Stable resource name (lower-kebab-case)
 
 Options:
@@ -929,9 +976,15 @@ const parseFlags = (
     const definition = commandDefinitions[command];
     const allowed = new Set(definition.flags);
     const parsed = new Map<string, string>();
-    for (let index = 0; index < argumentsList.length; index += 2) {
-      const flag = argumentsList[index];
-      const value = argumentsList[index + 1];
+    const coreCount = argumentsList.filter((argument) => argument === '--core').length;
+    if (coreCount > 1) {
+      return yield* failScaffolding('flag --core may be supplied only once');
+    }
+    const core = command === 'module-api' && coreCount === 1;
+    const normalizedArguments = core ? argumentsList.filter((argument) => argument !== '--core') : argumentsList;
+    for (let index = 0; index < normalizedArguments.length; index += 2) {
+      const flag = normalizedArguments[index];
+      const value = normalizedArguments[index + 1];
       yield* parseFlagPair(command, allowed, parsed, flag, value);
     }
     for (const required of definition.requiredFlags) {
@@ -943,6 +996,7 @@ const parseFlags = (
       accessFiltering: parsed.get(ACCESS_FILTERING_FLAG),
       action: parsed.get('action'),
       authorizationMode: parsed.get('authorization'),
+      core,
       kind: parsed.get('kind'),
       legalEntityScope: parsed.get(LEGAL_ENTITY_SCOPE_FLAG),
       module: parsed.get('module'),
@@ -985,12 +1039,13 @@ export const runScaffoldEffect = Effect.fn('runScaffold')(function* runScaffoldE
   return { kind: 'generated', result };
 });
 
-const optionalTextFlag = (name: string) => Flag.string(name).pipe(Flag.optional);
-const forwardedArguments = Argument.variadic(Argument.string('forwarded flags'));
+const optionalTextFlag = (name: string) => Flag.String(name).pipe(Flag.optional);
+const forwardedArguments = Argument.variadic(Argument.String('forwarded flags'));
 const cliFlags = {
   accessFiltering: optionalTextFlag(ACCESS_FILTERING_FLAG),
   action: optionalTextFlag('action'),
   authorization: optionalTextFlag('authorization'),
+  core: Flag.Boolean('core').pipe(Flag.withDefault(false)),
   kind: optionalTextFlag('kind'),
   legalEntityScope: optionalTextFlag(LEGAL_ENTITY_SCOPE_FLAG),
   module: optionalTextFlag('module'),
@@ -1016,18 +1071,26 @@ const cliFlags = {
 const cliFlagName = (key: string): string => key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 const toCliArguments = (
-  values: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>>,
+  values: Readonly<Partial<Record<Exclude<keyof typeof cliFlags, 'core'>, Option.Option<string>>>> & {
+    readonly core?: boolean;
+  },
 ): readonly string[] =>
-  Object.entries(values).flatMap(([key, value]) =>
-    value !== undefined && Option.isSome(value) ? [`--${cliFlagName(key)}`, value.value] : [],
-  );
+  Object.entries(values).flatMap(([key, value]) => {
+    if (key === 'core') {
+      return value === true ? ['--core'] : [];
+    }
+    return value !== undefined && Option.isOption(value) && Option.isSome(value)
+      ? [`--${cliFlagName(key)}`, value.value]
+      : [];
+  });
 
 const executeCliCommand =
   (command: ScaffoldCommand) =>
   ({
     forwarded,
     ...values
-  }: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>> & {
+  }: Readonly<Partial<Record<Exclude<keyof typeof cliFlags, 'core'>, Option.Option<string>>>> & {
+    readonly core?: boolean;
     readonly forwarded: readonly string[];
   }) =>
     Effect.gen(function* executeCliCommandEffect() {
@@ -1052,8 +1115,8 @@ const cliSubcommands = scaffoldCommandValues.map((command) =>
 
 const cliRoot = Command.make('scaffold').pipe(Command.withSubcommands(cliSubcommands));
 
-const customHelp = GlobalFlag.action({
-  flag: Flag.boolean('help').pipe(Flag.withAlias('h')),
+const customHelp = GlobalFlag.Action({
+  flag: Flag.Boolean('help').pipe(Flag.withAlias('h')),
   run: (_enabled, { commandPath }) => {
     const command = commandPath.at(-1);
     return command !== undefined && isScaffoldCommand(command)

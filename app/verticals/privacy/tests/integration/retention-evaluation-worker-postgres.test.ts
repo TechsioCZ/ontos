@@ -2,9 +2,11 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   dispositionDecisions,
   legalHolds,
@@ -56,11 +58,7 @@ const one = <Row>(rows: readonly Row[]): Row => {
   return row;
 };
 
-const pool = (connectionString: string) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString, max: 4 })),
-    (clientPool) => Effect.promise(() => clientPool.end()).pipe(Effect.orDie),
-  );
+const pool = makeTestPgClient;
 
 const ruleRecord = (ruleRef: string, contentScopeRef: string, ruleVersion = 1) => ({
   applicability: 'PROSPECTIVE_ONLY',
@@ -111,8 +109,8 @@ it.live('rechecks current PostgreSQL state, catches up overdue work, and complet
       const connections = yield* loadDatabaseConnectionPair();
       const adminPool = yield* pool(connections.admin.connectionString);
       const runtimePool = yield* pool(connections.runtime.connectionString);
-      const admin = yield* makeTestDatabaseFromPool(adminPool, privacyRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, privacyRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminPool, privacyRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimePool, privacyRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

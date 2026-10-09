@@ -9,7 +9,7 @@
  * `packages/core-runtime/src/auth/principal-management.ts:61`
  * (`loadPrincipal: (...) => Promise<PrincipalRecord | undefined>`) and
  * `packages/core-runtime/src/outbox/repository.ts:76`
- * (`claimNext: (...) => Effect.Effect<OutboxClaim | null, OutboxPersistenceError>`).
+ * (`claimNext: (...) => Effect.Effect<OutboxClaim | null, PersistenceFailure>`).
  * A service outcome that hides absence in `| undefined` / `| null` forces every caller to re-check
  * by hand; `Option`/`Result`/a typed `NotFound` failure makes absence matchable and exhaustive.
  *

@@ -6,14 +6,14 @@
 /* oxlint-disable effect-native/no-effect-provide-in-library effect-native/no-layer-provide-in-library -- The task forbids changing the generated worker-host layer, so this worker entrypoint builds and closes its verified Core fan-out layer per delivery; expires: 2027-03-31. */
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import type { OutboxWorkerLegalEntityScopeError } from '@app/core-runtime/outbox/worker';
 import {
   CorePersistenceLive,
   DatabaseConfigLive,
-  OutboxWorkerLegalEntityScopeError,
   OutboxWorkerLegalEntityScopeFanout,
   OutboxWorkerLegalEntityScopeFanoutLive,
 } from '@app/core-runtime/outbox/worker';
-import { Context, DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Ref, Schema } from 'effect';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
@@ -233,7 +233,7 @@ const routineWorkMatchesPayload = Effect.fn('RetentionEvaluationWorker.routineWo
 const mapScopeFailure = (
   failure: RetentionEvaluationWorkerError | OutboxWorkerLegalEntityScopeError,
 ): RetentionEvaluationWorkerError => {
-  if (!Schema.is(OutboxWorkerLegalEntityScopeError)(failure)) {
+  if (!Predicate.isTagged(failure, 'OutboxWorkerLegalEntityScopeError')) {
     return failure;
   }
   return failure.code === 'outbox_worker_scope_context_invalid'

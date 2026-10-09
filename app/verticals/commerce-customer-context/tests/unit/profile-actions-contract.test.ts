@@ -21,6 +21,7 @@ import { resolveProfileReconciliationAction } from '../../src/actions/resolve-pr
 import { revokeRetailPortalProfileBindingAction } from '../../src/actions/revoke-retail-portal-profile-binding.action.ts';
 import { suspendCustomerProfileAction } from '../../src/actions/suspend-customer-profile.action.ts';
 
+const originalCompositionRevision = 'a'.repeat(64);
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const actionRegistrations = [
   ensureRetailCustomerProfileAction,
@@ -144,6 +145,7 @@ describe('customer profile Actions', () => {
         actionInvocationId: '30000000-0000-4000-8000-000000000003',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope: {
@@ -193,6 +195,7 @@ describe('customer profile Actions', () => {
         actionInvocationId: '30000000-0000-4000-8000-000000000004',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope: {

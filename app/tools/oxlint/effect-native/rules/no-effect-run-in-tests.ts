@@ -39,6 +39,8 @@
  *
  * - The external `effect-rstest` runner owns the Effect.run* boundary.
  *   Test support and harness directories have no exemption.
+ * - Native Rstest setupFiles owns one module-level awaited, scoped Layer.build boundary,
+ *   proven by the actual owning manifest and native project configuration.
  * - D-tier Promise adapters forced by the framework: Playwright / e2e specs (`ignorePaths`).
  * - Type-only imports and type-only specifiers (`import type { runPromise } from "effect/Effect"`,
  *   `import { type runSync } …`): erased before runtime, so they cannot open a fiber.
@@ -55,6 +57,7 @@ import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { collectNamedImports } from '../shared/imports.ts';
+import { isNativeRstestSetupRun } from '../shared/native-rstest-setup.ts';
 import { globToRegExp, isTestFile, matchesAny } from '../shared/paths.ts';
 
 /** `run`, `runPromise`, `runSyncExit`, `runPromiseWith`, … but not `runtime`. */
@@ -487,6 +490,16 @@ export const rule = defineRule({
       },
 
       'Program:exit'() {
+        const setupRoot =
+          callSites.length === 1 &&
+          referenceSites.length === 0 &&
+          importSites.length === 0 &&
+          reexportSites.length === 0 &&
+          dynamicSites.length === 0 &&
+          callSites[0] !== undefined &&
+          isNativeRstestSetupRun(context, callSites[0].node)
+            ? callSites[0].node
+            : null;
         for (const site of importSites) {
           context.report({
             node: site.node,
@@ -510,6 +523,9 @@ export const rule = defineRule({
           });
         }
         for (const site of callSites) {
+          if (site.node === setupRoot) {
+            continue;
+          }
           if (isNested(site.node)) continue;
           context.report({
             node: site.node,

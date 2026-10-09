@@ -24,15 +24,22 @@ const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
 const verticalName = 'property-registry';
 const moduleId = 'property.registry';
 const resourceName = 'rental-unit';
+const coreResourceName = 'legal-entity';
+const resourceCommand = 'resource';
 const verticalFlag = '--vertical';
+const resourceFlag = '--resource';
 const resourceType = `${moduleId}.${resourceName}`;
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const verticalRoot = `verticals/${verticalName}`;
 const verticalPackagePath = `${verticalRoot}/package.json`;
 const verticalManifestPath = `${verticalRoot}/vertical.manifest.ts`;
-const packageJsonSchema = Schema.Struct({
-  exports: Schema.Record(Schema.String, Schema.String),
-});
+// The package document is rewritten by the tests, so undeclared owner fields must round-trip.
+const packageJsonSchema = Schema.StructWithRest(
+  Schema.Struct({
+    exports: Schema.Record(Schema.String, Schema.String),
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
 const generatedResourceModuleSchema = Schema.Struct({
   RentalUnitRefSchema: Schema.declare<Schema.Top>(Schema.isSchema),
 });
@@ -61,9 +68,9 @@ const createFixture = (): Effect.Effect<string, unknown> =>
         name: '@app/property-registry',
         private: true,
         scripts: {
-          build: 'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
+          build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
           'cloudflare:build':
-            'MODERNJS_DEPLOY=cloudflare modern build && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build',
+            'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
         },
         type: 'module',
         version: '0.1.0',
@@ -161,7 +168,7 @@ export declare const ShellSearchContributionSchema: Schema.Codec<unknown, unknow
 const withFixture = withCreatedFixture(createFixture());
 
 const scaffoldResource = Effect.fn(function* scenario7(root: string, resource = resourceName) {
-  return yield* runScaffoldEffect('resource', [verticalFlag, verticalName, '--resource', resource], {
+  return yield* runScaffoldEffect(resourceCommand, [verticalFlag, verticalName, resourceFlag, resource], {
     workspaceRoot: root,
   }).pipe(Effect.provide(NodeServices.layer));
 });
@@ -182,15 +189,69 @@ it.live(
   'resource help documents the public command and writes nothing',
   Effect.fn(function* scenario8() {
     const missingRoot = path.join(tmpdir(), 'resource-help-does-not-exist');
-    const result = yield* runScaffoldEffect('resource', ['--help'], {
+    const result = yield* runScaffoldEffect(resourceCommand, ['--help'], {
       workspaceRoot: missingRoot,
     }).pipe(Effect.provide(NodeServices.layer));
-    expect(result).toEqual({ help: getHelpText('resource'), kind: 'help' });
+    expect(result).toEqual({ help: getHelpText(resourceCommand), kind: 'help' });
     if (result.kind !== 'help') {
       throw new Error('Expected help result');
     }
     expect(result.help).toMatch(/scaffold:resource -- --vertical <vertical> --resource <resource>/u);
     expect(result.help).toMatch(/lower-kebab-case/u);
+    expect(result.help).toMatch(/or core for Core-owned references/u);
+  }),
+);
+
+it.live(
+  'resource scaffold publishes a Core-owned UUID LegalEntityRef without a vertical manifest',
+  Effect.fn(function* coreResourceScenario() {
+    yield* withFixture(
+      Effect.fn(function* coreResourceFixture(root) {
+        yield* write(
+          root,
+          'packages/core-runtime/package.json',
+          json({ exports: { '.': './src/index.ts' }, name: '@app/core-runtime', private: true, type: 'module' }),
+        );
+        const result = yield* runScaffoldEffect(
+          resourceCommand,
+          [verticalFlag, 'core', resourceFlag, coreResourceName],
+          {
+            workspaceRoot: root,
+          },
+        ).pipe(Effect.provide(NodeServices.layer));
+        expect(result.kind).toBe('generated');
+        const resourcePath = path.join(root, `packages/core-runtime/src/resources/${coreResourceName}.ts`);
+        const resource = yield* Effect.promise(() => readFile(resourcePath, 'utf-8'));
+        const packageSource = yield* Effect.promise(() =>
+          readFile(path.join(root, 'packages/core-runtime/package.json'), 'utf-8'),
+        );
+        expect(resource).toMatch(/@ontos-resource-owner core\.identity/u);
+        expect(resource).toMatch(/moduleId: Schema\.Literal\('core\.identity'\)/u);
+        expect(resource).toMatch(/resourceType: Schema\.Literal\('core\.identity\.legal-entity'\)/u);
+        expect(resource).toMatch(/const ResourceIdSchema = Schema\.String\.check\(Schema\.isUUID\(\)\)/u);
+        expect(resource).toMatch(/const TenantIdSchema = Schema\.String\.check\(Schema\.isUUID\(\)\)/u);
+        const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema)(JSON.parse(packageSource));
+        expect(modulePackage.exports['./resources/legal-entity']).toBe('./src/resources/legal-entity.ts');
+
+        const beforeUnsupported = yield* snapshotTree(root, ['node_modules']);
+        const unsupported = yield* runScaffoldEffect(resourceCommand, [verticalFlag, 'core', resourceFlag, 'other'], {
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer), Effect.sandbox, Effect.flip);
+        expect(String(Cause.squash(unsupported))).toMatch(/supports only legal-entity/u);
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeUnsupported);
+
+        const beforeRerun = yield* snapshotTree(root, ['node_modules']);
+        const rerun = yield* runScaffoldEffect(
+          resourceCommand,
+          [verticalFlag, 'core', resourceFlag, coreResourceName],
+          {
+            workspaceRoot: root,
+          },
+        ).pipe(Effect.provide(NodeServices.layer), Effect.sandbox, Effect.flip);
+        expect(String(Cause.squash(rerun))).toMatch(/resource contract export .* already exists/u);
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeRerun);
+      }),
+    );
   }),
 );
 
@@ -230,9 +291,7 @@ it.live(
           /import \{ rentalUnitResourceDescriptor \} from '\.\/shared\/resources\/rental-unit\.ts';/u,
         );
         expect(manifest).toMatch(/resourceTypes: \[[\s\S]*rentalUnitResourceDescriptor,/u);
-        const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema, {
-          onExcessProperty: 'preserve',
-        })(JSON.parse(packageSource));
+        const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema)(JSON.parse(packageSource));
         expect(modulePackage.exports['./resources/rental-unit']).toBe('./shared/resources/rental-unit.ts');
 
         const generatedModule = yield* Schema.decodeUnknownEffect(generatedResourceModuleSchema)(
@@ -329,9 +388,9 @@ it.live(
     yield* withFixture(
       Effect.fn(function* scenario15(root) {
         const packagePath = path.join(root, verticalPackagePath);
-        const packageValue = yield* Schema.decodeUnknownEffect(packageJsonSchema, {
-          onExcessProperty: 'preserve',
-        })(JSON.parse(yield* Effect.promise(() => readFile(packagePath, 'utf-8'))));
+        const packageValue = yield* Schema.decodeUnknownEffect(packageJsonSchema)(
+          JSON.parse(yield* Effect.promise(() => readFile(packagePath, 'utf-8'))),
+        );
         const packageWithExportCollision = {
           ...packageValue,
           exports: {

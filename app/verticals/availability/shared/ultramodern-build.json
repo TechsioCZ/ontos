@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "availability",
+    "buildMarker": "7b0e5ab486adc9c0",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/availability",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/availability",
+    "version": "0.1.0",
+    "build": "7b0e5ab486adc9c0"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "availability",
+      "buildMarker": "7b0e5ab486adc9c0",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/availability",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/availability",
+      "version": "0.1.0",
+      "build": "7b0e5ab486adc9c0",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "availability",
+      "buildMarker": "7b0e5ab486adc9c0",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/availability",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/availability",
+      "version": "0.1.0",
+      "build": "7b0e5ab486adc9c0",
+      "surface": "ui"
+    }
+  }
+}

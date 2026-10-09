@@ -32,10 +32,9 @@ export const DsrCasesApi = HttpApi.make('DsrCasesApi').add(
         DsrCasesUnavailableProblemSchema,
         DsrCasesInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: DsrCasesRequestSchema,
-      query: {},
+
       success: DsrCasesResponseSchema,
     }),
   ),

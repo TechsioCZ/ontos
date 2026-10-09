@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Cause } from 'effect';
-import { Context, DateTime, Effect, Layer, Predicate, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
 import type { ActionInvocationStatus } from '../db/schema.ts';
@@ -218,6 +218,11 @@ export interface ActionInvocationRecord {
   readonly status: ActionInvocationStatus;
 }
 
+/** The recorded reason a terminal `rejected` invocation was refused. */
+export type ActionRecordedRejection =
+  | { readonly stage: 'authz' }
+  | { readonly policyReasonCode: string; readonly stage: 'policy' };
+
 export interface ActionPolicyEvidence {
   readonly owningModuleKey?: string;
   readonly policyKey: string;
@@ -265,11 +270,15 @@ export interface ActionRepositoryService {
   readonly finalizePolicyDenial: (
     executor: CoreDatabaseExecutor,
     input: FinalizeActionPolicyDenialInput,
-  ) => Effect.Effect<void, ActionInvocationPersistenceError>;
+  ) => Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>;
   readonly flushSuccess: (
     transaction: CoreTransaction,
     input: FlushActionSuccessInput,
   ) => Effect.Effect<void, ActionTransactionError>;
+  readonly loadRecordedRejection: (
+    executor: Pick<CoreDatabaseExecutor, 'select'>,
+    invocationId: string,
+  ) => Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>;
   readonly lockInvocation: (
     transaction: CoreTransaction,
     invocationId: string,
@@ -277,7 +286,10 @@ export interface ActionRepositoryService {
   readonly rejectPermissionDenied: (
     executor: CoreDatabaseExecutor,
     input: RejectPermissionDeniedInput,
-  ) => Effect.Effect<void, ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError>;
+  ) => Effect.Effect<
+    Option.Option<ActionRecordedRejection>,
+    ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError
+  >;
   readonly resolveInvocation: (
     executor: CoreDatabaseExecutor,
     input: ResolveActionInvocationInput,
@@ -465,6 +477,39 @@ export const makeActionRepository = (): ActionRepositoryService => {
     },
   );
 
+  // The `action.rejected` Audit Event commits atomically with the `rejected` status, so any reader
+  // that observed that status can read the recorded rejection reason without another lock.
+  const loadRecordedRejection: ActionRepositoryService['loadRecordedRejection'] = Effect.fn(
+    'makeActionRepository.loadRecordedRejection',
+  )(function* loadRecordedRejectionEffect(executor: Pick<CoreDatabaseExecutor, 'select'>, invocationId: string) {
+    const rows = yield* executor
+      .select({ outcomeCode: auditEvents.outcomeCode, outcomeStage: auditEvents.outcomeStage })
+      .from(auditEvents)
+      .where(and(eq(auditEvents.actionInvocationId, invocationId), eq(auditEvents.eventType, 'action.rejected')))
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure('Unable to load the recorded Action rejection', cause)));
+    const [rejection] = rows;
+    if (rejection?.outcomeStage === 'authz') {
+      return Option.some<ActionRecordedRejection>({ stage: 'authz' });
+    }
+    if (rejection?.outcomeStage === 'policy') {
+      return Option.some<ActionRecordedRejection>({ policyReasonCode: rejection.outcomeCode, stage: 'policy' });
+    }
+    return Option.none();
+  });
+
+  // A denial finalizer that finds the invocation already rejected reports the rejection that won,
+  // so a concurrent loser returns the durable outcome rather than its own decision.
+  const earlierRejection = (transaction: CoreTransaction, invocationId: string) =>
+    loadRecordedRejection(transaction, invocationId).pipe(
+      Effect.filterOrFail(Option.isSome, () =>
+        persistenceFailure(
+          'The rejected Action invocation has no recorded rejection',
+          new RepositoryInvariantError({ reason: 'The action.rejected Audit Event is missing' }),
+        ),
+      ),
+    );
+
   const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) =>
     executor
       .select(invocationSelection)
@@ -554,7 +599,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
         }
 
         if (invocation.status === 'rejected' && invocation.completedAt !== null) {
-          return yield* Effect.void;
+          return yield* earlierRejection(transaction, input.actionInvocationId);
         }
         if (invocation.status !== 'received' || invocation.completedAt !== null) {
           return yield* new ActionInvocationStateError({
@@ -589,17 +634,16 @@ export const makeActionRepository = (): ActionRepositoryService => {
         yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
           Effect.mapError((cause) => transactionFailure(failureReason, cause)),
         );
-        return yield* Effect.void;
+        return Option.none<ActionRecordedRejection>();
       },
     );
 
-    yield* executor.transaction(transactionBody).pipe(
+    return yield* executor.transaction(transactionBody).pipe(
       Effect.catchTag('SqlError', (failure) => Effect.fail(transactionFailure(failureReason, failure))),
       Effect.catchDefect((defect) =>
         isSqlError(defect) ? Effect.fail(transactionFailure(failureReason, defect)) : Effect.die(defect),
       ),
     );
-    return yield* Effect.void;
   });
 
   const finalizePolicyDenial: ActionRepositoryService['finalizePolicyDenial'] = Effect.fn(
@@ -626,7 +670,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
         );
       }
       if (invocation.status === 'rejected' && invocation.completedAt !== null) {
-        return yield* Effect.void;
+        return yield* earlierRejection(transaction, input.actionInvocationId);
       }
       if (invocation.status !== 'received' || invocation.completedAt !== null) {
         return yield* persistenceFailure(
@@ -672,16 +716,15 @@ export const makeActionRepository = (): ActionRepositoryService => {
       yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
         Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
       );
-      return yield* Effect.void;
+      return Option.none<ActionRecordedRejection>();
     });
 
-    yield* executor.transaction(transactionBody).pipe(
+    return yield* executor.transaction(transactionBody).pipe(
       Effect.catchTag('SqlError', (failure) => Effect.fail(persistenceFailure(failureReason, failure))),
       Effect.catchDefect((defect) =>
         isSqlError(defect) ? Effect.fail(persistenceFailure(failureReason, defect)) : Effect.die(defect),
       ),
     );
-    return yield* Effect.void;
   });
 
   const flushSuccess: ActionRepositoryService['flushSuccess'] = Effect.fn('makeActionRepository.flushSuccess')(
@@ -892,6 +935,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
     createOrResolveInvocation,
     finalizePolicyDenial,
     flushSuccess,
+    loadRecordedRejection,
     lockInvocation,
     rejectPermissionDenied,
     resolveInvocation,

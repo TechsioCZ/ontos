@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  ActiveApplicationCompositionService,
   PrincipalResolver,
   PrincipalResolverUnavailableError,
   ContextAccess,
@@ -11,17 +12,14 @@ import {
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
   TrustedPrincipalContextSchema,
-  buildInstalledModuleCatalog,
   loadDatabaseConnectionPair,
   makePrincipalResolver,
   makeTenantModuleStateService,
 } from '@app/core-runtime';
-import type { InstalledModuleCatalog } from '@app/core-runtime';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Effect, Layer, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
-import { Pool } from 'pg';
 
 import {
   actionInvocations,
@@ -34,8 +32,16 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { AuthenticationNamespaceRegistrationSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
@@ -45,6 +51,9 @@ import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
+import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
+import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
@@ -55,6 +64,18 @@ const principalId = '40000000-0000-4000-8000-000000000001';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
 const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
+const staffAuthenticationNamespaceId = 'test.staff.better-auth.v1';
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeUnknownSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['billing', 'inventory-stock', 'testing1'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'better-auth',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user', 'api_key'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
 const PrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
 const IdentityResponseSchema = Schema.Struct({
   identity: Schema.Struct({
@@ -97,7 +118,10 @@ const legalEntitySelectionOptions = {
         : Effect.die('missing fixture legal entity'),
   },
 } as const;
-const contextAccessLayer = Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess);
+const contextAccessLayer = Layer.mergeAll(
+  Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+  Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
+);
 const authenticationContextLayer = Layer.mergeAll(
   contextAccessLayer,
   Layer.succeed(LegalEntityContext, legalEntitySelectionOptions.legalEntityContext),
@@ -117,6 +141,7 @@ const assertSessionForbidden = Effect.fnUntraced(function* assertSessionForbidde
 const verifiedGatewayAssertion = Effect.fnUntraced(function* verifiedGatewayAssertion(
   assertionResponse: Response,
   publicKey: Parameters<typeof jwtVerify>[1],
+  expectedCompositionRevision: string,
 ) {
   const assertion = yield* Schema.decodeUnknownEffect(TokenResponseSchema)(
     yield* Effect.tryPromise(() => assertionResponse.json()),
@@ -129,6 +154,8 @@ const verifiedGatewayAssertion = Effect.fnUntraced(function* verifiedGatewayAsse
       issuer: 'https://shell.example.test',
     }),
   );
+  expect(verified.payload['compositionRevision']).toBe(expectedCompositionRevision);
+  expect(verified.payload['targetBuildMarker']).toBe('integration-build');
   return {
     principal: yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(verified.payload['principal']),
     token: assertion.token,
@@ -142,20 +169,65 @@ const assertOptionalField = <Value extends object, Key extends keyof Value>(
   expect(value?.[key]).toBe(expected);
 };
 
-const installedCatalog = (moduleIds: readonly string[]): InstalledModuleCatalog =>
-  Object.freeze({
-    contracts: Object.freeze([]),
-    deploymentAppIds: Object.freeze([]),
-    deploymentStatuses: Object.freeze([]),
-    getByDeploymentAppId: () => undefined,
-    getByModuleId: () => undefined,
-    moduleIds: Object.freeze([...moduleIds]),
-    outboxSubscriptions: Object.freeze([]),
-  });
-const installedPageCatalog = (): InstalledModuleCatalog =>
-  buildInstalledModuleCatalog([
-    {
-      contract: {
+const installedContracts = (moduleIds: readonly string[]) =>
+  moduleIds.map((moduleId, index) => ({
+    deployment: {
+      appId: index === 0 ? 'inventory-stock' : moduleId.replaceAll('.', '-'),
+      buildMarker: 'integration-build',
+    },
+    manifest: {
+      activation: {
+        defaultState: 'inactive',
+        preservesHistoryWhenInactive: true,
+        scope: 'tenant',
+        supportedStates: ['inactive', 'active', 'read_only'],
+      },
+      module: {
+        description: 'Integration module.',
+        displayName: moduleId,
+        id: moduleId,
+        implementedAs: 'ultramodern_microvertical',
+        kind: 'business_module',
+      },
+      publicSurface: {
+        actions: [],
+        api: [],
+        components: [],
+        events: [],
+        reports: [],
+        resourceTypes: [],
+        search: [],
+        shellContributions: {
+          mediaAttachments: [],
+          navigation: [],
+          pages: [],
+          publicComponents: [],
+          reports: [],
+          resourceDetails: [],
+          search: [],
+          timelines: [],
+        },
+      },
+    },
+    runtime: { outboxSubscriptions: [] },
+    schemaVersion: '2',
+  }));
+
+const installedSnapshot = (moduleIds: readonly string[]) => makeCompositionSnapshot(installedContracts(moduleIds));
+const installedCatalog = (moduleIds: readonly string[]) =>
+  makeInstalledModuleCatalogLoader(installedSnapshot(moduleIds));
+const installedAdmission = (moduleIds: readonly string[]): GatewayIssuerLayerOptions['loadAdmission'] =>
+  installedCatalog(moduleIds).pipe(
+    Effect.map(({ composition }) => ({
+      audiences: new Map(composition.modules.map(({ deployment }) => [deployment.appId, deployment.buildMarker])),
+      revision: composition.revision,
+    })),
+  );
+
+const installedPageCatalog = () =>
+  makeInstalledModuleCatalogLoader(
+    makeCompositionSnapshot([
+      {
         deployment: {
           appId: 'inventory-stock',
           buildMarker: 'integration-build',
@@ -223,6 +295,7 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
                     role: 'page',
                     scope: 'tenant',
                   },
+                  expose: './PageHome',
                   routePath: '/inventory-stock',
                 },
                 {
@@ -236,6 +309,7 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
                     role: 'page',
                     scope: 'tenant',
                   },
+                  expose: './PageCustomers',
                   routePath: '/inventory-stock/customers',
                 },
               ],
@@ -250,21 +324,20 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
         runtime: { outboxSubscriptions: [] },
         schemaVersion: '2',
       },
-      expectedAppId: 'inventory-stock',
-    },
-  ]);
+    ]),
+  );
 it.live(
   'creates, resolves, persists, revokes, and signs out a Better Auth session',
   Effect.fnUntraced(function* runIntegration1() {
-    const configuration = yield* loadAuthConfig();
-    const corePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-      (pool) => Effect.promise(() => pool.end()),
-    );
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
+    const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
+    const coreClient = yield* makeTestPgClient(configuration.connectionString);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
-    const resolver = makePrincipalResolver({ executor: coreDatabase });
+    const resolver = makePrincipalResolver(
+      { executor: coreDatabase },
+      { authenticationNamespaceId: staffAuthenticationNamespaceId },
+    );
     const authentication = yield* makeAuthenticationService({
       allowFixtureSignUp: true,
     }).pipe(
@@ -356,6 +429,7 @@ it.live(
       tenantId,
     });
     yield* coreDatabase.insert(principalAuthBindings).values({
+      authenticationNamespaceId: staffAuthenticationNamespaceId,
       principalAuthBindingId: fixtureAuthBindingId,
       principalId,
       provider: 'better_auth',
@@ -365,12 +439,13 @@ it.live(
       tenantId,
     });
     yield* coreDatabase.insert(tenantModuleStates).values([
-      { moduleKey: 'testing1', state: 'active', tenantId },
+      { moduleKey: 'testing.one', state: 'active', tenantId },
       { moduleKey: 'testing.pages', state: 'active', tenantId },
       { moduleKey: 'stale-non-installed', state: 'active', tenantId },
       { moduleKey: 'inactive-installed', state: 'suspended', tenantId },
-      { moduleKey: 'testing1', state: 'active', tenantId: foreignTenantId },
+      { moduleKey: 'testing.one', state: 'active', tenantId: foreignTenantId },
     ]);
+    const testRevision = (yield* installedSnapshot(['testing.one'])).composition.revision;
     const requestHeaders = new Headers({
       origin: configuration.baseUrl,
     });
@@ -381,11 +456,11 @@ it.live(
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
-        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
       }),
       moduleStateLayer,
-      Effect.succeed(installedCatalog(['testing1'])),
+      installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
     );
@@ -394,7 +469,7 @@ it.live(
     const anonymousGatewayResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
-          body: JSON.stringify({ audience: 'inventory-stock' }),
+          body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision }),
           headers: {
             'content-type': 'application/json',
             origin: configuration.baseUrl,
@@ -418,6 +493,7 @@ it.live(
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/module-target`, {
           body: JSON.stringify({
+            compositionRevision: testRevision,
             entrypointKey: 'testing.pages.page.customers',
             moduleId: 'testing.pages',
           }),
@@ -473,9 +549,14 @@ it.live(
       cookie: cookieHeader(signedInCookies),
       origin: configuration.baseUrl,
     });
+    const approvedPageCatalog = yield* installedPageCatalog();
     const exactPageRequest = (entrypointKey = 'testing.pages.page.customers') =>
       new Request(`${configuration.baseUrl}/shell/module-target`, {
-        body: JSON.stringify({ entrypointKey, moduleId: 'testing.pages' }),
+        body: JSON.stringify({
+          compositionRevision: approvedPageCatalog.composition.revision,
+          entrypointKey,
+          moduleId: 'testing.pages',
+        }),
         headers: new Headers({
           'content-type': 'application/json',
           cookie: headerValue(authenticatedHeaders, 'cookie'),
@@ -488,18 +569,50 @@ it.live(
       .pipe(Effect.provide(authenticationContextLayer));
     assertOptionalField(current.identity, 'tenantId', tenantId);
     expect(current.identity).not.toBe(undefined);
+    let moduleResourcePermissionCalls = 0;
+    let providerCalls = 0;
+    let authenticationContextCalls = 0;
+    const observedAuthenticationLayer = Layer.succeed(AuthenticationService, {
+      ...authentication,
+      resolveShellContext: (headers) => {
+        authenticationContextCalls += 1;
+        return authentication.resolveShellContext(headers);
+      },
+    });
+    const observedContextAccessLayer = Layer.mergeAll(
+      Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+      Layer.succeed(ContextAccess, {
+        ...legalEntitySelectionOptions.contextAccess,
+        modules: (input) => {
+          moduleResourcePermissionCalls += 1;
+          return legalEntitySelectionOptions.contextAccess.modules(input);
+        },
+        resources: () => {
+          moduleResourcePermissionCalls += 1;
+          return legalEntitySelectionOptions.contextAccess.resources();
+        },
+      }),
+    );
+    const unavailableObservedProvider = () => {
+      providerCalls += 1;
+      return Effect.fail(new ShellProviderUnavailableError());
+    };
     const pageRuntime = makeShellAuthenticationApiRuntime(
-      authenticationLayer,
+      observedAuthenticationLayer,
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000009'),
-        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
       }),
       moduleStateLayer,
-      Effect.succeed(installedPageCatalog()),
+      Effect.succeed(approvedPageCatalog),
       false,
-      contextAccessLayer,
+      observedContextAccessLayer,
+      {
+        resource: { detail: unavailableObservedProvider, timeline: unavailableObservedProvider },
+        search: { search: unavailableObservedProvider },
+      },
     ).createHandler();
     handlers.push(pageRuntime);
     const exactPageResponse = yield* Effect.tryPromise(() => pageRuntime.handler(exactPageRequest()));
@@ -507,10 +620,87 @@ it.live(
     expect(yield* Effect.tryPromise(() => exactPageResponse.json())).toEqual({
       appId: 'inventory-stock',
       componentKey: 'testing.pages.page-customers',
+      compositionRevision: approvedPageCatalog.composition.revision,
       entrypointKey: 'testing.pages.page.customers',
+      federation: {
+        expose: './PageCustomers',
+        manifest:
+          approvedPageCatalog.composition.modules[0]?.federation.execution === 'browser'
+            ? approvedPageCatalog.composition.modules[0].federation.manifest
+            : undefined,
+        remoteName: 'verticalInventoryStock',
+      },
       moduleId: 'testing.pages',
+      routeParameters: {},
       writable: true,
     });
+    const permissionCallsBeforeStaleRequests = moduleResourcePermissionCalls;
+    const staleRevision = 'f'.repeat(64);
+    const staleRef = {
+      compositionRevision: staleRevision,
+      moduleId: 'testing.pages',
+      resourceId: fixtureLegalEntityId,
+      resourceType: 'testing.pages.customer',
+    };
+    const staleRequests = [
+      new Request(`${configuration.baseUrl}/shell/composition?compositionRevision=${staleRevision}`, {
+        headers: authenticatedHeaders,
+      }),
+      ...[
+        {
+          path: '/shell/module-target',
+          payload: { compositionRevision: staleRevision, moduleId: 'testing.pages' },
+        },
+        { path: '/shell/search', payload: { compositionRevision: staleRevision, query: 'customer' } },
+        { path: '/shell/resource', payload: staleRef },
+        { path: '/shell/resource/media-attachment', payload: staleRef },
+      ].map(
+        ({ path: requestPath, payload }) =>
+          new Request(`${configuration.baseUrl}${requestPath}`, {
+            body: JSON.stringify(payload),
+            headers: new Headers({
+              'content-type': 'application/json',
+              cookie: headerValue(authenticatedHeaders, 'cookie'),
+              origin: configuration.baseUrl,
+            }),
+            method: 'POST',
+          }),
+      ),
+    ];
+    for (const staleRequest of staleRequests) {
+      const staleResponse = yield* Effect.tryPromise(() => pageRuntime.handler(staleRequest));
+      expect(staleResponse.status).toBe(409);
+      expect(
+        Schema.decodeUnknownSync(ProblemStatusSchema)(yield* Effect.tryPromise(() => staleResponse.json())).status,
+      ).toBe(409);
+    }
+    expect(moduleResourcePermissionCalls).toBe(permissionCallsBeforeStaleRequests);
+    expect(providerCalls).toBe(0);
+    const contextCallsBeforeStaleGatewayRequests = authenticationContextCalls;
+    for (const gatewayPath of ['/auth/gateway-context', '/auth/api-key/gateway-context']) {
+      const staleGatewayResponse = yield* Effect.tryPromise(() =>
+        pageRuntime.handler(
+          new Request(`${configuration.baseUrl}${gatewayPath}`, {
+            body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: staleRevision }),
+            headers: new Headers({
+              'content-type': 'application/json',
+              cookie: headerValue(authenticatedHeaders, 'cookie'),
+              origin: configuration.baseUrl,
+              'x-api-key': 'must-not-be-verified-for-an-obsolete-release',
+            }),
+            method: 'POST',
+          }),
+        ),
+      );
+      expect(staleGatewayResponse.status).toBe(409);
+      expect(yield* Effect.tryPromise(() => staleGatewayResponse.json())).toMatchObject({
+        reloadRequired: true,
+        status: 409,
+      });
+    }
+    expect(authenticationContextCalls).toBe(contextCallsBeforeStaleGatewayRequests);
+    expect(moduleResourcePermissionCalls).toBe(permissionCallsBeforeStaleRequests);
+    expect(providerCalls).toBe(0);
     const missingPageResponse = yield* Effect.tryPromise(() =>
       pageRuntime.handler(exactPageRequest('testing.pages.page.missing')),
     );
@@ -542,11 +732,11 @@ it.live(
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000010'),
-        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
       }),
       moduleStateLayer,
-      Effect.succeed(installedPageCatalog()),
+      installedPageCatalog(),
       false,
       contextAccessLayer,
     ).createHandler();
@@ -565,17 +755,20 @@ it.live(
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000011'),
-        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
       }),
       moduleStateLayer,
-      Effect.succeed(installedPageCatalog()),
+      installedPageCatalog(),
       false,
-      Layer.succeed(ContextAccess, {
-        ...legalEntitySelectionOptions.contextAccess,
-        modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
-          Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
-      }),
+      Layer.mergeAll(
+        Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+        Layer.succeed(ContextAccess, {
+          ...legalEntitySelectionOptions.contextAccess,
+          modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
+            Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
+        }),
+      ),
     ).createHandler();
     handlers.push(deniedPageRuntime);
     const deniedPageResponse = yield* Effect.tryPromise(() => deniedPageRuntime.handler(exactPageRequest()));
@@ -614,36 +807,39 @@ it.live(
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000002'),
-        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
       }),
       moduleStateLayer,
-      Effect.succeed(installedCatalog(['testing1'])),
+      installedCatalog(['testing.one']),
       false,
-      Layer.succeed(ContextAccess, {
-        ...legalEntitySelectionOptions.contextAccess,
-        tenants: ({
-          permission,
-          tenantIds,
-        }: {
-          readonly permission:
-            | 'access'
-            | 'impersonate'
-            | 'manage_identity'
-            | 'manage_party_identity'
-            | 'manage_party_relationships'
-            | 'merge_party_identity'
-            | 'read_party_identity'
-            | 'review_party_identity';
-          readonly tenantIds: readonly string[];
-        }) =>
-          Effect.succeed(
-            tenantIds.map((key) => ({
-              decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
-              key,
-            })),
-          ),
-      }),
+      Layer.mergeAll(
+        Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+        Layer.succeed(ContextAccess, {
+          ...legalEntitySelectionOptions.contextAccess,
+          tenants: ({
+            permission,
+            tenantIds,
+          }: {
+            readonly permission:
+              | 'access'
+              | 'impersonate'
+              | 'manage_identity'
+              | 'manage_party_identity'
+              | 'manage_party_relationships'
+              | 'merge_party_identity'
+              | 'read_party_identity'
+              | 'review_party_identity';
+            readonly tenantIds: readonly string[];
+          }) =>
+            Effect.succeed(
+              tenantIds.map((key) => ({
+                decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
+                key,
+              })),
+            ),
+        }),
+      ),
     ).createHandler();
     handlers.push(deniedIdentityAdministrationRuntime);
     const deniedIdentityAdministrationResponse = yield* Effect.tryPromise(() =>
@@ -697,6 +893,7 @@ it.live(
     );
     expect(activeModulesResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
+      compositionRevision: testRevision,
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -751,14 +948,15 @@ it.live(
                   legalEntityId: fixtureLegalEntityId,
                   legalName: 'Fixture legal entity',
                 },
-                principal: {
+                principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
                   authBindingId: '45000000-0000-4000-8000-000000000001',
                   authContextRef: 'better-auth-session:45000000-0000-4000-8000-000000000001',
-                  authMethod: 'session' as const,
+                  authenticationNamespaceId: staffAuthenticationNamespaceId,
+                  authMethod: 'session',
                   legalEntityId: fixtureLegalEntityId,
                   principalId: current.identity.principalId,
                   tenantId: current.identity.tenantId,
-                },
+                }),
                 setCookieHeaders: ['refreshed-session=value; Path=/; HttpOnly'],
                 state: 'authenticated' as const,
               }),
@@ -766,11 +964,11 @@ it.live(
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
-        loadAudiences: Effect.succeed(new Set(['testing1'])),
+        loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
       }),
       moduleStateLayer,
-      Effect.succeed(installedCatalog(['testing1'])),
+      installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
     ).createHandler();
@@ -810,11 +1008,11 @@ it.live(
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
-        loadAudiences: Effect.succeed(new Set(['testing1'])),
+        loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
       }),
       Layer.succeed(TenantModuleStateService, unavailableModuleStates),
-      Effect.succeed(installedPageCatalog()),
+      installedPageCatalog(),
       false,
       contextAccessLayer,
       undefined,
@@ -842,7 +1040,7 @@ it.live(
     const unavailableGatewayResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
-          body: JSON.stringify({ audience: 'inventory-stock' }),
+          body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision }),
           headers: new Headers({
             'content-type': 'application/json',
             cookie: cookieHeader(signedInCookies),
@@ -865,7 +1063,7 @@ it.live(
     const issuerDependencies: GatewayIssuerLayerOptions = {
       currentTimeSeconds: Effect.succeed(1_700_000_000),
       generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
-      loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+      loadAdmission: installedAdmission(['testing.one']),
       loadConfig: Effect.succeed({
         issuer: 'https://shell.example.test',
         privateJwk: {
@@ -883,7 +1081,7 @@ it.live(
       authenticationLayer,
       makeGatewayIssuerLayer(issuerDependencies),
       moduleStateLayer,
-      Effect.succeed(installedCatalog(['testing1'])),
+      installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
     ).createHandler();
@@ -891,7 +1089,7 @@ it.live(
     const assertionResponse = yield* Effect.tryPromise(() =>
       issuingHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
-          body: JSON.stringify({ audience: 'inventory-stock' }),
+          body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision }),
           headers: new Headers({
             'content-type': 'application/json',
             cookie: cookieHeader(signedInCookies),
@@ -905,6 +1103,7 @@ it.live(
     const { principal: verifiedPrincipal, token: assertionToken } = yield* verifiedGatewayAssertion(
       assertionResponse,
       pair.publicKey,
+      testRevision,
     );
     expect(verifiedPrincipal.authBindingId).toBe(fixtureAuthBindingId);
     expect(optionalText(verifiedPrincipal.authContextRef)).toMatch(/^better-auth-session:/u);
@@ -948,7 +1147,16 @@ it.live(
         'dir',
       ),
     );
-    const generatedVerifierPath = path.join(generatedFixtureRoot, 'action-principal.ts');
+    yield* Effect.tryPromise(() => mkdir(path.join(generatedFixtureRoot, 'api', 'auth'), { recursive: true }));
+    yield* Effect.tryPromise(() => mkdir(path.join(generatedFixtureRoot, 'shared'), { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(generatedFixtureRoot, 'shared/ultramodern-build.ts'),
+        "export const ultramodernApiMarker = { appId: 'inventory-stock', buildMarker: 'integration-build' } as const;\n",
+        'utf-8',
+      ),
+    );
+    const generatedVerifierPath = path.join(generatedFixtureRoot, 'api', 'auth', 'action-principal.ts');
     yield* Effect.tryPromise(() =>
       writeFile(generatedVerifierPath, renderActionPrincipalServer({ appId: 'inventory-stock' }), 'utf-8'),
     );
@@ -984,7 +1192,7 @@ it.live(
           }),
         },
         redemption: { consume: () => Effect.void },
-      }),
+      }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: installedSnapshot(['testing.one']) })),
     );
     expect(generatedPrincipal.authBindingId).toBe(fixtureAuthBindingId);
     expect(optionalText(generatedPrincipal.authContextRef)).toMatch(/^better-auth-session:/u);
@@ -995,7 +1203,7 @@ it.live(
     const invalidAudienceResponse = yield* Effect.tryPromise(() =>
       issuingHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
-          body: JSON.stringify({ audience: 'billing' }),
+          body: JSON.stringify({ audience: 'billing', compositionRevision: testRevision }),
           headers: new Headers({
             'content-type': 'application/json',
             cookie: cookieHeader(signedInCookies),
@@ -1013,7 +1221,7 @@ it.live(
         generateJti: Effect.die(new Error('deliberate gateway test defect')),
       }),
       moduleStateLayer,
-      Effect.succeed(installedCatalog(['testing1'])),
+      installedCatalog(['testing.one']),
       false,
       contextAccessLayer,
     ).createHandler();
@@ -1021,7 +1229,7 @@ it.live(
     const defectResponse = yield* Effect.tryPromise(() =>
       defectHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
-          body: JSON.stringify({ audience: 'inventory-stock' }),
+          body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision }),
           headers: new Headers({
             'content-type': 'application/json',
             cookie: cookieHeader(signedInCookies),
@@ -1136,31 +1344,26 @@ it.live(
         },
       },
     } as const;
-    const multiContextAccessLayer = Layer.succeed(ContextAccess, multiLegalEntitySelectionOptions.contextAccess);
+    const multiContextAccessLayer = Layer.mergeAll(
+      Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+      Layer.succeed(ContextAccess, multiLegalEntitySelectionOptions.contextAccess),
+    );
     const multiAuthenticationContextLayer = Layer.mergeAll(
       multiContextAccessLayer,
       Layer.succeed(LegalEntityContext, multiLegalEntitySelectionOptions.legalEntityContext),
     );
-    const configuration = yield* loadAuthConfig();
-    const databaseConnections = yield* loadDatabaseConnectionPair();
-    const adminPool = yield* Effect.acquireRelease(
-      Effect.sync(
-        () =>
-          new Pool({
-            connectionString: databaseConnections.admin.connectionString,
-          }),
-      ),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
-    );
-    const corePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
-    );
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
+    const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
+    const databaseConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
+    const coreClient = yield* makeTestPgClient(configuration.connectionString);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
-    const adminAuthDatabase = yield* makeTestDatabaseFromPool(adminPool, authRelations);
-    const resolver = makePrincipalResolver({ executor: coreDatabase });
+    const adminAuthDatabase = yield* makeTestDatabaseFromClient(adminClient, authRelations);
+    const resolver = makePrincipalResolver(
+      { executor: coreDatabase },
+      { authenticationNamespaceId: staffAuthenticationNamespaceId },
+    );
     const authentication = yield* makeAuthenticationService({
       allowFixtureSignUp: true,
     }).pipe(
@@ -1265,6 +1468,7 @@ it.live(
     ]);
     yield* coreDatabase.insert(principalAuthBindings).values([
       {
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
         principalAuthBindingId: firstAuthBindingId,
         principalId: firstPrincipalId,
@@ -1275,6 +1479,7 @@ it.live(
         tenantId: firstTenantId,
       },
       {
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         createdAt: new Date('2026-02-01T00:00:00.000Z'),
         principalAuthBindingId: secondAuthBindingId,
         principalId: secondPrincipalId,
@@ -1286,8 +1491,8 @@ it.live(
       },
     ]);
     yield* coreDatabase.insert(tenantModuleStates).values([
-      { moduleKey: 'first-module', state: 'active', tenantId: firstTenantId },
-      { moduleKey: 'second-module', state: 'active', tenantId: secondTenantId },
+      { moduleKey: 'testing.first', state: 'active', tenantId: firstTenantId },
+      { moduleKey: 'testing.second', state: 'active', tenantId: secondTenantId },
     ]);
     const signIn = yield* authentication.signIn(multiEmail, password, new Headers({ origin: configuration.baseUrl }));
     expect(signIn.identity.tenantId).toBe(firstTenantId);
@@ -1319,12 +1524,13 @@ it.live(
     assertOptionalField(initialSessions[0], 'activeTenantId', firstTenantId);
     const pair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(pair.privateKey));
+    const testRevision = (yield* installedSnapshot(['testing.first', 'testing.second'])).composition.revision;
     const runtime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, authentication),
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('61000000-0000-4000-8000-000000000001'),
-        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadAdmission: installedAdmission(['testing.first', 'testing.second']),
         loadConfig: Effect.succeed({
           issuer: 'https://shell.example.test',
           privateJwk: {
@@ -1339,7 +1545,7 @@ it.live(
         }),
       }),
       moduleStateLayer,
-      Effect.succeed(installedCatalog(['first-module', 'second-module'])),
+      installedCatalog(['testing.first', 'testing.second']),
       false,
       multiContextAccessLayer,
     ).createHandler();
@@ -1379,6 +1585,7 @@ it.live(
       ),
     );
     expect(yield* Effect.tryPromise(() => firstModules.json())).toEqual({
+      compositionRevision: testRevision,
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1421,7 +1628,7 @@ it.live(
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('61000000-0000-4000-8000-000000000002'),
-        loadAudiences: Effect.succeed(new Set()),
+        loadAdmission: Effect.succeed({ audiences: new Map<string, string>(), revision: '0'.repeat(64) }),
         loadConfig: parseGatewayIssuerConfig({}),
       }),
       moduleStateLayer,
@@ -1518,6 +1725,7 @@ it.live(
       ),
     );
     expect(yield* Effect.tryPromise(() => secondModules.json())).toEqual({
+      compositionRevision: testRevision,
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1525,7 +1733,7 @@ it.live(
     const assertionResponse = yield* Effect.tryPromise(() =>
       runtime.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
-          body: JSON.stringify({ audience: 'inventory-stock' }),
+          body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision }),
           headers: new Headers({
             'content-type': 'application/json',
             cookie: authenticatedCookie,
@@ -1535,7 +1743,11 @@ it.live(
         }),
       ),
     );
-    const { principal: verifiedPrincipal } = yield* verifiedGatewayAssertion(assertionResponse, pair.publicKey);
+    const { principal: verifiedPrincipal } = yield* verifiedGatewayAssertion(
+      assertionResponse,
+      pair.publicKey,
+      testRevision,
+    );
     expect(verifiedPrincipal.authBindingId).toBe(secondAuthBindingId);
     expect(optionalText(verifiedPrincipal.authContextRef)).toMatch(/^better-auth-session:/u);
     expect(verifiedPrincipal.authMethod).toBe('session');

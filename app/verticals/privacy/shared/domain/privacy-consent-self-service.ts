@@ -1,5 +1,5 @@
 /* oxlint-disable perfectionist/sort-interfaces, perfectionist/sort-object-types, perfectionist/sort-objects -- These schemas and decision records follow the published cross-owner contract order. expires: 2027-03-31. */
-import { PrincipalRefSchema } from '@app/core-runtime';
+import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Effect, Schema } from 'effect';
 
 import { ConsentDecisionKindSchema } from './privacy-consent-decision.ts';

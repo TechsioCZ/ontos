@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface LegalBasisAssignmentsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type LegalBasisAssignmentsAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executeLegalBasisAssignmentsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: LegalBasisAssignmentsAuthorizedInvocation
 ) =>
   legalBasisAssignmentsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.legalBasisAssignments.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.legalBasisAssignments.execute({ payload })),
   );
 
 export const executeLegalBasisAssignments = (
   payload: LegalBasisAssignmentsRequest,
   ...[requestCorrelation, options = {}]: LegalBasisAssignmentsOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeLegalBasisAssignmentsWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeLegalBasisAssignmentsWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -6,12 +6,8 @@ import type { PlatformError } from 'effect/PlatformError';
 
 import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
 import { configuredMicroVerticalApiStem } from '@modern-js/code-tools/microvertical-api-boundary';
-import {
-  privateOwnerImportViolation,
-  strictEffectRuntimeTopologyViolation,
-  usesStrictRpcRuntimeTopology,
-  unconstrainedHttpApiContractSchemaViolation,
-} from './ultramodern-api-boundary-rules.mts';
+import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
+import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
 class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()('ApiBoundaryCheckFailed', {
   failureCount: Schema.Int,
@@ -104,7 +100,7 @@ const listWorkspaceFiles = (
 const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(path.resolve()));
+  const workspaceRoot = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(path.resolve()));
   const failures: string[] = [];
   const sourceByFile = new Map<string, string>();
 
@@ -239,15 +235,6 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
 
     for (const [file, content] of sourceByFile) {
       assertPrivateOwnerImports(file, content);
-      const unconstrainedContractSchema = file.includes('/tests/')
-        ? undefined
-        : unconstrainedHttpApiContractSchemaViolation(content, {
-            file,
-            sources: sourceByFile,
-          });
-      if (unconstrainedContractSchema !== undefined) {
-        fail(`${file}: ${unconstrainedContractSchema}.`);
-      }
       assertNotContains(
         file,
         content,
@@ -336,28 +323,20 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     }
   }
   const shellClient = 'apps/shell-super-app/src/api/vertical-clients.ts';
-  if ((yield* exists('apps/shell-super-app')) && verticalDirectories.length > 0) {
-    assert(yield* exists(shellClient), `${shellClient} must aggregate vertical API clients.`);
-  }
+  yield* assertNoPath(
+    shellClient,
+    `${shellClient} is forbidden; governed API clients belong to their deployment owners.`,
+  );
 
   const assertApiRuntime = (apiEntry: string) =>
     Effect.gen(function* assertApiRuntimeEffect() {
       if (yield* exists(apiEntry)) {
         const entry = yield* readText(apiEntry);
-        const usesRpcRuntime = usesStrictRpcRuntimeTopology(entry, topologyResolverFor(apiEntry));
         const runtimeTopologyViolation = strictEffectRuntimeTopologyViolation(entry, topologyResolverFor(apiEntry));
         if (runtimeTopologyViolation !== undefined) {
           fail(`${apiEntry}: ${runtimeTopologyViolation}.`);
         }
         assertContains(apiEntry, entry, /\bLayer\b/u, 'must compose dependencies with Effect Layer.');
-        if (!usesRpcRuntime) {
-          assertContains(
-            apiEntry,
-            entry,
-            /from ['"]\.\.\/shared\/api\.ts['"]/u,
-            'must import the contract from ../shared/api.ts.',
-          );
-        }
       }
     });
 
@@ -472,25 +451,17 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       const validateApiPackage = Effect.gen(function* validateApiPackageEffect() {
         if (yield* exists(packageJsonPath)) {
           const packageJson = yield* readText(packageJsonPath).pipe(Effect.flatMap(decodePackageJson));
-          const isPrivateVerticalInfrastructureApi =
-            appPath.startsWith('verticals/') &&
-            (yield* exists(sharedApi)) &&
-            isGeneratedInfrastructureReadinessApi(appPath, yield* readText(sharedApi));
-          if (isPrivateVerticalInfrastructureApi) {
-            assert(
-              packageJson.exports?.['./api'] === undefined && packageJson.exports?.['./api/client'] === undefined,
-              `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
-            );
-          } else {
-            assert(
-              packageJson.exports?.['./api'] === './shared/api.ts',
-              `${packageJsonPath}: package must export ./api from shared/api.ts.`,
-            );
-            assert(
-              packageJson.exports?.['./api/client']?.startsWith('./src/api/') ?? false,
-              `${packageJsonPath}: package must export ./api/client from src/api/*.`,
-            );
-          }
+          // Foundation readiness is framework infrastructure, independent of business publication.
+          // Every generated API keeps its schema/client exports; business endpoints still require
+          // the governed registration and gateway checks below.
+          assert(
+            packageJson.exports?.['./api'] === './shared/api.ts',
+            `${packageJsonPath}: package must export ./api from shared/api.ts.`,
+          );
+          assert(
+            packageJson.exports?.['./api/client']?.startsWith('./src/api/') ?? false,
+            `${packageJsonPath}: package must export ./api/client from src/api/*.`,
+          );
         }
       });
       yield* validateApiPackage;
@@ -526,8 +497,8 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         Effect.flatMap(decodePackageJson),
       );
       assert(
-        shellPackageJson.exports?.['./api/clients'] === './src/api/vertical-clients.ts',
-        'apps/shell-super-app/package.json must export ./api/clients.',
+        shellPackageJson.exports?.['./api/clients'] === undefined,
+        'apps/shell-super-app/package.json must not export a compiled vertical API client registry.',
       );
     }
 

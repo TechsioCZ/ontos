@@ -151,4 +151,4 @@ export const partyRegistryClient = {
   loadPartiesClient,
 } satisfies PartyRegistryClient;
 
-export { recoverPartyCreate } from './party-command-client.ts';
+export { recoverPartyCreate, recoverPartyCreateWithAuthorization } from './party-command-client.ts';

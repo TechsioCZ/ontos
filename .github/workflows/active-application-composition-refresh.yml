@@ -1,0 +1,336 @@
+name: Active Application Composition Refresh
+
+# Consumers stop trusting the published snapshot at validUntil, so each deployed environment re-observes its
+# live services and renews the same approved release well inside the validity window. The cadence and window live in
+# app/scripts/active-application-composition.mts (ACTIVE_APPLICATION_COMPOSITION_POLICY).
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # A refresh shares its environment's deploy lock (zerops-<environment>), so it never observes or publishes
+  # in the middle of a deploy. GitHub keeps one pending job per concurrency group and cancels the older
+  # pending one when another queues, so a refresh that queued behind a running deploy would cancel the
+  # deploy job pending after it. A deploy re-publishes the composition anyway, and validity outlasts
+  # three refresh intervals, so a refresh that finds a main deploy run in flight yields to it. This job
+  # sits outside the lock so it never queues there itself.
+  deploy-guard:
+    name: Yield the refresh to a main deploy in flight
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      stage-deploy-active: ${{ steps.active.outputs.stage }}
+      production-deploy-active: ${{ steps.active.outputs.production }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Find unfinished main deploy runs
+        id: active
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        # A push to main deploys stage; a dispatch deploys stage or production.
+        run: |
+          unfinished() {
+            gh run list --workflow ultramodern-workspace-gates.yml --branch main --event "$1" --limit 20 \
+              --json status --jq '[.[] | select(.status != "completed")] | length'
+          }
+          pushes="$(unfinished push)"
+          dispatches="$(unfinished workflow_dispatch)"
+          stage=false
+          production=false
+          if (( pushes + dispatches > 0 )); then
+            stage=true
+            echo "::notice title=Stage refresh skipped::A main deploy run is unfinished; it re-publishes the stage composition."
+          fi
+          if (( dispatches > 0 )); then
+            production=true
+            echo "::notice title=Production refresh skipped::A dispatched deploy run is unfinished and may target production; it re-publishes the composition."
+          fi
+          echo "stage=$stage" >>"$GITHUB_OUTPUT"
+          echo "production=$production" >>"$GITHUB_OUTPUT"
+
+  refresh-stage:
+    name: Re-observe and re-publish the stage Application Composition
+    needs: [deploy-guard]
+    if: needs.deploy-guard.outputs.stage-deploy-active == 'false'
+    runs-on: ubuntu-latest
+    # A refresh takes about two minutes and holds the stage deploy lock, so a stuck one must not hold it long.
+    timeout-minutes: 10
+    # Refreshing is not a deployment: without deployment: false the job would record a successful stage
+    # deployment for the schedule's main SHA, which the stage deploy would then treat as its diff base.
+    environment:
+      name: stage-edge
+      deployment: false
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      deployments: read
+    env:
+      # The publisher observes Zerops subdomains or, on the Cloudflare target, the Worker URLs, and
+      # renews the complete approved release without restarting any process.
+      DEPLOY_TARGET: cloudflare
+      OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        timeout-minutes: 5
+
+      # On the Cloudflare target the Workers are what the snapshot observes, and a failed edge rollout leaves
+      # the last successful stage-edge revision live even after a newer stage deployment succeeded.
+      - name: Resolve the last successful stage deployment
+        id: base
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deployment_environment=stage
+          if [[ "$DEPLOY_TARGET" == cloudflare ]]; then
+            deployment_environment=stage-edge
+          fi
+          mise exec -- pnpm deployment-base:resolve --environment "$deployment_environment"
+
+      # An OUTBOX_WORKER_MODE switch takes effect at the next stage deploy, which starts this mode's Outbox
+      # Workers and stops the other mode's. A pending mode switch is completed by the next deploy.
+      - name: Detect Outbox Workers that do not match the Outbox Worker mode
+        id: worker-drift
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: mise exec -- pnpm --silent active-composition:publish worker-mode-drift
+
+      - name: Leave the pending Outbox Worker mode switch to the stage deploy
+        if: steps.worker-drift.outputs.drift == 'true'
+        env:
+          MODE: ${{ env.OUTBOX_WORKER_MODE }}
+        run: >-
+          echo "::warning title=Refresh skipped::OUTBOX_WORKER_MODE is $MODE but the Outbox Workers still reflect
+          the other mode. Run the stage deploy to finish the switch; it re-publishes the composition."
+
+      # The publisher and topology of the deployed revision describe what stage actually runs. The clean drops
+      # main's install before the second one: mise-action hashes every **/mise*.toml-style path for its cache
+      # key, and walking main's node_modules (following its symlinks) took that hash 11 to 22 minutes.
+      - name: Preserve the workflow's native VPN action
+        if: steps.worker-drift.outputs.drift != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/composition-workflow-actions"
+          cp .github/actions/zerops-vpn/action.yml "$RUNNER_TEMP/composition-workflow-actions/zerops-vpn.yml"
+
+      - name: Check out the deployed revision
+        if: steps.worker-drift.outputs.drift != 'true'
+        env:
+          DEPLOYED_SHA: ${{ steps.base.outputs.base }}
+        run: |
+          git checkout --detach "$DEPLOYED_SHA"
+          git clean -ffdx
+          mkdir -p .github/actions/zerops-vpn
+          cp "$RUNNER_TEMP/composition-workflow-actions/zerops-vpn.yml" .github/actions/zerops-vpn/action.yml
+
+      - name: Install the deployed revision's app workspace
+        if: steps.worker-drift.outputs.drift != 'true'
+        uses: ./.github/actions/install-app
+        timeout-minutes: 5
+
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        if: steps.worker-drift.outputs.drift != 'true'
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Renew the complete approved Application Composition
+        if: steps.worker-drift.outputs.drift != 'true'
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: mise exec -- pnpm active-composition:publish refresh --environment stage
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+  # Production runs on Zerops, the only target outside stage, and publishes a snapshot of the same validity.
+  # A production that is not configured or has never deployed has no snapshot to refresh.
+  refresh-production:
+    name: Re-observe and re-publish the production Application Composition
+    needs: [deploy-guard]
+    if: needs.deploy-guard.outputs.production-deploy-active == 'false'
+    runs-on: ubuntu-latest
+    # It holds the production deploy lock, so it is bounded like the stage refresh.
+    timeout-minutes: 10
+    environment:
+      name: production
+      deployment: false
+    concurrency:
+      group: zerops-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      deployments: read
+    env:
+      DEPLOY_TARGET: zerops
+      # Production chooses its Outbox Worker mode like any environment; it runs `dedicated`.
+      OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Check the production Zerops project and token
+        id: configuration
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          if [[ -n "$ZEROPS_PROJECT_ID" && -n "$ZEROPS_TOKEN" ]]; then
+            echo 'configured=true' >>"$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >>"$GITHUB_OUTPUT"
+            echo '::notice title=Production not configured::Production has no Zerops project and token, so there is no snapshot to refresh.'
+          fi
+
+      - name: Checkout main
+        if: steps.configuration.outputs.configured == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the app workspace
+        if: steps.configuration.outputs.configured == 'true'
+        uses: ./.github/actions/install-app
+        timeout-minutes: 5
+
+      - name: Resolve the last successful production deployment
+        id: base
+        if: steps.configuration.outputs.configured == 'true'
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="$(mise exec -- pnpm --silent deployment-base:resolve --environment production --optional)"
+          if [[ -z "$base" ]]; then
+            echo '::notice title=Production not deployed::Production has no successful deployment, so there is no snapshot to refresh.'
+          fi
+
+      # A production OUTBOX_WORKER_MODE switch, like stage's, takes effect at the next production deploy.
+      - name: Detect Outbox Workers that do not match the Outbox Worker mode
+        id: worker-drift
+        if: steps.base.outputs.base != ''
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: mise exec -- pnpm --silent active-composition:publish worker-mode-drift
+
+      - name: Leave the pending Outbox Worker mode switch to the production deploy
+        if: steps.worker-drift.outputs.drift == 'true'
+        env:
+          MODE: ${{ env.OUTBOX_WORKER_MODE }}
+        run: >-
+          echo "::warning title=Refresh skipped::OUTBOX_WORKER_MODE is $MODE but the Outbox Workers still reflect
+          the other mode. Run the production deploy to finish the switch; it re-publishes the composition."
+
+      # The publisher and topology of the deployed revision describe what production actually runs. The clean
+      # drops main's install before the second one, as on stage.
+      - name: Preserve the workflow's native VPN action
+        if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/composition-workflow-actions"
+          cp .github/actions/zerops-vpn/action.yml "$RUNNER_TEMP/composition-workflow-actions/zerops-vpn.yml"
+
+      - name: Check out the deployed revision
+        if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
+        env:
+          DEPLOYED_SHA: ${{ steps.base.outputs.base }}
+        run: |
+          git checkout --detach "$DEPLOYED_SHA"
+          git clean -ffdx
+          mkdir -p .github/actions/zerops-vpn
+          cp "$RUNNER_TEMP/composition-workflow-actions/zerops-vpn.yml" .github/actions/zerops-vpn/action.yml
+
+      - name: Install the deployed revision's app workspace
+        if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
+        uses: ./.github/actions/install-app
+        timeout-minutes: 5
+
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Renew the complete approved Application Composition
+        if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: >-
+          mise exec -- pnpm active-composition:publish refresh
+          --environment production
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}

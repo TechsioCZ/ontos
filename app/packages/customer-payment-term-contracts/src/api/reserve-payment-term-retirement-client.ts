@@ -10,6 +10,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ReservePaymentTermRetirementClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
 }
@@ -32,19 +33,11 @@ export const executeReservePaymentTermRetirementWithAuthorization = (
           api: ReservePaymentTermRetirementApi,
           credential: Redacted.make(credential),
           defaultApiPrefix: '/commerce-customer-context-api',
+          idempotencyKey: options.idempotencyKey,
           requestCorrelation,
         },
         options,
-      ).pipe(
-        Effect.flatMap((client) =>
-          client.reservePaymentTermRetirement.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            params: {},
-            payload: encoded,
-            query: {},
-          }),
-        ),
-      ),
+      ).pipe(Effect.flatMap((client) => client.reservePaymentTermRetirement.execute({ payload: encoded }))),
     ),
   );
 
@@ -53,7 +46,11 @@ export const executeReservePaymentTermRetirement = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeReservePaymentTermRetirementWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeReservePaymentTermRetirementWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

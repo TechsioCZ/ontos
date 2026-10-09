@@ -35,10 +35,12 @@ export const actionSuccess = (value: JsonValue): TestActionOutcome => ({
 export const makeActionRuntimeDouble = (outcomes: readonly TestActionOutcome[]) => {
   let invocation = 0;
   const payloads: unknown[] = [];
+  const principals: unknown[] = [];
   const runtime: ActionRuntimeService = {
     resolveActionCommit: () => Effect.die('resolveActionCommit is not configured in this test'),
     runAction: (input) => {
       payloads.push(input.payload);
+      principals.push(input.principal);
       const outcome = outcomes[invocation];
       invocation += 1;
       if (outcome === undefined) {
@@ -59,5 +61,5 @@ export const makeActionRuntimeDouble = (outcomes: readonly TestActionOutcome[]) 
       return Effect.sync(() => Schema.decodeUnknownSync(input.registration.descriptor.resultSchema)(outcome.value));
     },
   };
-  return { invocationCount: () => invocation, payloads, runtime };
+  return { invocationCount: () => invocation, payloads, principals, runtime };
 };

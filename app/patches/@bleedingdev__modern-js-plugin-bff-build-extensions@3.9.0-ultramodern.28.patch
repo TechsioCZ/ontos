@@ -1,0 +1,265 @@
+diff --git a/dist/cjs/compile.js b/dist/cjs/compile.js
+index e75977310a8f9f741e42043fd2ad650ab2c2abe7..a2a14e5e2a29b8575e0762304d9f62ba032cb442 100644
+--- a/dist/cjs/compile.js
++++ b/dist/cjs/compile.js
+@@ -30,11 +30,12 @@ __webpack_require__.r(__webpack_exports__);
+ __webpack_require__.d(__webpack_exports__, {
+     registerBffCompilation: ()=>registerBffCompilation
+ });
++const effect_source_loader_namespaceObject = require("@modern-js/plugin-bff-extensions/effect-source-loader");
+ const external_server_global_vars_js_namespaceObject = require("./server-global-vars.js");
+ function registerBffCompilation(api) {
+     const serialized = new WeakMap();
+     api.onBeforeBffCompile((context)=>{
+-        serialized.set(context, (0, external_server_global_vars_js_namespaceObject.serializeServerGlobalVars)(api.getNormalizedConfig().source.globalVars));
++        serialized.set(context, (0, effect_source_loader_namespaceObject.serializeServerGlobalVars)(api.getNormalizedConfig().source.globalVars));
+     });
+     api.onAfterBffCompile(async (context)=>{
+         const globals = serialized.get(context);
+diff --git a/dist/cjs/server-global-vars.js b/dist/cjs/server-global-vars.js
+index b161ac3a1fd944bfe2560f95ab625449ad4f8501..6ec51edef9fc4fadec5e27073b503e755d382198 100644
+--- a/dist/cjs/server-global-vars.js
++++ b/dist/cjs/server-global-vars.js
+@@ -28,7 +28,6 @@ var __webpack_require__ = {};
+ var __webpack_exports__ = {};
+ __webpack_require__.r(__webpack_exports__);
+ __webpack_require__.d(__webpack_exports__, {
+-    serializeServerGlobalVars: ()=>serializeServerGlobalVars,
+     transformServerGlobalVars: ()=>transformServerGlobalVars
+ });
+ const utils_namespaceObject = require("@modern-js/utils");
+@@ -47,27 +46,6 @@ const collectJavaScriptFiles = (directory)=>Promise.resolve().then(()=>utils_nam
+                 absolutePath
+             ] : [];
+         })).then((nested)=>nested.flat()));
+-const serializeServerGlobalVars = (options)=>{
+-    const globalVars = (0, utils_namespaceObject.applyOptionsChain)({}, options, {
+-        env: 'server',
+-        target: 'node'
+-    });
+-    return Object.fromEntries(Object.entries(globalVars).map(([key, value])=>{
+-        let serialized;
+-        try {
+-            serialized = JSON.stringify(value);
+-        } catch (error) {
+-            throw new Error(`source.globalVars["${key}"] cannot be serialized exactly for BFF compilation.`, {
+-                cause: error
+-            });
+-        }
+-        if (void 0 === serialized) throw new Error(`source.globalVars["${key}"] cannot be serialized exactly for BFF compilation.`);
+-        return [
+-            key,
+-            serialized
+-        ];
+-    }));
+-};
+ const transformServerGlobalVars = (outputDirectories, globalVars)=>Promise.resolve().then(()=>{
+         if (0 === Object.keys(globalVars).length) return;
+         return Promise.all(outputDirectories.map((directory)=>utils_namespaceObject.fs.pathExists(directory).then((directoryExists)=>directoryExists ? directory : void 0))).then((existingDirectories)=>{
+@@ -102,10 +80,8 @@ const transformServerGlobalVars = (outputDirectories, globalVars)=>Promise.resol
+                     }))));
+         }).then(()=>void 0);
+     });
+-exports.serializeServerGlobalVars = __webpack_exports__.serializeServerGlobalVars;
+ exports.transformServerGlobalVars = __webpack_exports__.transformServerGlobalVars;
+ for(var __rspack_i in __webpack_exports__)if (-1 === [
+-    "serializeServerGlobalVars",
+     "transformServerGlobalVars"
+ ].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
+ Object.defineProperty(exports, '__esModule', {
+diff --git a/dist/esm/compile.mjs b/dist/esm/compile.mjs
+index 89196172cdccdc66ff2e590b07b5c5649f0850b1..20f4dec5880386c453a1607c7a3f44da39a6a8c4 100644
+--- a/dist/esm/compile.mjs
++++ b/dist/esm/compile.mjs
+@@ -1,4 +1,5 @@
+-import { serializeServerGlobalVars, transformServerGlobalVars } from "./server-global-vars.mjs";
++import { serializeServerGlobalVars } from "@modern-js/plugin-bff-extensions/effect-source-loader";
++import { transformServerGlobalVars } from "./server-global-vars.mjs";
+ function registerBffCompilation(api) {
+     const serialized = new WeakMap();
+     api.onBeforeBffCompile((context)=>{
+diff --git a/dist/esm/server-global-vars.mjs b/dist/esm/server-global-vars.mjs
+index a971ceb234a32acc4c6b19829109cb79ea6d1fa8..389c1d0c0b25401b87d0c7a86529e143f76659bf 100644
+--- a/dist/esm/server-global-vars.mjs
++++ b/dist/esm/server-global-vars.mjs
+@@ -1,4 +1,4 @@
+-import { applyOptionsChain, fs, upath } from "@modern-js/utils";
++import { fs, upath } from "@modern-js/utils";
+ import { transform } from "@swc/core";
+ const RELEASE_IDENTITY_GLOBAL_NAMES = [
+     'ULTRAMODERN_BUILD_MARKER',
+@@ -14,27 +14,6 @@ const collectJavaScriptFiles = (directory)=>Promise.resolve().then(()=>fs.readdi
+                 absolutePath
+             ] : [];
+         })).then((nested)=>nested.flat()));
+-const serializeServerGlobalVars = (options)=>{
+-    const globalVars = applyOptionsChain({}, options, {
+-        env: 'server',
+-        target: 'node'
+-    });
+-    return Object.fromEntries(Object.entries(globalVars).map(([key, value])=>{
+-        let serialized;
+-        try {
+-            serialized = JSON.stringify(value);
+-        } catch (error) {
+-            throw new Error(`source.globalVars["${key}"] cannot be serialized exactly for BFF compilation.`, {
+-                cause: error
+-            });
+-        }
+-        if (void 0 === serialized) throw new Error(`source.globalVars["${key}"] cannot be serialized exactly for BFF compilation.`);
+-        return [
+-            key,
+-            serialized
+-        ];
+-    }));
+-};
+ const transformServerGlobalVars = (outputDirectories, globalVars)=>Promise.resolve().then(()=>{
+         if (0 === Object.keys(globalVars).length) return;
+         return Promise.all(outputDirectories.map((directory)=>fs.pathExists(directory).then((directoryExists)=>directoryExists ? directory : void 0))).then((existingDirectories)=>{
+@@ -69,4 +48,4 @@ const transformServerGlobalVars = (outputDirectories, globalVars)=>Promise.resol
+                     }))));
+         }).then(()=>void 0);
+     });
+-export { serializeServerGlobalVars, transformServerGlobalVars };
++export { transformServerGlobalVars };
+diff --git a/dist/esm-node/compile.mjs b/dist/esm-node/compile.mjs
+index 4c652b30c7975a216ae7d9fe5cb4464ac589cf60..95458948595af56b38134680fe5e49023f9c84f9 100644
+--- a/dist/esm-node/compile.mjs
++++ b/dist/esm-node/compile.mjs
+@@ -1,5 +1,6 @@
+ import "node:module";
+-import { serializeServerGlobalVars, transformServerGlobalVars } from "./server-global-vars.mjs";
++import { serializeServerGlobalVars } from "@modern-js/plugin-bff-extensions/effect-source-loader";
++import { transformServerGlobalVars } from "./server-global-vars.mjs";
+ function registerBffCompilation(api) {
+     const serialized = new WeakMap();
+     api.onBeforeBffCompile((context)=>{
+diff --git a/dist/esm-node/server-global-vars.mjs b/dist/esm-node/server-global-vars.mjs
+index 554e7e54d8d9de379a932b6bceb61af3017daa91..6de96520d1bd1f6ccf45e46a6013ee21dd0bcaeb 100644
+--- a/dist/esm-node/server-global-vars.mjs
++++ b/dist/esm-node/server-global-vars.mjs
+@@ -1,5 +1,5 @@
+ import "node:module";
+-import { applyOptionsChain, fs, upath } from "@modern-js/utils";
++import { fs, upath } from "@modern-js/utils";
+ import { transform } from "@swc/core";
+ const RELEASE_IDENTITY_GLOBAL_NAMES = [
+     'ULTRAMODERN_BUILD_MARKER',
+@@ -15,27 +15,6 @@ const collectJavaScriptFiles = (directory)=>Promise.resolve().then(()=>fs.readdi
+                 absolutePath
+             ] : [];
+         })).then((nested)=>nested.flat()));
+-const serializeServerGlobalVars = (options)=>{
+-    const globalVars = applyOptionsChain({}, options, {
+-        env: 'server',
+-        target: 'node'
+-    });
+-    return Object.fromEntries(Object.entries(globalVars).map(([key, value])=>{
+-        let serialized;
+-        try {
+-            serialized = JSON.stringify(value);
+-        } catch (error) {
+-            throw new Error(`source.globalVars["${key}"] cannot be serialized exactly for BFF compilation.`, {
+-                cause: error
+-            });
+-        }
+-        if (void 0 === serialized) throw new Error(`source.globalVars["${key}"] cannot be serialized exactly for BFF compilation.`);
+-        return [
+-            key,
+-            serialized
+-        ];
+-    }));
+-};
+ const transformServerGlobalVars = (outputDirectories, globalVars)=>Promise.resolve().then(()=>{
+         if (0 === Object.keys(globalVars).length) return;
+         return Promise.all(outputDirectories.map((directory)=>fs.pathExists(directory).then((directoryExists)=>directoryExists ? directory : void 0))).then((existingDirectories)=>{
+@@ -70,4 +49,4 @@ const transformServerGlobalVars = (outputDirectories, globalVars)=>Promise.resol
+                     }))));
+         }).then(()=>void 0);
+     });
+-export { serializeServerGlobalVars, transformServerGlobalVars };
++export { transformServerGlobalVars };
+diff --git a/dist/types/server-global-vars.d.ts b/dist/types/server-global-vars.d.ts
+index 72b10afc8d6fe6fcb890d4605c2bd87c90e00f90..b4b5f18c3c832b49b83817d38c4142eabbccf6a9 100644
+--- a/dist/types/server-global-vars.d.ts
++++ b/dist/types/server-global-vars.d.ts
+@@ -1,6 +1,3 @@
+-import type { AppTools } from '@modern-js/app-tools';
+ type SerializedGlobalVars = Record<string, string>;
+-type ServerGlobalVarsOptions = NonNullable<NonNullable<AppTools['config']>['source']>['globalVars'];
+-export declare const serializeServerGlobalVars: (options: ServerGlobalVarsOptions) => SerializedGlobalVars;
+ export declare const transformServerGlobalVars: (outputDirectories: string[], globalVars: SerializedGlobalVars) => Promise<undefined>;
+ export {};
+diff --git a/src/compile.ts b/src/compile.ts
+index b263f572bcf6131935776adcb73dbe9edd54364c..8222891aac7dfd6696c159e39b50ca3e9eb7ab04 100644
+--- a/src/compile.ts
++++ b/src/compile.ts
+@@ -1,9 +1,7 @@
+ import type { AppTools, BffCompilation } from '@modern-js/app-tools';
+ import type { CLIPluginAPI } from '@modern-js/plugin';
+-import {
+-  serializeServerGlobalVars,
+-  transformServerGlobalVars,
+-} from './server-global-vars';
++import { serializeServerGlobalVars } from '@modern-js/plugin-bff-extensions/effect-source-loader';
++import { transformServerGlobalVars } from './server-global-vars';
+ 
+ export function registerBffCompilation(api: CLIPluginAPI<AppTools>) {
+   const serialized = new WeakMap<
+diff --git a/src/server-global-vars.ts b/src/server-global-vars.ts
+index 29b31d2f3e1b98e2a6dad84aa2c8ff3b523b5c2d..0ca182114be5b00c7ed06b39129a50d57d9aaa28 100644
+--- a/src/server-global-vars.ts
++++ b/src/server-global-vars.ts
+@@ -1,12 +1,7 @@
+-import type { AppTools } from '@modern-js/app-tools';
+-import type { RsbuildTarget } from '@modern-js/builder';
+-import { applyOptionsChain, fs, upath as path } from '@modern-js/utils';
++import { fs, upath as path } from '@modern-js/utils';
+ import { transform } from '@swc/core';
+ 
+ type SerializedGlobalVars = Record<string, string>;
+-type ServerGlobalVarsOptions = NonNullable<
+-  NonNullable<AppTools['config']>['source']
+->['globalVars'];
+ 
+ const RELEASE_IDENTITY_GLOBAL_NAMES = [
+   'ULTRAMODERN_BUILD_MARKER',
+@@ -29,38 +24,6 @@ const collectJavaScriptFiles = (directory: string): Promise<string[]> =>
+       ).then(nested => nested.flat()),
+     );
+ 
+-export const serializeServerGlobalVars = (
+-  options: ServerGlobalVarsOptions,
+-): SerializedGlobalVars => {
+-  const globalVars = applyOptionsChain<
+-    Record<string, unknown>,
+-    { env: string; target: RsbuildTarget }
+-  >({}, options, {
+-    env: 'server',
+-    target: 'node',
+-  });
+-
+-  return Object.fromEntries(
+-    Object.entries(globalVars).map(([key, value]) => {
+-      let serialized: string | undefined;
+-      try {
+-        serialized = JSON.stringify(value);
+-      } catch (error) {
+-        throw new Error(
+-          `source.globalVars["${key}"] cannot be serialized exactly for BFF compilation.`,
+-          { cause: error },
+-        );
+-      }
+-      if (serialized === undefined) {
+-        throw new Error(
+-          `source.globalVars["${key}"] cannot be serialized exactly for BFF compilation.`,
+-        );
+-      }
+-      return [key, serialized];
+-    }),
+-  );
+-};
+-
+ export const transformServerGlobalVars = (
+   outputDirectories: string[],
+   globalVars: SerializedGlobalVars,

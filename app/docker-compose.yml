@@ -29,6 +29,11 @@ services:
       - --datastore-engine=memory
       - --datastore-bootstrap-files=/bootstrap/bootstrap.yaml
       - --http-enabled=true
+      # One development certificate serves both listeners (scripts/local-spicedb-tls.mts).
+      - --grpc-tls-cert-path=/tls/cert.pem
+      - --grpc-tls-key-path=/tls/key.pem
+      - --http-tls-cert-path=/tls/cert.pem
+      - --http-tls-key-path=/tls/key.pem
     environment:
       SPICEDB_GRPC_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
     ports:
@@ -36,11 +41,14 @@ services:
       - '${SPICEDB_HTTP_PORT}:8443'
     volumes:
       - ./packages/core-runtime/spicedb/bootstrap.yaml:/bootstrap/bootstrap.yaml:ro
+      - ./.spicedb-tls:/tls:ro
     healthcheck:
       test:
         - CMD
         - /usr/local/bin/grpc_health_probe
         - -addr=localhost:50051
+        - -tls
+        - -tls-ca-cert=/tls/cert.pem
       interval: 5s
       timeout: 5s
       retries: 20

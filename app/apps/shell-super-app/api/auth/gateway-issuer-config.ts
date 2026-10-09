@@ -66,7 +66,7 @@ const HttpUrlSchema = Schema.URLFromString.check(
 const gatewayIssuerConfigSource = Config.all({
   issuer: Config.schema(Schema.Trim.check(Schema.isNonEmpty()), 'ONTOS_GATEWAY_ISSUER'),
   issuerUrl: Config.schema(HttpUrlSchema, 'ONTOS_GATEWAY_ISSUER'),
-  privateJwk: Config.redacted('ONTOS_GATEWAY_PRIVATE_JWK'),
+  privateJwk: Config.Redacted('ONTOS_GATEWAY_PRIVATE_JWK'),
 });
 
 const parseGatewayIssuerConfigFromProvider = Effect.fn('GatewayIssuerConfig.parseGatewayIssuerConfigFromProvider')(

@@ -1,3 +1,4 @@
+import { databaseRuntime } from '@app/core-runtime';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 
 import { loadConfigurationProvider } from './configuration-provider.ts';
@@ -57,9 +58,9 @@ const PostgreSqlUrlSchema = Schema.URLFromString.check(
 
 const authConfigSource = Config.all({
   baseUrl: Config.schema(HttpUrlSchema, 'BETTER_AUTH_URL'),
-  databaseUrl: Config.redacted('DATABASE_URL'),
-  nodeEnvironment: Config.string('NODE_ENV').pipe(Config.withDefault('')),
-  secret: Config.redacted('BETTER_AUTH_SECRET'),
+  databaseUrl: Config.Redacted('DATABASE_URL'),
+  nodeEnvironment: Config.String('NODE_ENV').pipe(Config.withDefault('')),
+  secret: Config.Redacted('BETTER_AUTH_SECRET'),
   supportUserIds: Config.schema(Schema.Trim, 'BETTER_AUTH_SUPPORT_USER_IDS').pipe(Config.withDefault('')),
   trustedOrigins: Config.schema(Schema.Trim, 'BETTER_AUTH_TRUSTED_ORIGINS').pipe(Config.withDefault('')),
 });
@@ -123,6 +124,14 @@ export interface LoadAuthConfigOptions {
 export const loadAuthConfig = (
   options: LoadAuthConfigOptions = {},
 ): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
-  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(Effect.flatMap(parseAuthConfigFromProvider));
+  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(
+    // A Worker's DATABASE_URL is its HYPERDRIVE binding; Node keeps the environment's.
+    Effect.flatMap((provider) =>
+      databaseRuntime
+        .runtimeDatabaseProvider(provider)
+        .pipe(Effect.catchTag('DatabaseConfigError', ({ reason }) => Effect.fail(new AuthConfigError({ reason })))),
+    ),
+    Effect.flatMap(parseAuthConfigFromProvider),
+  );
 
 export const AuthConfigLive = Layer.effect(AuthConfig, loadAuthConfig());

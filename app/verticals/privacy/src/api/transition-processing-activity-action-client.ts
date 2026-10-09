@@ -14,6 +14,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface TransitionProcessingActivityActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -37,7 +38,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: TransitionProcessingActivityActionApi, credential, defaultApiPrefix: '/privacy-api', requestCorrelation },
+    {
+      api: TransitionProcessingActivityActionApi,
+      credential,
+      defaultApiPrefix: '/privacy-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -48,12 +55,7 @@ export const executeTransitionProcessingActivityWithAuthorization = (
   Schema.encodeUnknownEffect(TransitionProcessingActivityPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.transitionProcessingActivityAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.transitionProcessingActivityAction.execute({ payload: encoded })),
       ),
     ),
   );
@@ -63,7 +65,11 @@ export const executeTransitionProcessingActivity = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeTransitionProcessingActivityWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeTransitionProcessingActivityWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

@@ -16,6 +16,7 @@ import {
 } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { parse as parseYaml } from 'yaml';
 
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -25,10 +26,11 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
-import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
-export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell']);
+export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell', 'worker']);
 export type DeploymentPhaseKind = typeof DeploymentPhaseKindSchema.Type;
 
 interface TopologyUnit {
@@ -48,6 +50,21 @@ interface DeploymentPhase {
   readonly stageSetup: string;
 }
 
+/** A delivery unit CI deploys to Cloudflare Workers, in dependency order. */
+export interface CloudflareDeployment {
+  readonly id: string;
+  readonly packageName: string;
+  readonly workerName: string;
+}
+
+/** A Worker placement retired; the edge deploy reports it, through the Shell's Wrangler, until deleted. */
+export interface CloudflareRetirement {
+  readonly packageName: string;
+  readonly workerName: string;
+}
+
+const CloudflareWorkerSchema = Schema.optional(Schema.Struct({ workerName: Schema.optional(Schema.String) }));
+
 const TopologyOwnerSchema = Schema.Struct({
   id: Schema.optional(Schema.String),
   package: Schema.optional(Schema.String),
@@ -58,6 +75,7 @@ const ReferenceTopologySchema = Schema.Struct({
   sharedPackages: Schema.optional(Schema.Array(TopologyOwnerSchema)),
   shell: Schema.optional(
     Schema.Struct({
+      cloudflare: CloudflareWorkerSchema,
       id: Schema.optional(Schema.String),
       package: Schema.optional(Schema.String),
       verticalRefs: Schema.optional(Schema.Array(Schema.String)),
@@ -66,6 +84,7 @@ const ReferenceTopologySchema = Schema.Struct({
   verticals: Schema.optional(
     Schema.Array(
       Schema.Struct({
+        cloudflare: CloudflareWorkerSchema,
         id: Schema.optional(Schema.String),
         moduleFederation: Schema.optional(
           Schema.Struct({
@@ -88,6 +107,44 @@ const OwnershipSchema = Schema.Struct({
 
 type Ownership = typeof OwnershipSchema.Type;
 
+// Which delivery units ship as Cloudflare Workers. The topology names each unit's Worker; placement
+// decides which of them CI deploys, so moving a unit to the edge is one reviewed topology change.
+// `buildEnvironment` is the non-secret configuration the placed units' Cloudflare builds read
+// (public URLs, Worker binding names, the Shell origin). Keeping it in the reviewed document makes
+// every change to it a topology change, which replans every unit, so no Worker keeps a stale build.
+const CLOUDFLARE_BUILD_VARIABLE_PATTERN = /^(?:MODERN|ULTRAMODERN|VERTICAL)_[A-Z0-9_]+$/u;
+// The deploy job sets these from the run itself; reviewed configuration must not override the
+// revision or environment a Worker build claims.
+// A Worker's name and its service-binding name are topology identity: the Shell binds each provider
+// by Worker name, and every consumer (the Shell's discovery, Commerce's routed fetch) calls the
+// topology binding name. An override would bind a Worker CI never deploys, or a name no caller uses.
+const WORKER_IDENTITY_OVERRIDE_PATTERN = /^VERTICAL_[A-Z0-9_]+_WORKER_(?:NAME|BINDING)$/u;
+const RESERVED_CLOUDFLARE_BUILD_VARIABLES: ReadonlySet<string> = new Set([
+  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+  'ULTRAMODERN_SOURCE_REVISION',
+]);
+const CloudflarePlacementSchema = Schema.Struct({
+  buildEnvironment: Schema.Record(Schema.String, Schema.String),
+  // Workers an earlier placement deployed and this one no longer names. The planner refuses a
+  // placement that drops a Worker without listing it. Retirement is two-phase: the Worker keeps
+  // running through the deploy that drops it, so rollbacks still find it, and each later successful
+  // edge deploy reports it until an operator deletes it.
+  retiredWorkers: Schema.Array(Schema.String),
+  schemaVersion: Schema.Literal(1),
+  units: Schema.Array(Schema.String),
+  // Placed units that call other placed units through Worker service bindings, by consumer. A
+  // binding must name a Worker that already exists, so each target deploys before its consumer.
+  unitServiceBindings: Schema.optionalKey(Schema.Record(Schema.String, Schema.Array(Schema.String))),
+});
+type CloudflarePlacement = typeof CloudflarePlacementSchema.Type;
+const CLOUDFLARE_PLACEMENT_PATH = 'topology/cloudflare-placement.json';
+// Repository-root inputs of the edge deploy itself: a change to how Workers are built or deployed
+// replans every placed unit, even when no unit's source changed.
+const CLOUDFLARE_DEPLOY_INPUT_PATHS: ReadonlySet<string> = new Set([
+  '.github/actions/install-app/action.yml',
+  '.github/workflows/ultramodern-workspace-gates.yml',
+]);
+
 const AuthorizationEnvironmentSchema = Schema.Literals(['development', 'production', 'stage']);
 const AuthorizationModeSchema = Schema.Literals(['enforced', 'report_only']);
 const AuthorizationCredentialSchema = Schema.Literals(['api_key', 'session']);
@@ -109,22 +166,36 @@ export interface DeploymentImpactPlan {
   readonly authorization?: {
     readonly environment: 'development' | 'production' | 'stage';
     readonly mode: 'enforced' | 'report_only';
-    readonly status: 'observing' | 'ready';
+    /**
+     * `observing`: report-only window. `ready`: enforced with matching promotion evidence.
+     * `enforced`: a non-production environment enforcing with an empty compatibility baseline, so no
+     * allowance is withdrawn and there is nothing for promotion evidence to prove.
+     */
+    readonly status: 'enforced' | 'observing' | 'ready';
   };
   readonly changedPaths: readonly string[];
   readonly comparison: {
     readonly baseRevision?: string;
     readonly headRevision?: string;
     readonly mode: 'diff' | 'full';
-    readonly reason?: string;
   };
   readonly phases: readonly DeploymentPhase[];
   readonly schemaVersion: 1;
   readonly units: {
+    readonly cloudflare: readonly CloudflareDeployment[];
+    readonly cloudflareRetirements: readonly CloudflareRetirement[];
     readonly migrator: boolean;
+    /** Zerops providers in plan order, each vertical's outbox worker right after its owner. */
     readonly providers: readonly string[];
     readonly shell: boolean;
     readonly spicedb: boolean;
+    /** The other Outbox Worker mode's setups to stop once this plan deploys this mode's workers. */
+    readonly stoppedWorkers: readonly string[];
+    /**
+     * The outbox workers among `providers`. They run on Zerops whatever the deploy target, because
+     * they drain PostgreSQL outboxes and are no edge unit; the Outbox Worker mode chooses which.
+     */
+    readonly workers: readonly string[];
   };
 }
 
@@ -133,16 +204,28 @@ export interface PlanDeploymentImpactOptions {
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
   readonly headRevision?: string;
+  /** Dedicated per-owner worker services or the one Outbox Worker host. Defaults to `dedicated`. */
+  readonly outboxWorkerMode?: OutboxWorkerMode;
+  /**
+   * The last successful edge deployment, for retirement checks. Defaults to `baseRevision`; a full
+   * plan passes it on its own so removals are still reconciled.
+   */
+  readonly placementBaseRevision?: string;
+  /**
+   * The workers do not match the Outbox Worker mode, so the mode changed since its workers last deployed.
+   * The plan deploys every worker of this mode, whatever the diff impacts, and stops the other mode's.
+   */
+  readonly reconcileWorkers?: boolean;
   readonly rootDirectory?: string;
 }
 
 export interface AuthorizationPromotionGateInput {
   readonly environment: 'development' | 'production' | 'stage';
-  readonly impact?: AuthorizationImpactReport;
+  readonly impact?: AuthorizationImpactReport | undefined;
   readonly inventory: ProtectedEntrypointInventory;
-  readonly negativeSmoke?: AuthorizationNegativeSmokeEvidence;
+  readonly negativeSmoke?: AuthorizationNegativeSmokeEvidence | undefined;
   readonly nowEpochMs: number;
-  readonly readiness?: AuthorizationReadinessEvidence;
+  readonly readiness?: AuthorizationReadinessEvidence | undefined;
   readonly rollout: AuthorizationRolloutContract;
 }
 
@@ -165,6 +248,12 @@ const InventoryAuthorizationSchema = Schema.Union([
 ]);
 
 const ProtectedEntrypointInventorySchema = Schema.Struct({
+  businessPermissions: Schema.Array(
+    Schema.Struct({
+      key: Schema.String,
+      owner: Schema.String,
+    }),
+  ),
   entries: Schema.Array(
     Schema.Struct({
       authorization: InventoryAuthorizationSchema,
@@ -175,7 +264,7 @@ const ProtectedEntrypointInventorySchema = Schema.Struct({
     }),
   ),
   inventoryHash: Schema.String,
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literal(2),
   sourceRevision: Schema.String,
 });
 
@@ -274,7 +363,7 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     Schema.Struct({
       environment: AuthorizationEnvironmentSchema,
       mode: AuthorizationModeSchema,
-      status: Schema.Literals(['observing', 'ready']),
+      status: Schema.Literals(['enforced', 'observing', 'ready']),
     }),
   ),
   changedPaths: Schema.Array(Schema.String),
@@ -282,15 +371,20 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     baseRevision: Schema.optional(Schema.String),
     headRevision: Schema.optional(Schema.String),
     mode: Schema.Literals(['diff', 'full']),
-    reason: Schema.optional(Schema.String),
   }),
   phases: Schema.Array(DeploymentPhaseSchema),
   schemaVersion: Schema.Literal(1),
   units: Schema.Struct({
+    cloudflare: Schema.Array(
+      Schema.Struct({ id: Schema.String, packageName: Schema.String, workerName: Schema.String }),
+    ),
+    cloudflareRetirements: Schema.Array(Schema.Struct({ packageName: Schema.String, workerName: Schema.String })),
     migrator: Schema.Boolean,
     providers: Schema.Array(Schema.String),
     shell: Schema.Boolean,
     spicedb: Schema.Boolean,
+    stoppedWorkers: Schema.Array(Schema.String),
+    workers: Schema.Array(Schema.String),
   }),
 });
 
@@ -372,6 +466,19 @@ export const validateAuthorizationPromotionGate = (
       status: 'observing',
     };
   }
+  if (
+    input.environment !== 'production' &&
+    rollout.compatibilityEligibleEntrypoints.length === 0 &&
+    input.impact === undefined &&
+    input.negativeSmoke === undefined &&
+    input.readiness === undefined
+  ) {
+    return {
+      environment: input.environment,
+      mode: rollout.mode,
+      status: 'enforced',
+    };
+  }
   if (!authorizationEvidenceMatches(input, requireAuthorizationEvidence(input))) {
     fail('authorization promotion evidence is missing, stale, mismatched, or unresolved');
   }
@@ -398,6 +505,8 @@ const INFRASTRUCTURE_PHASES = {
 } as const;
 
 const GIT_EXECUTABLE = '/usr/bin/git';
+const PACKAGE_MANIFEST = 'package.json';
+const WORKSPACE_MANIFEST = 'pnpm-workspace.yaml';
 
 const readJson = <DocumentSchema extends Schema.ConstraintDecoder<unknown>>(schema: DocumentSchema, filePath: string) =>
   Effect.gen(function* readJsonEffect() {
@@ -643,6 +752,245 @@ const buildTopologyUnits = (
   return units;
 };
 
+const cloudflareWorkerNames = (topology: ReferenceTopology): ReadonlyMap<string, string> =>
+  new Map(
+    [topology.shell, ...(topology.verticals ?? [])].flatMap((unit) =>
+      unit?.id === undefined || unit.cloudflare?.workerName === undefined
+        ? []
+        : [[unit.id, unit.cloudflare.workerName] as const],
+    ),
+  );
+
+// Only build variables reach the Cloudflare builds; credentials stay out of the reviewed document.
+const validateCloudflareBuildEnvironment = (buildEnvironment: Readonly<Record<string, string>>): void => {
+  for (const key of Object.keys(buildEnvironment)) {
+    if (!CLOUDFLARE_BUILD_VARIABLE_PATTERN.test(key)) {
+      fail(
+        `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment key "${key}" must be a MODERN_, ULTRAMODERN_ or VERTICAL_ build variable`,
+      );
+    }
+    if (WORKER_IDENTITY_OVERRIDE_PATTERN.test(key)) {
+      fail(
+        `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment must not set "${key}"; a Worker's name and service binding are its topology cloudflare.workerName and workerDispatch.serviceBinding`,
+      );
+    }
+    if (RESERVED_CLOUDFLARE_BUILD_VARIABLES.has(key)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment must not set "${key}"; the deploy job sets it from the run`);
+    }
+  }
+};
+
+const placedWorkerNames = (units: readonly string[], topology: ReferenceTopology): ReadonlySet<string> => {
+  const workerNames = cloudflareWorkerNames(topology);
+  return new Set(units.flatMap((id) => workerNames.get(id) ?? []));
+};
+
+/**
+ * Workers placement retires. A Worker placed or retired at the last edge deployment and not placed
+ * now must be listed in `retiredWorkers`, so a removal or rename never leaves the old Worker
+ * serving unreported. The list is a ledger: entries are never removed.
+ */
+const planCloudflareRetirements = (
+  placement: CloudflarePlacement,
+  topology: ReferenceTopology,
+  basePlacedWorkers: ReadonlySet<string>,
+  shellPackageName: string,
+): readonly CloudflareRetirement[] => {
+  const placedWorkers = placedWorkerNames(placement.units, topology);
+  const retired = new Set(placement.retiredWorkers);
+  for (const workerName of retired) {
+    if (placedWorkers.has(workerName)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} retires "${workerName}", which a placed unit still deploys`);
+    }
+  }
+  for (const workerName of basePlacedWorkers) {
+    if (!placedWorkers.has(workerName) && !retired.has(workerName)) {
+      fail(
+        `${CLOUDFLARE_PLACEMENT_PATH} no longer places or retires Worker "${workerName}"; keep it in retiredWorkers`,
+      );
+    }
+  }
+  return EffectArray.sort([...retired], Order.String).map((workerName) => ({
+    packageName: shellPackageName,
+    workerName,
+  }));
+};
+
+/**
+ * Orders placed providers so every service-binding target deploys before the unit that binds it,
+ * keeping the topology order otherwise.
+ */
+const orderByServiceBindings = (
+  providers: readonly TopologyUnit[],
+  unitServiceBindings: Readonly<Record<string, readonly string[]>>,
+): readonly TopologyUnit[] => {
+  const byId = new Map(providers.map((unit) => [unit.id, unit]));
+  const ordered: TopologyUnit[] = [];
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (unit: TopologyUnit): void => {
+    if (visited.has(unit.id)) {
+      return;
+    }
+    if (visiting.has(unit.id)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} unitServiceBindings contain a cycle at "${unit.id}"`);
+    }
+    visiting.add(unit.id);
+    for (const target of unitServiceBindings[unit.id] ?? []) {
+      const targetUnit = byId.get(target);
+      if (targetUnit !== undefined) {
+        visit(targetUnit);
+      }
+    }
+    visiting.delete(unit.id);
+    visited.add(unit.id);
+    ordered.push(unit);
+  };
+  for (const unit of providers) {
+    visit(unit);
+  }
+  return ordered;
+};
+
+const validateUnitServiceBindings = (
+  unitServiceBindings: Readonly<Record<string, readonly string[]>>,
+  placed: ReadonlySet<string>,
+  orderedUnits: readonly TopologyUnit[],
+): void => {
+  const kinds = new Map(orderedUnits.map((unit) => [unit.id, unit.kind]));
+  for (const [consumer, targets] of Object.entries(unitServiceBindings)) {
+    if (!placed.has(consumer) || kinds.get(consumer) !== 'provider') {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} unitServiceBindings names "${consumer}", which is not a placed vertical`);
+    }
+    for (const target of targets) {
+      if (target === consumer || !placed.has(target) || kinds.get(target) !== 'provider') {
+        fail(
+          `${CLOUDFLARE_PLACEMENT_PATH} unitServiceBindings binds "${consumer}" to "${target}", which is not another placed vertical`,
+        );
+      }
+    }
+  }
+};
+
+const planCloudflareDeployments = (
+  { units: placement, unitServiceBindings = {} }: Pick<CloudflarePlacement, 'unitServiceBindings' | 'units'>,
+  workerNames: ReadonlyMap<string, string>,
+  orderedUnits: readonly TopologyUnit[],
+  impacted: ReadonlySet<string>,
+  changedPaths: readonly string[],
+): readonly CloudflareDeployment[] => {
+  const deployInputChanged = changedPaths.some((changedPath) => CLOUDFLARE_DEPLOY_INPUT_PATHS.has(changedPath));
+  const unitIds = new Set(orderedUnits.map((unit) => unit.id));
+  const placed = new Set<string>();
+  for (const id of placement) {
+    if (placed.has(id)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${id}" more than once`);
+    }
+    if (!unitIds.has(id)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${id}", which is not a topology delivery unit`);
+    }
+    if (!workerNames.has(id)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${id}", whose topology entry names no Cloudflare workerName`);
+    }
+    placed.add(id);
+  }
+  // The Shell Worker binds every vertical Worker as a service, so a placed Shell needs every
+  // vertical placed: retiring one would leave the Shell bound to a Worker nobody deploys.
+  const shellUnit = orderedUnits.find((unit) => unit.kind === 'shell');
+  if (shellUnit !== undefined && placed.has(shellUnit.id)) {
+    for (const unit of orderedUnits) {
+      if (unit.kind === 'provider' && !placed.has(unit.id)) {
+        fail(`${CLOUDFLARE_PLACEMENT_PATH} places the Shell, which binds every vertical, but not "${unit.id}"`);
+      }
+    }
+  }
+  // Two placed units under one Worker name would overwrite each other and be proven and restored
+  // as one resource.
+  const placedByWorker = new Map<string, string>();
+  for (const id of placed) {
+    const workerName = requireString(workerNames.get(id), `topology ${id} cloudflare.workerName`);
+    const other = placedByWorker.get(workerName);
+    if (other !== undefined) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${other}" and "${id}" under the same Worker "${workerName}"`);
+    }
+    placedByWorker.set(workerName, id);
+  }
+  validateUnitServiceBindings(unitServiceBindings, placed, orderedUnits);
+  // The Shell Worker binds every vertical Worker as a service, beyond its Module Federation
+  // remotes, so its targets must exist first: providers deploy before the Shell, and a provider
+  // another provider binds deploys before it.
+  const planned = orderedUnits.filter((unit) => placed.has(unit.id) && (deployInputChanged || impacted.has(unit.id)));
+  return [
+    ...orderByServiceBindings(
+      planned.filter((unit) => unit.kind === 'provider'),
+      unitServiceBindings,
+    ),
+    ...planned.filter((unit) => unit.kind === 'shell'),
+  ].map((unit) => ({
+    id: unit.id,
+    packageName: unit.packageName,
+    workerName: requireString(workerNames.get(unit.id), `topology ${unit.id} cloudflare.workerName`),
+  }));
+};
+
+const WORKSPACE_GLOB_PATTERN = /^(?<directory>[\w.-]+(?:\/[\w.-]+)*)\/\*$/u;
+
+const WorkspaceManifestSchema = Schema.Struct({ packages: Schema.NonEmptyArray(Schema.String) });
+
+const parseWorkspaceGlobs = (workspaceSource: string) =>
+  Schema.decodeUnknownEffect(WorkspaceManifestSchema)(parseYaml(workspaceSource)).pipe(
+    Effect.map(({ packages }) => packages),
+    Effect.mapError(
+      () =>
+        new DeploymentImpactPlanningError({
+          message: 'Deployment impact planning failed: pnpm-workspace.yaml must declare a non-empty "packages" list',
+        }),
+    ),
+  );
+
+const listWorkspaceProjects = (rootDirectory: string, globs: readonly string[]) =>
+  Effect.gen(function* listWorkspaceProjectsEffect() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const projects: string[] = [];
+    for (const glob of globs) {
+      const directory = WORKSPACE_GLOB_PATTERN.exec(glob)?.groups?.directory;
+      if (directory === undefined) {
+        return fail(
+          `pnpm-workspace.yaml glob "${glob}" is unsupported; declare workspace projects with "<directory>/*" globs`,
+        );
+      }
+      const absoluteDirectory = pathService.join(rootDirectory, directory);
+      if (!(yield* fileSystem.exists(absoluteDirectory))) {
+        continue;
+      }
+      for (const entry of yield* fileSystem.readDirectory(absoluteDirectory)) {
+        if (yield* fileSystem.exists(pathService.join(absoluteDirectory, entry, PACKAGE_MANIFEST))) {
+          projects.push(`${directory}/${entry}`);
+        }
+      }
+    }
+    return EffectArray.sort(projects, Order.String);
+  });
+
+const validateWorkspaceCompleteness = (
+  workspaceProjects: readonly string[],
+  units: readonly TopologyUnit[],
+  sharedPackages: readonly TopologyOwner[],
+): void => {
+  const declaredPaths = new Set([
+    ...units.map((unit) => unit.path),
+    ...sharedPackages.flatMap((sharedPackage) => (sharedPackage.path === undefined ? [] : [sharedPackage.path])),
+  ]);
+  for (const project of workspaceProjects) {
+    if (!declaredPaths.has(project)) {
+      fail(
+        `workspace project "${project}" is not declared in topology; add it to reference-topology.json sharedPackages and topology/ownership.json owners`,
+      );
+    }
+  }
+};
+
 const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => {
   const unitsById = new Map(units.map((unit) => [unit.id, unit]));
   const ordered: TopologyUnit[] = [];
@@ -673,47 +1021,100 @@ const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => 
   return ordered;
 };
 
-const invalidBaseReason = (rootDirectory: string, baseRevision: string | undefined, headRevision: string) =>
-  Effect.gen(function* invalidBaseReasonEffect() {
-    if (baseRevision === undefined || baseRevision.length === 0 || /^0+$/u.test(baseRevision)) {
-      return 'comparison base is unavailable or all-zero';
-    }
+export const FULL_PLAN_SEED_INSTRUCTION =
+  'plan the whole topology once instead: dispatch "Ultramodern Workspace Gates and Main-to-Stage Deploy" on main with full=true (gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true)';
+
+const gitSucceeds = (rootDirectory: string, args: readonly string[]) =>
+  Effect.gen(function* gitSucceedsEffect() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const revisionExists = yield* spawner
-      .exitCode(
-        ChildProcess.make(GIT_EXECUTABLE, ['cat-file', '-e', `${baseRevision}^{commit}`], {
-          cwd: rootDirectory,
-          stderr: 'ignore',
-          stdout: 'ignore',
-        }),
-      )
+    return yield* spawner
+      .exitCode(ChildProcess.make(GIT_EXECUTABLE, args, { cwd: rootDirectory, stderr: 'ignore', stdout: 'ignore' }))
       .pipe(
         Effect.map((exitCode) => exitCode === 0),
         Effect.catch(() => Effect.succeed(false)),
       );
-    if (!revisionExists) {
-      return `comparison base "${baseRevision}" is unavailable`;
+  });
+
+const requireComparableBase = (rootDirectory: string, baseRevision: string, headRevision: string) =>
+  Effect.gen(function* requireComparableBaseEffect() {
+    if (!(yield* gitSucceeds(rootDirectory, ['cat-file', '-e', `${baseRevision}^{commit}`]))) {
+      return fail(`comparison base "${baseRevision}" is not a commit in this checkout; ${FULL_PLAN_SEED_INSTRUCTION}`);
     }
-    const isAncestor = yield* spawner
-      .exitCode(
-        ChildProcess.make(GIT_EXECUTABLE, ['merge-base', '--is-ancestor', baseRevision, headRevision], {
-          cwd: rootDirectory,
-          stderr: 'ignore',
-          stdout: 'ignore',
-        }),
-      )
-      .pipe(
-        Effect.map((exitCode) => exitCode === 0),
-        Effect.catch(() => Effect.succeed(false)),
+    if (!(yield* gitSucceeds(rootDirectory, ['merge-base', '--is-ancestor', baseRevision, headRevision]))) {
+      return fail(
+        `comparison base "${baseRevision}" is not an ancestor of "${headRevision}" (history was rewritten); ${FULL_PLAN_SEED_INSTRUCTION}`,
       );
-    if (!isAncestor) {
-      return `comparison base "${baseRevision}" is not an ancestor of "${headRevision}"`;
     }
     return yield* Effect.undefined;
   });
 
+/** A JSON document at a revision, or none when the revision has no such file. */
+const readJsonAtRevision = <DocumentSchema extends Schema.ConstraintDecoder<unknown>>(
+  schema: DocumentSchema,
+  rootDirectory: string,
+  revision: string,
+  relativePath: string,
+) =>
+  Effect.gen(function* readJsonAtRevisionEffect() {
+    const objectName = `${revision}:./${relativePath}`;
+    if (!(yield* gitSucceeds(rootDirectory, ['cat-file', '-e', objectName]))) {
+      return Option.none();
+    }
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const source = yield* spawner.string(
+      ChildProcess.make(GIT_EXECUTABLE, ['show', objectName], { cwd: rootDirectory }),
+    );
+    return Option.some(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(source));
+  });
+
+// Only the units, their topology Worker names and the retirement ledger matter for the base; an older
+// placement document predating `buildEnvironment` or `retiredWorkers` still names what it deployed.
+const BasePlacementSchema = Schema.Struct({
+  retiredWorkers: Schema.optional(Schema.Array(Schema.String)),
+  units: Schema.Array(Schema.String),
+});
+
+const basePlacedWorkerNames = (rootDirectory: string, baseRevision: string | undefined) =>
+  Effect.gen(function* basePlacedWorkerNamesEffect() {
+    if (baseRevision === undefined) {
+      return new Set<string>();
+    }
+    if (!(yield* gitSucceeds(rootDirectory, ['cat-file', '-e', `${baseRevision}^{commit}`]))) {
+      return fail(
+        `placement base "${baseRevision}" is not a commit in this checkout; retired Workers cannot be checked`,
+      );
+    }
+    const placement = yield* readJsonAtRevision(
+      BasePlacementSchema,
+      rootDirectory,
+      baseRevision,
+      CLOUDFLARE_PLACEMENT_PATH,
+    );
+    const topology = yield* readJsonAtRevision(
+      ReferenceTopologySchema,
+      rootDirectory,
+      baseRevision,
+      'topology/reference-topology.json',
+    );
+    // A base before edge placement existed deployed no Worker. A placement without its topology
+    // cannot name its Workers, so it fails instead of hiding a dropped Worker.
+    if (Option.isNone(placement)) {
+      return new Set<string>();
+    }
+    if (Option.isNone(topology)) {
+      return fail(`placement base "${baseRevision}" has ${CLOUDFLARE_PLACEMENT_PATH} but no reference topology`);
+    }
+    // Retired Workers stay in the ledger: CI cannot see an operator's deletion, so dropping an entry
+    // would silently stop reporting a Worker that may still run.
+    return new Set([
+      ...placedWorkerNames(placement.value.units, topology.value),
+      ...(placement.value.retiredWorkers ?? []),
+    ]);
+  });
+
 const changedPathsFromGit = (rootDirectory: string, baseRevision: string, headRevision: string) =>
   Effect.gen(function* changedPathsFromGitEffect() {
+    yield* requireComparableBase(rootDirectory, baseRevision, headRevision);
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const output = yield* spawner.string(
       ChildProcess.make(GIT_EXECUTABLE, ['diff', '--name-only', '--no-renames', '-z', baseRevision, headRevision], {
@@ -735,7 +1136,7 @@ const isMigrationChange = (changedPath: string): boolean =>
 const isPublicContractChange = (ownerPath: string, changedPath: string): boolean => {
   const relativePath = changedPath.slice(ownerPath.length + 1);
   return (
-    relativePath === 'package.json' ||
+    relativePath === PACKAGE_MANIFEST ||
     relativePath === 'vertical.manifest.ts' ||
     relativePath === 'module-federation.config.ts' ||
     relativePath === 'backend-federation.config.ts' ||
@@ -748,7 +1149,8 @@ const isSpiceDbChange = (changedPath: string): boolean =>
   changedPath.startsWith('packages/core-runtime/src/permissions/') ||
   changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts' ||
   changedPath === 'scripts/postgres/bootstrap-spicedb-database.mts' ||
-  changedPath === 'scripts/run-zerops-spicedb.sh';
+  changedPath === 'scripts/run-zerops-spicedb.sh' ||
+  changedPath === 'scripts/spicedb-datastore-uri.sh';
 
 const isAuthorizationRolloutChange = (changedPath: string): boolean =>
   changedPath.startsWith('packages/core-runtime/src/authorization/') ||
@@ -760,20 +1162,57 @@ const isAuthorizationRolloutChange = (changedPath: string): boolean =>
   changedPath === 'scripts/report-fail-closed-authorization-impact.mts' ||
   changedPath === 'topology/authorization-rollout.json';
 
-const CONSERVATIVE_FULL_DEPLOY_PATHS = new Set([
+/**
+ * Root-level inputs outside every owned delivery unit whose change reaches every build: the
+ * workspace toolchain and lockfile, the Zerops materializers, and the root files unit builds
+ * consume (the shared Module Federation config, the base tsconfig, and the module-contract
+ * generator with its imports). A guard test derives the build-input closure from the units' build
+ * configs so this list cannot fall behind them.
+ */
+export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   '.mise.toml',
-  'package.json',
+  'module-federation.shared.ts',
+  'oxfmt.config.ts',
+  PACKAGE_MANIFEST,
   'pnpm-lock.yaml',
-  'pnpm-workspace.yaml',
+  'scripts/generate-ontos-module-contract.mts',
+  'scripts/generate-ontos-shell-runtime-contract.mts',
+  'scripts/application-release-intent.mts',
+  'scripts/application-composition-authority-publication.mts',
+  'scripts/immutable-application-release.mts',
+  'scripts/immutable-backend-package.mts',
+  'scripts/immutable-shell-release.mts',
+  'scripts/active-application-composition.mts',
+  'scripts/configure-runtime-composition-source.mts',
+  'scripts/initial-composition-cutover-provider.mts',
+  'scripts/initial-composition-cutover.mts',
+  'scripts/observe-application-composition-backend.mts',
+  'scripts/publish-active-application-composition.mts',
+  'scripts/zerops-public-api-error.mts',
+  'scripts/zerops-public-api.mts',
+  'scripts/ops/ops-shell.mts',
+  'scripts/ops/ops-command-error.mts',
+  'scripts/scaffolding-runtime.mts',
+  'scripts/scaffolding/shared.mts',
+  'tsconfig.base.json',
+  WORKSPACE_MANIFEST,
+  // The planner decides what every other input impacts: after a repair to one of its rules, the
+  // units the old rule skipped must deploy too.
+  'scripts/plan-deployment-impact.mts',
   'scripts/install-zerops-node.sh',
+  'scripts/verify-zerops-workspace-install.mts',
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
+  'scripts/materialize-zerops-environment.mts',
   'scripts/materialize-zerops-runtime.mjs',
+  'scripts/locked-registry-overrides.mjs',
   'scripts/outbox-worker-delivery.mjs',
+  OUTBOX_WORKER_HOST.entry,
   'zerops.yaml',
 ]);
 const isConservativeFullDeployChange = (changedPath: string): boolean =>
-  CONSERVATIVE_FULL_DEPLOY_PATHS.has(changedPath) || changedPath.startsWith('topology/');
+  CONSERVATIVE_FULL_DEPLOY_PATHS.has(changedPath) ||
+  (changedPath.startsWith('topology/') && changedPath !== 'topology/application-release-intent.json');
 
 const toPhase = (unit: TopologyUnit): DeploymentPhase => ({
   id: unit.id,
@@ -783,22 +1222,12 @@ const toPhase = (unit: TopologyUnit): DeploymentPhase => ({
 });
 
 const makeComparison = (
-  options: PlanDeploymentImpactOptions,
+  baseRevision: string | undefined,
   headRevision: string,
-  fallbackReason: string | undefined,
+  fullDeploy: boolean,
 ): DeploymentImpactPlan['comparison'] => {
-  const mode = fallbackReason === undefined ? 'diff' : 'full';
-  if (options.baseRevision === undefined) {
-    return fallbackReason === undefined ? { headRevision, mode } : { headRevision, mode, reason: fallbackReason };
-  }
-  return fallbackReason === undefined
-    ? { baseRevision: options.baseRevision, headRevision, mode }
-    : {
-        baseRevision: options.baseRevision,
-        headRevision,
-        mode,
-        reason: fallbackReason,
-      };
+  const mode = fullDeploy ? 'full' : 'diff';
+  return baseRevision === undefined ? { headRevision, mode } : { baseRevision, headRevision, mode };
 };
 
 interface DeploymentImpactState {
@@ -912,22 +1341,15 @@ const deriveDeploymentImpact = (
 const deploymentComparison = (options: PlanDeploymentImpactOptions, rootDirectory: string) =>
   Effect.gen(function* deploymentComparisonEffect() {
     const headRevision = options.headRevision ?? 'HEAD';
-    const fallbackReason =
-      options.changedPaths === undefined
-        ? yield* invalidBaseReason(rootDirectory, options.baseRevision, headRevision)
-        : undefined;
-    const fullDeploy = fallbackReason !== undefined;
+    const { baseRevision } = options;
+    if (options.changedPaths === undefined && baseRevision === undefined) {
+      return { baseRevision, changedPaths: [], fullDeploy: true, headRevision };
+    }
     const comparedPaths =
       options.changedPaths ??
-      (fullDeploy
-        ? []
-        : yield* changedPathsFromGit(
-            rootDirectory,
-            requireString(options.baseRevision, 'base revision'),
-            headRevision,
-          ));
+      (yield* changedPathsFromGit(rootDirectory, requireString(baseRevision, 'base revision'), headRevision));
     const changedPaths = EffectArray.sort([...new Set(comparedPaths.map(normalizeChangedPath))], Order.String);
-    return { changedPaths, fallbackReason, fullDeploy, headRevision };
+    return { baseRevision, changedPaths, fullDeploy: false, headRevision };
   });
 
 const validateWorkerStageSetups = (
@@ -941,6 +1363,58 @@ const validateWorkerStageSetups = (
   }
 };
 
+/**
+ * Each impacted owner's dedicated worker in the `dedicated` mode; in the `host` mode, the one host once any
+ * owner is impacted. Reconciling a mode switch deploys every worker of the mode, since the other mode's
+ * runs left them stopped or on stale artifacts.
+ */
+const planWorkerPhases = (
+  workers: readonly {
+    readonly id: string;
+    readonly ownerId: string;
+    readonly serviceIdEnv: string;
+    readonly stageSetup: string;
+  }[],
+  impacted: ReadonlySet<string>,
+  mode: OutboxWorkerMode,
+  reconcileWorkers: boolean,
+): readonly DeploymentPhase[] => {
+  const impactedWorkers = reconcileWorkers ? workers : workers.filter((worker) => impacted.has(worker.ownerId));
+  if (mode === 'dedicated') {
+    return impactedWorkers.map((worker) => ({
+      id: worker.id,
+      kind: 'worker' as const,
+      serviceIdEnv: worker.serviceIdEnv,
+      stageSetup: worker.stageSetup,
+    }));
+  }
+  return impactedWorkers.length === 0
+    ? []
+    : [
+        {
+          id: OUTBOX_WORKER_HOST.id,
+          kind: 'worker' as const,
+          serviceIdEnv: OUTBOX_WORKER_HOST.serviceIdEnv,
+          stageSetup: OUTBOX_WORKER_HOST.stageSetup,
+        },
+      ];
+};
+
+/**
+ * The worker services of the other Outbox Worker mode. Switching `OUTBOX_WORKER_MODE` leaves them running,
+ * so they are stopped in the same run that deploys this mode's workers; one set of workers always runs.
+ */
+const planStoppedWorkers = (
+  workers: readonly { readonly stageSetup: string }[],
+  workerPhases: readonly DeploymentPhase[],
+  mode: OutboxWorkerMode,
+): readonly string[] => {
+  if (workerPhases.length === 0) {
+    return [];
+  }
+  return mode === 'dedicated' ? [OUTBOX_WORKER_HOST.stageSetup] : workers.map((worker) => worker.stageSetup);
+};
+
 export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) =>
   Effect.gen(function* planDeploymentImpactEffect() {
     const authorization =
@@ -949,16 +1423,31 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         : validateAuthorizationPromotionGate(options.authorizationPromotion);
     const pathService = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
-    const rootDirectory = options.rootDirectory ?? (yield* Config.string('PWD').pipe(Effect.orElseSucceed(() => '.')));
+    const rootDirectory = options.rootDirectory ?? (yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.')));
     const topology = yield* readJson(
       ReferenceTopologySchema,
       pathService.join(rootDirectory, 'topology/reference-topology.json'),
     );
     const ownership = yield* readJson(OwnershipSchema, pathService.join(rootDirectory, 'topology/ownership.json'));
+    const cloudflarePlacement = yield* readJson(
+      CloudflarePlacementSchema,
+      pathService.join(rootDirectory, CLOUDFLARE_PLACEMENT_PATH),
+    );
+    validateCloudflareBuildEnvironment(cloudflarePlacement.buildEnvironment);
     const stageSetups = parseStageSetups(
       yield* fileSystem.readFileString(pathService.join(rootDirectory, 'zerops.yaml')),
     );
     const orderedUnits = orderUnits(buildTopologyUnits(topology, ownership, stageSetups));
+    validateWorkspaceCompleteness(
+      yield* listWorkspaceProjects(
+        rootDirectory,
+        yield* parseWorkspaceGlobs(
+          yield* fileSystem.readFileString(pathService.join(rootDirectory, WORKSPACE_MANIFEST)),
+        ),
+      ),
+      orderedUnits,
+      topology.sharedPackages ?? [],
+    );
     const workerDeliveries = yield* Effect.all(
       (topology.verticals ?? []).map((vertical) =>
         outboxWorkerDelivery(rootDirectory, {
@@ -969,13 +1458,13 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       ),
     );
     const workers = workerDeliveries.filter((delivery) => delivery !== undefined);
-    validateWorkerStageSetups(workers, stageSetups);
+    validateWorkerStageSetups(workers.length === 0 ? [] : [...workers, OUTBOX_WORKER_HOST], stageSetups);
     const shell = orderedUnits.find((unit) => unit.kind === 'shell');
     if (shell === undefined) {
       return fail('reference topology has no Shell delivery unit');
     }
 
-    const { changedPaths, fallbackReason, fullDeploy, headRevision } = yield* deploymentComparison(
+    const { baseRevision, changedPaths, fullDeploy, headRevision } = yield* deploymentComparison(
       options,
       rootDirectory,
     );
@@ -988,6 +1477,8 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     );
 
     const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
+    const outboxWorkerMode = options.outboxWorkerMode ?? 'dedicated';
+    const workerPhases = planWorkerPhases(workers, impacted, outboxWorkerMode, options.reconcileWorkers ?? false);
     const phases: DeploymentPhase[] = [];
     if (migrator) {
       phases.push(INFRASTRUCTURE_PHASES.migrator);
@@ -997,28 +1488,38 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     }
     phases.push(
       ...selectedUnits.filter((unit) => unit.kind === 'provider').map(toPhase),
-      ...workers
-        .filter((worker) => impacted.has(worker.ownerId))
-        .map((worker) => ({
-          id: worker.id,
-          kind: 'provider' as const,
-          serviceIdEnv: worker.serviceIdEnv,
-          stageSetup: worker.stageSetup,
-        })),
+      ...workerPhases,
       ...selectedUnits.filter((unit) => unit.kind === 'shell').map(toPhase),
     );
 
     const plan: DeploymentImpactPlan = {
       any: phases.length > 0,
       changedPaths,
-      comparison: makeComparison(options, headRevision, fallbackReason),
+      comparison: makeComparison(baseRevision, headRevision, fullDeploy),
       phases,
       schemaVersion: 1,
       units: {
+        cloudflare: planCloudflareDeployments(
+          cloudflarePlacement,
+          cloudflareWorkerNames(topology),
+          orderedUnits,
+          impacted,
+          changedPaths,
+        ),
+        cloudflareRetirements: planCloudflareRetirements(
+          cloudflarePlacement,
+          topology,
+          yield* basePlacedWorkerNames(rootDirectory, options.placementBaseRevision ?? baseRevision),
+          shell.packageName,
+        ),
         migrator,
-        providers: phases.filter((phase) => phase.kind === 'provider').map((phase) => phase.id),
+        providers: phases
+          .filter((phase) => phase.kind === 'provider' || phase.kind === 'worker')
+          .map((phase) => phase.id),
         shell: impacted.has(shell.id),
         spicedb,
+        stoppedWorkers: planStoppedWorkers(workers, workerPhases, outboxWorkerMode),
+        workers: phases.filter((phase) => phase.kind === 'worker').map((phase) => phase.id),
       },
     };
     return authorization === undefined ? plan : { ...plan, authorization };
@@ -1043,41 +1544,62 @@ const loadAuthorizationPromotionGate = (
     if (rollout.mode === 'report_only') {
       return { environment, inventory, nowEpochMs, rollout };
     }
-    return {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const readEvidence = <EvidenceSchema extends Schema.ConstraintDecoder<unknown>>(
+      schema: EvidenceSchema,
+      fileName: string,
+    ) =>
+      Effect.gen(function* readEvidenceEffect() {
+        const evidencePath = pathService.join(reportDirectory, fileName);
+        return (yield* fileSystem.exists(evidencePath)) ? yield* readJson(schema, evidencePath) : undefined;
+      });
+    // Absent evidence is decided by the promotion gate: production always requires all of it.
+    const [impact, negativeSmoke, readiness] = yield* Effect.all([
+      readEvidence(AuthorizationImpactReportSchema, 'fail-closed-impact.json'),
+      readEvidence(AuthorizationNegativeSmokeEvidenceSchema, `negative-smoke.${environment}.json`),
+      readEvidence(AuthorizationReadinessEvidenceSchema, 'readiness.json'),
+    ]);
+    const gate: AuthorizationPromotionGateInput = {
       environment,
-      impact: yield* readJson(
-        AuthorizationImpactReportSchema,
-        pathService.join(reportDirectory, 'fail-closed-impact.json'),
-      ),
+      impact,
       inventory,
-      negativeSmoke: yield* readJson(
-        AuthorizationNegativeSmokeEvidenceSchema,
-        pathService.join(reportDirectory, `negative-smoke.${environment}.json`),
-      ),
+      negativeSmoke,
       nowEpochMs,
-      readiness: yield* readJson(
-        AuthorizationReadinessEvidenceSchema,
-        pathService.join(reportDirectory, 'readiness.json'),
-      ),
+      readiness,
       rollout,
     };
+    return gate;
   });
 
 const PlanJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema);
-const ProvidersJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const UnitListJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const CloudflareJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema.fields.units.fields.cloudflare);
+const CloudflareRetirementsJsonSchema = Schema.fromJsonString(
+  DeploymentImpactPlanSchema.fields.units.fields.cloudflareRetirements,
+);
 
 const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
   Effect.gen(function* writeGitHubOutputsEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const planJson = yield* Schema.encodeEffect(PlanJsonSchema)(plan);
-    const providersJson = yield* Schema.encodeEffect(ProvidersJsonSchema)(plan.units.providers);
+    const providersJson = yield* Schema.encodeEffect(UnitListJsonSchema)(plan.units.providers);
+    const stoppedWorkersJson = yield* Schema.encodeEffect(UnitListJsonSchema)(plan.units.stoppedWorkers);
+    const workersJson = yield* Schema.encodeEffect(UnitListJsonSchema)(plan.units.workers);
+    const cloudflareJson = yield* Schema.encodeEffect(CloudflareJsonSchema)(plan.units.cloudflare);
+    const cloudflareRetirementsJson = yield* Schema.encodeEffect(CloudflareRetirementsJsonSchema)(
+      plan.units.cloudflareRetirements,
+    );
     const output = [
       `any=${String(plan.any)}`,
+      `cloudflare=${cloudflareJson}`,
+      `cloudflare_retirements=${cloudflareRetirementsJson}`,
       `migrator=${String(plan.units.migrator)}`,
       `plan=${planJson}`,
       `providers=${providersJson}`,
       `shell=${String(plan.units.shell)}`,
       `spicedb=${String(plan.units.spicedb)}`,
+      `stopped_workers=${stoppedWorkersJson}`,
+      `workers=${workersJson}`,
       '',
     ].join('\n');
     yield* fileSystem.writeFileString(outputPath, output, { flag: 'a' });
@@ -1089,17 +1611,30 @@ const parseAuthorizationNow = (value: string) =>
 const deploymentImpactCommand = Command.make(
   'plan-deployment-impact',
   {
-    authorizationEnvironment: Flag.choice('authorization-environment', ['development', 'production', 'stage']).pipe(
+    authorizationEnvironment: Flag.Literals('authorization-environment', ['development', 'production', 'stage']).pipe(
       Flag.optional,
     ),
-    authorizationNow: Flag.string('authorization-now').pipe(Flag.optional),
-    baseRevision: Flag.string('base').pipe(Flag.optional),
-    changedPaths: Flag.string('changed-path').pipe(Flag.atLeast(0)),
-    headRevision: Flag.string('head').pipe(Flag.optional),
+    authorizationNow: Flag.String('authorization-now').pipe(Flag.optional),
+    baseRevision: Flag.String('base').pipe(Flag.optional),
+    changedPaths: Flag.String('changed-path').pipe(Flag.atLeast(0)),
+    headRevision: Flag.String('head').pipe(Flag.optional),
+    // Required: every deploying environment names its mode, so no environment inherits the other's.
+    outboxWorkerMode: Flag.Literals('outbox-worker-mode', OutboxWorkerModeSchema.literals),
+    placementBaseRevision: Flag.String('placement-base').pipe(Flag.optional),
+    reconcileWorkers: Flag.Boolean('reconcile-workers').pipe(Flag.withDefault(false)),
   },
-  ({ authorizationEnvironment, authorizationNow, baseRevision, changedPaths, headRevision }) =>
+  ({
+    authorizationEnvironment,
+    authorizationNow,
+    baseRevision,
+    changedPaths,
+    headRevision,
+    outboxWorkerMode,
+    placementBaseRevision,
+    reconcileWorkers,
+  }) =>
     Effect.gen(function* deploymentImpactCommandEffect() {
-      const rootDirectory = yield* Config.string('PWD').pipe(Effect.orElseSucceed(() => '.'));
+      const rootDirectory = yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.'));
       const environment = Option.getOrUndefined(authorizationEnvironment);
       let authorizationPromotion: AuthorizationPromotionGateInput | undefined;
       if (environment !== undefined) {
@@ -1112,6 +1647,9 @@ const deploymentImpactCommand = Command.make(
         baseRevision: Option.getOrUndefined(baseRevision),
         changedPaths: changedPaths.length === 0 ? undefined : changedPaths,
         headRevision: Option.getOrUndefined(headRevision),
+        outboxWorkerMode,
+        placementBaseRevision: Option.getOrUndefined(placementBaseRevision),
+        reconcileWorkers,
         rootDirectory,
       };
       const plan =
@@ -1120,7 +1658,7 @@ const deploymentImpactCommand = Command.make(
           : yield* planDeploymentImpact({ ...options, authorizationPromotion });
       const planJson = yield* Schema.encodeEffect(PlanJsonSchema)(plan);
       yield* Console.log(planJson);
-      const outputPath = yield* Config.option(Config.string('GITHUB_OUTPUT'));
+      const outputPath = yield* Config.option(Config.String('GITHUB_OUTPUT'));
       if (Option.isSome(outputPath)) {
         yield* writeGitHubOutputs(plan, outputPath.value);
       }

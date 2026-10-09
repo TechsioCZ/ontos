@@ -7,6 +7,6 @@ export const LocalPayload = Schema.Struct({
   secret: Schema.String,
 });
 
-export const LocalSecret = Config.string('BETTER_AUTH_SECRET');
+export const LocalSecret = Config.String('BETTER_AUTH_SECRET');
 
 export const Panel = (): unknown => LocalPayload;

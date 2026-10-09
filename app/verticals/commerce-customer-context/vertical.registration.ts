@@ -6,8 +6,13 @@ import { commerceCustomerContextManifest } from './vertical.manifest.ts';
 /* jscpd:ignore-start -- generated imports intentionally mirror the manifest's generated action imports. */
 // <generated-module-registration-imports>
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
+import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
+import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
+import { administerPaymentTermPolicyAction } from './src/actions/administer-payment-term-policy.action.ts';
+import { administerPurchaseCurrencyPolicyAction } from './src/actions/administer-purchase-currency-policy.action.ts';
 import { archiveCustomerGroupAction } from './src/actions/archive-customer-group.action.ts';
 import { archiveCustomerProfileAction } from './src/actions/archive-customer-profile.action.ts';
+import { assignCommerceQuantityRuleAction } from './src/actions/assign-commerce-quantity-rule.action.ts';
 import { assignCounterpartyPriceGroupAction } from './src/actions/assign-counterparty-price-group.action.ts';
 import { assignCustomerGroupAction } from './src/actions/assign-customer-group.action.ts';
 import { assignCustomerPriceGroupAction } from './src/actions/assign-customer-price-group.action.ts';
@@ -19,6 +24,7 @@ import { changeCustomerPaymentTermsAction } from './src/actions/change-customer-
 import { changePrincipalPurchaseLimitOverrideAction } from './src/actions/change-principal-purchase-limit-override.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from './src/actions/change-retail-payment-term-preference.action.ts';
 import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-counterparty-access-invitation.action.ts';
+import { claimPortalEnrollmentTransitionAction } from './src/actions/claim-portal-enrollment-transition.action.ts';
 import { clearDefaultBillingAddressAction } from './src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
@@ -45,6 +51,7 @@ import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.w
 import { reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-activation-authorization-mutation.worker.ts';
 import { reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-recovery-authorization-mutation.worker.ts';
 import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-revocation-authorization-mutation.worker.ts';
+import { recordPortalEnrollmentOutcomeAction } from './src/actions/record-portal-enrollment-outcome.action.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
@@ -55,6 +62,7 @@ import { repeatCounterpartyOrderAction } from './src/actions/repeat-counterparty
 import { repeatRetailOrderAction } from './src/actions/repeat-retail-order.action.ts';
 import { reroutePurchaseApprovalRequestAction } from './src/actions/reroute-purchase-approval-request.action.ts';
 import { resendCounterpartyAccessInvitationAction } from './src/actions/resend-counterparty-access-invitation.action.ts';
+import { reserveMarketRetirementAction } from './src/actions/reserve-market-retirement.action.ts';
 import { reservePaymentTermRetirementAction } from './src/actions/reserve-payment-term-retirement.action.ts';
 import { resolveProfileReconciliationAction } from './src/actions/resolve-profile-reconciliation.action.ts';
 import { revalidatePurchaseApprovalAction } from './src/actions/revalidate-purchase-approval.action.ts';
@@ -63,8 +71,10 @@ import { revokeCounterpartyCommerceAccessAction } from './src/actions/revoke-cou
 import { revokeRetailPortalProfileBindingAction } from './src/actions/revoke-retail-portal-profile-binding.action.ts';
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
+import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
+import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-enrollment.action.ts';
 import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-approval.action.ts';
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
@@ -76,8 +86,13 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     /* jscpd:ignore-start -- generated runtime actions intentionally mirror the manifest's public action list. */
     // <generated-module-registration-actions>
     addSavedAddressAction,
+    administerCommerceQuantityRuleAction,
+    administerMarketBootstrapPolicyAction,
+    administerPaymentTermPolicyAction,
+    administerPurchaseCurrencyPolicyAction,
     archiveCustomerGroupAction,
     archiveCustomerProfileAction,
+    assignCommerceQuantityRuleAction,
     assignCounterpartyPriceGroupAction,
     assignCustomerGroupAction,
     assignCustomerPriceGroupAction,
@@ -89,6 +104,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     changePrincipalPurchaseLimitOverrideAction,
     changeRetailPaymentTermPreferenceAction,
     claimCounterpartyAccessInvitationAction,
+    claimPortalEnrollmentTransitionAction,
     clearDefaultBillingAddressAction,
     clearDefaultDeliveryDestinationAction,
     consumePurchaseApprovalAction,
@@ -106,6 +122,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     openProfileReconciliationAction,
     reactivateCustomerGroupAction,
     reactivateCustomerProfileAction,
+    recordPortalEnrollmentOutcomeAction,
     recoverRetailPortalProfileBindingAction,
     removeCounterpartyPriceGroupAction,
     removeCustomerGroupAction,
@@ -116,6 +133,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     repeatRetailOrderAction,
     reroutePurchaseApprovalRequestAction,
     resendCounterpartyAccessInvitationAction,
+    reserveMarketRetirementAction,
     reservePaymentTermRetirementAction,
     resolveProfileReconciliationAction,
     revalidatePurchaseApprovalAction,
@@ -124,8 +142,10 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     revokeRetailPortalProfileBindingAction,
     setDefaultBillingAddressAction,
     setDefaultDeliveryDestinationAction,
+    startPortalEnrollmentAction,
     submitPurchaseApprovalRequestAction,
     suspendCustomerProfileAction,
+    terminatePortalEnrollmentAction,
     triggerPurchaseApprovalAction,
     updateCustomerGroupAction,
     updateSavedAddressAction,
@@ -135,6 +155,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'commerce-quantity-policy-current': () => import('./src/api/commerce-quantity-policy-current-client.ts'),
+      'commerce-quantity-resolution': () => import('./src/api/commerce-quantity-resolution-client.ts'),
       'counterparty-access-invitation-read': () => import('./src/api/counterparty-access-invitation-read-client.ts'),
       'counterparty-all-customer-archive': () => import('./src/api/counterparty-all-customer-archive-client.ts'),
       'counterparty-all-order-history': () => import('./src/api/counterparty-all-order-history-client.ts'),
@@ -157,14 +179,24 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'customer-profile-trading-gate': () => import('./src/api/customer-profile-trading-gate-client.ts'),
       'customer-record-visibility': () => import('./src/api/customer-record-visibility-client.ts'),
       'delivery-destination-resolution': () => import('./src/api/delivery-destination-resolution-client.ts'),
+      'effective-customer-group-membership-set-v1': () =>
+        import('./src/api/effective-customer-group-membership-set-v1-client.ts'),
       'effective-customer-group-memberships': () => import('./src/api/effective-customer-group-memberships-client.ts'),
       'guest-attribution-status': () => import('./src/api/guest-attribution-status-client.ts'),
       'guest-payment-terms-resolution': () => import('./src/api/guest-payment-terms-resolution-client.ts'),
       'invoice-recipient-resolution': () => import('./src/api/invoice-recipient-resolution-client.ts'),
+      'market-affected-use-assessment': () => import('./src/api/market-affected-use-assessment-client.ts'),
+      'market-bootstrap-policy-current': () => import('./src/api/market-bootstrap-policy-current-client.ts'),
+      'market-bootstrap-resolution': () => import('./src/api/market-bootstrap-resolution-client.ts'),
+      'market-subject-restrictions-current': () => import('./src/api/market-subject-restrictions-current-client.ts'),
       'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
+      'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
+      'pricing-purchase-context-verification': () =>
+        import('./src/api/pricing-purchase-context-verification-client.ts'),
       'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),
       'profile-reconciliation-read': () => import('./src/api/profile-reconciliation-read-client.ts'),
+      'purchase-currency-policy-current': () => import('./src/api/purchase-currency-policy-current-client.ts'),
       'purchase-currency-resolution': () => import('./src/api/purchase-currency-resolution-client.ts'),
       'purchase-limit-evaluation': () => import('./src/api/purchase-limit-evaluation-client.ts'),
       'purchase-limit-policy-read': () => import('./src/api/purchase-limit-policy-read-client.ts'),
@@ -174,9 +206,14 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'retail-order-history-detail': () => import('./src/api/retail-order-history-detail-client.ts'),
       'retail-portal-profile-binding-read': () => import('./src/api/retail-portal-profile-binding-read-client.ts'),
       'retail-principal-resolution': () => import('./src/api/retail-principal-resolution-client.ts'),
+      'retail-purchasing-subject-current-v1': () => import('./src/api/retail-purchasing-subject-current-v1-client.ts'),
       'saved-address-defaults': () => import('./src/api/saved-address-defaults-client.ts'),
       'saved-address-detail': () => import('./src/api/saved-address-detail-client.ts'),
       'saved-address-list': () => import('./src/api/saved-address-list-client.ts'),
+      'verify-effective-customer-group-membership-set-v1': () =>
+        import('./src/api/verify-effective-customer-group-membership-set-v1-client.ts'),
+      'verify-retail-purchasing-subject-current-v1': () =>
+        import('./src/api/verify-retail-purchasing-subject-current-v1-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -198,8 +235,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
   },
   manifest: commerceCustomerContextManifest,
   outboxWorkers: [
-    // <generated-module-registration-workers>
     executePrivacyMeasureWorker,
+    // <generated-module-registration-workers>
     reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker,
     reconcileCounterpartyAccessGrantAuthorizationMutationWorker,
     reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker,

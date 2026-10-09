@@ -115,6 +115,7 @@ const actionContext = (services: Services) => {
       actionInvocationId,
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: 'test-composition',
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,

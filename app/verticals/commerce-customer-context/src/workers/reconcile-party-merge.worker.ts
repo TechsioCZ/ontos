@@ -5,7 +5,8 @@
 // @ontos-outbox-worker-topic party.registry.party-merged.v1
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { OutboxWorkerLegalEntityScopeError, OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
+import type { OutboxWorkerLegalEntityScopeError } from '@app/core-runtime/outbox/worker';
+import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-party-merged-v1';
 import {
   OutboxPayloadSchema,
@@ -13,7 +14,7 @@ import {
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-party-merged-v1';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { Context, Effect, Schema } from 'effect';
+import { Context, Effect, Predicate, Schema } from 'effect';
 import {
   ProfileBoundedKeySchema,
   ProfileInstantSchema,
@@ -298,7 +299,7 @@ const observePartyMergeInScope = Effect.fn('ReconcilePartyMergeWorker.observePar
 const mapScopeFailure = (
   failure: ReconcilePartyMergeWorkerError | OutboxWorkerLegalEntityScopeError,
 ): ReconcilePartyMergeWorkerError => {
-  if (!Schema.is(OutboxWorkerLegalEntityScopeError)(failure)) {
+  if (!Predicate.isTagged(failure, 'OutboxWorkerLegalEntityScopeError')) {
     return failure;
   }
   return failure.code === 'outbox_worker_scope_context_invalid'

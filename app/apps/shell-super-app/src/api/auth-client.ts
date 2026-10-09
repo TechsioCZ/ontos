@@ -10,6 +10,14 @@ import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
+// @ontos-codesmith-core-read-client-imports:start
+
+// @ontos-core-read legal-entity-detail
+import type {
+  LegalEntityDetailRequest,
+  LegalEntityDetailResponse,
+} from '../../shared/core-reads/legal-entity-detail.ts';
+// @ontos-codesmith-core-read-client-imports:end
 import type {
   AvailableLegalEntitiesResponse,
   AvailableTenantsResponse,
@@ -36,6 +44,8 @@ import type {
   ShellAuthenticationRequiredProblem,
   ShellCapabilityUnavailableProblem,
   ShellComposition,
+  ShellCompositionRequest,
+  ShellReloadRequiredProblem,
   ShellInternalProblem,
   IdentityProblem,
   ApiKeyIssueResponse,
@@ -57,7 +67,7 @@ import type {
   ShellSelectionRequiredProblem,
   ShellTargetForbiddenProblem,
   ShellTargetNotFoundProblem,
-  ResourceRef,
+  ShellResourceRequest,
   ShellResourceResponse,
   ShellSearchPayload,
   ShellSearchResponse,
@@ -117,6 +127,7 @@ export type SwitchLegalEntityClientError = AvailableTenantsClientError | LegalEn
 export type SwitchLegalEntityClientEffect = Effect.Effect<SwitchLegalEntityResponse, SwitchLegalEntityClientError>;
 
 export type ShellCompositionClientError =
+  | ShellReloadRequiredProblem
   | HttpClientError.HttpClientError
   | Schema.SchemaError
   | IdentityProblem
@@ -209,9 +220,10 @@ export const switchLegalEntity = (
   invokeShellAuthenticationClient(options, (client) => client.legalEntities.switchLegalEntity({ payload }));
 
 export const shellComposition = (
+  payload: ShellCompositionRequest,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellComposition, ShellCompositionClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.composition.shellComposition({}));
+  invokeShellAuthenticationClient(options, (client) => client.composition.shellComposition({ query: payload }));
 
 export const resolveModuleTarget = (
   payload: ResolveModuleTargetPayload,
@@ -226,13 +238,13 @@ export const searchResources = (
   invokeShellAuthenticationClient(options, (client) => client.resources.search({ payload }));
 
 export const resourceDetail = (
-  payload: ResourceRef,
+  payload: ShellResourceRequest,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellResourceResponse, ShellResourceClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.resources.resourceDetail({ payload }));
 
 export const attachResourceMedia = (
-  payload: ResourceRef,
+  payload: ShellResourceRequest,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<MediaAttachmentResponse, ShellResourceClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.resources.attachMedia({ payload }));
@@ -376,5 +388,17 @@ export const stopSupportImpersonation = (
       headers: identityHeaders(options),
     }),
   );
+
+// @ontos-codesmith-core-read-client-operations:start
+
+// @ontos-core-read legal-entity-detail
+export const executeLegalEntityDetail = (
+  payload: LegalEntityDetailRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<LegalEntityDetailResponse, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.coreReadLegalEntityDetail.executeLegalEntityDetail({ payload }),
+  );
+// @ontos-codesmith-core-read-client-operations:end
 
 export { Effect } from '@modern-js/bff-effect/effect-client';

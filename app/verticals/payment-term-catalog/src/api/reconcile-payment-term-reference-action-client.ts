@@ -14,6 +14,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface ReconcilePaymentTermReferenceActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -41,6 +42,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: ReconcilePaymentTermReferenceActionApi,
       credential,
       defaultApiPrefix: '/payment-term-catalog-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -53,12 +55,7 @@ export const executeReconcilePaymentTermReferenceWithAuthorization = (
   Schema.encodeUnknownEffect(ReconcilePaymentTermReferencePayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.reconcilePaymentTermReferenceAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.reconcilePaymentTermReferenceAction.execute({ payload: encoded })),
       ),
     ),
   );
@@ -68,7 +65,11 @@ export const executeReconcilePaymentTermReference = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeReconcilePaymentTermReferenceWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeReconcilePaymentTermReferenceWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

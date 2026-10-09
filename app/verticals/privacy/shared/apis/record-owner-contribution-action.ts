@@ -11,10 +11,6 @@ import {
 
 export { RecordOwnerContributionPayloadSchema } from '../actions/record-owner-contribution.ts';
 
-const RecordOwnerContributionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecordOwnerContributionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordOwnerContributionActionInvalidProblem',
   400,
@@ -128,15 +124,37 @@ const actionErrors = [
   RecordOwnerContributionActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const recordOwnerContributionActionGroupDefinition = HttpApiGroup.make('recordOwnerContributionAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/record-owner-contribution', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RecordOwnerContributionPayloadSchema),
+      success: RecordOwnerContributionResultSchema,
+    }),
+  )
+  .middleware(RecordOwnerContributionActionSchemaErrorMiddleware);
+
+export type RecordOwnerContributionActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'recordOwnerContributionAction',
+  HttpApiGroup.Endpoints<typeof recordOwnerContributionActionGroupDefinition>
+>;
+
+const RecordOwnerContributionActionGroup: RecordOwnerContributionActionGroupContract =
+  recordOwnerContributionActionGroupDefinition;
+
 export const RecordOwnerContributionActionApi = HttpApi.make('RecordOwnerContributionActionApi').add(
-  HttpApiGroup.make('recordOwnerContributionAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/record-owner-contribution', {
-        error: actionErrors,
-        headers: RecordOwnerContributionActionHeadersSchema,
-        payload: Schema.toEncoded(RecordOwnerContributionPayloadSchema),
-        success: RecordOwnerContributionResultSchema,
-      }),
-    )
-    .middleware(RecordOwnerContributionActionSchemaErrorMiddleware),
+  RecordOwnerContributionActionGroup,
 );

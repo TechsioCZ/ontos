@@ -1,5 +1,6 @@
 import {
-  ActionRuntimeLive,
+  makeActionRuntimeLive,
+  ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -14,7 +15,12 @@ import {
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { FetchHttpClient } from 'effect/unstable/http';
+import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
@@ -95,7 +101,6 @@ import { DsrVerificationAuthorityUnavailableLive } from '../src/actions/record-d
 import { NoticeChannelDeliveryAuthorityUnavailableLive } from '../src/actions/record-notice-provision.action.ts';
 import { DsrDeliveryAccessAuthorityUnavailableLive } from '../src/actions/dsr-delivery-access-authority.ts';
 import { ProcessingInterventionAuthorityUnavailableLive } from '../src/actions/processing-intervention-authority.ts';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 
 const operationAttributes = (operationContext: OperationContext) => {
   const attributes = {
@@ -138,6 +143,13 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
+const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
+  Layer.provide(
+    FetchHttpClient.layer.pipe(
+      Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+    ),
+  ),
+);
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = Layer.provide(
   OperationalScopeResolverLive,
@@ -170,7 +182,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(DatabaseConfigLive),
   Layer.provideMerge(PrivacyApplicabilityBusinessFactAuthorityUnavailableLive),
 );
-const productionActionRuntimeLive = ActionRuntimeLive.pipe(
+const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
@@ -180,6 +192,8 @@ const productionActionRuntimeLive = ActionRuntimeLive.pipe(
       moduleStateGateLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
+      ActionAuthorizationPreflightDatabaseLive.pipe(Layer.provideMerge(CorePersistenceLive)),
+      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
     ),
   ),
   Layer.provide(DatabaseConfigLive),
@@ -254,7 +268,7 @@ export const makePrivacyApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(
     Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
-    Layer.provide(runtimeObservabilityLive),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
     Layer.orDie,
   );
   return assembleEffectBffRuntime({

@@ -4,8 +4,8 @@ import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
-  acquireTestPool,
-  makeTestDatabaseFromPool,
+  makeTestPgClient,
+  makeTestDatabaseFromClient,
   privacyMeasureDeferredCases,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { counterparties, parties, partyRelations, privacyMeasureExecutions } from '../../src/db/schema.ts';
@@ -45,10 +45,10 @@ it.live('records unsupported Party measures without changing canonical lifecycle
   Effect.scoped(
     Effect.gen(function* partyPrivacyMeasurePostgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquireTestPool(connections.admin.connectionString);
-      const runtimePool = yield* acquireTestPool(connections.runtime.connectionString);
-      const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, partyRelations);
+      const adminPool = yield* makeTestPgClient(connections.admin.connectionString);
+      const runtimePool = yield* makeTestPgClient(connections.runtime.connectionString);
+      const admin = yield* makeTestDatabaseFromClient(adminPool, partyRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimePool, partyRelations);
       const scope = {
         authMethod: 'system' as const,
         correlationId: 'party-owner-postgres',

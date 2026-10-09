@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ProfileReconciliationReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ProfileReconciliationReadAuthorizedInvocation = readonly [
@@ -40,15 +41,17 @@ export const executeProfileReconciliationReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ProfileReconciliationReadAuthorizedInvocation
 ) =>
   profileReconciliationReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.profileReconciliationRead.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.profileReconciliationRead.execute({ payload })),
   );
 
 export const executeProfileReconciliationRead = (
   payload: ProfileReconciliationReadRequest,
   ...[requestCorrelation, options = {}]: ProfileReconciliationReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeProfileReconciliationReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeProfileReconciliationReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

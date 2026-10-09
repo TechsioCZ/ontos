@@ -1,7 +1,8 @@
+import { PgTypes } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { DateTime, Effect, Option, Result, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { ScopedRoutineInvocationError } from './scoped-routine-error.ts';
 import type { ScopedRoutineInvocationErrorCode } from './scoped-routine-error.ts';
@@ -73,7 +74,6 @@ type ScalarValueByType = Readonly<{
   timestamptz: Date | string;
   uuid: string;
 }>;
-type ScopedRoutineResolvedValue = Schema.Schema.Type<typeof Schema.Unknown>;
 
 type ScopedRoutineParameterValue<Type extends ScopedRoutineParameterType> =
   Type extends `${infer Element extends keyof ScalarValueByType}[]`
@@ -144,27 +144,38 @@ const moduleKey = /^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)*$/u;
 const evidenceKey = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u;
 const parameterTypes = new Set<string>(SCOPED_ROUTINE_PARAMETER_TYPES);
 
-const parameterTypeSql: Readonly<Record<ScopedRoutineParameterType, SQL>> = Object.freeze({
-  bigint: sql.raw('bigint'),
-  'bigint[]': sql.raw('bigint[]'),
-  boolean: sql.raw('boolean'),
-  'boolean[]': sql.raw('boolean[]'),
-  date: sql.raw('date'),
-  'date[]': sql.raw('date[]'),
-  integer: sql.raw('integer'),
-  'integer[]': sql.raw('integer[]'),
-  jsonb: sql.raw('jsonb'),
-  'jsonb[]': sql.raw('jsonb[]'),
-  numeric: sql.raw('numeric'),
-  'numeric[]': sql.raw('numeric[]'),
-  smallint: sql.raw('smallint'),
-  'smallint[]': sql.raw('smallint[]'),
-  text: sql.raw('text'),
-  'text[]': sql.raw('text[]'),
-  timestamptz: sql.raw('timestamptz'),
-  'timestamptz[]': sql.raw('timestamptz[]'),
-  uuid: sql.raw('uuid'),
-  'uuid[]': sql.raw('uuid[]'),
+/**
+ * The native driver infers scalars, strings, and non-empty homogeneous arrays from their JavaScript
+ * values. JSON documents and empty arrays carry no inferable PostgreSQL type, so they are bound with
+ * the routine's declared type instead.
+ */
+interface ParameterTypeBinding {
+  readonly cast: SQL;
+  readonly elementOid?: number;
+  readonly json?: true;
+}
+
+const parameterTypeBindings: Readonly<Record<ScopedRoutineParameterType, ParameterTypeBinding>> = Object.freeze({
+  bigint: { cast: sql.raw('bigint') },
+  'bigint[]': { cast: sql.raw('bigint[]'), elementOid: PgTypes.OID.int8 },
+  boolean: { cast: sql.raw('boolean') },
+  'boolean[]': { cast: sql.raw('boolean[]'), elementOid: PgTypes.OID.bool },
+  date: { cast: sql.raw('date') },
+  'date[]': { cast: sql.raw('date[]'), elementOid: PgTypes.OID.date },
+  integer: { cast: sql.raw('integer') },
+  'integer[]': { cast: sql.raw('integer[]'), elementOid: PgTypes.OID.int4 },
+  jsonb: { cast: sql.raw('jsonb'), json: true },
+  'jsonb[]': { cast: sql.raw('jsonb[]'), elementOid: PgTypes.OID.jsonb, json: true },
+  numeric: { cast: sql.raw('numeric') },
+  'numeric[]': { cast: sql.raw('numeric[]'), elementOid: PgTypes.OID.numeric },
+  smallint: { cast: sql.raw('smallint') },
+  'smallint[]': { cast: sql.raw('smallint[]'), elementOid: PgTypes.OID.int2 },
+  text: { cast: sql.raw('text') },
+  'text[]': { cast: sql.raw('text[]'), elementOid: PgTypes.OID.text },
+  timestamptz: { cast: sql.raw('timestamptz') },
+  'timestamptz[]': { cast: sql.raw('timestamptz[]'), elementOid: PgTypes.OID.timestamptz },
+  uuid: { cast: sql.raw('uuid') },
+  'uuid[]': { cast: sql.raw('uuid[]'), elementOid: PgTypes.OID.uuid },
 });
 
 const ScopedRoutineDefinitionInvariantError = Schema.TaggedError<Error>()('ScopedRoutineDefinitionInvariantError', {
@@ -275,35 +286,6 @@ const invalidDeclarationError = (): ScopedRoutineInvocationError =>
     routineKey: 'unknown',
   });
 
-const encodeJson = Schema.encodeResult(Schema.fromJsonString(Schema.Unknown));
-const decodeArray = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown));
-const decodeTextArrayElement = Schema.decodeUnknownOption(
-  Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.BigInt]),
-);
-
-const postgresArrayElement = (type: ScopedRoutineParameterType, value: ScopedRoutineResolvedValue): string => {
-  let text: string;
-  if (type === 'jsonb[]') {
-    text = Result.getOrThrow(encodeJson(value));
-  } else if (Schema.is(Schema.Date)(value)) {
-    text = DateTime.formatIso(DateTime.makeUnsafe(value));
-  } else {
-    text = String(Option.getOrThrow(decodeTextArrayElement(value)));
-  }
-  const escaped = text.replaceAll('\\', String.raw`\\`).replaceAll('"', String.raw`\"`);
-  return `"${escaped}"`;
-};
-
-const encodePostgresArray = (
-  type: ScopedRoutineParameterType,
-  value: ScopedRoutineResolvedValue,
-): ScopedRoutineResolvedValue => {
-  const elements = decodeArray(value);
-  return type.endsWith('[]') && Option.isSome(elements)
-    ? `{${elements.value.map((element) => postgresArrayElement(type, element)).join(',')}}`
-    : value;
-};
-
 const AnyScopedRoutineDefinitionSchema = Schema.instanceOf(ScopedRoutinePrivateStorage).check(
   Schema.makeFilter((declaration) =>
     declaration[scopedRoutineDeclaration] === true && Object.isFrozen(declaration)
@@ -319,7 +301,7 @@ const resolveInvocationValues = <
   routine: ScopedRoutineDefinition<RowSchema, Parameters>,
   inputValues: ScopedRoutineInputValues<Parameters>,
   scope: ScopedRoutineScope,
-): Effect.Effect<readonly ScopedRoutineResolvedValue[], ScopedRoutineInvocationError> => {
+): Effect.Effect<readonly unknown[], ScopedRoutineInvocationError> => {
   const expectedInputCount = routine.parameters.filter(({ source }) => source === 'input').length;
   if (inputValues.length !== expectedInputCount) {
     return Effect.fail(
@@ -330,7 +312,7 @@ const resolveInvocationValues = <
       ),
     );
   }
-  const values: ScopedRoutineResolvedValue[] = [];
+  const values: unknown[] = [];
   let inputIndex = 0;
   for (const parameter of routine.parameters) {
     if (parameter.source === 'tenantId') {
@@ -354,14 +336,41 @@ const resolveInvocationValues = <
   return Effect.succeed(Object.freeze(values));
 };
 
-const invocationStatement = (routine: ScopedRoutineDefinition, values: readonly ScopedRoutineResolvedValue[]): SQL => {
-  const parameters = routine.parameters.map(
-    (parameter, index) =>
-      sql`${encodePostgresArray(parameter.type, values[index])}::${parameterTypeSql[parameter.type]}`,
+const invocationStatement = (
+  routine: ScopedRoutineDefinition,
+  values: readonly unknown[],
+): Result.Result<SQL, PgTypes.CodecError> =>
+  Result.map(
+    Result.all(
+      routine.parameters.map((parameter, index): Result.Result<unknown, PgTypes.CodecError> => {
+        const value = values[index];
+        const binding = parameterTypeBindings[parameter.type];
+        if (value === null) {
+          return Result.succeed(value);
+        }
+        if (binding.elementOid === undefined) {
+          return Result.succeed(binding.json === true ? PgTypes.jsonb(value) : value);
+        }
+        return Array.isArray(value) && (binding.json === true || value.length === 0)
+          ? PgTypes.array(value, binding.elementOid)
+          : Result.succeed(value);
+      }),
+    ),
+    (bound) => {
+      /**
+       * A bare array interpolated into a Drizzle template becomes a parenthesised value list —
+       * `($1, $2)` — which is an `IN` list, not an array literal, so every array-typed owner
+       * parameter would be cast as `($1)::text[]` and refused by PostgreSQL as an invalid text
+       * representation. Binding it explicitly keeps one placeholder per declared parameter, and
+       * the driver encodes the array itself.
+       */
+      const parameters = routine.parameters.map(
+        (parameter, index) => sql`${sql.param(bound[index])}::${parameterTypeBindings[parameter.type].cast}`,
+      );
+      const separator = sql.raw(', ');
+      return sql`select * from ${sql.identifier(routine.schema)}.${sql.identifier(routine.name)}(${sql.join(parameters, separator)})`;
+    },
   );
-  const separator = sql.raw(', ');
-  return sql`select * from ${sql.identifier(routine.schema)}.${sql.identifier(routine.name)}(${sql.join(parameters, separator)})`;
-};
 
 /** Internal live adapter used only while Core owns the active transaction. */
 export const scopedRoutineInvokerFromTransaction = (
@@ -380,7 +389,20 @@ export const scopedRoutineInvokerFromTransaction = (
     }
     return resolveInvocationValues(routine, inputValues, scope).pipe(
       Effect.flatMap((values) =>
-        execute(invocationStatement(routine, values)).pipe(
+        Result.match(invocationStatement(routine, values), {
+          onFailure: () =>
+            Effect.fail(
+              invocationError(
+                routine,
+                'scoped_routine_arguments_invalid',
+                'The scoped routine arguments do not match its declared signature',
+              ),
+            ),
+          onSuccess: Effect.succeed,
+        }),
+      ),
+      Effect.flatMap((statement) =>
+        execute(statement).pipe(
           Effect.mapError((failure) =>
             invocationError(
               routine,

@@ -35,6 +35,22 @@
       }
     },
     {
+      "id": "better-auth-effect-drizzle",
+      "package": "@app/better-auth-effect-drizzle",
+      "path": "packages/better-auth-effect-drizzle",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/wave2/core-runtime.md",
+        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
+        "blastRadius": {
+          "tier": "tier-0-core-infrastructure",
+          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
+        }
+      }
+    },
+    {
       "id": "shell-super-app",
       "package": "@app/shell-super-app",
       "path": "apps/shell-super-app",
@@ -118,6 +134,86 @@
       }
     },
     {
+      "id": "customer-market-retirement-contracts",
+      "package": "@app/customer-market-retirement-contracts",
+      "path": "packages/customer-market-retirement-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-customer-context.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"]
+        }
+      }
+    },
+    {
+      "id": "email-delivery",
+      "package": "@app/email-delivery",
+      "path": "packages/email-delivery",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/wave2/core-runtime.md",
+        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
+        "blastRadius": {
+          "tier": "tier-0-core-infrastructure",
+          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
+        }
+      }
+    },
+    {
+      "id": "price-group-catalog-contracts",
+      "package": "@app/price-group-catalog-contracts",
+      "path": "packages/price-group-catalog-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/price-group-catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#price-group-catalog",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#price-group-catalog"]
+        }
+      }
+    },
+    {
+      "id": "pricing-contracts",
+      "package": "@app/pricing-contracts",
+      "path": "packages/pricing-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/pricing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#pricing",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#pricing"]
+        }
+      }
+    },
+    {
+      "id": "storefront-registry-contracts",
+      "package": "@app/storefront-registry-contracts",
+      "path": "packages/storefront-registry-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/storefront-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#storefront-registry",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#storefront-registry"]
+        }
+      }
+    },
+    {
       "id": "party-registry",
       "package": "@app/party-registry",
       "path": "verticals/party-registry",
@@ -162,6 +258,134 @@
         "blastRadius": {
           "tier": "tier-2-vertical",
           "references": ["docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"]
+        }
+      }
+    },
+    {
+      "id": "assortment",
+      "package": "@app/assortment",
+      "path": "verticals/assortment",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/assortment.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#assortment",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#assortment"]
+        }
+      }
+    },
+    {
+      "id": "inventory",
+      "package": "@app/inventory",
+      "path": "verticals/inventory",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/inventory.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#inventory",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#inventory"]
+        }
+      }
+    },
+    {
+      "id": "commerce-market-catalog",
+      "package": "@app/commerce-market-catalog",
+      "path": "verticals/commerce-market-catalog",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-market-catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-market-catalog",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#commerce-market-catalog"]
+        }
+      }
+    },
+    {
+      "id": "catalog",
+      "package": "@app/catalog",
+      "path": "verticals/catalog",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#catalog",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#catalog"]
+        }
+      }
+    },
+    {
+      "id": "pricing",
+      "package": "@app/pricing",
+      "path": "verticals/pricing",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/pricing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#pricing",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#pricing"]
+        }
+      }
+    },
+    {
+      "id": "storefront-registry",
+      "package": "@app/storefront-registry",
+      "path": "verticals/storefront-registry",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/storefront-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#storefront-registry",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#storefront-registry"]
+        }
+      }
+    },
+    {
+      "id": "price-group-catalog",
+      "package": "@app/price-group-catalog",
+      "path": "verticals/price-group-catalog",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/price-group-catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#price-group-catalog",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#price-group-catalog"]
+        }
+      }
+    },
+    {
+      "id": "availability",
+      "package": "@app/availability",
+      "path": "verticals/availability",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/availability.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#availability",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#availability"]
         }
       }
     },

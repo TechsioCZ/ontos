@@ -95,6 +95,15 @@ const SearchPage = () => {
   const { t } = useModernI18n();
   const model = useLoaderData({ from: '/$lang/search' });
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
+  if (model.state === 'reload_required' || model.shell.state === 'reload_required' || controls.reloadRequired) {
+    return (
+      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+        <StatusText aria-live="polite" showIcon status="error">
+          {t('shell.moduleTarget.reload_required')}
+        </StatusText>
+      </main>
+    );
+  }
   if (model.shell.state !== 'authenticated') {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">

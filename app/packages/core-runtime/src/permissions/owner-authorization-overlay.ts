@@ -1,12 +1,9 @@
 import { Context, Effect, Layer, Schema } from 'effect';
+import type { DateTime } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import type {
-  BusinessAccessTarget,
-  LegalEntityPermissionKey,
-  ResourceAccessTarget,
-  TenantPermissionKey,
-} from './context-access.ts';
+import type { BusinessAccessTarget, AssortmentPermissionAccessTarget, ResourceAccessTarget } from './context-access.ts';
+import type { LegalEntityPermissionKey, TenantPermissionKey } from './context-permissions.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 
 /**
@@ -23,6 +20,11 @@ export type OwnerAuthorizationTarget =
       readonly kind: 'business_permission';
       readonly permission: BusinessPermissionCode;
       readonly target: BusinessAccessTarget;
+      readonly trustedStorefrontId?: string;
+    }>
+  | Readonly<{
+      readonly kind: 'assortment_permission';
+      readonly target: AssortmentPermissionAccessTarget;
       readonly trustedStorefrontId?: string;
     }>
   | Readonly<{
@@ -48,6 +50,8 @@ export type OwnerAuthorizationTarget =
 
 export interface OwnerAuthorizationInput {
   readonly operation: 'action' | 'read';
+  /** Core-minted PostgreSQL transaction start time; never derived from request input. */
+  readonly operationAt: DateTime.Utc;
   readonly operationKey: string;
   readonly owningModuleKey: string;
   readonly scope: OperationalScope;
@@ -85,13 +89,14 @@ export const allowOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = 
  * authorization bypass. Keep this fallback deliberately small and target-based; owner-neutral
  * operations remain available while every owner-governed target fails closed as unavailable.
  */
+export const failClosedOwnerAuthorizationDecision = (input: OwnerAuthorizationInput): OwnerAuthorizationDecision =>
+  input.targets.some((target) => target.kind === 'business_permission' || target.kind === 'assortment_permission')
+    ? 'unavailable'
+    : 'allowed';
+
 export const failClosedOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = Object.freeze({
   authorize: (_transaction: ScopedTransactionExecutor, input: OwnerAuthorizationInput) =>
-    Effect.succeed(
-      input.targets.some((target) => target.kind === 'business_permission')
-        ? ('unavailable' as const)
-        : ('allowed' as const),
-    ),
+    Effect.succeed(failClosedOwnerAuthorizationDecision(input)),
 });
 
 export const OwnerAuthorizationOverlayAllowLive = Layer.succeed(

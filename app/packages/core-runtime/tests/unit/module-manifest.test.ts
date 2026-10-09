@@ -113,9 +113,7 @@ it.effect('accepts populated typed surfaces and keeps executable values out of s
     const parameterizedApiValue = HttpApi.make('PropertyDetailApi').add(
       HttpApiGroup.make('propertyDetail').add(
         HttpApiEndpoint.get('getUnit', '/units/:unitId', {
-          headers: {},
           params: { unitId: UnitId },
-          query: {},
         }),
       ),
     );

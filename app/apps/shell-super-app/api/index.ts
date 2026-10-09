@@ -1,18 +1,20 @@
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
   ContextAccess,
-  InstalledModuleCatalog,
   PrincipalManagementError,
   PrincipalResolutionError,
   ReadCoreError,
   TenantModuleStateService,
 } from '@app/core-runtime';
 import {
-  ActionRuntimeLive,
+  makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
   LegalEntityContextLive,
+  legalEntityDetailRead,
   makeTenantModuleStateService,
   managedPrincipalsRead,
   OutboxRepositoryLive,
@@ -33,7 +35,7 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import type { GatewayContextProblem } from '@app/shared-contracts';
-import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import {
@@ -50,6 +52,9 @@ import {
   Schema,
   Tracer,
 } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
+import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+import { ModuleApiTransportLive } from '../src/module-api/transport.ts';
 
 import {
   ApiKeyIssueResponseSchema,
@@ -86,6 +91,7 @@ import type {
   ShellPolicyUnprocessableProblem,
   ShellPreconditionRequiredProblem,
   ShellSelectionRequiredProblem,
+  ShellReloadRequiredProblem,
   ShellTargetForbiddenProblem,
   ShellTargetNotFoundProblem,
   SwitchTenantProblem,
@@ -95,10 +101,32 @@ import type {
   TenantInternalProblem,
 } from '../shared/api.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
+// @ontos-codesmith-core-read-server-imports:start
+
+// @ontos-core-read legal-entity-detail
+// legalEntityDetailRead uses the canonical @app/core-runtime import
+// @ontos-codesmith-core-read-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfigLive } from './auth/config.ts';
+import {
+  CommerceExternalIdentityContextAccessLive,
+  CommerceExternalIdentityDeploymentLive,
+} from './auth/commerce-external-identity-deployment.ts';
 import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
-import { GatewayIssuer, GatewayIssuerLive, issueGatewayContextAssertion } from './auth/gateway-issuer.ts';
+import {
+  GatewayIssuer,
+  GatewayIssuerLive,
+  ShellCryptoLive,
+  issueGatewayContextAssertion,
+} from './auth/gateway-issuer.ts';
+import {
+  externalIdentityGroupLive,
+  externalIdentityWorkloadAuthorizationLive,
+} from './auth/external-identity/index.ts';
+import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
+import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
@@ -114,9 +142,10 @@ import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import type { ShellContextResult } from './auth/service.ts';
 import { ShellInstalledModuleCatalog, ShellInstalledModuleCatalogLive } from './modules/installed-module-catalog.ts';
-import type { InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
+import type { ShellInstalledCatalog, InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
 import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.ts';
 import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
+import { CapturedShellCompositionCatalog } from './modules/captured-shell-catalog.ts';
 import { ShellGovernedReads, createShellGovernedReadsLayer } from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import {
@@ -368,8 +397,21 @@ const gatewayAuthenticationProblem = (
 
 const gatewayIssuerProblem = (
   error: GatewayIssuerError,
-): GatewayProblem<'GatewayAudienceInvalidProblem'> | GatewayProblem<'GatewayUnavailableProblem'> =>
-  error.code === 'gateway_audience_invalid'
+):
+  | GatewayProblem<'GatewayAudienceInvalidProblem'>
+  | GatewayProblem<'GatewayReloadRequiredProblem'>
+  | GatewayProblem<'GatewayUnavailableProblem'> => {
+  if (error.code === 'gateway_revision_unsupported') {
+    return extendedProblemDetails(
+      'GatewayReloadRequiredProblem',
+      'The document release is no longer admitted. Reload to continue.',
+      409,
+      'Reload required',
+      'https://ontos.dev/problems/gateway-reload-required',
+      { reloadRequired: true as const },
+    );
+  }
+  return error.code === 'gateway_audience_invalid'
     ? problemDetails(
         'GatewayAudienceInvalidProblem',
         'The requested audience is not an available MicroVertical.',
@@ -385,6 +427,7 @@ const gatewayIssuerProblem = (
         'https://ontos.dev/problems/gateway-unavailable',
         { retryable: true as const },
       );
+};
 
 const logGatewayIssuerFailure = (
   operation: 'api_key' | 'session',
@@ -801,6 +844,7 @@ const logShellReadFailure = (
   );
 
 type ShellProblem =
+  | ShellReloadRequiredProblem
   | ShellAuthenticationRequiredProblem
   | ShellCapabilityUnavailableProblem
   | ShellInternalProblem
@@ -1002,9 +1046,37 @@ const requireAuthenticatedShellContext = Effect.fn('ShellApi.requireAuthenticate
   },
 );
 
+const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureShellReleaseEffect(
+  requestedRevision?: string,
+) {
+  const authority = yield* ShellInstalledModuleCatalog;
+  const catalog = yield* authority.load.pipe(
+    Effect.catchTags({
+      InstalledModuleCatalogInvalidError: () => failShellProblem(shellCapabilityUnavailableProblem()),
+      InstalledModuleCatalogUnavailableError: () => failShellProblem(shellCapabilityUnavailableProblem()),
+    }),
+  );
+  if (
+    catalog.composition.shell.deployment.appId !== ultramodernDeliveryUnit.appId ||
+    catalog.composition.shell.deployment.buildMarker !== ultramodernDeliveryUnit.buildMarker ||
+    (requestedRevision !== undefined && requestedRevision !== catalog.composition.revision)
+  ) {
+    return yield* failShellProblem(
+      problemDetails(
+        'ShellReloadRequiredProblem',
+        'The document release is no longer admitted. Reload to continue.',
+        409,
+        'Reload required',
+        'https://ontos.dev/problems/shell-reload-required',
+      ),
+    );
+  }
+  return catalog;
+});
+
 const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'composition', (handlers) =>
   handlers
-    .handle('shellComposition', ({ request }) =>
+    .handle('shellComposition', ({ query, request }) =>
       Effect.gen(function* shellCompositionHandler() {
         const session = yield* requireShellSession(request.headers);
         if (session.state === 'access_blocked') {
@@ -1021,6 +1093,7 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
             shellInternalProblem,
           );
         }
+        const catalog = yield* captureShellRelease(query.compositionRevision);
         const governedReads = yield* ShellGovernedReads;
         const correlationId = correlationFromRequest(request);
         const response = yield* governedReads
@@ -1029,6 +1102,7 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
             principal: session.principal,
           })
           .pipe(
+            Effect.provideService(CapturedShellCompositionCatalog, catalog),
             Effect.tapError((error) => logShellReadFailure('composition', request, error)),
             Effect.catch((error) => pipe(error, shellListReadProblem, failShellProblem)),
           );
@@ -1042,24 +1116,17 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
     .handle('resolveModuleTarget', ({ payload, request }) =>
       Effect.gen(function* resolveModuleTargetHandler() {
         const session = yield* requireAuthenticatedShellContext(request.headers);
+        const catalog = yield* captureShellRelease(payload.compositionRevision);
         const governedReads = yield* ShellGovernedReads;
         const correlationId = correlationFromRequest(request);
         const response = yield* governedReads
-          .moduleTarget(
-            withOptionalProperty(
-              {
-                correlationId,
-              },
-              payload.entrypointKey !== undefined,
-              'entrypointKey',
-              payload.entrypointKey,
-              {
-                moduleId: payload.moduleId,
-                principal: session.principal,
-              },
-            ),
-          )
+          .moduleTarget({
+            ...payload,
+            correlationId,
+            principal: session.principal,
+          })
           .pipe(
+            Effect.provideService(CapturedShellCompositionCatalog, catalog),
             Effect.tapError((error) => logShellReadFailure('module_target', request, error)),
             Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)),
           );
@@ -1089,6 +1156,7 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
     .handle('search', ({ payload, request }) =>
       Effect.gen(function* searchHandler() {
         const session = yield* requireShellSession(request.headers);
+        const catalog = yield* captureShellRelease(payload.compositionRevision);
         const governedReads = yield* ShellGovernedReads;
         const response = yield* governedReads
           .search({
@@ -1096,7 +1164,10 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
             principal: session.principal,
             ...payload,
           })
-          .pipe(Effect.catch((error) => pipe(error, shellListReadProblem, failShellProblem)));
+          .pipe(
+            Effect.provideService(CapturedShellCompositionCatalog, catalog),
+            Effect.catch((error) => pipe(error, shellListReadProblem, failShellProblem)),
+          );
         return yield* decodeResponse(ShellSearchResponseSchema, response, shellInternalProblem);
       }).pipe(
         recoverUnexpectedDefect(request, 'Unexpected Shell search defect', () =>
@@ -1107,14 +1178,19 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
     .handle('resourceDetail', ({ payload, request }) =>
       Effect.gen(function* resourceDetailHandler() {
         const session = yield* requireAuthenticatedShellContext(request.headers);
+        const { compositionRevision, ...ref } = payload;
+        const catalog = yield* captureShellRelease(compositionRevision);
         const governedReads = yield* ShellGovernedReads;
         const response = yield* governedReads
           .resourceDetail({
             correlationId: correlationFromRequest(request),
             principal: session.principal,
-            ref: payload,
+            ref,
           })
-          .pipe(Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)));
+          .pipe(
+            Effect.provideService(CapturedShellCompositionCatalog, catalog),
+            Effect.catch((error) => pipe(error, shellReadProblem, failShellProblem)),
+          );
         return yield* decodeResponse(ShellResourceResponseSchema, response, shellInternalProblem);
       }).pipe(
         recoverUnexpectedDefect(request, 'Unexpected Shell resource-detail defect', () =>
@@ -1125,14 +1201,16 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
     .handle('attachMedia', ({ payload, request }) =>
       Effect.gen(function* attachMediaHandler() {
         const session = yield* requireAuthenticatedShellContext(request.headers);
+        const { compositionRevision, ...ref } = payload;
+        const catalog = yield* captureShellRelease(compositionRevision);
         const resolution = yield* attachShellMedia(
           {
             ...session.principal,
             correlationId: correlationFromRequest(request),
             legalEntityId: session.identity.legalEntityId,
           },
-          payload,
-        );
+          ref,
+        ).pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
         return yield* Match.value(resolution).pipe(
           Match.discriminators('outcome')({
             forbidden: mediaAttachmentForbidden,
@@ -1532,10 +1610,40 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
     );
 });
 
+const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function* requireGatewayReleaseEffect(
+  compositionRevision: string,
+) {
+  const authority = yield* ShellInstalledModuleCatalog;
+  const catalog = yield* authority.load.pipe(
+    Effect.catchTags({
+      InstalledModuleCatalogInvalidError: () => failGatewayProblem(gatewayAuthenticationUnavailableProblem()),
+      InstalledModuleCatalogUnavailableError: () => failGatewayProblem(gatewayAuthenticationUnavailableProblem()),
+    }),
+  );
+  if (
+    compositionRevision !== catalog.composition.revision ||
+    catalog.composition.shell.deployment.appId !== ultramodernDeliveryUnit.appId ||
+    catalog.composition.shell.deployment.buildMarker !== ultramodernDeliveryUnit.buildMarker
+  ) {
+    return yield* failGatewayProblem(
+      extendedProblemDetails(
+        'GatewayReloadRequiredProblem',
+        'The document release is no longer admitted. Reload to continue.',
+        409,
+        'Reload required',
+        'https://ontos.dev/problems/gateway-reload-required',
+        { reloadRequired: true as const },
+      ),
+    );
+  }
+  return catalog.composition.revision;
+});
+
 const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
   handlers
     .handle('issueGatewayContext', ({ payload, request }) =>
       Effect.gen(function* issueGatewayContextHandler() {
+        yield* requireGatewayRelease(payload.compositionRevision);
         const authentication = yield* AuthenticationService;
         const sessionResult = yield* authentication
           .resolveShellContext(requestHeaders(request.headers))
@@ -1550,6 +1658,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
 
         return yield* issueGatewayContextAssertion({
           audience: payload.audience,
+          compositionRevision: payload.compositionRevision,
           principal: sessionResult.principal,
         }).pipe(
           Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
@@ -1563,6 +1672,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     )
     .handle('issueApiKeyGatewayContext', ({ headers, payload, request }) =>
       Effect.gen(function* issueApiKeyGatewayContextHandler() {
+        yield* requireGatewayRelease(payload.compositionRevision);
         const keys = yield* ApiKeyService;
         const resolver = yield* PrincipalResolver;
         const { 'x-api-key': rawKey } = headers;
@@ -1596,6 +1706,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           {
             authBindingId: identity.authBindingId,
             authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+            authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             authMethod: 'api_key' as const,
             principalId: identity.principalId,
             tenantId: identity.tenantId,
@@ -1607,6 +1718,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         );
         return yield* issueGatewayContextAssertion({
           audience: payload.audience,
+          compositionRevision: payload.compositionRevision,
           principal,
         }).pipe(
           Effect.tapError((error) => logGatewayIssuerFailure('api_key', request, error)),
@@ -1621,22 +1733,59 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
 );
 
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
+const defaultContextAccessLive = Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive);
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
-const principalResolverLive = PrincipalResolverLive.pipe(Layer.provide(corePersistenceLive));
+const principalResolverLive = PrincipalResolverLive({
+  authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+}).pipe(Layer.provide(corePersistenceLive));
 const legalEntityContextLive = LegalEntityContextLive.pipe(Layer.provide(corePersistenceLive));
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(corePersistenceLive));
 const authenticationDependenciesLive = Layer.mergeAll(
   authPersistenceLive,
-  ContextAccessLive,
+  defaultContextAccessLive,
   legalEntityContextLive,
   principalResolverLive,
 );
 const authenticationServiceLive = AuthenticationServiceLive.pipe(Layer.provide(authenticationDependenciesLive));
 const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(authPersistenceLive));
-const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive.pipe(
-  Layer.provide(corePersistenceLive),
-);
+const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive({
+  authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+}).pipe(Layer.provide(corePersistenceLive));
 
+// @ontos-codesmith-core-read-server-groups:start
+
+// @ontos-core-read legal-entity-detail
+const coreReadLegalEntityDetailGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreReadLegalEntityDetail',
+  (handlers) =>
+    handlers.handle('executeLegalEntityDetail', ({ payload, request }) =>
+      Effect.gen(function* executeLegalEntityDetailCoreRead() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const runtime = yield* ReadRuntime;
+        return yield* runtime
+          .runRead({
+            input: payload,
+            principal: resolved.principal,
+            registration: legalEntityDetailRead,
+            transport: { correlationId: correlationFromRequest(request) },
+          })
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core read defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
+// @ontos-codesmith-core-read-server-groups:end
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -1646,6 +1795,16 @@ const runtimeObservabilityLive = Layer.mergeAll(
 type ShellAuthenticationLayer = Layer.Layer<AuthenticationService, Layer.Error<typeof authenticationServiceLive>>;
 type ShellModuleStateLayer = Layer.Layer<TenantModuleStateService, Layer.Error<typeof tenantModuleStateServiceLive>>;
 
+const compositionHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
+const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
+const approvedModuleCatalogLive = ShellInstalledModuleCatalogLive.pipe(Layer.provide(activeApplicationCompositionLive));
+const approvedGatewayIssuerLive = GatewayIssuerLive.pipe(Layer.provide(approvedModuleCatalogLive));
+
 const defaultScopedModuleStateFactory: ShellScopedModuleStateFactory = (transaction) =>
   makeTenantModuleStateService({ executor: transaction });
 
@@ -1653,11 +1812,12 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   authenticationLayer: ShellAuthenticationLayer,
   issuerLayer: Layer.Layer<GatewayIssuer>,
   moduleStateLayer?: ShellModuleStateLayer,
-  loadInstalledModuleCatalog?: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>,
+  loadInstalledModuleCatalog?: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>,
   enableInstalledOutboxMatcher?: boolean,
-  contextAccessLayer?: Layer.Layer<ContextAccess>,
+  contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>>,
   resourceGateways?: ShellResourceGateways,
   scopedModuleStateFactory?: ShellScopedModuleStateFactory,
+  externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
 ];
 
 export const makeShellAuthenticationApiRuntime = (
@@ -1669,13 +1829,14 @@ export const makeShellAuthenticationApiRuntime = (
     moduleStateLayer = tenantModuleStateServiceLive,
     loadInstalledModuleCatalog,
     enableInstalledOutboxMatcher = false,
-    contextAccessLayer = ContextAccessLive,
+    contextAccessLayer = defaultContextAccessLive,
     resourceGateways = unavailableResourceGateways,
     scopedModuleStateFactory = defaultScopedModuleStateFactory,
+    externalIdentityDeploymentLayer = ExternalIdentityNotInstalledLive,
   ] = args;
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
-      ? ShellInstalledModuleCatalogLive
+      ? approvedModuleCatalogLive
       : Layer.succeed(ShellInstalledModuleCatalog, {
           load: loadInstalledModuleCatalog,
         });
@@ -1692,8 +1853,15 @@ export const makeShellAuthenticationApiRuntime = (
     operationalScopeResolverLayer,
   );
   const readRuntimeLayer = ReadRuntimeLive.pipe(Layer.provide(sharedOperationLayers));
-  const actionRuntimeLayer = ActionRuntimeLive.pipe(
-    Layer.provide(Layer.mergeAll(sharedOperationLayers, ActionRepositoryLive, ActionPermissionLive)),
+  const actionRuntimeLayer = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        sharedOperationLayers,
+        activeApplicationCompositionLive,
+        ActionRepositoryLive,
+        ActionPermissionLive,
+      ),
+    ),
   );
   const identityLifecycleLayer = IdentityLifecycleLive.pipe(
     Layer.provide(Layer.mergeAll(actionRuntimeLayer, apiKeyServiceLive, principalResolverLive)),
@@ -1702,10 +1870,19 @@ export const makeShellAuthenticationApiRuntime = (
     GatewayIssuer.pipe(
       Effect.map((gatewayIssuer) => {
         const providerAssertionIssuer = {
-          issueAssertion: ({ appId, context }: { readonly appId: string; readonly context: ShellResourceContext }) =>
+          issueAssertion: ({
+            appId,
+            compositionRevision,
+            context,
+          }: {
+            readonly appId: string;
+            readonly compositionRevision: string;
+            readonly context: ShellResourceContext;
+          }) =>
             gatewayIssuer
               .issue({
                 audience: appId,
+                compositionRevision,
                 principal: withOptionalProperty(
                   withOptionalProperty(
                     withOptionalProperty(
@@ -1790,6 +1967,9 @@ export const makeShellAuthenticationApiRuntime = (
     shellGovernedReadsLayer,
     readRuntimeLayer,
     runtimeObservabilityLive,
+    ShellCryptoLive,
+    externalIdentityWorkloadAuthorizationLive,
+    externalIdentityDeploymentLayer,
   );
   const apiHandlersLive = Layer.mergeAll(
     authenticationGroupLive,
@@ -1799,20 +1979,36 @@ export const makeShellAuthenticationApiRuntime = (
     compositionGroupLive,
     resourcesGroupLive,
     gatewayContextGroupLive,
-  ).pipe(Layer.provide(outboxMatcherLayer), Layer.provide(handlerDependenciesLive), Layer.orDie);
+    // @ontos-codesmith-core-read-server-layers:start
+
+    // @ontos-core-read legal-entity-detail
+    coreReadLegalEntityDetailGroupLive,
+    // @ontos-codesmith-core-read-server-layers:end
+    externalIdentityGroupLive,
+  ).pipe(
+    Layer.provide(outboxMatcherLayer),
+    Layer.provide(handlerDependenciesLive),
+    Layer.provide(compositionSourceLive),
+    Layer.orDie,
+  );
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
+    transport: ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),
   });
 };
 
 const apiRuntime = makeShellAuthenticationApiRuntime(
   authenticationServiceLive,
-  GatewayIssuerLive,
+  approvedGatewayIssuerLive,
   tenantModuleStateServiceLive,
   undefined,
   true,
+  CommerceExternalIdentityContextAccessLive,
+  unavailableResourceGateways,
+  defaultScopedModuleStateFactory,
+  CommerceExternalIdentityDeploymentLive,
 );
 
 export default apiRuntime;

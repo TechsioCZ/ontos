@@ -4,11 +4,16 @@ import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bf
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Schema } from 'effect';
 import { commerceCustomerContextApi } from '../shared/api.ts';
-import {
-  PurchaseCurrencyResolutionAuthenticationProblemSchema,
+import type {
   PurchaseCurrencyResolutionDomainConflictProblem,
   PurchaseCurrencyResolutionDomainPolicyProblem,
   PurchaseCurrencyResolutionDomainUnavailableProblem,
+} from '../shared/apis/purchase-currency-resolution.ts';
+import {
+  PurchaseCurrencyResolutionAuthenticationProblemSchema,
+  PurchaseCurrencyResolutionDomainConflictProblemSchema,
+  PurchaseCurrencyResolutionDomainPolicyProblemSchema,
+  PurchaseCurrencyResolutionDomainUnavailableProblemSchema,
   PurchaseCurrencyResolutionForbiddenProblemSchema,
   PurchaseCurrencyResolutionInternalProblemSchema,
   PurchaseCurrencyResolutionInvalidProblemSchema,
@@ -41,7 +46,7 @@ const mapPurchaseCurrencyResolutionDomainError = (
   | PurchaseCurrencyResolutionDomainPolicyProblem
   | PurchaseCurrencyResolutionDomainUnavailableProblem => {
   if (Schema.is(PurchaseCurrencyDependencyUnavailable)(error)) {
-    return new PurchaseCurrencyResolutionDomainUnavailableProblem({
+    return PurchaseCurrencyResolutionDomainUnavailableProblemSchema.make({
       detail: 'A required Current currency-resolution capability is temporarily unavailable.',
       reasonCode: error.code,
       retryable: true,
@@ -52,7 +57,7 @@ const mapPurchaseCurrencyResolutionDomainError = (
     });
   }
   if (Schema.is(InconsistentPurchaseCurrencyPolicy)(error)) {
-    return new PurchaseCurrencyResolutionDomainConflictProblem({
+    return PurchaseCurrencyResolutionDomainConflictProblemSchema.make({
       detail: 'The Current currency-resolution facts are inconsistent.',
       reasonCode: error._tag,
       // oxlint-disable-next-line effect-native/no-hand-built-problem-details -- This invokes the endpoint's declared status-specific TaggedError constructor; the rule mistakes its checked literal field for an ad hoc Problem object.
@@ -61,7 +66,7 @@ const mapPurchaseCurrencyResolutionDomainError = (
       type: 'https://ontos.dev/problems/purchase-currency-resolution-conflict',
     });
   }
-  return new PurchaseCurrencyResolutionDomainPolicyProblem({
+  return PurchaseCurrencyResolutionDomainPolicyProblemSchema.make({
     detail: 'No eligible purchase currency can be resolved from the Current facts.',
     reasonCode: error._tag,
     // oxlint-disable-next-line effect-native/no-hand-built-problem-details -- This invokes the endpoint's declared status-specific TaggedError constructor; the rule mistakes its checked literal field for an ad hoc Problem object.

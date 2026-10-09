@@ -1,0 +1,1 @@
+ALTER POLICY "pricing_currency_support_legacy_scope_insert" ON "pricing"."currency_support_revisions" TO "ontos_runtime" WITH CHECK (false);

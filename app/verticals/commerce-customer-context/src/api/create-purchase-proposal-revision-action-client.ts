@@ -14,6 +14,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface CreatePurchaseProposalRevisionActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -41,6 +42,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: CreatePurchaseProposalRevisionActionApi,
       credential,
       defaultApiPrefix: '/commerce-customer-context-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -53,12 +55,7 @@ export const executeCreatePurchaseProposalRevisionWithAuthorization = (
   Schema.encodeUnknownEffect(CreatePurchaseProposalRevisionPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.createPurchaseProposalRevisionAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.createPurchaseProposalRevisionAction.execute({ payload: encoded })),
       ),
     ),
   );
@@ -68,7 +65,11 @@ export const executeCreatePurchaseProposalRevision = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeCreatePurchaseProposalRevisionWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeCreatePurchaseProposalRevisionWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

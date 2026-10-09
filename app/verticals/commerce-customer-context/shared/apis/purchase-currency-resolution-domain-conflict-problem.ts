@@ -1,20 +1,12 @@
-import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
+import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 
-const problemDetailsRepresentation = HttpApiSchema.asJson({
-  contentType: 'application/problem+json',
-});
-
-export class PurchaseCurrencyResolutionDomainConflictProblem extends Schema.TaggedError<PurchaseCurrencyResolutionDomainConflictProblem>()(
+export const PurchaseCurrencyResolutionDomainConflictProblemSchema = makeProblemDetailsSchema(
   'PurchaseCurrencyResolutionDomainConflictProblem',
+  409,
   {
-    detail: Schema.String,
     reasonCode: Schema.Literal('INCONSISTENT_CURRENCY_POLICY'),
-    status: Schema.Literal(409),
-    title: Schema.String,
-    type: Schema.String,
   },
-) {}
-
-export const PurchaseCurrencyResolutionDomainConflictProblemSchema =
-  PurchaseCurrencyResolutionDomainConflictProblem.pipe(problemDetailsRepresentation, HttpApiSchema.status(409));
+);
+export type PurchaseCurrencyResolutionDomainConflictProblem =
+  typeof PurchaseCurrencyResolutionDomainConflictProblemSchema.Type;

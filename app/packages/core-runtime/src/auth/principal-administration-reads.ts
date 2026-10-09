@@ -4,8 +4,10 @@ import { Cause, DateTime, Effect, Schema } from 'effect';
 import { principalAuthBindings, principals } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import { OperationContextUnavailable } from '../operations/errors.ts';
 import { defineRead } from '../reads/definition.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
+import { isTrustedSystemPrincipalContext } from './system-principal-context-provenance.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
@@ -68,6 +70,7 @@ const services = (
   transaction: ScopedTransactionExecutor,
   tenantId: string,
   principalId: string,
+  authenticationNamespaceId?: string,
 ): IdentityReadServices => ({
   listManaged: ({ limit, offset }) =>
     transaction
@@ -87,6 +90,9 @@ const services = (
         and(
           eq(principalAuthBindings.tenantId, principals.tenantId),
           eq(principalAuthBindings.principalId, principals.principalId),
+          ...(authenticationNamespaceId === undefined
+            ? []
+            : [eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId)]),
           eq(principalAuthBindings.subjectType, 'api_key'),
         ),
       )
@@ -139,50 +145,58 @@ const services = (
         ),
       ),
   listSelf: ({ limit, offset }) =>
-    transaction
-      .select({
-        authBindingId: principalAuthBindings.principalAuthBindingId,
-        createdAt: principalAuthBindings.createdAt,
-        revokedAt: principalAuthBindings.revokedAt,
-        status: principalAuthBindings.status,
-      })
-      .from(principalAuthBindings)
-      .where(
-        and(
-          eq(principalAuthBindings.tenantId, tenantId),
-          eq(principalAuthBindings.principalId, principalId),
-          eq(principalAuthBindings.subjectType, 'api_key'),
-        ),
-      )
-      .orderBy(asc(principalAuthBindings.createdAt), asc(principalAuthBindings.principalAuthBindingId))
-      .limit(limit + 1)
-      .offset(offset)
-      .pipe(
-        Effect.mapError((cause) => readUnavailable('Identity bindings are temporarily unavailable', cause)),
-        Effect.timeoutOrElse({
-          duration: databaseReadTimeout,
-          orElse: () =>
-            Effect.fail(
-              readUnavailable(
-                'Identity bindings are temporarily unavailable',
-                new Cause.TimeoutError('Database read timed out'),
+    authenticationNamespaceId === undefined
+      ? Effect.fail(
+          readUnavailable(
+            'Identity bindings are temporarily unavailable',
+            new Cause.IllegalArgumentError('An authentication namespace is required for self API-key reads'),
+          ),
+        )
+      : transaction
+          .select({
+            authBindingId: principalAuthBindings.principalAuthBindingId,
+            createdAt: principalAuthBindings.createdAt,
+            revokedAt: principalAuthBindings.revokedAt,
+            status: principalAuthBindings.status,
+          })
+          .from(principalAuthBindings)
+          .where(
+            and(
+              eq(principalAuthBindings.tenantId, tenantId),
+              eq(principalAuthBindings.principalId, principalId),
+              eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
+              eq(principalAuthBindings.subjectType, 'api_key'),
+            ),
+          )
+          .orderBy(asc(principalAuthBindings.createdAt), asc(principalAuthBindings.principalAuthBindingId))
+          .limit(limit + 1)
+          .offset(offset)
+          .pipe(
+            Effect.mapError((cause) => readUnavailable('Identity bindings are temporarily unavailable', cause)),
+            Effect.timeoutOrElse({
+              duration: databaseReadTimeout,
+              orElse: () =>
+                Effect.fail(
+                  readUnavailable(
+                    'Identity bindings are temporarily unavailable',
+                    new Cause.TimeoutError('Database read timed out'),
+                  ),
+                ),
+            }),
+            Effect.map((rows) => ({
+              items: rows.slice(0, limit).map((row) => ({
+                ...row,
+                createdAt: DateTime.formatIso(DateTime.fromDateUnsafe(row.createdAt)),
+                revokedAt: row.revokedAt === null ? null : DateTime.formatIso(DateTime.fromDateUnsafe(row.revokedAt)),
+              })),
+              nextOffset: rows.length > limit ? offset + limit : null,
+            })),
+            Effect.flatMap((result) =>
+              Schema.decodeEffect(SelfResultJson)(result).pipe(
+                Effect.mapError((cause) => readUnavailable('Identity bindings are temporarily unavailable', cause)),
               ),
             ),
-        }),
-        Effect.map((rows) => ({
-          items: rows.slice(0, limit).map((row) => ({
-            ...row,
-            createdAt: DateTime.formatIso(DateTime.fromDateUnsafe(row.createdAt)),
-            revokedAt: row.revokedAt === null ? null : DateTime.formatIso(DateTime.fromDateUnsafe(row.revokedAt)),
-          })),
-          nextOffset: rows.length > limit ? offset + limit : null,
-        })),
-        Effect.flatMap((result) =>
-          Schema.decodeEffect(SelfResultJson)(result).pipe(
-            Effect.mapError((cause) => readUnavailable('Identity bindings are temporarily unavailable', cause)),
           ),
-        ),
-      ),
 });
 
 export const selfApiKeyBindingsRead = defineRead<
@@ -225,7 +239,15 @@ export const selfApiKeyBindingsRead = defineRead<
         result,
       })),
     ),
-  (transaction, scope) => Effect.succeed(services(transaction, scope.tenantId, scope.principalId)),
+  (transaction, scope) =>
+    scope.authenticationNamespaceId === undefined
+      ? Effect.fail(
+          new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'The authenticated identity namespace is unavailable',
+          }),
+        )
+      : Effect.succeed(services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId)),
   () => ({ kind: 'tenant', permission: 'access' }),
 );
 
@@ -269,6 +291,26 @@ export const managedPrincipalsRead = defineRead<
         result,
       })),
     ),
-  (transaction, scope) => Effect.succeed(services(transaction, scope.tenantId, scope.principalId)),
+  (transaction, scope) => {
+    if (scope.authMethod === 'system') {
+      return isTrustedSystemPrincipalContext(scope)
+        ? Effect.succeed(services(transaction, scope.tenantId, scope.principalId))
+        : Effect.fail(
+            new OperationContextUnavailable({
+              code: 'operation_context_unavailable',
+              reason: 'The trusted system identity context is unavailable',
+            }),
+          );
+    }
+    if (scope.authenticationNamespaceId === undefined) {
+      return Effect.fail(
+        new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'The authenticated identity namespace is unavailable',
+        }),
+      );
+    }
+    return Effect.succeed(services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId));
+  },
   () => ({ kind: 'tenant', permission: 'manage_identity' }),
 );

@@ -2,17 +2,25 @@ import { Config, ConfigProvider, Duration, Effect, Schedule, Schema } from 'effe
 
 import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements, OutboxWorkerSubscription } from './definition.ts';
 import { OutboxPollerConfigError } from './errors.ts';
+import type { OutboxWorkerDescriptorError } from './errors.ts';
+import type { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
 import type { OutboxWorkerHealth } from './health.ts';
 import { runOutboxCycle } from './runtime.ts';
 import type { OutboxCycleError, OutboxCycleResult, OutboxRuntime, RunOutboxCycleInput } from './runtime.ts';
 
 const DEFAULT_MAX_DELIVERIES = 100;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
+type OutboxAdmissionError = ActiveApplicationCompositionUnavailableError | OutboxWorkerDescriptorError;
+type OutboxAdmittedCycleError = OutboxCycleError | OutboxAdmissionError;
+type OutboxPollingRequirements<Registration extends AnyOutboxWorkerRegistration, RunnerRequirements> =
+  | OutboxRuntime
+  | RunnerRequirements
+  | OutboxWorkerRequirements<Registration>;
 
 interface OutboxPollingEnvironment {
-  readonly OUTBOX_WORKER_CLAIM_OWNER?: string;
   readonly OUTBOX_WORKER_MAX_DELIVERIES?: string;
   readonly OUTBOX_WORKER_POLL_INTERVAL_MS?: string;
+  readonly OUTBOX_WORKER_PROCESS_IDENTITY?: string;
 }
 
 export interface OutboxPollingConfig {
@@ -22,13 +30,16 @@ export interface OutboxPollingConfig {
 }
 
 export interface ParseOutboxPollingConfigInput {
-  readonly defaultClaimOwner: string;
+  /** One prefix per polling loop hosted by this process; each loop claims under its own owner. */
+  readonly claimOwnerPrefixes: readonly string[];
+  readonly defaultProcessIdentity: string;
   readonly environment?: OutboxPollingEnvironment;
 }
 
 export interface RunOutboxPollingLoopInput<
   Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
 > {
+  readonly admitComposition: Effect.Effect<string, OutboxAdmissionError>;
   readonly config: OutboxPollingConfig;
   readonly health?: Pick<OutboxWorkerHealth, 'cycleFailed' | 'cycleSucceeded'>;
   readonly registrations: readonly Registration[];
@@ -46,7 +57,8 @@ const configError = (reason: string): OutboxPollerConfigError =>
   new OutboxPollerConfigError({ code: 'outbox_poller_config_invalid', reason });
 
 const EmptyConfigValue = Schema.Trim.pipe(Schema.decodeTo(Schema.Literal('')));
-const ClaimOwnerOverride = Schema.Trim.check(Schema.isMaxLength(200));
+const ProcessIdentityOverride = Schema.Trim.check(Schema.isMaxLength(200));
+const ClaimOwnerPrefix = Schema.String.check(Schema.isMinLength(1));
 const ClaimOwner = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 
 const boundedIntegerConfig = (key: string, fallback: number, minimum: number, maximum: number): Config.Config<number> =>
@@ -65,33 +77,56 @@ const boundedIntegerConfig = (key: string, fallback: number, minimum: number, ma
     Config.map((value) => (value === '' ? fallback : value)),
   );
 
-const pollingConfig = (defaultClaimOwner: string) =>
+const pollingConfig = (defaultProcessIdentity: string) =>
   Config.all({
-    claimOwner: Config.schema(ClaimOwnerOverride, 'OUTBOX_WORKER_CLAIM_OWNER').pipe(
-      Config.withDefault(defaultClaimOwner),
-      Config.map((value) => (value === '' ? defaultClaimOwner : value)),
-    ),
     maxDeliveries: boundedIntegerConfig('OUTBOX_WORKER_MAX_DELIVERIES', DEFAULT_MAX_DELIVERIES, 1, 1000),
     pollIntervalMs: boundedIntegerConfig('OUTBOX_WORKER_POLL_INTERVAL_MS', DEFAULT_POLL_INTERVAL_MS, 10, 3_600_000),
+    processIdentity: Config.schema(ProcessIdentityOverride, 'OUTBOX_WORKER_PROCESS_IDENTITY').pipe(
+      Config.withDefault(defaultProcessIdentity),
+      Config.map((value) => (value === '' ? defaultProcessIdentity : value)),
+    ),
   });
 
 const pollingConfigFailure = ({ message }: { readonly message: string }) => configError(message);
 
+const requireDistinctPrefixes = (claimOwnerPrefixes: readonly string[]) => {
+  if (claimOwnerPrefixes.length === 0) {
+    return Effect.fail(configError('An Outbox Worker process must host at least one polling loop'));
+  }
+  const duplicate = claimOwnerPrefixes.find((prefix, index) => claimOwnerPrefixes.indexOf(prefix) !== index);
+  return duplicate === undefined
+    ? Effect.void
+    : Effect.fail(configError(`Outbox Worker claim owner prefix ${duplicate} is hosted more than once`));
+};
+
+/**
+ * Process-wide settings are read once. The process identity only ever fills the suffix of a claim
+ * owner, so every hosted loop keeps its own `${prefix}:${processIdentity}` owner and no environment
+ * value can make two loops in one process claim under the same identity.
+ */
 export const parseOutboxPollingConfig = ({
-  defaultClaimOwner,
+  claimOwnerPrefixes,
+  defaultProcessIdentity,
   environment,
-}: ParseOutboxPollingConfigInput): Effect.Effect<OutboxPollingConfig, OutboxPollerConfigError> => {
-  const config = pollingConfig(defaultClaimOwner);
+}: ParseOutboxPollingConfigInput): Effect.Effect<readonly OutboxPollingConfig[], OutboxPollerConfigError> => {
+  const config = pollingConfig(defaultProcessIdentity);
   const decoded = environment === undefined ? config : config.parse(ConfigProvider.fromUnknown(environment));
 
-  return decoded.pipe(
-    Effect.flatMap((value) =>
-      Schema.decodeEffect(ClaimOwner)(value.claimOwner).pipe(
-        Effect.map((claimOwner) => Object.freeze({ ...value, claimOwner })),
+  const configs = decoded.pipe(
+    Effect.flatMap(({ maxDeliveries, pollIntervalMs, processIdentity }) =>
+      Effect.forEach(
+        claimOwnerPrefixes,
+        (prefix) =>
+          Schema.decodeEffect(ClaimOwnerPrefix)(prefix).pipe(
+            Effect.flatMap((validPrefix) => Schema.decodeEffect(ClaimOwner)(`${validPrefix}:${processIdentity}`)),
+            Effect.map((claimOwner) => Object.freeze({ claimOwner, maxDeliveries, pollIntervalMs })),
+          ),
+        { concurrency: 1 },
       ),
     ),
     Effect.mapError(pollingConfigFailure),
   );
+  return requireDistinctPrefixes(claimOwnerPrefixes).pipe(Effect.andThen(configs));
 };
 
 const hasActivity = (result: OutboxCycleResult): boolean =>
@@ -107,18 +142,31 @@ export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistr
 export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistration, RunnerRequirements>(
   input: RunOutboxPollingLoopInput<Registration>,
   runCycle?: OutboxCycleRunner<Registration, RunnerRequirements>,
-): Effect.Effect<void, never, OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>> {
-  const cycleInput = {
-    claimOwner: input.config.claimOwner,
-    maxDeliveries: input.config.maxDeliveries,
-    registrations: input.registrations,
-    subscriptions: input.subscriptions,
-  };
+): Effect.Effect<void, never, OutboxPollingRequirements<Registration, RunnerRequirements>> {
   const cycle: Effect.Effect<
     OutboxCycleResult,
-    OutboxCycleError,
-    OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>
-  > = runCycle === undefined ? runOutboxCycle(cycleInput) : runCycle(cycleInput);
+    OutboxAdmittedCycleError,
+    OutboxPollingRequirements<Registration, RunnerRequirements>
+  > = input.admitComposition.pipe(
+    Effect.flatMap(
+      (
+        compositionRevision,
+      ): Effect.Effect<
+        OutboxCycleResult,
+        OutboxCycleError,
+        OutboxPollingRequirements<Registration, RunnerRequirements>
+      > => {
+        const cycleInput = {
+          claimOwner: input.config.claimOwner,
+          compositionRevision,
+          maxDeliveries: input.config.maxDeliveries,
+          registrations: input.registrations,
+          subscriptions: input.subscriptions,
+        };
+        return runCycle === undefined ? runOutboxCycle(cycleInput) : runCycle(cycleInput);
+      },
+    ),
+  );
   const tick = cycle.pipe(
     Effect.tap(() => input.health?.cycleSucceeded ?? Effect.void),
     Effect.tap((result) =>

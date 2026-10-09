@@ -3,6 +3,7 @@ import { unavailablePurchaseCurrencyDependency } from './purchase-currency-depen
 import type { PurchaseCurrencyDependencyUnavailable } from './purchase-currency-dependency.ts';
 import type {
   CurrencyPolicyDecision,
+  PurchaseCurrencyResolutionFailure,
   PurchaseCurrencyCurrentFacts,
   PurchaseCurrencySubject,
 } from './purchase-currency-resolution.ts';
@@ -12,7 +13,10 @@ export interface PurchaseCurrencyPolicyPortService {
     readonly context: Pick<PurchaseCurrencyCurrentFacts, 'contextRevision' | 'purchasingContext'>;
     readonly observedAt: string;
     readonly subject: PurchaseCurrencySubject;
-  }) => Effect.Effect<CurrencyPolicyDecision, PurchaseCurrencyDependencyUnavailable>;
+  }) => Effect.Effect<
+    CurrencyPolicyDecision,
+    PurchaseCurrencyDependencyUnavailable | PurchaseCurrencyResolutionFailure
+  >;
 }
 
 export class PurchaseCurrencyPolicyPort extends Context.Service<

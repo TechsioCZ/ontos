@@ -1281,7 +1281,7 @@ const purchaseApprovalTriggerEvidenceSourceFactoryLayer = Layer.effect(
 );
 
 /**
- * Production exposes the real source factory while absent #323/#333 owner integrations remain an
+ * Production exposes the real source factory while the absent owner integrations remain an
  * explicit typed fail-closed leaf. Deployments replace that leaf with their authoritative adapter.
  */
 export const purchaseLimitPersistenceLayer = Layer.mergeAll(

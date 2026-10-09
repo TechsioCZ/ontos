@@ -4,7 +4,7 @@ import { Effect, FileSystem, Option, Path, Predicate, Result, Schema } from 'eff
 import { format } from 'oxfmt';
 import oxfmtConfig from '../../oxfmt.config.ts';
 
-import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/index.ts';
+import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/modules/manifest-constants.ts';
 import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 
 /* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. expires: 2026-12-31. */
@@ -41,6 +41,16 @@ export const GOVERNED_HTTP_API_IMPORT_SLOT_START = '// <generated-governed-http-
 export const GOVERNED_HTTP_API_IMPORT_SLOT_END = '// </generated-governed-http-api-imports>';
 export const GOVERNED_HTTP_API_ADDITION_SLOT_START = '// <generated-governed-http-api-additions>';
 export const GOVERNED_HTTP_API_ADDITION_SLOT_END = '// </generated-governed-http-api-additions>';
+/**
+ * Closes the composed vertical API once: every endpoint decodes its payload with excess properties
+ * rejected. Endpoints declare no header codecs, so browser transport headers stay unconstrained.
+ */
+export const GOVERNED_HTTP_API_CLOSING_ANNOTATION = ".annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })";
+const escapeGovernedPattern = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+const governedHttpApiClosedTail = new RegExp(
+  String.raw`^\s*${escapeGovernedPattern(GOVERNED_HTTP_API_CLOSING_ANNOTATION)}\s*\.pipe\((?:identity|governedHttpApiIdentity)\);`,
+  'u',
+);
 export const GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START = '// <generated-governed-http-handler-imports>';
 export const GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END = '// </generated-governed-http-handler-imports>';
 export const GOVERNED_HTTP_HANDLER_LAYER_SLOT_START = '// <generated-governed-http-handler-layers>';
@@ -153,11 +163,23 @@ export interface ExternalHttpAdapterScaffoldConfig {
   readonly vertical: string;
 }
 
-export interface OutboxScaffoldConfig {
+interface VerticalOutboxScaffoldConfig {
   readonly action: string;
+  readonly module?: never;
+  readonly scope?: never;
   readonly topic: string;
   readonly vertical: string;
 }
+
+interface CoreOutboxScaffoldConfig {
+  readonly action: string;
+  readonly module: string;
+  readonly scope: 'core';
+  readonly topic: string;
+  readonly vertical?: never;
+}
+
+export type OutboxScaffoldConfig = CoreOutboxScaffoldConfig | VerticalOutboxScaffoldConfig;
 
 export interface OutboxWorkerScaffoldConfig {
   readonly authorization: 'owner_local_background';
@@ -167,8 +189,15 @@ export interface OutboxWorkerScaffoldConfig {
   readonly worker: string;
 }
 
+export const ReadScaffoldAuthorizationSchema = Schema.Literals([
+  'authenticated_principal',
+  'context_permission',
+  'public',
+]);
+export type ReadScaffoldAuthorization = typeof ReadScaffoldAuthorizationSchema.Type;
+
 export interface PageScaffoldConfig {
-  readonly authorization: 'authenticated_principal' | 'context_permission' | 'public';
+  readonly authorization: ReadScaffoldAuthorization;
   readonly page: string;
   readonly permission?: string;
   readonly url?: string;
@@ -176,11 +205,19 @@ export interface PageScaffoldConfig {
 }
 
 export interface GovernedContributionScaffoldConfig {
-  readonly authorization: 'authenticated_principal' | 'context_permission' | 'public';
+  readonly authorization: ReadScaffoldAuthorization;
   readonly name: string;
   readonly permission?: string;
   readonly resource?: string;
   readonly vertical: string;
+}
+
+export interface CoreReadScaffoldConfig {
+  readonly authorization: ReadScaffoldAuthorization;
+  readonly core: true;
+  readonly module: string;
+  readonly name: string;
+  readonly permission?: string;
 }
 
 export interface SearchProviderAccessScaffoldConfig {
@@ -214,7 +251,19 @@ export interface ResourceScaffoldConfig {
 
 export interface PermissionScaffoldConfig {
   readonly permission: string;
-  readonly scope: 'counterparty' | 'counterparty_storefront' | 'retail_profile';
+  readonly scope:
+    | 'assortment_binding'
+    | 'assortment_boundary'
+    | 'assortment_configuration'
+    | 'assortment_decision'
+    | 'assortment_rule'
+    | 'counterparty'
+    | 'counterparty_storefront'
+    | 'inventory_resource'
+    | 'module'
+    | 'price_group'
+    | 'pricing_catalog'
+    | 'retail_profile';
   readonly vertical: string;
 }
 
@@ -1628,8 +1677,13 @@ export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string =>
   }
   const afterMarker = end + GOVERNED_HTTP_API_ADDITION_SLOT_END.length;
   const trailing = content.slice(afterMarker);
-  if (/^\s*\.pipe\((?:identity|governedHttpApiIdentity)\);/u.test(trailing)) {
+  if (governedHttpApiClosedTail.test(trailing)) {
     return content;
+  }
+  if (/^\s*\./u.test(trailing)) {
+    return raiseScaffoldFailure(
+      `generated owner API chain must end ${GOVERNED_HTTP_API_ADDITION_SLOT_END} with ${GOVERNED_HTTP_API_CLOSING_ANNOTATION}.pipe(identity)`,
+    );
   }
 
   let prefix = content.slice(0, end);
@@ -1646,7 +1700,7 @@ export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string =>
       `generated owner API chain lacks a stable terminator at ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`,
     );
   }
-  const withTerminator = `${prefix}${GOVERNED_HTTP_API_ADDITION_SLOT_END}\n  .pipe(identity);${suffix}`;
+  const withTerminator = `${prefix}${GOVERNED_HTTP_API_ADDITION_SLOT_END}\n  ${GOVERNED_HTTP_API_CLOSING_ANNOTATION}\n  .pipe(identity);${suffix}`;
   return withTerminator.includes("import { identity } from 'effect';")
     ? withTerminator
     : `import { identity } from 'effect';\n${withTerminator}`;
@@ -1717,6 +1771,26 @@ export const generatedSlotContainsExactEntry = (
     readGeneratedSlotEntries(content, startMarker, endMarker).filter(
       (entry) => normalizeGeneratedSlotEntry(entry) === normalizedExpected,
     ).length === 1
+  );
+};
+
+/** Replaces one generated owner entry while retaining deterministic slot ordering. */
+export const replaceGeneratedSlotEntry = (
+  content: string,
+  startMarker: string,
+  endMarker: string,
+  currentEntry: string,
+  replacement: string,
+): string => {
+  const entries = readGeneratedSlotEntries(content, startMarker, endMarker);
+  if (entries.filter((entry) => entry === currentEntry).length !== 1) {
+    return raiseScaffoldFailure(`expected exactly one generated owner entry to replace: ${currentEntry}`);
+  }
+  return renderGeneratedSlotEntries(
+    content,
+    startMarker,
+    endMarker,
+    entries.map((entry) => (entry === currentEntry ? replacement : entry)),
   );
 };
 

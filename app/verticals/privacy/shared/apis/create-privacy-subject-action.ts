@@ -11,10 +11,6 @@ import {
 
 export { CreatePrivacySubjectPayloadSchema } from '../actions/create-privacy-subject.ts';
 
-const CreatePrivacySubjectActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreatePrivacySubjectActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreatePrivacySubjectActionInvalidProblem',
   400,
@@ -128,15 +124,37 @@ const actionErrors = [
   CreatePrivacySubjectActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const createPrivacySubjectActionGroupDefinition = HttpApiGroup.make('createPrivacySubjectAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/create-privacy-subject', {
+      error: actionErrors,
+      payload: Schema.toEncoded(CreatePrivacySubjectPayloadSchema),
+      success: CreatePrivacySubjectResultSchema,
+    }),
+  )
+  .middleware(CreatePrivacySubjectActionSchemaErrorMiddleware);
+
+export type CreatePrivacySubjectActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'createPrivacySubjectAction',
+  HttpApiGroup.Endpoints<typeof createPrivacySubjectActionGroupDefinition>
+>;
+
+const CreatePrivacySubjectActionGroup: CreatePrivacySubjectActionGroupContract =
+  createPrivacySubjectActionGroupDefinition;
+
 export const CreatePrivacySubjectActionApi = HttpApi.make('CreatePrivacySubjectActionApi').add(
-  HttpApiGroup.make('createPrivacySubjectAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/create-privacy-subject', {
-        error: actionErrors,
-        headers: CreatePrivacySubjectActionHeadersSchema,
-        payload: Schema.toEncoded(CreatePrivacySubjectPayloadSchema),
-        success: CreatePrivacySubjectResultSchema,
-      }),
-    )
-    .middleware(CreatePrivacySubjectActionSchemaErrorMiddleware),
+  CreatePrivacySubjectActionGroup,
 );

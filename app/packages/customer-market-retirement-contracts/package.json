@@ -1,0 +1,39 @@
+{
+  "name": "@app/customer-market-retirement-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Customer-owned public Market affected-use and retirement reservation contracts.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./market-affected-use-assessment": "./src/apis/market-affected-use-assessment.ts",
+    "./market-affected-use-assessment/client": "./src/api/market-affected-use-assessment-client.ts",
+    "./market-subject-restrictions-current": "./src/apis/market-subject-restrictions-current.ts",
+    "./market-subject-restrictions-current/client": "./src/api/market-subject-restrictions-current-client.ts",
+    "./reserve-market-retirement": "./src/apis/reserve-market-retirement.ts",
+    "./reserve-market-retirement/client": "./src/api/reserve-market-retirement-client.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.0-rc.117"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.11.12",
+    "@types/node": "20.19.43",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597"
+  },
+  "ontosContractOwner": {
+    "appId": "commerce-customer-context",
+    "moduleApis": [
+      "market-affected-use-assessment",
+      "market-subject-restrictions-current",
+      "reserve-market-retirement"
+    ],
+    "moduleId": "commerce.customer-context",
+    "packageName": "@app/commerce-customer-context"
+  }
+}

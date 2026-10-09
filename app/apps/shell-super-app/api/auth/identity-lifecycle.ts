@@ -17,7 +17,8 @@ import {
   setManagedApiKeyBindingStatusAction,
   setSelfApiKeyBindingStatusAction,
 } from '@app/core-runtime';
-import { Context, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Match, Schema } from 'effect';
+import type { Redacted } from 'effect';
 
 import { ApiKeyService } from './api-key-service.ts';
 import type {
@@ -57,7 +58,7 @@ export interface ApiKeyLifecycleResult extends SafeApiKeyMetadata {
   readonly authBindingId: string;
   readonly cleanupPending: boolean;
 }
-export type ApiKeyIssueResult = ApiKeyLifecycleResult & Readonly<Record<'secret', string>>;
+export type ApiKeyIssueResult = ApiKeyLifecycleResult & Readonly<Record<'secret', Redacted.Redacted>>;
 
 type RequestIdentity = Readonly<Record<'correlationId' | 'idempotencyKey', string>>;
 
@@ -161,7 +162,7 @@ export const makeIdentityLifecycleService = (
           ...publicMetadata(input.issued),
           authBindingId: binding.authBindingId,
           cleanupPending,
-          secret: Redacted.value(input.issued.secret),
+          secret: input.issued.secret,
         });
         return keys.clearPendingCleanup(input.issued.providerKeyId).pipe(
           Effect.as(result(false)),

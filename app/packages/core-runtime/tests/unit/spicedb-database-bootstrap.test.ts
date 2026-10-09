@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 
 import { NodeFileSystem } from '@effect/platform-node';
-import { Effect, FileSystem } from 'effect';
+import { Effect, FileSystem, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { parseSpiceDbDatabaseBootstrapConfig } from '../../src/install/spicedb-database-config.ts';
@@ -19,35 +19,27 @@ const extractSchema = (source: string): string =>
     .map((line) => line.replace(/^ {2}/u, ''))
     .join('\n');
 
-it('accepts a distinct SpiceDB role and database on the administrative server', () => {
+it('bootstraps the fixed SpiceDB role and database with the exact configured password', () => {
   expect(
     parseSpiceDbDatabaseBootstrapConfig({
       DATABASE_ADMIN_URL: 'postgresql://db:admin@db:5432/db',
-      SPICEDB_DATABASE_URL: 'postgresql://spicedb:p%40ssword@db:5432/spicedb',
+      SPICEDB_DATABASE_PASSWORD: Redacted.make(' p@ss:w/o%rd#? '),
     }),
   ).toEqual({
     adminUrl: 'postgresql://db:admin@db:5432/db',
     database: 'spicedb',
-    password: 'p@ssword',
+    password: ' p@ss:w/o%rd#? ',
     user: 'spicedb',
   });
 });
 
-it('rejects unsafe SpiceDB database bootstrap targets', () => {
+it('rejects unsafe SpiceDB database bootstrap configuration', () => {
   for (const environment of [
     {},
-    {
-      DATABASE_ADMIN_URL: 'postgresql://db:admin@db:5432/db',
-      SPICEDB_DATABASE_URL: 'postgresql://postgres:secret@db:5432/spicedb',
-    },
-    {
-      DATABASE_ADMIN_URL: 'postgresql://db:admin@db:5432/db',
-      SPICEDB_DATABASE_URL: 'postgresql://spicedb:secret@other-db:5432/spicedb',
-    },
-    {
-      DATABASE_ADMIN_URL: 'postgresql://db:admin@db:5432/db',
-      SPICEDB_DATABASE_URL: 'postgresql://spicedb:secret@db:5432/ontos',
-    },
+    { DATABASE_ADMIN_URL: 'postgresql://db:admin@db:5432/db' },
+    { DATABASE_ADMIN_URL: 'postgresql://db:admin@db:5432/db', SPICEDB_DATABASE_PASSWORD: Redacted.make('') },
+    { DATABASE_ADMIN_URL: 'mysql://db:admin@db:3306/db', SPICEDB_DATABASE_PASSWORD: Redacted.make('secret') },
+    { DATABASE_ADMIN_URL: 'postgresql://spicedb:admin@db:5432/db', SPICEDB_DATABASE_PASSWORD: Redacted.make('secret') },
   ]) {
     expect(() => parseSpiceDbDatabaseBootstrapConfig(environment)).toThrow();
   }
@@ -68,6 +60,10 @@ it.layer(NodeFileSystem.layer)('SpiceDB bootstrap sources', (suite) => {
       expect(stage).not.toMatch(/relationships:|assertions:/u);
       expect(development).toMatch(/#executor@tenant:test-tenant#member/u);
       expect(development).toMatch(/#executor@principal:allowed-principal/u);
+      expect(development).toMatch(/relation containing_catalog: business_permission/u);
+      expect(development).toMatch(
+        /permission use = direct_use \+ \(tenant->access & containing_catalog->direct_use\)/u,
+      );
     }),
   );
 

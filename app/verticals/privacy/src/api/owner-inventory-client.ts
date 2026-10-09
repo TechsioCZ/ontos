@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface OwnerInventoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type OwnerInventoryAuthorizedInvocation = readonly [
@@ -37,13 +38,17 @@ export const executeOwnerInventoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: OwnerInventoryAuthorizedInvocation
 ) =>
   ownerInventoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.ownerInventory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.ownerInventory.execute({ payload })),
   );
 
 export const executeOwnerInventory = (
   payload: OwnerInventoryRequest,
   ...[requestCorrelation, options = {}]: OwnerInventoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeOwnerInventoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeOwnerInventoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

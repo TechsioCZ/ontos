@@ -50,6 +50,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   const legalEntityEndpoints = Object.keys(ShellAuthenticationApi.groups.legalEntities.endpoints).toSorted();
   const tenantEndpoints = Object.keys(ShellAuthenticationApi.groups.tenants.endpoints).toSorted();
   const resourceEndpoints = Object.keys(ShellAuthenticationApi.groups.resources.endpoints).toSorted();
+  const externalIdentityEndpoints = Object.keys(ShellAuthenticationApi.groups.externalIdentity.endpoints).toSorted();
 
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
   expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
@@ -70,6 +71,14 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
   expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
+  expect(externalIdentityEndpoints).toEqual([
+    'activatePrincipalBinding',
+    'changePrincipalBindingStatus',
+    'issueExternalGatewayContext',
+    'readPrincipalBinding',
+    'reservePrincipalBinding',
+    'resolveExternalSubject',
+  ]);
   expect(
     Object.fromEntries(
       Object.values(ShellAuthenticationApi.groups).flatMap((group) =>
@@ -77,18 +86,25 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
       ),
     ),
   ).toEqual({
+    activatePrincipalBinding: '/auth/identity/external/bindings/activate',
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',
     availableTenants: '/auth/tenants',
+    changePrincipalBindingStatus: '/auth/identity/external/binding/status',
     changePrincipalStatus: '/auth/identity/principal-status',
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
+    executeLegalEntityDetail: '/core/reads/legal-entity-detail',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
+    issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',
     issueSelfApiKey: '/auth/identity/api-keys/self',
     listManagedApiKeys: '/auth/identity/api-keys/managed/list',
     listSelfApiKeys: '/auth/identity/api-keys/self/list',
+    readPrincipalBinding: '/auth/identity/external/bindings/read',
+    reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
+    resolveExternalSubject: '/auth/identity/external/resolve',
     resolveModuleTarget: '/shell/module-target',
     resourceDetail: '/shell/resource',
     rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',
@@ -212,25 +228,30 @@ it.effect('publishes exact legal-entity endpoints with an ID-only switch payload
 
 it.effect('decodes an optional exact page entrypoint without accepting private routing fields', () =>
   Effect.gen(function* testProgram3() {
+    const compositionRevision = 'a'.repeat(64);
     expect(
       yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        compositionRevision,
         entrypointKey: 'contacts.core.page.customers',
         importPath: 'must-not-pass',
         moduleId: 'contacts.core',
         routePath: '/contacts/customers',
       }),
     ).toEqual({
+      compositionRevision,
       entrypointKey: 'contacts.core.page.customers',
       moduleId: 'contacts.core',
     });
     expect(
       yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        compositionRevision,
         moduleId: 'contacts.core',
       }),
-    ).toEqual({ moduleId: 'contacts.core' });
+    ).toEqual({ compositionRevision, moduleId: 'contacts.core' });
     expect(
       yield* Effect.flip(
         Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+          compositionRevision,
           entrypointKey: '../private-page',
           moduleId: 'contacts.core',
         }),

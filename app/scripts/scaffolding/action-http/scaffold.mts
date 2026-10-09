@@ -77,6 +77,7 @@ const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const decodeRecord = Schema.decodeUnknownOption(UnknownRecordSchema);
 const isString = Schema.is(Schema.String);
 const DomainErrorSchema = Schema.declare<Schema.Top>(Schema.isSchema);
+const ActionPayloadSchema = Schema.declare<Schema.Top>(Schema.isSchema);
 const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const OwningModuleKeySchema = Schema.String.pipe(Schema.brand('OwningModuleKey'));
 const ActionDescriptorSchema = Schema.Struct({
@@ -84,6 +85,7 @@ const ActionDescriptorSchema = Schema.Struct({
   domainErrorSchema: DomainErrorSchema,
   idempotency: Schema.Literals(['optional', 'required']),
   owningModuleKey: OwningModuleKeySchema,
+  payloadSchema: ActionPayloadSchema,
 });
 type ActionDescriptor = typeof ActionDescriptorSchema.Type;
 interface ActionModuleLike {
@@ -226,12 +228,52 @@ const collectDomainErrors = (ast: SchemaAstLike): readonly DomainErrorIdentity[]
   return errors.toSorted((left, right) => left.tag.localeCompare(right.tag) || left.code.localeCompare(right.code));
 };
 
+interface PayloadDiscriminator {
+  readonly key: string;
+  readonly values: readonly string[];
+}
+
+const payloadDiscriminatorPriority = ['_tag', 'operation', 'type', 'kind'] as const;
+const payloadDiscriminatorRank = new Map<string, number>(
+  payloadDiscriminatorPriority.map((key, index) => [key, index]),
+);
+
+const collectPayloadDiscriminator = (ast: SchemaAstLike): PayloadDiscriminator | undefined => {
+  const astTypes = ast.types;
+  if (!Predicate.isTagged(ast, 'Union') || astTypes === undefined || astTypes.length < 2) {
+    return undefined;
+  }
+  const branchValues = astTypes.map(collectNodeDomainErrorValues);
+  const [firstBranch] = branchValues;
+  if (firstBranch === undefined) {
+    return undefined;
+  }
+  const candidates = [...firstBranch.entries()]
+    .filter(
+      ([key, values]) =>
+        /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(key) &&
+        values.size === 1 &&
+        branchValues.every((branch) => branch.get(key)?.size === 1),
+    )
+    .map(([key]) => ({
+      key,
+      values: branchValues.flatMap((branch) => [...(branch.get(key) ?? [])]),
+    }))
+    .filter(({ values }) => new Set(values).size === branchValues.length)
+    .toSorted((left, right) => {
+      const leftRank = payloadDiscriminatorRank.get(left.key) ?? payloadDiscriminatorPriority.length;
+      const rightRank = payloadDiscriminatorRank.get(right.key) ?? payloadDiscriminatorPriority.length;
+      return leftRank - rightRank || left.key.localeCompare(right.key);
+    });
+  return candidates[0];
+};
+
 interface DecodedActionRegistration {
   readonly descriptor: ActionDescriptor;
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Dynamic import namespaces are untrusted here and are decoded field-by-field before the scaffold accepts the registration.
-const decodeActionRegistration = (module: unknown, value: string): Option.Option<DecodedActionRegistration> =>
+export const decodeActionRegistration = (module: unknown, value: string): Option.Option<DecodedActionRegistration> =>
   Option.gen(function* decodeActionRegistrationOption() {
     const moduleRecord = yield* decodeRecord(module);
     const action = yield* decodeRecord(moduleRecord[value]);
@@ -313,12 +355,6 @@ import {
 
 export { ${type}PayloadSchema } from '../actions/${action}.ts';
 
-const ${type}ActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  ),
-});
-
 export const ${type}ActionInvalidProblemSchema = makeProblemDetailsSchema('${type}ActionInvalidProblem', 400);
 export const ${type}ActionAuthenticationProblemSchema = makeProblemDetailsSchema('${type}ActionAuthenticationProblem', 401);
 export const ${type}ActionForbiddenProblemSchema = makeProblemDetailsSchema('${type}ActionForbiddenProblem', 403, { code: ${literalList(codes.forbidden)} });
@@ -372,18 +408,34 @@ ${rateCodes.length === 0 ? '' : `  ${type}ActionRateLimitedProblemSchema,\n`}${t
   ${type}ActionInternalProblemSchema,
 ] as const;
 
-export const ${type}ActionApi = HttpApi.make('${type}ActionApi').add(
-  HttpApiGroup.make('${group}')
-    .add(
-      HttpApiEndpoint.post('execute', '/${vertical.appId}/actions/${action}', {
-        error: actionErrors,
-        headers: ${type}ActionHeadersSchema,
-        payload: Schema.toEncoded(${type}PayloadSchema),
-        success: ${type}ResultSchema,
-      }),
-    )
-    .middleware(${type}ActionSchemaErrorMiddleware),
-);
+/**
+ * The endpoint chain stays a \`const\`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's \`shared/api.ts\` merges every group type into one \`HttpApi\` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const ${group}GroupDefinition = HttpApiGroup.make('${group}')
+  .add(
+    HttpApiEndpoint.post('execute', '/${vertical.appId}/actions/${action}', {
+      error: actionErrors,
+      payload: Schema.toEncoded(${type}PayloadSchema),
+      success: ${type}ResultSchema,
+    }),
+  )
+  .middleware(${type}ActionSchemaErrorMiddleware);
+
+export type ${type}ActionGroupContract = HttpApiGroup.HttpApiGroup<'${group}', HttpApiGroup.Endpoints<typeof ${group}GroupDefinition>>;
+
+const ${type}ActionGroup: ${type}ActionGroupContract = ${group}GroupDefinition;
+
+export const ${type}ActionApi = HttpApi.make('${type}ActionApi').add(${type}ActionGroup);
 `;
 };
 
@@ -483,8 +535,6 @@ export const renderActionHttpProblems = (
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
-/* jscpd:ignore-start -- Generated Action problem adapters intentionally share the Core problem mapping protocol while preserving owner-specific domain errors. */
-// oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
@@ -591,7 +641,6 @@ export const ${toCamelCase(action)}ActionSchemaErrorLive = HttpApiMiddleware.lay
   ${type}ActionSchemaErrorMiddleware,
   () => Effect.fail(${toCamelCase(action)}ActionProblem.invalid()),
 );
-/* jscpd:ignore-end */
 `;
 };
 
@@ -601,6 +650,7 @@ const renderActionHttpServer = (vertical: OntosVerticalMetadata, action: string)
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
+import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { HttpServerRequest } from 'effect/unstable/http';
 import { Redacted, Schema } from 'effect';
@@ -621,17 +671,18 @@ const runActionHttp = bindActionHttpRunner({
 const execute = Effect.fn('${type}ActionServer.execute')(
   function* execute${type}(
     payload: typeof ${value}Action.descriptor.payloadSchema.Encoded,
-    idempotencyKey: string | undefined,
     request: HttpServerRequest.HttpServerRequest,
   ) {
   const correlationId = request.headers['x-correlation-id'];
   if (correlationId !== undefined && correlationId.length > 200) {
     return yield* Effect.fail(${value}ActionProblem.invalid());
   }
+  const endpointHeaders = yield* decodeActionEndpointHeaders(request.headers)
+    .pipe(Effect.mapError(${value}ActionProblem.invalid));
   const decoded = yield* Schema.decodeEffect(${value}Action.descriptor.payloadSchema)(payload)
     .pipe(Effect.mapError(${value}ActionProblem.invalid));
   return yield* runActionHttp({
-    endpointHeaders: { idempotencyKey, traceId: request.headers['x-trace-id'] },
+    endpointHeaders,
     internalProblem: ${value}ActionProblem.internal,
     invalidCorrelationProblem: ${value}ActionProblem.invalid,
     mapError: map${type}ActionProblem,
@@ -648,21 +699,40 @@ const execute = Effect.fn('${type}ActionServer.execute')(
 export const ${value}ActionApiLive = HttpApiBuilder.group(
   ${toCamelCase(vertical.slug)}Api,
   '${value}Action',
-  (handlers) => handlers.handle('execute', ({ headers, payload, request }) =>
-    execute(payload, headers['idempotency-key'], request),
-  ),
+  (handlers) => handlers.handle('execute', ({ payload, request }) => execute(payload, request)),
 ).pipe(Layer.provide(${value}ActionSchemaErrorLive));
 `;
 };
 
-export const renderActionHttpClient = (vertical: OntosVerticalMetadata, action: string, required: boolean): string => {
+export const renderActionHttpClient = (
+  vertical: OntosVerticalMetadata,
+  action: string,
+  required: boolean,
+  payloadSchema?: Schema.Top,
+): string => {
   const type = toPascalCase(action);
   const value = toCamelCase(action);
+  const payloadDiscriminator = payloadSchema === undefined ? undefined : collectPayloadDiscriminator(payloadSchema.ast);
+  const executeRequest =
+    payloadDiscriminator === undefined
+      ? `client.${value}Action.execute({ payload: encoded })`
+      : `Match.value(encoded).pipe(
+${payloadDiscriminator.values
+  .toSorted((left, right) => left.localeCompare(right))
+  .map((discriminatorValue) => {
+    const payloadBinding = `${toCamelCase(discriminatorValue.toLowerCase())}Payload`;
+    return `      Match.when({ ${payloadDiscriminator.key}: '${discriminatorValue}' }, (${payloadBinding}) =>
+        client.${value}Action.execute({ payload: ${payloadBinding} }),
+      ),`;
+  })
+  .join('\n')}
+      Match.exhaustive,
+    )`;
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, ${payloadDiscriminator === undefined ? '' : 'Match, '}Redacted, Schema } from 'effect';
 import { ${type}ActionApi, ${type}PayloadSchema } from '../../shared/apis/${action}-action.ts';
 import type { ${type}Payload } from '../../shared/actions/${action}.ts';
 import { operationGateway } from './action-gateway.ts';
@@ -671,6 +741,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface ${type}ActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey${required ? '' : '?'}: string;
   readonly [traceIdOption]?: string;
@@ -686,17 +757,14 @@ interface MakeClientOptions {
 }
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
-  makeGovernedEffectBffClient({ api: ${type}ActionApi, credential, defaultApiPrefix: '/${vertical.appId}-api', requestCorrelation }, options);
+  makeGovernedEffectBffClient({ api: ${type}ActionApi, credential, defaultApiPrefix: '/${vertical.appId}-api', idempotencyKey: options.idempotencyKey, requestCorrelation }, options);
 
 export const execute${type}WithAuthorization = (
   payload: ${type}Payload,
   ...[credential, requestCorrelation, options]: AuthorizedInvocation
 ) => Schema.encodeUnknownEffect(${type}PayloadSchema)(payload).pipe(
   Effect.flatMap((encoded) => makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-    Effect.flatMap((client) => client.${value}Action.execute({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload: encoded,
-    })),
+    Effect.flatMap((client) => ${executeRequest}),
   )),
 );
 
@@ -704,7 +772,11 @@ export const execute${type} = (
   payload: ${type}Payload,
   ...[requestCorrelation, options]: OperationInvocation
 ) => operationGateway.invoke(
-  (credential) => execute${type}WithAuthorization(payload, credential, requestCorrelation, options),
+  (credential, { apiBaseUrl, compositionRevision }) => execute${type}WithAuthorization(payload, credential, requestCorrelation, {
+    ...options,
+    baseUrl: apiBaseUrl,
+    compositionRevision,
+  }),
   options.gateway,
 );
 `;
@@ -932,7 +1004,12 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
     ),
     createOrUpdateOwnedGeneratedMutationEffect(
       clientPath,
-      renderActionHttpClient(vertical, action, inspected.descriptor.idempotency === 'required'),
+      renderActionHttpClient(
+        vertical,
+        action,
+        inspected.descriptor.idempotency === 'required',
+        inspected.descriptor.payloadSchema,
+      ),
       ownsGeneratedActionHttpArtifact,
     ),
   ]);

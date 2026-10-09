@@ -1,9 +1,17 @@
 {
   "ontosModuleManifests": {
-    "party-registry": "http://localhost:4102/.well-known/ontos-module-manifest.json",
+    "assortment": "http://localhost:4104/.well-known/ontos-module-manifest.json",
+    "commerce-market-catalog": "http://localhost:4109/.well-known/ontos-module-manifest.json",
     "commerce-customer-context": "http://localhost:4101/.well-known/ontos-module-manifest.json",
+    "party-registry": "http://localhost:4102/.well-known/ontos-module-manifest.json",
     "payment-term-catalog": "http://localhost:4103/.well-known/ontos-module-manifest.json",
-    "privacy": "http://localhost:4104/.well-known/ontos-module-manifest.json"
+    "catalog": "http://localhost:4105/.well-known/ontos-module-manifest.json",
+    "pricing": "http://localhost:4106/.well-known/ontos-module-manifest.json",
+    "storefront-registry": "http://localhost:4107/.well-known/ontos-module-manifest.json",
+    "price-group-catalog": "http://localhost:4108/.well-known/ontos-module-manifest.json",
+    "inventory": "http://localhost:4110/.well-known/ontos-module-manifest.json",
+    "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json",
+    "privacy": "http://localhost:4112/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -13,11 +21,23 @@
     "party-registry": 4102,
     "commerce-customer-context": 4101,
     "payment-term-catalog": 4103,
-    "privacy": 4104
+    "assortment": 4104,
+    "commerce-market-catalog": 4109,
+    "catalog": 4105,
+    "pricing": 4106,
+    "storefront-registry": 4107,
+    "price-group-catalog": 4108,
+    "inventory": 4110,
+    "availability": 4111,
+    "privacy": 4112
   },
   "manifests": {
+    "assortment": "http://localhost:4104/mf-manifest.json",
     "party-registry": "http://localhost:4102/mf-manifest.json",
-    "privacy": "http://localhost:4104/mf-manifest.json"
+    "commerce-market-catalog": "http://localhost:4109/mf-manifest.json",
+    "catalog": "http://localhost:4105/mf-manifest.json",
+    "inventory": "http://localhost:4110/mf-manifest.json",
+    "privacy": "http://localhost:4112/mf-manifest.json"
   },
   "serverExecution": {
     "party-registry": {
@@ -183,8 +203,404 @@
         }
       }
     },
+    "commerce-market-catalog": {
+      "apiBaseUrl": "http://localhost:4109/commerce-market-catalog-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/commerce-market-catalog",
+        "buildMarker": "a3f3551680596bed"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-commerce-market-catalog",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_COMMERCE_MARKET_CATALOG_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_COMMERCE_MARKET_CATALOG_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_COMMERCE_MARKET_CATALOG_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_COMMERCE_MARKET_CATALOG_WORKER",
+          "serviceBindingEnv": "VERTICAL_COMMERCE_MARKET_CATALOG_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_COMMERCE_MARKET_CATALOG_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_COMMERCE_MARKET_CATALOG_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalCommerceMarketCatalogBackend",
+        "manifestEnv": "VERTICAL_COMMERCE_MARKET_CATALOG_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4109/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4109/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/commerce-market-catalog",
+          "buildMarker": "a3f3551680596bed"
+        }
+      }
+    },
+    "catalog": {
+      "apiBaseUrl": "http://localhost:4105/catalog-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/catalog",
+        "buildMarker": "d68f889ade45a491"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-catalog",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CATALOG",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_CATALOG_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_CATALOG_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_CATALOG_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_CATALOG_WORKER",
+          "serviceBindingEnv": "VERTICAL_CATALOG_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_CATALOG_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_CATALOG_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalCatalogBackend",
+        "manifestEnv": "VERTICAL_CATALOG_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4105/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4105/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/catalog",
+          "buildMarker": "d68f889ade45a491"
+        }
+      }
+    },
+    "pricing": {
+      "apiBaseUrl": "http://localhost:4106/pricing-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/pricing",
+        "buildMarker": "472426e9fbfd8da9"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-pricing",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRICING",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_PRICING_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PRICING_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PRICING_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_PRICING_WORKER",
+          "serviceBindingEnv": "VERTICAL_PRICING_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PRICING_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PRICING_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalPricingBackend",
+        "manifestEnv": "VERTICAL_PRICING_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4106/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4106/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/pricing",
+          "buildMarker": "472426e9fbfd8da9"
+        }
+      }
+    },
+    "storefront-registry": {
+      "apiBaseUrl": "http://localhost:4107/storefront-registry-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/storefront-registry",
+        "buildMarker": "6e1423f340df12ea"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-storefront-registry",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_STOREFRONT_REGISTRY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_STOREFRONT_REGISTRY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_STOREFRONT_REGISTRY_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_STOREFRONT_REGISTRY_WORKER",
+          "serviceBindingEnv": "VERTICAL_STOREFRONT_REGISTRY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_STOREFRONT_REGISTRY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_STOREFRONT_REGISTRY_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalStorefrontRegistryBackend",
+        "manifestEnv": "VERTICAL_STOREFRONT_REGISTRY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4107/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4107/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/storefront-registry",
+          "buildMarker": "6e1423f340df12ea"
+        }
+      }
+    },
+    "price-group-catalog": {
+      "apiBaseUrl": "http://localhost:4108/price-group-catalog-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/price-group-catalog",
+        "buildMarker": "af022b7822b7562c"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-price-group-catalog",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_PRICE_GROUP_CATALOG_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PRICE_GROUP_CATALOG_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PRICE_GROUP_CATALOG_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_PRICE_GROUP_CATALOG_WORKER",
+          "serviceBindingEnv": "VERTICAL_PRICE_GROUP_CATALOG_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PRICE_GROUP_CATALOG_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PRICE_GROUP_CATALOG_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalPriceGroupCatalogBackend",
+        "manifestEnv": "VERTICAL_PRICE_GROUP_CATALOG_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4108/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4108/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/price-group-catalog",
+          "buildMarker": "af022b7822b7562c"
+        }
+      }
+    },
+    "inventory": {
+      "apiBaseUrl": "http://localhost:4110/inventory-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/inventory",
+        "buildMarker": "d87a59b2fccc989f"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-inventory",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_INVENTORY",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_INVENTORY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_INVENTORY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_INVENTORY_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_INVENTORY_WORKER",
+          "serviceBindingEnv": "VERTICAL_INVENTORY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_INVENTORY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_INVENTORY_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalInventoryBackend",
+        "manifestEnv": "VERTICAL_INVENTORY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4110/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4110/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/inventory",
+          "buildMarker": "d87a59b2fccc989f"
+        }
+      }
+    },
+    "assortment": {
+      "apiBaseUrl": "http://localhost:4104/assortment-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/assortment",
+        "buildMarker": "26e7bfcc7c19d1d4"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-assortment",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_ASSORTMENT",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_ASSORTMENT_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_ASSORTMENT_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_ASSORTMENT_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_ASSORTMENT_WORKER",
+          "serviceBindingEnv": "VERTICAL_ASSORTMENT_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_ASSORTMENT_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_ASSORTMENT_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalAssortmentBackend",
+        "manifestEnv": "VERTICAL_ASSORTMENT_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4104/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4104/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/assortment",
+          "buildMarker": "26e7bfcc7c19d1d4"
+        }
+      }
+    },
+    "availability": {
+      "apiBaseUrl": "http://localhost:4111/availability-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/availability",
+        "buildMarker": "7b0e5ab486adc9c0"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-availability",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_AVAILABILITY",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_AVAILABILITY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_AVAILABILITY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_AVAILABILITY_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_AVAILABILITY_WORKER",
+          "serviceBindingEnv": "VERTICAL_AVAILABILITY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_AVAILABILITY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_AVAILABILITY_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalAvailabilityBackend",
+        "manifestEnv": "VERTICAL_AVAILABILITY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4111/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4111/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/availability",
+          "buildMarker": "7b0e5ab486adc9c0"
+        }
+      }
+    },
     "privacy": {
-      "apiBaseUrl": "http://localhost:4104/privacy-api",
+      "apiBaseUrl": "http://localhost:4112/privacy-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/privacy",
@@ -223,8 +639,8 @@
         "adapterVersion": "backend-mf-effect-v1",
         "remoteName": "verticalPrivacyBackend",
         "manifestEnv": "VERTICAL_PRIVACY_BACKEND_MF_MANIFEST",
-        "manifestUrl": "http://localhost:4104/backend-mf-manifest.json",
-        "containerEntry": "http://localhost:4104/backendRemoteEntry.cjs",
+        "manifestUrl": "http://localhost:4112/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4112/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
@@ -239,6 +655,14 @@
     "party-registry": "http://localhost:4102/party-registry-api",
     "commerce-customer-context": "http://localhost:4101/commerce-customer-context-api",
     "payment-term-catalog": "http://localhost:4103/payment-term-catalog-api",
-    "privacy": "http://localhost:4104/privacy-api"
+    "commerce-market-catalog": "http://localhost:4109/commerce-market-catalog-api",
+    "catalog": "http://localhost:4105/catalog-api",
+    "pricing": "http://localhost:4106/pricing-api",
+    "storefront-registry": "http://localhost:4107/storefront-registry-api",
+    "price-group-catalog": "http://localhost:4108/price-group-catalog-api",
+    "assortment": "http://localhost:4104/assortment-api",
+    "inventory": "http://localhost:4110/inventory-api",
+    "availability": "http://localhost:4111/availability-api",
+    "privacy": "http://localhost:4112/privacy-api"
   }
 }

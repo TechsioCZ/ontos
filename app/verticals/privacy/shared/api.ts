@@ -143,6 +143,7 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(UpsertRetentionRuleActionApi)
   .addHttpApi(UpsertTemporaryDsrExportActionApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 
 export const privacyOperationContexts = {

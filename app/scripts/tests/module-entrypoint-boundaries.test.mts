@@ -8,8 +8,15 @@ import { Cause, ConfigProvider, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
-import { hasGeneratedGovernedServerContract } from '../generated-governed-http-boundary.mts';
-import { hasGeneratedGovernedClientContract, hasGeneratedSourceHeader } from '../generated-module-api-boundary.mts';
+import {
+  hasGeneratedActionRegistrationBinding,
+  hasGeneratedGovernedServerContract,
+} from '../generated-governed-http-boundary.mts';
+import {
+  hasGeneratedGovernedClientContract,
+  hasGeneratedModuleApiReadContract,
+  hasGeneratedSourceHeader,
+} from '../generated-module-api-boundary.mts';
 import {
   assertPublishedCrossMicroVerticalContractUsage,
   assertPublishedOutboxContractSource,
@@ -20,6 +27,44 @@ import {
 } from '../published-outbox-contracts.mts';
 
 const EXPECTED_EFFECT_FAILURE = 'Expected the Effect to fail';
+const ALIASED_PERMISSION_PROPERTY = 'permission: INVENTORY_READ_PERMISSION';
+const FixtureEntrypointKeySchema = Schema.String.pipe(Schema.brand('EntrypointKey'));
+const acceptsTypedGtinBinding = (source: string) =>
+  hasGeneratedActionRegistrationBinding(source, 'confirmGtin', 'ConfirmGtin', 'commerce.catalog');
+
+it('accepts a typed Codesmith Action binding but rejects spoofed or mismatched registration types', () => {
+  const binding = `export const confirmGtinAction: ActionRegistration<
+    typeof ConfirmGtinPayloadSchema,
+    typeof ConfirmGtinResultSchema,
+    typeof GtinActionErrorSchema,
+    Readonly<Record<string, never>>,
+    'commerce.catalog',
+    GtinServices
+  > = defineAction(
+    { domainErrorSchema: GtinActionErrorSchema, payloadSchema: ConfirmGtinPayloadSchema,
+      resultSchema: ConfirmGtinResultSchema, actionKey: 'commerce.catalog.confirm-gtin' },
+    handleConfirmGtin, gtinServicesForScope,
+  );`;
+  expect(acceptsTypedGtinBinding(binding)).toBe(true);
+  expect(
+    acceptsTypedGtinBinding(
+      binding.replace(
+        'GtinServices\n  > = defineAction(',
+        'GtinServices, GtinHandlerRequirements\n  > = defineAction(',
+      ),
+    ),
+  ).toBe(true);
+  expect(acceptsTypedGtinBinding(binding.replace("'commerce.catalog'", "'other.module'"))).toBe(false);
+  expect(acceptsTypedGtinBinding(binding.replace('typeof ConfirmGtinResultSchema', 'typeof WrongResultSchema'))).toBe(
+    false,
+  );
+  expect(
+    acceptsTypedGtinBinding(
+      binding.replace('domainErrorSchema: GtinActionErrorSchema', 'domainErrorSchema: WrongErrorSchema'),
+    ),
+  ).toBe(false);
+  expect(acceptsTypedGtinBinding(`const decoy = \`${binding}\`;`)).toBe(false);
+});
 
 it('recognizes real provenance comments after import sorting and rejects string decoys', () => {
   const header =
@@ -116,6 +161,16 @@ const PARTY_DEPLOYMENT_ID = 'party-registry';
 const PARTY_MANIFEST_PATH = './vertical.manifest.ts';
 
 const PARTY_MODULE_ID = 'party.registry';
+const CANONICAL_MODULE_ROUTE = 'apps/shell-super-app/src/routes/[lang]/$/route.meta.ts';
+const CANONICAL_MODULE_LOADER = 'apps/shell-super-app/src/routes/[lang]/$.data.ts';
+const CANONICAL_MODULE_CLIENT_LOADER = 'apps/shell-super-app/src/routes/[lang]/$.data.client.ts';
+const CANONICAL_LOADER_FIXTURE = 'export const loader = true;';
+const PRIVATE_ROUTE_METADATA = 'public: false';
+const CANONICAL_ROUTE_SOURCE = `import { defineSystemModuleEntrypoint } from '@app/core-runtime';
+export const routeMeta = {
+  canonicalPath: '/*', public: false, indexable: false, ownerAppId: 'shell-super-app',
+  entrypoint: defineSystemModuleEntrypoint({ access: 'read', authorization: { kind: 'authenticated_principal' }, entrypointKey: 'shell-super-app.page.canonical-module-target', moduleKey: 'shell-super-app', role: 'page' }),
+};`;
 
 const PARTY_OUTBOX_SPECIFIER = '@app/party-registry/outbox/party-created';
 
@@ -170,6 +225,7 @@ import type { ${requestType} } from '${options.contractImport}';
 ${GATEWAY_IMPORT}
 export interface ${operationStem}ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 type ${apiStem}AuthorizedInvocation = readonly [credential: string, requestCorrelation: string, options?: ${operationStem}ClientOptions];
 type ${apiStem}OperationInvocation = readonly [requestCorrelation: string, options?: ${operationStem}ClientOptions];
@@ -192,16 +248,18 @@ export const ${options.authorizedOperation} = (
   ...[credential, requestCorrelation, options = {}]: ${apiStem}AuthorizedInvocation
 ) =>
   ${options.clientHelper}(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.${options.endpointGroup}.execute(${
-      options.invocationKind === MODULE_API_KIND ? '{ headers: {}, params: {}, payload, query: {} }' : '{ payload }'
-    })),
+    Effect.flatMap((client) => client.${options.endpointGroup}.execute({ payload })),
   );
 export const ${options.publicOperation} = (
   payload: ${requestType},
   ...[requestCorrelation, options = {}]: ${apiStem}OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    ${options.authorizedOperation}(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    ${options.authorizedOperation}(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );`;
 };
 
@@ -226,6 +284,17 @@ it.effect('governed clients retain every boundary check across formatter trailin
     });
     const withoutCallTrailingCommas = source.replaceAll(/,\s*(?=\))/gu, '');
     expect(hasGeneratedGovernedClientContract(withoutCallTrailingCommas, expectation)).toBe(true);
+    for (const invalidTarget of [
+      source.replace('baseUrl: apiBaseUrl', "baseUrl: '/inventory-stock-api'"),
+      source.replace('baseUrl: apiBaseUrl,\n      compositionRevision,', 'baseUrl: apiBaseUrl,'),
+      source.replace(
+        '...options,\n      baseUrl: apiBaseUrl,\n      compositionRevision,',
+        'baseUrl: apiBaseUrl,\n      compositionRevision,\n      ...options,',
+      ),
+      source.replace('(credential, { apiBaseUrl, compositionRevision })', '(credential)'),
+    ]) {
+      expect(hasGeneratedGovernedClientContract(invalidTarget, expectation)).toBe(false);
+    }
     expect(
       hasGeneratedGovernedClientContract(
         withoutCallTrailingCommas.replace(AUTHORIZATION_VALUE, AUTHORIZATION_VALUE_TAIL),
@@ -347,16 +416,38 @@ it('governed servers bind the trusted handler, authentication, registration, and
     group: 'stockList',
     readValue: 'stockListRead',
   });
-  const accepts = (candidate: string): boolean =>
-    hasGeneratedGovernedServerContract(
-      candidate,
-      exportedName,
-      `export const api = HttpApi.make('InventoryApi')
+  const closedApi = `export const api = HttpApi.make('InventoryApi')
 // <generated-governed-http-api-additions>
 // </generated-governed-http-api-additions>
-.pipe(identity);`,
-    );
+.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
+.pipe(identity);`;
+  const accepts = (candidate: string, api = closedApi): boolean =>
+    hasGeneratedGovernedServerContract(candidate, exportedName, api);
   expect(accepts(source)).toBe(true);
+  const withExportedDomainMapper = source
+    .replace(
+      "import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';",
+      "import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';\nimport { Schema } from 'effect';",
+    )
+    .replace(
+      "StockListInternalProblemSchema } from '../shared/apis/stock-list.ts';",
+      "StockListInternalProblemSchema, StockListDomainPolicyProblemSchema } from '../shared/apis/stock-list.ts';",
+    )
+    .replace(
+      'const problems = makeGovernedReadProblems({',
+      `export const mapStockListDomainError = (
+  error: unknown,
+): typeof StockListDomainPolicyProblemSchema.Type => {
+  Schema.is(Schema.Unknown)(error);
+  return StockListDomainPolicyProblemSchema.make({ detail: 'Rejected' });
+};
+const problems = makeGovernedReadProblems({`,
+    )
+    .replace(
+      '    authenticatePrincipal: authenticateOperationPrincipal,',
+      '    authenticatePrincipal: authenticateOperationPrincipal,\n    mapDomainError: mapStockListDomainError,',
+    );
+  expect(accepts(withExportedDomainMapper)).toBe(true);
   expect(accepts(source.replace(MODULE_API_HEADER, ''))).toBe(false);
   expect(accepts(source.replace('    problems,', '    problems: problems,'))).toBe(true);
   for (const [expected, replacement] of [
@@ -412,15 +503,13 @@ const makeFixture = Effect.fn(function* mergedScenario1(
   yield* initialize(root);
   yield* write(
     root,
-    '.modernjs/ultramodern.json',
+    'topology/reference-topology.json',
     JSON.stringify({
-      topology: {
-        apps: [
-          { id: 'shell-super-app', path: 'apps/shell-super-app' },
-          { id: 'inventory-stock', path: INVENTORY_VERTICAL_PATH },
-          ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
-        ],
-      },
+      shell: { id: 'shell-super-app', path: 'apps/shell-super-app' },
+      verticals: [
+        { id: 'inventory-stock', path: INVENTORY_VERTICAL_PATH },
+        ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
+      ],
     }),
   );
   yield* write(root, `${INVENTORY_VERTICAL_PATH}/package.json`, JSON.stringify({ name: '@app/inventory-stock' }));
@@ -435,8 +524,14 @@ export const routeMeta = { ownerAppId: 'shell-super-app', entrypoint: defineSyst
   yield* write(
     root,
     'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-    `export const routes = [{ entrypoint: { entrypointKey: 'shell-super-app.page.home' } }];`,
+    `import { routeMeta as route0 } from './home/route.meta';
+import { routeMeta as route1 } from './[lang]/$/route.meta';`,
   );
+  yield* write(root, CANONICAL_MODULE_ROUTE, CANONICAL_ROUTE_SOURCE);
+  yield* write(root, 'apps/shell-super-app/modern.config.ts', 'export const app = true;');
+  yield* write(root, 'apps/shell-super-app/src/routes/[lang]/$.tsx', 'export const CanonicalModuleRoute = true;');
+  yield* write(root, CANONICAL_MODULE_LOADER, CANONICAL_LOADER_FIXTURE);
+  yield* write(root, CANONICAL_MODULE_CLIENT_LOADER, CANONICAL_LOADER_FIXTURE);
   yield* write(
     root,
     'apps/shell-super-app/shared/api.ts',
@@ -461,7 +556,7 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
   yield* write(
     root,
     'verticals/inventory-stock/src/routes/ultramodern-route-metadata.ts',
-    `export const routes = [{ entrypoint: { entrypointKey: 'inventory.stock.page.orders' } }];`,
+    `import { routeMeta as route0 } from './orders/route.meta';`,
   );
   yield* write(root, ACTION_FILE, validAction);
   yield* write(root, WORKER_FILE, validWorker);
@@ -481,6 +576,76 @@ it.live('accepts governed generated Actions, pages, Workers, catalogs, and route
   Effect.gen(function* testEffect3() {
     const root = yield* makeFixture();
     yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live('confines native Federation imports, including aliases and dynamic imports, to governed Shell edges', () =>
+  Effect.gen(function* nativeFederationBoundary() {
+    const root = yield* makeFixture();
+    const sources = [
+      "import { loadRemote as resolveRemote } from '@module-federation/enhanced/runtime'; resolveRemote('inventory/Widget');",
+      "import { getInstance } from '@module-federation/modern-js-v3/runtime'; getInstance()?.loadRemote('inventory/Widget');",
+      "import * as federation from '@module-federation/runtime'; federation.loadRemote('inventory/Widget');",
+      "const federation = import('@module-federation/runtime-tools');",
+      "const { loadRemote: resolveRemote } = require('@module-federation/runtime'); resolveRemote('inventory/Widget');",
+      "export { createInstance } from '@module-federation/runtime-core';",
+      "import { createLazyComponent } from '@module-federation/bridge-react';",
+      "federation.preloadRemote([{ nameOrAlias: 'inventory' }]);",
+      "federation.registerRemotes([{ name: 'inventory', entry: 'https://inventory.example/mf-manifest.json' }]);",
+    ];
+    yield* assertRejectedSources(
+      root,
+      'apps/shell-super-app/src/native-remote.ts',
+      sources,
+      /native Federation runtime imports.*approved Shell module-entrypoint loader/u,
+    );
+    yield* write(root, 'apps/shell-super-app/src/native-remote.ts', 'export const presentation = true;');
+    yield* write(root, 'apps/shell-super-app/src/routes/module-entrypoint-loader.ts', sources[0] ?? '');
+    yield* write(root, 'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.tsx', sources[1] ?? '');
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live('requires the generic canonical route to retain private metadata and the Shell authentication gate', () =>
+  Effect.gen(function* canonicalRouteBoundary() {
+    const root = yield* makeFixture();
+    yield* assertRejectedSources(
+      root,
+      CANONICAL_MODULE_ROUTE,
+      [
+        CANONICAL_ROUTE_SOURCE.replace(PRIVATE_ROUTE_METADATA, 'public: true'),
+        CANONICAL_ROUTE_SOURCE.replace('indexable: false', 'indexable: true'),
+        CANONICAL_ROUTE_SOURCE.replace("canonicalPath: '/*'", "canonicalPath: '/contacts'"),
+        CANONICAL_ROUTE_SOURCE.replace(PRIVATE_ROUTE_METADATA, 'public: false, public: true'),
+        CANONICAL_ROUTE_SOURCE.replace(PRIVATE_ROUTE_METADATA, '...overrides, public: false'),
+        CANONICAL_ROUTE_SOURCE.replace(PRIVATE_ROUTE_METADATA, "public: false, ['public']: true"),
+        CANONICAL_ROUTE_SOURCE.replace("kind: 'authenticated_principal'", "kind: 'public'"),
+      ],
+      /generic canonical module route must/u,
+    );
+    yield* write(root, CANONICAL_MODULE_ROUTE, CANONICAL_ROUTE_SOURCE);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* Effect.promise(() => rm(path.join(root, CANONICAL_MODULE_LOADER)));
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+      /provide its generic canonical module route and loader/u,
+    );
+    yield* write(root, CANONICAL_MODULE_LOADER, CANONICAL_LOADER_FIXTURE);
+    yield* Effect.promise(() => rm(path.join(root, CANONICAL_MODULE_CLIENT_LOADER)));
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toContain(CANONICAL_MODULE_CLIENT_LOADER);
+  }),
+);
+
+it.live('advances past a hash in a regular expression without skipping boundary checks', () =>
+  Effect.gen(function* regexScannerControl() {
+    const root = yield* makeFixture();
+    const file = 'apps/shell-super-app/src/hex.ts';
+    const validSource = 'export const isHex = (value: string) => /^#[0-9a-fA-F]{6}$/u.test(value);';
+    yield* write(root, file, validSource);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* write(root, file, `${validSource}\ngetActionHandler(registration);`);
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+      /private handler accessors.*module-state gate/u,
+    );
   }),
 );
 
@@ -699,7 +864,8 @@ export const api = HttpApi.make('InventoryApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(StockListApi)
   // </generated-governed-http-api-additions>
-  ;
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
+  .pipe(identity);
 `,
   );
   yield* write(
@@ -741,7 +907,7 @@ export const api = HttpApi.make('InventoryApi')
   yield* write(
     root,
     `${vertical}/api/index.ts`,
-    `import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
+    `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 // <generated-governed-http-handler-imports>
 import { stockListReadApiLive } from './stock-list-read-server.ts';
 // </generated-governed-http-handler-imports>
@@ -1238,7 +1404,7 @@ export const executeStockListWithAuthorization`,
       .replaceAll('executeStockList', 'decoy')}
 export const executeStockListWithAuthorization = (payload, credential, requestCorrelation, options) =>
   stockListClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.stockList.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.stockList.execute({ payload })),
   );
 export const executeStockList = (payload, requestCorrelation, options) =>
   executeStockListWithAuthorization(payload, 'Bearer bypass', requestCorrelation, options);`;
@@ -1247,7 +1413,7 @@ export const executeStockList = (payload, requestCorrelation, options) =>
       'export const executeStockList = (\n  operationGateway: unknown,\n  payload:',
     );
     const bypassedEndpointClient = validClient.replace(
-      'Effect.flatMap((client) => client.stockList.execute({ headers: {}, params: {}, payload, query: {} }))',
+      'Effect.flatMap((client) => client.stockList.execute({ payload }))',
       'Effect.flatMap(() => Effect.succeed({ bypass: true }))',
     );
     const shadowedFactoryClient = validClient.replace(
@@ -1961,14 +2127,10 @@ export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: st
     );
     yield* write(
       root,
-      '.modernjs/ultramodern.json',
+      'topology/reference-topology.json',
       JSON.stringify({
-        topology: {
-          apps: [
-            { id: 'shell-super-app', path: 'apps/shell-super-app' },
-            { id: INVENTORY_RUNTIME_ID, path: INVENTORY_VERTICAL_PATH },
-          ],
-        },
+        shell: { id: 'shell-super-app', path: 'apps/shell-super-app' },
+        verticals: [{ id: INVENTORY_RUNTIME_ID, path: INVENTORY_VERTICAL_PATH }],
       }),
     );
     const routeMetadataPath = 'verticals/inventory-stock/src/routes/orders/route.meta.ts';
@@ -2544,15 +2706,17 @@ it('keeps executable owner behavior out of published Outbox contracts', () => {
   ).toThrow(/must remain a generated schema-only Outbox contract/u);
 });
 
-it.live('rejects missing, orphaned, and cross-owner route manifest entries', () =>
+it.live('rejects route manifests that import missing or orphaned route metadata', () =>
   Effect.gen(function* testEffect8() {
     const root = yield* makeFixture();
     yield* write(
       root,
       'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-      `export const routes = [{ entrypoint: { entrypointKey: 'inventory.stock.page.orders' } }];`,
+      `import { routeMeta as route0 } from './orders/route.meta';`,
     );
-    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(/manifest is stale/u);
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+      /manifest is stale \(missing: .*home\/route\.meta\.ts; orphaned: apps\/shell-super-app\/src\/routes\/orders\/route\.meta\.ts\)/u,
+    );
   }),
 );
 
@@ -2710,3 +2874,212 @@ for (const outcome of ['success', EARLY_FAILURE, PARTIAL_FAILURE, 'interruption'
     }),
   );
 }
+
+it('resolves only immutable literal permission aliases and preserves exact authorization comparison', () => {
+  const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+  const declaration = "const INVENTORY_READ_PERMISSION = 'module.access' as const;\n";
+  const aliased = `${declaration}${base.replace("permission: 'module.access'", ALIASED_PERMISSION_PROPERTY)}`;
+  const expectation = { kind: 'context_permission', permission: 'module.access' } as const;
+  const accepts = (source: string) =>
+    hasGeneratedModuleApiReadContract(source, 'inventory.stock', STOCK_LIST_STEM, expectation);
+  expect(accepts(aliased)).toBe(true);
+  expect(accepts(aliased.replace(' as const;', ';'))).toBe(true);
+  expect(accepts(aliased.replace('const INVENTORY_READ_PERMISSION', 'let INVENTORY_READ_PERMISSION'))).toBe(false);
+  expect(accepts(aliased.replace(declaration, ''))).toBe(false);
+  expect(accepts(aliased.replace(declaration, `for (${declaration.trim()} false;) {}\n`))).toBe(false);
+  expect(accepts(aliased.replace(declaration, "const INVENTORY_READ_PERMISSION = 'module.other' as const;\n"))).toBe(
+    false,
+  );
+  expect(
+    accepts(`${aliased}\nfunction shadow(INVENTORY_READ_PERMISSION: string) { return INVENTORY_READ_PERMISSION; }`),
+  ).toBe(false);
+  expect(accepts(`${aliased}\nfunction shadow({permission: INVENTORY_READ_PERMISSION}) {}`)).toBe(false);
+  expect(accepts(`${aliased}\n({permission: INVENTORY_READ_PERMISSION} = attacker);`)).toBe(false);
+  expect(accepts(`${aliased}\nconst shadow = ({permission: INVENTORY_READ_PERMISSION}) => true;`)).toBe(false);
+  expect(accepts(`${aliased}\nfunction shadow({nested: {permission: INVENTORY_READ_PERMISSION}}) {}`)).toBe(false);
+  const property = '{permission: INVENTORY_READ_PERMISSION}';
+  const nestedTargets = [property, `[${property}]`, `{nested: [${property}]}`, `[{nested: [${property}]}]`];
+  for (const target of nestedTargets) {
+    const invalidUses = [
+      `${target} = attacker;`,
+      `(${target} = attacker);`,
+      `(${target}) = attacker;`,
+      `const ${target} = attacker;`,
+      `let ${target}: unknown = attacker;`,
+      `var first, ${target} = attacker;`,
+      `function shadow(${target}) {}`,
+      `declare function shadow(${target});`,
+      `declare function shadow<T>(${target});`,
+      `declare function shadow<T extends {nested: unknown}>(${target});`,
+      `declare class Shadow { method(${target}); }`,
+      `declare class Shadow<T extends {nested: unknown}> { method(${target}); }`,
+      `interface Shadow { method(${target}) }`,
+      `interface Shadow { method(${target}), other(): void }`,
+      `function shadow(${target} = attacker) {}`,
+      `const shadow = (${target}) => true;`,
+      `const shadow = (${target}): boolean => true;`,
+      `const shadow = { method(${target}) {} };`,
+      `try {} catch (${target}) {}`,
+      `for (${target} of attacker) {}`,
+      `for (${target} in attacker) {}`,
+      `for (const ${target} of attacker) {}`,
+    ];
+    for (const invalidUse of invalidUses) {
+      expect(accepts(`${aliased}\n${invalidUse}`), invalidUse).toBe(false);
+    }
+    const valueReads = [
+      `const copied = ${target};`,
+      `consume(${target});`,
+      `const copied = () => (${target});`,
+      `function copied() { return ${target}; }`,
+      `const copied = [${target}];`,
+      `class Copied { value = consume(${target}); }`,
+      `class Copied { method() { consume(${target}); } }`,
+    ];
+    for (const valueRead of valueReads) {
+      expect(accepts(`${aliased}\n${valueRead}`), valueRead).toBe(true);
+    }
+  }
+  for (const invalidUse of [
+    `[{...${property}}] = attacker;`,
+    `[{permission: INVENTORY_READ_PERMISSION = fallback}] = attacker;`,
+    `const [...[${property}]] = attacker;`,
+    `function shadow(...[${property}]) {}`,
+    `([{nested: [${property}]}] as unknown) = attacker;`,
+  ]) {
+    expect(accepts(`${aliased}\n${invalidUse}`), invalidUse).toBe(false);
+  }
+  expect(accepts(`${aliased}\nconst copied = {permission: INVENTORY_READ_PERMISSION};`)).toBe(true);
+  expect(accepts(`${aliased}\nconst copied = () => ({permission: INVENTORY_READ_PERMISSION});`)).toBe(true);
+  expect(accepts(`${aliased}\n{ const INVENTORY_READ_PERMISSION = 'module.other'; }`)).toBe(false);
+  expect(accepts(`${aliased}\nINVENTORY_READ_PERMISSION = 'module.other';`)).toBe(false);
+  expect(accepts(aliased.replace(declaration, 'const INVENTORY_READ_PERMISSION = getPermission();\n'))).toBe(false);
+  expect(
+    accepts(aliased.replace(ALIASED_PERMISSION_PROPERTY, "permission: INVENTORY_READ_PERMISSION || 'module.other'")),
+  ).toBe(false);
+  expect(accepts(aliased.replace(declaration, "const INVENTORY_READ_PERMISSION = 'module.' + 'access';\n"))).toBe(
+    false,
+  );
+});
+
+it.live(
+  'accepts canonical additional Layer provisions and rejects unsupported aliases without dropping the governed runtime',
+  Effect.fn(function* canonicalLayerProvisionScenario() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const handlerPath = `${INVENTORY_VERTICAL_PATH}/api/index.ts`;
+    const original = yield* Effect.promise(() => readFile(path.join(root, handlerPath), 'utf-8'));
+    const first = 'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive))';
+    const ownerProvision = 'Layer.provide(ownerDependenciesLive)';
+    const provisioned = original.replace(
+      first,
+      `stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), ${ownerProvision})`,
+    );
+    yield* write(root, handlerPath, provisioned);
+    yield* checkModuleEntrypointBoundaries(root);
+    const invalidSources = [
+      provisioned.replace(ownerProvision, 'GovernedReadLayer.provide(ownerDependenciesLive)'),
+      provisioned.replace(ownerProvision, 'UnknownLayer.provide(ownerDependenciesLive)'),
+      provisioned.replace(ownerProvision, 'Layer.provide(makeDependencies())'),
+      provisioned.replace(ownerProvision, 'Layer.provide(ownerDependenciesLive, attacker)'),
+      provisioned.replace(ownerProvision, 'ownerDependenciesLive'),
+      provisioned.replace('GovernedReadLayer.provide(governedReadRuntimeLive), ', ''),
+      provisioned.replace(
+        'GovernedReadLayer.provide(governedReadRuntimeLive)',
+        'Layer.provide(governedReadRuntimeLive)',
+      ),
+    ];
+    yield* assertRejectedSources(root, handlerPath, invalidSources, /module APIs require/u);
+  }),
+);
+
+it.live(
+  'records immutable permission aliases in the authorization inventory using the reviewed descriptor parser',
+  Effect.fn(function* immutablePermissionInventoryScenario() {
+    const root = yield* makeFixture();
+    const declaration = "const INVENTORY_READ_PERMISSION = 'module.access' as const;\n";
+    const source = `${declaration}${moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList').replace(
+      "permission: 'module.access'",
+      ALIASED_PERMISSION_PROPERTY,
+    )}`;
+    const inventorySchema = Schema.fromJsonString(
+      Schema.Struct({
+        entries: Schema.Array(
+          Schema.Struct({
+            authorization: Schema.Struct({ kind: Schema.String, permission: Schema.optionalKey(Schema.String) }),
+            entrypointKey: FixtureEntrypointKeySchema,
+          }),
+        ),
+      }),
+    );
+    for (const permission of ['module.access', 'module.other']) {
+      yield* write(root, STOCK_LIST_READ_FILE, source.replace("'module.access' as const", `'${permission}' as const`));
+      yield* checkModuleEntrypointBoundaries(root);
+      const report = yield* Effect.promise(() =>
+        readFile(path.join(root, '.codex/reports/authorization/protected-entrypoints.json'), 'utf-8'),
+      );
+      const inventory = yield* Schema.decodeUnknownEffect(inventorySchema)(report);
+      expect(
+        inventory.entries.find((entry) => entry.entrypointKey === 'inventory.stock.api.stock-list')?.authorization,
+      ).toEqual({ kind: 'context_permission', permission });
+    }
+    const invalidSources = [
+      source.replace(declaration, ''),
+      source.replace('const INVENTORY_READ_PERMISSION', 'let INVENTORY_READ_PERMISSION'),
+      source.replace(declaration, "const INVENTORY_READ_PERMISSION = 'MODULE.INVALID';\n"),
+      source.replace(declaration, 'const INVENTORY_READ_PERMISSION = resolvePermission();\n'),
+      source.replace(ALIASED_PERMISSION_PROPERTY, 'permission: INVENTORY_READ_PERMISSION || fallback'),
+      `${source}\nINVENTORY_READ_PERMISSION = attacker;`,
+      `${source}\nfunction shadow({permission: INVENTORY_READ_PERMISSION}) {}`,
+      `${source}\n[{permission: INVENTORY_READ_PERMISSION}] = attacker;`,
+      source.replace(ALIASED_PERMISSION_PROPERTY, 'permission: INVENTORY_READ_PERMISSION, ...override'),
+      source.replace(ALIASED_PERMISSION_PROPERTY, "permission: INVENTORY_READ_PERMISSION, permission: 'module.other'"),
+      source.replace(
+        "authorization: { kind: 'context_permission', permission: INVENTORY_READ_PERMISSION }",
+        "authorization: { kind: 'context_permission', permission: INVENTORY_READ_PERMISSION }, authorization: { kind: 'context_permission', permission: 'module.other' }",
+      ),
+    ];
+    yield* assertRejectedSources(
+      root,
+      STOCK_LIST_READ_FILE,
+      invalidSources,
+      /every runtime entrypoint must declare exactly one valid authorization/u,
+    );
+  }),
+);
+
+it.live(
+  'accepts the exact optional canonical request-schema error while retaining all required governed errors',
+  Effect.fn(function* canonicalRequestSchemaProblemScenario() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const contractPath = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
+    const original = yield* Effect.promise(() => readFile(path.join(root, contractPath), 'utf-8'));
+    const canonicalName = 'RequestSchemaProblemSchema';
+    const factoryImport =
+      "import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';\n";
+    const canonicalImport = `import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema, ${canonicalName} } from '@app/shared-contracts/problem-details';\n`;
+    const withError = original.replace('error: [', `error: [${canonicalName}, `);
+    const withCanonical = withError.replace(factoryImport, canonicalImport);
+    yield* write(root, contractPath, withCanonical);
+    yield* checkModuleEntrypointBoundaries(root);
+    const invalidSources = [
+      withError,
+      withCanonical.replace(canonicalImport, `${factoryImport}import { ${canonicalName} } from './fake-problem.ts';\n`),
+      withCanonical.replace(
+        canonicalImport,
+        `${factoryImport}import type { ${canonicalName} } from '@app/shared-contracts/problem-details';\n`,
+      ),
+      withCanonical.replace(canonicalImport, `${factoryImport}const ${canonicalName} = fakeProblem;\n`),
+      `${withCanonical}\nfunction shadow(${canonicalName}) {}`,
+      `${withCanonical}\nfunction shadow({error: [${canonicalName}]}) {}`,
+      `${withCanonical}\n[{error: [${canonicalName}]}] = attacker;`,
+      `${withCanonical}\n${canonicalName}.make = attacker;`,
+      `${withCanonical}\nimport { ${canonicalName} } from './fake-problem.ts';`,
+      withCanonical.replace(`error: [${canonicalName}, `, `error: [${canonicalName}, ${canonicalName}, `),
+      withCanonical.replace(`error: [${canonicalName}, `, 'error: [UnknownProblemSchema, '),
+      withCanonical.replace('StockListInvalidProblemSchema, ', ''),
+    ];
+    yield* assertRejectedSources(root, contractPath, invalidSources, /module APIs require/u);
+  }),
+);

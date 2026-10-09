@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ProcessingEligibilityClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ProcessingEligibilityAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executeProcessingEligibilityWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ProcessingEligibilityAuthorizedInvocation
 ) =>
   processingEligibilityClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.processingEligibility.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.processingEligibility.execute({ payload })),
   );
 
 export const executeProcessingEligibility = (
   payload: ProcessingEligibilityRequest,
   ...[requestCorrelation, options = {}]: ProcessingEligibilityOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeProcessingEligibilityWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeProcessingEligibilityWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

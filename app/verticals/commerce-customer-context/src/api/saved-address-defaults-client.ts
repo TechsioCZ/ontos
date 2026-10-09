@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SavedAddressDefaultsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SavedAddressDefaultsAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executeSavedAddressDefaultsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SavedAddressDefaultsAuthorizedInvocation
 ) =>
   savedAddressDefaultsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.savedAddressDefaults.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.savedAddressDefaults.execute({ payload })),
   );
 
 export const executeSavedAddressDefaults = (
   payload: SavedAddressDefaultsRequest,
   ...[requestCorrelation, options = {}]: SavedAddressDefaultsOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSavedAddressDefaultsWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSavedAddressDefaultsWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -1,0 +1,145 @@
+name: Zerops private network
+description: Connect an isolated Linux runner to the native Zerops project VPN and clear its own key afterward.
+inputs:
+  operation:
+    description: connect or clear
+    required: true
+  project-id:
+    description: Protected environment's Zerops project
+    required: true
+  token:
+    description: Protected environment's native Zerops access token
+    required: true
+  database-url:
+    description: Private runtime database URI to verify after connection
+    required: false
+  database-admin-url:
+    description: Private admin database URI to verify after connection
+    required: false
+  state-directory:
+    description: This runner's state directory returned by connect
+    required: false
+  cli-path:
+    description: The pinned native CLI returned by connect
+    required: false
+outputs:
+  state-directory:
+    description: Owned native VPN configuration and key registry
+    value: ${{ steps.prepare.outputs.state-directory }}
+  cli-path:
+    description: Pinned native CLI executable for cleanup
+    value: ${{ steps.prepare.outputs.cli-path }}
+runs:
+  using: composite
+  steps:
+    - name: Validate the native VPN operation
+      if: always()
+      shell: bash
+      env:
+        VPN_OPERATION: ${{ inputs.operation }}
+        VPN_PROJECT_ID: ${{ inputs.project-id }}
+        ZEROPS_TOKEN: ${{ inputs.token }}
+      run: |
+        [[ "$RUNNER_OS" == Linux ]]
+        [[ "$VPN_OPERATION" == connect || "$VPN_OPERATION" == clear ]]
+        [[ -n "$VPN_PROJECT_ID" && -n "$ZEROPS_TOKEN" ]]
+
+    - name: Install the pinned native VPN client
+      if: inputs.operation == 'connect'
+      id: prepare
+      shell: bash
+      run: |
+        sudo apt-get update --quiet
+        sudo apt-get install --yes --no-install-recommends wireguard-tools systemd-resolved iputils-ping
+        sudo systemctl start systemd-resolved
+        npm install --global @zerops/zcli@1.1.0
+        mise reshim
+        global_modules="$(npm root --global)"
+        cli_path="$(node -e 'process.stdout.write(require(process.argv[1]).getBinaryPath())' "$global_modules/@zerops/zcli/lib/resolve.js")"
+        [[ -x "$cli_path" ]]
+        state_directory="$(mktemp --directory "$RUNNER_TEMP/ontos-zerops-vpn.XXXXXX")"
+        chmod 700 "$state_directory"
+        echo "state-directory=$state_directory" >>"$GITHUB_OUTPUT"
+        echo "cli-path=$cli_path" >>"$GITHUB_OUTPUT"
+
+    # v1.1.0 uses wg-quick and resolvectl directly. Its native environment token keeps credentials
+    # out of command arguments; the isolated registry owns only this runner's generated key.
+    - name: Connect to the protected project's private network
+      if: inputs.operation == 'connect'
+      shell: bash
+      env:
+        VPN_PROJECT_ID: ${{ inputs.project-id }}
+        ZEROPS_TOKEN: ${{ inputs.token }}
+        VPN_STATE_DIRECTORY: ${{ steps.prepare.outputs.state-directory }}
+        VPN_CLI_PATH: ${{ steps.prepare.outputs.cli-path }}
+      run: |
+        export ZEROPS_CLI_DATA_FILE_PATH="$VPN_STATE_DIRECTORY/cli.data"
+        export ZEROPS_WG_CONFIG_FILE_PATH="$VPN_STATE_DIRECTORY/zerops.conf"
+        export ZEROPS_CLI_YAML_FILE_PATH="$VPN_STATE_DIRECTORY/.zcli.yml"
+        export ZEROPS_CLI_LOG_FILE_PATH=/dev/null
+        sudo --preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
+          "$VPN_CLI_PATH" vpn up --project-id "$VPN_PROJECT_ID" --mtu 1350
+
+    # Native vpn up only warns when its logger ping fails. Database DNS and TCP must work before
+    # any authority lock, migration, artifact upload or publication can proceed.
+    - name: Verify both private database endpoints
+      if: inputs.operation == 'connect'
+      shell: bash
+      env:
+        DATABASE_URL: ${{ inputs.database-url }}
+        DATABASE_ADMIN_URL: ${{ inputs.database-admin-url }}
+      run: |
+        python3 - <<'PY'
+        import os
+        import socket
+        import time
+        from urllib.parse import urlsplit
+
+        for name in ("DATABASE_URL", "DATABASE_ADMIN_URL"):
+            try:
+                endpoint = urlsplit(os.environ[name])
+                if endpoint.scheme not in ("postgres", "postgresql") or not endpoint.hostname:
+                    raise ValueError()
+                address = (endpoint.hostname, endpoint.port or 5432)
+            except (KeyError, ValueError):
+                raise SystemExit(f"{name} must name the private PostgreSQL endpoint") from None
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    with socket.create_connection(address, timeout=3):
+                        break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise SystemExit(f"{name} is unreachable through the native Zerops VPN") from None
+                    time.sleep(1)
+        PY
+
+    - name: Clear only this runner's native VPN key and configuration
+      if: always() && inputs.operation == 'clear'
+      shell: bash
+      env:
+        VPN_PROJECT_ID: ${{ inputs.project-id }}
+        ZEROPS_TOKEN: ${{ inputs.token }}
+        VPN_STATE_DIRECTORY: ${{ inputs.state-directory }}
+        VPN_CLI_PATH: ${{ inputs.cli-path }}
+      run: |
+        [[ "$VPN_STATE_DIRECTORY" == "$RUNNER_TEMP"/ontos-zerops-vpn.* ]]
+        [[ "$(dirname -- "$VPN_STATE_DIRECTORY")" == "$RUNNER_TEMP" ]]
+        [[ -d "$VPN_STATE_DIRECTORY" && ! -L "$VPN_STATE_DIRECTORY" && -x "$VPN_CLI_PATH" ]]
+        export ZEROPS_CLI_DATA_FILE_PATH="$VPN_STATE_DIRECTORY/cli.data"
+        export ZEROPS_WG_CONFIG_FILE_PATH="$VPN_STATE_DIRECTORY/zerops.conf"
+        export ZEROPS_CLI_YAML_FILE_PATH="$VPN_STATE_DIRECTORY/.zcli.yml"
+        export ZEROPS_CLI_LOG_FILE_PATH=/dev/null
+        cleanup_status=0
+        sudo --preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
+          "$VPN_CLI_PATH" vpn clear --project-id "$VPN_PROJECT_ID" || cleanup_status=$?
+        if sudo ip link show dev zerops >/dev/null 2>&1; then
+          sudo --preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
+            "$VPN_CLI_PATH" vpn down || cleanup_status=$?
+        fi
+        if sudo ip link show dev zerops >/dev/null 2>&1; then
+          echo 'The runner-owned Zerops VPN interface is still present.' >&2
+          cleanup_status=1
+        fi
+        sudo rm --recursive --force -- "$VPN_STATE_DIRECTORY" || cleanup_status=$?
+        exit "$cleanup_status"

@@ -36,7 +36,7 @@
  *      `.check(...)` / `.pipe(...)` / `.annotate(...)` chain over one, `pipe(Schema.String, ...)`,
  *      and the absence/collection wrappers `optional`, `optionalKey`, `NullOr`, `NullishOr`,
  *      `UndefinedOr`, `Array`, `NonEmptyArray`, `mutable`, `withDecodingDefault*` around one.
- *   4. `secretConfigKey` — `Config.string("...")` / `Config.nonEmptyString("...")` (and the other
+ *   4. `secretConfigKey` — `Config.String("...")` / `Config.NonEmptyString("...")` (and the other
  *      plain string readers) whose literal key matches `secretConfigKeys`
  *      (`SECRET`, `PASSWORD`, `PRIVATE`, `PRESHARED`, `_TOKEN`, `API_KEY`, `CREDENTIAL`,
  *      `DATABASE_*URL`, `_DSN`).
@@ -49,7 +49,7 @@
  * The `Schema` / `Config` / `pipe` bindings are resolved through the real import graph, so all of
  * these work: `import { Schema } from "effect"`, `import { Schema as S } from "effect"`,
  * `import * as Schema from "effect/Schema"`, `import * as Effect from "effect"` →
- * `Effect.Schema.String` / `Effect.Config.string`, computed access (`Schema["String"]`), optional
+ * `Effect.Schema.String` / `Effect.Config.String`, computed access (`Schema["String"]`), optional
  * chaining, and the Modern.js BFF barrels that re-export `effect/Schema` verbatim (`reexportModules`
  * — how every `shared/api.ts` contract in this repository reaches `Schema`). A local shadow of the
  * namespace identifier is never reported. `.ts` and `.tsx` alike.
@@ -59,7 +59,7 @@
  *   - Anything already redacted: a `Redacted.Redacted<string>` / `Redacted<string>` annotation is not
  *     string-shaped, and structurally resolved Schema.Redacted/RedactedFromSelf constructors are not plain-string
  *     schemas. Annotation text containing the word Redacted does not grant an exemption. So is
- *     `Config.redacted("AUTH_SECRET")` — only the plain string readers are listed.
+ *     `Config.Redacted("AUTH_SECRET")` — only the plain string readers are listed.
  *   - **Non-string shapes**: `credential: 'api_key' | 'session'` (literal union),
  *     `readonly credential: Credential` (type reference), `privateJwk: Ed25519PrivateJwk` (an
  *     already-modelled key type), a `Schema.Literals([...])` vocabulary. The rule only fires when the
@@ -69,7 +69,7 @@
  *     credentials, and every real credential collection is an array or a single value.
  *   - **Public material**: names are matched at the end of the identifier, so `apiKeyId`,
  *     `secretRef`, `keyId`, `searchKey`, `providerKeyId` are untouched; and
- *     `Config.string('ONTOS_GATEWAY_PUBLIC_JWKS')` / `Config.string('ONTOS_GATEWAY_ISSUER')` — public
+ *     `Config.String('ONTOS_GATEWAY_PUBLIC_JWKS')` / `Config.String('ONTOS_GATEWAY_ISSUER')` — public
  *     verification material, not credentials — do not match `secretConfigKeys`.
  *   - **Tests** (`ignoreTestFiles: true` by default). The audit's D tier blesses test fixtures that
  *     hand-build credentials and deliberately malformed values; a `readonly connectionString: string`
@@ -170,7 +170,7 @@ const SCHEMA_WRAPPERS = new Set([
 const SCHEMA_CHAIN_METHODS = new Set(['annotate', 'annotateKey', 'brand', 'check', 'pipe']);
 
 /** `Config` readers that hand back a plain, loggable string. */
-const PLAIN_CONFIG_READERS = new Set(['nonEmptyString', 'string', 'url']);
+const PLAIN_CONFIG_READERS = new Set(['NonEmptyString', 'String', 'URL']);
 
 /** Nodes that own `params` and therefore make a nested `Identifier` a parameter. */
 const PARAMETER_OWNERS = new Set([
@@ -320,12 +320,12 @@ export const rule = defineRule({
     type: 'problem',
     docs: {
       description:
-        'Audit A3: credential-shaped fields, parameters, Schema fields and Config keys declared as plain strings can leak through logs and serialization. Use Redacted, Schema.Redacted and Config.redacted. Syntax-only: credential names are heuristics; bounded local aliases and structural redaction are recognized, not arbitrary external types or schema transforms.',
+        'Audit A3: credential-shaped fields, parameters, Schema fields and Config keys declared as plain strings can leak through logs and serialization. Use Redacted, Schema.Redacted and Config.Redacted. Syntax-only: credential names are heuristics; bounded local aliases and structural redaction are recognized, not arbitrary external types or schema transforms.',
       url: 'docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md#a3-replace-ambient-configuration-with-config-configprovider-and-redacted',
     },
     messages: {
       secretConfigKey:
-        "Audit A3: `Config.{{member}}('{{name}}')` reads credential material as a plain string, so the value can be logged, annotated or serialized anywhere it flows. Use `Config.redacted('{{name}}')` — it yields `Redacted<string>`, prints as `<redacted>`, and only `Redacted.value` at the single use site can unwrap it.",
+        "Audit A3: `Config.{{member}}('{{name}}')` reads credential material as a plain string, so the value can be logged, annotated or serialized anywhere it flows. Use `Config.Redacted('{{name}}')` — it yields `Redacted<string>`, prints as `<redacted>`, and only `Redacted.value` at the single use site can unwrap it.",
       secretField:
         'Audit A3: the credential-shaped field `{{name}}` stores a plain string that can leak when read into logs, error payloads or JSON. Store it as `Redacted.Redacted<string>` (construct with `Redacted.make`, unwrap only at the boundary that needs it with `Redacted.value`). Private field visibility alone does not redact the value.',
       secretParameter:
@@ -361,7 +361,7 @@ export const rule = defineRule({
           },
           secretConfigKeys: {
             type: 'string',
-            description: "Regex (case-sensitive) matched against `Config.string('KEY')` literals.",
+            description: "Regex (case-sensitive) matched against `Config.String('KEY')` literals.",
           },
           secretNames: {
             type: 'string',
@@ -625,7 +625,7 @@ export const rule = defineRule({
         report(property.key, 'secretSchemaField', { name });
       },
 
-      // Case 4: `Config.string("AUTH_SECRET")`.
+      // Case 4: `Config.String("AUTH_SECRET")`.
       CallExpression(node) {
         const called = resolveMember(unwrap(node.callee as AnyNode));
         if (called === null || called.namespace !== CONFIG_NAMESPACE) return;

@@ -41,10 +41,9 @@ export const PrivacySubjectsApi = HttpApi.make('PrivacySubjectsApi').add(
         PrivacySubjectsUnavailableProblemSchema,
         PrivacySubjectsInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: PrivacySubjectsRequestSchema,
-      query: {},
+
       success: PrivacySubjectsResponseSchema,
     }),
   ),

@@ -11,10 +11,6 @@ import {
 
 export { RecordRetentionExceptionPayloadSchema } from '../actions/record-retention-exception.ts';
 
-const RecordRetentionExceptionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecordRetentionExceptionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordRetentionExceptionActionInvalidProblem',
   400,
@@ -128,15 +124,37 @@ const actionErrors = [
   RecordRetentionExceptionActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const recordRetentionExceptionActionGroupDefinition = HttpApiGroup.make('recordRetentionExceptionAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/record-retention-exception', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RecordRetentionExceptionPayloadSchema),
+      success: RecordRetentionExceptionResultSchema,
+    }),
+  )
+  .middleware(RecordRetentionExceptionActionSchemaErrorMiddleware);
+
+export type RecordRetentionExceptionActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'recordRetentionExceptionAction',
+  HttpApiGroup.Endpoints<typeof recordRetentionExceptionActionGroupDefinition>
+>;
+
+const RecordRetentionExceptionActionGroup: RecordRetentionExceptionActionGroupContract =
+  recordRetentionExceptionActionGroupDefinition;
+
 export const RecordRetentionExceptionActionApi = HttpApi.make('RecordRetentionExceptionActionApi').add(
-  HttpApiGroup.make('recordRetentionExceptionAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/record-retention-exception', {
-        error: actionErrors,
-        headers: RecordRetentionExceptionActionHeadersSchema,
-        payload: Schema.toEncoded(RecordRetentionExceptionPayloadSchema),
-        success: RecordRetentionExceptionResultSchema,
-      }),
-    )
-    .middleware(RecordRetentionExceptionActionSchemaErrorMiddleware),
+  RecordRetentionExceptionActionGroup,
 );

@@ -7,15 +7,51 @@
     ".": "./src/index.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
     "./actions/runtime-wiring": "./src/actions/runtime-wiring.ts",
+    "./auth/external-identity-admission": "./src/auth/external-identity/verifier.ts",
+    "./auth/external-identity-contracts": "./src/auth/external-identity-contracts.ts",
     "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
+    "./auth/staff-authentication-namespace": "./src/auth/staff-authentication-namespace.ts",
     "./auth/system-principal-context-provenance": "./src/auth/system-principal-context-provenance.ts",
     "./http/action-runner": "./src/http/http-instrumentation-seam.ts",
     "./http/governed-read": "./src/http/governed-read.ts",
     "./http/principal-authentication": "./src/http/principal-authentication.ts",
+    "./install/stage-accounts-file": "./src/install/stage-accounts-file.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
+    "./module-entrypoint": "./src/modules/module-entrypoint.ts",
+    "./modules/active-application-composition": "./src/modules/active-application-composition.ts",
+    "./modules/active-application-composition-source": {
+      "workerd": "./src/modules/active-application-composition-source.workerd.ts",
+      "default": "./src/modules/active-application-composition-source.node.ts"
+    },
+    "./operations/context": "./src/operations/context.ts",
+    "./operations/external-authentication": "./src/operations/external-authentication.ts",
+    "./outbox/core-identity-principal-binding-activated-v1": "./src/outbox/core-identity-principal-binding-activated-v1.ts",
+    "./outbox/core-identity-principal-binding-reserved-v1": "./src/outbox/core-identity-principal-binding-reserved-v1.ts",
+    "./outbox/core-identity-principal-binding-status-changed-v1": "./src/outbox/core-identity-principal-binding-status-changed-v1.ts",
     "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
+    "./permissions/principal-ref": "./src/permissions/principal-ref.ts",
+    "./resources/legal-entity": "./src/resources/legal-entity.ts",
     "./testing/actions": "./src/testing/actions.ts",
+    "./testing/application-composition-source": "./src/modules/active-application-composition-source-service.ts",
+    "./testing/outbox": "./src/outbox/verified-handler-context.ts",
+    "./testing/reads": "./src/testing/reads.ts",
+    "./testing/module-contract": "./src/testing/module-contract.ts",
+    "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
+  },
+  "imports": {
+    "#database-runtime": {
+      "workerd": "./src/db/database-runtime.workerd.ts",
+      "default": "./src/db/database-runtime.node.ts"
+    },
+    "#unit-service-fetch": {
+      "workerd": "./src/http/unit-service-fetch.workerd.ts",
+      "node": "./src/http/unit-service-fetch.node.ts"
+    },
+    "#spicedb-transport": {
+      "workerd": "./src/permissions/spicedb-transport.workerd.ts",
+      "default": "./src/permissions/spicedb-transport.node.ts"
+    }
   },
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
@@ -29,21 +65,21 @@
     "action:test:integration": "rstest --project integration tests/integration/action-",
     "outbox:test:unit": "rstest --project unit tests/unit/outbox-",
     "outbox:test:integration": "rstest --project integration tests/integration/outbox-",
-    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
-    "@effect/platform-node": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.117",
+    "@effect/sql-pg": "4.0.0-rc.117",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0-rc.112",
-    "pg": "8.22.0",
-    "@effect/sql-pg": "4.0.0-rc.112"
+    "effect": "4.0.0-rc.117"
   },
   "devDependencies": {
+    "@rstest/core": "0.11.12",
     "@types/node": "^26.4.1",
-    "@types/pg": "8.20.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
-    "effect-rstest": "0.1.4",
-    "@rstest/core": "0.11.12"
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "pg": "8.22.0",
+    "yaml": "2.9.1"
   }
 }

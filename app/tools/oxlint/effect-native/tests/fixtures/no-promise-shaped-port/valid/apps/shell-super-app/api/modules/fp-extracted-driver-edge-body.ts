@@ -10,7 +10,7 @@
  * Real hits reproduced here:
  * - apps/shell-super-app/api/modules/installed-module-catalog.ts:66,109
  * - packages/core-runtime/src/install/stage-context-bootstrap.ts:149,370
- * - apps/shell-super-app/api/auth/stage-demo-bootstrap-runtime-infrastructure.ts:25
+ * - apps/shell-super-app/api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts:25
  * - apps/shell-super-app/api/auth/impersonation-service.ts:271,289
  */
 import { Effect } from "effect";

@@ -5,12 +5,17 @@ import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
+import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
+import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
+import { administerPaymentTermPolicyAction } from './src/actions/administer-payment-term-policy.action.ts';
+import { administerPurchaseCurrencyPolicyAction } from './src/actions/administer-purchase-currency-policy.action.ts';
 import { approvalDecisionResourceDescriptor } from './shared/resources/approval-decision.ts';
 import { approvalHierarchyResourceDescriptor } from './shared/resources/approval-hierarchy.ts';
 import { approvalRevalidationResourceDescriptor } from './shared/resources/approval-revalidation.ts';
 import { approvalRouteResourceDescriptor } from './shared/resources/approval-route.ts';
 import { archiveCustomerGroupAction } from './src/actions/archive-customer-group.action.ts';
 import { archiveCustomerProfileAction } from './src/actions/archive-customer-profile.action.ts';
+import { assignCommerceQuantityRuleAction } from './src/actions/assign-commerce-quantity-rule.action.ts';
 import { assignCounterpartyPriceGroupAction } from './src/actions/assign-counterparty-price-group.action.ts';
 import { assignCustomerGroupAction } from './src/actions/assign-customer-group.action.ts';
 import { assignCustomerPriceGroupAction } from './src/actions/assign-customer-price-group.action.ts';
@@ -22,8 +27,13 @@ import { changeCustomerPaymentTermsAction } from './src/actions/change-customer-
 import { changePrincipalPurchaseLimitOverrideAction } from './src/actions/change-principal-purchase-limit-override.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from './src/actions/change-retail-payment-term-preference.action.ts';
 import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-counterparty-access-invitation.action.ts';
+import { claimPortalEnrollmentTransitionAction } from './src/actions/claim-portal-enrollment-transition.action.ts';
 import { clearDefaultBillingAddressAction } from './src/actions/clear-default-billing-address.action.ts';
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
+import { CommerceQuantityPolicyCurrentApi } from './shared/apis/commerce-quantity-policy-current.ts';
+import { CommerceQuantityResolutionApi } from './shared/apis/commerce-quantity-resolution.ts';
+import { commerceQuantityRuleAssignmentResourceDescriptor } from './shared/resources/commerce-quantity-rule-assignment.ts';
+import { commerceQuantityRuleResourceDescriptor } from './shared/resources/commerce-quantity-rule.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
 import { CounterpartyAccessInvitationReadApi } from './shared/apis/counterparty-access-invitation-read.ts';
 import { counterpartyAccessInvitationResourceDescriptor } from './shared/resources/counterparty-access-invitation.ts';
@@ -74,21 +84,32 @@ import { CustomerRecordVisibilityApi } from './shared/apis/customer-record-visib
 import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purchase-approval-request.action.ts';
 import { DeliveryDestinationResolutionApi } from './shared/apis/delivery-destination-resolution.ts';
 import { EffectiveCustomerGroupMembershipsApi } from './shared/apis/effective-customer-group-memberships.ts';
+import { EffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/effective-customer-group-membership-set-v1.ts';
 import { ensureRetailCustomerProfileAction } from './src/actions/ensure-retail-customer-profile.action.ts';
 import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
+import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execution.ts';
 import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-counterparty-commerce-access.action.ts';
 import { GuestAttributionStatusApi } from './shared/apis/guest-attribution-status.ts';
 import { GuestPaymentTermsResolutionApi } from './shared/apis/guest-payment-terms-resolution.ts';
 import { InvoiceRecipientResolutionApi } from './shared/apis/invoice-recipient-resolution.ts';
+import { MarketAffectedUseAssessmentApi } from './shared/apis/market-affected-use-assessment.ts';
+import { MarketBootstrapPolicyCurrentApi } from './shared/apis/market-bootstrap-policy-current.ts';
+import { marketBootstrapPolicyResourceDescriptor } from './shared/resources/market-bootstrap-policy.ts';
+import { MarketBootstrapResolutionApi } from './shared/apis/market-bootstrap-resolution.ts';
+import { MarketSubjectRestrictionsCurrentApi } from './shared/apis/market-subject-restrictions-current.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
 import { openProfileReconciliationAction } from './src/actions/open-profile-reconciliation.action.ts';
 import { PaymentTermAffectedUseAssessmentApi } from './shared/apis/payment-term-affected-use-assessment.ts';
+import { PaymentTermPolicyCurrentApi } from './shared/apis/payment-term-policy-current.ts';
+import { paymentTermPolicyResourceDescriptor } from './shared/resources/payment-term-policy.ts';
 import { PaymentTermsResolutionApi } from './shared/apis/payment-terms-resolution.ts';
-import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execution.ts';
+import { PricingPurchaseContextVerificationApi } from './shared/apis/pricing-purchase-context-verification.ts';
 import { profileReconciliationCaseResourceDescriptor } from './shared/resources/profile-reconciliation-case.ts';
 import { ProfileReconciliationReadApi } from './shared/apis/profile-reconciliation-read.ts';
 import { purchaseApprovalRequestResourceDescriptor } from './shared/resources/purchase-approval-request.ts';
+import { PurchaseCurrencyPolicyCurrentApi } from './shared/apis/purchase-currency-policy-current.ts';
+import { purchaseCurrencyPolicyResourceDescriptor } from './shared/resources/purchase-currency-policy.ts';
 import { PurchaseCurrencyResolutionApi } from './shared/apis/purchase-currency-resolution.ts';
 import { PurchaseLimitEvaluationApi } from './shared/apis/purchase-limit-evaluation.ts';
 import { PurchaseLimitPolicyReadApi } from './shared/apis/purchase-limit-policy-read.ts';
@@ -96,6 +117,7 @@ import { purchaseLimitPolicyResourceDescriptor } from './shared/resources/purcha
 import { purchaseProposalRevisionResourceDescriptor } from './shared/resources/purchase-proposal-revision.ts';
 import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer-group.action.ts';
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
+import { recordPortalEnrollmentOutcomeAction } from './src/actions/record-portal-enrollment-outcome.action.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
@@ -107,6 +129,7 @@ import { RepeatOrderPreparationApi } from './shared/apis/repeat-order-preparatio
 import { repeatRetailOrderAction } from './src/actions/repeat-retail-order.action.ts';
 import { reroutePurchaseApprovalRequestAction } from './src/actions/reroute-purchase-approval-request.action.ts';
 import { resendCounterpartyAccessInvitationAction } from './src/actions/resend-counterparty-access-invitation.action.ts';
+import { reserveMarketRetirementAction } from './src/actions/reserve-market-retirement.action.ts';
 import { reservePaymentTermRetirementAction } from './src/actions/reserve-payment-term-retirement.action.ts';
 import { resolveProfileReconciliationAction } from './src/actions/resolve-profile-reconciliation.action.ts';
 import { RetailAccessDecisionApi } from './shared/apis/retail-access-decision.ts';
@@ -124,6 +147,7 @@ import { RetailPortalProfileBindingReadApi } from './shared/apis/retail-portal-p
 import { retailPortalProfileBindingResourceDescriptor } from './shared/resources/retail-portal-profile-binding.ts';
 import { RetailPrincipalResolutionApi } from './shared/apis/retail-principal-resolution.ts';
 import { retailProfileReadPermission } from './shared/permissions/retail-profile-read.ts';
+import { RetailPurchasingSubjectCurrentV1Api } from './shared/apis/retail-purchasing-subject-current-v1.ts';
 import { retailRepeatOrderPermission } from './shared/permissions/retail-repeat-order.ts';
 import { retailSettingsPaymentTermPreferenceManagePermission } from './shared/permissions/retail-settings-payment-term-preference-manage.ts';
 import { revalidatePurchaseApprovalAction } from './src/actions/revalidate-purchase-approval.action.ts';
@@ -136,11 +160,15 @@ import { SavedAddressListApi } from './shared/apis/saved-address-list.ts';
 import { savedAddressResourceDescriptor } from './shared/resources/saved-address.ts';
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
+import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
+import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-enrollment.action.ts';
 import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-approval.action.ts';
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
+import { VerifyEffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/verify-effective-customer-group-membership-set-v1.ts';
+import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-retail-purchasing-subject-current-v1.ts';
 // </generated-module-manifest-imports>
 
 export const commerceCustomerContextManifest: OntosModuleManifestInput = defineOntosModuleManifest({
@@ -161,8 +189,13 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     actions: [
       // <generated-module-manifest-actions>
       addSavedAddressAction,
+      administerCommerceQuantityRuleAction,
+      administerMarketBootstrapPolicyAction,
+      administerPaymentTermPolicyAction,
+      administerPurchaseCurrencyPolicyAction,
       archiveCustomerGroupAction,
       archiveCustomerProfileAction,
+      assignCommerceQuantityRuleAction,
       assignCounterpartyPriceGroupAction,
       assignCustomerGroupAction,
       assignCustomerPriceGroupAction,
@@ -174,6 +207,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       changePrincipalPurchaseLimitOverrideAction,
       changeRetailPaymentTermPreferenceAction,
       claimCounterpartyAccessInvitationAction,
+      claimPortalEnrollmentTransitionAction,
       clearDefaultBillingAddressAction,
       clearDefaultDeliveryDestinationAction,
       consumePurchaseApprovalAction,
@@ -191,6 +225,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       openProfileReconciliationAction,
       reactivateCustomerGroupAction,
       reactivateCustomerProfileAction,
+      recordPortalEnrollmentOutcomeAction,
       recoverRetailPortalProfileBindingAction,
       removeCounterpartyPriceGroupAction,
       removeCustomerGroupAction,
@@ -201,6 +236,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       repeatRetailOrderAction,
       reroutePurchaseApprovalRequestAction,
       resendCounterpartyAccessInvitationAction,
+      reserveMarketRetirementAction,
       reservePaymentTermRetirementAction,
       resolveProfileReconciliationAction,
       revalidatePurchaseApprovalAction,
@@ -209,8 +245,10 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       revokeRetailPortalProfileBindingAction,
       setDefaultBillingAddressAction,
       setDefaultDeliveryDestinationAction,
+      startPortalEnrollmentAction,
       submitPurchaseApprovalRequestAction,
       suspendCustomerProfileAction,
+      terminatePortalEnrollmentAction,
       triggerPurchaseApprovalAction,
       updateCustomerGroupAction,
       updateSavedAddressAction,
@@ -218,6 +256,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     ],
     api: {
       // <generated-module-manifest-apis>
+      'commerce-quantity-policy-current': CommerceQuantityPolicyCurrentApi,
+      'commerce-quantity-resolution': CommerceQuantityResolutionApi,
       'counterparty-access-invitation-read': CounterpartyAccessInvitationReadApi,
       'counterparty-all-customer-archive': CounterpartyAllCustomerArchiveApi,
       'counterparty-all-order-history': CounterpartyAllOrderHistoryApi,
@@ -238,14 +278,22 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'customer-profile-trading-gate': CustomerProfileTradingGateApi,
       'customer-record-visibility': CustomerRecordVisibilityApi,
       'delivery-destination-resolution': DeliveryDestinationResolutionApi,
+      'effective-customer-group-membership-set-v1': EffectiveCustomerGroupMembershipSetV1Api,
       'effective-customer-group-memberships': EffectiveCustomerGroupMembershipsApi,
       'guest-attribution-status': GuestAttributionStatusApi,
       'guest-payment-terms-resolution': GuestPaymentTermsResolutionApi,
       'invoice-recipient-resolution': InvoiceRecipientResolutionApi,
+      'market-affected-use-assessment': MarketAffectedUseAssessmentApi,
+      'market-bootstrap-policy-current': MarketBootstrapPolicyCurrentApi,
+      'market-bootstrap-resolution': MarketBootstrapResolutionApi,
+      'market-subject-restrictions-current': MarketSubjectRestrictionsCurrentApi,
       'payment-term-affected-use-assessment': PaymentTermAffectedUseAssessmentApi,
+      'payment-term-policy-current': PaymentTermPolicyCurrentApi,
       'payment-terms-resolution': PaymentTermsResolutionApi,
+      'pricing-purchase-context-verification': PricingPurchaseContextVerificationApi,
       'privacy-measure-execution': PrivacyMeasureExecutionApi,
       'profile-reconciliation-read': ProfileReconciliationReadApi,
+      'purchase-currency-policy-current': PurchaseCurrencyPolicyCurrentApi,
       'purchase-currency-resolution': PurchaseCurrencyResolutionApi,
       'purchase-limit-evaluation': PurchaseLimitEvaluationApi,
       'purchase-limit-policy-read': PurchaseLimitPolicyReadApi,
@@ -255,9 +303,12 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'retail-order-history-detail': RetailOrderHistoryDetailApi,
       'retail-portal-profile-binding-read': RetailPortalProfileBindingReadApi,
       'retail-principal-resolution': RetailPrincipalResolutionApi,
+      'retail-purchasing-subject-current-v1': RetailPurchasingSubjectCurrentV1Api,
       'saved-address-defaults': SavedAddressDefaultsApi,
       'saved-address-detail': SavedAddressDetailApi,
       'saved-address-list': SavedAddressListApi,
+      'verify-effective-customer-group-membership-set-v1': VerifyEffectiveCustomerGroupMembershipSetV1Api,
+      'verify-retail-purchasing-subject-current-v1': VerifyRetailPurchasingSubjectCurrentV1Api,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [
@@ -304,6 +355,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       approvalHierarchyResourceDescriptor,
       approvalRevalidationResourceDescriptor,
       approvalRouteResourceDescriptor,
+      commerceQuantityRuleAssignmentResourceDescriptor,
+      commerceQuantityRuleResourceDescriptor,
       counterpartyAccessInvitationResourceDescriptor,
       counterpartyCommerceAccessGrantResourceDescriptor,
       counterpartyPurchasingProfileResourceDescriptor,
@@ -311,8 +364,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       customerGroupResourceDescriptor,
       customerPaymentTermEntitlementResourceDescriptor,
       customerPriceGroupAssignmentResourceDescriptor,
+      marketBootstrapPolicyResourceDescriptor,
+      paymentTermPolicyResourceDescriptor,
       profileReconciliationCaseResourceDescriptor,
       purchaseApprovalRequestResourceDescriptor,
+      purchaseCurrencyPolicyResourceDescriptor,
       purchaseLimitPolicyResourceDescriptor,
       purchaseProposalRevisionResourceDescriptor,
       retailCustomerProfileResourceDescriptor,

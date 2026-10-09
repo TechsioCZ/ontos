@@ -1,17 +1,18 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlError } from 'effect/unstable/sql/SqlError';
 import { CoreDatabase } from '../db/client.ts';
 import { legalEntities } from '../db/schema.ts';
-import { ScopedRoutineInvocationError } from '../db/scoped-routine-error.ts';
 import { scopedRoutineInvokerFromTransaction } from '../db/scoped-routine.ts';
 import type { ScopedRoutineInvoker } from '../db/scoped-routine.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import type { OutboxWorkerHandlerContext } from './definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from './definition.ts';
 import { OutboxWorkerLegalEntityScopeError } from './legal-entity-scope-error.ts';
 import { outboxWorkerCompletionPublisherFor, persistOutboxWorkerCompletion } from './completion-publication.ts';
 import type { OutboxWorkerCompletionPublisher } from './completion-publication.ts';
+import { lifetimeBoundOutboxWorkerOwnerCapabilities } from './worker-owner-scope-lifetime.ts';
 
 export { OutboxWorkerLegalEntityScopeError } from './legal-entity-scope-error.ts';
 
@@ -67,22 +68,13 @@ const empty = () =>
     retryable: true,
   });
 
-const unavailable = (cause?: unknown) => {
-  const failure = new OutboxWorkerLegalEntityScopeError({
+const unavailable = (cause?: unknown) =>
+  new OutboxWorkerLegalEntityScopeError({
+    cause,
     code: 'outbox_worker_scope_unavailable',
     reason: 'Legal-entity worker scope is temporarily unavailable',
     retryable: true,
   });
-  if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', {
-      configurable: false,
-      enumerable: false,
-      value: cause,
-      writable: false,
-    });
-  }
-  return failure;
-};
 
 const legalEntityStatuses = ['active', 'archived', 'suspended'] as const;
 
@@ -111,7 +103,12 @@ export const makeOutboxWorkerLegalEntityScopeFanout = (
   backend: OutboxWorkerLegalEntityScopeBackend,
 ): OutboxWorkerLegalEntityScopeFanoutService => ({
   forEachScope: (context, observe) => {
-    if (!isVerifiedOutboxWorkerHandlerContext(context) || !uuidPattern.test(context.tenantId)) {
+    if (
+      !isVerifiedOutboxWorkerHandlerContext(context) ||
+      !/^[\da-f]{64}$/u.test(context.compositionRevision) ||
+      (context.legalEntityScope ?? 'required') !== 'required' ||
+      !uuidPattern.test(context.tenantId)
+    ) {
       return Effect.fail(invalid());
     }
     return backend.list(context).pipe(
@@ -132,16 +129,6 @@ interface ScopeSettingRow extends Record<string, unknown> {
   readonly tenant_id: string;
 }
 
-const inactiveInvokerError = (routine: Parameters<ScopedRoutineInvoker['invoke']>[0]): ScopedRoutineInvocationError =>
-  new ScopedRoutineInvocationError({
-    code: 'scoped_routine_scope_missing',
-    constraint: Option.none(),
-    ownerModuleKey: routine.ownerModuleKey,
-    postgresCode: Option.none(),
-    reason: 'The verified worker legal-entity scope lifetime has ended',
-    routineKey: routine.routineKey,
-  });
-
 const ownerScope = (
   transaction: CoreTransaction,
   context: OutboxWorkerHandlerContext,
@@ -151,25 +138,24 @@ const ownerScope = (
   close: () => void;
   scope: OutboxWorkerLegalEntityScope;
 }> => {
-  let active = true;
   const delegate = scopedRoutineInvokerFromTransaction(
     (statement) => transaction.execute<Record<string, never>>(statement, 'objects'),
     { legalEntityId, tenantId },
   );
-  const invoke: ScopedRoutineInvoker['invoke'] = (routine, values) =>
-    active ? delegate.invoke(routine, values) : Effect.fail(inactiveInvokerError(routine));
-  return Object.freeze({
-    close: () => {
-      active = false;
-    },
-    scope: Object.freeze({
-      completionPublisher: outboxWorkerCompletionPublisherFor({
-        context,
-        legalEntityId,
-        persist: persistOutboxWorkerCompletion(transaction),
-      }),
+  const capabilities = lifetimeBoundOutboxWorkerOwnerCapabilities(
+    delegate,
+    outboxWorkerCompletionPublisherFor({
+      context,
       legalEntityId,
-      routineInvoker: Object.freeze({ invoke }),
+      persist: persistOutboxWorkerCompletion(transaction),
+    }),
+  );
+  return Object.freeze({
+    close: capabilities.close,
+    scope: Object.freeze({
+      completionPublisher: capabilities.completionPublisher,
+      legalEntityId,
+      routineInvoker: capabilities.routineInvoker,
       tenantId,
     }),
   });
@@ -198,6 +184,9 @@ export const makePostgresOutboxWorkerLegalEntityScopeBackend = (database: {
       Effect.fn('OutboxWorkerLegalEntityScopeFanout.transaction')(function* runLegalEntityScopeTransaction(
         scopedTransaction: CoreTransaction,
       ) {
+        yield* lockApplicationCompositionAuthority(scopedTransaction, context.compositionRevision, 'worker').pipe(
+          Effect.mapError(unavailable),
+        );
         const settings = yield* scopedTransaction
           .execute<ScopeSettingRow>(
             sql`

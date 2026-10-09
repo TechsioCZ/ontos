@@ -9,6 +9,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PrivacyMeasureExecutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PrivacyMeasureExecutionAuthorizedInvocation = readonly [
@@ -42,14 +43,18 @@ export const executePrivacyMeasureExecutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PrivacyMeasureExecutionAuthorizedInvocation
 ) =>
   privacyMeasureExecutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.privacyMeasureExecution.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.privacyMeasureExecution.execute({ payload })),
   );
 
 export const executePrivacyMeasureExecution = (
   payload: PrivacyMeasureExecutionRequest,
   ...[requestCorrelation, options = {}]: PrivacyMeasureExecutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePrivacyMeasureExecutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePrivacyMeasureExecutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );
 /* jscpd:ignore-end */

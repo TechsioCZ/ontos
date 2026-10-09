@@ -2,13 +2,20 @@ import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
-import { DateTime, Effect, Option, Predicate } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { managedPrincipalsRead } from '../../src/auth/principal-administration-reads.ts';
+import {
+  AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
+} from '../../src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../src/auth/external-identity/verifier.ts';
 import {
   PrincipalManagementRepository,
   principalManagementRepositoryFromTransaction,
@@ -35,12 +42,26 @@ import { setSelfApiKeyBindingStatusAction } from '../../src/modules/actions/set-
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { makeContextAccess } from '../../src/permissions/context-access.ts';
 import { makeActionPermissionService, toSpiceDbActionObjectId } from '../../src/permissions/service.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+
+const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['core-runtime-test'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'test-provider',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user', 'api_key'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -71,23 +92,29 @@ const relationship = (
     }),
   });
 
-const acquireIdentityPool = (connectionString: string) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString })),
-    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-  );
-
 it.live('runs identity mutations and tenant-isolated administration through live Action and Read runtimes', () =>
   Effect.gen(function* identityRuntimeIntegration() {
     const connections = yield* loadDatabaseConnectionPair();
     const spiceDbConfiguration = yield* loadSpiceDbConfig();
-    const adminPool = yield* acquireIdentityPool(connections.admin.connectionString);
-    const runtimePool = yield* acquireIdentityPool(connections.runtime.connectionString);
-    const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
-    const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
-    const principalManagementRepository = principalManagementRepositoryFromTransaction(runtimeDatabase);
+    const admin = yield* makeTestDatabaseFromClient(
+      yield* makeTestPgClient(connections.admin.connectionString),
+      coreRelations,
+    );
+    const runtimeDatabase = yield* makeTestDatabaseFromClient(
+      yield* makeTestPgClient(connections.runtime.connectionString),
+      coreRelations,
+    );
+    const principalManagementRepository = principalManagementRepositoryFromTransaction(
+      runtimeDatabase,
+      staffAuthenticationNamespaceId,
+    );
     const runIdentityAction = <Value, Failure>(action: Effect.Effect<Value, Failure, PrincipalManagementRepository>) =>
-      action.pipe(Effect.provideService(PrincipalManagementRepository, principalManagementRepository));
+      action.pipe(
+        Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+        Effect.provideService(PrincipalManagementRepository, principalManagementRepository),
+      );
+    const runIdentityRead = <Value, Failure, Requirements>(read: Effect.Effect<Value, Failure, Requirements>) =>
+      read.pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
     const tenantId = randomUUID();
     const foreignTenantId = randomUUID();
     const administratorPrincipalId = randomUUID();
@@ -100,11 +127,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
     const providerKeyId = `identity-runtime-key-${randomUUID()}`;
     const selfProviderKeyId = `identity-runtime-self-key-${randomUUID()}`;
     const supportTargetUserId = `identity-runtime-target-${randomUUID()}`;
-    const spiceDbClient = v1.NewClient(
-      spiceDbConfiguration.preSharedKey,
-      spiceDbConfiguration.endpoint,
-      spiceDbConfiguration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-    );
+    const spiceDbClient = newSpiceDbGrpcClient(spiceDbConfiguration);
     const permissionClient = createSpiceDbPermissionClient(spiceDbConfiguration, SPICEDB_CHECK_TIMEOUT_MS);
     const contextAccess = makeContextAccess(permissionClient);
     const actionPermission = makeActionPermissionService(permissionClient);
@@ -128,6 +151,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
     const principal = {
       authBindingId: administratorAuthBindingId,
       authContextRef: `better-auth-session:${randomUUID()}`,
+      authenticationNamespaceId: staffAuthenticationNamespaceId,
       authMethod: 'session' as const,
       principalId: administratorPrincipalId,
       tenantId,
@@ -222,6 +246,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
       ]);
       yield* admin.insert(principalAuthBindings).values([
         {
+          authenticationNamespaceId: staffAuthenticationNamespaceId,
           principalAuthBindingId: administratorAuthBindingId,
           principalId: administratorPrincipalId,
           provider: 'better_auth',
@@ -231,6 +256,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
           tenantId,
         },
         {
+          authenticationNamespaceId: staffAuthenticationNamespaceId,
           principalAuthBindingId: supportTargetAuthBindingId,
           principalId: supportTargetPrincipalId,
           provider: 'better_auth',
@@ -373,12 +399,14 @@ it.live('runs identity mutations and tenant-isolated administration through live
           },
         }),
       );
-      const listed = yield* readRuntime.runRead({
-        input: { limit: 100, offset: 0 },
-        principal,
-        registration: managedPrincipalsRead,
-        transport: { correlationId: randomUUID() },
-      });
+      const listed = yield* runIdentityRead(
+        readRuntime.runRead({
+          input: { limit: 100, offset: 0 },
+          principal,
+          registration: managedPrincipalsRead,
+          transport: { correlationId: randomUUID() },
+        }),
+      );
 
       expect(binding.status).toBe('active');
       expect(
@@ -392,18 +420,21 @@ it.live('runs identity mutations and tenant-isolated administration through live
           principalId: created.principalId,
         },
       ]);
-      yield* readRuntime.runRead({
-        input: { limit: 100, offset: 0 },
-        principal: {
-          authBindingId: selfBinding.authBindingId,
-          authContextRef: `better-auth-api-key:${selfProviderKeyId}`,
-          authMethod: 'api_key',
-          principalId: administratorPrincipalId,
-          tenantId,
-        },
-        registration: managedPrincipalsRead,
-        transport: { correlationId: randomUUID() },
-      });
+      yield* runIdentityRead(
+        readRuntime.runRead({
+          input: { limit: 100, offset: 0 },
+          principal: {
+            authBindingId: selfBinding.authBindingId,
+            authContextRef: `better-auth-api-key:${selfProviderKeyId}`,
+            authenticationNamespaceId: staffAuthenticationNamespaceId,
+            authMethod: 'api_key',
+            principalId: administratorPrincipalId,
+            tenantId,
+          },
+          registration: managedPrincipalsRead,
+          transport: { correlationId: randomUUID() },
+        }),
+      );
       const committed = yield* admin
         .select({
           actionKey: actionInvocations.actionKey,
@@ -492,12 +523,14 @@ it.live('runs identity mutations and tenant-isolated administration through live
         }),
       );
       expect(systemCreated.status).toBe('active');
-      const systemRead = yield* readRuntime.runRead({
-        input: { limit: 100, offset: 0 },
-        principal: systemPrincipal,
-        registration: managedPrincipalsRead,
-        transport: { correlationId: randomUUID() },
-      });
+      const systemRead = yield* runIdentityRead(
+        readRuntime.runRead({
+          input: { limit: 100, offset: 0 },
+          principal: systemPrincipal,
+          registration: managedPrincipalsRead,
+          transport: { correlationId: randomUUID() },
+        }),
+      );
       expect(systemRead.items.length >= 2).toBe(true);
 
       const supportReason = 'Investigate a live support incident';
@@ -551,9 +584,10 @@ it.live('runs identity mutations and tenant-isolated administration through live
         .update(principals)
         .set({ status: 'disabled' })
         .where(inArray(principals.principalId, [administratorPrincipalId, supportTargetPrincipalId]));
-      const recoveryPrincipal = yield* makeSupportRecoveryPrincipalContextResolver({
-        executor: runtimeDatabase,
-      }).resolveStoppedImpersonation({
+      const recoveryPrincipal = yield* makeSupportRecoveryPrincipalContextResolver(
+        { executor: runtimeDatabase },
+        { authenticationNamespaceId: staffAuthenticationNamespaceId },
+      ).resolveStoppedImpersonation({
         originalAuthBindingId: administratorAuthBindingId,
         originalPrincipalId: administratorPrincipalId,
         originalSessionId: randomUUID(),

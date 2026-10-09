@@ -3,14 +3,11 @@ import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  contains as optionContains,
-  getOrElse as getOptionOrElse,
-  getOrUndefined as getOptionOrUndefined,
-} from 'effect/Option';
+import { getOrElse as getOptionOrElse, getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Boolean as BooleanSchema,
+  Literal,
   Literals,
   NumberFromString,
   OptionFromUndefinedOr,
@@ -74,6 +71,7 @@ interface ModernBuildContext {
   buildTarget: 'cloudflare' | 'web';
   buildTempDirectory: string;
   cloudflareDeployEnabled: boolean;
+  cloudflarePublicUrlEnvironmentVariable: string;
   envValue: (name: string) => string | undefined;
   getBuildBoolean: (name: string) => boolean;
   moduleFederationDevServerOrigin: string;
@@ -97,15 +95,6 @@ const createBuildConfigReaders = (getBuildConfigEnvironment: BuildConfigEnvironm
       () => false,
     );
   return { envValue, getBuildBoolean };
-};
-
-const getCloudflareDeployEnabled = (getBuildConfigEnvironment: BuildConfigEnvironment): boolean => {
-  const cloudflareDeployMode = getResultOrThrow(
-    decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
-      getBuildConfigEnvironment('MODERNJS_DEPLOY'),
-    ),
-  );
-  return optionContains(cloudflareDeployMode, 'cloudflare');
 };
 
 const getBuildPort = (
@@ -142,42 +131,12 @@ const getDefaultRemoteAssetPrefix = (
   return remoteAssetOrigin.length > 0 ? `${remoteAssetOrigin.replace(/\/+$/u, '')}/` : 'auto';
 };
 
-const assertCloudflarePublicUrl = ({
-  appId,
-  cloudflareDeployEnabled,
-  cloudflarePublicUrlEnvironmentVariable,
-  configuredCloudflareUrl,
-  configuredSiteUrl,
-  getBuildBoolean,
-  inferredCloudflareUrl,
-}: {
-  appId: string;
-  cloudflareDeployEnabled: boolean;
-  cloudflarePublicUrlEnvironmentVariable: string;
-  configuredCloudflareUrl: string | undefined;
-  configuredSiteUrl: string | undefined;
-  getBuildBoolean: (name: string) => boolean;
-  inferredCloudflareUrl: string | undefined;
-}): void => {
-  if (
-    cloudflareDeployEnabled &&
-    getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
-    configuredCloudflareUrl === undefined &&
-    configuredSiteUrl === undefined &&
-    inferredCloudflareUrl === undefined
-  ) {
-    // oxlint-disable-next-line effect-native/no-native-error-construction -- Missing required deployment configuration is a synchronous build-time invariant at this non-Effect tooling boundary.
-    throw new Error(
-      `Cloudflare deploy for ${appId} needs ${cloudflarePublicUrlEnvironmentVariable}, MODERN_PUBLIC_SITE_URL, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN.`,
-    );
-  }
-};
-
 export const createModernBuildContext = ({
   appId,
   cloudflarePublicUrlEnvironmentVariable,
   cloudflareWorkerName,
   defaultPort,
+  deployTarget,
   getBuildConfigEnvironment,
   portEnvironmentVariable,
 }: {
@@ -185,11 +144,13 @@ export const createModernBuildContext = ({
   cloudflarePublicUrlEnvironmentVariable: string;
   cloudflareWorkerName: string;
   defaultPort: number;
+  /** `resolveDeployTarget().target` from `@modern-js/app-tools-extensions/config`. */
+  deployTarget: string;
   getBuildConfigEnvironment: BuildConfigEnvironment;
   portEnvironmentVariable: string;
 }): ModernBuildContext => {
   const { envValue, getBuildBoolean } = createBuildConfigReaders(getBuildConfigEnvironment);
-  const cloudflareDeployEnabled = getCloudflareDeployEnabled(getBuildConfigEnvironment);
+  const cloudflareDeployEnabled = deployTarget === 'cloudflare';
   const port = getBuildPort(getBuildConfigEnvironment, portEnvironmentVariable, defaultPort);
   const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
   const configuredCloudflareUrl = envValue(cloudflarePublicUrlEnvironmentVariable);
@@ -223,16 +184,6 @@ export const createModernBuildContext = ({
   // oxlint-disable-next-line github/js-class-name -- This interpolated value is a filesystem directory name required by Modern.js, not a CSS class name.
   const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
 
-  assertCloudflarePublicUrl({
-    appId,
-    cloudflareDeployEnabled,
-    cloudflarePublicUrlEnvironmentVariable,
-    configuredCloudflareUrl,
-    configuredSiteUrl,
-    getBuildBoolean,
-    inferredCloudflareUrl,
-  });
-
   return {
     assetPrefix,
     buildCacheDirectory,
@@ -240,6 +191,7 @@ export const createModernBuildContext = ({
     buildTarget,
     buildTempDirectory,
     cloudflareDeployEnabled,
+    cloudflarePublicUrlEnvironmentVariable,
     envValue,
     getBuildBoolean,
     moduleFederationDevServerOrigin,
@@ -262,7 +214,8 @@ interface DevelopmentMiddlewareSetup {
   ) => void;
 }
 
-const createDevelopmentContractMiddleware = (moduleUrl: string) => {
+/** Serves the unit's prepared development module contract ahead of locale redirects. */
+export const createDevelopmentContractMiddleware = (moduleUrl: string) => {
   const contractPath = fileURLToPath(new URL('.dev-public/.well-known/ontos-module-manifest.json', moduleUrl));
   return ({ unshift }: DevelopmentMiddlewareSetup) => {
     unshift((request, response, next) => {
@@ -312,13 +265,129 @@ export const createCloudflareWorkerSecurity = () => ({
   },
 });
 
-const createCloudflareDeployment = (enabled: boolean, workerName: string) =>
-  enabled
+const requiredCloudflareBuildValue = (envValue: ModernBuildContext['envValue'], name: string): string =>
+  getResultOrThrow(
+    decodeUnknownResult(
+      Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))),
+    )(envValue(name) ?? ''),
+  );
+
+/**
+ * Every OntOS Worker reaches the private data plane through two account objects: PostgreSQL through
+ * the `HYPERDRIVE` binding (Core's `#database-runtime`) and SpiceDB's HTTP gateway through the
+ * `SPICEDB` Workers VPC binding (Core's `#spicedb-transport`). It reads the published active
+ * Application Composition from the `ONTOS_ACTIVE_APPLICATION_COMPOSITION` Workers KV binding through
+ * Core's conditional public source module. Their IDs are reviewed build inputs.
+ */
+export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['envValue']) => ({
+  vpcServices: [
+    {
+      binding: 'SPICEDB',
+      serviceId: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID'),
+    },
+  ],
+  wrangler: {
+    hyperdrive: [
+      { binding: 'HYPERDRIVE', id: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID') },
+    ],
+    kv_namespaces: [
+      {
+        binding: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION',
+        id: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID'),
+      },
+    ],
+  },
+});
+
+/**
+ * CPU budgets per invocation. Workers Paid includes 30M CPU ms a month, so a runaway request is cut
+ * off here instead of billed. An API vertical does a few database and SpiceDB round trips (waiting on
+ * I/O is not CPU time), and the Shell also renders SSR, so it gets twice the vertical budget.
+ *
+ * Every BFF request builds and disposes the whole Effect HTTP API runtime, because workerd ties I/O
+ * objects to the request that created them, so its CPU cost grows with the API's endpoint count.
+ * Catalog (about 200 endpoints) and commerce-customer-context (about 115) spend far more than 100 ms
+ * per request, while the next largest vertical has about 20. Workers analytics on stage (72 h, µs
+ * rounded to ms): successful requests peaked at 1590 ms (Catalog) and 2015 ms (commerce-customer-context),
+ * and the requests Cloudflare cut off had already spent up to 2539 ms. `largeApiVertical` is the
+ * smallest round cap above all of them. Raise a cap only with a measured p99 from Workers analytics.
+ */
+export const CLOUDFLARE_WORKER_CPU_MS = { largeApiVertical: 3000, shell: 200, vertical: 100 } as const;
+
+/**
+ * Workers Logs per deployment environment. Every Worker build states its setting, so a deploy never
+ * keeps whatever the dashboard last had. The edge deploy sets `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT`;
+ * a build without it (a local preview or a CI proof) deploys nowhere and keeps logs off.
+ *
+ * Stage keeps every invocation: Workers Paid includes 20M log events a month for the account, and
+ * stage served about 7.8k Worker invocations a day on its busiest day (Workers analytics,
+ * 2026-09-30), about 0.25M a month. Even at ten log lines per invocation that stays near 2.5M events.
+ * Lower `head_sampling_rate` only with a measured event count from the Workers Logs telemetry API.
+ * Production does not run on Cloudflare yet; its cutover must choose a measured rate here.
+ */
+export const CLOUDFLARE_WORKER_OBSERVABILITY = {
+  development: { enabled: false },
+  production: { enabled: false },
+  stage: { enabled: true, head_sampling_rate: 1 },
+} as const;
+
+const CloudflareDeploymentEnvironmentSchema = OptionFromUndefinedOr(Literals(['stage', 'production']));
+
+/** The Workers Logs setting for the deployment environment this Worker build is for. */
+const resolveCloudflareWorkerObservability = (envValue: ModernBuildContext['envValue']) =>
+  CLOUDFLARE_WORKER_OBSERVABILITY[
+    getOptionOrElse(
+      getResultOrThrow(
+        decodeUnknownResult(CloudflareDeploymentEnvironmentSchema)(envValue('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')),
+      ),
+      () => 'development' as const,
+    )
+  ];
+
+/**
+ * The data plane plus the cost guards every OntOS Worker carries: it answers only on its reviewed
+ * custom domain, the hostname of `publicUrlVariable` (no `*.workers.dev` route and no preview URLs,
+ * which would bypass the stage zone's WAF kill switch), and stops after `cpuMs` of CPU per request.
+ * Wrangler creates the custom domain's DNS record and certificate on deploy. Workers Logs follow
+ * the deployment environment (`CLOUDFLARE_WORKER_OBSERVABILITY`).
+ */
+export const createCloudflareWorkerConfig = (
+  envValue: ModernBuildContext['envValue'],
+  { cpuMs, publicUrlVariable }: { readonly cpuMs: number; readonly publicUrlVariable: string },
+) => {
+  const dataPlane = createCloudflareDataPlaneBindings(envValue);
+  const customDomain = new URL(requiredCloudflareBuildValue(envValue, publicUrlVariable)).hostname;
+  return {
+    ...dataPlane,
+    wrangler: {
+      ...dataPlane.wrangler,
+      compatibility_flags: ['global_fetch_strictly_public'],
+      limits: { cpu_ms: cpuMs },
+      observability: resolveCloudflareWorkerObservability(envValue),
+      preview_urls: false,
+      routes: [{ custom_domain: true, pattern: customDomain }],
+      workers_dev: false,
+    },
+  };
+};
+
+const createCloudflareDeployment = (
+  build: ModernBuildContext,
+  worker: {
+    readonly cpuMs: number;
+    readonly name: string;
+  },
+) =>
+  build.cloudflareDeployEnabled
     ? {
         deploy: {
           worker: {
+            ...createCloudflareWorkerConfig(build.envValue, {
+              cpuMs: worker.cpuMs,
+              publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
+            }),
             compatibilityDate: '2026-06-02',
-            name: workerName,
+            name: worker.name,
             security: createCloudflareWorkerSecurity(),
             ssr: true,
           },
@@ -330,7 +399,6 @@ interface RspackConfiguration {
   externals?: unknown;
   node?: false | object;
   plugins: unknown[];
-  resolve: { alias?: false | object };
 }
 
 /* oxlint-disable anti-slop/no-unknown-returns -- Rspack supplies opaque plugin constructors; their instances are forwarded unchanged to its generic plugin collection and are never inspected here. */
@@ -352,12 +420,6 @@ const createCloudflareRspack = (cloudflareDeployEnabled: boolean, sourceDirector
     if (!cloudflareDeployEnabled) {
       return;
     }
-    const configuredAliases = config.resolve.alias;
-    config.resolve.alias = configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
-    Object.assign(config.resolve.alias, {
-      'pg-pool$': createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool'),
-      'pg-protocol$': fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json'))),
-    });
     const configuredExternals = config.externals;
     const nextExternals = [cloudflareRuntimeExternal];
     if (configuredExternals !== undefined) {
@@ -388,22 +450,26 @@ interface BundlerChain {
 /* oxlint-enable anti-slop/no-unknown-returns */
 
 export const createModernConfig = <Plugin, BuilderPlugin>({
+  apiOnly = false,
   appId,
   bffPrefix,
   build,
   builderPlugins,
   chunkLoadingGlobal,
+  cloudflareCpuMs = CLOUDFLARE_WORKER_CPU_MS.vertical,
   cloudflareWorkerName,
   moduleUrl,
   plugins,
   rsdoctorEnabled,
   uniqueName,
 }: {
+  apiOnly?: boolean;
   appId: string;
   bffPrefix: string;
   build: ModernBuildContext;
   builderPlugins?: BuilderPlugin[];
   chunkLoadingGlobal: string;
+  cloudflareCpuMs?: number;
   cloudflareWorkerName: string;
   moduleUrl: string;
   plugins: Plugin[];
@@ -431,7 +497,10 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     },
     // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- This generic optional field retains the public factory's inferred return shape and its position in the emitted configuration.
     ...(builderPlugins === undefined ? {} : { builderPlugins }),
-    ...createCloudflareDeployment(build.cloudflareDeployEnabled, cloudflareWorkerName),
+    ...createCloudflareDeployment(build, {
+      cpuMs: cloudflareCpuMs,
+      name: cloudflareWorkerName,
+    }),
     dev: {
       // Remote dev manifests must publish an absolute publicPath so host
       // shells load remoteEntry.js and exposed chunks from this dev server.
@@ -446,7 +515,8 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     },
     output: {
       assetPrefix: build.assetPrefix,
-      disableTsChecker: false,
+      // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
+      disableTsChecker: true,
       distPath: {
         html: './',
         root: build.buildOutputRoot,
@@ -477,9 +547,12 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     },
     source: {
       alias: {
-        '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
+        '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
       },
-      entriesDir: 'src/routes',
+      // Modern.js detects API-only apps from a missing entries directory. Keep
+      // owner source under `src/`, while directing its web-entry scan to a path
+      // that does not exist for API-only MicroVerticals.
+      entriesDir: apiOnly ? '.api-only-no-web-entry' : undefined,
       globalVars: {
         ULTRAMODERN_SHELL_ORIGIN: build.moduleFederationDevServerOrigin,
         ULTRAMODERN_SITE_URL: build.siteUrl,
@@ -498,18 +571,25 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   };
 };
 
+// Zephyr uploads only for a deploy that provides ZE_CI_TOKEN; the deploy environment then sets
+// ZE_FAIL_BUILD=true so a failed upload fails the build instead of shipping without it.
+const zephyrFailBuildSchema = Literal('true').annotate({
+  message:
+    'ZE_CI_TOKEN is set but ZE_FAIL_BUILD is not "true", so a failed Zephyr upload would not fail the deploy. Set ZE_FAIL_BUILD=true in the deploy environment next to ZE_CI_TOKEN.',
+});
+
 export const createZephyrRspackPlugin = <Configuration>(options: {
   configure: () => Configuration;
-  readToken: () => string | undefined;
+  readEnvironment: (name: 'ZE_CI_TOKEN' | 'ZE_FAIL_BUILD') => string | undefined;
 }) => ({
   name: 'ultramodern-zephyr-rspack-plugin',
   pre: ['@modern-js/plugin-module-federation-config'],
   setup(api: { modifyRspackConfig: (configuration: Configuration) => void }) {
-    // Only authoritative CI deployments upload artifacts. Ordinary builds need
-    // no Zephyr account or network access; deployment upload failures stay fatal.
-    if (options.readToken() === undefined) {
+    // Ordinary builds need no Zephyr account or network access.
+    if (options.readEnvironment('ZE_CI_TOKEN') === undefined) {
       return;
     }
+    getResultOrThrow(decodeUnknownResult(zephyrFailBuildSchema)(options.readEnvironment('ZE_FAIL_BUILD')));
     api.modifyRspackConfig(options.configure());
   },
 });

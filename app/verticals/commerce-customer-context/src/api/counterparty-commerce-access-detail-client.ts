@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CounterpartyCommerceAccessDetailClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CounterpartyCommerceAccessDetailAuthorizedInvocation = readonly [
@@ -40,20 +41,17 @@ export const executeCounterpartyCommerceAccessDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CounterpartyCommerceAccessDetailAuthorizedInvocation
 ) =>
   counterpartyCommerceAccessDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.counterpartyCommerceAccessDetail.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.counterpartyCommerceAccessDetail.execute({ payload })),
   );
 
 export const executeCounterpartyCommerceAccessDetail = (
   payload: CounterpartyCommerceAccessDetailRequest,
   ...[requestCorrelation, options = {}]: CounterpartyCommerceAccessDetailOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCounterpartyCommerceAccessDetailWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCounterpartyCommerceAccessDetailWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

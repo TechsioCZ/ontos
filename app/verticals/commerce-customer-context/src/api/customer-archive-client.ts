@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerArchiveClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerArchiveAuthorizedInvocation = readonly [
@@ -37,13 +38,17 @@ export const executeCustomerArchiveWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerArchiveAuthorizedInvocation
 ) =>
   customerArchiveClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.customerArchive.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.customerArchive.execute({ payload })),
   );
 
 export const executeCustomerArchive = (
   payload: CustomerArchiveRequest,
   ...[requestCorrelation, options = {}]: CustomerArchiveOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerArchiveWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerArchiveWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

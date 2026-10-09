@@ -12,7 +12,6 @@ import {
   samePriceGroupRef,
   sameProfileTarget,
 } from './price-group-contracts.ts';
-import { CustomerPriceGroupCatalogUnavailable } from './price-group-errors.ts';
 import type { PriceGroupCatalogPort } from './price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from './price-group-ports.ts';
 
@@ -56,11 +55,12 @@ export const resolveCustomerPriceGroupAt = Effect.fn('CustomerPriceGroup.resolve
     if (assignment === undefined) {
       return { _tag: 'NONE' } as const;
     }
+    // The assignment keeps its accepted evidence. Each consumption obtains fresh owner truth;
+    // only an expectation from this operation may be used as a Current concurrency fence.
     const outcome = yield* catalog.resolveCurrent(
       assignment.priceGroupRef,
       CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
       effectiveAt,
-      assignment.compatibility,
     );
 
     if (outcome._tag !== 'USABLE') {
@@ -68,7 +68,8 @@ export const resolveCustomerPriceGroupAt = Effect.fn('CustomerPriceGroup.resolve
     }
     if (
       !samePriceGroupRef(outcome.priceGroupRef, assignment.priceGroupRef) ||
-      outcome.compatibility.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT
+      outcome.compatibility.requiredContract.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT ||
+      outcome.compatibility.requiredContract.version !== 1
     ) {
       return {
         _tag: 'BROKEN',
@@ -91,14 +92,3 @@ export const resolveCustomerPriceGroupAt = Effect.fn('CustomerPriceGroup.resolve
     } as const;
   },
 );
-
-/** Fail-closed default until Pricing publishes #334's governed PriceGroup catalog port. */
-export const unavailablePriceGroupCatalogPort: PriceGroupCatalogPort = {
-  resolveCurrent: () =>
-    Effect.fail(
-      new CustomerPriceGroupCatalogUnavailable({
-        code: 'customer_price_group_catalog_unavailable',
-        reason: 'Pricing has not published the governed PriceGroup catalog contract (#334)',
-      }),
-    ),
-};

@@ -1,8 +1,9 @@
-import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
+import type { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import type { Effect } from 'effect';
 
 import type { coreRelations } from './schema.ts';
 
-export type CoreDatabaseExecutor = EffectPgDatabase<typeof coreRelations>;
+export type CoreDatabaseExecutor = Effect.Success<ReturnType<typeof makeWithDefaults<typeof coreRelations>>>;
 
 type CoreTransactionCallback = Parameters<CoreDatabaseExecutor['transaction']>[0];
 

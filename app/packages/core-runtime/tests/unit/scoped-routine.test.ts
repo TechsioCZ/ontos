@@ -1,10 +1,12 @@
+import { PgTypes } from '@effect/sql-pg';
 import type { SQL } from 'drizzle-orm';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { Cause, Effect, Option, Schema } from 'effect';
+import { Cause, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import {
   defineScopedRoutine,
@@ -15,15 +17,22 @@ import type { ScopedRoutineDefinitionInput } from '../../src/db/scoped-routine.t
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
-const scope = Object.freeze({
-  authContextRef: 'better-auth-session:test',
-  authMethod: 'session',
+const scope: OperationalScope = Object.freeze({
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '44444444-4444-4444-8444-444444444444',
+    authContextRef: 'better-auth-session:test',
+    authMethod: 'session',
+    legalEntityId,
+    principalId: '33333333-3333-4333-8333-333333333333',
+    tenantId,
+  }),
   correlationId: 'correlation-1',
-  legalEntityId,
-  principalId: '33333333-3333-4333-8333-333333333333',
-  tenantId,
-}) satisfies OperationalScope;
+});
+if (scope.authBindingId === undefined || scope.authContextRef === undefined) {
+  throw new Error('Scoped routine fixture requires a session binding and context reference');
+}
 const tenantOnlyScope = Object.freeze({
+  authBindingId: scope.authBindingId,
   authContextRef: scope.authContextRef,
   authMethod: scope.authMethod,
   correlationId: scope.correlationId,
@@ -78,12 +87,12 @@ it.effect('injects verified scope values and parameterizes every caller-supplied
     expect(query.sql).toBe(
       'select * from "commerce_customer_context"."save_profile"($1::uuid, $2::uuid, $3::text, $4::jsonb)',
     );
-    expect(query.params).toEqual([tenantId, legalEntityId, payload, { source: 'test' }]);
+    expect(query.params).toEqual([tenantId, legalEntityId, payload, PgTypes.jsonb({ source: 'test' })]);
     expect(query.sql).not.toContain(payload);
   }),
 );
 
-it.effect('encodes array parameters as PostgreSQL array literals while keeping them parameterized', () =>
+it.effect('binds arrays as native PostgreSQL parameters without expanding their values into SQL', () =>
   Effect.gen(function* arrayParameterInvocation() {
     let statement: SQL | undefined;
     const memberIds = ['44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555'];
@@ -103,12 +112,7 @@ it.effect('encodes array parameters as PostgreSQL array literals while keeping t
     expect(query.sql).toBe(
       'select * from "commerce_customer_context"."save_profile_members"($1::uuid, $2::uuid[], $3::text[], $4::jsonb[])',
     );
-    expect(query.params).toEqual([
-      tenantId,
-      '{"44444444-4444-4444-8444-444444444444","55555555-5555-4555-8555-555555555555"}',
-      String.raw`{"primary,member","quoted \"member\"","escaped\\member","NULL"}`,
-      String.raw`{"{\"label\":\"primary,member\"}","{\"label\":\"quoted \\\"member\\\"\"}"}`,
-    ]);
+    expect(query.params).toEqual([tenantId, memberIds, labels, Result.getOrThrow(PgTypes.array(evidence, 3802))]);
   }),
 );
 

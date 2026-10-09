@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PurchaseCurrencyResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PurchaseCurrencyResolutionAuthorizedInvocation = readonly [
@@ -40,15 +41,17 @@ export const executePurchaseCurrencyResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PurchaseCurrencyResolutionAuthorizedInvocation
 ) =>
   purchaseCurrencyResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.purchaseCurrencyResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.purchaseCurrencyResolution.execute({ payload })),
   );
 
 export const executePurchaseCurrencyResolution = (
   payload: PurchaseCurrencyResolutionRequest,
   ...[requestCorrelation, options = {}]: PurchaseCurrencyResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePurchaseCurrencyResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePurchaseCurrencyResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

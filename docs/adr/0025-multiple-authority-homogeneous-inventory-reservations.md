@@ -1,19 +1,29 @@
 ---
-status: accepted
+status: superseded
+superseded_by: ADR-0026
 ---
 
 # One Order Commitment Attempt may use multiple authority-homogeneous Inventory Reservations
 
-For Launch, one exact Order Commitment Attempt may require one or more Inventory Reservations. Each Inventory Reservation is homogeneous to exactly one actual Reservation Authority and contains only Stock Allocations that authority can enforce. The Attempt has complete Inventory reservation coverage only when the set of Reservations collectively covers every Stock Requirement in the exact requested Quantity + Unit; one Stock Requirement may be split across multiple Reservations when its Allocations span different Reservation Authorities.
+This ADR is retained as discovery history and is **not Current Launch design**.
 
-Immediately before Order commitment, every member Reservation required by the Attempt must have its own owner-issued Commitment Protection. Proven Order commit converts each member Reservation into its corresponding `COMMITTED_OBLIGATION`; proven non-commit plus definitive Attempt closure allows each provisional Reservation to be safely released, with unresolved individual owner effects remaining explicit reconciliation debt.
+It was superseded after the product-owner decision that one Customer Configuration / Launch Inventory operating scope uses exactly one configured Inventory Backend: either a customer-provided External Business System (for example an ERP such as ABRA) or the OntOS-provided WMS. Simultaneous authoritative use of both is not supported.
 
-## Considered Options
+The multi-authority problem that motivated this ADR therefore does not exist in the supported Launch model. Current behavior is defined by ADR-0026.
 
-- Allow 1..N authority-homogeneous Reservations per Attempt, including splitting one Requirement across authorities — accepted because Stock Allocation may already span multiple Positions/Locations and each real authority must remain the issuer of only the Quantity it can enforce.
-- Allow multiple Reservations but require each Stock Requirement to stay under one Reservation Authority — rejected because it would add an authority-based allocation constraint not otherwise present in the confirmed multi-Position model.
-- Require one Reservation and one Reservation Authority per Attempt — rejected because it would make otherwise valid multi-authority stock coverage impossible or require Inventory to fabricate a cross-owner authority.
+## Historical decision
 
-## Consequences
+The former decision allowed one Order Commitment Attempt to use multiple authority-homogeneous Inventory Reservations when Stock Allocations spanned different Reservation Authorities. That model is superseded and must not be used as implementation guidance.
 
-There is no synthetic cross-authority Reservation Confirmation, Commitment Protection, or FIFO order. Each Reservation keeps its real issuer and proof lifecycle. Order Commitment Gate later composes the complete set of Inventory proofs for the Attempt without becoming their owner.
+## Superseding consequence
+
+Current Launch uses:
+
+- one configured Inventory Backend for the applicable Customer Configuration / Inventory operating scope;
+- one actual Reservation Authority provided by that selected backend;
+- one Inventory Reservation per exact Order Commitment Attempt;
+- 1..N Stock Allocations inside that Reservation across supported Stock Positions/Locations of the same selected backend;
+- one Reservation Confirmation and one Commitment Protection for that Reservation;
+- one corresponding `COMMITTED_OBLIGATION` after proven Order commit.
+
+Changing from one backend to another is a migration/cutover operation, not a normal runtime dual-authority mode.

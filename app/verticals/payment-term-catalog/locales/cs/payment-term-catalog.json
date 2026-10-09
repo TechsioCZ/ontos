@@ -15,7 +15,7 @@
     "remoteUnavailable": "Remote vertical je nedostupný",
     "role": "payment-term-catalog",
     "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
-    "title": "Payment Term Catalog Vertical",
+    "title": "Vertical katalogu platebních podmínek",
     "widgetBody": "Vlastní routovanou plochu verticalu."
   }
 }

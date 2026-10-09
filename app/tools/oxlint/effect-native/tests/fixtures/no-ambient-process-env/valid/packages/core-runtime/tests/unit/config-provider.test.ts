@@ -11,5 +11,5 @@ const TestConfigLayer = Layer.setConfigProvider(
 );
 
 export const readDatabaseUrl = Effect.gen(function* () {
-	return yield* Config.string("DATABASE_URL");
+	return yield* Config.String("DATABASE_URL");
 }).pipe(Effect.provide(TestConfigLayer));

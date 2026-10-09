@@ -56,10 +56,9 @@ export const ProcessingActivitiesApi = HttpApi.make('ProcessingActivitiesApi').a
         ProcessingActivitiesUnavailableProblemSchema,
         ProcessingActivitiesInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: ProcessingActivitiesRequestSchema,
-      query: {},
+
       success: ProcessingActivitiesResponseSchema,
     }),
   ),

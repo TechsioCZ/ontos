@@ -60,6 +60,7 @@ export type {
   ApiKeyBindingAdministration,
   AvailableTenant,
   PrincipalResolutionRecord,
+  PrincipalResolverConfiguration,
   PrincipalResolverService,
   ProviderSubject,
   ResolvedPrincipalIdentity,
@@ -80,6 +81,7 @@ export {
 } from './auth/support-recovery-principal-context.ts';
 export type {
   SupportRecoveryPrincipalContextError,
+  SupportRecoveryPrincipalContextResolverConfiguration,
   SupportRecoveryPrincipalContextResolverService,
 } from './auth/support-recovery-principal-context.ts';
 export type { SystemPrincipalContextError, SystemWorkloadRegistration } from './auth/system-principal-context.ts';
@@ -91,6 +93,11 @@ export {
 } from './auth/principal-management-errors.ts';
 export type { PrincipalManagementError } from './auth/principal-management-errors.ts';
 export { managedPrincipalsRead, selfApiKeyBindingsRead } from './auth/principal-administration-reads.ts';
+// @ontos-codesmith-core-read-exports:start
+
+// @ontos-core-read legal-entity-detail
+export { legalEntityDetailRead } from './generated-reads/legal-entity-detail.ts';
+// @ontos-codesmith-core-read-exports:end
 export {
   LegalEntityContext,
   LegalEntityContextAmbiguousError,
@@ -111,6 +118,8 @@ export type {
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
+export { databaseRuntime } from '#database-runtime';
+export type { DatabaseRuntime } from './db/database-runtime.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
@@ -170,15 +179,18 @@ export type {
   DatabaseDriverFailureInput,
   DatabaseDriverFailureKind,
 } from './database/driver-failure.ts';
+export { PersistenceFailure } from './database/persistence-failure.ts';
 export { findPostgresFailure, isPostgresUniqueViolation } from './database/postgres-failure.ts';
 export type { PostgresFailureMetadata } from './database/postgres-failure.ts';
 export {
   ContextAccess,
   ContextAccessLive,
-  LEGAL_ENTITY_PERMISSION_KEYS,
-  TENANT_PERMISSION_KEYS,
   makeContextAccess,
   makeContextAccessLive,
+  assortmentPermissionTargetRequiresLegalEntity,
+  toAssortmentPermissionAccessKey,
+  toAssortmentPermissionAccessObjectId,
+  toAssortmentPermissionAccessObjectIdForTargets,
   toBusinessPermissionAccessKey,
   toBusinessPermissionAccessObjectId,
   toContextPermissionAccessKey,
@@ -187,7 +199,15 @@ export {
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from './permissions/context-access.ts';
+export { LEGAL_ENTITY_PERMISSION_KEYS, TENANT_PERMISSION_KEYS } from './permissions/context-permissions.ts';
 export type {
+  AssortmentPermissionAccessTarget,
+  AssortmentPermissionAccessTargetWithTrustedStorefront,
+  AssortmentPermissionAdmissionSet,
+  AssortmentPermissionCode,
+  AssortmentPermissionCommercialScope,
+  AssortmentPermissionSelector,
+  AssortmentPermissionSubject,
   BusinessAccessTarget,
   BusinessPermissionAccessTarget,
   ContextAccessClientFactory,
@@ -195,10 +215,9 @@ export type {
   ContextAccessResult,
   ContextAccessService,
   ContextPermissionAccessTarget,
-  LegalEntityPermissionKey,
   ResourceAccessTarget,
-  TenantPermissionKey,
 } from './permissions/context-access.ts';
+export type { LegalEntityPermissionKey, TenantPermissionKey } from './permissions/context-permissions.ts';
 export {
   OwnerAuthorizationDecisionSchema,
   OwnerAuthorizationOverlay,
@@ -299,6 +318,21 @@ export type {
   BusinessPermissionRelationshipMutationService,
 } from './permissions/business-permission-mutation.ts';
 export {
+  ResourceContainmentMutationUnavailable,
+  ResourceContainmentRelationshipMutation,
+  ResourceContainmentRelationshipMutationLive,
+  createResourceContainmentRelationshipMutationClient,
+  makeResourceContainmentRelationshipMutation,
+  makeResourceContainmentRelationshipMutationLive,
+} from './permissions/resource-containment-mutation.ts';
+export type {
+  ResourceContainmentRelationship,
+  ResourceContainmentRelationshipMutationClient,
+  ResourceContainmentRelationshipMutationInput,
+  ResourceContainmentRelationshipMutationService,
+  SpiceDbResourceReference,
+} from './permissions/resource-containment-mutation.ts';
+export {
   ContextPermissionMutationUnavailable,
   ContextPermissionRelationshipMutation,
   ContextPermissionRelationshipMutationLive,
@@ -313,11 +347,15 @@ export type {
 } from './permissions/context-permission-mutation.ts';
 export {
   defineAction,
+  defineActionAssortmentPermissions,
   defineActionBusinessPermission,
   defineActionResourcePermission,
   isActionRegistration,
 } from './actions/definition.ts';
 export type {
+  ActionAssortmentPermissionDeclaration,
+  ActionAssortmentPermissionTarget,
+  ActionAssortmentPermissionTargetResolver,
   ActionBusinessPermissionDeclaration,
   ActionBusinessPermissionTarget,
   ActionBusinessPermissionTargetResolver,
@@ -336,6 +374,7 @@ export type {
   ActionResourcePermissionTarget,
   ActionResourcePermissionTargetResolver,
   ActionRequirements,
+  ActionServiceFactory,
   ActionTenantPermission,
   AnyActionRegistration,
 } from './actions/definition.ts';
@@ -351,7 +390,7 @@ export type {
   GlobalActionPolicy,
   MicroverticalActionPolicy,
 } from './actions/policy.ts';
-export { ActionRuntime, ActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
+export { ActionRuntime, makeActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
 export type {
   ActionCommitOpen,
   ActionRuntimeService,
@@ -373,20 +412,21 @@ export type {
 export {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
   trustResolvedSystemPrincipalContext,
   trustVerifiedGatewayPrincipalContext,
 } from './auth/system-principal-context-provenance.ts';
 export {
-  LEGAL_ENTITY_SCOPES,
   OperationalScopeRepositoryLive,
   OperationalScopeResolver,
   OperationalScopeResolverFromRepositoryLive,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from './operations/context.ts';
+export { LEGAL_ENTITY_SCOPES } from './operations/legal-entity-scope.ts';
+export type { LegalEntityScope } from './operations/legal-entity-scope.ts';
 export { OperationalScopeRepositoryContext } from './operations/repository-context.ts';
 export type {
-  LegalEntityScope,
   OperationalScope,
   OperationalScopeRepository,
   OperationalScopeRequest,
@@ -568,23 +608,66 @@ export {
 } from './modules/tenant-module-state-service.ts';
 export {
   ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
+  ONTOS_SHELL_CONTRIBUTION_ABI,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   ApplicationCompositionArtifactReferenceSchema,
+  ApplicationCompositionBackendSchema,
+  ApplicationCompositionBrowserFederationSchema,
+  ApplicationCompositionCloudflareWorkerBackendSchema,
   ApplicationCompositionModuleSchema,
   ApplicationCompositionSchema,
+  ApplicationCompositionServerOnlyFederationSchema,
   ApplicationCompositionSingletonSchema,
   ApplicationCompositionValidationError,
+  OntosShellRuntimeContractSchema,
   ApplicationCompositionVersionedIdentitySchema,
   canonicalizeApplicationComposition,
   validateApplicationCompositionCandidate,
 } from './modules/application-composition.ts';
 export type {
   ApplicationComposition,
+  ApplicationCompositionBackend,
+  ApplicationCompositionBrowserFederation,
   ApplicationCompositionCandidateEvidence,
   ApplicationCompositionModule,
   ApplicationCompositionVersionedIdentity,
   ObservedApplicationCompositionContract,
   ObservedModuleFederationManifest,
+  OntosShellRuntimeContract,
 } from './modules/application-composition.ts';
+export {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionSnapshotSchema,
+  makeActiveApplicationCompositionLayer,
+  validateActiveApplicationCompositionSnapshot,
+} from './modules/active-application-composition.ts';
+export {
+  applicationCompositionContentRevision,
+  buildApplicationCompositionCatalog,
+} from './modules/application-composition-catalog.ts';
+export { ActiveApplicationCompositionUnavailableError } from './modules/active-application-composition-errors.ts';
+export {
+  ApplicationCompositionAuthorityError,
+  closeApplicationCompositionDurableAdmission,
+  drainApplicationCompositionAuthority,
+  isApplicationCompositionWorkDrained,
+  isApplicationCompositionDurableWorkDrained,
+  lockApplicationCompositionAuthority,
+  lockApplicationCompositionPublication,
+  markApplicationCompositionMigrationComplete,
+  publishApplicationCompositionAuthority,
+  resumeApplicationCompositionDurableAdmission,
+  sealApplicationCompositionAuthority,
+} from './modules/application-composition-authority.ts';
+export {
+  ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING,
+  ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY,
+} from './modules/active-application-composition-edge.ts';
+export type {
+  ActiveApplicationCompositionServiceContract,
+  ActiveApplicationCompositionSnapshot,
+} from './modules/active-application-composition.ts';
 export {
   MODULE_ENTRYPOINT_ACCESSES,
   MODULE_ENTRYPOINT_ROLES,
@@ -661,6 +744,7 @@ export {
   ShellResourceDetailContributionSchema,
   ShellSearchContributionSchema,
   ShellTimelineContributionSchema,
+  isReservedShellRouteRoot,
   validateShellContributions,
 } from './modules/shell-contribution.ts';
 export type { OntosShellContributions, ShellContributionReferenceSets } from './modules/shell-contribution.ts';
@@ -721,13 +805,26 @@ export { coreActionCatalog } from './modules/actions/catalog.ts';
 export type { CoreActionDescriptor } from './modules/actions/catalog.ts';
 export { ONTOS_SPICEDB_SCHEMA } from './permissions/schema.ts';
 
+export { readPrincipalBinding } from './auth/external-identity/read.ts';
+export {
+  ExternalIdentityAdmission,
+  resolveExternalSubject,
+  resolveExternalSubjectFromTransaction,
+} from './auth/external-identity/resolve.ts';
+export type { ResolveExternalSubjectInput, ResolveExternalSubjectResult } from './auth/external-identity/resolve.ts';
+export type { ExternalIdentityAdmissionContext } from './auth/external-identity/repository.ts';
+export { externalIdentitySubjectForBinding } from './auth/external-identity/repository.ts';
+
 // <generated-core-action-exports>
+export { activatePrincipalBindingAction } from './modules/actions/activate-principal-binding.action.ts';
 export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';
 export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
+export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
+export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
@@ -758,10 +855,9 @@ export {
   OutboxHandlerExecutionError,
   OutboxPayloadDecodeError,
   OutboxPollerConfigError,
-  OutboxPersistenceError,
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
-export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';
+export type { OutboxWorkerHealth, OutboxWorkerHealthServer, OutboxWorkerReadiness } from './outbox/health.ts';
 export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
 export type {
   OutboxCycleRunner,
@@ -782,7 +878,12 @@ export type {
   OutboxWorkerLegalEntityScopeFanoutService,
   OutboxWorkerLegalEntityScopeRecord,
 } from './outbox/legal-entity-scope-fanout.ts';
-export type { RunOutboxWorkerProcessInput, StartOutboxWorkerProcessInput } from './outbox/process.ts';
+export type {
+  DefineOutboxWorkerEntryInput,
+  OutboxWorkerEntry,
+  OutboxWorkerLoopInput,
+  RunOutboxWorkerHostInput,
+} from './outbox/process.ts';
 export { OutboxRuntime, OutboxRuntimeLive, matchOutboxMessages, runOutboxCycle } from './outbox/runtime.ts';
 export type {
   MatchOutboxMessagesInput,

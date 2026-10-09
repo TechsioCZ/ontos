@@ -46,6 +46,7 @@ const handle = Effect.fn('SetSelfApiKeyBindingStatusAction.handle')(function* se
     managed: false,
     principalId: context.scope.principalId,
     tenantId: context.scope.tenantId,
+    transitionRef: context.actionInvocationId,
   });
   yield* context.recordDataAccess({
     accessKind: 'read',
@@ -87,8 +88,8 @@ export const setSelfApiKeyBindingStatusAction = defineAction(
     schemaVersion: '1',
   },
   handle,
-  (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+  (transaction, scope) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({ setStatus: repository.setApiKeyBindingStatus });
   },
 );

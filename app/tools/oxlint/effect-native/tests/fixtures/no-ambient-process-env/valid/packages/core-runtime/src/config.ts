@@ -1,8 +1,8 @@
 // The A3 target shape: declared Config values, one root ConfigProvider, Redacted secrets.
 import { Config, ConfigProvider, Effect, Layer, Redacted, Schema } from "effect";
 
-const DatabaseUrl = Config.redacted("DATABASE_URL");
-const PoolSize = Config.integer("DB_POOL_SIZE");
+const DatabaseUrl = Config.Redacted("DATABASE_URL");
+const PoolSize = Config.Int("DB_POOL_SIZE");
 const Jwks = Config.schema(Schema.fromJsonString(Schema.Unknown), "ONTOS_GATEWAY_PUBLIC_JWKS");
 
 export const AppConfig = Config.all({ databaseUrl: DatabaseUrl, poolSize: PoolSize, jwks: Jwks });

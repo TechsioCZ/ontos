@@ -8,10 +8,6 @@ import { UpsertDsrOwnerTaskPayloadSchema, UpsertDsrOwnerTaskResultSchema } from 
 
 export { UpsertDsrOwnerTaskPayloadSchema } from '../actions/upsert-dsr-owner-task.ts';
 
-const UpsertDsrOwnerTaskActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const UpsertDsrOwnerTaskActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpsertDsrOwnerTaskActionInvalidProblem',
   400,
@@ -125,15 +121,35 @@ const actionErrors = [
   UpsertDsrOwnerTaskActionInternalProblemSchema,
 ] as const;
 
-export const UpsertDsrOwnerTaskActionApi = HttpApi.make('UpsertDsrOwnerTaskActionApi').add(
-  HttpApiGroup.make('upsertDsrOwnerTaskAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/upsert-dsr-owner-task', {
-        error: actionErrors,
-        headers: UpsertDsrOwnerTaskActionHeadersSchema,
-        payload: Schema.toEncoded(UpsertDsrOwnerTaskPayloadSchema),
-        success: UpsertDsrOwnerTaskResultSchema,
-      }),
-    )
-    .middleware(UpsertDsrOwnerTaskActionSchemaErrorMiddleware),
-);
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const upsertDsrOwnerTaskActionGroupDefinition = HttpApiGroup.make('upsertDsrOwnerTaskAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/upsert-dsr-owner-task', {
+      error: actionErrors,
+      payload: Schema.toEncoded(UpsertDsrOwnerTaskPayloadSchema),
+      success: UpsertDsrOwnerTaskResultSchema,
+    }),
+  )
+  .middleware(UpsertDsrOwnerTaskActionSchemaErrorMiddleware);
+
+export type UpsertDsrOwnerTaskActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'upsertDsrOwnerTaskAction',
+  HttpApiGroup.Endpoints<typeof upsertDsrOwnerTaskActionGroupDefinition>
+>;
+
+const UpsertDsrOwnerTaskActionGroup: UpsertDsrOwnerTaskActionGroupContract = upsertDsrOwnerTaskActionGroupDefinition;
+
+export const UpsertDsrOwnerTaskActionApi =
+  HttpApi.make('UpsertDsrOwnerTaskActionApi').add(UpsertDsrOwnerTaskActionGroup);

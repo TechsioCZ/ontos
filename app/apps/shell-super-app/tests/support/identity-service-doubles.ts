@@ -15,6 +15,7 @@ const apiKeyDefaults: ApiKeyServiceContract = {
 };
 
 const principalResolverDefaults: PrincipalResolverService = {
+  authenticationNamespaceId: 'test.staff.better-auth.v1',
   listAvailableTenants: () => unconfigured('listAvailableTenants'),
   loadApiKeyBindingForAdministration: () => unconfigured('loadApiKeyBindingForAdministration'),
   resolveApiKeyBindingSubject: () => unconfigured('resolveApiKeyBindingSubject'),

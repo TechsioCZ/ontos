@@ -39,7 +39,7 @@ const createOrAcceptOwnedMutation = (
   filePath: string,
   content: string,
   requiredMarkers: readonly string[],
-  requiredContract?: { readonly marker: string; readonly migration: string },
+  requiredContracts: readonly { readonly marker: string; readonly migration: string }[] = [],
 ): Effect.Effect<Option.Option<Mutation>, ActionBoundaryScaffoldError | ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* createOrAcceptOwnedMutationEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -56,9 +56,10 @@ const createOrAcceptOwnedMutation = (
       current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
       requiredMarkers.every((marker) => current.includes(marker))
     ) {
-      if (requiredContract !== undefined && !current.includes(requiredContract.marker)) {
+      const missingContract = requiredContracts.find(({ marker }) => !current.includes(marker));
+      if (missingContract !== undefined) {
         return yield* scaffoldError(
-          `incompatible generated Action boundary: ${filePath}. ${requiredContract.migration}`,
+          `incompatible generated Action boundary: ${filePath}. ${missingContract.migration}`,
         );
       }
       return Option.none();
@@ -72,12 +73,16 @@ export const renderActionPrincipalServer = (
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
-import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type {
   GatewayPrincipalVerificationWithRedemptionOptions,
 } from '@app/gateway-principal-verifier/server';
-import { Effect, Redacted } from 'effect';
+import { Effect, Layer, Redacted } from 'effect';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 export {
   ACTION_PRINCIPAL_BEARER_CHALLENGE,
@@ -99,14 +104,26 @@ export type {
 } from '@app/gateway-principal-verifier/server';
 
 export const ACTION_GATEWAY_AUDIENCE = '${vertical.appId}' as const;
-export {
-  GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier,
-  GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive,
-} from '@app/gateway-principal-verifier/server';
+export { GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+/**
+ * What this runtime needs to accept a Shell-issued assertion for its audience: the gateway
+ * verification material, and the staff namespace registration Core revalidates the asserted
+ * principal's binding against (without it every governed route answers
+ * \`operation_context_unavailable\`).
+ */
+export const ActionPrincipalVerifierLive: Layer.Layer<
+  Layer.Success<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>>,
+  Layer.Error<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>>,
+  Layer.Services<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>>
+> = Layer.mergeAll(
+  GatewayPrincipalVerifierLive,
+  ActiveApplicationCompositionConfigLive,
+  staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
+);
 export type ActionPrincipalVerificationOptions =
   GatewayPrincipalVerificationWithRedemptionOptions;
 
-const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
+const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker);
 
 export const verifyActionPrincipal = (
   authorization: string | undefined,
@@ -227,11 +244,29 @@ export const planActionBoundaryScaffold = (
       serverPath,
       renderActionPrincipalServer(vertical),
       [`@ontos-action-boundary-owner ${vertical.appId}`, `@ontos-action-boundary-audience ${vertical.appId}`],
-      {
-        marker: 'export const authenticateOperationPrincipal',
-        migration:
-          'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
-      },
+      [
+        {
+          marker: 'export const authenticateOperationPrincipal',
+          migration:
+            'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
+        },
+        {
+          marker: 'bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker)',
+          migration: 'Bind the gateway principal verifier to this owner release with ultramodernApiMarker.',
+        },
+        {
+          marker: 'ActiveApplicationCompositionConfigLive,',
+          migration:
+            'Merge ActiveApplicationCompositionConfigLive into ActionPrincipalVerifierLive so each operation validates current release authority.',
+        },
+        {
+          // Core revalidates the staff namespace every Shell-issued assertion names; a runtime
+          // without its registration answers every governed route operation_context_unavailable.
+          marker: 'AuthenticationNamespaceRegistry',
+          migration:
+            'Register the staff authentication namespace for this audience: merge staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]) into ActionPrincipalVerifierLive, or name the runtime-owned AuthenticationNamespaceRegistry that already includes it.',
+        },
+      ],
     );
     const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderActionGatewayClient(vertical), [
       `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
@@ -252,7 +287,7 @@ export const planActionBoundaryScaffold = (
           '@app/core-runtime': WORKSPACE_DEPENDENCY_VERSION,
           '@app/gateway-principal-verifier': WORKSPACE_DEPENDENCY_VERSION,
           '@app/shared-contracts': WORKSPACE_DEPENDENCY_VERSION,
-          effect: '4.0.0-rc.112',
+          effect: '4.0.0-rc.117',
         }),
       ),
     );

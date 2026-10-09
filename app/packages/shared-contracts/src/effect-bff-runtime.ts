@@ -1,8 +1,4 @@
-/** Server-only assembly for the invariant tail of a strict Effect BFF runtime factory. */
 import { governedReadHttpStatus } from '@app/core-runtime/http/governed-read';
-
-export { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-export type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 
 interface GovernedProblemFields<Status extends number> {
   readonly detail: string;

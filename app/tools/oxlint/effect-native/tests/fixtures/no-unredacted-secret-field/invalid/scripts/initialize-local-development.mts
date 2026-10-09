@@ -7,4 +7,4 @@ export interface LocalCredentials {
   readonly spiceDbPreSharedKey: string;
 }
 
-export const AdminDsn = Config.string('POSTGRES_ADMIN_DSN');
+export const AdminDsn = Config.String('POSTGRES_ADMIN_DSN');

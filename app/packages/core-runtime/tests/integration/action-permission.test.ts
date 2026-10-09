@@ -2,15 +2,25 @@ import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
-import { Context, Effect, Layer, Exit, Schema, Predicate } from 'effect';
+import { Context, Deferred, Effect, Fiber, Function, Layer, Exit, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
+import { ActionPermissionDenied } from '../../src/actions/errors.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
+import type { ActionRuntimeOptions } from '../../src/actions/runtime.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import {
+  AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
+} from '../../src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../src/auth/external-identity/verifier.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -24,9 +34,12 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
+import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
+import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
@@ -34,9 +47,10 @@ import {
   makeActionPermissionService,
   toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
-import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
+import { injectStatementFaults } from '../support/database-faults.ts';
 import { TestWriteError } from '../support/permission-write-error.ts';
 
 class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof v1.NewClient>>()(
@@ -44,6 +58,44 @@ class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof
 ) {}
 
 const suiteId = randomUUID();
+const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['core-runtime-test'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'test-provider',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
+const testOperationalScopeResolver: OperationalScopeResolverService = {
+  resolve: (input) =>
+    Effect.gen(function* registeredTestOperationalScope() {
+      const namespaceId = input.principal.authenticationNamespaceId;
+      if (namespaceId !== undefined) {
+        const registration = yield* authenticationNamespaceRegistry
+          .lookup(AuthenticationNamespaceIdSchema.make(namespaceId))
+          .pipe(
+            Effect.mapError(
+              () =>
+                new OperationContextUnavailable({
+                  code: 'operation_context_unavailable',
+                  reason: 'The test authentication namespace registry is unavailable',
+                }),
+            ),
+          );
+        if (Option.isNone(registration)) {
+          return yield* new OperationAuthenticationRequired({
+            code: 'operation_authentication_required',
+            reason: 'The test authentication namespace is not registered',
+          });
+        }
+      }
+      return yield* baseTestOperationalScopeResolver.resolve(input);
+    }),
+};
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
@@ -68,6 +120,7 @@ const actionKeys = {
 const principal = {
   authBindingId: principalAuthBindingId,
   authContextRef: `better-auth-session:${suiteId}:principal`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   legalEntityId,
   principalId,
@@ -77,6 +130,7 @@ const principal = {
 const nonMemberPrincipal = {
   authBindingId: nonMemberAuthBindingId,
   authContextRef: `better-auth-session:${suiteId}:non-member`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   principalId: nonMemberPrincipalId,
   tenantId,
@@ -85,6 +139,7 @@ const nonMemberPrincipal = {
 const otherTenantPrincipal = {
   authBindingId: otherTenantAuthBindingId,
   authContextRef: `better-auth-session:${suiteId}:other-tenant`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session',
   principalId: otherTenantPrincipalId,
   tenantId: otherTenantId,
@@ -106,7 +161,7 @@ const withDatabase = <Value, Error, Requirements>(
   Effect.scoped(
     Effect.gen(function* databaseScope() {
       const configuration = yield* loadDatabaseConfig();
-      const database = yield* makeFaultInjectableCoreDatabase(configuration);
+      const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database);
     }),
   );
@@ -225,11 +280,7 @@ const PermissionFixture = Layer.effect(
   PermissionAdmin,
   Effect.gen(function* integrationProgram1() {
     const spiceDbConfig = yield* loadSpiceDbConfig();
-    const adminClient = v1.NewClient(
-      spiceDbConfig.preSharedKey,
-      spiceDbConfig.endpoint,
-      spiceDbConfig.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-    );
+    const adminClient = newSpiceDbGrpcClient(spiceDbConfig);
 
     const prepare = Effect.gen(function* preparePermissionFixture() {
       yield* Effect.promise(() =>
@@ -284,6 +335,7 @@ const PermissionFixture = Layer.effect(
           ]);
           yield* database.executor.insert(principalAuthBindings).values([
             {
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
               principalAuthBindingId,
               principalId,
               provider: 'better_auth',
@@ -293,6 +345,7 @@ const PermissionFixture = Layer.effect(
               tenantId,
             },
             {
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
               principalAuthBindingId: nonMemberAuthBindingId,
               principalId: nonMemberPrincipalId,
               provider: 'better_auth',
@@ -302,6 +355,7 @@ const PermissionFixture = Layer.effect(
               tenantId,
             },
             {
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
               principalAuthBindingId: otherTenantAuthBindingId,
               principalId: otherTenantPrincipalId,
               provider: 'better_auth',
@@ -440,6 +494,7 @@ const runWithLivePermission = <Value, Error>(
   database: ContextServiceContract,
   operation: (runtime: ReturnType<typeof makeActionRuntime>) => Effect.Effect<Value, Error>,
   configuration?: SpiceDbConfigValue,
+  onStage: NonNullable<ActionRuntimeOptions['onStage']> = Function.constVoid,
 ) =>
   (configuration === undefined ? loadSpiceDbConfig() : Effect.succeed(configuration)).pipe(
     Effect.flatMap((config) =>
@@ -452,7 +507,7 @@ const runWithLivePermission = <Value, Error>(
               makeActionRepository(),
               makeActionPermissionService(client),
               testOperationalScopeResolver,
-              openActionRuntimeOptions,
+              { ...openActionRuntimeOptions, onStage },
             ),
           ),
         (client) => Effect.sync(() => client.close()),
@@ -469,7 +524,7 @@ const withDenialPersistenceFailure = (
     database.executor.transaction((current) => {
       const prefix = stage === 'audit' ? 'insert into "core"."audit_events"' : 'update "core"."action_invocations"';
       return operation(current).pipe(
-        Effect.provideService(TestQueryHook, (statement) =>
+        injectStatementFaults((statement) =>
           statement.startsWith(prefix)
             ? Effect.fail(
                 new SqlError({
@@ -625,44 +680,96 @@ const testProgram3 = () =>
     ),
   );
 
+const loadDenialEvidence = Effect.fn('loadDenialEvidence')(function* loadDenialEvidence(
+  database: ContextServiceContract,
+  key: string,
+) {
+  const [invocation] = yield* database.executor
+    .select()
+    .from(actionInvocations)
+    .where(eq(actionInvocations.idempotencyKey, key));
+  if (invocation === undefined) {
+    return yield* Effect.die(new Error(`Expected an invocation for ${key}`));
+  }
+  const audits = yield* database.executor
+    .select()
+    .from(auditEvents)
+    .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+  return { audits, invocation };
+});
+
+const deniedInput = (key: string, executions: ExecutionCounter) => {
+  const moduleStateKey = `${actionPrefix}.state.${key}`;
+  return {
+    payload: undefined,
+    principal,
+    registration: registration(
+      actionKeys.concurrentDenied,
+      moduleStateKey,
+      incrementExecution.bind(undefined, executions),
+    ),
+    transport: transport(key, moduleStateKey),
+  };
+};
+
 const testProgram4 = () =>
+  withDatabase(
+    Effect.fn(function* verifyRetryAfterRecordedDenial(database) {
+      const executions: ExecutionCounter = { value: 0 };
+      const input = deniedInput('retry-after-denial', executions);
+      const first = yield* runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input)));
+      const retry = yield* runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input)));
+      const { audits, invocation } = yield* loadDenialEvidence(database, 'retry-after-denial');
+
+      expect(Schema.is(ActionPermissionDenied)(first)).toBe(true);
+      expect(Schema.is(ActionPermissionDenied)(retry)).toBe(true);
+      expect(executions.value).toBe(0);
+      expect(invocation.status).toBe('rejected');
+      expect(audits.length).toBe(1);
+    }),
+  );
+
+// The first request holds its denial transaction open until the second request has prepared the
+// same invocation, so the second request always observes the in-flight denial, never a race.
+const withHeldDenialAudit = (database: ContextServiceContract, release: Deferred.Deferred<null>) => {
+  const transaction: ContextServiceContract['executor']['transaction'] = (operation) =>
+    database.executor.transaction((current) =>
+      operation(current).pipe(
+        injectStatementFaults((statement) =>
+          statement.startsWith('insert into "core"."audit_events"') ? Deferred.await(release) : Effect.void,
+        ),
+      ),
+    );
+  const executor: ContextServiceContract['executor'] = Object.assign(Object.create(database.executor), { transaction });
+  return { executor };
+};
+
+const testProgram4b = () =>
   withDatabase(
     Effect.fn(function* verifyConcurrentDenials(database) {
       const executions: ExecutionCounter = { value: 0 };
-      const key = 'concurrent-denied';
-      const moduleStateKey = `${actionPrefix}.state.concurrent-denied`;
-      const input = {
-        payload: undefined,
-        principal,
-        registration: registration(
-          actionKeys.concurrentDenied,
-          moduleStateKey,
-          incrementExecution.bind(undefined, executions),
+      const input = deniedInput('concurrent-denied', executions);
+      const secondPrepared = yield* Deferred.make<null>();
+      const first = yield* Effect.forkChild(
+        runWithLivePermission(withHeldDenialAudit(database, secondPrepared), (runtime) =>
+          Effect.flip(runtime.runAction(input)),
         ),
-        transport: transport(key, moduleStateKey),
-      };
-      const results = yield* Effect.forEach(
-        [1, 2],
-        () => runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input))),
-        { concurrency: 'unbounded' },
       );
-      const [invocation] = yield* database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key));
-      expect(invocation).toBeDefined();
-      if (invocation === undefined) {
-        throw new Error('Expected invocation');
-      }
-      const audits = yield* database.executor
-        .select()
-        .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+      const second = yield* runWithLivePermission(
+        database,
+        (runtime) => Effect.flip(runtime.runAction(input)),
+        undefined,
+        (stage) => {
+          if (stage === 'invocation_prepared') {
+            Deferred.doneUnsafe(secondPrepared, Effect.succeed(null));
+          }
+        },
+      );
+      const firstResult = yield* Fiber.join(first);
+      const { audits, invocation } = yield* loadDenialEvidence(database, 'concurrent-denied');
 
-      expect(results.length).toBe(2);
-      for (const result of results) {
-        expect(Predicate.isTagged(result, 'ActionPermissionDenied')).toBe(true);
-      }
+      expect(Schema.is(ActionPermissionDenied)(firstResult)).toBe(true);
+      expect(Schema.is(ActionPermissionDenied)(second)).toBe(true);
       expect(executions.value).toBe(0);
       expect(invocation.status).toBe('rejected');
       expect(audits.length).toBe(1);
@@ -762,14 +869,20 @@ const testProgram6 = () =>
     }),
   );
 
-it.layer(PermissionFixture, { excludeTestServices: true })('Action permissions', (suite) => {
+it.layer(
+  Layer.merge(PermissionFixture, Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry)),
+  {
+    excludeTestServices: true,
+  },
+)('Action permissions', (suite) => {
   suite.effect('allows direct Principal and Tenant-membership executor grants', testProgram1);
 
   suite.effect('persists one normalized terminal denial and no business or collected evidence', testProgram2);
 
   suite.effect('denies a legacy marker without an executor and membership-set outsiders', testProgram3);
 
-  suite.effect('serializes concurrent denials into one Audit Event without executing the handler', testProgram4);
+  suite.effect('returns the recorded permission denial to a same-key retry', testProgram4);
+  suite.effect('serializes concurrent denials into one Audit Event without executing the handler', testProgram4b);
 
   suite.effect('rolls back both denial evidence writes when either persistence step fails', testProgram5);
 

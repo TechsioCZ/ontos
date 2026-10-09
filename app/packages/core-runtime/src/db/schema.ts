@@ -16,10 +16,13 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 
 export const CORE_SCHEMA_NAME = 'core';
 
 export const CORE_TABLE_INVENTORY = [
+  'application_composition_authority',
+  'application_composition_durable_work',
   'tenants',
   'legal_entities',
   'principals',
@@ -67,7 +70,7 @@ export type PrincipalStatus = (typeof PRINCIPAL_STATUSES)[number];
 export const BINDING_SUBJECT_TYPES = ['user', 'api_key'] as const;
 export type BindingSubjectType = (typeof BINDING_SUBJECT_TYPES)[number];
 
-export const BINDING_STATUSES = ['active', 'disabled', 'revoked'] as const;
+export const BINDING_STATUSES = ['pending', 'active', 'disabled', 'revoked'] as const;
 export type BindingStatus = (typeof BINDING_STATUSES)[number];
 
 export const coreSchema = pgSchema(CORE_SCHEMA_NAME);
@@ -77,6 +80,69 @@ const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultN
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
 const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
 const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table => table.enableRLS();
+
+/** Publication is admin-owned; application runtimes can only observe the complete approved authority. */
+export const applicationCompositionAuthority = enableCoreGovernedRls(
+  coreSchema.table(
+    'application_composition_authority',
+    {
+      authorityKey: text('authority_key').primaryKey().default('active'),
+      revision: text('revision').notNull(),
+      phase: text('phase').$type<'active' | 'draining' | 'sealed' | 'migrated'>().notNull(),
+      durableWorkAdmission: text('durable_work_admission').$type<'open' | 'closed'>().default('open').notNull(),
+      validUntil: timestamp('valid_until', { withTimezone: true }).notNull(),
+      subscriptionsJson: jsonb('subscriptions_json').$type<readonly OutboxWorkerSubscription[]>().notNull(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      check('core_application_composition_authority_key_ck', sql`${table.authorityKey} = 'active'`),
+      check('core_application_composition_authority_revision_ck', sql`${table.revision} ~ '^[a-f0-9]{64}$'`),
+      check(
+        'core_application_composition_authority_durable_admission_ck',
+        sql`${table.durableWorkAdmission} in ('open', 'closed')`,
+      ),
+      check(
+        'core_application_composition_authority_phase_ck',
+        sql`${table.phase} in ('active', 'draining', 'sealed', 'migrated')`,
+      ),
+      pgPolicy('core_application_composition_authority_select', {
+        for: 'select',
+        to: 'ontos_runtime',
+        using: sql`true`,
+      }),
+    ],
+  ),
+);
+
+/** Durable owner workflows participate until their trusted journal transition reaches a terminal state. */
+export const applicationCompositionDurableWork = enableCoreGovernedRls(
+  coreSchema.table(
+    'application_composition_durable_work',
+    {
+      ownerModuleKey: text('owner_module_key').notNull(),
+      originalRevision: text('original_revision').notNull(),
+      workId: text('work_id').notNull(),
+      createdAt: createdAt(),
+    },
+    (table) => [
+      primaryKey({
+        columns: [table.ownerModuleKey, table.originalRevision, table.workId],
+        name: 'core_application_composition_durable_work_pk',
+      }),
+      check(
+        'core_application_composition_durable_work_owner_ck',
+        sql`${table.ownerModuleKey} ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)*$'`,
+      ),
+      check('core_application_composition_durable_work_revision_ck', sql`${table.originalRevision} ~ '^[a-f0-9]{64}$'`),
+      check('core_application_composition_durable_work_id_ck', sql`length(${table.workId}) between 1 and 500`),
+      pgPolicy('core_application_composition_durable_work_select', {
+        for: 'select',
+        to: 'ontos_runtime',
+        using: sql`true`,
+      }),
+    ],
+  ),
+);
 
 export const tenants = coreSchema.table(
   'tenants',
@@ -154,19 +220,27 @@ export const principalAuthBindings = coreSchema.table(
     principalAuthBindingId: uuid('principal_auth_binding_id').defaultRandom().primaryKey(),
     tenantId: tenantId(),
     principalId: principalId(),
+    authenticationNamespaceId: text('authentication_namespace_id').notNull(),
     provider: text('provider').notNull(),
     subjectType: text('subject_type').$type<BindingSubjectType>().notNull(),
     providerSubjectId: text('provider_subject_id').notNull(),
     status: text('status').$type<BindingStatus>().notNull(),
+    bindingRevision: integer('binding_revision').default(1).notNull(),
+    // Nullable for legacy/bootstrap rows whose original writer was not an
+    // Action invocation. Governed writes set this to their trusted invocation.
+    createdByInvocationId: uuid('created_by_invocation_id'),
+    // Nullable for legacy/bootstrap rows. Governed transitions set the stable
+    // transition reference and same-state no-ops leave it unchanged.
+    lastTransitionRef: uuid('last_transition_ref'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (table) => [
     uniqueIndex('core_auth_bindings_tenant_id_uk').on(table.tenantId, table.principalAuthBindingId),
-    uniqueIndex('core_auth_bindings_subject_uk').on(
+    uniqueIndex('core_auth_bindings_namespace_subject_uk').on(
       table.tenantId,
-      table.provider,
+      table.authenticationNamespaceId,
       table.subjectType,
       table.providerSubjectId,
     ),
@@ -179,12 +253,18 @@ export const principalAuthBindings = coreSchema.table(
       foreignColumns: [principals.tenantId, principals.principalId],
       name: 'core_auth_bindings_tenant_principal_fk',
     }).onDelete('restrict'),
-    check('core_auth_bindings_provider_ck', sql`${table.provider} in ('better_auth')`),
+    check('core_auth_bindings_provider_ck', sql`length(${table.provider}) between 1 and 500`),
+    check(
+      'core_auth_bindings_namespace_ck',
+      sql`length(btrim(${table.authenticationNamespaceId})) between 1 and 200 and ${table.authenticationNamespaceId} = btrim(${table.authenticationNamespaceId})`,
+    ),
     check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key')`),
-    check('core_auth_bindings_status_ck', sql`${table.status} in ('active', 'revoked', 'disabled')`),
+    check('core_auth_bindings_subject_id_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
+    check('core_auth_bindings_status_ck', sql`${table.status} in ('pending', 'active', 'revoked', 'disabled')`),
+    check('core_auth_bindings_revision_ck', sql`${table.bindingRevision} >= 1`),
     check(
       'core_auth_bindings_lifecycle_ck',
-      sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('active', 'disabled') and ${table.revokedAt} is null)`,
+      sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('pending', 'active', 'disabled') and ${table.revokedAt} is null)`,
     ),
   ],
 );
@@ -929,6 +1009,8 @@ export const workerCheckpoints = coreSchema.table(
 );
 
 export const coreDatabaseSchema = {
+  applicationCompositionAuthority,
+  applicationCompositionDurableWork,
   actionInvocations,
   auditEvents,
   dataAccessEvents,
@@ -952,6 +1034,8 @@ export const coreDatabaseSchema = {
 } as const;
 
 export const CORE_TABLES = [
+  applicationCompositionAuthority,
+  applicationCompositionDurableWork,
   tenants,
   legalEntities,
   principals,

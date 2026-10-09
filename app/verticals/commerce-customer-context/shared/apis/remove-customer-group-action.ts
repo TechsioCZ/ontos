@@ -8,10 +8,6 @@ import { RemoveCustomerGroupPayloadSchema, RemoveCustomerGroupResultSchema } fro
 
 export { RemoveCustomerGroupPayloadSchema } from '../actions/remove-customer-group.ts';
 
-const RemoveCustomerGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveCustomerGroupActionInvalidProblem',
   400,
@@ -129,15 +125,35 @@ const actionErrors = [
   RemoveCustomerGroupActionInternalProblemSchema,
 ] as const;
 
-export const RemoveCustomerGroupActionApi = HttpApi.make('RemoveCustomerGroupActionApi').add(
-  HttpApiGroup.make('removeCustomerGroupAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/remove-customer-group', {
-        error: actionErrors,
-        headers: RemoveCustomerGroupActionHeadersSchema,
-        payload: Schema.toEncoded(RemoveCustomerGroupPayloadSchema),
-        success: RemoveCustomerGroupResultSchema,
-      }),
-    )
-    .middleware(RemoveCustomerGroupActionSchemaErrorMiddleware),
-);
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const removeCustomerGroupActionGroupDefinition = HttpApiGroup.make('removeCustomerGroupAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/remove-customer-group', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RemoveCustomerGroupPayloadSchema),
+      success: RemoveCustomerGroupResultSchema,
+    }),
+  )
+  .middleware(RemoveCustomerGroupActionSchemaErrorMiddleware);
+
+export type RemoveCustomerGroupActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'removeCustomerGroupAction',
+  HttpApiGroup.Endpoints<typeof removeCustomerGroupActionGroupDefinition>
+>;
+
+const RemoveCustomerGroupActionGroup: RemoveCustomerGroupActionGroupContract = removeCustomerGroupActionGroupDefinition;
+
+export const RemoveCustomerGroupActionApi =
+  HttpApi.make('RemoveCustomerGroupActionApi').add(RemoveCustomerGroupActionGroup);

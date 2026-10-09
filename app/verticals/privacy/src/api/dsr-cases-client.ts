@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface DsrCasesClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type DsrCasesAuthorizedInvocation = readonly [
@@ -33,13 +34,17 @@ export const executeDsrCasesWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: DsrCasesAuthorizedInvocation
 ) =>
   dsrCasesClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.dsrCases.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.dsrCases.execute({ payload })),
   );
 
 export const executeDsrCases = (
   payload: DsrCasesRequest,
   ...[requestCorrelation, options = {}]: DsrCasesOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeDsrCasesWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeDsrCasesWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

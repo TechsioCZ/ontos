@@ -5,6 +5,7 @@ import { FileSystem, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect
 import { assert, expect, it } from 'effect-rstest';
 
 import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import {
   AresLookupApi,
   AresLookupAuthenticationProblemSchema,
@@ -58,13 +59,15 @@ const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
 const evidence = Schema.decodeSync(AresLookupResponseSchema)(evidenceWire);
 
 const scope = Object.freeze({
-  authBindingId: '00000000-0000-4000-8000-000000000005',
-  authContextRef: 'better-auth-session:ares-lookup-unit',
-  authMethod: 'session' as const,
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '00000000-0000-4000-8000-000000000005',
+    authContextRef: 'better-auth-session:ares-lookup-unit',
+    authMethod: 'session',
+    legalEntityId: '00000000-0000-4000-8000-000000000004',
+    principalId: '00000000-0000-4000-8000-000000000003',
+    tenantId: '00000000-0000-4000-8000-000000000001',
+  }),
   correlationId: 'ares-lookup-correlation',
-  legalEntityId: '00000000-0000-4000-8000-000000000004',
-  principalId: '00000000-0000-4000-8000-000000000003',
-  tenantId: '00000000-0000-4000-8000-000000000001',
 });
 const request = Schema.decodeSync(AresLookupRequestSchema)({
   ico: '48039101',

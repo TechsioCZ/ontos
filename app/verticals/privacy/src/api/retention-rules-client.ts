@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetentionRulesClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetentionRulesAuthorizedInvocation = readonly [
@@ -37,13 +38,17 @@ export const executeRetentionRulesWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetentionRulesAuthorizedInvocation
 ) =>
   retentionRulesClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.retentionRules.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.retentionRules.execute({ payload })),
   );
 
 export const executeRetentionRules = (
   payload: RetentionRulesRequest,
   ...[requestCorrelation, options = {}]: RetentionRulesOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetentionRulesWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetentionRulesWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -67,7 +67,7 @@ it.effect('loads configuration from the caller provider inside the transaction',
       NATIVE_CONTEXT_TEST_VALUE: 'caller-config',
     });
     const actual = yield* executor
-      .transaction(() => Config.string('NATIVE_CONTEXT_TEST_VALUE'))
+      .transaction(() => Config.String('NATIVE_CONTEXT_TEST_VALUE'))
       .pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider));
     expect(actual).toBe('caller-config');
   }),

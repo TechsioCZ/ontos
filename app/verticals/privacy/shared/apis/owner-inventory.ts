@@ -41,10 +41,9 @@ export const OwnerInventoryApi = HttpApi.make('OwnerInventoryApi').add(
         OwnerInventoryUnavailableProblemSchema,
         OwnerInventoryInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: OwnerInventoryRequestSchema,
-      query: {},
+
       success: OwnerInventoryResponseSchema,
     }),
   ),

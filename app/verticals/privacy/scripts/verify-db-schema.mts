@@ -1,8 +1,8 @@
-// @effect-diagnostics asyncFunction:off globalConsole:off nodeBuiltinImport:off -- The operator-only PostgreSQL verifier adapts the driver's Promise API through Effect.tryPromise; expires: 2027-03-31.
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { Array as EffectArray, Effect, Order, Schema } from 'effect';
-import { Client } from 'pg';
+import { Array as EffectArray, Effect, Order, Schema, Redacted } from 'effect';
+import { PgClient } from '@effect/sql-pg';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { PRIVACY_SCHEMA_NAME, PRIVACY_TABLE_INVENTORY, PRIVACY_TABLES } from '../src/database/schema.ts';
 
@@ -186,25 +186,11 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
   }
 
   const connections = yield* loadDatabaseConnectionPair();
-  const client = new Client({
-    connectionString: connections.admin.connectionString,
-  });
-
-  yield* Effect.acquireUseRelease(
-    Effect.tryPromise({
-      catch: (cause) => failure('Unable to connect to PostgreSQL as the migration owner', cause),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-      try: () => client.connect().then(() => client),
-    }),
-    (connected) =>
-      // fallow-ignore-next-line complexity -- The verifier intentionally audits the complete Privacy schema, RLS, routine, trigger, and ownership contract in one connection lifecycle.
-      Effect.gen(function* inspectPrivacyDatabase() {
-        const catalog = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to inspect the Privacy table catalog', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-          try: () =>
-            connected.query<CatalogRow>(
-              `select relation.relname as table_name,
+  const connected = yield* PgClient.makeClient({ url: Redacted.make(connections.admin.connectionString) });
+  yield* Effect.gen(function* inspectPrivacyDatabase() {
+    const catalog = yield* connected
+      .unsafe<CatalogRow>(
+        `select relation.relname as table_name,
                       pg_catalog.pg_get_userbyid(relation.relowner) as owner_name,
                       relation.relrowsecurity as rls_enabled,
                       relation.relforcerowsecurity as rls_forced,
@@ -216,41 +202,41 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
                  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
                 where namespace.nspname = $1 and relation.relkind in ('r', 'p')
                 order by relation.relname`,
-              [PRIVACY_SCHEMA_NAME],
-            ),
-        });
-        const actualTables = catalog.rows.map(({ table_name }) => table_name);
-        if (!sameStrings(actualTables, EXPECTED_TABLES)) {
-          yield* failure(
-            `Privacy table catalog mismatch; expected=[${EXPECTED_TABLES.join(',')}], actual=[${actualTables.join(',')}]`,
-          );
-        }
-        const unsafeTables = catalog.rows.filter((table) => {
-          const mutable = !IMMUTABLE_TABLE_SET.has(table.table_name);
-          return (
-            table.owner_name !== connections.admin.user ||
-            !table.rls_enabled ||
-            !table.rls_forced ||
-            !table.can_select ||
-            !table.can_insert ||
-            table.can_update !== mutable ||
-            table.can_delete !== mutable
-          );
-        });
-        if (unsafeTables.length > 0) {
-          yield* failure(
-            `Privacy table ownership, RLS, or runtime privilege mismatch; tables=[${unsafeTables
-              .map(({ table_name }) => table_name)
-              .join(',')}]`,
-          );
-        }
+        [PRIVACY_SCHEMA_NAME],
+      )
+      .pipe(
+        Effect.map((rows) => ({ rows })),
+        Effect.mapError((cause) => failure('Unable to inspect the Privacy table catalog', cause)),
+      );
+    const actualTables = catalog.rows.map(({ table_name }) => table_name);
+    if (!sameStrings(actualTables, EXPECTED_TABLES)) {
+      yield* failure(
+        `Privacy table catalog mismatch; expected=[${EXPECTED_TABLES.join(',')}], actual=[${actualTables.join(',')}]`,
+      );
+    }
+    const unsafeTables = catalog.rows.filter((table) => {
+      const mutable = !IMMUTABLE_TABLE_SET.has(table.table_name);
+      return (
+        table.owner_name !== connections.admin.user ||
+        !table.rls_enabled ||
+        !table.rls_forced ||
+        !table.can_select ||
+        !table.can_insert ||
+        table.can_update !== mutable ||
+        table.can_delete !== mutable
+      );
+    });
+    if (unsafeTables.length > 0) {
+      yield* failure(
+        `Privacy table ownership, RLS, or runtime privilege mismatch; tables=[${unsafeTables
+          .map(({ table_name }) => table_name)
+          .join(',')}]`,
+      );
+    }
 
-        const policies = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to inspect Privacy RLS policies', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-          try: () =>
-            connected.query<PolicyRow>(
-              `select relation.relname as table_name,
+    const policies = yield* connected
+      .unsafe<PolicyRow>(
+        `select relation.relname as table_name,
                       policy.polname as policy_name,
                       case policy.polcmd
                         when 'r' then 'select'
@@ -271,73 +257,73 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
                  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
                 where namespace.nspname = $1
                 order by relation.relname, policy.polname`,
-              [PRIVACY_SCHEMA_NAME],
-            ),
-        });
-        const actualPolicies = EffectArray.sort(
-          policies.rows.map(
-            ({ command, policy_name, roles, table_name }) => `${table_name}:${policy_name}:${command}:${roles}`,
-          ),
-          Order.String,
-        );
-        if (
-          !sameStrings(actualPolicies, EXPECTED_POLICIES) ||
-          policies.rows.some((policy) => !policyHasExactScope(policy))
-        ) {
-          yield* failure(
-            `Privacy RLS policy mismatch; expected=${EXPECTED_POLICIES.length}, actual=${actualPolicies.length}`,
-          );
-        }
+        [PRIVACY_SCHEMA_NAME],
+      )
+      .pipe(
+        Effect.map((rows) => ({ rows })),
+        Effect.mapError((cause) => failure('Unable to inspect Privacy RLS policies', cause)),
+      );
+    const actualPolicies = EffectArray.sort(
+      policies.rows.map(
+        ({ command, policy_name, roles, table_name }) => `${table_name}:${policy_name}:${command}:${roles}`,
+      ),
+      Order.String,
+    );
+    if (
+      !sameStrings(actualPolicies, EXPECTED_POLICIES) ||
+      policies.rows.some((policy) => !policyHasExactScope(policy))
+    ) {
+      yield* failure(
+        `Privacy RLS policy mismatch; expected=${EXPECTED_POLICIES.length}, actual=${actualPolicies.length}`,
+      );
+    }
 
-        const triggers = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to inspect Privacy immutable triggers', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-          try: () =>
-            connected.query<TriggerRow>(
-              `select relation.relname as table_name, trigger_record.tgname as trigger_name
+    const triggers = yield* connected
+      .unsafe<TriggerRow>(
+        `select relation.relname as table_name, trigger_record.tgname as trigger_name
                  from pg_catalog.pg_trigger as trigger_record
                  join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
                  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
                 where namespace.nspname = $1 and not trigger_record.tgisinternal
                 order by relation.relname, trigger_record.tgname`,
-              [PRIVACY_SCHEMA_NAME],
-            ),
-        });
-        const actualTriggers = triggers.rows.map(({ table_name, trigger_name }) => `${table_name}:${trigger_name}`);
-        if (!sameStrings(actualTriggers, EXPECTED_IMMUTABLE_TRIGGERS)) {
-          yield* failure(
-            `Privacy immutable trigger mismatch; expected=[${EXPECTED_IMMUTABLE_TRIGGERS.join(',')}], actual=[${actualTriggers.join(',')}]`,
-          );
-        }
+        [PRIVACY_SCHEMA_NAME],
+      )
+      .pipe(
+        Effect.map((rows) => ({ rows })),
+        Effect.mapError((cause) => failure('Unable to inspect Privacy immutable triggers', cause)),
+      );
+    const actualTriggers = triggers.rows.map(({ table_name, trigger_name }) => `${table_name}:${trigger_name}`);
+    if (!sameStrings(actualTriggers, EXPECTED_IMMUTABLE_TRIGGERS)) {
+      yield* failure(
+        `Privacy immutable trigger mismatch; expected=[${EXPECTED_IMMUTABLE_TRIGGERS.join(',')}], actual=[${actualTriggers.join(',')}]`,
+      );
+    }
 
-        const foreignKeys = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to inspect Privacy foreign keys', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-          try: () =>
-            connected.query<ForeignKeyRow>(
-              `select constraint_record.conname as constraint_name
+    const foreignKeys = yield* connected
+      .unsafe<ForeignKeyRow>(
+        `select constraint_record.conname as constraint_name
                  from pg_catalog.pg_constraint as constraint_record
                  join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
                  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
                 where namespace.nspname = $1 and constraint_record.contype = 'f'
                 order by constraint_record.conname`,
-              [PRIVACY_SCHEMA_NAME],
-            ),
-        });
-        const actualForeignKeys = foreignKeys.rows.map(({ constraint_name }) => constraint_name);
-        if (!sameStrings(actualForeignKeys, EXPECTED_FOREIGN_KEYS)) {
-          yield* failure(
-            `Privacy foreign-key mismatch; expected=${EXPECTED_FOREIGN_KEYS.length} [${EXPECTED_FOREIGN_KEYS.join(',')}], ` +
-              `actual=${actualForeignKeys.length} [${actualForeignKeys.join(',')}]`,
-          );
-        }
+        [PRIVACY_SCHEMA_NAME],
+      )
+      .pipe(
+        Effect.map((rows) => ({ rows })),
+        Effect.mapError((cause) => failure('Unable to inspect Privacy foreign keys', cause)),
+      );
+    const actualForeignKeys = foreignKeys.rows.map(({ constraint_name }) => constraint_name);
+    if (!sameStrings(actualForeignKeys, EXPECTED_FOREIGN_KEYS)) {
+      yield* failure(
+        `Privacy foreign-key mismatch; expected=${EXPECTED_FOREIGN_KEYS.length} [${EXPECTED_FOREIGN_KEYS.join(',')}], ` +
+          `actual=${actualForeignKeys.length} [${actualForeignKeys.join(',')}]`,
+      );
+    }
 
-        const dispositionConstraints = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to inspect the Privacy disposition outcome constraint', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-          try: () =>
-            connected.query<ConstraintRow>(
-              `select constraint_record.conname as constraint_name,
+    const dispositionConstraints = yield* connected
+      .unsafe<ConstraintRow>(
+        `select constraint_record.conname as constraint_name,
                       pg_catalog.pg_get_constraintdef(constraint_record.oid) as constraint_definition
                  from pg_catalog.pg_constraint as constraint_record
                  join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
@@ -345,108 +331,104 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
                 where namespace.nspname = $1
                   and relation.relname = 'disposition_decisions'
                   and constraint_record.conname = 'privacy_disposition_decisions_outcome_ck'`,
-              [PRIVACY_SCHEMA_NAME],
-            ),
-        });
-        const dispositionConstraint = dispositionConstraints.rows.at(0);
-        if (
-          dispositionConstraint === undefined ||
-          !['RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE'].every((outcome) =>
-            dispositionConstraint.constraint_definition.includes(outcome),
-          ) ||
-          dispositionConstraint.constraint_definition.includes('INDETERMINATE')
-        ) {
-          yield* failure('Privacy disposition decisions must persist determinate outcomes only');
-        }
+        [PRIVACY_SCHEMA_NAME],
+      )
+      .pipe(
+        Effect.map((rows) => ({ rows })),
+        Effect.mapError((cause) => failure('Unable to inspect the Privacy disposition outcome constraint', cause)),
+      );
+    const dispositionConstraint = dispositionConstraints.rows.at(0);
+    if (
+      dispositionConstraint === undefined ||
+      !['RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE'].every((outcome) =>
+        dispositionConstraint.constraint_definition.includes(outcome),
+      ) ||
+      dispositionConstraint.constraint_definition.includes('INDETERMINATE')
+    ) {
+      yield* failure('Privacy disposition decisions must persist determinate outcomes only');
+    }
 
-        const retentionRoutines = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to inspect the Privacy retention evaluation routine', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-          try: () =>
-            connected.query<RoutineRow>(
-              `select pg_catalog.pg_get_functiondef(function_record.oid) as function_definition
+    const retentionRoutines = yield* connected
+      .unsafe<RoutineRow>(
+        `select pg_catalog.pg_get_functiondef(function_record.oid) as function_definition
                  from pg_catalog.pg_proc as function_record
                  join pg_catalog.pg_namespace as namespace on namespace.oid = function_record.pronamespace
                 where namespace.nspname = $1
                   and function_record.proname = 'process_retention_evaluation_work'
                   and function_record.pronargs = 5`,
-              [PRIVACY_SCHEMA_NAME],
-            ),
-        });
-        const retentionRoutine = retentionRoutines.rows.at(0)?.function_definition;
-        const requiredEvaluationFields = [
-          'evaluationRef',
-          'outcome',
-          'policyRef',
-          'policyVersion',
-          'controllerRef',
-          'evidenceRefs',
-          'provenanceRef',
-          'blockerRefs',
-        ];
-        if (
-          retentionRoutine === undefined ||
-          requiredEvaluationFields.some((field) => !retentionRoutine.includes(`'${field}'`)) ||
-          !retentionRoutine.includes('AUTHORITATIVE_EVALUATION_INCOMPLETE')
-        ) {
-          yield* failure('Privacy retention evaluation routine does not persist authoritative worker evidence');
-        }
+        [PRIVACY_SCHEMA_NAME],
+      )
+      .pipe(
+        Effect.map((rows) => ({ rows })),
+        Effect.mapError((cause) => failure('Unable to inspect the Privacy retention evaluation routine', cause)),
+      );
+    const retentionRoutine = retentionRoutines.rows.at(0)?.function_definition;
+    const requiredEvaluationFields = [
+      'evaluationRef',
+      'outcome',
+      'policyRef',
+      'policyVersion',
+      'controllerRef',
+      'evidenceRefs',
+      'provenanceRef',
+      'blockerRefs',
+    ];
+    if (
+      retentionRoutine === undefined ||
+      requiredEvaluationFields.some((field) => !retentionRoutine.includes(`'${field}'`)) ||
+      !retentionRoutine.includes('AUTHORITATIVE_EVALUATION_INCOMPLETE')
+    ) {
+      yield* failure('Privacy retention evaluation routine does not persist authoritative worker evidence');
+    }
 
-        const journals = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to inspect the Privacy migration journal', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-          try: () =>
-            connected.query<JournalRow>(
-              `select journal.relname as journal_name
+    const journals = yield* connected
+      .unsafe<JournalRow>(
+        `select journal.relname as journal_name
                  from pg_catalog.pg_class as journal
                  join pg_catalog.pg_namespace as namespace on namespace.oid = journal.relnamespace
                 where namespace.nspname = 'drizzle' and journal.relname = '__drizzle_migrations_privacy'
                   and journal.relkind in ('r', 'p')`,
-            ),
-        });
-        if (
-          !sameStrings(
-            journals.rows.map(({ journal_name }) => journal_name),
-            ['__drizzle_migrations_privacy'],
-          )
-        ) {
-          yield* failure('Privacy must own exactly one __drizzle_migrations_privacy journal');
-        }
+      )
+      .pipe(
+        Effect.map((rows) => ({ rows })),
+        Effect.mapError((cause) => failure('Unable to inspect the Privacy migration journal', cause)),
+      );
+    if (
+      !sameStrings(
+        journals.rows.map(({ journal_name }) => journal_name),
+        ['__drizzle_migrations_privacy'],
+      )
+    ) {
+      yield* failure('Privacy must own exactly one __drizzle_migrations_privacy journal');
+    }
 
-        const roles = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to inspect Privacy database roles', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-          try: () =>
-            connected.query<RoleRow>(
-              `select has_schema_privilege('ontos_runtime', $1, 'USAGE') as runtime_usage,
+    const roles = yield* connected
+      .unsafe<RoleRow>(
+        `select has_schema_privilege('ontos_runtime', $1, 'USAGE') as runtime_usage,
                       has_schema_privilege('ontos_runtime', $1, 'CREATE') as runtime_create,
                       runtime.rolsuper as runtime_super,
                       runtime.rolbypassrls as runtime_bypass_rls
                  from pg_catalog.pg_roles as runtime
                 where runtime.rolname = 'ontos_runtime'`,
-              [PRIVACY_SCHEMA_NAME],
-            ),
-        });
-        const [role] = roles.rows;
-        if (
-          role === undefined ||
-          !role.runtime_usage ||
-          role.runtime_create ||
-          role.runtime_super ||
-          role.runtime_bypass_rls
-        ) {
-          yield* failure('Privacy runtime role or schema privileges are unsafe');
-        }
-        yield* Effect.void;
-      }),
-    () =>
-      Effect.tryPromise({
-        catch: (cause) => failure('Unable to close the PostgreSQL verifier connection', cause),
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-        try: () => client.end(),
-      }),
-  );
-});
+        [PRIVACY_SCHEMA_NAME],
+      )
+      .pipe(
+        Effect.map((rows) => ({ rows })),
+        Effect.mapError((cause) => failure('Unable to inspect Privacy database roles', cause)),
+      );
+    const [role] = roles.rows;
+    if (
+      role === undefined ||
+      !role.runtime_usage ||
+      role.runtime_create ||
+      role.runtime_super ||
+      role.runtime_bypass_rls
+    ) {
+      yield* failure('Privacy runtime role or schema privileges are unsafe');
+    }
+    yield* Effect.void;
+  });
+}).pipe(Effect.scoped, Effect.provide(Reactivity.layer));
 
 await Effect.runPromise(verify);
 process.stdout.write(

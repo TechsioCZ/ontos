@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { Duration, Effect, Option, Schema } from 'effect';
 
+import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
@@ -67,17 +68,12 @@ interface SystemPrincipalContextRecordReader<Result extends SystemPrincipalConte
   readonly load: (input: { readonly principalId: string; readonly tenantId: string }) => Result;
 }
 
-const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
-  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-
 const unavailable = (cause?: unknown): SystemPrincipalContextUnavailableError =>
-  attachCause(
-    new SystemPrincipalContextUnavailableError({
-      code: 'system_principal_context_unavailable',
-      reason: 'The system principal could not be revalidated',
-    }),
+  new SystemPrincipalContextUnavailableError({
     cause,
-  );
+    code: 'system_principal_context_unavailable',
+    reason: 'The system principal could not be revalidated',
+  });
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 
@@ -157,14 +153,22 @@ export const systemPrincipalContextResolverFromRepository = <Result extends Syst
           reason: 'The configured system principal is not active and eligible in this tenant',
         });
       }
-      return trustResolvedSystemPrincipalContext(
-        Object.freeze({
-          authContextRef: `job:${input.registration.jobKey}:run:${input.runReference}`,
-          authMethod: 'system' as const,
-          principalId: input.principalId,
-          tenantId: input.tenantId,
-        }),
+      const context = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+        authContextRef: `job:${input.registration.jobKey}:run:${input.runReference}`,
+        authMethod: 'system',
+        principalId: input.principalId,
+        tenantId: input.tenantId,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SystemPrincipalContextInvalidError({
+              cause,
+              code: 'system_principal_context_invalid',
+              reason: 'The trusted system workload registration is invalid',
+            }),
+        ),
       );
+      return trustResolvedSystemPrincipalContext(Object.freeze(context));
     },
   ),
 });

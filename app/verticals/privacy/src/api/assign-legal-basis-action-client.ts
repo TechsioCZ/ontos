@@ -14,6 +14,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface AssignLegalBasisActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -34,7 +35,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: AssignLegalBasisActionApi, credential, defaultApiPrefix: '/privacy-api', requestCorrelation },
+    {
+      api: AssignLegalBasisActionApi,
+      credential,
+      defaultApiPrefix: '/privacy-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -45,12 +52,7 @@ export const executeAssignLegalBasisWithAuthorization = (
   Schema.encodeUnknownEffect(AssignLegalBasisPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.assignLegalBasisAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.assignLegalBasisAction.execute({ payload: encoded })),
       ),
     ),
   );
@@ -60,6 +62,11 @@ export const executeAssignLegalBasis = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) => executeAssignLegalBasisWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeAssignLegalBasisWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

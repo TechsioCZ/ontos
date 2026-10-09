@@ -41,10 +41,9 @@ export const RetentionRulesApi = HttpApi.make('RetentionRulesApi').add(
         RetentionRulesUnavailableProblemSchema,
         RetentionRulesInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: RetentionRulesRequestSchema,
-      query: {},
+
       success: RetentionRulesResponseSchema,
     }),
   ),

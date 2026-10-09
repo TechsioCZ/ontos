@@ -22,6 +22,8 @@
         "tools/oxlint/effect-native/tests/*.test.mts",
         "tools/oxlint/effect-native/report.mts",
         "scripts/run-zerops-migrator.mjs",
+        "scripts/api-contract-schema-rules.mts",
+        "scripts/outbox-worker-host.generated.mts",
         "tools/oxlint/effect-native/tests/fixture-plugin.ts",
         "tools/oxlint/effect-native/tests/production-fixture.config.ts",
         "!**/node_modules/**",
@@ -65,6 +67,11 @@
           "tests/**/*.{test,spec}.{ts,tsx,mts}"
         ]
       },
+      "ignoreDependencies": [
+        "@effect/language-service",
+        "@rsbuild/core",
+        "@rspack/core"
+      ],
       "lefthook": false,
       "node": false
     },
@@ -93,7 +100,7 @@
         "src/routes/**/route.{meta,sitemap}.{ts,mjs}",
         "*.config.{ts,mts,js,mjs}",
         "src/modern.runtime.ts",
-        "src/worker-host/main.ts",
+        "src/worker-host/entry.ts",
         "api/backend-federation.ts",
         "api/effect-api.ts",
         "!**/node_modules/**",
@@ -143,6 +150,7 @@
       ],
       "entry": [
         "src/index.{ts,tsx,js}",
+        "src/entry.tsx",
         "api/index.ts",
         "vertical.registration.ts",
         "src/federation-entry.tsx",
@@ -151,7 +159,7 @@
         "src/routes/**/route.{meta,sitemap}.{ts,mjs}",
         "*.config.{ts,mts,js,mjs}",
         "src/modern.runtime.ts",
-        "src/worker-host/main.ts",
+        "src/worker-host/entry.ts",
         "api/backend-federation.ts",
         "api/effect-api.ts",
         "!**/node_modules/**",
@@ -182,6 +190,17 @@
           "tests/**/*.{test,spec}.{ts,tsx,mts}"
         ]
       },
+      "lefthook": false
+    },
+    "vendor/*": {
+      "project": [
+        "src/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/dist/**"
+      ],
+      "entry": [
+        "src/index.ts",
+        "src/utils.ts"
+      ],
       "lefthook": false
     },
     "packages/*": {
@@ -223,7 +242,10 @@
           "tests/**/*.{test,spec}.{ts,tsx,mts}"
         ]
       },
-      "lefthook": false
+      "lefthook": false,
+      "ignoreDependencies": [
+        "cloudflare"
+      ]
     }
   }
 }

@@ -1,5 +1,6 @@
 import { Context } from 'effect';
 import type { Effect, Schema } from 'effect';
+import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 
 import type {
   CoreSearchProjectionDocument,
@@ -15,6 +16,7 @@ export interface CoreSearchProjectionStoreService {
   /** Applies one idempotent versioned lifecycle observation. */
   readonly apply: (
     input: UnparsedCoreSearchInput,
+    context: OutboxWorkerHandlerContext,
   ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
   /** Candidate access is Core-private: the query runtime strips searchable evidence before return. */
   readonly queryCandidates: (
@@ -26,6 +28,7 @@ export interface CoreSearchProjectionStoreService {
    */
   readonly replace: (
     input: UnparsedCoreSearchInput,
+    context: OutboxWorkerHandlerContext,
   ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
 }
 
@@ -33,8 +36,4 @@ export interface CoreSearchProjectionStoreService {
 export class CoreSearchProjectionStore extends Context.Service<
   CoreSearchProjectionStore,
   CoreSearchProjectionStoreService
->()(
-  // Preserve the public Context identity after splitting the service into its owning module.
-  // @effect-diagnostics-next-line deterministicKeys:off
-  '@app/core-runtime/search/projection/CoreSearchProjectionStore',
-) {}
+>()('@app/core-runtime/search/projection-store/CoreSearchProjectionStore') {}

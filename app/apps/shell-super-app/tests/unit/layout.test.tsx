@@ -11,6 +11,7 @@ import { afterEach, expect, it, rstest, test } from 'effect-rstest';
 import type { ComponentProps, ReactNode } from 'react';
 
 import { AppIdSchema } from '../../shared/api';
+import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
 
@@ -151,6 +152,13 @@ test('leaves route content free of global user-perceivable UI', () => {
   expect(screen.getByRole('main').textContent).toBe('Current route');
   expect(screen.queryByRole('region')).toBeNull();
   expect(document.body.textContent?.trim()).toBe('Current route');
+});
+
+test('marks every server-rendered Shell route with its UI release marker', () => {
+  const { container } = render(<Layout />);
+
+  const root = container.querySelector<HTMLElement>('[data-app-id="shell-super-app"]');
+  expect(root?.dataset['buildMarker']).toBe(ultramodernUiMarker.build);
 });
 
 test('renders the default Home dashboard contract and preserves page children', () => {

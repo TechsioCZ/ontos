@@ -1,0 +1,12 @@
+/** A self-signed certificate for localhost, spicedb and 127.0.0.1; its key was discarded, so it only satisfies TLS client construction. */
+export const SPICEDB_TEST_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+MIIBgzCCASmgAwIBAgIUYRC7V+k1kKpM4Dx0q9MV2jRoXTcwCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MDkyOTIxMzkwNloYDzIxMjYwOTA1
+MjEzOTA2WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjO
+PQMBBwNCAAQ7CjBIn/F/ffxrilY61deUlrISmkF6nA+XqhYNoSRclCt6Uz+tu3ZZ
+QnznT+Lq5rCHx3PokkWvK5ruAibmddoWo1cwVTAdBgNVHQ4EFgQUUK+P899ZjPLy
+rTNljZO7hYgCaYowDwYDVR0TAQH/BAUwAwEB/zAjBgNVHREEHDAagglsb2NhbGhv
+c3SCB3NwaWNlZGKHBH8AAAEwCgYIKoZIzj0EAwIDSAAwRQIgcG7UXMlXhXj8c6JP
+Z6NIWWMiutcic1zquDXwge950DsCIQDxMii7OjEMP6VPPTDq91Xfs42/EmVznFD6
+G1HSnDdI5g==
+-----END CERTIFICATE-----`;

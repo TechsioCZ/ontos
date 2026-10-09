@@ -1,6 +1,6 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class ContextPermissionMutationUnavailable extends Schema.TaggedError<ContextPermissionMutationUnavailable>()(
-  'ContextPermissionMutationUnavailable',
-  { reason: Schema.String },
-) {}
+export class ContextPermissionMutationUnavailable extends Data.TaggedError('ContextPermissionMutationUnavailable')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}

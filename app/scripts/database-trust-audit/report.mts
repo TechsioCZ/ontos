@@ -1,6 +1,5 @@
 // oxlint-disable-next-line max-classes-per-file -- This report owns the three related tagged audit failures.
-import { Cause, Option, Schema } from 'effect';
-import type { Client } from 'pg';
+import { Cause, Option, Redacted, Result, Schema } from 'effect';
 
 interface DatabasePrivileges {
   readonly connect: boolean;
@@ -279,12 +278,33 @@ export const assertSameDatabaseTarget = (
   }
 };
 
+const DEFAULT_POSTGRES_HOST = 'localhost';
+const DEFAULT_POSTGRES_PORT = 5432;
+
+/**
+ * Resolves the endpoint the `@effect/sql-pg` driver dials for a connection URL: the last `host` /
+ * `port` query parameter wins over the URL authority, a bracketed IPv6 authority is unwrapped, and
+ * absent values fall back to the driver defaults.
+ */
 export const getEffectiveDatabaseEndpoint = (
-  client: Client,
-): Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'> => ({
-  configuredHost: client.host,
-  configuredPort: client.port,
-});
+  connectionString: Redacted.Redacted,
+): Result.Result<Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'>, DatabaseTrustBoundaryAuditError> =>
+  Result.try({
+    catch: () => new DatabaseTrustBoundaryAuditError({ reason: 'Database connection URL is invalid' }),
+    try: () => {
+      const url = new URL(Redacted.value(connectionString));
+      const authorityHost =
+        url.hostname.startsWith('[') && url.hostname.endsWith(']')
+          ? url.hostname.slice(1, -1)
+          : decodeURIComponent(url.hostname);
+      const host = url.searchParams.getAll('host').at(-1) ?? (authorityHost === '' ? undefined : authorityHost);
+      const port = url.searchParams.getAll('port').at(-1) ?? (url.port === '' ? undefined : url.port);
+      return {
+        configuredHost: host ?? DEFAULT_POSTGRES_HOST,
+        configuredPort: port === undefined ? DEFAULT_POSTGRES_PORT : Number(port),
+      };
+    },
+  });
 
 export const assertDatabaseSessionIdentities = (
   administrative: DatabaseSessionIdentity,

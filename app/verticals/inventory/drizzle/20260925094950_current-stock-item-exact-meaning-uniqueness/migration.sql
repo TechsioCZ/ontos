@@ -1,0 +1,2 @@
+DROP INDEX "inventory"."inventory_stock_items_exact_meaning_uk";--> statement-breakpoint
+CREATE UNIQUE INDEX "inventory_stock_items_exact_meaning_uk" ON "inventory"."stock_items" ("tenant_id","exact_selection_meaning_id") WHERE "lifecycle_state" = 'CURRENT';

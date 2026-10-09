@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetailAccessDecisionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetailAccessDecisionAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executeRetailAccessDecisionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetailAccessDecisionAuthorizedInvocation
 ) =>
   retailAccessDecisionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.retailAccessDecision.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.retailAccessDecision.execute({ payload })),
   );
 
 export const executeRetailAccessDecision = (
   payload: RetailAccessDecisionRequest,
   ...[requestCorrelation, options = {}]: RetailAccessDecisionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetailAccessDecisionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetailAccessDecisionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

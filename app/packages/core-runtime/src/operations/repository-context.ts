@@ -5,9 +5,12 @@ import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import type { OperationContextUnavailable } from './errors.ts';
 
 export interface PersistedScopeRecord {
+  readonly bindingAuthenticationNamespaceId?: null | string;
   readonly bindingPrincipalId: null | string;
+  readonly bindingRevision?: null | number;
   readonly bindingRevokedAt: Date | null;
   readonly bindingStatus: null | string;
+  readonly bindingSubjectType?: null | string;
   readonly bindingTenantId: null | string;
   readonly impersonatorStatus?: null | string;
   readonly impersonatorTenantId?: null | string;

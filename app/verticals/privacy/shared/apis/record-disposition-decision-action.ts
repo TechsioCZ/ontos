@@ -11,10 +11,6 @@ import {
 
 export { RecordDispositionDecisionPayloadSchema } from '../actions/record-disposition-decision.ts';
 
-const RecordDispositionDecisionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecordDispositionDecisionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordDispositionDecisionActionInvalidProblem',
   400,
@@ -128,15 +124,37 @@ const actionErrors = [
   RecordDispositionDecisionActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const recordDispositionDecisionActionGroupDefinition = HttpApiGroup.make('recordDispositionDecisionAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/record-disposition-decision', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RecordDispositionDecisionPayloadSchema),
+      success: RecordDispositionDecisionResultSchema,
+    }),
+  )
+  .middleware(RecordDispositionDecisionActionSchemaErrorMiddleware);
+
+export type RecordDispositionDecisionActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'recordDispositionDecisionAction',
+  HttpApiGroup.Endpoints<typeof recordDispositionDecisionActionGroupDefinition>
+>;
+
+const RecordDispositionDecisionActionGroup: RecordDispositionDecisionActionGroupContract =
+  recordDispositionDecisionActionGroupDefinition;
+
 export const RecordDispositionDecisionActionApi = HttpApi.make('RecordDispositionDecisionActionApi').add(
-  HttpApiGroup.make('recordDispositionDecisionAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/record-disposition-decision', {
-        error: actionErrors,
-        headers: RecordDispositionDecisionActionHeadersSchema,
-        payload: Schema.toEncoded(RecordDispositionDecisionPayloadSchema),
-        success: RecordDispositionDecisionResultSchema,
-      }),
-    )
-    .middleware(RecordDispositionDecisionActionSchemaErrorMiddleware),
+  RecordDispositionDecisionActionGroup,
 );

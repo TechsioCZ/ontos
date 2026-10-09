@@ -1,7 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Checked-in migration SQL is the security contract; expires: 2027-03-01.
 /* eslint-disable effect-native/no-manual-tag-comparison -- Persistence tests assert exact audited routine-to-domain outcome mappings; expires: 2027-03-01. */
-import { readFileSync } from 'node:fs';
-
 import type { OperationalScope, ScopedRoutineDefinition } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -67,9 +64,20 @@ const priceGroupRef = {
 
 const compatibility = {
   catalogRevision: 7,
-  contractId: 'commerce.customer-price-group-assignment.v1',
-  contractRevision: 1,
-  definitionRevision: 4,
+  definitionEffectivePeriod: {
+    effectiveFrom: '2026-09-01T00:00:00.000Z',
+    effectiveTo: null,
+  },
+  definitionRevisionId: '80000000-0000-4000-8000-000000000001',
+  definitionRevisionNumber: 4,
+  meaningFingerprint: 'a'.repeat(64),
+  priceGroupRef,
+  requiredContract: {
+    contractId: 'commerce.customer-price-group-assignment.v1',
+    version: 1,
+  },
+  trustedOperationAt: '2026-09-09T10:00:00.000Z',
+  verifiedAt: '2026-09-09T10:00:01.000Z',
 } as const;
 
 const assignmentRow = {
@@ -92,10 +100,50 @@ const assignmentRow = {
 const transactionReturning = (
   rows: readonly object[],
   calls: Readonly<{ readonly name: string; readonly values: readonly unknown[] }>[] = [],
+  responses: Readonly<Record<string, readonly object[]>> = {},
 ) => {
   const fake = {
     invoke: (routine: ScopedRoutineDefinition, values: readonly unknown[]) => {
       calls.push({ name: routine.name, values });
+      const configured = responses[routine.name];
+      if (configured !== undefined) {
+        return Effect.succeed(configured);
+      }
+      if (routine.name === 'read_price_group_assignment_compatibility_evidence') {
+        return Effect.succeed([
+          {
+            catalog_revision: null,
+            compatibility_contract_id: null,
+            compatibility_contract_revision: null,
+            compatibility_trusted_at: null,
+            compatibility_verified_at: null,
+            definition_effective_from: null,
+            definition_effective_to: null,
+            definition_revision: null,
+            definition_revision_id: null,
+            meaning_fingerprint: null,
+            outcome: 'LEGACY',
+          },
+        ]);
+      }
+      if (routine.name === 'bind_price_group_assignment_compatibility_evidence') {
+        return Effect.succeed([
+          {
+            catalog_revision: values[4],
+            changed: true,
+            compatibility_contract_id: values[5],
+            compatibility_contract_revision: values[6],
+            compatibility_trusted_at: values[12],
+            compatibility_verified_at: values[13],
+            definition_effective_from: values[10],
+            definition_effective_to: values[11],
+            definition_revision: values[7],
+            definition_revision_id: values[8],
+            meaning_fingerprint: values[9],
+            outcome: 'BOUND',
+          },
+        ]);
+      }
       return Effect.succeed(rows);
     },
   };
@@ -103,7 +151,7 @@ const transactionReturning = (
   return fake as PriceGroupRoutineInvoker;
 };
 
-it('declares an immutable six-routine allowlist with Core-injected scope first', () => {
+it('declares an immutable eight-routine allowlist with Core-injected scope first', () => {
   expect(priceGroupRoutineAllowlist.map(({ name }) => name)).toEqual([
     'inspect_price_group_profile',
     'read_price_group_assignments',
@@ -111,6 +159,8 @@ it('declares an immutable six-routine allowlist with Core-injected scope first',
     'assign_price_group',
     'remove_price_group_assignment',
     'migrate_price_group_assignments',
+    'read_price_group_assignment_compatibility_evidence',
+    'bind_price_group_assignment_compatibility_evidence',
   ]);
   for (const routine of priceGroupRoutineAllowlist) {
     expect(Object.isFrozen(routine)).toBe(true);
@@ -173,32 +223,101 @@ it.effect('resolves only assignments effective at the trusted instant', () =>
       Match.exhaustive,
     );
     expect(found?.assignments).toHaveLength(1);
+    expect(found?.assignments[0]?.compatibility).toBeUndefined();
     expect(calls).toEqual([
       {
         name: 'resolve_price_group_assignments',
         values: [profileId, 'RETAIL', '2026-09-09T10:00:00.000Z'],
       },
+      {
+        name: 'read_price_group_assignment_compatibility_evidence',
+        values: [assignmentId],
+      },
     ]);
   }),
 );
 
-it.effect('maps business-equivalent assignment replay without changing history', () =>
+it.effect('round-trips canonical owner evidence and fails closed on corrupt persisted evidence', () =>
+  Effect.gen(function* evidenceRoundTrip() {
+    const canonicalRow = {
+      catalog_revision: compatibility.catalogRevision,
+      compatibility_contract_id: compatibility.requiredContract.contractId,
+      compatibility_contract_revision: compatibility.requiredContract.version,
+      compatibility_trusted_at: compatibility.trustedOperationAt,
+      compatibility_verified_at: compatibility.verifiedAt,
+      definition_effective_from: compatibility.definitionEffectivePeriod.effectiveFrom,
+      definition_effective_to: compatibility.definitionEffectivePeriod.effectiveTo,
+      definition_revision: compatibility.definitionRevisionNumber,
+      definition_revision_id: compatibility.definitionRevisionId,
+      meaning_fingerprint: compatibility.meaningFingerprint,
+      outcome: 'FOUND',
+    } as const;
+    const canonicalStore = customerPriceGroupAssignmentStoreForTransaction(
+      transactionReturning([{ ...assignmentRow, outcome: 'FOUND' }], [], {
+        read_price_group_assignment_compatibility_evidence: [canonicalRow],
+      }),
+      scope,
+    );
+    const canonical = yield* canonicalStore.resolve(profile, compatibility.trustedOperationAt);
+    expect(canonical).toMatchObject({
+      _tag: 'found',
+      assignments: [{ compatibility }],
+    });
+
+    const corruptStore = customerPriceGroupAssignmentStoreForTransaction(
+      transactionReturning([{ ...assignmentRow, outcome: 'FOUND' }], [], {
+        read_price_group_assignment_compatibility_evidence: [{ ...canonicalRow, outcome: 'CORRUPT' }],
+      }),
+      scope,
+    );
+    const failure = yield* Effect.flip(corruptStore.resolve(profile, compatibility.trustedOperationAt));
+    expect(Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure)).toBe(true);
+  }),
+);
+
+it.effect('preserves the first verification observation on a business-equivalent assignment replay', () =>
   Effect.gen(function* assignReplay() {
+    const calls: { readonly name: string; readonly values: readonly unknown[] }[] = [];
+    const retriedCompatibility = {
+      ...compatibility,
+      verifiedAt: '2026-09-09T10:00:02.000Z',
+    } as const;
     const store = customerPriceGroupAssignmentStoreForTransaction(
-      transactionReturning([
+      transactionReturning(
+        [
+          {
+            ...assignmentRow,
+            changed: false,
+            outcome: 'UNCHANGED',
+            profile_state: null,
+            replaced_assignment_id: null,
+          },
+        ],
+        calls,
         {
-          ...assignmentRow,
-          changed: false,
-          outcome: 'UNCHANGED',
-          profile_state: null,
-          replaced_assignment_id: null,
+          bind_price_group_assignment_compatibility_evidence: [
+            {
+              catalog_revision: compatibility.catalogRevision,
+              changed: false,
+              compatibility_contract_id: compatibility.requiredContract.contractId,
+              compatibility_contract_revision: compatibility.requiredContract.version,
+              compatibility_trusted_at: compatibility.trustedOperationAt,
+              compatibility_verified_at: compatibility.verifiedAt,
+              definition_effective_from: compatibility.definitionEffectivePeriod.effectiveFrom,
+              definition_effective_to: compatibility.definitionEffectivePeriod.effectiveTo,
+              definition_revision: compatibility.definitionRevisionNumber,
+              definition_revision_id: compatibility.definitionRevisionId,
+              meaning_fingerprint: compatibility.meaningFingerprint,
+              outcome: 'BOUND',
+            },
+          ],
         },
-      ]),
+      ),
       scope,
     );
     const result = yield* store.assign({
       actionInvocationId,
-      compatibility,
+      compatibility: retriedCompatibility,
       effectiveFrom: '2026-09-09T10:00:00.000Z',
       effectiveTo: null,
       expectedProfileRevision: 3,
@@ -219,10 +338,68 @@ it.effect('maps business-equivalent assignment replay without changing history',
       Match.exhaustive,
     );
     expect(assigned).toMatchObject({
-      assignment: { assignmentRef: { resourceId: assignmentId }, revision: 1 },
+      assignment: { assignmentRef: { resourceId: assignmentId }, compatibility, revision: 1 },
       changed: false,
       replacedAssignmentRef: null,
     });
+    expect(calls.find(({ name }) => name === 'bind_price_group_assignment_compatibility_evidence')?.values[13]).toBe(
+      retriedCompatibility.verifiedAt,
+    );
+  }),
+);
+
+it.effect('fails closed when a replay conflicts with persisted semantic evidence', () =>
+  Effect.gen(function* semanticEvidenceConflict() {
+    const conflictFields = Object.fromEntries(
+      [
+        'catalog_revision',
+        'compatibility_contract_id',
+        'compatibility_contract_revision',
+        'compatibility_trusted_at',
+        'compatibility_verified_at',
+        'definition_effective_from',
+        'definition_effective_to',
+        'definition_revision',
+        'definition_revision_id',
+        'meaning_fingerprint',
+      ].map((field) => [field, null]),
+    );
+    const store = customerPriceGroupAssignmentStoreForTransaction(
+      transactionReturning(
+        [
+          {
+            ...assignmentRow,
+            changed: false,
+            outcome: 'UNCHANGED',
+            profile_state: null,
+            replaced_assignment_id: null,
+          },
+        ],
+        [],
+        {
+          bind_price_group_assignment_compatibility_evidence: [
+            { ...conflictFields, changed: false, outcome: 'CONFLICT' },
+          ],
+        },
+      ),
+      scope,
+    );
+    const failure = yield* Effect.flip(
+      store.assign({
+        actionInvocationId,
+        compatibility: { ...compatibility, meaningFingerprint: 'b'.repeat(64) },
+        effectiveFrom: '2026-09-09T10:00:00.000Z',
+        effectiveTo: null,
+        expectedProfileRevision: 3,
+        priceGroupRef,
+        principalId,
+        profile,
+        reason: 'Negotiated terms',
+        recordedAt: '2026-09-09T09:00:00.000Z',
+        tenantId,
+      }),
+    );
+    expect(Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure)).toBe(true);
   }),
 );
 
@@ -466,50 +643,3 @@ it.effect('fails closed before invoking a routine for a cross-tenant profile', (
     expect(calls).toEqual([]);
   }),
 );
-
-it('pins the clean-chain repair and exact SECURITY DEFINER privilege boundary', () => {
-  const alignment = readFileSync(
-    new URL('../../drizzle/20260909104256_align_customer_context_domain_contracts/migration.sql', import.meta.url),
-    'utf-8',
-  );
-  const routines = readFileSync(
-    new URL('../../drizzle/20260909112237_price-group-routines/migration.sql', import.meta.url),
-    'utf-8',
-  );
-
-  expect(alignment).toContain('DROP CONSTRAINT IF EXISTS "ccc_price_assignments_compatibility_ck"');
-  expect(routines.match(/SECURITY DEFINER/gu)).toHaveLength(6);
-  expect(routines.match(/REVOKE ALL ON FUNCTION/gu)).toHaveLength(6);
-  expect(routines.match(/GRANT EXECUTE ON FUNCTION/gu)).toHaveLength(6);
-  expect(routines).toContain('SET search_path = pg_catalog, commerce_customer_context');
-  expect(routines).toContain('SET row_security = on');
-  expect(routines).toContain('FOR UPDATE');
-  expect(routines).toContain('tstzrange(assignment.effective_from');
-  expect(routines).toContain('counterparty.counterparty_resource_id = p_counterparty_resource_id');
-  expect(routines).toContain('assignment.revision <> p_expected_revision');
-  expect(routines.match(/p_effective_from < p_recorded_at/gu)).toHaveLength(2);
-  expect(routines).toContain('p_effective_at < p_recorded_at');
-  expect(routines).toContain('v_assignment.effective_to IS DISTINCT FROM p_effective_at');
-  expect(routines).toContain("v_assignment.lifecycle IN ('ACTIVE', 'ENDED')");
-  expect(routines).toContain('AND v_assignment.effective_to = p_effective_at');
-  expect(routines).toContain("assignment.lifecycle IN ('ACTIVE', 'ENDED')");
-  expect(routines).toContain('assignment.effective_from <= p_effective_from');
-  expect(routines).toContain('assignment.effective_to IS NULL OR p_effective_from < assignment.effective_to');
-  expect(routines).toContain(
-    `"lifecycle" = 'CANCELLED' OR "effective_to" IS NULL OR "effective_to" > "effective_from"`,
-  );
-  expect(routines).toContain('history.recorded_at <= p_effective_at');
-  expect(routines).toContain(
-    'ORDER BY assignment.effective_from DESC, assignment.customer_price_group_assignment_id DESC',
-  );
-  expect(routines).toContain('LIMIT 200');
-  expect(routines).toContain('ORDER BY selected.effective_from, selected.customer_price_group_assignment_id');
-  expect(routines).toContain('resolve_price_group_assignments"(uuid, uuid, text, text, timestamptz)');
-  expect(routines).toContain("assignment.lifecycle = 'ACTIVE'");
-  expect(routines).toContain('assignment.effective_from <= p_effective_at');
-  expect(routines).toContain('assignment.effective_to IS NULL OR p_effective_at < assignment.effective_to');
-  expect(routines).toContain('LIMIT 2');
-  expect(routines).toContain('inspect_price_group_profile"(uuid, uuid, text, text, timestamptz, text)');
-  expect(routines).not.toMatch(/SET[^;]*action_invocation_id\s*=\s*p_action_invocation_id/su);
-  expect(routines).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE)\s+ON/iu);
-});

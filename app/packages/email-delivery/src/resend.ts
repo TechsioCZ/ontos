@@ -45,9 +45,9 @@ export type ResendEnvironmentKey = typeof ResendEnvironmentKeySchema.Type;
 export type ResendEmailDeliveryEnvironment = Readonly<Partial<Record<ResendEnvironmentKey, string>>>;
 
 const configSource = Config.all({
-  apiKey: Config.redacted('RESEND_API_KEY'),
-  endpoint: Config.string('RESEND_API_URL').pipe(Config.withDefault(RESEND_EMAILS_ENDPOINT)),
-  from: Config.string('RESEND_FROM_EMAIL'),
+  apiKey: Config.Redacted('RESEND_API_KEY'),
+  endpoint: Config.String('RESEND_API_URL').pipe(Config.withDefault(RESEND_EMAILS_ENDPOINT)),
+  from: Config.String('RESEND_FROM_EMAIL'),
 });
 
 const emailAddress = /^[^\s@<>()[\],:;]+@[^\s@<>()[\],:;]+$/u;

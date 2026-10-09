@@ -1,0 +1,2 @@
+ALTER TABLE "catalog"."product_variant_axes" ADD COLUMN "definition_revision" integer;--> statement-breakpoint
+ALTER TABLE "catalog"."product_variant_axis_events" ADD COLUMN "attribute_definition_revisions" integer[];

@@ -5,6 +5,9 @@ import { CustomerGroupRefSchema } from '../resources/customer-group.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
 
 export const CustomerGroupRevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
+export const CustomerGroupLegalEntityIdSchema = Schema.toEncoded(
+  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CustomerGroupLegalEntityId')),
+);
 export const CustomerGroupTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 export const CustomerGroupDefinitionTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
 export const CustomerGroupBusinessCodeSchema = Schema.Trim.check(

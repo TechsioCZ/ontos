@@ -6,11 +6,12 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 
+import { ShellReloadRequiredProblemSchema } from '../../../../../../../shared/api.ts';
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
-import type { ResourcePageModel } from './page.data.ts';
+import type { ResourcePageModel } from './resource-page-model.ts';
 
 const MediaStateSchema = Schema.Literals(['failed', 'idle', 'pending', 'success']);
 type MediaState = typeof MediaStateSchema.Type;
@@ -97,15 +98,26 @@ const ResourcePage = () => {
     from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
   });
   const [mediaState, setMediaState] = useState<MediaState>('idle');
+  const [attachmentReloadRequired, setAttachmentReloadRequired] = useState(false);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   const handleMediaAttachment = (ref: ReadyResourceModel['resource']['ref']) => {
+    if (
+      model.shell.state !== 'authenticated' ||
+      model.shell.compositionRevision === undefined ||
+      controls.reloadRequired ||
+      attachmentReloadRequired
+    ) {
+      return;
+    }
     setMediaState('pending');
     void browserRuntime.runPromise(
-      attachResourceMedia(ref).pipe(
+      attachResourceMedia({ ...ref, compositionRevision: model.shell.compositionRevision }).pipe(
         Effect.matchEffect({
           onFailure: (error) =>
             Effect.sync(() => {
-              void error;
+              if (Schema.is(ShellReloadRequiredProblemSchema)(error)) {
+                setAttachmentReloadRequired(true);
+              }
               setMediaState('failed');
             }),
           onSuccess: () => Effect.sync(() => setMediaState('success')),
@@ -113,6 +125,20 @@ const ResourcePage = () => {
       ),
     );
   };
+  if (
+    model.state === 'reload_required' ||
+    model.shell.state === 'reload_required' ||
+    controls.reloadRequired ||
+    attachmentReloadRequired
+  ) {
+    return (
+      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+        <StatusText aria-live="polite" showIcon status="error">
+          {t('shell.moduleTarget.reload_required')}
+        </StatusText>
+      </main>
+    );
+  }
   if (model.shell.state !== 'authenticated') {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">

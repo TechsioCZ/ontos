@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { Array as EffectArray, Order, Result, Schema } from 'effect';
 
-export const PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION = 1 as const;
+export const PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION = 2 as const;
 
 const PermissionSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u));
 
@@ -44,7 +44,13 @@ const ProtectedEntrypointInventoryEntrySchema = Schema.Struct({
   surface: ProtectedEntrypointSurfaceSchema,
 });
 
+const BusinessPermissionInventoryEntrySchema = Schema.Struct({
+  key: PermissionSchema,
+  owner: StableIdentifierSchema,
+});
+
 const ProtectedEntrypointInventorySchema = Schema.Struct({
+  businessPermissions: Schema.Array(BusinessPermissionInventoryEntrySchema),
   entries: Schema.Array(ProtectedEntrypointInventoryEntrySchema),
   inventoryHash: Schema.String,
   schemaVersion: Schema.Literal(PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION),
@@ -52,6 +58,8 @@ const ProtectedEntrypointInventorySchema = Schema.Struct({
 });
 
 export type ProtectedEntrypointInventoryEntry = typeof ProtectedEntrypointInventoryEntrySchema.Encoded;
+
+export type BusinessPermissionInventoryEntry = typeof BusinessPermissionInventoryEntrySchema.Encoded;
 
 export type ProtectedEntrypointInventory = typeof ProtectedEntrypointInventorySchema.Encoded;
 
@@ -128,6 +136,11 @@ const compareInventoryEntries = (
 
 const InventoryEntryOrder = Order.make(compareInventoryEntries);
 
+const BusinessPermissionEntryOrder = Order.mapInput(
+  Order.String,
+  (entry: BusinessPermissionInventoryEntry) => entry.key,
+);
+
 const normalizeProtectedEntrypointInventoryResult = (
   entries: readonly ProtectedEntrypointInventoryEntry[],
 ): Result.Result<readonly ProtectedEntrypointInventoryEntry[], ProtectedEntrypointInventoryError> =>
@@ -148,15 +161,49 @@ export const normalizeProtectedEntrypointInventory = (
 ): readonly ProtectedEntrypointInventoryEntry[] =>
   getOrThrowTypeError(normalizeProtectedEntrypointInventoryResult(entries));
 
-export const hashProtectedEntrypointInventory = (entries: readonly ProtectedEntrypointInventoryEntry[]): string => {
-  const encodedEntries = getOrThrowTypeError(encodeJsonResult(entries).pipe(Result.mapError(encodingFailure)));
-  const source = `${encodedEntries}\n`;
+const normalizeBusinessPermissionInventoryResult = (
+  permissions: readonly BusinessPermissionInventoryEntry[],
+): Result.Result<readonly BusinessPermissionInventoryEntry[], ProtectedEntrypointInventoryError> =>
+  Result.gen(function* normalizeBusinessPermissionInventoryResultGenerator() {
+    const normalized = yield* Result.all(
+      permissions.map((permission) =>
+        Schema.decodeUnknownResult(BusinessPermissionInventoryEntrySchema, {
+          onExcessProperty: 'error',
+        })(permission).pipe(
+          Result.mapError(() => invalidInventory('business permission inventory entry is invalid or unsafe')),
+        ),
+      ),
+    );
+    const seen = new Set<string>();
+    for (const permission of normalized) {
+      if (seen.has(permission.key)) {
+        return yield* Result.fail(invalidInventory(`duplicate business permission: ${permission.key}`));
+      }
+      seen.add(permission.key);
+    }
+    return EffectArray.sort(normalized, BusinessPermissionEntryOrder);
+  });
+
+export const normalizeBusinessPermissionInventory = (
+  permissions: readonly BusinessPermissionInventoryEntry[],
+): readonly BusinessPermissionInventoryEntry[] =>
+  getOrThrowTypeError(normalizeBusinessPermissionInventoryResult(permissions));
+
+export const hashProtectedEntrypointInventory = (
+  entries: readonly ProtectedEntrypointInventoryEntry[],
+  businessPermissions: readonly BusinessPermissionInventoryEntry[] = [],
+): string => {
+  const encodedInventory = getOrThrowTypeError(
+    encodeJsonResult({ businessPermissions, entries }).pipe(Result.mapError(encodingFailure)),
+  );
+  const source = `${encodedInventory}\n`;
   return bytesToHex(sha256(utf8ToBytes(source)));
 };
 
 export const makeProtectedEntrypointInventory = (
   sourceRevision: string,
   entries: readonly ProtectedEntrypointInventoryEntry[],
+  businessPermissions: readonly BusinessPermissionInventoryEntry[] = [],
 ): ProtectedEntrypointInventory =>
   getOrThrowTypeError(
     Result.gen(function* makeInventoryResult() {
@@ -164,9 +211,11 @@ export const makeProtectedEntrypointInventory = (
         return yield* Result.fail(invalidInventory('sourceRevision must be a stable revision identifier'));
       }
       const normalized = yield* normalizeProtectedEntrypointInventoryResult(entries);
+      const normalizedBusinessPermissions = yield* normalizeBusinessPermissionInventoryResult(businessPermissions);
       return {
+        businessPermissions: normalizedBusinessPermissions,
         entries: normalized,
-        inventoryHash: hashProtectedEntrypointInventory(normalized),
+        inventoryHash: hashProtectedEntrypointInventory(normalized, normalizedBusinessPermissions),
         schemaVersion: PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION,
         sourceRevision,
       };

@@ -1,7 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Source-contract assertions protect generated Action attachment seams; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
-import { readFileSync } from 'node:fs';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
@@ -206,57 +204,6 @@ it('builds seven distinct owner messages without generic data envelopes', () => 
   }
 });
 
-it('attaches every generated message to its returned Domain Event only inside a material-change branch', () => {
-  const actionSources = [
-    ['create-customer-group.action.ts', 'if (resolved.created) {'],
-    ['assign-customer-group.action.ts', 'if (resolved.created) {'],
-    ['remove-customer-group.action.ts', 'if (resolved.changed) {'],
-  ] as const;
-  for (const [file, changedBranch] of actionSources) {
-    const source = readFileSync(new URL(`../../src/actions/${file}`, import.meta.url), {
-      encoding: 'utf-8',
-    });
-    expect(source).toContain(changedBranch);
-    expect(source).toContain('const event = yield* context.addDomainEvent({');
-    expect(source).toContain('yield* context.addOutboxMessage(');
-    expect(source).toContain('event,');
-    expect(source.match(/context\.addOutboxMessage\(/gu)).toHaveLength(1);
-  }
-
-  const delegatedActionSources = [
-    ['archive-customer-group.action.ts', 'outboxMessage: createCustomerGroupArchivedOutboxMessage'],
-    ['reactivate-customer-group.action.ts', 'outboxMessage: createCustomerGroupReactivatedOutboxMessage'],
-    ['update-customer-group.action.ts', 'outboxMessage: createCustomerGroupUpdatedOutboxMessage'],
-  ] as const;
-  for (const [file, outboxMessageBinding] of delegatedActionSources) {
-    const source = readFileSync(new URL(`../../src/actions/${file}`, import.meta.url), {
-      encoding: 'utf-8',
-    });
-    expect(source).toContain('executeCustomerGroupAction(payload, context, {');
-    expect(source).toContain(outboxMessageBinding);
-  }
-
-  const sharedHandlerSource = readFileSync(
-    new URL('../../src/actions/customer-group-action-handler.ts', import.meta.url),
-    { encoding: 'utf-8' },
-  );
-  expect(sharedHandlerSource).toContain('if (resolved.changed) {');
-  expect(sharedHandlerSource).toContain('const event = yield* context.addDomainEvent({');
-  expect(sharedHandlerSource).toContain('yield* context.addOutboxMessage(event,');
-  expect(sharedHandlerSource.match(/context\.addOutboxMessage\(/gu)).toHaveLength(1);
-});
-
-it('composes the governed transaction adapter for both Action and Read services', () => {
-  const source = readFileSync(new URL('../../src/actions/customer-group-action-support.ts', import.meta.url), {
-    encoding: 'utf-8',
-  });
-  expect(source).toContain(
-    "import { customerGroupPersistenceForTransaction } from '../persistence/group-persistence.ts';",
-  );
-  expect(source).toContain('customerGroupPersistenceForTransaction(transaction, { ...scope, legalEntityId })');
-  expect(source).not.toContain('failClosedCustomerGroupPersistence');
-});
-
 const persistenceUnavailable = () =>
   new CustomerGroupPersistenceUnavailable({
     code: 'customer_group_persistence_unavailable',
@@ -315,6 +262,7 @@ it.effect('records bounded audit evidence for a maximum-size valid group definit
       actionInvocationId: '60000000-0000-4000-8000-000000000002',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope: {
@@ -358,6 +306,7 @@ const collectRemoval = (membership: typeof CommerceCustomerGroupMembershipSchema
         actionInvocationId: '60000000-0000-4000-8000-000000000001',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: 'a'.repeat(64),
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope: {

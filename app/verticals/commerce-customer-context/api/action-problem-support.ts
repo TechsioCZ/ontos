@@ -128,7 +128,7 @@ export const counterpartyAccessContractViolationProblemByCode = {
   reason_required: { code: 'reason_required', kind: 'ineligible' },
 } as const satisfies Record<string, CounterpartyAccessDomainProblemIdentity>;
 
-export const makeAuthenticationProblem =
+export const buildAuthenticationProblem =
   <Output>(make: (input: ProblemFields<401>) => Output): (() => Output) =>
   () =>
     make({
@@ -138,7 +138,7 @@ export const makeAuthenticationProblem =
       type: 'https://ontos.dev/problems/operation-authentication-required',
     });
 
-export const makeConflictProblem =
+export const buildConflictProblem =
   <Code extends string, Output>(make: (input: CodedProblemFields<Code, 409>) => Output): ((code: Code) => Output) =>
   (code) =>
     make({
@@ -149,7 +149,7 @@ export const makeConflictProblem =
       type: 'https://ontos.dev/problems/action-conflict',
     });
 
-export const makeForbiddenProblem =
+export const buildForbiddenProblem =
   <Code extends string, Output>(make: (input: CodedProblemFields<Code, 403>) => Output): ((code: Code) => Output) =>
   (code) =>
     make({
@@ -160,7 +160,7 @@ export const makeForbiddenProblem =
       type: 'https://ontos.dev/problems/action-forbidden',
     });
 
-export const makeIneligibleProblem =
+export const buildIneligibleProblem =
   <Code extends string, Output>(make: (input: CodedProblemFields<Code, 422>) => Output): ((code: Code) => Output) =>
   (code) =>
     make({
@@ -171,7 +171,7 @@ export const makeIneligibleProblem =
       type: 'https://ontos.dev/problems/action-ineligible',
     });
 
-export const makeInternalProblem =
+export const buildInternalProblem =
   <Output>(make: (input: ProblemFields<500>) => Output): (() => Output) =>
   () =>
     make({
@@ -181,7 +181,7 @@ export const makeInternalProblem =
       type: 'https://ontos.dev/problems/action-failed',
     });
 
-export const makeInvalidProblem =
+export const buildInvalidProblem =
   <Output>(make: (input: ProblemFields<400>) => Output, actionSlug: string): (() => Output) =>
   () =>
     make({
@@ -191,7 +191,7 @@ export const makeInvalidProblem =
       type: 'https://ontos.dev/problems/action-invalid',
     });
 
-export const makeNotFoundProblem =
+export const buildNotFoundProblem =
   <Code extends string, Output>(make: (input: CodedProblemFields<Code, 404>) => Output): ((code: Code) => Output) =>
   (code) =>
     make({
@@ -202,7 +202,7 @@ export const makeNotFoundProblem =
       type: 'https://ontos.dev/problems/action-resource-not-found',
     });
 
-export const makePreconditionProblem =
+export const buildPreconditionProblem =
   <Output>(make: (input: ProblemFields<428>) => Output): (() => Output) =>
   () =>
     make({
@@ -212,7 +212,7 @@ export const makePreconditionProblem =
       type: 'https://ontos.dev/problems/idempotency-key-required',
     });
 
-export const makeRateLimitedProblem =
+export const buildRateLimitedProblem =
   <Code extends string, Output>(make: (input: CodedProblemFields<Code, 429>) => Output): ((code: Code) => Output) =>
   (code) =>
     make({
@@ -223,7 +223,7 @@ export const makeRateLimitedProblem =
       type: 'https://ontos.dev/problems/action-rate-limited',
     });
 
-export const makeUnavailableProblem =
+export const buildUnavailableProblem =
   <Code extends string, Output>(make: (input: UnavailableProblemFields<Code>) => Output): ((code: Code) => Output) =>
   (code) =>
     make({

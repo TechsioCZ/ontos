@@ -1,81 +1,95 @@
-# Inventory language
+# Inventory
 
-Inventory owns canonical stock meaning and Inventory-recognized stock obligations within explicit authority boundaries. This context extends shared OntOS and Commerce language; accepted Inventory ADRs record durable trade-offs while GitHub issues hold detailed behavior and acceptance scenarios.
+Inventory defines canonical stock meaning, stock demand, Inventory-recognized stock obligations, and their authority boundaries. Detailed behavior and acceptance live in GitHub issues; durable trade-offs live in accepted ADRs.
 
 ## Stock model
 
-**Stock Item** — Durable Inventory Resource representing exactly one exact Catalog Selection meaning for Launch, with one explicit stock Unit. A materially different Catalog Selection meaning requires a different Stock Item.
-_Avoid_: Product or SKU as stock identity, one Stock Item shared by several exact Catalog Selections, one Catalog Selection decomposed into several Stock Items.
+**Stock Item** — Durable Inventory Resource representing exactly one immutable exact Catalog Selection meaning with one explicit stock Unit. A materially different exact Selection meaning uses a different Stock Item; relation correction never redefines an existing Item.
+_Avoid_: Product, SKU, one Stock Item shared by materially different exact Catalog Selections, or redefining a Stock Item through relation correction.
 
 **Stock Location** — Durable Inventory Resource identifying one explicit operational stock scope in which stock facts are interpreted.
-_Avoid_: Storefront, postal address, pickup point, hostname, or legacy `store` label as Stock Location identity.
+_Avoid_: Storefront, postal address, pickup point, hostname, or legacy `store` label as identity.
 
-**Stock Position** — Canonical constrained quantity scope for one Stock Item in one exact Inventory stock scope/location. Reservation contention and quantity guarantees bind to Stock Positions rather than Product, SKU, Channel, or seller similarity.
-_Avoid_: Product-level stock bucket, warehouse name alone as reservation scope.
+**Stock Position** — Durable Inventory Resource with its own stable identity, representing one constrained quantity scope for one Stock Item in one exact Stock Location. `(Customer Configuration, Stock Item, Stock Location)` is the Launch Current-uniqueness constraint, not the Position identity.
+_Avoid_: composite Item + Location used as Resource identity, Product-level stock bucket, or duplicate Current Positions for one Item + Location constraint.
 
-**ON_HAND** — Authoritative physical Quantity for one exact Stock Position according to its declared System of Record. It is not customer-facing Availability and is not automatically reduced by Inventory obligations.
+**ON_HAND** — Authoritative physical Quantity for one exact Stock Position according to its declared System of Record. It is not customer-facing Availability.
 
-**RESERVED** — Quantity constrained by Current Inventory-recognized Reservation obligations for one exact Stock Position. It does not by itself prove that an external physical-stock owner enforces the hold.
+**RESERVED** — Derived Quantity from Current successful provisional Inventory Reservation Allocations on one exact Stock Position. It is not independently writable, a committed obligation, or failed/indeterminate create-effect debt.
 
-**UNKNOWN** — Stock-fact state in which the expected owner/scope is known but the owner cannot currently establish a numeric value.
+**Stock Evidence UNKNOWN** — Stock Evidence state where the expected owner and scope are known but a Current numeric value cannot be established.
 
-**MISSING** — Stock-fact state in which no usable evidence exists for an expected fact/scope.
+**Stock Evidence MISSING** — Stock Evidence state where no usable evidence exists for an expected fact and scope.
 
-**STALE** — Stock-fact state in which prior evidence exists but no longer qualifies as Current under its owner contract.
+**Stock Evidence STALE** — Stock Evidence state where prior evidence exists but no longer qualifies as Current under its owner contract.
 
-**INDETERMINATE** — Stock-fact state in which relevant evidence exists but Current truth cannot be safely resolved because of conflict or uncertain effect outcome.
+**Stock Evidence INDETERMINATE** — Stock Evidence state where relevant evidence exists but Current truth cannot be safely resolved.
+_Avoid_: treating `MISSING` or `INDETERMINATE` as one global Inventory status independent of the owning outcome type.
 
-**Stock Receipt** — Authoritative physical increase of one exact Stock Position for an explicit business reason in a scope whose physical-stock authority permits that transition.
+**Stock Receipt** — Authoritative physical increase of one exact Stock Position for an explicit business reason.
 
-**Stock Issue** — Authoritative physical decrease of one exact Stock Position for an explicit business reason in a scope whose physical-stock authority permits that transition.
+**Stock Issue** — Authoritative physical decrease of one exact Stock Position for an explicit business reason.
 
-**Stock Correction** — High-risk Inventory Action establishing corrected absolute ON_HAND for one exact Stock Position only where the applicable authority contract permits Inventory to own that correction.
-_Avoid_: generic inventory update, local override of an external physical-stock System of Record.
+**Stock Correction** — High-risk Inventory Action establishing corrected absolute ON_HAND for one exact Stock Position under the selected Inventory Backend's applicable authority contract.
+_Avoid_: generic inventory update, local override of the selected System of Record, or backend switching.
 
-## Stock demand and allocation
+## Stock demand and relations
 
-**Catalog-to-Stock Binding** — Stable Inventory-owned one-to-one relation between one exact Catalog Selection meaning and one exact Stock Item. It is explicit and historically explainable rather than inferred from Product, Variant, SKU, Package contents, Set components, source identifiers, or current availability; material meaning change requires a different exact Selection and Stock Item.
+**Catalog-to-Stock Binding** — Inventory-owned Current one-to-one relation between one exact Catalog Selection meaning and one compatible Stock Item carrying that same intrinsic meaning. Relation correction changes the relation, never either Stock Item's intrinsic meaning.
+_Avoid_: inference from Product, SKU, Package contents, Set components, source identifiers, availability, or redefining a Stock Item to repair a wrong relation.
 
-**Stock Requirement** — Exact Inventory demand for one Stock Item derived from one exact Catalog Selection plus the unchanged requested Quantity and Unit. Inventory does not convert the Unit, derive purchase Quantity from Configuration attributes, or decompose Package/Set contents into other Stock Items.
+**Stock Requirement** — Exact Inventory demand for one Commerce-owned `Purchase Demand Occurrence`, preserving that stable occurrence identity, its exact Catalog Selection provenance, one Stock Item, and unchanged requested Quantity + Unit. Distinct occurrences remain distinct Requirements even when their values and Stock Item are equal.
 
-**Stock Allocation** — Assignment of all or part of one Stock Requirement Quantity to one Stock Position for the same Stock Item and Unit. One Requirement may use one or more Stock Allocations across Stock Positions/Locations whose quantities together cover the unchanged requirement.
-_Avoid_: allocation as remapping, availability-driven substitution, Unit conversion.
+**Stock Allocation** — Assignment of all or part of one Stock Requirement Quantity to one Stock Position for the same Stock Item and Unit. One Requirement may use 1..N Allocations whose quantities cover that unchanged Requirement.
+_Avoid_: substitution, remapping, or Unit conversion.
 
-## Reservations and commitment
+**External Stock Correlation** — Inventory specialization of the shared OntOS `Connector Registry` correlation concept, mapping one issuer/backend-origin + namespace/scope + identifier-kind + external-value key to one Stock Item or Stock Location for the relevant Effective Period. Inventory owns the stock-specific target and lifecycle semantics; this is not a second generic external-ID mapping framework.
+_Avoid_: similarity-based SKU/name/address matching, an external identifier treated as Inventory identity, or resolving delayed evidence through a replacement backend merely because that backend is Current.
 
-**Inventory Reservation** — Durable, authority-homogeneous Inventory Resource representing one exact stock obligation for one Order Commitment Attempt. One Reservation contains only Stock Allocations enforced by one actual Reservation Authority; one Attempt may therefore require multiple Inventory Reservations.
+**Stock Sharing Eligibility** — Inventory-owned positive Current relation between one exact Stock Position and required Selling Legal Entity + Channel, optionally restricted by Commerce Market and/or Storefront. It is distinct from Principal Permission, Assortment, Availability, and Reservation guarantee.
+_Avoid_: a durable Sales Context Resource, customer-specific stock selectors, or an ALLOW/DENY specificity resolver.
 
-**Reservation Authority** — Owner capable of enforcing one exact Reservation obligation in the applicable scope and therefore of issuing authoritative Reservation evidence. It may be Inventory, an External Business System, or absent.
-_Avoid_: Availability, Integration Route, or provider adapter treated as authority merely because it consumes or transports evidence.
+## Reservations and obligations
 
-**Attempt Reservation Coverage** — Complete set of one or more Inventory Reservations whose Allocations collectively cover all Stock Requirements of one exact Order Commitment Attempt. Each member Reservation remains bound to exactly one Reservation Authority.
+**Inventory Backend** — Exactly one configured stock/reservation backend selected for the whole Customer Configuration in Launch: either a customer-provided External Business System or the OntOS-provided WMS.
+_Avoid_: per-Location backend selection, simultaneous authoritative backends, automatic fallback, or Integration Route as authority.
 
-**Reservation Confirmation** — Attempt-bound proof issued by the actual Reservation Authority that one exact provisional Inventory Reservation is currently guaranteed under its declared validity boundary. An Attempt with multiple Reservations therefore has multiple authority-issued Confirmations. It is not part of the pre-attempt Order Acceptance Decision Bundle.
+**Reservation Authority** — The selected Inventory Backend in its role as the owner capable of enforcing the exact Inventory Reservation and issuing authoritative Reservation evidence.
+_Avoid_: Availability, Order Commitment Gate, Integration Route, provider adapter, or an unselected backend as issuer.
 
-**Reservation Release** — Explicit owner-governed end of one whole provisional Inventory Reservation after release safety is proven.
-_Avoid_: Confirmation expiry, `AT_RISK`, or `REVOKED` treated as Reservation Release.
+**Inventory Reservation** — Durable Inventory Resource for one exact Order Commitment Attempt representing its complete provisional stock obligation across required Stock Requirements and Stock Allocations. Its identity is the Inventory-recognized obligation identity for that runtime Attempt.
 
-**Provisional Shortage Priority** — Launch FIFO rule within one Reservation Authority's affected provisional scope after a material shortage: older owner-issued unprotected Confirmation has priority over younger Confirmation. No cross-authority global FIFO is inferred.
-_Avoid_: best-fit skipping, B2C-over-B2B priority, technical arrival order as FIFO.
+**Reservation Confirmation** — The single Attempt-bound proof identity issued by the Reservation Authority that one exact Inventory Reservation is guaranteed within its declared validity interval. In Launch, that Confirmation identity is not renewed or replaced after pre-Protection expiry or definitive revocation.
 
-**Commitment Protection** — Attempt-bound owner guarantee established by the actual Reservation Authority for one exact Inventory Reservation immediately before Order commitment. An Attempt with multiple Reservations requires protection for every member Reservation before Inventory coverage is fully protected.
+**Reservation Release** — Explicit owner-governed transition ending the whole provisional Inventory Reservation after release safety is proven.
+_Avoid_: Confirmation expiry, `AT_RISK`, or `REVOKED` treated as Release.
 
-**COMMITTED_OBLIGATION** — Post-commit lifecycle meaning of one Inventory Reservation's stock obligation for an Accepted Order. If an Attempt used multiple Reservations, proven commit yields multiple corresponding committed obligations; each continues to constrain its exact Stock Positions until owner-governed transitions account for the remaining Quantity.
+**Unresolved Reservation Effect Constraint** — Inventory evidence meaning that a failed or indeterminate Reservation create effect is known or possible to keep stock constrained although no successful Inventory Reservation exists. It retains exact owner-proven scope/Quantity when known, otherwise typed effect uncertainty and original Attempt/effect provenance.
+_Avoid_: folding this debt into `RESERVED`, treating no successful Reservation as reusable stock, or fabricating an exact deduction from uncertainty.
 
-**AT_RISK** — Guarantee-health meaning stating that an obligation still exists but its promised guarantee cannot currently be owner-verifiably honored.
-_Avoid_: release, revocation, cancellation, free stock, or proof that an Order did not commit.
+**Provisional Shortage Priority** — Stable authoritative-issuance rank used among competing unprotected provisional Reservation Confirmations after a material shortage in one constrained scope. Proof health and priority rank are distinct meanings; leaving the priority pool is not Reservation Release.
+_Avoid_: physical picking order, best-fit, Selling Legal Entity/Purchasing Subject priority, Current-health sorting, or technical arrival order.
 
-**REVOKED** — Pre-protection Confirmation state in which the actual Reservation Authority explicitly terminates that exact Confirmation guarantee. It does not release the underlying Reservation.
+**Commitment Protection** — The single Attempt-bound owner guarantee fencing the exact Inventory Reservation through Order commitment. It is established by the Reservation Authority while the Reservation Confirmation is valid and remains distinct from that Confirmation.
 
-**EXPIRED** — Confirmation state reached when its declared validity interval ends. Expiry does not release the Reservation or an established Commitment Protection.
+**COMMITTED_OBLIGATION** — Post-commit lifecycle meaning of the same underlying stock-obligation identity previously represented by the successful Inventory Reservation, now bound to the Accepted Order.
+_Avoid_: a second parallel obligation created by commit.
 
-**UNVERIFIABLE** — Proof-health state in which Current owner evidence is insufficient to establish the guarantee state. It is neither implicit revocation nor release.
+**AT_RISK** — Guarantee-health meaning where an Inventory obligation still exists but its promised guarantee cannot currently be owner-verifiably honored.
+_Avoid_: release, cancellation, or proof of non-commit.
 
-**Imported Committed Obligation** — Migration-origin Inventory obligation bound directly to an already-proven imported Order and explicit source lineage, starting in committed meaning without fabricating a historical OntOS Order Commitment Attempt.
+**REVOKED** — Pre-Protection Reservation Confirmation state where the Reservation Authority explicitly terminates that exact Confirmation guarantee. Revocation is not Reservation Release.
+
+**EXPIRED** — Reservation Confirmation state reached when its declared validity interval ends. Expiry is not Reservation Release and does not erase established Commitment Protection.
+
+**UNVERIFIABLE** — Proof-health state where Current owner evidence is insufficient to establish the guarantee state.
+_Avoid_: implicit revocation or release.
+
+**Imported Committed Obligation** — Migration-origin Inventory obligation bound directly to an already-proven imported Order with explicit source lineage, starting in committed meaning without fabricating a historical OntOS Order Commitment Attempt.
 
 ## External stock evidence
 
-**Inventory Source Assertion** — Provenance-backed claim from an External Business System about one Inventory fact, retaining issuer, exact correlated scope, fact meaning, Quantity/Unit, business time, and owner-defined ordering evidence. Technical arrival or parsing does not make it Current.
+**Inventory Source Assertion** — Provenance-backed stock claim retaining actual issuer/backend origin, exact correlated scope, fact meaning, Quantity + Unit, business time, and owner-defined ordering evidence. Transport arrival is not business Currentness or authority.
 
-**Source Coverage Evidence** — Owner-verifiable evidence establishing whether an absolute ON_HAND assertion includes a particular authoritative physical Stock Issue, or an owner revision boundary that makes that relation unambiguous.
-_Avoid_: message arrival order as effect coverage, double subtraction, delayed snapshot assumed to include an Issue.
+**Source Coverage Evidence** — Owner-verifiable evidence establishing whether an absolute ON_HAND assertion includes, excludes, or predates a separately known authoritative Stock Receipt or Stock Issue.
+_Avoid_: message arrival order as coverage evidence or guessed/double-applied arithmetic.

@@ -1,0 +1,2 @@
+ALTER TABLE "catalog"."attribute_value_sets" ADD CONSTRAINT "catalog_attribute_value_sets_definition_id_uk" UNIQUE("tenant_id","attribute_value_set_id","attribute_definition_id");--> statement-breakpoint
+ALTER TABLE "catalog"."attribute_value_items" DROP CONSTRAINT "catalog_attribute_value_items_set_fk", ADD CONSTRAINT "catalog_attribute_value_items_set_fk" FOREIGN KEY ("tenant_id","attribute_value_set_id","attribute_definition_id") REFERENCES "catalog"."attribute_value_sets"("tenant_id","attribute_value_set_id","attribute_definition_id") ON DELETE CASCADE;

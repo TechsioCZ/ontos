@@ -11,10 +11,6 @@ import {
 
 export { AddProcessingPurposeVersionPayloadSchema } from '../actions/add-processing-purpose-version.ts';
 
-const AddProcessingPurposeVersionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AddProcessingPurposeVersionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AddProcessingPurposeVersionActionInvalidProblem',
   400,
@@ -131,15 +127,37 @@ const actionErrors = [
   AddProcessingPurposeVersionActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const addProcessingPurposeVersionActionGroupDefinition = HttpApiGroup.make('addProcessingPurposeVersionAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/add-processing-purpose-version', {
+      error: actionErrors,
+      payload: Schema.toEncoded(AddProcessingPurposeVersionPayloadSchema),
+      success: AddProcessingPurposeVersionResultSchema,
+    }),
+  )
+  .middleware(AddProcessingPurposeVersionActionSchemaErrorMiddleware);
+
+export type AddProcessingPurposeVersionActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'addProcessingPurposeVersionAction',
+  HttpApiGroup.Endpoints<typeof addProcessingPurposeVersionActionGroupDefinition>
+>;
+
+const AddProcessingPurposeVersionActionGroup: AddProcessingPurposeVersionActionGroupContract =
+  addProcessingPurposeVersionActionGroupDefinition;
+
 export const AddProcessingPurposeVersionActionApi = HttpApi.make('AddProcessingPurposeVersionActionApi').add(
-  HttpApiGroup.make('addProcessingPurposeVersionAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/add-processing-purpose-version', {
-        error: actionErrors,
-        headers: AddProcessingPurposeVersionActionHeadersSchema,
-        payload: Schema.toEncoded(AddProcessingPurposeVersionPayloadSchema),
-        success: AddProcessingPurposeVersionResultSchema,
-      }),
-    )
-    .middleware(AddProcessingPurposeVersionActionSchemaErrorMiddleware),
+  AddProcessingPurposeVersionActionGroup,
 );

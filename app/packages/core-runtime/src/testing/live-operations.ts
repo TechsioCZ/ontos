@@ -1,12 +1,16 @@
 import { v1 } from '@authzed/authzed-node';
 import { eq } from 'drizzle-orm';
-import { Context, Duration, Effect, Exit, Layer, Random, Redacted, Schema, Scope } from 'effect';
-import { Pool } from 'pg';
+import { Context, Data, Duration, Effect, Exit, Layer, Predicate, Random, Redacted, Schema, Scope } from 'effect';
 
 import { ActionCommitIndeterminate, ActionTransactionError } from '../actions/errors.ts';
 import type { ActionRepositoryService } from '../actions/repository.ts';
 import { makeActionRepository } from '../actions/repository.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
+import { AuthenticationNamespaceIdSchema } from '../auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../auth/external-identity/verifier.ts';
 import { CoreDatabase, makeCoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
 import {
@@ -34,6 +38,7 @@ import {
   toResourceAccessObjectId,
 } from '../permissions/context-access.ts';
 import { makeActionPermissionLive } from '../permissions/service.ts';
+import { newSpiceDbGrpcClient } from '../permissions/spicedb-grpc-rpc.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 
 const LIVE_FIXTURE_EXTERNAL_TIMEOUT = Duration.seconds(30);
@@ -55,19 +60,20 @@ const relationship = (
 const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
+  authenticationNamespaceId: AuthenticationNamespaceIdSchema,
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
 export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded;
 
-class LiveOperationFixtureError extends Schema.TaggedError<LiveOperationFixtureError>()('LiveOperationFixtureError', {
-  reason: Schema.String,
-}) {}
+class LiveOperationFixtureError extends Data.TaggedError('LiveOperationFixtureError')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}
 
-const fixtureFailure = (reason: string, cause?: unknown): LiveOperationFixtureError => {
-  const failure = new LiveOperationFixtureError({ reason });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-};
+const fixtureFailure = (reason: string, cause?: unknown): LiveOperationFixtureError =>
+  new LiveOperationFixtureError({ cause, reason });
 
 const attemptFixturePromise = <Value>(
   reason: string,
@@ -110,6 +116,7 @@ const makeFixtureId = Effect.fn('LiveOperations.makeFixtureId')(function* makeFi
 
 const makeFixtureActor = Effect.fn('LiveOperations.makeFixtureActor')(function* makeFixtureActorEffect(
   tenantId: string,
+  authenticationNamespaceId: string,
 ) {
   const [authBindingId, principalId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
     concurrency: 2,
@@ -117,6 +124,7 @@ const makeFixtureActor = Effect.fn('LiveOperations.makeFixtureActor')(function* 
   return {
     authBindingId,
     authContextRef: `better-auth-session:${authBindingId}`,
+    authenticationNamespaceId,
     authMethod: 'session' as const,
     principalId,
     tenantId,
@@ -134,8 +142,13 @@ const fixturePrincipalValues = (actors: readonly FixtureActor[], tenantId: strin
     tenantId,
   }));
 
-const fixtureAuthBindingValues = (actors: readonly FixtureActor[], tenantId: string) =>
+const fixtureAuthBindingValues = (
+  actors: readonly FixtureActor[],
+  tenantId: string,
+  authenticationNamespaceId: string,
+) =>
   actors.map((principal) => ({
+    authenticationNamespaceId,
     principalAuthBindingId: principal.authBindingId,
     principalId: principal.principalId,
     provider: 'better_auth' as const,
@@ -179,6 +192,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
   function* setupLiveOperationFixtureEffect(input: {
     readonly actionKeys: readonly string[];
     readonly actors: readonly FixtureActor[];
+    readonly authenticationNamespaceId: string;
     readonly executor: FixtureExecutor;
     readonly legalEntityId: string;
     readonly legalEntityOnly: FixtureActor;
@@ -221,7 +235,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       .pipe(Effect.mapError((cause) => fixtureFailure('Unable to create the live fixture principals', cause)));
     yield* input.executor
       .insert(principalAuthBindings)
-      .values(fixtureAuthBindingValues(input.actors, input.tenantId))
+      .values(fixtureAuthBindingValues(input.actors, input.tenantId, input.authenticationNamespaceId))
       .pipe(Effect.mapError((cause) => fixtureFailure('Unable to bind the live fixture principals', cause)));
     const entityObject = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
     const moduleObject = toModuleAccessObjectId(input.tenantId, input.legalEntityId, 'party.registry');
@@ -350,7 +364,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     const configuration = yield* Schema.decodeEffect(LiveOperationFixtureConfigurationSchema)(input).pipe(
       Effect.mapError((cause) => fixtureFailure('Invalid live operation fixture configuration', cause)),
     );
-    const spiceDb = yield* loadSpiceDbConfig().pipe(
+    const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' }).pipe(
       Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
     );
     const runtimeConnectionString = Redacted.value(configuration.runtimeConnectionString);
@@ -361,21 +375,24 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       return yield* fixtureFailure('Live test fixtures require disposable localhost services');
     }
 
-    const pool = new Pool({ connectionString: runtimeConnectionString, max: 8 });
     const databaseScope = yield* Scope.make();
     const databaseConfiguration = yield* parseDatabaseConfig({
       DATABASE_URL: runtimeConnectionString,
     }).pipe(Effect.mapError((cause) => fixtureFailure('Invalid database configuration', cause)));
-    const { executor } = yield* makeCoreDatabase(databaseConfiguration, () => pool).pipe(
+    const { executor } = yield* makeCoreDatabase({ ...databaseConfiguration, maxConnections: 8 }).pipe(
       Scope.provide(databaseScope),
       Effect.mapError((cause) => fixtureFailure('Unable to initialize fixture database', cause)),
     );
-    const spice = v1.NewClient(spiceDb.preSharedKey, spiceDb.endpoint, v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED);
+    const spice = newSpiceDbGrpcClient(spiceDb);
     const [tenantId, legalEntityId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
       concurrency: 2,
     });
     const [manager, legalEntityActor, denied] = yield* Effect.all(
-      [makeFixtureActor(tenantId), makeFixtureActor(tenantId), makeFixtureActor(tenantId)],
+      [
+        makeFixtureActor(tenantId, configuration.authenticationNamespaceId),
+        makeFixtureActor(tenantId, configuration.authenticationNamespaceId),
+        makeFixtureActor(tenantId, configuration.authenticationNamespaceId),
+      ],
       { concurrency: 3 },
     );
     const legalEntityOnly = { ...legalEntityActor, legalEntityId };
@@ -387,6 +404,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     yield* setupLiveOperationFixture({
       actionKeys: configuration.actionKeys ?? [],
       actors,
+      authenticationNamespaceId: configuration.authenticationNamespaceId,
       executor,
       legalEntityId,
       legalEntityOnly,
@@ -404,6 +422,17 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       executor,
     } satisfies (typeof CoreDatabase)['Service'];
     const readDatabase = { executor } satisfies (typeof CoreDatabase)['Service'];
+    const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+      {
+        allowedAudiences: ['party-registry'],
+        authenticationNamespaceId: configuration.authenticationNamespaceId,
+        provider: 'live-fixture',
+        requiresOperationAdmission: false,
+        reservationPrincipalKind: 'human',
+        subjectTypes: ['user'],
+        trustedAttesterPrincipalIds: [],
+      },
+    ]);
     const layer = Layer.effectContext(
       Effect.gen(function* makeLiveOperationRuntimeContext() {
         const [contextAccess, actionPermission] = yield* Effect.all(
@@ -432,8 +461,12 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           actionScopeResolver,
           {
             contextAccess,
+            // This fixture owns authorization and commit-fault acceptance. Release publication
+            // is exercised separately against its own disposable composition authority.
+            lockCompositionAuthority: () => Effect.succeed([]),
             moduleEntrypointGateway: actionModuleEntrypointGateway,
             moduleStateGate: actionModuleStateGate,
+            resolveCompositionRevision: () => Effect.succeed(configuration.compositionRevision),
           },
         );
         const runAction: (typeof ActionRuntime)['Service']['runAction'] = Effect.fn('LiveOperations.runAction')(
@@ -471,6 +504,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
         );
         return Context.empty().pipe(
           Context.add(ActionRuntime, actionRuntime),
+          Context.add(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
           Context.add(CoreDatabase, readDatabase),
           Context.add(ReadRuntime, readRuntime),
         );
@@ -508,7 +542,7 @@ export const makeLiveOperationFixture = Effect.fn('LiveOperations.makeLiveOperat
   function* makeLiveOperationFixturePublicEffect(input: LiveOperationFixtureConfiguration) {
     return yield* makeLiveOperationFixtureEffect(input).pipe(
       Effect.mapError((cause) =>
-        Schema.is(LiveOperationFixtureError)(cause)
+        Predicate.isTagged(cause, 'LiveOperationFixtureError')
           ? cause
           : fixtureFailure('Unable to create live operation fixture', cause),
       ),

@@ -6,8 +6,16 @@ import { Match, Predicate, Schema, SchemaAST } from 'effect';
 /** HTTP statuses currently used by OntOS public Problem Details contracts. */
 export type ProblemDetailsStatus = 400 | 401 | 403 | 404 | 409 | 422 | 428 | 429 | 500 | 503 | 504;
 
+export const problemDetailsFields = Object.freeze({
+  detail: Schema.String,
+  title: Schema.String,
+  type: Schema.String,
+});
+
+export const problemDetailsContentType = 'application/problem+json';
+
 const problemDetailsRepresentation = HttpApiSchema.asJson({
-  contentType: 'application/problem+json',
+  contentType: problemDetailsContentType,
 });
 
 const hasJsonSafeNumberCheck = (checks: SchemaAST.Checks | undefined): boolean =>
@@ -49,9 +57,6 @@ const isConcreteExtensionValue = (ast: SchemaAST.AST): boolean => {
   }
   if (SchemaAST.isNumber(ast)) {
     return hasJsonSafeNumberCheck(ast.checks);
-  }
-  if (SchemaAST.isEnum(ast)) {
-    return ast.enums.every(([, value]) => Predicate.isString(value) || Number.isFinite(value));
   }
   return true;
 };
@@ -249,3 +254,11 @@ export const makeRetryableProblemDetailsSchema = <
   status: Status,
   extensions?: Extensions,
 ) => makeAnnotatedProblemDetailsSchema(tag, status, { retryable: Schema.Literal(true) }, extensions);
+
+/**
+ * The 400 the HTTP edge answers when a request does not match its endpoint's codecs, such as an
+ * excess payload property under a closed composed API. It names the failing paths, never values.
+ */
+export const RequestSchemaProblemSchema = makeProblemDetailsSchema('RequestSchemaProblem', 400, {
+  paths: Schema.Array(Schema.String),
+});

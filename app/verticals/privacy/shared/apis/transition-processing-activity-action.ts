@@ -11,10 +11,6 @@ import {
 
 export { TransitionProcessingActivityPayloadSchema } from '../actions/transition-processing-activity.ts';
 
-const TransitionProcessingActivityActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const TransitionProcessingActivityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'TransitionProcessingActivityActionInvalidProblem',
   400,
@@ -131,15 +127,37 @@ const actionErrors = [
   TransitionProcessingActivityActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const transitionProcessingActivityActionGroupDefinition = HttpApiGroup.make('transitionProcessingActivityAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/transition-processing-activity', {
+      error: actionErrors,
+      payload: Schema.toEncoded(TransitionProcessingActivityPayloadSchema),
+      success: TransitionProcessingActivityResultSchema,
+    }),
+  )
+  .middleware(TransitionProcessingActivityActionSchemaErrorMiddleware);
+
+export type TransitionProcessingActivityActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'transitionProcessingActivityAction',
+  HttpApiGroup.Endpoints<typeof transitionProcessingActivityActionGroupDefinition>
+>;
+
+const TransitionProcessingActivityActionGroup: TransitionProcessingActivityActionGroupContract =
+  transitionProcessingActivityActionGroupDefinition;
+
 export const TransitionProcessingActivityActionApi = HttpApi.make('TransitionProcessingActivityActionApi').add(
-  HttpApiGroup.make('transitionProcessingActivityAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/transition-processing-activity', {
-        error: actionErrors,
-        headers: TransitionProcessingActivityActionHeadersSchema,
-        payload: Schema.toEncoded(TransitionProcessingActivityPayloadSchema),
-        success: TransitionProcessingActivityResultSchema,
-      }),
-    )
-    .middleware(TransitionProcessingActivityActionSchemaErrorMiddleware),
+  TransitionProcessingActivityActionGroup,
 );

@@ -243,6 +243,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
+          expose: './PageContacts',
           routePath: '/contacts',
         }),
         // </generated-module-shell-pages>

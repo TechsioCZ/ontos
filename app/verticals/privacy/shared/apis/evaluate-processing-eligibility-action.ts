@@ -11,10 +11,6 @@ import {
 
 export { EvaluateProcessingEligibilityPayloadSchema } from '../actions/evaluate-processing-eligibility.ts';
 
-const EvaluateProcessingEligibilityActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const EvaluateProcessingEligibilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EvaluateProcessingEligibilityActionInvalidProblem',
   400,
@@ -128,15 +124,39 @@ const actionErrors = [
   EvaluateProcessingEligibilityActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const evaluateProcessingEligibilityActionGroupDefinition = HttpApiGroup.make(
+  'evaluateProcessingEligibilityAction',
+)
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/evaluate-processing-eligibility', {
+      error: actionErrors,
+      payload: Schema.toEncoded(EvaluateProcessingEligibilityPayloadSchema),
+      success: EvaluateProcessingEligibilityResultSchema,
+    }),
+  )
+  .middleware(EvaluateProcessingEligibilityActionSchemaErrorMiddleware);
+
+export type EvaluateProcessingEligibilityActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'evaluateProcessingEligibilityAction',
+  HttpApiGroup.Endpoints<typeof evaluateProcessingEligibilityActionGroupDefinition>
+>;
+
+const EvaluateProcessingEligibilityActionGroup: EvaluateProcessingEligibilityActionGroupContract =
+  evaluateProcessingEligibilityActionGroupDefinition;
+
 export const EvaluateProcessingEligibilityActionApi = HttpApi.make('EvaluateProcessingEligibilityActionApi').add(
-  HttpApiGroup.make('evaluateProcessingEligibilityAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/evaluate-processing-eligibility', {
-        error: actionErrors,
-        headers: EvaluateProcessingEligibilityActionHeadersSchema,
-        payload: Schema.toEncoded(EvaluateProcessingEligibilityPayloadSchema),
-        success: EvaluateProcessingEligibilityResultSchema,
-      }),
-    )
-    .middleware(EvaluateProcessingEligibilityActionSchemaErrorMiddleware),
+  EvaluateProcessingEligibilityActionGroup,
 );

@@ -9,10 +9,14 @@ import type {
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type { CounterpartyRef } from '../../shared/domain/access-contract.ts';
-import { CustomerPriceGroupAssignmentSchema } from '../../shared/domain/price-group-contracts.ts';
+import {
+  CustomerPriceGroupAssignmentSchema,
+  PriceGroupCompatibilityEvidenceSchema,
+} from '../../shared/domain/price-group-contracts.ts';
 import type {
   CommerceCustomerProfileTarget,
   CustomerPriceGroupAssignment,
+  PriceGroupCompatibilityEvidence,
   PriceGroupInstant,
 } from '../../shared/domain/price-group-contracts.ts';
 import {
@@ -120,6 +124,28 @@ const MigrationMutationRowSchema = Schema.Struct({
   profile_id: Schema.NullOr(Schema.String),
   profile_kind: Schema.NullOr(Schema.Literals(['COUNTERPARTY', 'RETAIL'])),
 });
+const CompatibilityEvidenceFields = {
+  catalog_revision: Schema.NullOr(Schema.Int),
+  compatibility_contract_id: Schema.NullOr(Schema.String),
+  compatibility_contract_revision: Schema.NullOr(Schema.Int),
+  compatibility_trusted_at: Schema.NullOr(Schema.Union([Schema.Date, Schema.String])),
+  compatibility_verified_at: Schema.NullOr(Schema.Union([Schema.Date, Schema.String])),
+  definition_effective_from: Schema.NullOr(Schema.Union([Schema.Date, Schema.String])),
+  definition_effective_to: Schema.NullOr(Schema.Union([Schema.Date, Schema.String])),
+  definition_revision: Schema.NullOr(Schema.Int),
+  definition_revision_id: Schema.NullOr(Schema.String),
+  meaning_fingerprint: Schema.NullOr(Schema.String),
+} as const;
+const CompatibilityEvidenceReadRowSchema = Schema.Struct({
+  ...CompatibilityEvidenceFields,
+  outcome: Schema.Literals(['CORRUPT', 'FOUND', 'LEGACY', 'NOT_FOUND']),
+});
+const CompatibilityEvidenceBindRowSchema = Schema.Struct({
+  ...CompatibilityEvidenceFields,
+  changed: Schema.Boolean,
+  outcome: Schema.Literals(['BOUND', 'CONFLICT', 'NOT_FOUND']),
+});
+type CompatibilityEvidenceRow = typeof CompatibilityEvidenceReadRowSchema.Type;
 /* eslint-enable effect-native/no-nullable-schema-field */
 
 const inspectPriceGroupProfileRoutine = defineScopedRoutine({
@@ -247,6 +273,45 @@ const migratePriceGroupAssignmentsRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
+const readPriceGroupCompatibilityEvidenceRoutine = defineScopedRoutine({
+  name: 'read_price_group_assignment_compatibility_evidence',
+  ownerModuleKey: CUSTOMER_CONTEXT_MODULE_ID,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'text' },
+  ],
+  resultSchema: CompatibilityEvidenceReadRowSchema,
+  routineKey: 'price-group.assignments.compatibility-evidence.read',
+  schema: 'commerce_customer_context',
+});
+
+const bindPriceGroupCompatibilityEvidenceRoutine = defineScopedRoutine({
+  name: 'bind_price_group_assignment_compatibility_evidence',
+  ownerModuleKey: CUSTOMER_CONTEXT_MODULE_ID,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'integer' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'integer' },
+    { source: 'input', type: 'integer' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'timestamptz' },
+    { nullable: true, source: 'input', type: 'timestamptz' },
+    { source: 'input', type: 'timestamptz' },
+    { source: 'input', type: 'timestamptz' },
+  ],
+  resultSchema: CompatibilityEvidenceBindRowSchema,
+  routineKey: 'price-group.assignments.compatibility-evidence.bind',
+  schema: 'commerce_customer_context',
+});
+
 const persistenceUnavailable = (reason: string) =>
   new CustomerPriceGroupPersistenceUnavailable({
     code: 'customer_price_group_persistence_unavailable',
@@ -313,6 +378,12 @@ const assignmentFromRow = (
   if (effectiveFrom === null || recordedAt === null) {
     return Effect.fail(persistenceUnavailable('The Price Group Assignment routine returned an incomplete row'));
   }
+  const priceGroupRef = {
+    moduleId: completeRow.price_group_module_id,
+    resourceId: completeRow.price_group_resource_id,
+    resourceType: completeRow.price_group_resource_type,
+    tenantId: profile.tenantId,
+  };
   const assignment = {
     assignmentRef: {
       moduleId: CUSTOMER_CONTEXT_MODULE_ID,
@@ -320,20 +391,9 @@ const assignmentFromRow = (
       resourceType: 'commerce.customer-context.customer-price-group-assignment',
       tenantId: profile.tenantId,
     },
-    compatibility: {
-      catalogRevision: completeRow.catalog_revision,
-      contractId: completeRow.compatibility_contract_id,
-      contractRevision: completeRow.compatibility_contract_revision,
-      definitionRevision: completeRow.definition_revision,
-    },
     effectiveFrom,
     effectiveTo,
-    priceGroupRef: {
-      moduleId: completeRow.price_group_module_id,
-      resourceId: completeRow.price_group_resource_id,
-      resourceType: completeRow.price_group_resource_type,
-      tenantId: profile.tenantId,
-    },
+    priceGroupRef,
     profile,
     reason: completeRow.reason,
     recordedAt,
@@ -345,6 +405,57 @@ const assignmentFromRow = (
     : Effect.fail(persistenceUnavailable('The Price Group Assignment routine returned an invalid row'));
 };
 
+type CompatibilityEvidenceValues = Pick<CompatibilityEvidenceRow, keyof typeof CompatibilityEvidenceFields>;
+
+const compatibilityFromEvidenceRow = (
+  row: CompatibilityEvidenceValues,
+  priceGroupRef: CustomerPriceGroupAssignment['priceGroupRef'],
+): Effect.Effect<PriceGroupCompatibilityEvidence, CustomerPriceGroupPersistenceUnavailable> => {
+  if (
+    row.catalog_revision === null ||
+    row.compatibility_contract_id === null ||
+    row.compatibility_contract_revision === null ||
+    row.compatibility_trusted_at === null ||
+    row.compatibility_verified_at === null ||
+    row.definition_effective_from === null ||
+    row.definition_revision === null ||
+    row.definition_revision_id === null ||
+    row.meaning_fingerprint === null
+  ) {
+    return Effect.fail(persistenceUnavailable('The Price Group Assignment has incomplete compatibility evidence'));
+  }
+  const compatibility = {
+    catalogRevision: row.catalog_revision,
+    definitionEffectivePeriod: {
+      effectiveFrom: timestamp(row.definition_effective_from),
+      effectiveTo: row.definition_effective_to === null ? null : timestamp(row.definition_effective_to),
+    },
+    definitionRevisionId: row.definition_revision_id,
+    definitionRevisionNumber: row.definition_revision,
+    meaningFingerprint: row.meaning_fingerprint,
+    priceGroupRef,
+    requiredContract: {
+      contractId: row.compatibility_contract_id,
+      version: row.compatibility_contract_revision,
+    },
+    trustedOperationAt: timestamp(row.compatibility_trusted_at),
+    verifiedAt: timestamp(row.compatibility_verified_at),
+  };
+  return Schema.is(PriceGroupCompatibilityEvidenceSchema)(compatibility)
+    ? Effect.succeed(compatibility)
+    : Effect.fail(persistenceUnavailable('The Price Group Assignment has invalid compatibility evidence'));
+};
+
+const withCompatibility = (
+  assignment: CustomerPriceGroupAssignment,
+  compatibility: PriceGroupCompatibilityEvidence,
+): Effect.Effect<CustomerPriceGroupAssignment, CustomerPriceGroupPersistenceUnavailable> => {
+  const hydrated = { ...assignment, compatibility };
+  return Schema.is(CustomerPriceGroupAssignmentSchema)(hydrated)
+    ? Effect.succeed(hydrated)
+    : Effect.fail(persistenceUnavailable('Compatibility Evidence does not match its Price Group Assignment'));
+};
+
 const checkScopedReference = (
   scope: OperationalScope & { readonly legalEntityId: string },
   profile: CommerceCustomerProfileTarget,
@@ -353,6 +464,77 @@ const checkScopedReference = (
   profile.tenantId === scope.tenantId && (counterpartyRef === undefined || counterpartyRef.tenantId === scope.tenantId)
     ? Effect.void
     : Effect.fail(persistenceUnavailable('The Price Group Assignment scope is inconsistent'));
+
+const readAssignmentCompatibility = (
+  transaction: PriceGroupRoutineInvoker,
+  assignment: CustomerPriceGroupAssignment,
+): Effect.Effect<CustomerPriceGroupAssignment, CustomerPriceGroupPersistenceUnavailable> =>
+  transaction.invoke(readPriceGroupCompatibilityEvidenceRoutine, [assignment.assignmentRef.resourceId]).pipe(
+    Effect.mapError(routinePersistenceUnavailable),
+    Effect.flatMap(([row]) => {
+      if (row === undefined) {
+        return Effect.fail(persistenceUnavailable('The compatibility evidence routine returned no outcome'));
+      }
+      if (row.outcome === 'LEGACY') {
+        return Effect.succeed(assignment);
+      }
+      if (row.outcome === 'NOT_FOUND') {
+        return Effect.fail(persistenceUnavailable('The Price Group Assignment disappeared during evidence hydration'));
+      }
+      if (row.outcome === 'CORRUPT') {
+        return Effect.fail(persistenceUnavailable('The Price Group Assignment has corrupt compatibility evidence'));
+      }
+      return compatibilityFromEvidenceRow(row, assignment.priceGroupRef).pipe(
+        Effect.flatMap((compatibility) => withCompatibility(assignment, compatibility)),
+      );
+    }),
+  );
+
+const bindAssignmentCompatibility = (
+  transaction: PriceGroupRoutineInvoker,
+  assignment: CustomerPriceGroupAssignment,
+  compatibility: PriceGroupCompatibilityEvidence,
+): Effect.Effect<CustomerPriceGroupAssignment, CustomerPriceGroupPersistenceUnavailable> =>
+  withCompatibility(assignment, compatibility).pipe(
+    Effect.flatMap(() =>
+      transaction.invoke(bindPriceGroupCompatibilityEvidenceRoutine, [
+        assignment.assignmentRef.resourceId,
+        compatibility.priceGroupRef.moduleId,
+        compatibility.priceGroupRef.resourceType,
+        compatibility.priceGroupRef.resourceId,
+        compatibility.catalogRevision,
+        compatibility.requiredContract.contractId,
+        compatibility.requiredContract.version,
+        compatibility.definitionRevisionNumber,
+        compatibility.definitionRevisionId,
+        compatibility.meaningFingerprint,
+        compatibility.definitionEffectivePeriod.effectiveFrom,
+        compatibility.definitionEffectivePeriod.effectiveTo,
+        compatibility.trustedOperationAt,
+        compatibility.verifiedAt,
+      ]),
+    ),
+    Effect.mapError((failure) =>
+      Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure) ? failure : routinePersistenceUnavailable(failure),
+    ),
+    Effect.flatMap(([row]) => {
+      if (row === undefined) {
+        return Effect.fail(persistenceUnavailable('The compatibility evidence bind returned no outcome'));
+      }
+      if (row.outcome !== 'BOUND') {
+        return Effect.fail(
+          persistenceUnavailable(
+            row.outcome === 'NOT_FOUND'
+              ? 'The Price Group Assignment disappeared before evidence binding'
+              : 'The Price Group Assignment already has different compatibility evidence',
+          ),
+        );
+      }
+      return compatibilityFromEvidenceRow(row, assignment.priceGroupRef).pipe(
+        Effect.flatMap((stored) => withCompatibility(assignment, stored)),
+      );
+    }),
+  );
 
 const inspectCustomerPriceGroupProfile = (
   transaction: PriceGroupRoutineInvoker,
@@ -424,9 +606,9 @@ const assign = (
         input.priceGroupRef.resourceType,
         input.priceGroupRef.resourceId,
         input.compatibility.catalogRevision,
-        input.compatibility.contractId,
-        input.compatibility.contractRevision,
-        input.compatibility.definitionRevision,
+        input.compatibility.requiredContract.contractId,
+        input.compatibility.requiredContract.version,
+        input.compatibility.definitionRevisionNumber,
         input.effectiveFrom,
         input.effectiveTo,
         input.expectedProfileRevision,
@@ -466,6 +648,7 @@ const assign = (
           return Effect.fail(persistenceUnavailable('The assignment failed its atomic profile revision check'));
         }
         return assignmentFromRow(row, input.profile).pipe(
+          Effect.flatMap((assignment) => bindAssignmentCompatibility(transaction, assignment, input.compatibility)),
           Effect.map((assignment) => ({
             _tag: 'assigned' as const,
             assignment,
@@ -486,6 +669,7 @@ const assign = (
   );
 
 const assignmentLookupFromRows = (
+  transaction: PriceGroupRoutineInvoker,
   rows: readonly AssignmentListRow[],
   profile: CommerceCustomerProfileTarget,
 ): Effect.Effect<CustomerPriceGroupAssignmentLookup, CustomerPriceGroupPersistenceUnavailable> => {
@@ -496,9 +680,14 @@ const assignmentLookupFromRows = (
     (row): row is AssignmentListRow & { readonly assignment_id: string } =>
       row.outcome === 'FOUND' && row.assignment_id !== null,
   );
-  return Effect.forEach(assignmentRows, (row) => assignmentFromRow(row, profile), { concurrency: 1 }).pipe(
-    Effect.map((assignments) => ({ _tag: 'found' as const, assignments })),
-  );
+  return Effect.forEach(
+    assignmentRows,
+    (row) =>
+      assignmentFromRow(row, profile).pipe(
+        Effect.flatMap((assignment) => readAssignmentCompatibility(transaction, assignment)),
+      ),
+    { concurrency: 1 },
+  ).pipe(Effect.map((assignments) => ({ _tag: 'found' as const, assignments })));
 };
 
 const list = (
@@ -513,7 +702,7 @@ const list = (
     Effect.mapError((failure) =>
       Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure) ? failure : routinePersistenceUnavailable(failure),
     ),
-    Effect.flatMap((rows) => assignmentLookupFromRows(rows, profile)),
+    Effect.flatMap((rows) => assignmentLookupFromRows(transaction, rows, profile)),
   );
 
 const resolve = (
@@ -529,7 +718,7 @@ const resolve = (
     Effect.mapError((failure) =>
       Schema.is(CustomerPriceGroupPersistenceUnavailable)(failure) ? failure : routinePersistenceUnavailable(failure),
     ),
-    Effect.flatMap((rows) => assignmentLookupFromRows(rows, profile)),
+    Effect.flatMap((rows) => assignmentLookupFromRows(transaction, rows, profile)),
   );
 
 const remove = (
@@ -590,6 +779,7 @@ const remove = (
           return Effect.fail(persistenceUnavailable('The removal scope could not be verified'));
         }
         return assignmentFromRow(row, input.profile).pipe(
+          Effect.flatMap((assignment) => readAssignmentCompatibility(transaction, assignment)),
           Effect.map((assignment) => ({
             _tag: 'removed' as const,
             assignment,
@@ -646,9 +836,9 @@ const migrate = (
         input.targetPriceGroupRef.resourceType,
         input.targetPriceGroupRef.resourceId,
         input.compatibility.catalogRevision,
-        input.compatibility.contractId,
-        input.compatibility.contractRevision,
-        input.compatibility.definitionRevision,
+        input.compatibility.requiredContract.contractId,
+        input.compatibility.requiredContract.version,
+        input.compatibility.definitionRevisionNumber,
         input.effectiveFrom,
         input.reason,
         input.recordedAt,
@@ -693,7 +883,11 @@ const migrate = (
             );
             return source === undefined
               ? Effect.fail(persistenceUnavailable('The migration routine returned an unknown profile'))
-              : assignmentFromRow(row, source.profile);
+              : assignmentFromRow(row, source.profile).pipe(
+                  Effect.flatMap((assignment) =>
+                    bindAssignmentCompatibility(transaction, assignment, input.compatibility),
+                  ),
+                );
           },
           { concurrency: 1 },
         ).pipe(
@@ -734,4 +928,6 @@ export const priceGroupRoutineAllowlist = Object.freeze([
   assignPriceGroupRoutine,
   removePriceGroupAssignmentRoutine,
   migratePriceGroupAssignmentsRoutine,
+  readPriceGroupCompatibilityEvidenceRoutine,
+  bindPriceGroupCompatibilityEvidenceRoutine,
 ]);

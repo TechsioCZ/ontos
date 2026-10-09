@@ -1,311 +1,181 @@
-import { Effect, Predicate } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { ActiveApplicationCompositionUnavailableError } from '@app/core-runtime';
+import { DateTime, Effect } from 'effect';
+import { TestClock } from 'effect/testing';
+import { expect, it, rstest } from 'effect-rstest';
 
 import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
-import type { DeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import {
   installedModuleCatalog,
+  InstalledModuleCatalogUnavailableError,
   makeInstalledModuleCatalogLayer,
   makeInstalledModuleCatalogLoader,
+  ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
+import { contentDigest, makeCompositionSnapshot, sealComposition } from '../fixtures/application-composition.ts';
 
-const contract = (appId: string, moduleId: string) =>
-  makeModuleContractFixture({
-    appId,
-    moduleId,
-    supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
-  });
+const contract = (appId: string, moduleId: string) => makeModuleContractFixture({ appId, moduleId });
+const property = () => contract('property-registry', 'property.registry');
+const documents = () => contract('documents-center', 'documents.center');
 
-const allowlist = (entries: DeploymentAllowlist['entries']): DeploymentAllowlist =>
-  Object.freeze({
-    entries: Object.freeze([...entries]),
-    revision: JSON.stringify(entries),
-  });
-
-const response = <Value>(value: Value, init: ResponseInit = {}): Response => {
-  const headers = {
-    'content-type': 'application/json',
-    ...Object.fromEntries(new Headers(init.headers)),
-  };
-  return new Response(Predicate.isString(value) ? value : JSON.stringify(value), {
-    ...init,
-    headers,
-  });
-};
-
-it.effect('loads two independent deployment contracts once and preserves both identities', () =>
-  Effect.gen(function* verifyCase1() {
-    const requests: string[] = [];
-    const documents = new Map([
-      [
-        'https://property.example.test/.well-known/ontos-module-manifest.json',
-        contract('property-registry', 'property.registry'),
-      ],
-      [
-        'https://documents.example.test/.well-known/ontos-module-manifest.json',
-        contract('documents-center', 'documents.center'),
-      ],
-    ]);
-    const loader = makeInstalledModuleCatalogLoader(
-      allowlist([
-        {
-          appId: 'property-registry',
-          contractUrl: [...documents.keys()][0] ?? '',
-        },
-        {
-          appId: 'documents-center',
-          contractUrl: [...documents.keys()][1] ?? '',
-        },
-      ]),
-      (url, init) => {
-        const normalized = new Request(url).url;
-        requests.push(normalized);
-        expect(init?.redirect).toBe('manual');
-        return Promise.resolve(response(documents.get(normalized)));
-      },
-    );
-    const [first, concurrent, cached] = yield* Effect.all([loader, loader, loader], {
-      concurrency: 'unbounded',
-    });
-    expect(first).toBe(concurrent);
-    expect(first).toBe(cached);
-    expect(requests).toHaveLength(2);
-    expect(first.moduleIds).toEqual(['documents.center', 'property.registry']);
-    expect(first.getByDeploymentAppId('property-registry')?.manifest.module.id).toBe('property.registry');
-    expect(first.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
+it.effect('loads the complete approved documents without contacting module deployments', () =>
+  Effect.gen(function* approvedDocuments() {
+    const snapshot = yield* makeCompositionSnapshot([property(), documents()]);
+    const fetch = rstest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('module deployments are offline'));
+    try {
+      const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+      expect(catalog.moduleIds).toEqual(['documents.center', 'property.registry']);
+      expect(catalog.getByDeploymentAppId('property-registry')?.manifest.module.id).toBe('property.registry');
+      expect(catalog.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
+      expect(catalog.composition.revision).toBe(snapshot.composition.revision);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      fetch.mockRestore();
+    }
   }),
 );
 
-it.effect('keeps a healthy deployment available on cold start when another is unreachable', () =>
-  Effect.gen(function* verifyCase2() {
-    const loader = makeInstalledModuleCatalogLoader(
-      allowlist([
-        {
-          appId: 'property-registry',
-          contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
-        },
-        {
-          appId: 'documents-center',
-          contractUrl: 'https://documents.example.test/.well-known/ontos-module-manifest.json',
-        },
-      ]),
-      (url) => {
-        const appId = new Request(url).url.includes('property') ? 'property-registry' : 'documents-center';
-        if (appId === 'property-registry') {
-          return Promise.reject(new Error('deployment unreachable'));
-        }
-        return Promise.resolve(response(contract(appId, 'documents.center')));
-      },
-    );
-
-    const catalog = yield* loader;
-
-    expect(catalog.moduleIds).toEqual(['documents.center']);
-    expect(catalog.deploymentStatuses).toEqual([
-      {
-        appId: 'documents-center',
-        moduleId: 'documents.center',
-        status: 'available',
-      },
-      {
-        appId: 'property-registry',
-        reason: 'unavailable',
-        status: 'unavailable',
-      },
-    ]);
-  }),
-);
-
-const unavailableResponses = [
-  ['unavailable', () => Promise.reject(new Error('secret host failure')), 'unavailable'],
-  ['redirect', () => Promise.resolve(response({}, { status: 302 })), 'unavailable'],
-  ['non-JSON', () => Promise.resolve(response('{}', { headers: { 'content-type': 'text/html' } })), 'incompatible'],
-  ['malformed JSON', () => Promise.resolve(response('{broken')), 'incompatible'],
-  ['invalid schema', () => Promise.resolve(response({ schemaVersion: '0' })), 'incompatible'],
-  [
-    'mismatched app',
-    () => Promise.resolve(response(contract('documents-center', 'property.registry'))),
-    'incompatible',
-  ],
-] as const;
-for (const [label, fetcher, expectedReason] of unavailableResponses) {
-  it.effect(`reports a typed deployment status for ${label} responses`, () =>
-    Effect.gen(function* verifyCase3() {
-      const loader = makeInstalledModuleCatalogLoader(
-        allowlist([
-          {
-            appId: 'property-registry',
-            contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
-          },
-        ]),
-        fetcher,
-      );
-      const catalog = yield* loader;
-      expect(catalog.moduleIds).toEqual([]);
-      expect(catalog.deploymentStatuses).toEqual([
-        {
-          appId: 'property-registry',
-          reason: expectedReason,
-          status: 'unavailable',
-        },
-      ]);
-    }),
-  );
-}
-
-it.live('classifies oversized, timed-out, and duplicate-module deployments without caching failures', () =>
-  Effect.gen(function* verifyCase4() {
-    let attempts = 0;
-    const one: DeploymentAllowlist['entries'][number] = {
-      appId: 'property-registry',
-      contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
-    };
-    const oversized = makeInstalledModuleCatalogLoader(
-      allowlist([one]),
-      () => Promise.resolve(response('x'.repeat(64))),
-      { maxBytes: 32 },
-    );
-    expect(yield* oversized).toMatchObject({
-      deploymentStatuses: [
-        {
-          appId: 'property-registry',
-          reason: 'unavailable',
-          status: 'unavailable',
-        },
-      ],
-    });
-
-    const timedOut = makeInstalledModuleCatalogLoader(
-      allowlist([one]),
-      (_url, init) => {
-        const pending = Promise.withResolvers<Response>();
-        init?.signal?.addEventListener('abort', () => pending.reject(new Error('aborted')), {
-          once: true,
-        });
-        return Promise.resolve(pending.promise);
-      },
-      { timeoutMs: 10 },
-    );
-    expect(yield* timedOut).toMatchObject({
-      deploymentStatuses: [
-        {
-          appId: 'property-registry',
-          reason: 'timeout',
-          status: 'unavailable',
-        },
-      ],
-    });
-
-    const duplicate = makeInstalledModuleCatalogLoader(
-      allowlist([
-        one,
-        {
-          appId: 'documents-center',
-          contractUrl: 'https://documents.example.test/.well-known/ontos-module-manifest.json',
-        },
-      ]),
-      (url) => {
-        attempts += 1;
-        return Promise.resolve(
-          new Request(url).url.includes('property')
-            ? response(contract('property-registry', 'shared.module'))
-            : response(contract('documents-center', 'shared.module')),
-        );
-      },
-    );
-    expect(yield* duplicate).toMatchObject({
-      deploymentStatuses: [
-        {
-          appId: 'documents-center',
-          reason: 'incompatible',
-          status: 'unavailable',
-        },
-        {
-          appId: 'property-registry',
-          reason: 'incompatible',
-          status: 'unavailable',
-        },
-      ],
-    });
-    yield* duplicate;
-    expect(attempts).toBe(4);
-  }),
-);
-
-it.effect('recovers a deployment on a later read and caches only the fully healthy result', () =>
-  Effect.gen(function* verifyCase5() {
-    let requests = 0;
-    const loader = makeInstalledModuleCatalogLoader(
-      allowlist([
-        {
-          appId: 'property-registry',
-          contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
-        },
-      ]),
-      () => {
-        requests += 1;
-        if (requests === 1) {
-          return Promise.reject(new Error('temporarily unreachable'));
-        }
-        return Promise.resolve(response(contract('property-registry', 'property.registry')));
-      },
-    );
-
-    const degraded = yield* loader;
-    const recovered = yield* loader;
-    const cached = yield* loader;
-
-    expect(degraded.deploymentStatuses).toEqual([
-      {
-        appId: 'property-registry',
-        reason: 'unavailable',
-        status: 'unavailable',
-      },
-    ]);
-    expect(recovered.deploymentStatuses).toEqual([
-      {
-        appId: 'property-registry',
-        moduleId: 'property.registry',
-        status: 'available',
-      },
-    ]);
-    expect(cached).toBe(recovered);
-    expect(requests).toBe(2);
-  }),
-);
-
-it.effect('recreates the complete cache by constructing a new deployment-revision Layer', () =>
-  Effect.gen(function* verifyCase6() {
-    let requests = 0;
-    const fetcher = () => {
-      requests += 1;
-      return Promise.resolve(response(contract('property-registry', 'property.registry')));
-    };
-    const firstRevision = makeInstalledModuleCatalogLayer(
-      allowlist([
-        {
-          appId: 'property-registry',
-          contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
-        },
-      ]),
-      fetcher,
-    );
-    const secondRevision = makeInstalledModuleCatalogLayer(
-      Object.freeze({
-        ...allowlist([
-          {
-            appId: 'property-registry',
-            contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
-          },
-        ]),
-        revision: 'revision-2',
+it.effect('observes the next approved revision through the same Layer without retaining an earlier catalog', () =>
+  Effect.gen(function* freshRevision() {
+    const firstSnapshot = yield* makeCompositionSnapshot([property()]);
+    const nextSnapshot = yield* makeCompositionSnapshot([property(), documents()]);
+    let current = firstSnapshot;
+    let reads = 0;
+    const layer = makeInstalledModuleCatalogLayer(
+      Effect.sync(() => {
+        reads += 1;
+        return current;
       }),
-      fetcher,
     );
+    const first = yield* installedModuleCatalog.pipe(Effect.provide(layer));
+    current = nextSnapshot;
+    const next = yield* installedModuleCatalog.pipe(Effect.provide(layer));
+    expect(first.moduleIds).toEqual(['property.registry']);
+    expect(next.moduleIds).toEqual(['documents.center', 'property.registry']);
+    expect(next.composition.revision).not.toBe(first.composition.revision);
+    expect(reads).toBe(2);
+  }),
+);
 
-    yield* installedModuleCatalog.pipe(Effect.provide(firstRevision));
-    yield* installedModuleCatalog.pipe(Effect.provide(firstRevision));
-    yield* installedModuleCatalog.pipe(Effect.provide(secondRevision));
-    expect(requests).toBe(2);
+it.effect('fails closed when approved source disappears instead of using the previous valid catalog', () =>
+  Effect.gen(function* noRetainedFallback() {
+    const snapshot = yield* makeCompositionSnapshot([property()]);
+    let available = true;
+    const loader = makeInstalledModuleCatalogLoader(
+      Effect.suspend(() =>
+        available
+          ? Effect.succeed(snapshot)
+          : Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'authority unavailable' })),
+      ),
+    );
+    expect((yield* loader).moduleIds).toEqual(['property.registry']);
+    available = false;
+    expect(yield* Effect.flip(loader)).toBeInstanceOf(InstalledModuleCatalogUnavailableError);
+    available = true;
+    expect((yield* loader).moduleIds).toEqual(['property.registry']);
+  }),
+);
+
+it.effect('rejects changed embedded bytes even when the outer revision is resealed', () =>
+  Effect.gen(function* pinnedBytes() {
+    const snapshot = yield* makeCompositionSnapshot([property()]);
+    const [module] = snapshot.composition.modules;
+    if (module === undefined) {
+      throw new Error('missing fixture module');
+    }
+    const changed = sealComposition({
+      ...snapshot.composition,
+      modules: [{ ...module, contractDocument: `${module.contractDocument}\n` }],
+    });
+    const error = yield* Effect.flip(
+      makeInstalledModuleCatalogLoader(Effect.succeed({ ...snapshot, composition: changed })),
+    );
+    expect(error).toBeInstanceOf(InstalledModuleCatalogUnavailableError);
+  }),
+);
+
+it.effect('rejects an internally hashed document that contradicts the approved module identity', () =>
+  Effect.gen(function* contradictoryIdentity() {
+    const snapshot = yield* makeCompositionSnapshot([property()]);
+    const [module] = snapshot.composition.modules;
+    if (module === undefined) {
+      throw new Error('missing fixture module');
+    }
+    const contractDocument = JSON.stringify(contract('other-deployment', 'property.registry'));
+    const digest = contentDigest(contractDocument);
+    const changed = sealComposition({
+      ...snapshot.composition,
+      modules: [
+        {
+          ...module,
+          contract: { ...module.contract, sha256: digest },
+          contractDocument,
+          publicContract: { ...module.publicContract, sha256: digest },
+        },
+      ],
+    });
+    expect(
+      yield* Effect.flip(makeInstalledModuleCatalogLoader(Effect.succeed({ ...snapshot, composition: changed }))),
+    ).toBeInstanceOf(InstalledModuleCatalogUnavailableError);
+  }),
+);
+
+it.effect('requires authority to be valid now, with neither future observations nor expired fallback', () =>
+  Effect.gen(function* authorityWindow() {
+    const snapshot = yield* makeCompositionSnapshot([property()]);
+    const now = yield* TestClock.testClockWith((clock) => clock.currentTimeMillis);
+    const invalidWindows = [
+      { observedAt: DateTime.makeUnsafe(now - 60_000), validUntil: DateTime.makeUnsafe(now) },
+      { observedAt: DateTime.makeUnsafe(now + 1000), validUntil: DateTime.makeUnsafe(now + 60_000) },
+    ];
+    for (const validity of invalidWindows) {
+      expect(
+        yield* Effect.flip(makeInstalledModuleCatalogLoader(Effect.succeed({ ...snapshot, ...validity }))),
+      ).toBeInstanceOf(InstalledModuleCatalogUnavailableError);
+    }
+  }),
+);
+
+it.effect('rechecks expiry after successful admission and resumes only after the same release is freshly renewed', () =>
+  Effect.gen(function* expiryAndRenewal() {
+    const snapshot = yield* makeCompositionSnapshot([property()], 1000);
+    let current = snapshot;
+    const loader = makeInstalledModuleCatalogLoader(Effect.sync(() => current));
+    expect((yield* loader).composition.revision).toBe(snapshot.composition.revision);
+    yield* TestClock.adjust('1 second');
+    expect(yield* Effect.flip(loader)).toBeInstanceOf(InstalledModuleCatalogUnavailableError);
+    const now = yield* TestClock.testClockWith((clock) => clock.currentTimeMillis);
+    current = { ...snapshot, observedAt: DateTime.makeUnsafe(now), validUntil: DateTime.makeUnsafe(now + 1000) };
+    expect((yield* loader).composition.revision).toBe(snapshot.composition.revision);
+  }),
+);
+
+it.effect('acquires the catalog service before authority exists and reports absence only on admission', () =>
+  Effect.gen(function* coldBootstrap() {
+    let reads = 0;
+    const layer = makeInstalledModuleCatalogLayer(
+      Effect.suspend(() => {
+        reads += 1;
+        return Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'not yet published' }));
+      }),
+    );
+    expect(reads).toBe(0);
+    yield* ShellInstalledModuleCatalog.pipe(Effect.provide(layer));
+    expect(reads).toBe(0);
+    const error = yield* Effect.flip(installedModuleCatalog.pipe(Effect.provide(layer)));
+    expect(error).toBeInstanceOf(InstalledModuleCatalogUnavailableError);
+    expect(reads).toBe(1);
+  }),
+);
+
+it.effect('rejects a contradictory complete bundle without admitting a healthy subset', () =>
+  Effect.gen(function* atomicCatalog() {
+    const snapshot = yield* makeCompositionSnapshot([
+      property(),
+      contract('duplicate-property', 'property.registry'),
+      documents(),
+    ]);
+    expect(yield* Effect.flip(makeInstalledModuleCatalogLoader(Effect.succeed(snapshot)))).toBeInstanceOf(
+      InstalledModuleCatalogUnavailableError,
+    );
   }),
 );

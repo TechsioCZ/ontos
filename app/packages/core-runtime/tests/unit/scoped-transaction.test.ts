@@ -1,7 +1,8 @@
 import { getTableConfig, pgTable, uuid } from 'drizzle-orm/pg-core';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
   OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
@@ -27,6 +28,28 @@ const transactionService = (
   update: unusedOperation,
   verify,
 });
+const principalId = '10000000-0000-4000-8000-000000000001';
+const tenantId = '20000000-0000-4000-8000-000000000001';
+const legalEntityId = '30000000-0000-4000-8000-000000000001';
+const transactionScope = (withLegalEntity: boolean) => {
+  const context = withLegalEntity
+    ? Schema.decodeSync(TrustedPrincipalContextSchema)({
+        authBindingId: '40000000-0000-4000-8000-000000000001',
+        authContextRef: 'better-auth-session:scoped-transaction',
+        authMethod: 'session',
+        legalEntityId,
+        principalId,
+        tenantId,
+      })
+    : Schema.decodeSync(TrustedPrincipalContextSchema)({
+        authBindingId: '40000000-0000-4000-8000-000000000001',
+        authContextRef: 'better-auth-session:scoped-transaction',
+        authMethod: 'session',
+        principalId,
+        tenantId,
+      });
+  return { ...context, correlationId: 'c-1' };
+};
 it.effect('installs and verifies transaction-local scope and exposes no transaction controls', () =>
   Effect.gen(function* migratedTest1() {
     let calls = 0;
@@ -38,19 +61,14 @@ it.effect('installs and verifies transaction-local scope and exposes no transact
       Effect.sync(() => {
         calls += 1;
         return Option.some({
-          legal_entity_id: 'entity',
-          tenant_id: 'tenant',
+          legal_entity_id: legalEntityId,
+          tenant_id: tenantId,
         });
       }),
     );
-    const capability = yield* installOperationalScopeFromTransactionService({
-      authContextRef: 'job:test:run:scoped-transaction',
-      authMethod: 'system',
-      correlationId: 'c-1',
-      legalEntityId: 'entity',
-      principalId: 'principal',
-      tenantId: 'tenant',
-    }).pipe(Effect.provideService(OperationalScopeTransaction, transaction));
+    const capability = yield* installOperationalScopeFromTransactionService(transactionScope(true)).pipe(
+      Effect.provideService(OperationalScopeTransaction, transaction),
+    );
     expect(calls).toBe(2);
     expect('commit' in capability).toBe(false);
     expect('query' in capability).toBe(false);
@@ -66,13 +84,9 @@ it.effect('fails closed when transaction settings do not match', () =>
       Effect.succeedSome({ legal_entity_id: '', tenant_id: 'foreign' }),
     );
     const error = yield* Effect.flip(
-      installOperationalScopeFromTransactionService({
-        authContextRef: 'job:test:run:scoped-transaction',
-        authMethod: 'system',
-        correlationId: 'c-1',
-        principalId: 'principal',
-        tenantId: 'tenant',
-      }).pipe(Effect.provideService(OperationalScopeTransaction, transaction)),
+      installOperationalScopeFromTransactionService(transactionScope(false)).pipe(
+        Effect.provideService(OperationalScopeTransaction, transaction),
+      ),
     );
     expect(Predicate.isTagged(error, 'OperationContextUnavailable')).toBe(true);
   }),

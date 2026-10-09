@@ -275,7 +275,7 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
         if (payloadSchema === undefined) {
           return Effect.fail(invalidCollectorInput('The Domain Event declaration has no payload schema'));
         }
-        return Schema.decodeEffect(payloadSchema)(decoded.payloadJson).pipe(
+        return Schema.decodeEffect(payloadSchema, { onExcessProperty: 'error' })(decoded.payloadJson).pipe(
           Effect.catchTag('SchemaError', () =>
             Effect.fail(invalidCollectorInput('The Domain Event payload violates its declared contract')),
           ),

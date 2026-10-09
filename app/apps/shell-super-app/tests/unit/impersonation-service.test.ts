@@ -7,6 +7,7 @@ import {
   IdentityTargetInvalidError,
   PrincipalResolver,
   SupportRecoveryPrincipalContextResolver,
+  TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import type {
   ActionRuntimeService,
@@ -14,7 +15,7 @@ import type {
   SupportRecoveryPrincipalContextResolverService,
 } from '@app/core-runtime';
 import { makeSignature } from 'better-auth/crypto';
-import { Context, Effect, Match, Option } from 'effect';
+import { Context, Effect, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -54,6 +55,7 @@ const targetPrincipalId = '30000000-0000-4000-8000-000000000001';
 const tenantId = '40000000-0000-4000-8000-000000000001';
 const impersonationSessionId = 'impersonated-session-id';
 const restoredSessionId = 'restored-session-id';
+const staffAuthenticationNamespaceId = 'test.staff.better-auth.v1';
 
 const configuration = {
   baseUrl: 'http://localhost:3000',
@@ -114,13 +116,16 @@ const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService =
     readonly originalSessionId: string;
     readonly tenantId: string;
   }) =>
-    Effect.succeed({
-      authBindingId: input.originalAuthBindingId,
-      authContextRef: `better-auth-session:${input.originalSessionId}`,
-      authMethod: 'session',
-      principalId: input.originalPrincipalId,
-      tenantId: input.tenantId,
-    }),
+    Effect.succeed(
+      Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+        authBindingId: input.originalAuthBindingId,
+        authContextRef: `better-auth-session:${input.originalSessionId}`,
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
+        authMethod: 'session',
+        principalId: input.originalPrincipalId,
+        tenantId: input.tenantId,
+      }),
+    ),
 };
 
 const provider = (impersonated: boolean): SupportAuthProvider => ({
@@ -194,13 +199,14 @@ it.effect('preserves definite requested-checkpoint errors for their declared HTT
                     principalId: originalPrincipalId,
                     tenantId,
                   },
-                  principal: {
+                  principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
                     authBindingId: originalAuthBindingId,
                     authContextRef: `better-auth-session:${restoredSessionId}`,
+                    authenticationNamespaceId: staffAuthenticationNamespaceId,
                     authMethod: 'session',
                     principalId: originalPrincipalId,
                     tenantId,
-                  },
+                  }),
                   setCookieHeaders: [],
                   state: 'authenticated',
                 }),
@@ -260,13 +266,14 @@ it.effect('removes the provider session and recovery when started evidence canno
               principalId: originalPrincipalId,
               tenantId,
             },
-            principal: {
+            principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
               authBindingId: originalAuthBindingId,
               authContextRef: `better-auth-session:${restoredSessionId}`,
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
               authMethod: 'session',
               principalId: originalPrincipalId,
               tenantId,
-            },
+            }),
             setCookieHeaders: [],
             state: 'authenticated',
           }),

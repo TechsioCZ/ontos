@@ -1,3 +1,4 @@
+import { getDocumentCompositionRevision } from '@app/shared-contracts';
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
 import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import type { HttpApi, HttpApiClient, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
@@ -53,6 +54,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface PartyCommandRecoveryOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly [correlationIdOption]: string;
   readonly gateway?: GatewayContextClientOptions;
   readonly [traceIdOption]?: string;
@@ -65,17 +67,31 @@ export interface PartyCommandOptions extends PartyCommandRecoveryOptions {
 type PartyCommandInvocation = readonly [credential: string, options: PartyCommandOptions];
 type PartyCommandRecoveryInvocation = readonly [credential: string, options: PartyCommandRecoveryOptions];
 
+export interface PartyCreateRecoveryAuthorization {
+  readonly credential: Redacted.Redacted<string>;
+  readonly options: {
+    readonly baseUrl: string | URL;
+    readonly compositionRevision: string;
+  };
+}
+
 interface PartyCommandRequestContextValue {
   readonly baseUrl: string | URL;
+  readonly compositionRevision: string | undefined;
   readonly credential: Redacted.Redacted<string>;
+  /** Action transport header; the endpoint contracts declare no header codec. */
+  readonly idempotencyKey: string | undefined;
   readonly requestCorrelation: string;
-  readonly requestTrace?: string;
+  readonly requestTrace: string | undefined;
 }
 
 const defaultPartyCommandRequestContext: PartyCommandRequestContextValue = {
   baseUrl: '/party-registry-api',
+  compositionRevision: undefined,
   credential: Redacted.make(''),
+  idempotencyKey: undefined,
   requestCorrelation: '',
+  requestTrace: undefined,
 };
 
 const PartyCommandRequestContext = Context.Reference<PartyCommandRequestContextValue>('PartyCommandRequestContext', {
@@ -86,19 +102,14 @@ const applyPartyCommandRequestContext = (request: HttpClientRequest.HttpClientRe
   Effect.gen(function* applyRequestContext() {
     const context = yield* PartyCommandRequestContext;
     const withBaseUrl = HttpClientRequest.prependUrl(request, context.baseUrl.toString());
-    return HttpClientRequest.setHeaders(
-      withBaseUrl,
-      context.requestTrace === undefined
-        ? {
-            authorization: Redacted.value(context.credential),
-            'x-correlation-id': context.requestCorrelation,
-          }
-        : {
-            authorization: Redacted.value(context.credential),
-            'x-correlation-id': context.requestCorrelation,
-            'x-trace-id': context.requestTrace,
-          },
-    );
+    // Header construction skips undefined values, so absent optional headers stay absent.
+    return HttpClientRequest.setHeaders(withBaseUrl, {
+      authorization: Redacted.value(context.credential),
+      'idempotency-key': context.idempotencyKey,
+      'x-correlation-id': context.requestCorrelation,
+      'x-trace-id': context.requestTrace,
+      'x-ontos-composition-revision': context.compositionRevision,
+    });
   });
 
 const transformPartyCommandClient = HttpClient.mapRequestEffect(applyPartyCommandRequestContext);
@@ -122,19 +133,17 @@ const partyCommandRecoveryClient = Effect.runSync(
 const providePartyCommandRequestContext = <Success, Failure, Requirements>(
   effect: Effect.Effect<Success, Failure, Requirements>,
   gatewayAssertion: string,
-  options: PartyCommandRecoveryOptions,
+  options: PartyCommandRecoveryOptions & { readonly idempotencyKey?: string },
 ) => {
   const context: PartyCommandRequestContextValue = {
     baseUrl: options.baseUrl ?? '/party-registry-api',
+    compositionRevision: options.compositionRevision,
     credential: Redacted.make(gatewayAssertion),
+    idempotencyKey: options.idempotencyKey,
     requestCorrelation: options[correlationIdOption],
+    requestTrace: options[traceIdOption],
   };
-  const requestTrace = options[traceIdOption];
-  return Effect.provideService(
-    effect,
-    PartyCommandRequestContext,
-    requestTrace === undefined ? context : { ...context, requestTrace },
-  );
+  return Effect.provideService(effect, PartyCommandRequestContext, context);
 };
 
 const invokeAuthorized = <Success, Failure>(
@@ -145,12 +154,21 @@ const invokeAuthorized = <Success, Failure>(
 
 // Defer gateway loading to the attempt: the gateway's ARES coordinator uses these exact commands.
 // Assertions are acquired afresh, never cached in a client, route loader, or module initializer.
-const invoke = <Success, Failure>(
-  options: PartyCommandRecoveryOptions,
-  operation: (gatewayAssertion: string) => Effect.Effect<Success, Failure>,
+const invoke = <Success, Failure, Options extends PartyCommandRecoveryOptions>(
+  options: Options,
+  operation: (
+    gatewayAssertion: string,
+    approvedOptions: Options & { readonly baseUrl: string; readonly compositionRevision: string },
+  ) => Effect.Effect<Success, Failure>,
 ) =>
   Effect.promise(() => import('./action-gateway.ts')).pipe(
-    Effect.flatMap(({ operationGateway }) => operationGateway.invoke(operation, options.gateway)),
+    Effect.flatMap(({ operationGateway }) =>
+      operationGateway.invoke(
+        (credential, { apiBaseUrl, compositionRevision }) =>
+          operation(credential, { ...options, baseUrl: apiBaseUrl, compositionRevision }),
+        options.gateway,
+      ),
+    ),
   );
 
 export const resolvePartyCommandCommitWithAuthorization = (
@@ -166,256 +184,203 @@ export const resolvePartyCommandCommitWithAuthorization = (
 export const resolvePartyCommandCommit = (
   payload: ResolvePartyCommandCommitPayload,
   options: PartyCommandRecoveryOptions,
-) => invoke(options, (authorization) => resolvePartyCommandCommitWithAuthorization(payload, authorization, options));
+) =>
+  invoke(options, (authorization, approvedOptions) =>
+    resolvePartyCommandCommitWithAuthorization(payload, authorization, approvedOptions),
+  );
 
 const defineCommand = <Payload, Success, Failure>(
-  operation: (
-    client: PartyCommandClient,
-    payload: Payload,
-    headers: { readonly 'idempotency-key': string },
-  ) => Effect.Effect<Success, Failure>,
+  operation: (client: PartyCommandClient, payload: Payload) => Effect.Effect<Success, Failure>,
 ) => {
   const authorized = (payload: Payload, ...[credential, options]: PartyCommandInvocation) =>
-    invokeAuthorized(credential, options, (client) =>
-      operation(client, payload, { 'idempotency-key': options.idempotencyKey }),
-    );
+    invokeAuthorized(credential, options, (client) => operation(client, payload));
   const execute = (payload: Payload, options: PartyCommandOptions) =>
-    invoke(options, (credential) => authorized(payload, credential, options));
+    invoke(options, (credential, approvedOptions) => authorized(payload, credential, approvedOptions));
   return { authorized, execute };
 };
 
 export const { authorized: addContactPointWithAuthorization, execute: addContactPoint } = defineCommand(
-  (client, payload: AddContactPointPayload, headers) =>
+  (client, payload: AddContactPointPayload) =>
     Schema.encodeUnknownEffect(AddContactPointPayloadSchema)(payload).pipe(
-      Effect.flatMap((endpointPayload) =>
-        client.partyCommands.addContactPoint({
-          headers,
-          payload: endpointPayload,
-        }),
-      ),
+      Effect.flatMap((endpointPayload) => client.partyCommands.addContactPoint({ payload: endpointPayload })),
     ),
 );
 
 export const { authorized: addPartyOfficialIdentifierWithAuthorization, execute: addPartyOfficialIdentifier } =
-  defineCommand((client, payload: AddPartyOfficialIdentifierPayload, headers) =>
+  defineCommand((client, payload: AddPartyOfficialIdentifierPayload) =>
     Schema.encodeUnknownEffect(AddPartyOfficialIdentifierPayloadSchema)(payload).pipe(
       Effect.flatMap((endpointPayload) =>
-        client.partyCommands.addPartyOfficialIdentifier({
-          headers,
-          payload: endpointPayload,
-        }),
+        client.partyCommands.addPartyOfficialIdentifier({ payload: endpointPayload }),
       ),
     ),
   );
 
 export const { authorized: archivePartyWithAuthorization, execute: archiveParty } = defineCommand(
-  (client, payload: ArchivePartyPayload, headers) =>
-    client.partyCommands.archiveParty({
-      headers,
-      payload,
-    }),
+  (client, payload: ArchivePartyPayload) => client.partyCommands.archiveParty({ payload }),
 );
 
 export const { authorized: confirmDuplicatePartiesWithAuthorization, execute: confirmDuplicateParties } = defineCommand(
-  (client, payload: ConfirmDuplicatePartiesPayload, headers) =>
-    client.partyCommands.confirmDuplicateParties({
-      headers,
-      payload,
-    }),
+  (client, payload: ConfirmDuplicatePartiesPayload) => client.partyCommands.confirmDuplicateParties({ payload }),
 );
 
 export const { authorized: correctPartyFactWithAuthorization, execute: correctPartyFact } = defineCommand(
-  (client, payload: CorrectPartyFactPayload, headers) => {
+  (client, payload: CorrectPartyFactPayload) => {
     // HttpApi retains an overload for each union member; narrow without weakening its schema.
     if (payload.factKind !== 'RELATIONSHIP') {
-      return client.partyCommands.correctPartyFact({ headers, payload });
+      return client.partyCommands.correctPartyFact({ payload });
     }
     if (payload.correctionMode === 'SUPERSEDE') {
-      return client.partyCommands.correctPartyFact({ headers, payload });
+      return client.partyCommands.correctPartyFact({ payload });
     }
-    return client.partyCommands.correctPartyFact({ headers, payload });
+    return client.partyCommands.correctPartyFact({ payload });
   },
 );
 
 export const { authorized: counterpartyCreateWithAuthorization, execute: counterpartyCreate } = defineCommand(
-  (client, payload: CounterpartyCreatePayload, headers) =>
-    client.partyCommands.counterpartyCreate({
-      headers,
-      payload,
-    }),
+  (client, payload: CounterpartyCreatePayload) => client.partyCommands.counterpartyCreate({ payload }),
 );
 
 export const { authorized: counterpartyRoleAddWithAuthorization, execute: counterpartyRoleAdd } = defineCommand(
-  (client, payload: CounterpartyRoleAddPayload, headers) =>
-    client.partyCommands.counterpartyRoleAdd({
-      headers,
-      payload,
-    }),
+  (client, payload: CounterpartyRoleAddPayload) => client.partyCommands.counterpartyRoleAdd({ payload }),
 );
 
 export const { authorized: counterpartyRoleEndWithAuthorization, execute: counterpartyRoleEnd } = defineCommand(
-  (client, payload: CounterpartyRoleEndPayload, headers) =>
-    client.partyCommands.counterpartyRoleEnd({
-      headers,
-      payload,
-    }),
+  (client, payload: CounterpartyRoleEndPayload) => client.partyCommands.counterpartyRoleEnd({ payload }),
 );
 
 export const { authorized: createPartyRelationshipWithAuthorization, execute: createPartyRelationship } = defineCommand(
-  (client, payload: CreatePartyRelationshipPayload, headers) =>
-    client.partyCommands.createPartyRelationship({
-      headers,
-      payload,
-    }),
+  (client, payload: CreatePartyRelationshipPayload) => client.partyCommands.createPartyRelationship({ payload }),
 );
 
 export const { authorized: createPartyWithAuthorization, execute: createParty } = defineCommand(
-  (client, payload: CreatePartyPayload, headers) =>
+  (client, payload: CreatePartyPayload) =>
     Schema.encodeUnknownEffect(CreatePartyPayloadSchema)(payload).pipe(
-      Effect.flatMap((endpointPayload) =>
-        client.partyCommands.createParty({
-          headers,
-          payload: endpointPayload,
-        }),
-      ),
+      Effect.flatMap((endpointPayload) => client.partyCommands.createParty({ payload: endpointPayload })),
     ),
 );
 
 export const { authorized: dismissDuplicateCandidateWithAuthorization, execute: dismissDuplicateCandidate } =
-  defineCommand((client, payload: DismissDuplicateCandidatePayload, headers) =>
-    client.partyCommands.dismissDuplicateCandidate({
-      headers,
-      payload,
-    }),
+  defineCommand((client, payload: DismissDuplicateCandidatePayload) =>
+    client.partyCommands.dismissDuplicateCandidate({ payload }),
   );
 
 export const { authorized: endContactPointWithAuthorization, execute: endContactPoint } = defineCommand(
-  (client, payload: EndContactPointPayload, headers) =>
-    client.partyCommands.endContactPoint({
-      headers,
-      payload,
-    }),
+  (client, payload: EndContactPointPayload) => client.partyCommands.endContactPoint({ payload }),
 );
 
 export const { authorized: endPartyOfficialIdentifierWithAuthorization, execute: endPartyOfficialIdentifier } =
-  defineCommand((client, payload: EndPartyOfficialIdentifierPayload, headers) =>
-    client.partyCommands.endPartyOfficialIdentifier({
-      headers,
-      payload,
-    }),
+  defineCommand((client, payload: EndPartyOfficialIdentifierPayload) =>
+    client.partyCommands.endPartyOfficialIdentifier({ payload }),
   );
 
 export const { authorized: endPartyRelationshipWithAuthorization, execute: endPartyRelationship } = defineCommand(
-  (client, payload: EndPartyRelationshipPayload, headers) =>
-    client.partyCommands.endPartyRelationship({
-      headers,
-      payload,
-    }),
+  (client, payload: EndPartyRelationshipPayload) => client.partyCommands.endPartyRelationship({ payload }),
 );
 
 export const {
   authorized: markDuplicateCandidateNeedsEvidenceWithAuthorization,
   execute: markDuplicateCandidateNeedsEvidence,
-} = defineCommand((client, payload: MarkDuplicateCandidateNeedsEvidencePayload, headers) =>
-  client.partyCommands.markDuplicateCandidateNeedsEvidence({
-    headers,
-    payload,
-  }),
+} = defineCommand((client, payload: MarkDuplicateCandidateNeedsEvidencePayload) =>
+  client.partyCommands.markDuplicateCandidateNeedsEvidence({ payload }),
 );
 
 export const { authorized: matchPartyWithAuthorization, execute: matchParty } = defineCommand(
-  (client, payload: MatchPartyPayload, headers) =>
-    client.partyCommands.matchParty({
-      headers,
-      payload,
-    }),
+  (client, payload: MatchPartyPayload) => client.partyCommands.matchParty({ payload }),
 );
 
 export const { authorized: requestSearchRebuildWithAuthorization, execute: requestSearchRebuild } = defineCommand(
-  (client, payload: RequestSearchRebuildPayload, headers) =>
-    client.partyCommands.requestSearchRebuild({
-      headers,
-      payload,
-    }),
+  (client, payload: RequestSearchRebuildPayload) => client.partyCommands.requestSearchRebuild({ payload }),
 );
 
 export const {
   authorized: resolveDuplicateCandidateCreateWithAuthorization,
   execute: resolveDuplicateCandidateCreate,
-} = defineCommand((client, payload: ResolveDuplicateCandidateCreatePayload, headers) =>
-  client.partyCommands.resolveDuplicateCandidateCreate({
-    headers,
-    payload,
-  }),
+} = defineCommand((client, payload: ResolveDuplicateCandidateCreatePayload) =>
+  client.partyCommands.resolveDuplicateCandidateCreate({ payload }),
 );
 
 export const { authorized: resolveDuplicateCandidateMatchWithAuthorization, execute: resolveDuplicateCandidateMatch } =
-  defineCommand((client, payload: ResolveDuplicateCandidateMatchPayload, headers) =>
-    client.partyCommands.resolveDuplicateCandidateMatch({
-      headers,
-      payload,
-    }),
+  defineCommand((client, payload: ResolveDuplicateCandidateMatchPayload) =>
+    client.partyCommands.resolveDuplicateCandidateMatch({ payload }),
   );
 
 export const { authorized: unarchivePartyWithAuthorization, execute: unarchiveParty } = defineCommand(
-  (client, payload: UnarchivePartyPayload, headers) =>
-    client.partyCommands.unarchiveParty({
-      headers,
-      payload,
-    }),
+  (client, payload: UnarchivePartyPayload) => client.partyCommands.unarchiveParty({ payload }),
 );
 
 export const { authorized: updateContactPointWithAuthorization, execute: updateContactPoint } = defineCommand(
-  (client, payload: UpdateContactPointPayload, headers) =>
-    client.partyCommands.updateContactPoint({
-      headers,
-      payload,
-    }),
+  (client, payload: UpdateContactPointPayload) => client.partyCommands.updateContactPoint({ payload }),
 );
 
 export const { authorized: updatePartyOfficialIdentifierWithAuthorization, execute: updatePartyOfficialIdentifier } =
-  defineCommand((client, payload: UpdatePartyOfficialIdentifierPayload, headers) =>
-    client.partyCommands.updatePartyOfficialIdentifier({
-      headers,
-      payload,
-    }),
+  defineCommand((client, payload: UpdatePartyOfficialIdentifierPayload) =>
+    client.partyCommands.updatePartyOfficialIdentifier({ payload }),
   );
 
 export const { authorized: updatePartyRelationshipWithAuthorization, execute: updatePartyRelationship } = defineCommand(
-  (client, payload: UpdatePartyRelationshipPayload, headers) =>
-    client.partyCommands.updatePartyRelationship({
-      headers,
-      payload,
-    }),
+  (client, payload: UpdatePartyRelationshipPayload) => client.partyCommands.updatePartyRelationship({ payload }),
 );
 
 export const { authorized: updatePartyWithAuthorization, execute: updateParty } = defineCommand(
-  (client, payload: UpdatePartyPayload, headers) =>
+  (client, payload: UpdatePartyPayload) =>
     Schema.encodeUnknownEffect(UpdatePartyPayloadSchema)(payload).pipe(
-      Effect.flatMap((endpointPayload) =>
-        client.partyCommands.updateParty({
-          headers,
-          payload: endpointPayload,
-        }),
-      ),
+      Effect.flatMap((endpointPayload) => client.partyCommands.updateParty({ payload: endpointPayload })),
     ),
 );
 
 /** Resolve commit before reading the durable result; never resubmit Create during recovery. */
-export const recoverPartyCreate = (payload: ResolvePartyCommandCommitPayload, options: PartyCommandRecoveryOptions) =>
+export const recoverPartyCreateWithAuthorization = <AcquireFailure, AcquireRequirements>(
+  payload: ResolvePartyCommandCommitPayload,
+  acquire: () => Effect.Effect<PartyCreateRecoveryAuthorization, AcquireFailure, AcquireRequirements>,
+  options: PartyCommandRecoveryOptions & { readonly compositionRevision: string },
+) =>
   Effect.gen(function* recoverCreate() {
-    const resolution = yield* resolvePartyCommandCommit(payload, options);
+    const originalInvocationId = payload.invocationId;
+    const originalRevision = options.compositionRevision;
+    const originalCorrelationId = options[correlationIdOption];
+    const originalTraceId = options[traceIdOption];
+    const commitAuthorization = yield* acquire();
+    const commitCredential = commitAuthorization.credential;
+    const selectedBaseUrl = commitAuthorization.options.baseUrl.toString();
+    const commitRevision = commitAuthorization.options.compositionRevision;
+    if (commitRevision !== originalRevision) {
+      return yield* new PartyCreateRecoveryUnavailable({
+        reason: 'The commit recovery credential does not match the original release',
+      });
+    }
+    let commitOptions: PartyCommandRecoveryOptions = {
+      baseUrl: selectedBaseUrl,
+      compositionRevision: originalRevision,
+      correlationId: originalCorrelationId,
+    };
+    if (originalTraceId !== undefined) {
+      commitOptions = { ...commitOptions, traceId: originalTraceId };
+    }
+    const resolution = yield* resolvePartyCommandCommitWithAuthorization(
+      { invocationId: originalInvocationId },
+      Redacted.value(commitCredential),
+      commitOptions,
+    );
     if (resolution.state !== 'COMMITTED') {
       return { _tag: 'PartyCreateRecoveryPending' as const, resolution };
     }
-    const actionInvocationId = yield* Schema.decodeEffect(ActionInvocationIdSchema)(payload.invocationId);
-    const decision = yield* invoke(options, (authorization) =>
-      executePartyMatchDecisionWithAuthorization(
-        { actionInvocationId },
-        authorization,
-        options[correlationIdOption],
-        options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl },
-      ),
+    const actionInvocationId = yield* Schema.decodeEffect(ActionInvocationIdSchema)(originalInvocationId);
+    const decisionAuthorization = yield* acquire();
+    const decisionCredential = decisionAuthorization.credential;
+    if (
+      decisionAuthorization.options.compositionRevision !== originalRevision ||
+      decisionAuthorization.options.baseUrl.toString() !== selectedBaseUrl ||
+      Redacted.value(decisionCredential) === Redacted.value(commitCredential)
+    ) {
+      return yield* new PartyCreateRecoveryUnavailable({
+        reason: 'The decision recovery credential must be fresh and select the same original release',
+      });
+    }
+    const decision = yield* executePartyMatchDecisionWithAuthorization(
+      { actionInvocationId },
+      Redacted.value(decisionCredential),
+      originalCorrelationId,
+      { baseUrl: selectedBaseUrl, compositionRevision: originalRevision },
     );
     const result = committedCreateResult(decision);
     if (result === null) {
@@ -426,3 +391,20 @@ export const recoverPartyCreate = (payload: ResolvePartyCommandCommitPayload, op
     }
     return { _tag: 'PartyCreateRecovered' as const, result };
   });
+
+export const recoverPartyCreate = (payload: ResolvePartyCommandCommitPayload, options: PartyCommandRecoveryOptions) =>
+  getDocumentCompositionRevision().pipe(
+    Effect.flatMap((compositionRevision) =>
+      recoverPartyCreateWithAuthorization(
+        payload,
+        () =>
+          invoke(options, (credential, approvedOptions) =>
+            Effect.succeed({
+              credential: Redacted.make(credential),
+              options: { baseUrl: approvedOptions.baseUrl, compositionRevision: approvedOptions.compositionRevision },
+            }),
+          ),
+        { ...options, compositionRevision },
+      ),
+    ),
+  );

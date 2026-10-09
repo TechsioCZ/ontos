@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Data, Schema } from 'effect';
 
 const AUTHORIZATION_MUTATION_SAGA_ERROR_CODES = [
   'authorization_mutation_intent_invalid',
@@ -10,12 +10,10 @@ const AUTHORIZATION_MUTATION_SAGA_ERROR_CODES = [
 const AuthorizationMutationSagaErrorCodeSchema = Schema.Literals(AUTHORIZATION_MUTATION_SAGA_ERROR_CODES);
 export type AuthorizationMutationSagaErrorCode = typeof AuthorizationMutationSagaErrorCodeSchema.Type;
 
-export class AuthorizationMutationSagaError extends Schema.TaggedError<AuthorizationMutationSagaError>()(
-  'AuthorizationMutationSagaError',
-  {
-    code: AuthorizationMutationSagaErrorCodeSchema,
-    externalMutationMayHaveSucceeded: Schema.Boolean,
-    reason: Schema.String,
-    retryable: Schema.Boolean,
-  },
-) {}
+export class AuthorizationMutationSagaError extends Data.TaggedError('AuthorizationMutationSagaError')<{
+  readonly cause?: unknown;
+  readonly code: typeof AuthorizationMutationSagaErrorCodeSchema.Type;
+  readonly externalMutationMayHaveSucceeded: boolean;
+  readonly reason: string;
+  readonly retryable: boolean;
+}> {}

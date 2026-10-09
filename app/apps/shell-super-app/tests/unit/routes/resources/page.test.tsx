@@ -4,9 +4,13 @@ import { Deferred, Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import type { ReactNode } from 'react';
 
-import { ShellResourceResponseSchema, ShellTargetForbiddenProblemSchema } from '../../../../shared/api.ts';
+import {
+  ShellReloadRequiredProblemSchema,
+  ShellResourceResponseSchema,
+  ShellTargetForbiddenProblemSchema,
+} from '../../../../shared/api.ts';
 import type { MediaAttachmentResponse, ShellResourceResponse } from '../../../../shared/api.ts';
-import type { ResourcePageModel } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.data.ts';
+import type { ResourcePageModel } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/resource-page-model.ts';
 import ResourcePage from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
@@ -37,6 +41,7 @@ const translations = new Map(
   Object.entries({
     'shell.auth.logout.failed': 'Logout failed',
     'shell.dashboard.unavailable': 'The dashboard is unavailable',
+    'shell.moduleTarget.reload_required': 'Reload this page to continue',
     'shell.resource.forbidden': 'You cannot open this resource',
     'shell.resource.media.absent': 'This resource has no media',
     'shell.resource.media.attach': 'Attach media',
@@ -138,6 +143,14 @@ const forbiddenProblem = Schema.decodeUnknownSync(ShellTargetForbiddenProblemSch
   type: 'https://ontos.dev/problems/shell-target-forbidden',
 });
 
+const reloadRequiredProblem = Schema.decodeUnknownSync(ShellReloadRequiredProblemSchema)({
+  _tag: 'ShellReloadRequiredProblem',
+  detail: 'This document belongs to a previous application release.',
+  status: 409,
+  title: 'Application reload required',
+  type: 'https://ontos.dev/problems/shell-reload-required',
+});
+
 const attachButton = () => screen.getByRole('button');
 
 const lastDashboardProps = (): DashboardPageProps => {
@@ -165,6 +178,7 @@ beforeEach(() => {
     legalEntitySwitchPending: false,
     logoutFailed: false,
     logoutPending: false,
+    reloadRequired: false,
     tenantSwitchFailed: false,
     tenantSwitchPending: false,
   });
@@ -177,6 +191,10 @@ afterEach(() => {
 });
 
 it.each([
+  {
+    blockedText: 'Reload this page to continue',
+    shellState: 'reload_required' as const,
+  },
   {
     blockedText: 'The dashboard is unavailable',
     shellState: 'unavailable' as const,
@@ -199,6 +217,16 @@ it.each([
     expect(browserRunPromiseMock).not.toHaveBeenCalled();
   },
 );
+
+it('refuses media attachment when document hydration requires a reload', () => {
+  shellControlsMock.mockReturnValueOnce({ reloadRequired: true });
+  renderResourcePage(readyModel());
+
+  expect(screen.getByText('Reload this page to continue')).toBeTruthy();
+  expect(screen.queryByRole('button')).toBeNull();
+  expect(dashboardRenders).toHaveLength(0);
+  expect(attachResourceMediaMock).not.toHaveBeenCalled();
+});
 
 const closedStates: readonly {
   readonly closedText: string;
@@ -342,7 +370,10 @@ it.live('attaches media for the loaded resource reference and reports success on
     yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Media attached')).toBeTruthy()));
 
     expect(attachResourceMediaMock).toHaveBeenCalledTimes(1);
-    expect(attachResourceMediaMock).toHaveBeenCalledWith(model.resource.ref);
+    expect(attachResourceMediaMock).toHaveBeenCalledWith({
+      ...model.resource.ref,
+      compositionRevision: shell.state === 'authenticated' ? shell.compositionRevision : undefined,
+    });
     expect(screen.queryByText('Attaching media…')).toBeNull();
     expect(screen.queryByText('Attaching the media failed')).toBeNull();
     expect(attachButton().hasAttribute('disabled')).toBe(false);
@@ -361,6 +392,21 @@ it.live('settles a typed attachment failure into its own status without a defect
     expect(screen.queryByText('Media attached')).toBeNull();
     expect(screen.queryByText('Attaching media…')).toBeNull();
     expect(attachButton().hasAttribute('disabled')).toBe(false);
+  }),
+);
+
+it.live('removes the media seam when attachment admission requires a fresh document', () =>
+  Effect.gen(function* staleAttachmentRequiresANewDocument() {
+    attachResourceMediaMock.mockReturnValue(Effect.fail(reloadRequiredProblem));
+    const user = userEvent.setup();
+    renderResourcePage(readyModel());
+
+    yield* Effect.promise(() => user.click(attachButton()));
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByText('Reload this page to continue')).toBeTruthy()));
+
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByText('Media attached')).toBeNull();
+    expect(attachResourceMediaMock).toHaveBeenCalledTimes(1);
   }),
 );
 

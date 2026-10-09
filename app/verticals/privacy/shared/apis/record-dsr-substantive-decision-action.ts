@@ -11,10 +11,6 @@ import {
 
 export { RecordDsrSubstantiveDecisionPayloadSchema } from '../actions/record-dsr-substantive-decision.ts';
 
-const RecordDsrSubstantiveDecisionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecordDsrSubstantiveDecisionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordDsrSubstantiveDecisionActionInvalidProblem',
   400,
@@ -128,15 +124,37 @@ const actionErrors = [
   RecordDsrSubstantiveDecisionActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const recordDsrSubstantiveDecisionActionGroupDefinition = HttpApiGroup.make('recordDsrSubstantiveDecisionAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/record-dsr-substantive-decision', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RecordDsrSubstantiveDecisionPayloadSchema),
+      success: RecordDsrSubstantiveDecisionResultSchema,
+    }),
+  )
+  .middleware(RecordDsrSubstantiveDecisionActionSchemaErrorMiddleware);
+
+export type RecordDsrSubstantiveDecisionActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'recordDsrSubstantiveDecisionAction',
+  HttpApiGroup.Endpoints<typeof recordDsrSubstantiveDecisionActionGroupDefinition>
+>;
+
+const RecordDsrSubstantiveDecisionActionGroup: RecordDsrSubstantiveDecisionActionGroupContract =
+  recordDsrSubstantiveDecisionActionGroupDefinition;
+
 export const RecordDsrSubstantiveDecisionActionApi = HttpApi.make('RecordDsrSubstantiveDecisionActionApi').add(
-  HttpApiGroup.make('recordDsrSubstantiveDecisionAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/record-dsr-substantive-decision', {
-        error: actionErrors,
-        headers: RecordDsrSubstantiveDecisionActionHeadersSchema,
-        payload: Schema.toEncoded(RecordDsrSubstantiveDecisionPayloadSchema),
-        success: RecordDsrSubstantiveDecisionResultSchema,
-      }),
-    )
-    .middleware(RecordDsrSubstantiveDecisionActionSchemaErrorMiddleware),
+  RecordDsrSubstantiveDecisionActionGroup,
 );

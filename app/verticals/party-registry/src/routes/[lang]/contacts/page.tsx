@@ -1,8 +1,11 @@
-import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
+import '../../index.css';
+
+import { partyRegistryI18nResources } from '../../../i18n/resources.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
-const ContactsPage = () => {
+const ContactsContent = () => {
   const { t } = useModernI18n();
   const headingId = 'contacts-heading';
 
@@ -28,5 +31,16 @@ const ContactsPage = () => {
     </>
   );
 };
+
+const ContactsPage = () => (
+  <FederatedI18nBoundary
+    defaultNamespace="party-registry"
+    fallbackLanguage="en"
+    resources={partyRegistryI18nResources}
+    supportedLanguages={['en', 'cs']}
+  >
+    <ContactsContent />
+  </FederatedI18nBoundary>
+);
 
 export default ContactsPage;

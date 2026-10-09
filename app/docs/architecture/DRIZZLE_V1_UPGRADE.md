@@ -112,21 +112,13 @@ Result on this repository: `normalized 333 fragments in 13 snapshots`. After nor
 
 - **Relational Queries v2.** `apps/shell-super-app/api/auth/db/schema.ts` replaces the four `relations(...)` declarations with one `authRelations = defineRelations(authDatabaseSchema, ...)` graph (`user.sessions`, `user.accounts`, `user.apiKeys`, and the `one` reverse edges). Core and Contacts export `coreRelations` / `contactsRelations` as `defineRelations(<tables>)` with no navigational relations yet, which still exposes typed `db.query.<table>` access.
 - **Executor types.** `NodePgDatabase<typeof coreRelations>`, `NodePgDatabase<typeof authRelations>`, and `NodePgDatabase<typeof contactsRelations>` replace the schema-keyed generics. Every `drizzle({ client, schema })` call site now passes `relations` instead.
-- **Better Auth.** All five `drizzleAdapter` imports (`service.ts`, `api-key-service.ts`, `impersonation-service.ts`, `stage-demo-bootstrap-runtime-infrastructure.ts`, the e2e fixture) and `scripts/initialize-local-development.mts` import from `@better-auth/drizzle-adapter/relations-v2`. The adapter still receives `schema: authDatabaseSchema` (tables keyed by Better Auth model name) and `transaction: true`.
+- **Better Auth.** All five `drizzleAdapter` imports (`service.ts`, `api-key-service.ts`, `impersonation-service.ts`, `stage-accounts-bootstrap-runtime-infrastructure.ts`, the e2e fixture) and `scripts/initialize-local-development.mts` import from `@better-auth/drizzle-adapter/relations-v2`. The adapter still receives `schema: authDatabaseSchema` (tables keyed by Better Auth model name) and `transaction: true`.
 - **Row-level security.** The deprecated `table.enableRLS()` wrapper `enableGovernedRls` was removed from `@app/core-runtime`; Contacts tables are declared with `contactsSchema.table.withRLS(...)`. `tenantRlsPolicies` and `tenantLegalEntityRlsPolicies` are unchanged.
 - **Deprecated helpers.** `getTableColumns` became `getColumns`; the Core schema-contract test asserts the sequence column through `getSQLType()` because v1 reports `dataType` as `bigint int64`.
 
-### Better Auth 1.7 account identity
+### Better Auth account identity
 
-Better Auth 1.7 keys every provider identity on `(issuer, accountId)` and requires a non-null `account.issuer` column with a unique index over both columns. The Auth owner adds that column in `20260905002342_add-account-issuer`. The migration is expand-then-tighten inside one transaction:
-
-1. add `issuer` as nullable;
-2. refuse to continue if any `provider_id` needs URI encoding (OntOS only has `credential`);
-3. backfill `local:credential` for credential accounts and `local:oauth:<providerId>` otherwise, which is Better Auth's `provider-id` identity strategy;
-4. refuse to continue if two rows share an `(issuer, account_id)` identity;
-5. set `NOT NULL` and create `auth_account_issuer_account_id_uk`.
-
-Better Auth 1.6 writers do not supply `issuer`, so the migration also installs a `BEFORE INSERT` trigger (`auth.account_issuer_compat`) that derives the value with the same rule when a row arrives without one. That keeps the previous Shell release working against the expanded schema, as the [Deployment](./DEPLOYMENT.md) sequence requires, so the Auth migration stays expand-only. Drop the trigger and its function in a later contraction migration once no Better Auth 1.6 writer remains; Better Auth 1.7 always writes `issuer` explicitly, so the trigger is inert for the new release.
+Better Auth 1.7.0 to 1.7.2 keyed provider identities on `(issuer, accountId)`, so `20260905002342_add-account-issuer` added a backfilled `account.issuer` column, a unique index over it, and a `BEFORE INSERT` compatibility trigger for 1.6 writers. Better Auth 1.7.3 returned to the 1.6 identity `(providerId, accountId)` and stopped writing `issuer`. `account-provider-identity` (Auth and Commerce portal auth) is the expand step: it makes `issuer` nullable and adds a unique index on `(provider_id, account_id)`, which every existing row satisfies because each provider has one issuer. Both owners keep an `account_issuer_compat` trigger that derives the legacy issuer for rows written without one, so the previous release still finds accounts the new release creates. A later release, once no 1.7.2 provider remains, drops the column, its index, and both triggers with their functions.
 
 ### New `db:check` script
 

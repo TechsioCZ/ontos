@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface NoticeVersionsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type NoticeVersionsAuthorizedInvocation = readonly [
@@ -37,13 +38,17 @@ export const executeNoticeVersionsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: NoticeVersionsAuthorizedInvocation
 ) =>
   noticeVersionsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.noticeVersions.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.noticeVersions.execute({ payload })),
   );
 
 export const executeNoticeVersions = (
   payload: NoticeVersionsRequest,
   ...[requestCorrelation, options = {}]: NoticeVersionsOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeNoticeVersionsWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeNoticeVersionsWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

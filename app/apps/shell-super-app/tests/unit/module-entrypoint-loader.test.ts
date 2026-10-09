@@ -18,7 +18,6 @@ import { TestClock } from 'effect/testing';
 import {
   loadModuleEntrypointComposition,
   MODULE_LOAD_CONCURRENCY,
-  resolveThenLoadModuleTarget,
   settleModuleEntrypointLoad,
   settleModuleEntrypointLoads,
 } from '../../src/routes/module-entrypoint-loader.ts';
@@ -519,39 +518,62 @@ it.effect('does not surface a late remote rejection after a timeout', () =>
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(
-  'never invokes a remote loader after a %s target resolution',
-  (outcome) => {
-    let loads = 0;
-    return Effect.gen(function* verifyRejectedTargetResolution() {
-      const failure = yield* Effect.flip(
-        resolveThenLoadModuleTarget(Effect.fail({ outcome }), () =>
-          Effect.sync(() => {
-            loads += 1;
-            return 'unreachable';
-          }),
-        ),
-      );
-      expect(failure).toEqual({ outcome });
-      expect(loads).toBe(0);
+it.effect('shares load permits across separate navigations until uncancellable imports settle', () =>
+  Effect.gen(function* boundsLoadsAcrossNavigations() {
+    const pending = Array.from({ length: MODULE_LOAD_CONCURRENCY }, () => Promise.withResolvers<RemoteModule>());
+    const firstWindowStarted = Promise.withResolvers<null>();
+    let started = 0;
+    const makeRequest = (index: number, timeoutMs: number) => ({
+      identity: `navigation-${index}/page`,
+      isCompatible: compatibleRemoteModule,
+      load: () => {
+        started += 1;
+        if (started === MODULE_LOAD_CONCURRENCY) {
+          firstWindowStarted.resolve(null);
+        }
+        return pending[index]?.promise ?? Promise.resolve({ default: remoteDefault });
+      },
+      timeoutMs,
     });
-  },
-);
+    yield* Effect.gen(function* verifyGlobalPermits() {
+      const navigations = yield* Effect.forEach(
+        pending,
+        (_, index) => Effect.forkChild(settleModuleEntrypointLoads([makeRequest(index, 10)])),
+        { concurrency: 1 },
+      );
+      yield* Effect.promise(() => firstWindowStarted.promise);
+      yield* TestClock.adjust('10 millis');
+      const timedOut = yield* Effect.forEach(navigations, (navigation) => Fiber.join(navigation), { concurrency: 1 });
+      expect(timedOut.every(([result]) => result?.state === 'unavailable' && result.reason === 'timeout')).toBe(true);
 
-it.effect('invokes the lazy registry only after receiving an approved target', () =>
-  Effect.gen(function* verifyApprovedTargetResolution() {
-    let loads = 0;
-    const target = {
-      appId: 'inventory-app',
-      componentKey: 'inventory.stock.page',
-    };
-    const result = yield* resolveThenLoadModuleTarget(Effect.succeed(target), (approved) =>
-      Effect.sync(() => {
-        loads += 1;
-        return approved.componentKey;
-      }),
+      const anotherNavigation = yield* Effect.forkChild(
+        settleModuleEntrypointLoads([makeRequest(MODULE_LOAD_CONCURRENCY, 10)]),
+      );
+      yield* TestClock.adjust('10 millis');
+      expect(yield* Fiber.join(anotherNavigation)).toEqual([
+        {
+          identity: `navigation-${MODULE_LOAD_CONCURRENCY}/page`,
+          reason: 'timeout',
+          state: 'unavailable',
+        },
+      ]);
+      expect(started).toBe(MODULE_LOAD_CONCURRENCY);
+
+      for (const remote of pending) {
+        remote.resolve({ default: remoteDefault });
+      }
+      yield* Effect.promise(() => Promise.all(pending.map(({ promise }) => promise)));
+      const healthyNavigation = yield* settleModuleEntrypointLoads([makeRequest(MODULE_LOAD_CONCURRENCY + 1, 100)]);
+      expect(healthyNavigation[0]?.state).toBe('ready');
+      expect(started).toBe(MODULE_LOAD_CONCURRENCY + 1);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          for (const remote of pending) {
+            remote.resolve({ default: remoteDefault });
+          }
+        }),
+      ),
     );
-    expect(result).toBe('inventory.stock.page');
-    expect(loads).toBe(1);
-  }),
+  }).pipe(Effect.provide(TestClock.layer())),
 );

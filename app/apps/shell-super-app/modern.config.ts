@@ -4,24 +4,24 @@ import { fileURLToPath } from 'node:url';
 
 import { defineConfig } from '@modern-js/app-tools';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
+import type { UltramodernAppUserConfig } from '@modern-js/ultramodern-app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
-import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
+import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-import {
-  contains as optionContains,
-  getOrElse as getOptionOrElse,
-  getOrUndefined as getOptionOrUndefined,
-} from 'effect/Option';
+import { getOrElse as getOptionOrElse, getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
+  Array as SchemaArray,
   Boolean as BooleanSchema,
   Literals,
+  NonEmptyString,
   NumberFromString,
   OptionFromUndefinedOr,
+  Struct,
   Trim,
   check,
   decodeTo,
@@ -30,21 +30,19 @@ import {
   isBetween,
   isInt,
   isMinLength,
+  makeFilter,
 } from 'effect/Schema';
 import { transform } from 'effect/SchemaTransformation';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
+  CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareWorkerConfig,
   createCloudflareWorkerSecurity,
   createWorkerSsrPlugins,
   createZephyrRspackPlugin,
   resolveCloudflareExternal,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
-import {
-  DeploymentAllowlistOverlaySchema,
-  DeploymentAllowlistTopologySchema,
-} from './api/modules/deployment-allowlist.ts';
-import { createModuleDeploymentAllowlistBuildInput } from './module-deployment-allowlist.config.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -83,19 +81,14 @@ const getBuildBoolean = (name: string): boolean =>
     getResultOrThrow(decodeUnknownResult(OptionFromUndefinedOr(BuildBooleanSchema))(getBuildConfigEnvironment(name))),
     () => false,
   );
-const cloudflareDeployMode = getResultOrThrow(
-  decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
-    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
-  ),
-);
-const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
-const postgresProtocolCommonJsEntry = fileURLToPath(
-  new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')),
-);
-const postgresPoolCommonJsEntry = createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
-const cloudflareWorkerRemoteStubPath = fileURLToPath(
-  new URL('src/api/cloudflare-worker-remote-stub.ts', import.meta.url),
-);
+const cloudflareDeployEnabled = resolveDeployTarget().target === 'cloudflare';
+// Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
+const cloudflareWorkerConfig = cloudflareDeployEnabled
+  ? createCloudflareWorkerConfig(envValue, {
+      cpuMs: CLOUDFLARE_WORKER_CPU_MS.shell,
+      publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
+    })
+  : undefined;
 const effectApiSourceDirectory = fileURLToPath(new URL('api/', import.meta.url));
 /* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 const cloudflareRuntimeExternal = (
@@ -108,36 +101,31 @@ const cloudflareRuntimeExternal = (
 
 const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
   createZephyrRspackPlugin({
-    configure: () => withBuildConfigEnvironment('ZE_FAIL_BUILD', 'true', withZephyrRspack()),
-    readToken: () => getOptionalBuildConfig('ZE_CI_TOKEN'),
+    configure: () => withZephyrRspack(),
+    readEnvironment: getOptionalBuildConfig,
   });
 
 const appId = 'shell-super-app';
 const moduleFederationConfigPath = fileURLToPath(new URL('module-federation.config.ts', import.meta.url));
 const referenceTopologyPath = fileURLToPath(new URL('../../topology/reference-topology.json', import.meta.url));
-const referenceTopology = getResultOrThrow(
-  decodeUnknownResult(fromJsonString(DeploymentAllowlistTopologySchema), {
-    onExcessProperty: 'preserve',
-  })(readFileSync(referenceTopologyPath, 'utf-8')),
-);
-const developmentOverlayPath = fileURLToPath(
-  new URL('../../topology/local-overlays/development.json', import.meta.url),
-);
-const developmentOverlay = getResultOrThrow(
-  decodeUnknownResult(fromJsonString(DeploymentAllowlistOverlaySchema), {
-    onExcessProperty: 'preserve',
-  })(readFileSync(developmentOverlayPath, 'utf-8')),
-);
-const moduleDeploymentAllowlist = createModuleDeploymentAllowlistBuildInput({
-  cloudflareDeployEnabled,
-  developmentOverlay,
-  readEnvironment: getBuildConfigEnvironment,
-  topology: referenceTopology,
+// This is a build check of the native BFF convention, never a runtime module registry.
+const NativeBffTopologySchema = Struct({
+  verticals: SchemaArray(
+    Struct({
+      api: Struct({ bff: Struct({ prefix: NonEmptyString }) }),
+      id: NonEmptyString,
+    }).pipe(
+      check(
+        makeFilter(({ api, id }) =>
+          api.bff.prefix === `/${id}-api` ? undefined : `Native module dispatch requires /${id}-api`,
+        ),
+      ),
+    ),
+  ),
 });
-Object.assign(globalThis, {
-  ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
-  ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
-});
+getResultOrThrow(
+  decodeUnknownResult(fromJsonString(NativeBffTopologySchema))(readFileSync(referenceTopologyPath, 'utf-8')),
+);
 const cloudflareWorkerName = 'app-shell-super-app';
 const port = getOptionOrElse(
   getResultOrThrow(
@@ -175,18 +163,6 @@ const shellDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserCon
   'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
 };
 
-if (
-  cloudflareDeployEnabled &&
-  getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
-  configuredCloudflareUrl === undefined &&
-  configuredSiteUrl === undefined &&
-  inferredCloudflareUrl === undefined
-) {
-  throw new Error(
-    `Cloudflare deploy for ${appId} needs ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP, MODERN_PUBLIC_SITE_URL, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN.`,
-  );
-}
-
 export default defineConfig(
   presetUltramodern(
     withOptionalProperty(
@@ -203,47 +179,20 @@ export default defineConfig(
           runtimeFramework: 'effect',
         },
         builderPlugins: [pluginTailwindcss()],
-      } satisfies AppToolsUserConfig,
+        deploy: { releaseEnvelopeRole: 'shell' },
+      } satisfies UltramodernAppUserConfig,
       cloudflareDeployEnabled,
       'deploy',
       {
+        releaseEnvelopeRole: 'shell',
         worker: {
+          ...cloudflareWorkerConfig,
           compatibilityDate: '2026-06-02',
           name: cloudflareWorkerName,
           security: createCloudflareWorkerSecurity(),
-          services: [
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_BINDING') ??
-                'VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER',
-              prefix: '/commerce-customer-context-api',
-              service:
-                getOptionalBuildConfig('VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_NAME') ??
-                'app-commerce-customer-context',
-            },
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_PARTY_REGISTRY_WORKER_BINDING') ?? 'VERTICAL_PARTY_REGISTRY_WORKER',
-              prefix: '/party-registry-api',
-              service: getOptionalBuildConfig('VERTICAL_PARTY_REGISTRY_WORKER_NAME') ?? 'app-party-registry',
-            },
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_PAYMENT_TERM_CATALOG_WORKER_BINDING') ??
-                'VERTICAL_PAYMENT_TERM_CATALOG_WORKER',
-              prefix: '/payment-term-catalog-api',
-              service:
-                getOptionalBuildConfig('VERTICAL_PAYMENT_TERM_CATALOG_WORKER_NAME') ?? 'app-payment-term-catalog',
-            },
-            {
-              binding: getOptionalBuildConfig('VERTICAL_PRIVACY_WORKER_BINDING') ?? 'VERTICAL_PRIVACY_WORKER',
-              prefix: '/privacy-api',
-              service: getOptionalBuildConfig('VERTICAL_PRIVACY_WORKER_NAME') ?? 'app-privacy',
-            },
-          ],
           ssr: true,
         },
-      } satisfies NonNullable<AppToolsUserConfig['deploy']>,
+      } satisfies NonNullable<UltramodernAppUserConfig['deploy']>,
       {
         dev: {
           // Keep shell dev assets origin-relative so the shell works through
@@ -259,7 +208,8 @@ export default defineConfig(
         },
         output: {
           assetPrefix,
-          disableTsChecker: false,
+          // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
+          disableTsChecker: true,
           distPath: {
             html: './',
             root: buildOutputRoot,
@@ -286,6 +236,8 @@ export default defineConfig(
             localeDetection: {
               fallbackLanguage: 'en',
               ignoreRedirectRoutes: [
+                // The Shell runtime contract the Application Composition publisher observes.
+                '/.well-known',
                 '/@mf-types',
                 '/assets',
                 '/bundles',
@@ -320,11 +272,9 @@ export default defineConfig(
         },
         source: {
           alias: {
-            '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
+            '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
           },
           globalVars: {
-            ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
-            ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
             ULTRAMODERN_SITE_URL: siteUrl,
           },
           mainEntryName: 'index',
@@ -341,17 +291,15 @@ export default defineConfig(
               .uniqueName('shellSuperApp')
               .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
           },
-          rspack: ((config, { environment, rspack }) => {
+          rspack: ((config, { environment, isServer, rspack }) => {
+            config.plugins.push(
+              new rspack.DefinePlugin({
+                __ONTOS_BROWSER_BUILD__: !(isServer || environment.name === 'workerSSR'),
+              }),
+            );
             if (!cloudflareDeployEnabled) {
               return;
             }
-            const configuredAliases = config.resolve.alias;
-            config.resolve.alias =
-              configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
-            Object.assign(config.resolve.alias, {
-              'pg-pool$': postgresPoolCommonJsEntry,
-              'pg-protocol$': postgresProtocolCommonJsEntry,
-            });
             const configuredExternals = config.externals;
             config.externals = [cloudflareRuntimeExternal];
             if (configuredExternals !== undefined) {
@@ -366,15 +314,12 @@ export default defineConfig(
                 __dirname: false,
                 __filename: false,
               });
-              config.plugins.push(
-                ...createWorkerSsrPlugins(rspack, effectApiSourceDirectory),
-                new rspack.NormalModuleReplacementPlugin(/^partyRegistry\//u, cloudflareWorkerRemoteStubPath),
-              );
+              config.plugins.push(...createWorkerSsrPlugins(rspack, effectApiSourceDirectory));
             }
           }) satisfies RspackConfigHandler,
         },
-      } satisfies AppToolsUserConfig,
-    ) satisfies AppToolsUserConfig,
+      } satisfies UltramodernAppUserConfig,
+    ) satisfies UltramodernAppUserConfig,
     {
       appId,
       deliveryUnit: {

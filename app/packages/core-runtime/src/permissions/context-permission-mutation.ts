@@ -20,17 +20,11 @@ import type { PrincipalRef } from './principal-ref.ts';
 
 export { ContextPermissionMutationUnavailable } from './context-permission-mutation-error.ts';
 
-const unavailable = (cause?: unknown): ContextPermissionMutationUnavailable => {
-  const failure = new ContextPermissionMutationUnavailable({
+const unavailable = (cause?: unknown): ContextPermissionMutationUnavailable =>
+  new ContextPermissionMutationUnavailable({
+    cause,
     reason: 'The context permission relationship mutation could not be completed safely',
   });
-  return cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', {
-        configurable: true,
-        value: cause,
-      });
-};
 
 export interface ContextPermissionRelationshipMutationInput {
   readonly legalEntityId?: string;
@@ -85,11 +79,13 @@ const prepare = (
   return {
     granteeId: input.principal.principalId,
     resourceId,
-    scopeRelationship: {
-      relation: 'tenant',
-      subjectId: input.tenantId,
-      subjectType: 'tenant',
-    },
+    scopeRelationships: [
+      {
+        relation: 'tenant',
+        subjectId: input.tenantId,
+        subjectType: 'tenant',
+      },
+    ],
   };
 };
 

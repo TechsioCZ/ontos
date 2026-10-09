@@ -2,6 +2,7 @@ import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 import {
   BusinessPermissionCodeSchema,
+  BusinessPermissionScopeKindSchema,
   defineBusinessPermission,
   defineBusinessPermissionCatalog,
 } from '../../src/permissions/business-permission.ts';
@@ -22,6 +23,14 @@ const readPermission = defineBusinessPermission({
 
 it('builds an immutable, reciprocal and versioned permission catalog', () => {
   expect(Schema.decodeSync(BusinessPermissionCodeSchema)('retail.repeat_order')).toBe('retail.repeat_order');
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('pricing.price_group.read')).toBe('pricing.price_group.read');
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('assortment.configuration.read')).toBe(
+    'assortment.configuration.read',
+  );
+  expect(Schema.decodeSync(BusinessPermissionScopeKindSchema)('assortment_boundary')).toBe('assortment_boundary');
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('pricing.currency_support.read')).toBe(
+    'pricing.currency_support.read',
+  );
   const catalog = defineBusinessPermissionCatalog({
     authorityGroups: {
       'Counterparty Buyer': [Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.profile.read')],
@@ -37,6 +46,9 @@ it('builds an immutable, reciprocal and versioned permission catalog', () => {
 
 it('rejects invalid codes, duplicate catalog entries, and one-sided group membership', () => {
   expect(() => defineBusinessPermission({ ...readPermission, key: 'generic.manage' })).toThrow();
+  for (const permission of ['assortment.manage', 'assortment.boundary.replace', 'assortment.rules.create']) {
+    expect(() => Schema.decodeSync(BusinessPermissionCodeSchema)(permission)).toThrow();
+  }
   expect(() =>
     defineBusinessPermissionCatalog({
       authorityGroups: {
@@ -53,6 +65,77 @@ it('rejects invalid codes, duplicate catalog entries, and one-sided group member
       permissions: [readPermission],
     }),
   ).toThrow(/undeclared authority group/u);
+});
+
+it('accepts only the canonical tenant-only Pricing target kinds', () => {
+  expect(
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['pricing_catalog', 'price_group'],
+      key: 'pricing.price_group.create',
+    }).allowedScopeKinds,
+  ).toEqual(['pricing_catalog', 'price_group']);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['counterparty'],
+      key: 'pricing.price_group.create',
+    }),
+  ).toThrow(/incompatible target scope/u);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['price_group'],
+    }),
+  ).toThrow(/incompatible target scope/u);
+});
+
+it('accepts Inventory permissions only for exact Inventory Resource scope', () => {
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('inventory.stock.correct')).toBe('inventory.stock.correct');
+  expect(
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['inventory_resource'],
+      key: 'inventory.stock.correct',
+    }).allowedScopeKinds,
+  ).toEqual(['inventory_resource']);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['counterparty'],
+      key: 'inventory.stock.correct',
+    }),
+  ).toThrow(/incompatible target scope/u);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['inventory_resource'],
+    }),
+  ).toThrow(/incompatible target scope/u);
+});
+
+it('models module-scoped context permissions without admitting a business target scope', () => {
+  expect(
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['module'],
+      key: 'pricing.currency_support.read',
+    }).allowedScopeKinds,
+  ).toEqual(['module']);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['pricing_catalog'],
+      key: 'pricing.currency_support.read',
+    }),
+  ).toThrow(/incompatible target scope/u);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['module'],
+      key: 'pricing.price_group.read',
+    }),
+  ).toThrow(/incompatible target scope/u);
 });
 
 it('allows only explicit authorization projection state transitions', () => {

@@ -66,10 +66,9 @@ export const ProcessingPurposesApi = HttpApi.make('ProcessingPurposesApi').add(
         ProcessingPurposesUnavailableProblemSchema,
         ProcessingPurposesInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: ProcessingPurposesRequestSchema,
-      query: {},
+
       success: ProcessingPurposesResponseSchema,
     }),
   ),

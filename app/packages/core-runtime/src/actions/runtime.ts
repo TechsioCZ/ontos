@@ -5,12 +5,21 @@ import { ConnectionError, UnknownError, isSqlError } from 'effect/unstable/sql/S
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
 } from '../auth/system-principal-context-provenance.ts';
 import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import {
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../modules/active-application-composition.ts';
+import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
+import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
 import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
@@ -18,7 +27,19 @@ import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { ModuleStateGate } from '../modules/module-state-gate.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { OperationalScopeResolver } from '../operations/context.ts';
-import { ContextAccess, toBusinessPermissionAccessKey } from '../permissions/context-access.ts';
+import {
+  ContextAccess,
+  InventoryAuthorizationResourceIdSchema,
+  InventoryAuthorizationResourceTypeSchema,
+  PricingAuthorizationResourceIdSchema,
+  isBusinessPermissionTargetCompatible,
+  toAssortmentPermissionAccessKey,
+  toAssortmentPermissionAccessObjectId,
+  toAssortmentPermissionAccessObjectIdForTargets,
+  isAssortmentPermissionTargetValid,
+  assortmentPermissionTargetRequiresLegalEntity,
+  toBusinessPermissionAccessKey,
+} from '../permissions/context-access.ts';
 import { BusinessPermissionCodeSchema } from '../permissions/business-permission.ts';
 import { ActionAuthorizationPreflight } from '../permissions/action-authorization-preflight.ts';
 import type { ActionAuthorizationPreflightService } from '../permissions/action-authorization-preflight.ts';
@@ -41,6 +62,7 @@ import {
   getCommittedActionDomainError,
 } from './context.ts';
 import type {
+  ActionAssortmentPermissionTarget,
   ActionBusinessPermissionTarget,
   ActionDeniedAuditEvidenceDeclaration,
   ActionLegalEntityPermission,
@@ -51,7 +73,9 @@ import type {
 import {
   decodeActionPayload,
   decodeActionResult,
+  getActionDecodedSuccessHook,
   getActionBusinessPermissionTargetResolver,
+  getActionAssortmentPermissionTargetResolver,
   getActionHandler,
   getActionResourcePermissionTargetResolver,
   getActionServiceFactory,
@@ -63,6 +87,7 @@ import {
   ActionHandlerExecutionError,
   ActionIdempotencyKeyRequired,
   ActionInvocationPersistenceError,
+  ActionInvocationNotFound,
   ActionInvocationStateError,
   ActionPayloadValidationError,
   ActionPermissionCheckError,
@@ -74,11 +99,24 @@ import {
   ActionTransactionError,
   ActionTrustedContextValidationError,
 } from './errors.ts';
-import type { ActionCoreError, ActionInvocationNotFound } from './errors.ts';
+import type { ActionCoreError } from './errors.ts';
+import { createActionTransactionErrorWithCause } from './transaction-error.ts';
 import type { DomainEventContractMap } from './events.ts';
+import { ModuleStateCheckUnavailableError, ModuleStateDeniedError } from '../modules/module-state-gate-errors.ts';
+import {
+  OperationAuthenticationRequired,
+  OperationContextDenied,
+  OperationContextInvalid,
+  OperationContextUnavailable,
+} from '../operations/errors.ts';
 import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
 import { PolicyDenied } from './policy.ts';
-import type { ActionInvocationRecord, ActionPolicyEvidence, ActionRepositoryService } from './repository.ts';
+import type {
+  ActionInvocationRecord,
+  ActionPolicyEvidence,
+  ActionRecordedRejection,
+  ActionRepositoryService,
+} from './repository.ts';
 import {
   ActionRepository,
   computeActionRequestHash,
@@ -166,6 +204,7 @@ export const ACTION_RUNTIME_STAGES = [
   'permission_checked',
   'policy_boundary',
   'invocation_running',
+  'composition_authority_locked',
   'invocation_locked',
   'database_scope_installed',
   'module_state_rechecked',
@@ -184,6 +223,8 @@ export interface RunActionInput<
   Services = Readonly<Record<string, never>>,
   HandlerRequirements = never,
 > {
+  /** Trusted receiving deployment audience for per-operation admission. */
+  readonly audience?: string;
   readonly payload: unknown;
   readonly principal: unknown;
   readonly registration: ActionRegistration<
@@ -250,10 +291,14 @@ export interface ActionRuntimeOptions {
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   readonly contextAccess?: (typeof ContextAccess)['Service'];
   readonly installScope?: typeof installOperationalScope;
+  readonly lockCompositionAuthority?: typeof lockApplicationCompositionAuthority;
   readonly moduleEntrypointGateway: ModuleEntrypointGatewayService;
   readonly moduleStateGate: ModuleStateGateService;
   readonly onStage?: (stage: ActionRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
+  readonly resolveCompositionRevision?: (
+    principal: TrustedPrincipalContext,
+  ) => Effect.Effect<string, ActionTransactionError>;
   readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
 }
@@ -274,11 +319,43 @@ const transactionFailure = () =>
     reason: 'The Action transaction did not complete successfully',
   });
 
+const ActionCoreErrorSchema = Schema.Union([
+  ActionAlreadyCommitted,
+  ActionCollectorError,
+  ActionCommitIndeterminate,
+  ActionHandlerExecutionError,
+  ActionIdempotencyKeyRequired,
+  ActionInvocationNotFound,
+  ActionInvocationPersistenceError,
+  ActionInvocationStateError,
+  ActionPermissionCheckError,
+  ActionPermissionDenied,
+  ActionPayloadValidationError,
+  ActionPolicyDenied,
+  ActionPolicyEvaluationError,
+  ActionRequestHashConflict,
+  ActionResultValidationError,
+  ActionTransactionError,
+  ActionTrustedContextValidationError,
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+  OperationAuthenticationRequired,
+  OperationContextDenied,
+  OperationContextInvalid,
+  OperationContextUnavailable,
+]);
+
 const alreadyCommitted = (invocationId: string) =>
   new ActionAlreadyCommitted({
     code: 'action_already_committed',
     invocationId,
     reason: 'This idempotency key already committed successfully',
+  });
+
+const permissionDeniedFailure = () =>
+  new ActionPermissionDenied({
+    code: 'action_permission_denied',
+    reason: 'The principal is not permitted to execute this Action',
   });
 
 const requestHashConflict = () =>
@@ -397,7 +474,6 @@ const BusinessStorefrontIdSchema = Schema.String.check(Schema.isMinLength(1), Sc
   Schema.brand('BusinessStorefrontId'),
   Schema.decodeTo(Schema.String),
 );
-
 const BusinessAccessTargetSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('retail_profile'),
@@ -418,6 +494,26 @@ const BusinessAccessTargetSchema = Schema.Union([
     storefrontId: BusinessStorefrontIdSchema,
     tenantId: BusinessTenantIdSchema,
   }),
+  Schema.Struct({
+    kind: Schema.Literal('pricing_catalog'),
+    pricingCatalogId: PricingAuthorizationResourceIdSchema,
+    tenantId: BusinessTenantIdSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('price_group'),
+    priceGroupId: PricingAuthorizationResourceIdSchema,
+    pricingCatalogId: PricingAuthorizationResourceIdSchema,
+    tenantId: BusinessTenantIdSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('inventory_resource'),
+    resource: Schema.Struct({
+      moduleId: Schema.Literal('commerce.inventory'),
+      resourceId: InventoryAuthorizationResourceIdSchema,
+      resourceType: InventoryAuthorizationResourceTypeSchema,
+    }),
+    tenantId: BusinessTenantIdSchema,
+  }),
 ]);
 const ActionBusinessPermissionTargetSchema = Schema.Struct({
   permission: BusinessPermissionCodeSchema,
@@ -429,7 +525,19 @@ const businessTargetResourceId = (target: ActionBusinessPermissionTarget['target
   if (target.kind === 'retail_profile') {
     return target.profileId;
   }
-  return target.kind === 'counterparty' ? target.counterpartyId : `${target.counterpartyId}:${target.storefrontId}`;
+  if (target.kind === 'counterparty') {
+    return target.counterpartyId;
+  }
+  if (target.kind === 'counterparty_storefront') {
+    return `${target.counterpartyId}:${target.storefrontId}`;
+  }
+  if (target.kind === 'pricing_catalog') {
+    return target.pricingCatalogId;
+  }
+  if (target.kind === 'price_group') {
+    return `${target.pricingCatalogId}:${target.priceGroupId}`;
+  }
+  return target.resource.resourceId;
 };
 
 const resolveActionBusinessPermissionTarget = <Payload>(
@@ -454,13 +562,31 @@ const resolveActionBusinessPermissionTarget = <Payload>(
     }).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(ActionBusinessPermissionTargetSchema)),
       Effect.filterOrFail(
-        (resolved) =>
-          resolved.target.tenantId === scope.tenantId &&
-          resolved.target.legalEntityId === scope.legalEntityId &&
-          (resolved.target.kind === 'counterparty_storefront'
-            ? scope.trustedStorefrontId === resolved.target.storefrontId &&
-              resolved.trustedStorefrontId === scope.trustedStorefrontId
-            : resolved.trustedStorefrontId === undefined),
+        (resolved) => {
+          if (!isBusinessPermissionTargetCompatible(resolved)) {
+            return false;
+          }
+          if (resolved.target.tenantId !== scope.tenantId) {
+            return false;
+          }
+          if (resolved.target.kind === 'pricing_catalog' || resolved.target.kind === 'price_group') {
+            return (
+              scope.legalEntityId === undefined &&
+              scope.trustedStorefrontId === undefined &&
+              resolved.trustedStorefrontId === undefined
+            );
+          }
+          if (resolved.target.kind === 'inventory_resource') {
+            return resolved.trustedStorefrontId === undefined;
+          }
+          return (
+            resolved.target.legalEntityId === scope.legalEntityId &&
+            (resolved.target.kind === 'counterparty_storefront'
+              ? scope.trustedStorefrontId === resolved.target.storefrontId &&
+                resolved.trustedStorefrontId === scope.trustedStorefrontId
+              : resolved.trustedStorefrontId === undefined)
+          );
+        },
         () =>
           new ActionPermissionCheckError({
             code: 'action_permission_check_failed',
@@ -482,12 +608,251 @@ const resolveActionBusinessPermissionTarget = <Payload>(
     );
   });
 
+const AssortmentResourceTargetSchema = Schema.Struct({
+  moduleId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+    Schema.brand('AssortmentModuleId'),
+  ),
+  resourceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+    Schema.brand('AssortmentResourceId'),
+  ),
+  resourceType: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+});
+const AssortmentSelectorKindSchema = Schema.Literals(['ALL', 'CATEGORY', 'PRODUCT', 'VARIANT', 'PACKAGE_OPTION']);
+const AssortmentPurposeSchema = Schema.Literals(['VISIBILITY', 'PURCHASE']);
+const AssortmentEffectSchema = Schema.Literals(['ALLOW', 'DENY']);
+const AssortmentSubjectKindSchema = Schema.Literals(['RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY']);
+const AssortmentSelectorSchema = Schema.Struct({
+  kind: AssortmentSelectorKindSchema,
+  target: Schema.optionalKey(AssortmentResourceTargetSchema),
+}).check(
+  Schema.makeFilter((selector) =>
+    (selector.kind === 'ALL') === (selector.target === undefined)
+      ? undefined
+      : 'Assortment ALL selectors cannot carry a target and other selectors require one',
+  ),
+);
+const AssortmentScopeSchema = Schema.Struct({
+  channel: AssortmentResourceTargetSchema,
+  market: Schema.optionalKey(AssortmentResourceTargetSchema),
+  storefront: Schema.optionalKey(AssortmentResourceTargetSchema),
+});
+const AssortmentSubjectSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('GUEST') }),
+  Schema.Struct({
+    kind: AssortmentSubjectKindSchema,
+    ref: AssortmentResourceTargetSchema,
+  }),
+]);
+const AssortmentAdmissionSetSchema = Schema.Union([
+  Schema.Struct({
+    contentHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+    entries: Schema.Tuple([]),
+    memberCount: Schema.Literal(0),
+    setKind: Schema.Literal('EMPTY'),
+  }),
+  Schema.Struct({
+    contentHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+    entries: Schema.Array(AssortmentSelectorSchema).check(Schema.isMinLength(1)),
+    memberCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    setKind: Schema.Literal('ENTRIES'),
+  }).check(
+    Schema.makeFilter((set) =>
+      set.entries.length === set.memberCount ? undefined : 'Admission Set count must match its complete entries',
+    ),
+  ),
+]);
+const AssortmentPermissionTargetSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal('assortment_configuration'),
+    permission: Schema.Literal('assortment.configuration.read'),
+    resource: AssortmentResourceTargetSchema,
+  }),
+  Schema.Struct({
+    catalogSelection: AssortmentResourceTargetSchema,
+    commercialScope: AssortmentScopeSchema,
+    kind: Schema.Literal('assortment_decision'),
+    permission: Schema.Literal('assortment.decision.explain'),
+    purpose: AssortmentPurposeSchema,
+    subject: AssortmentSubjectSchema,
+  }),
+  Schema.Struct({
+    effect: AssortmentEffectSchema,
+    kind: Schema.Literal('assortment_rule'),
+    mode: Schema.Literal('create'),
+    permission: Schema.Literal('assortment.rule.create'),
+    purpose: AssortmentPurposeSchema,
+    selector: AssortmentSelectorSchema,
+    stableCode: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  }),
+  Schema.Struct({
+    effect: AssortmentEffectSchema,
+    kind: Schema.Literal('assortment_rule'),
+    mode: Schema.Literal('revision_create'),
+    permission: Schema.Literal('assortment.rule.revision.create'),
+    purpose: AssortmentPurposeSchema,
+    selector: AssortmentSelectorSchema,
+    stableRule: AssortmentResourceTargetSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('assortment_rule'),
+    mode: Schema.Literal('retire'),
+    permission: Schema.Literal('assortment.rule.retire'),
+    stableRule: AssortmentResourceTargetSchema,
+  }),
+  Schema.Struct({
+    audience: Schema.Union([
+      Schema.Struct({ kind: Schema.Literal('SHARED') }),
+      Schema.Struct({ group: AssortmentResourceTargetSchema, kind: Schema.Literal('COMMERCE_CUSTOMER_GROUP') }),
+      Schema.Struct({
+        kind: Schema.Literal('SUBJECT'),
+        subject: Schema.Union([
+          Schema.Struct({
+            kind: AssortmentSubjectKindSchema,
+            ref: AssortmentResourceTargetSchema,
+          }),
+        ]),
+      }),
+    ]),
+    commercialScope: AssortmentScopeSchema,
+    effectiveFrom: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+    kind: Schema.Literal('assortment_binding'),
+    mode: Schema.Literal('create'),
+    permission: Schema.Literal('assortment.binding.create'),
+    ruleRevision: AssortmentResourceTargetSchema,
+  }),
+  Schema.Struct({
+    binding: AssortmentResourceTargetSchema,
+    kind: Schema.Literal('assortment_binding'),
+    mode: Schema.Literal('end'),
+    permission: Schema.Literal('assortment.binding.end'),
+  }),
+  Schema.Struct({
+    admissionSet: AssortmentAdmissionSetSchema,
+    commercialScope: AssortmentScopeSchema,
+    effectiveFrom: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+    kind: Schema.Literal('assortment_boundary'),
+    mode: Schema.Literal('create'),
+    permission: Schema.Literal('assortment.boundary.create'),
+    purpose: AssortmentPurposeSchema,
+    subject: Schema.Union([
+      Schema.Struct({
+        kind: AssortmentSubjectKindSchema,
+        ref: AssortmentResourceTargetSchema,
+      }),
+    ]),
+  }),
+  Schema.Struct({
+    boundary: AssortmentResourceTargetSchema,
+    kind: Schema.Literal('assortment_boundary'),
+    mode: Schema.Literal('end'),
+    permission: Schema.Literal('assortment.boundary.end'),
+  }),
+]);
+const AssortmentPermissionTargetsSchema = Schema.Array(AssortmentPermissionTargetSchema).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(8),
+);
+const AssortmentTargetJsonSchema = Schema.fromJsonString(Schema.Unknown);
+
+const resolveActionAssortmentPermissionTargets = <Payload>(
+  payload: Payload,
+  scope: OperationalScope,
+  resolver: ((payload: Payload, scope: OperationalScope) => readonly ActionAssortmentPermissionTarget[]) | undefined,
+): Effect.Effect<readonly ActionAssortmentPermissionTarget[], ActionPermissionCheckError> =>
+  Effect.suspend(() => {
+    if (resolver === undefined) {
+      return Effect.succeed([]);
+    }
+    return Effect.try({
+      catch: (cause) =>
+        attachFailureCause(
+          new ActionPermissionCheckError({
+            code: 'action_permission_check_failed',
+            reason: 'The declared Assortment permission targets could not be resolved safely',
+          }),
+          cause,
+        ),
+      try: () => resolver(payload, scope),
+    }).pipe(
+      Effect.flatMap((targets) => Schema.decodeUnknownEffect(AssortmentPermissionTargetsSchema)(targets)),
+      Effect.filterOrFail(
+        (targets) =>
+          targets.every((target) =>
+            target.kind === 'assortment_rule' && target.mode !== 'retire'
+              ? target.purpose === 'PURCHASE' || !['VARIANT', 'PACKAGE_OPTION'].includes(target.selector.kind)
+              : true,
+          ) &&
+          new Set(
+            targets.map((target) =>
+              Result.getOrElse(Schema.encodeResult(AssortmentTargetJsonSchema)(target), () => ''),
+            ),
+          ).size === targets.length &&
+          targets.every((target) => {
+            const storefront =
+              target.kind === 'assortment_decision' ||
+              (target.kind === 'assortment_binding' && target.mode === 'create') ||
+              (target.kind === 'assortment_boundary' && target.mode === 'create')
+                ? target.commercialScope.storefront
+                : undefined;
+            return storefront === undefined
+              ? true
+              : scope.trustedStorefrontId !== undefined && scope.trustedStorefrontId === storefront.resourceId;
+          }),
+        () =>
+          new ActionPermissionCheckError({
+            code: 'action_permission_check_failed',
+            reason: 'The declared Assortment permission targets do not match trusted scope',
+          }),
+      ),
+      Effect.map((targets) => Object.freeze(targets.map((target) => Object.freeze({ ...target })))),
+      Effect.mapError((cause) =>
+        Schema.is(ActionPermissionCheckError)(cause)
+          ? cause
+          : attachFailureCause(
+              new ActionPermissionCheckError({
+                code: 'action_permission_check_failed',
+                reason: 'The declared Assortment permission targets are invalid',
+              }),
+              cause,
+            ),
+      ),
+    );
+  });
+
+const terminalInvocation = () =>
+  new ActionInvocationStateError({
+    code: 'action_invocation_state_invalid',
+    reason: 'This Action invocation is terminal and cannot execute again',
+  });
+
+// A same-key retry of a rejected invocation reports the recorded rejection, so the outcome does
+// not depend on whether the retry arrived before or after the first request committed it.
+const recordedRejectionFailure = (rejection: Option.Option<ActionRecordedRejection>) => {
+  if (Option.isNone(rejection)) {
+    return terminalInvocation();
+  }
+  return rejection.value.stage === 'authz'
+    ? permissionDeniedFailure()
+    : new ActionPolicyDenied({
+        code: 'action_policy_denied',
+        policyReasonCode: rejection.value.policyReasonCode,
+        reason: 'A required Action Policy rejected this invocation',
+      });
+};
+
 const verifyInvocation = (
   invocation: ActionInvocationRecord,
   requestHash: string,
+  recordedRejection: Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>,
 ): Effect.Effect<
   void,
-  ActionAlreadyCommitted | ActionCommitIndeterminate | ActionInvocationStateError | ActionRequestHashConflict
+  | ActionAlreadyCommitted
+  | ActionCommitIndeterminate
+  | ActionInvocationPersistenceError
+  | ActionInvocationStateError
+  | ActionPermissionDenied
+  | ActionPolicyDenied
+  | ActionRequestHashConflict
 > => {
   if (invocation.requestHash !== requestHash) {
     return Effect.fail(requestHashConflict());
@@ -507,12 +872,10 @@ const verifyInvocation = (
   if ((invocation.status === 'received' || invocation.status === 'running') && invocation.completedAt === null) {
     return Effect.void;
   }
-  return Effect.fail(
-    new ActionInvocationStateError({
-      code: 'action_invocation_state_invalid',
-      reason: 'This Action invocation is terminal and cannot execute again',
-    }),
-  );
+  if (invocation.status === 'rejected') {
+    return recordedRejection.pipe(Effect.flatMap((rejection) => Effect.fail(recordedRejectionFailure(rejection))));
+  }
+  return Effect.fail(terminalInvocation());
 };
 
 const StoppedCheckpointPayloadSchema = Schema.Struct({
@@ -611,6 +974,16 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   const resolveHandler = options.resolveHandler ?? getActionHandler;
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
   const installScope = options.installScope ?? installOperationalScope;
+  const lockCompositionAuthority = options.lockCompositionAuthority ?? lockApplicationCompositionAuthority;
+  const resolveCompositionRevision =
+    options.resolveCompositionRevision ??
+    (() =>
+      Effect.fail(
+        new ActionTransactionError({
+          code: 'action_transaction_failed',
+          reason: 'The Action has no approved Application Composition authority',
+        }),
+      ));
   const notifyStage = (stage: ActionRuntimeStage): void => {
     options.onStage?.(stage);
   };
@@ -731,6 +1104,53 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       );
   };
 
+  const checkActionAssortmentPermissions = (
+    scope: OperationalScope,
+    assortmentTargets: readonly ActionAssortmentPermissionTarget[],
+  ): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> => {
+    if (assortmentTargets.length === 0) {
+      return Effect.succeed('allowed');
+    }
+    if (
+      contextAccess?.assortmentPermissions === undefined ||
+      assortmentTargets.some((target) => !isAssortmentPermissionTargetValid(target)) ||
+      (scope.legalEntityId === undefined && assortmentTargets.some(assortmentPermissionTargetRequiresLegalEntity))
+    ) {
+      return Effect.fail(permissionUnavailable());
+    }
+    const { legalEntityId } = scope;
+    const checkInputBase = {
+      principal: { principalId: scope.principalId, tenantId: scope.tenantId },
+      targets: assortmentTargets.map((entry) => ({ target: entry })),
+    };
+    const checkInputWithStorefront =
+      scope.trustedStorefrontId === undefined
+        ? checkInputBase
+        : { ...checkInputBase, trustedStorefrontId: scope.trustedStorefrontId };
+    const checkInput =
+      legalEntityId === undefined ? checkInputWithStorefront : { ...checkInputWithStorefront, legalEntityId };
+    return contextAccess.assortmentPermissions(checkInput).pipe(
+      Effect.flatMap((decisions) => {
+        if (
+          decisions.length !== assortmentTargets.length ||
+          decisions.some(
+            (decision, index) =>
+              decision.key !==
+                (assortmentTargets[index] === undefined
+                  ? undefined
+                  : toAssortmentPermissionAccessKey(scope.tenantId, legalEntityId, assortmentTargets[index])) ||
+              decision.decision === 'unavailable',
+          )
+        ) {
+          return Effect.fail(permissionUnavailable());
+        }
+        return decisions.some(({ decision }) => decision === 'denied')
+          ? Effect.succeed('denied' as const)
+          : Effect.succeed('allowed' as const);
+      }),
+    );
+  };
+
   const runAction: ActionRuntimeService['runAction'] = Effect.fn('ActionRuntime.runAction')(function* runActionEffect<
     PayloadSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -759,14 +1179,20 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         const transport = yield* validateTransport(input.transport);
         const scope = yield* operationalScopeResolver.resolve(
           withOptionalProperty(
-            {
-              correlationId: transport.correlationId,
-              legalEntityScope: input.registration.descriptor.legalEntityScope,
-              principal,
-            },
-            transport.traceId !== undefined,
-            'traceId',
-            transport.traceId,
+            withOptionalProperty(
+              {
+                correlationId: transport.correlationId,
+                legalEntityScope: input.registration.descriptor.legalEntityScope,
+                principal,
+              },
+              transport.traceId !== undefined,
+              'traceId',
+              transport.traceId,
+              {},
+            ),
+            input.audience !== undefined,
+            'audience',
+            input.audience,
             {},
           ),
         );
@@ -786,6 +1212,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       tenantPermission: Option.Option<ActionTenantPermission>,
       legalEntityPermission: ActionLegalEntityPermission | undefined,
       businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
+      assortmentPermissionTargets: readonly ActionAssortmentPermissionTarget[],
       resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
     ): readonly OwnerAuthorizationTarget[] => {
       const targets: OwnerAuthorizationTarget[] = [];
@@ -810,6 +1237,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             {},
           ),
         );
+      }
+      for (const target of assortmentPermissionTargets) {
+        targets.push({
+          kind: 'assortment_permission',
+          target,
+        });
       }
       if (Option.isSome(resourcePermissionTarget)) {
         targets.push({
@@ -847,7 +1280,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     /* oxlint-disable anti-slop/no-known-value-widening -- The normalized governed-target result intentionally preserves the existing owner authorization contract across all branches. */
     const prepareGovernedTarget = (
       transport: ActionTransportMetadata,
+      scope: OperationalScope,
       businessPermissionTarget: Option.Option<ActionBusinessPermissionTarget>,
+      assortmentPermissionTargets: readonly ActionAssortmentPermissionTarget[],
       resourcePermissionTarget: Option.Option<ActionResourcePermissionTarget>,
       hasCanonicalScopeTarget: boolean,
     ): Readonly<{
@@ -856,10 +1291,35 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     }> => {
       if (Option.isSome(businessPermissionTarget)) {
         const { permission: targetPermission, target } = businessPermissionTarget.value;
+        if (target.kind === 'inventory_resource') {
+          const actionTarget = {
+            targetModuleKey: target.resource.moduleId,
+            targetResourceId: target.resource.resourceId,
+            targetResourceType: target.resource.resourceType,
+          };
+          return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
+        }
         const actionTarget = {
           targetModuleKey: input.registration.descriptor.owningModuleKey,
           targetResourceId: businessTargetResourceId(target),
           targetResourceType: `${target.kind}:${targetPermission}`,
+        };
+        return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
+      }
+      if (assortmentPermissionTargets.length > 0) {
+        const [singleTarget] = assortmentPermissionTargets;
+        const assortmentTargetResourceId =
+          assortmentPermissionTargets.length === 1 && singleTarget !== undefined
+            ? toAssortmentPermissionAccessObjectId(scope.tenantId, scope.legalEntityId, singleTarget)
+            : toAssortmentPermissionAccessObjectIdForTargets(
+                scope.tenantId,
+                scope.legalEntityId,
+                assortmentPermissionTargets,
+              );
+        const actionTarget = {
+          targetModuleKey: input.registration.descriptor.owningModuleKey,
+          targetResourceId: assortmentTargetResourceId ?? 'assortment-unavailable',
+          targetResourceType: 'assortment_permission',
         };
         return { actionTarget, governedTransport: buildGovernedTransport(transport, actionTarget) };
       }
@@ -918,36 +1378,50 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ? Option.none<ActionTenantPermission>()
           : yield* resolveActionTenantPermission(payload, input.registration.descriptor.tenantPermission);
         const { legalEntityPermission } = input.registration.descriptor;
-        const businessPermissionTarget = yield* resolveActionBusinessPermissionTarget(
-          payload,
-          scope,
-          getActionBusinessPermissionTargetResolver(input.registration),
-        );
-        // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Preserve business-before-resource resolver execution because owner callbacks may throw or observe mutable state.
-        const resourcePermissionTarget = yield* resolveActionResourcePermissionTarget(
-          payload,
-          scope,
-          getActionResourcePermissionTargetResolver(input.registration),
+        const [businessPermissionTarget, assortmentPermissionTargets, resourcePermissionTarget] = yield* Effect.all(
+          [
+            resolveActionBusinessPermissionTarget(
+              payload,
+              scope,
+              getActionBusinessPermissionTargetResolver(input.registration),
+            ),
+            resolveActionAssortmentPermissionTargets(
+              payload,
+              scope,
+              getActionAssortmentPermissionTargetResolver(input.registration),
+            ),
+            resolveActionResourcePermissionTarget(
+              payload,
+              scope,
+              getActionResourcePermissionTargetResolver(input.registration),
+            ),
+          ],
+          { concurrency: 1 },
         );
         const hasCanonicalScopeTarget =
           Option.isSome(tenantPermission) ||
           legalEntityPermission !== undefined ||
-          Option.isSome(businessPermissionTarget);
+          Option.isSome(businessPermissionTarget) ||
+          assortmentPermissionTargets.length > 0;
         const frozenOwnerAuthorizationTargets = buildOwnerAuthorizationTargets(
           scope,
           tenantPermission,
           legalEntityPermission,
           businessPermissionTarget,
+          assortmentPermissionTargets,
           resourcePermissionTarget,
         );
         const { actionTarget, governedTransport } = prepareGovernedTarget(
           transport,
+          scope,
           businessPermissionTarget,
+          assortmentPermissionTargets,
           resourcePermissionTarget,
           hasCanonicalScopeTarget,
         );
         return {
           actionTarget,
+          assortmentPermissionTargets,
           businessPermissionTarget,
           frozenOwnerAuthorizationTargets,
           governedTransport,
@@ -1017,7 +1491,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ),
         );
       notifyStage('invocation_prepared');
-      yield* verifyInvocation(invocation, requestHash);
+      yield* verifyInvocation(
+        invocation,
+        requestHash,
+        repository.loadRecordedRejection(database.executor, invocation.actionInvocationId),
+      );
       return { invocation, requestHash };
     });
 
@@ -1047,6 +1525,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     );
     const {
       actionTarget,
+      assortmentPermissionTargets,
       businessPermissionTarget,
       deniedAuditEvidence,
       frozenOwnerAuthorizationTargets,
@@ -1101,12 +1580,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         .pipe(
           Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
           Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
-          Effect.flatMap(() =>
+          Effect.flatMap((earlierRejection) =>
             Effect.fail(
-              new ActionPermissionDenied({
-                code: 'action_permission_denied',
-                reason: 'The principal is not permitted to execute this Action',
-              }),
+              Option.isSome(earlierRejection) ? recordedRejectionFailure(earlierRejection) : permissionDeniedFailure(),
             ),
           ),
         );
@@ -1154,13 +1630,15 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(scope, legalEntityPermission);
       const resourcePermissionDecision = yield* checkActionResourcePermission(scope, resourcePermissionTarget);
       const businessPermissionDecision = yield* checkActionBusinessPermission(scope, businessPermissionTarget);
+      const assortmentPermissionDecision = yield* checkActionAssortmentPermissions(scope, assortmentPermissionTargets);
       return (
         preflightDenied ||
         (permissionDecision === 'denied' && !hasPreflightPermit) ||
         tenantPermissionDecision === 'denied' ||
         legalEntityPermissionDecision === 'denied' ||
         resourcePermissionDecision === 'denied' ||
-        businessPermissionDecision === 'denied'
+        businessPermissionDecision === 'denied' ||
+        assortmentPermissionDecision === 'denied'
       );
     });
 
@@ -1222,7 +1700,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           Schema.is(PolicyDenied)(failureReason.error)
         ) {
           const denial = failureReason.error;
-          yield* repository
+          const earlierRejection = yield* repository
             .finalizePolicyDenial(
               database.executor,
               withOptionalProperty(
@@ -1251,6 +1729,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 }),
               ),
             );
+          if (
+            Option.isSome(earlierRejection) &&
+            !(
+              earlierRejection.value.stage === 'policy' && earlierRejection.value.policyReasonCode === denial.reasonCode
+            )
+          ) {
+            return yield* recordedRejectionFailure(earlierRejection);
+          }
           return yield* new ActionPolicyDenied({
             code: 'action_policy_denied',
             policyReasonCode: denial.reasonCode,
@@ -1281,6 +1767,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       },
     );
     const allowedPolicies = yield* authorizeAndEvaluatePolicies();
+    const admittedCompositionRevision = yield* resolveCompositionRevision(principal);
 
     const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
       function* executeTransactionAndHandleExitEffect() {
@@ -1293,6 +1780,18 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ActionCoreError | DomainErrorSchema['Type'],
           HandlerRequirements
         > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
+          yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
+            Effect.mapError((cause) =>
+              createActionTransactionErrorWithCause(
+                {
+                  code: 'action_transaction_failed',
+                  reason: 'The approved Application Composition no longer admits owner writes',
+                },
+                cause,
+              ),
+            ),
+          );
+          notifyStage('composition_authority_locked');
           const lockedInvocation = yield* repository
             .lockInvocation(drizzleTransaction, invocation.actionInvocationId)
             .pipe(
@@ -1305,7 +1804,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ),
             );
           notifyStage('invocation_locked');
-          yield* verifyInvocation(lockedInvocation, requestHash);
+          yield* verifyInvocation(
+            lockedInvocation,
+            requestHash,
+            repository.loadRecordedRejection(drizzleTransaction, lockedInvocation.actionInvocationId),
+          );
 
           const scopedTransaction = yield* installScope(drizzleTransaction, scope);
           notifyStage('database_scope_installed');
@@ -1319,10 +1822,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             yield* moduleStateGate.recheckWrite(drizzleTransaction, scope.tenantId, tenantEntrypoint);
           }
           notifyStage('module_state_rechecked');
+          const operationAt = yield* trustedTransactionTime(drizzleTransaction);
           const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
             scopedTransaction,
             Object.freeze({
               operation: 'action' as const,
+              operationAt,
               operationKey: input.registration.descriptor.actionKey,
               owningModuleKey: input.registration.descriptor.owningModuleKey,
               scope,
@@ -1343,9 +1848,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 }),
               ),
             );
-          yield* verifyInvocation(runningInvocation, requestHash);
+          yield* verifyInvocation(
+            runningInvocation,
+            requestHash,
+            repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
+          );
           const serviceFactory = resolveServiceFactory(input.registration);
-          const services = yield* serviceFactory(scopedTransaction, scope);
+          const services = yield* serviceFactory(scopedTransaction, scope, admittedCompositionRevision);
           const handler = resolveHandler(input.registration);
 
           const collector = createActionCollector(
@@ -1358,6 +1867,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             actionInvocationId: lockedInvocation.actionInvocationId,
             addDomainEvent: collector.addDomainEvent,
             addOutboxMessage: collector.addOutboxMessage,
+            compositionRevision: admittedCompositionRevision,
             recordAuditEvidence: collector.recordAuditEvidence,
             recordDataAccess: collector.recordDataAccess,
             scope,
@@ -1428,6 +1938,38 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                   ),
                 ),
             });
+            const onDecodedSuccess = getActionDecodedSuccessHook(input.registration);
+            if (onDecodedSuccess !== undefined) {
+              const hookExit = yield* Effect.exit(
+                Effect.suspend(() =>
+                  onDecodedSuccess(
+                    Object.freeze({
+                      actionInvocationId: lockedInvocation.actionInvocationId,
+                      result,
+                      scope,
+                      services,
+                    }),
+                  ),
+                ),
+              );
+              if (Exit.isFailure(hookExit)) {
+                const failureReasons = hookExit.cause.reasons.filter(Cause.isFailReason);
+                const [failureReason] = failureReasons;
+                if (failureReasons.length === hookExit.cause.reasons.length && failureReason !== undefined) {
+                  const decodedDomainError = yield* Effect.option(
+                    Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
+                  );
+                  if (Option.isSome(decodedDomainError)) {
+                    return yield* Effect.fail(decodedDomainError.value);
+                  }
+                  if (Schema.is(ActionCoreErrorSchema)(failureReason.error)) {
+                    return yield* Effect.failCause(Cause.fail(failureReason.error));
+                  }
+                }
+                yield* Effect.logError('Unexpected Action decoded-success hook defect', hookExit.cause);
+                return yield* makeHandlerExecutionError();
+              }
+            }
           }
           yield* repository
             .flushSuccess(drizzleTransaction, {
@@ -1582,38 +2124,83 @@ export class ActionRuntime extends Context.Service<ActionRuntime, ActionRuntimeS
   '@app/core-runtime/actions/runtime/ActionRuntime',
 ) {}
 
-export const ActionRuntimeLive = Layer.effect(
-  ActionRuntime,
-  Effect.gen(function* makeActionRuntimeService() {
-    const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
-    const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
-    const [database, repository, permission, moduleEntrypointGateway, moduleStateGate, scopeResolver, contextAccess] =
-      yield* Effect.all(
-        [
-          CoreDatabaseService,
-          ActionRepository,
-          ActionPermission,
-          ModuleEntrypointGateway,
-          ModuleStateGate,
-          OperationalScopeResolver,
-          ContextAccess,
-        ] as const,
-        { concurrency: 7 },
-      );
-    let runtimeOptions: ActionRuntimeOptions = {
-      contextAccess,
-      moduleEntrypointGateway,
-      moduleStateGate,
-      ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
-        ? ownerAuthorizationOverlay.value
-        : failClosedOwnerAuthorizationOverlay,
-    };
-    if (Option.isSome(authorizationPreflight)) {
-      runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+const unavailableActionComposition = (cause?: unknown) =>
+  createActionTransactionErrorWithCause(
+    {
+      code: 'action_transaction_failed',
+      reason: 'The receiving owner release is not approved by the active Application Composition',
+    },
+    cause,
+  );
+
+/** Core-private resolver shared by the live runtime and its release-race regression tests. */
+export const makeActionCompositionRevisionResolver = (
+  applicationComposition: ActiveApplicationCompositionServiceContract,
+  expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
+) => {
+  const receivingDeployment = Object.freeze({ ...expectedDeployment });
+  return Effect.fn('ActionRuntime.resolveCompositionRevision')(function* resolveCompositionRevision(
+    principal: TrustedPrincipalContext,
+  ) {
+    const snapshot = yield* applicationComposition.load.pipe(
+      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+      Effect.mapError(unavailableActionComposition),
+    );
+    const selectedOwner = snapshot.composition.modules.find(
+      (module) =>
+        module.deployment.appId === receivingDeployment.appId &&
+        module.deployment.buildMarker === receivingDeployment.buildMarker,
+    );
+    const shellDeployment = snapshot.composition.shell.deployment;
+    const isSelectedShell =
+      receivingDeployment.appId === shellDeployment.appId &&
+      receivingDeployment.buildMarker === shellDeployment.buildMarker;
+    const gatewayRevision = readVerifiedGatewayCompositionRevision(principal);
+    if (
+      (selectedOwner === undefined && !isSelectedShell) ||
+      (gatewayRevision !== undefined && gatewayRevision !== snapshot.composition.revision)
+    ) {
+      return yield* unavailableActionComposition();
     }
-    return makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
-  }),
-);
+    return snapshot.composition.revision;
+  });
+};
+
+export const makeActionRuntimeLive = (expectedDeployment: typeof OntosDeploymentIdentitySchema.Type) =>
+  Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* makeActionRuntimeService() {
+      const applicationComposition = yield* ActiveApplicationCompositionService;
+      const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
+      const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
+      const [database, repository, permission, moduleEntrypointGateway, moduleStateGate, scopeResolver, contextAccess] =
+        yield* Effect.all(
+          [
+            CoreDatabaseService,
+            ActionRepository,
+            ActionPermission,
+            ModuleEntrypointGateway,
+            ModuleStateGate,
+            OperationalScopeResolver,
+            ContextAccess,
+          ] as const,
+          { concurrency: 7 },
+        );
+      let runtimeOptions: ActionRuntimeOptions = {
+        contextAccess,
+        moduleEntrypointGateway,
+        moduleStateGate,
+        ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
+          ? ownerAuthorizationOverlay.value
+          : failClosedOwnerAuthorizationOverlay,
+        resolveCompositionRevision: makeActionCompositionRevisionResolver(applicationComposition, expectedDeployment),
+      };
+      if (Option.isSome(authorizationPreflight)) {
+        runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+      }
+      return makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
+    }),
+  );
 
 export const runAction = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,

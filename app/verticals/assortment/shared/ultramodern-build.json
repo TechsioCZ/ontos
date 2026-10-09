@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "assortment",
+    "buildMarker": "26e7bfcc7c19d1d4",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/assortment",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/assortment",
+    "version": "0.1.0",
+    "build": "26e7bfcc7c19d1d4"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "assortment",
+      "buildMarker": "26e7bfcc7c19d1d4",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/assortment",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/assortment",
+      "version": "0.1.0",
+      "build": "26e7bfcc7c19d1d4",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "assortment",
+      "buildMarker": "26e7bfcc7c19d1d4",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/assortment",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/assortment",
+      "version": "0.1.0",
+      "build": "26e7bfcc7c19d1d4",
+      "surface": "ui"
+    }
+  }
+}

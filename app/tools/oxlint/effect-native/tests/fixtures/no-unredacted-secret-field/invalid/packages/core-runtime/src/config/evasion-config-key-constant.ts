@@ -4,4 +4,4 @@ import { Config } from 'effect';
 
 const AUTH_SECRET_KEY = 'BETTER_AUTH_SECRET';
 
-export const AuthSecret = Config.string(AUTH_SECRET_KEY);
+export const AuthSecret = Config.String(AUTH_SECRET_KEY);

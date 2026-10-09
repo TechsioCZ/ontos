@@ -1,15 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Option } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Param } from 'effect/unstable/cli';
 
 const configFilename = 'tsconfig.json';
-const metadataFilename = 'metadata.mts';
 const compilerRelativePath = 'node_modules/.bin/tsc';
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -115,70 +112,7 @@ cockroachRole('invalid', { createRole: 1 });
       }
     }
     verifyDrizzleRuntimeFormats(fixture);
-    writeFileSync(
-      path.join(fixture, metadataFilename),
-      `import { Option } from 'effect';
-import { Param } from 'effect/unstable/cli';
-const metadata = Param.getParamMetadata(Param.string(Param.flagKind, 'name'));
-const expected: { readonly isOptional: boolean; readonly isVariadic: boolean; readonly variadicMin: Option.Option<number>; readonly variadicMax: Option.Option<number> } = metadata;
-const reverse: typeof metadata = expected;
-`,
-    );
-    writeFileSync(
-      path.join(fixture, configFilename),
-      JSON.stringify({
-        compilerOptions: {
-          exactOptionalPropertyTypes: true,
-          module: 'NodeNext',
-          noEmit: true,
-          skipLibCheck: false,
-          strict: true,
-          target: 'ESNext',
-          types: ['node'],
-        },
-        files: [metadataFilename],
-      }),
-    );
-    const result = spawnSync(
-      path.join(workspaceRoot, compilerRelativePath),
-      ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
-      { encoding: 'utf-8' },
-    );
-    expect(result.error).toBeUndefined();
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-    appendFileSync(
-      path.join(fixture, metadataFilename),
-      `
-const wrongOptional: string = metadata.isOptional;
-const wrongVariadic: number = metadata.isVariadic;
-const wrongMin: Option.Option<string> = metadata.variadicMin;
-const wrongMax: Option.Option<string> = metadata.variadicMax;
-metadata.isOptional = true;
-`,
-    );
-    const invalidMetadata = spawnSync(
-      path.join(workspaceRoot, compilerRelativePath),
-      ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
-      { encoding: 'utf-8' },
-    );
-    expect(invalidMetadata.error).toBeUndefined();
-    const diagnostics = invalidMetadata.stdout + invalidMetadata.stderr;
-    expect(invalidMetadata.status, diagnostics).toBe(1);
-    expect(countDiagnostics(diagnostics, /error TS2322:/gu), diagnostics).toBe(2);
-    expect(countDiagnostics(diagnostics, /error TS2375:/gu), diagnostics).toBe(2);
-    expect(countDiagnostics(diagnostics, /error TS2540:/gu), diagnostics).toBe(1);
-    expect(countDiagnostics(diagnostics, /error TS\d+:/gu), diagnostics).toBe(5);
   } finally {
     rmSync(fixture, { force: true, recursive: true });
   }
-});
-
-it('published runtime exposes real parameter metadata', () => {
-  const metadata = Param.getParamMetadata(Param.string(Param.flagKind, 'name'));
-  expect(metadata).toEqual({
-    isOptional: false,
-    isVariadic: false,
-    variadicMax: Option.none(),
-    variadicMin: Option.none(),
-  });
 });

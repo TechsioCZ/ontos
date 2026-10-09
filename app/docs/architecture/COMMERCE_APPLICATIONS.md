@@ -6,6 +6,15 @@ The accepted product decision is [ADR-0017](../../../docs/adr/0017-commerce-appl
 
 ## Application inventory
 
+This inventory describes channel and application edges; it is not a list of every business
+MicroVertical. `commerce.market-catalog` remains a separate MicroVertical because it owns canonical
+Commerce Market identity, lifecycle, Storefront associations, persistence, governed entrypoints,
+and completeness evidence. `commerce.customer-context` consumes that owner only through its
+published client. The deployment `appId` names the topology unit and gateway audience, while the
+`moduleId` names the stable semantic owner. This boundary follows accepted ownership and the V0
+one-business-module-per-deployment contract, not the fact that the work originated in a separate
+planning issue.
+
 | Application/edge               | Deployment and ownership                                                                                                                                                                                    |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Storefront Application**     | External to the standard OntOS Shell deployment. Owns framework, routes, rendering, layout, interaction, branding, assets, and SEO. A customer may have separate B2C/B2B storefronts.                       |
@@ -80,7 +89,7 @@ It must preserve owner-local validation, Permission, Business Policy, Action, au
 This section defines accepted target selection semantics. Current V0 supports one implicit `standard` implementation per `moduleId`; it does not yet serialize or select `implementationId`.
 
 - `moduleId` is the Module Contract Identity and owns public capability semantics.
-- `implementationId` identifies one catalogued executable implementation, for example `standard` or `akros`.
+- `implementationId` identifies one catalogued executable implementation, for example `standard` or `tenant-a`.
 - `appId` remains the independently deployable topology identity and exact gateway audience.
 
 Once that target contract exists, two implementations may share `moduleId` only while public semantics and compatibility remain the same. Different semantics require a different `moduleId`. Each implementation records immutable build revision/digest, public-contract hash/version, migration set, owner, health, and readiness; the catalog rejects missing, duplicate, ambiguous, incompatible, or invisible implementation identities. Implement the target only by extending Codesmith, Effect Schemas, serialized contracts, topology/allowlist validation, Customer Configuration resolution, and tests together. Do not hand-author fields or customer branches as a substitute.

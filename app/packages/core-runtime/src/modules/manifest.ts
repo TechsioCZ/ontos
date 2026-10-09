@@ -1,16 +1,17 @@
+import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
 import { Predicate, Result, Schema } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
 
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
-import { TENANT_PERMISSION_KEYS } from '../permissions/context-access.ts';
+import { TENANT_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
 import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '../permissions/business-permission.ts';
 import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
-export const ONTOS_MODULE_CONTRACT_SCHEMA_VERSION = '2' as const;
+export { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
 export const ONTOS_MODULE_CONTRACT_PATH = '/.well-known/ontos-module-manifest.json' as const;
 export const ONTOS_MODULE_CONTRACT_MAX_BYTES = 1024 * 1024;
 export const ONTOS_MODULE_CONTRACT_TIMEOUT_MS = 5000;
@@ -164,7 +165,15 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
 
 export const OntosDeploymentIdentitySchema = Schema.Struct({
   appId: OntosDeploymentAppIdSchema,
-  buildMarker: nonEmptyString,
+  buildMarker: nonEmptyString.check(
+    Schema.isMaxLength(200),
+    Schema.isTrimmed(),
+    Schema.makeFilter((value) =>
+      value.isWellFormed() && value !== '.' && value !== '..'
+        ? undefined
+        : 'build marker must be well-formed text and must not be a URL dot segment',
+    ),
+  ),
 });
 
 export const OntosModuleDeploymentContractSchema = Schema.Struct({

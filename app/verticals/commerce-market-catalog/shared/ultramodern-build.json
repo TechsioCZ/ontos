@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "commerce-market-catalog",
+    "buildMarker": "a3f3551680596bed",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/commerce-market-catalog",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/commerce-market-catalog",
+    "version": "0.1.0",
+    "build": "a3f3551680596bed"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "commerce-market-catalog",
+      "buildMarker": "a3f3551680596bed",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/commerce-market-catalog",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/commerce-market-catalog",
+      "version": "0.1.0",
+      "build": "a3f3551680596bed",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "commerce-market-catalog",
+      "buildMarker": "a3f3551680596bed",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/commerce-market-catalog",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/commerce-market-catalog",
+      "version": "0.1.0",
+      "build": "a3f3551680596bed",
+      "surface": "ui"
+    }
+  }
+}

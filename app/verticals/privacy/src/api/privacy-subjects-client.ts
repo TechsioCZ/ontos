@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PrivacySubjectsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PrivacySubjectsAuthorizedInvocation = readonly [
@@ -37,13 +38,17 @@ export const executePrivacySubjectsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PrivacySubjectsAuthorizedInvocation
 ) =>
   privacySubjectsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.privacySubjects.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.privacySubjects.execute({ payload })),
   );
 
 export const executePrivacySubjects = (
   payload: PrivacySubjectsRequest,
   ...[requestCorrelation, options = {}]: PrivacySubjectsOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePrivacySubjectsWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePrivacySubjectsWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

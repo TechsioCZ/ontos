@@ -1,8 +1,9 @@
-import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Cause, Duration, Effect } from 'effect';
+import { v1 } from '@authzed/authzed-node';
+import { spiceDbTransport } from '#spicedb-transport';
+import { Effect } from 'effect';
 import type { Scope } from 'effect';
 
-import { SPICEDB_CHECK_TIMEOUT_MS, acquireSpiceDbClientResource, spiceDbClientSecurity } from './client.ts';
+import { SPICEDB_CHECK_TIMEOUT_MS, acquireSpiceDbClientResource } from './client.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 
@@ -19,26 +20,11 @@ export const createPermissionRelationshipMutationClient = <Failure>(
   timeoutMilliseconds: number,
   unavailable: (cause?: unknown) => Failure,
 ): PermissionRelationshipMutationClient<Failure> => {
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    spiceDbClientSecurity(configuration),
-    undefined,
-    { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
-  );
+  const rpc = spiceDbTransport.open(configuration, timeoutMilliseconds);
   return {
-    close: () => client.close(),
+    close: rpc.close,
     writeRelationships: (request) =>
-      Effect.tryPromise({
-        catch: unavailable,
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
-        try: () => client.promises.writeRelationships(request),
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.millis(SPICEDB_CHECK_TIMEOUT_MS),
-          orElse: () => Effect.fail(unavailable(new Cause.TimeoutError('SpiceDB relationship mutation timed out'))),
-        }),
-      ),
+      rpc.writeRelationships(request).pipe(Effect.mapError(({ cause }) => unavailable(cause))),
   };
 };
 
@@ -55,7 +41,7 @@ interface PermissionRelationshipDefinition {
 export interface PermissionRelationshipMutationPreparation {
   readonly granteeId: string;
   readonly resourceId: string;
-  readonly scopeRelationship: PermissionRelationshipDefinition;
+  readonly scopeRelationships: readonly PermissionRelationshipDefinition[];
 }
 
 interface PermissionRelationshipMutationDefinition<Input extends PermissionRelationshipMutationInput, Failure> {
@@ -95,12 +81,12 @@ export const makePermissionRelationshipMutation = <Input extends PermissionRelat
         input.operation === 'grant' ? v1.RelationshipUpdate_Operation.TOUCH : v1.RelationshipUpdate_Operation.DELETE;
       const updates = [
         ...(input.operation === 'grant'
-          ? [
+          ? prepared.scopeRelationships.map((scopeRelationship) =>
               v1.RelationshipUpdate.create({
                 operation: v1.RelationshipUpdate_Operation.TOUCH,
-                relationship: relationship(definition.resourceType, prepared.resourceId, prepared.scopeRelationship),
+                relationship: relationship(definition.resourceType, prepared.resourceId, scopeRelationship),
               }),
-            ]
+            )
           : []),
         v1.RelationshipUpdate.create({
           operation,

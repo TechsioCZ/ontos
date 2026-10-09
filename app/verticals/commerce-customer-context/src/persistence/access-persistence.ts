@@ -20,6 +20,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
+import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
 
 import type {
@@ -85,17 +86,21 @@ const AccessGrantRowSchema = Schema.Struct({
   grant_id: Schema.String,
   granted_at: timestampSchema,
   granted_by: Schema.String,
+  // `access_grant_row` projects its `p_operation_outcome` argument, which a plain listing or lock
+  // leaves NULL: only a mutation routine has an outcome to report through the shared row shape.
   operation_outcome: Schema.optionalKey(
-    Schema.Literals([
-      'ALREADY_ACTIVE',
-      'ALREADY_REVOKED',
-      'CONFLICT',
-      'LAST_ADMIN_PROTECTED',
-      'PENDING_GRANT',
-      'PENDING_REVOKE',
-      'PROFILE_NOT_FOUND',
-      'SCOPE_MISMATCH',
-    ]),
+    Schema.NullOr(
+      Schema.Literals([
+        'ALREADY_ACTIVE',
+        'ALREADY_REVOKED',
+        'CONFLICT',
+        'LAST_ADMIN_PROTECTED',
+        'PENDING_GRANT',
+        'PENDING_REVOKE',
+        'PROFILE_NOT_FOUND',
+        'SCOPE_MISMATCH',
+      ]),
+    ),
   ),
   permission_code: CounterpartyPermissionCodeSchema,
   principal_id: Schema.String,
@@ -117,6 +122,16 @@ const AccessMutationIntentRowSchema = Schema.Struct({
 });
 type AccessMutationIntentRow = typeof AccessMutationIntentRowSchema.Type;
 
+/** The closed lifecycle vocabulary of `counterparty_access_invitations`, under either column name. */
+const InvitationLifecycleSchema = Schema.Literals([
+  'PENDING',
+  'CLAIMING',
+  'CLAIMED',
+  'REVOKED',
+  'EXPIRED',
+  'RECONCILIATION_REQUIRED',
+]);
+
 const InvitationRowFieldsSchema = Schema.Struct({
   claimed_at: nullableTimestampSchema,
   claimed_by_principal_id: Schema.NullOr(Schema.String),
@@ -128,27 +143,31 @@ const InvitationRowFieldsSchema = Schema.Struct({
   grant_progress: Schema.Array(InvitationGrantProgressSchema),
   invitation_id: Schema.String,
   invited_by: Schema.String,
+  // `read_access_invitation` projects `NULL::text` into this column: a plain read has no mutation
+  // outcome, while `create_access_invitation` and `mutate_access_invitation` alias their own here.
   operation_outcome: Schema.optionalKey(
-    Schema.Literals([
-      'ALREADY_CLAIMED',
-      'ALREADY_PENDING',
-      'ALREADY_REVOKED',
-      'ALREADY_SENT',
-      'CLAIM_REJECTED',
-      'CLAIMING',
-      'CREATED',
-      'EXPIRED',
-      'INVALID',
-      'RECONCILIATION_REQUIRED',
-      'RESENT',
-      'REVOKED',
-      'REVISION_CONFLICT',
-    ]),
+    Schema.NullOr(
+      Schema.Literals([
+        'ALREADY_CLAIMED',
+        'ALREADY_PENDING',
+        'ALREADY_REVOKED',
+        'ALREADY_SENT',
+        'CLAIM_REJECTED',
+        'CLAIMING',
+        'CREATED',
+        'EXPIRED',
+        'INVALID',
+        'RECONCILIATION_REQUIRED',
+        'RESENT',
+        'REVOKED',
+        'REVISION_CONFLICT',
+      ]),
+    ),
   ),
   reason: Schema.String,
   requested_permission_codes: Schema.Array(CounterpartyPermissionCodeSchema),
   revision: Schema.Int,
-  state: Schema.Literals(['PENDING', 'CLAIMING', 'CLAIMED', 'REVOKED', 'EXPIRED', 'RECONCILIATION_REQUIRED']),
+  state: InvitationLifecycleSchema,
   storefront_resource_id: Schema.NullOr(Schema.String),
 });
 type InvitationRow = typeof InvitationRowFieldsSchema.Type;
@@ -431,6 +450,29 @@ const readAccessInvitationRoutine = defineScopedRoutine({
   ],
   resultSchema: InvitationRowSchema,
   routineKey: 'counterparty-access.read-invitation',
+  schema: 'commerce_customer_context',
+});
+
+/* oxlint-disable effect-native/no-nullable-schema-field -- The routine projects SQL NULL for every invitation fact an unknown or unclaimed invitation has none of; the mapping below turns each absence into an omitted public field. */
+const InvitationClaimabilityRowSchema = Schema.Struct({
+  claim_proof_reference: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  claimable: Schema.Boolean,
+  claimed_by_principal_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  lifecycle: Schema.optionalKey(Schema.NullOr(InvitationLifecycleSchema)),
+});
+/* oxlint-enable effect-native/no-nullable-schema-field */
+type InvitationClaimabilityRow = typeof InvitationClaimabilityRowSchema.Type;
+
+const readCounterpartyInvitationClaimabilityRoutine = defineScopedRoutine({
+  name: 'read_counterparty_invitation_claimability',
+  ownerModuleKey: customerContextModuleKey,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: InvitationClaimabilityRowSchema,
+  routineKey: 'counterparty-access.read-invitation-claimability',
   schema: 'commerce_customer_context',
 });
 
@@ -1050,6 +1092,82 @@ const readInvitation = (
           : Effect.succeed(invitationFromRow(dependencies.scope.tenantId, row)),
       ),
     );
+
+/**
+ * One invitation, read over a scoped transaction alone.
+ *
+ * The enrollment claim route needs the invitation's current revision to present the
+ * compare-and-set the claim Action demands, and it holds a scoped owner transaction rather than the
+ * whole access port — which would drag the proof-delivery, eligibility and crypto seams a read
+ * never touches into an HTTP group. Scope is still the routine's own: it refuses any Tenant or
+ * Legal Entity the transaction did not install, and it answers an out-of-scope invitation exactly
+ * as an absent one.
+ */
+export const readCounterpartyAccessInvitationForScope = (
+  transaction: CounterpartyAccessScopedRoutineInvoker,
+  tenantId: string,
+  input: {
+    readonly counterpartyRef: CounterpartyRef;
+    readonly invitationId: string;
+    readonly scope: CounterpartyPermissionScope;
+  },
+): Effect.Effect<CounterpartyAccessInvitation, CounterpartyAccessDomainError> =>
+  transaction
+    .invoke(readAccessInvitationRoutine, [
+      input.invitationId,
+      input.counterpartyRef.resourceId,
+      scopeStorefront(input.scope),
+    ])
+    .pipe(
+      Effect.mapError(accessUnavailable),
+      Effect.flatMap(([row]) =>
+        row === undefined
+          ? Effect.fail(violation('invitation_invalid', invitationUnavailableReason))
+          : Effect.succeed(invitationFromRow(tenantId, row)),
+      ),
+    );
+
+/** What the durable invitation says about one claim, for a caller holding the invitation id alone. */
+export interface CounterpartyInvitationClaimability {
+  /** PENDING, unexpired, with an unexpired STAGED proof still to present. */
+  readonly claimable: boolean;
+  readonly claimedByPrincipalId: string | undefined;
+  /** The attestation reference a finished claim stamped, absent while none has. */
+  readonly claimProofReference: string | undefined;
+  /** Absent exactly when this scope holds no such invitation. */
+  readonly lifecycle: CounterpartyInvitationLifecycle | undefined;
+}
+
+type CounterpartyInvitationLifecycle = typeof InvitationLifecycleSchema.Type;
+
+const claimabilityFromRow = (row: InvitationClaimabilityRow | undefined): CounterpartyInvitationClaimability => ({
+  claimable: row?.claimable === true,
+  claimedByPrincipalId: row?.claimed_by_principal_id ?? undefined,
+  claimProofReference: row?.claim_proof_reference ?? undefined,
+  lifecycle: row?.lifecycle ?? undefined,
+});
+
+/**
+ * Whether the named invitation id can still be claimed: PENDING, unexpired, in this scope's Tenant
+ * and Legal Entity, with a VERIFIED and STAGED proof that has not itself expired — and, alongside
+ * that, the lifecycle, claimant and claim attestation reference the invitation durably carries.
+ *
+ * No existing read is keyed by invitation id alone: `read_access_invitation` needs the counterparty
+ * resource id and storefront key an unclaimed invitation has not disclosed to its recipient yet, and
+ * `verify_invitation_claim_authority` needs a presented proof reference no caller holds before it
+ * starts a claim. This lets enrollment-start refuse an unknown, consumed, revoked or expired
+ * invitation before it spends any budget or creates an Attempt and provider account nothing can ever
+ * complete — without revealing which of those refusal reasons applied — and lets an enrollment claim
+ * whose answer never arrived be settled from the invitation instead of claimed a second time.
+ */
+export const readCounterpartyInvitationClaimability = (
+  transaction: CounterpartyAccessScopedRoutineInvoker,
+  invitationId: string,
+): Effect.Effect<CounterpartyInvitationClaimability, CounterpartyAccessDomainError> =>
+  transaction.invoke(readCounterpartyInvitationClaimabilityRoutine, [invitationId]).pipe(
+    Effect.mapError(accessUnavailable),
+    Effect.map(([row]) => claimabilityFromRow(row)),
+  );
 
 const mutateInvitation = (
   dependencies: CounterpartyAccessPersistenceContext,
@@ -1836,31 +1954,35 @@ const claimInviterAuthorityDecision = (
     // Reconciliation must not repair or preserve owner-governed access from Core-only state.
     return Effect.succeed('unavailable' as const);
   }
-  return ownerAccessReader(scope.routineInvoker, {
-    legalEntityId: scope.legalEntityId,
-    tenantId: scope.tenantId,
-  })({
-    counterpartyRef: {
-      moduleId: counterpartyModuleKey,
-      resourceId: root.counterparty_resource_id,
-      resourceType: counterpartyResourceType,
-      tenantId: scope.tenantId,
-    },
-    legalEntityId: scope.legalEntityId,
-    permission: accessManagementPermission,
-    principal: { principalId: root.invited_by, tenantId: scope.tenantId },
-    scope: permissionScope,
-  }).pipe(
-    Effect.flatMap((decision) => {
-      if (decision === 'DENIED') {
-        return Effect.succeed('denied' as const);
-      }
-      if (decision === 'UNAVAILABLE') {
-        return Effect.succeed('unavailable' as const);
-      }
-      return verifyCoreAuthority();
-    }),
-  );
+  return Effect.gen(function* claimInviterAuthorityDecisionEffect() {
+    const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
+      Effect.mapError((cause) =>
+        workerRejected('RECONCILIATION_UNAVAILABLE', 'The worker Tenant scope is malformed', cause),
+      ),
+    );
+    const decision = yield* ownerAccessReader(scope.routineInvoker, {
+      legalEntityId: scope.legalEntityId,
+      tenantId,
+    })({
+      counterpartyRef: {
+        moduleId: counterpartyModuleKey,
+        resourceId: root.counterparty_resource_id,
+        resourceType: counterpartyResourceType,
+        tenantId: scope.tenantId,
+      },
+      legalEntityId: scope.legalEntityId,
+      permission: accessManagementPermission,
+      principal: { principalId: root.invited_by, tenantId: scope.tenantId },
+      scope: permissionScope,
+    });
+    if (decision === 'DENIED') {
+      return 'denied' as const;
+    }
+    if (decision === 'UNAVAILABLE') {
+      return 'unavailable' as const;
+    }
+    return yield* verifyCoreAuthority();
+  });
 };
 
 const invitationClaimAttestation = (

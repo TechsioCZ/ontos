@@ -9,8 +9,10 @@ import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
 import { makeModuleContractFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
+import { SPICEDB_TEST_CERTIFICATE } from '../../packages/core-runtime/tests/support/spicedb-test-certificate.ts';
 import type { deriveOntosModuleDeploymentContract } from '../generate-ontos-module-contract.mts';
 import {
+  LOCAL_DEVELOPMENT_VERTICALS,
   LOCAL_DEVELOPMENT_CONTEXT,
   LocalDevelopmentInitializationError,
   buildLocalDevelopmentRelationships,
@@ -21,14 +23,20 @@ import {
   parseLocalDevelopmentConfiguration,
   reconcileCoreContext,
 } from '../initialize-local-development.mts';
+import {
+  CZECH_LAUNCH_COMMERCE_FIXTURE,
+  CzechLaunchActivationRejected,
+  validateCzechLaunchActivation,
+  validateCzechLaunchFixtureContracts,
+} from '../czech-launch-commerce-fixture.mts';
 
 const localEnvironment = {
   BETTER_AUTH_SECRET: 'a-local-secret-with-at-least-32-characters',
   BETTER_AUTH_URL: 'http://localhost:3020',
   DATABASE_ADMIN_URL: 'postgres://ontos_admin:admin@localhost:5432/ontos',
   DATABASE_URL: 'postgres://ontos_runtime:runtime@localhost:5432/ontos',
+  SPICEDB_CA_CERT: SPICEDB_TEST_CERTIFICATE,
   SPICEDB_ENDPOINT: 'localhost:50051',
-  SPICEDB_INSECURE: 'true',
   SPICEDB_PRESHARED_KEY: 'local-spicedb-key',
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
 } as const;
@@ -36,13 +44,39 @@ const localEnvironment = {
 const LOCAL_AUTH_USER_ID = 'local-auth-user';
 const INVENTORY_MODULE_ID = 'inventory.core';
 const LOCAL_MODULES_DIRECTORY_PREFIX = 'ontos-local-modules-';
+const CUSTOMER_CONTEXT_VERTICAL_ID = 'commerce-customer-context';
+const MARKET_CATALOG_VERTICAL_ID = 'commerce-market-catalog';
+const PARTY_REGISTRY_VERTICAL_ID = 'party-registry';
 const PARTY_REGISTRY_MODULE_ID = 'party.registry';
 const PARTY_REGISTRY_MODULE_STATE_LABEL = 'Party Registry module state';
+const CATALOG_MODULE_ID = 'commerce.catalog';
 const TOPOLOGY_DIRECTORY = 'topology';
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const topology = JSON.stringify({
-  verticals: [{ id: 'party-registry' }, { id: 'inventory' }],
+  verticals: [
+    { id: PARTY_REGISTRY_VERTICAL_ID },
+    { id: MARKET_CATALOG_VERTICAL_ID },
+    { id: CUSTOMER_CONTEXT_VERTICAL_ID },
+    { id: 'inventory' },
+  ],
 });
+
+const fixturePricingCurrencies = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies;
+const fixturePricingVerificationRef = `commerce.pricing.currency-support-proof:${fixturePricingCurrencies.supportRevisionRef.resourceId}`;
+const activationOwnerFacts = {
+  ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts,
+  pricingCurrencies: {
+    ...fixturePricingCurrencies,
+    factProofs: [
+      {
+        factRef: fixturePricingCurrencies.supportRootRef.resourceId,
+        factRevisionRef: fixturePricingCurrencies.supportRevisionRef.resourceId,
+        verificationRef: fixturePricingVerificationRef,
+      },
+    ],
+    verificationRef: fixturePricingVerificationRef,
+  },
+};
 
 const moduleContract = (moduleId: string): Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>> =>
   makeModuleContractFixture({
@@ -67,8 +101,8 @@ it.effect('accepts only a development configuration with local service endpoints
         {
           ...localEnvironment,
           SPICEDB_ENDPOINT: 'spicedb.example.com:50051',
-          SPICEDB_INSECURE: 'false',
         },
+        { ...localEnvironment, SPICEDB_CA_CERT: '' },
       ].map((environment) =>
         Effect.gen(function* testEffect2() {
           expect(
@@ -135,7 +169,7 @@ it.effect('module-state reconciliation preserves migrated IDs and rejects identi
   }),
 );
 
-it.effect('derives only configured Party Registry through its generated owner contract', () =>
+it.effect('derives the fixed local commerce launch modules through generated owner contracts', () =>
   Effect.gen(function* testEffect5() {
     const root = yield* Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), LOCAL_MODULES_DIRECTORY_PREFIX)));
     yield* Effect.tryPromise(() => mkdir(path.join(root, TOPOLOGY_DIRECTORY), { recursive: true }));
@@ -143,8 +177,86 @@ it.effect('derives only configured Party Registry through its generated owner co
     const deriveContract = ({ vertical }: { readonly vertical: string }) =>
       Effect.succeed(moduleContract(`${vertical}.core`));
     expect(yield* deriveActivatedModuleIds(root, deriveContract).pipe(Effect.provide(NodeServices.layer))).toEqual([
+      'commerce-customer-context.core',
+      'commerce-market-catalog.core',
       'party-registry.core',
     ]);
+    expect(LOCAL_DEVELOPMENT_VERTICALS).toEqual([
+      PARTY_REGISTRY_VERTICAL_ID,
+      MARKET_CATALOG_VERTICAL_ID,
+      CUSTOMER_CONTEXT_VERTICAL_ID,
+    ]);
+  }),
+);
+
+it('omits the excluded storefront from the default market tuple', () => {
+  expect(CZECH_LAUNCH_COMMERCE_FIXTURE.policies.marketBootstrap.revision.value).toEqual({
+    defaultChannelId: 'B2C',
+    defaultCommerceMarketId: '74000000-0000-4000-8000-000000000010',
+    defaultSellingLegalEntityId: '71000000-0000-4000-8000-000000000010',
+    kind: 'DEFAULT_MARKET_TUPLE',
+  });
+});
+
+it.effect('publishes a schema-valid deterministic Czech Launch operator fixture', () =>
+  Effect.gen(function* validateFixture() {
+    yield* validateCzechLaunchFixtureContracts();
+    expect(CZECH_LAUNCH_COMMERCE_FIXTURE.scope).toMatchObject({
+      channelId: 'B2C',
+      storefrontId: 'czech-launch-b2c',
+      tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+    });
+    expect(CZECH_LAUNCH_COMMERCE_FIXTURE.policies.quantity.revision.value).toEqual({
+      audience: 'SHARED',
+      basis: {
+        targetDivisibilityRevision: 1,
+        targetRef: {
+          moduleId: CATALOG_MODULE_ID,
+          resourceId: '76000000-0000-4000-8000-000000000015',
+          resourceType: 'commerce.catalog.package-definition',
+          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+        },
+        unitRef: {
+          moduleId: CATALOG_MODULE_ID,
+          resourceId: '76000000-0000-4000-8000-000000000020',
+          resourceType: 'commerce.catalog.product-unit',
+          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+        },
+        unitRuleRevision: 1,
+      },
+      constraintMode: 'REPLACEABLE_ENVELOPE',
+      envelope: { kind: 'BOUNDED', maximum: null, minimum: '1', multiple: '1' },
+      kind: 'COMMERCE_QUANTITY_RULE',
+      selector: {
+        kind: 'PACKAGE_OPTION',
+        packageOptionRef: {
+          moduleId: 'commerce.catalog',
+          resourceId: '76000000-0000-4000-8000-000000000015',
+          resourceType: 'commerce.catalog.package-definition',
+          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+        },
+      },
+    });
+  }),
+);
+
+it.effect('fails Czech Launch activation closed without every current owner proof', () =>
+  Effect.gen(function* validateActivation() {
+    expect(
+      yield* validateCzechLaunchActivation({
+        ...activationOwnerFacts,
+        paymentTermCatalog: {
+          ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.paymentTermCatalog,
+          current: [],
+        },
+      }).pipe(Effect.flip),
+    ).toBeInstanceOf(CzechLaunchActivationRejected);
+    const withUndeclaredEvidence = { ...activationOwnerFacts, undeclaredEvidence: true };
+    expect(yield* validateCzechLaunchActivation(withUndeclaredEvidence).pipe(Effect.flip)).toBeInstanceOf(
+      CzechLaunchActivationRejected,
+    );
+
+    expect(yield* validateCzechLaunchActivation(activationOwnerFacts)).toBeDefined();
   }),
 );
 
@@ -171,9 +283,19 @@ it.effect('generates stable module state IDs and complete access relationships',
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).toBe(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID));
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).not.toBe(moduleStateIdFor(INVENTORY_MODULE_ID));
     const relationships = yield* buildLocalDevelopmentRelationships([PARTY_REGISTRY_MODULE_ID, INVENTORY_MODULE_ID]);
-    expect(relationships.length).toBe(7);
+    expect(relationships.length).toBe(8);
     expect(relationships.filter(({ relation }) => relation === 'accessor').length).toBe(2);
     expect(relationships.filter(({ relation }) => relation === 'legal_entity').length).toBe(2);
+    // Party Registry's governed reads need the tenant read permission, not only module access.
+    expect(relationships).toContainEqual({
+      relation: 'party_identity_reader',
+      resourceId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+      resourceType: 'tenant',
+      subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+      subjectType: 'principal',
+    });
+    const withoutPartyRegistry = yield* buildLocalDevelopmentRelationships([INVENTORY_MODULE_ID]);
+    expect(withoutPartyRegistry.some(({ relation }) => relation === 'party_identity_reader')).toBe(false);
   }),
 );
 

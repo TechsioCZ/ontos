@@ -43,9 +43,13 @@ import type {
   ReadRuntimeService,
 } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate, Struct } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -64,6 +68,7 @@ import {
   PartySchema,
 } from '../../shared/domain/identity-contracts.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
@@ -165,6 +170,14 @@ const makeMissingDecisionReadRuntime = () => {
 };
 
 const issuer = 'https://shell.ontos.test';
+const partyCompositionSnapshot = makeApplicationCompositionSnapshotFixture(
+  [ultramodernApiMarker.appId],
+  ultramodernApiMarker.buildMarker,
+);
+const actionPrincipalVerifierTestLayer = Layer.mergeAll(
+  ActionPrincipalVerifierLive,
+  makeActiveApplicationCompositionLayer(partyCompositionSnapshot),
+).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer));
 
 const actionSlugs = [
   'add-contact-point',
@@ -225,6 +238,7 @@ const makeAssertion = (
   options: { readonly expiresAt?: number; readonly tokenIssuer?: string } = {},
 ) =>
   Effect.gen(function* signPrincipalAssertions() {
+    const snapshot = yield* partyCompositionSnapshot;
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -233,7 +247,12 @@ const makeAssertion = (
       use: 'sig',
     };
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal, ver: 1 })
+      new SignJWT({
+        compositionRevision: snapshot.composition.revision,
+        principal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({
           alg: 'EdDSA',
           kid: 'party-command-test',
@@ -249,7 +268,12 @@ const makeAssertion = (
     );
     const otherPrincipal = { ...principal, principalId: randomUUID() };
     const otherToken = yield* Effect.promise(() =>
-      new SignJWT({ principal: otherPrincipal, ver: 1 })
+      new SignJWT({
+        compositionRevision: snapshot.composition.revision,
+        principal: otherPrincipal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({
           alg: 'EdDSA',
           kid: 'party-command-test',
@@ -319,7 +343,7 @@ const mounted = (
     partyRegistryCommandRecoveryLive,
     partyMatchDecisionReadApiLive,
   ).pipe(
-    Layer.provide(ActionPrincipalVerifierLive),
+    Layer.provide(actionPrincipalVerifierTestLayer),
     Layer.provide(actionLayer),
     Layer.provide(readLayer),
     Layer.provide(redemptionLayer),
@@ -346,7 +370,7 @@ const mountedOrganizationEngagement = (
   const actionLayer = Layer.succeed(ActionRuntime, actionRuntime);
   const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, nonPersistingRedemption);
   const handlers = organizationEngagementMutationsLive.pipe(
-    Layer.provide(ActionPrincipalVerifierLive),
+    Layer.provide(actionPrincipalVerifierTestLayer),
     Layer.provide(actionLayer),
     Layer.provide(redemptionLayer),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
@@ -1759,4 +1783,87 @@ it.live(
       expect(harness.snapshot().committed).toEqual(committedSnapshot.committed);
       expect(harness.snapshot().invocations.length).toBe(1);
     }),
+);
+
+const browserHeaders = {
+  accept: 'application/json, text/plain, */*',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  'accept-language': 'cs-CZ,cs;q=0.9,en;q=0.8',
+  'cache-control': 'no-cache',
+  cookie: 'ontos-session=opaque',
+  origin: 'https://party.ontos.test',
+  referer: 'https://party.ontos.test/parties',
+  'sec-ch-ua': '"Chromium";v="141", "Not?A_Brand";v="8"',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-origin',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',
+  'x-trace-id': 'closed-payload-trace',
+} as const;
+
+it.live('full browser headers reach the Read and the Action; only the Idempotency-Key is decoded', () =>
+  Effect.gen(function* acceptBrowserHeaders() {
+    const assertion = yield* makeAssertion();
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      tenantPermission: 'allowed',
+    });
+    const decision: typeof PartyMatchDecisionRecordSchema.Type = {
+      caseRef: null,
+      committedCreateOutcome: 'CREATED',
+      decidedAt: '2026-09-01T00:00:00.000Z',
+      decisionRef: { ...partyRef, resourceType: 'party.registry.party-match-decision' },
+      evidenceEvaluation: null,
+      evidenceExplanation: [{ reason: 'Verified creation evidence', ruleKey: RuleKeySchema.make('creation-evidence') }],
+      matchRuleVersion: 'closed-payload-rule-v1',
+      operation: 'CREATE',
+      outcome: 'CREATED',
+      partyRef,
+    };
+    let reads = 0;
+    const readRuntime: ReadRuntimeService = {
+      runRead: (input) =>
+        Effect.suspend(() => {
+          reads += 1;
+          return Schema.decodeEffect(input.registration.descriptor.resultSchema)(decision).pipe(
+            Effect.mapError(
+              () => new ReadResultValidationError({ code: 'read_result_invalid', reason: 'Invalid decision fixture' }),
+            ),
+          );
+        }),
+    };
+    const app = yield* mountApp(harness, assertion.environment, readRuntime);
+    const actionInvocationId = randomUUID();
+
+    const read = yield* handle(app, decisionRequest(actionInvocationId, assertion.token, browserHeaders));
+    expect(read.status).toBe(200);
+    expect(yield* Effect.promise(() => read.json())).toEqual(decision);
+    expect(reads).toBe(1);
+
+    const oversizedKey = yield* handle(
+      app,
+      commandRequest('request-search-rebuild', {}, assertion.token, {
+        ...browserHeaders,
+        'idempotency-key': 'k'.repeat(201),
+      }),
+    );
+    expect(oversizedKey.status).toBe(400);
+    yield* Schema.decodeUnknownEffect(PartyCommandInvalidRequestProblemSchema)(
+      yield* Effect.promise(() => oversizedKey.json()),
+    );
+    expect(harness.snapshot().invocations.length).toBe(0);
+    const action = yield* handle(
+      app,
+      commandRequest('request-search-rebuild', {}, assertion.token, {
+        ...browserHeaders,
+        'idempotency-key': 'closed-action-browser-headers',
+      }),
+    );
+    expect(action.status).toBe(200);
+    expect(harness.snapshot().committed[0]?.transport).toEqual({
+      correlationId: 'party-command-test',
+      idempotencyKey: 'closed-action-browser-headers',
+      traceId: 'closed-payload-trace',
+    });
+  }),
 );

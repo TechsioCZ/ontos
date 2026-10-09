@@ -1,8 +1,12 @@
 import { eq, inArray, sql } from 'drizzle-orm';
+import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import {
   contactsRelations,
@@ -17,9 +21,13 @@ const fixtureTenants = [tenantA, tenantB] as const;
 
 it.live('enforces tenant isolation and canonical-reference uniqueness without cross-vertical FKs', () =>
   Effect.gen(function* testEffect1() {
+    const connections = yield* loadDatabaseConnectionPair();
     const { admin, runtime } = yield* openBoundaryDatabases(
-      (pool) => makeTestDatabaseFromPool(pool, contactsRelations),
-      1,
+      (client) => makeTestDatabaseFromClient(client, contactsRelations),
+      {
+        admin: yield* makeTestPgClient(connections.admin.connectionString),
+        runtime: yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 1 }),
+      },
     );
     const cleanup = () =>
       purgeFixtureRows(

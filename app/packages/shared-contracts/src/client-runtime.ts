@@ -8,7 +8,7 @@ const EffectBffOperationContextSchema = Schema.Struct({
   // eslint-disable-next-line effect-native/no-unbranded-identifier-schema -- The framework operation name is owner-supplied routing metadata, not an interchangeable Resource identifier.
   operationId: Schema.String,
   routePath: Schema.String,
-  source: Schema.Literals(['client', 'server', 'generated-client', 'effect-adapter', 'data-platform', 'unknown']),
+  source: Schema.Literals(['client', 'server', 'generated-client', 'effect-server', 'data-platform', 'unknown']),
 });
 
 export type EffectBffOperationContext = typeof EffectBffOperationContextSchema.Type;
@@ -22,6 +22,7 @@ export interface EffectBffRequestContext {
 
 export interface EffectBffClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly requestContext?: EffectBffRequestContext;
   readonly transportHeaders?: HttpHeaders.Input;
 }
@@ -87,7 +88,10 @@ interface GovernedEffectBffClientConfig<ApiId extends string, Groups extends Htt
   readonly api: HttpApi.HttpApi<ApiId, Groups>;
   readonly credential: Redacted.Redacted;
   readonly defaultApiPrefix: string | URL;
+  /** Action transport header; endpoint contracts declare no header codec. */
+  readonly idempotencyKey?: string | undefined;
   readonly requestCorrelation: string;
+  readonly requestTrace?: string;
 }
 
 const isGovernedBaseUrl = (value: string): boolean => {
@@ -106,19 +110,26 @@ const isGovernedBaseUrl = (value: string): boolean => {
 
 /** Fresh per-invocation transport; credentials remain redacted until HTTP header construction. */
 export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends HttpApiGroup.Constraint>(
-  { api, credential, defaultApiPrefix, requestCorrelation }: GovernedEffectBffClientConfig<ApiId, Groups>,
-  options: Pick<EffectBffClientOptions, 'baseUrl'>,
+  {
+    api,
+    credential,
+    defaultApiPrefix,
+    idempotencyKey,
+    requestCorrelation,
+    requestTrace,
+  }: GovernedEffectBffClientConfig<ApiId, Groups>,
+  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision'>,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
-  const clientConfig = {
-    api,
-    baseUrl,
-    defaultApiPrefix,
-    transportHeaders: {
-      authorization: Redacted.value(credential),
-      'x-correlation-id': requestCorrelation,
-    },
+  // Header construction skips undefined values, so absent optional headers stay absent.
+  const transportHeaders = {
+    authorization: Redacted.value(credential),
+    'idempotency-key': idempotencyKey,
+    'x-correlation-id': requestCorrelation,
+    'x-ontos-composition-revision': options.compositionRevision,
+    'x-trace-id': requestTrace,
   };
+  const clientConfig = { api, baseUrl, defaultApiPrefix, transportHeaders };
   return Schema.decodeUnknownEffect(Schema.Literal(true))(isGovernedBaseUrl(baseUrl)).pipe(
     Effect.map(() => clientConfig),
     Effect.flatMap(makeEffectBffClient),

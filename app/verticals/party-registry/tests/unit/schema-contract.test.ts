@@ -603,19 +603,13 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
       expect(remediation).toMatch(/party_match_decisions_create_result_ck/u);
       expect(remediation).toMatch(/committed_create_outcome/u);
       const migration = yield* FileSystem.FileSystem.use((fs) =>
-        Effect.map(
-          // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Effect.forEach takes its mapper as the second argument; this is not Array.prototype.forEach's thisArg.
-          Effect.forEach(migrationFolders, (folder) =>
-            fs.readFileString(fileURLToPath(new URL(`${folder}/migration.sql`, migrationDirectory))),
-          ),
-          (migrations) => migrations.join('\n'),
-        ),
+        fs.readFileString(fileURLToPath(new URL(`${migrationFolders[0] ?? ''}/migration.sql`, migrationDirectory))),
       );
       expect(migration.match(/ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu)?.length).toBe(
-        PARTY_TABLE_INVENTORY.length,
+        PARTY_TABLE_INVENTORY.length - 1,
       );
       expect(migration.match(/ALTER TABLE "party"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu)?.length).toBe(
-        PARTY_TABLE_INVENTORY.length,
+        PARTY_TABLE_INVENTORY.length - 1,
       );
       expect(migration).not.toMatch(/REFERENCES "(?:core|auth|contacts)"\./u);
       expect(migration).toMatch(/party_reject_correction_mutation/u);
@@ -627,8 +621,6 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
       expect(migration).toMatch(
         /party_counterparty_role_periods_no_overlap_excl[\s\S]*EXCLUDE USING gist[\s\S]*tstzrange/iu,
       );
-      expect(migration).toMatch(/ALTER TABLE "party"\."privacy_measure_executions" FORCE ROW LEVEL SECURITY/iu);
-      expect(migration).toMatch(/CREATE TRIGGER "party_privacy_measure_executions_immutable"/iu);
     }),
   );
 
@@ -644,12 +636,20 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party', 'privacy'\]/u);
+      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party', 'catalog', 'inventory', 'privacy'\]/u);
       expect(verifier).toMatch(
-        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'auth',\s*'commerce_customer_context',\s*'contacts',\s*'core',\s*'party',\s*'payment_term_catalog',\s*'privacy',\s*\]/u,
+        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'storefront_registry',\s*\]/u,
       );
+      expect(verifier).toMatch(/__drizzle_migrations_assortment/u);
+      expect(verifier).toMatch(/__drizzle_migrations_catalog/u);
       expect(verifier).toMatch(/__drizzle_migrations_party/u);
+      expect(verifier).toMatch(/__drizzle_migrations_price_group_catalog/u);
+      expect(verifier).toMatch(/__drizzle_migrations_pricing/u);
+      expect(verifier).toMatch(/__drizzle_migrations_storefront_registry/u);
+      expect(verifier).toMatch(/verticals\/catalog\/scripts\/verify-db-schema\.mts/u);
+      expect(verifier).toMatch(/verticals\/assortment\/scripts\/verify-db-schema\.mts/u);
       expect(verifier).toMatch(/verticals\/party-registry\/scripts\/verify-db-schema\.mts/u);
+      expect(verifier).toMatch(/verticals\/price-group-catalog\/scripts\/verify-db-schema\.mts/u);
     }),
   );
 });

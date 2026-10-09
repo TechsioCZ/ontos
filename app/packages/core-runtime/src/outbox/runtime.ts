@@ -15,8 +15,10 @@ import {
   validateOutboxWorkerSubscriptions,
 } from './definition.ts';
 import { OutboxHandlerExecutionError, OutboxPayloadDecodeError, OutboxWorkerDescriptorError } from './errors.ts';
-import type { OutboxClaimLostError, OutboxPersistenceError } from './errors.ts';
+import type { PersistenceFailure } from '../database/persistence-failure.ts';
+import type { OutboxClaimLostError } from './errors.ts';
 import { OutboxRepository } from './repository.ts';
+import type { ApplicationCompositionAuthorityError } from '../modules/application-composition-authority.ts';
 import type { OutboxClaim, OutboxRepositoryService as OutboxRepositoryPort } from './repository.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -29,6 +31,7 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
 
 export interface RunOutboxCycleInput<Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration> {
   readonly claimOwner: string;
+  readonly compositionRevision: string;
   readonly maxDeliveries?: number;
   readonly now?: Date;
   readonly registrations: readonly Registration[];
@@ -36,8 +39,8 @@ export interface RunOutboxCycleInput<Registration extends AnyOutboxWorkerRegistr
 }
 
 export interface MatchOutboxMessagesInput {
+  readonly compositionRevision: string;
   readonly now?: Date;
-  readonly subscriptions: readonly OutboxWorkerSubscription[];
 }
 
 export interface OutboxMatchResult {
@@ -55,12 +58,19 @@ export interface OutboxCycleResult {
   readonly succeeded: number;
 }
 
-export type OutboxCycleError = OutboxClaimLostError | OutboxPersistenceError | OutboxWorkerDescriptorError;
+export type OutboxCycleError =
+  | ApplicationCompositionAuthorityError
+  | OutboxClaimLostError
+  | PersistenceFailure
+  | OutboxWorkerDescriptorError;
 
 export interface OutboxRuntimeService {
   readonly matchMessages: (
     input: MatchOutboxMessagesInput,
-  ) => Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError>;
+  ) => Effect.Effect<
+    OutboxMatchResult,
+    ApplicationCompositionAuthorityError | PersistenceFailure | OutboxWorkerDescriptorError
+  >;
   readonly runCycle: <Registration extends AnyOutboxWorkerRegistration>(
     input: RunOutboxCycleInput<Registration>,
   ) => Effect.Effect<OutboxCycleResult, OutboxCycleError, OutboxWorkerRequirements<Registration>>;
@@ -75,6 +85,9 @@ const descriptorFailure = (reason: string): OutboxWorkerDescriptorError =>
 const validateCycleInput = Effect.fn('OutboxRuntime.validateCycleInput')(function* validateCycleInputEffect<
   Registration extends AnyOutboxWorkerRegistration,
 >(input: RunOutboxCycleInput<Registration>) {
+  if (!/^[a-f0-9]{64}$/u.test(input.compositionRevision)) {
+    return yield* descriptorFailure('compositionRevision must identify an approved Application Composition');
+  }
   if (input.claimOwner.trim().length === 0 || input.claimOwner.length > 200) {
     return yield* descriptorFailure('claimOwner must be a non-empty stable runtime identity');
   }
@@ -95,6 +108,7 @@ const validateCycleInput = Effect.fn('OutboxRuntime.validateCycleInput')(functio
   });
   return {
     claimOwner: input.claimOwner,
+    compositionRevision: input.compositionRevision,
     maxDeliveries,
     now,
     registrations,
@@ -145,13 +159,18 @@ const withOutcomeSpan = <Value, Error, Requirements>(
     }),
   );
 
-const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext =>
+const handlerContext = (
+  claim: OutboxClaim,
+  legalEntityScope: 'forbidden' | 'required',
+  compositionRevision: string,
+): OutboxWorkerHandlerContext =>
   attestOutboxWorkerHandlerContext(
     withOptionalProperty(
       withOptionalProperty(
         {
           attemptNumber: claim.attemptNumber,
           claimId: claim.claimId,
+          compositionRevision,
         },
         claim.actorPrincipalId !== undefined,
         'actorPrincipalId',
@@ -165,6 +184,7 @@ const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext =>
         consumerModuleKey: claim.consumerModuleKey,
         deliveryId: claim.deliveryId,
         domainEventId: claim.domainEventId,
+        legalEntityScope,
         messageId: claim.messageId,
         producerModuleKey: claim.producerModuleKey,
         tenantId: claim.tenantId,
@@ -230,6 +250,7 @@ const initialCycleProgress = (): OutboxCycleProgress => ({
 
 interface OutboxCycleExecution<Registration extends AnyOutboxWorkerRegistration> {
   readonly claimOwner: string;
+  readonly compositionRevision: string;
   readonly now: Date;
   readonly registrations: readonly Registration[];
   readonly registrationsByKey: ReadonlyMap<string, Registration>;
@@ -237,18 +258,16 @@ interface OutboxCycleExecution<Registration extends AnyOutboxWorkerRegistration>
 
 const matchMessagesWithRepository = Effect.fn('makeOutboxRuntime.matchMessages')(
   function* matchMessagesWithRepositoryEffect(repository: OutboxRepositoryPort, input: MatchOutboxMessagesInput) {
-    const subscriptions = yield* Effect.try({
-      catch: (error) => {
-        void error;
-        return descriptorFailure('The installed subscription snapshot is invalid');
-      },
-      try: () => validateOutboxWorkerSubscriptions(input.subscriptions),
-    });
+    if (!/^[a-f0-9]{64}$/u.test(input.compositionRevision)) {
+      return yield* descriptorFailure('compositionRevision must identify an approved Application Composition');
+    }
     const now = input.now ?? (yield* DateTime.nowAsDate);
     if (Number.isNaN(now.getTime())) {
       return yield* descriptorFailure('now must be a valid timestamp');
     }
-    return yield* repository.matchUnmatched(subscriptions, now).pipe(Effect.tapError(() => logUnexpectedPersistence()));
+    return yield* repository
+      .matchUnmatched(input.compositionRevision, now)
+      .pipe(Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence()));
   },
 );
 
@@ -261,7 +280,7 @@ const failOutboxDelivery = Effect.fn('OutboxRuntime.failDelivery')(function* fai
   outcome: string,
 ) {
   const status = yield* repository.fail(claim, reason, now).pipe(
-    Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
+    Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence(claim)),
     (effect) => withOutcomeSpan(effect, claim, outcome),
   );
   return {
@@ -279,7 +298,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
     state: OutboxCycleProgress,
   ) {
     const claimOption = yield* repository
-      .claimNext(execution.registrations, execution.claimOwner, execution.now)
+      .claimNext(execution.registrations, execution.claimOwner, execution.now, execution.compositionRevision)
       .pipe(Effect.tapError(() => logUnexpectedPersistence()));
     if (Option.isNone(claimOption)) {
       return { ...state, stopped: true };
@@ -291,7 +310,9 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
       return yield* descriptorFailure(`claimed delivery references unknown worker ${claim.workerKey}`);
     }
     const decoded = yield* Effect.exit(
-      Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)(claim.payloadJson),
+      Schema.decodeUnknownEffect(registration.descriptor.payloadSchema, { onExcessProperty: 'error' })(
+        claim.payloadJson,
+      ),
     );
     if (Exit.isFailure(decoded)) {
       const decodeError = new OutboxPayloadDecodeError({
@@ -310,7 +331,12 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
 
     const handler = getOutboxWorkerHandler(registration);
     const handlerExit = yield* Effect.exit(
-      Effect.suspend(() => handler(decoded.value, handlerContext(claim))).pipe(
+      Effect.suspend(() =>
+        handler(
+          decoded.value,
+          handlerContext(claim, registration.descriptor.legalEntityScope ?? 'required', execution.compositionRevision),
+        ),
+      ).pipe(
         Effect.match({
           onFailure: (error) => {
             void error;
@@ -347,7 +373,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
     }
 
     yield* repository.complete(claim, execution.now).pipe(
-      Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
+      Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence(claim)),
       (effect) => withOutcomeSpan(effect, claim, 'success'),
     );
     return { ...claimedState, succeeded: claimedState.succeeded + 1 };
@@ -371,6 +397,7 @@ const runCycleWithRepository = Effect.fn('makeOutboxRuntime.runCycle')(function*
   );
   const execution: OutboxCycleExecution<Registration> = {
     claimOwner: validated.claimOwner,
+    compositionRevision: validated.compositionRevision,
     now: validated.now,
     registrations: validated.registrations,
     registrationsByKey,
@@ -424,5 +451,8 @@ export const runOutboxCycle = <Registration extends AnyOutboxWorkerRegistration>
 
 export const matchOutboxMessages = (
   input: MatchOutboxMessagesInput,
-): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, OutboxRuntime> =>
-  Effect.flatMap(OutboxRuntime, (runtime) => runtime.matchMessages(input));
+): Effect.Effect<
+  OutboxMatchResult,
+  ApplicationCompositionAuthorityError | PersistenceFailure | OutboxWorkerDescriptorError,
+  OutboxRuntime
+> => Effect.flatMap(OutboxRuntime, (runtime) => runtime.matchMessages(input));

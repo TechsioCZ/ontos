@@ -3,6 +3,7 @@ import { Cause, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
+import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import type { ReadRegistration } from '../reads/definition.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
@@ -253,6 +254,8 @@ interface GovernedReadHttpOptions<
   Unavailable extends HttpProblem<503>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
 > {
+  /** Trusted receiver configuration, never supplied by the HTTP caller. */
+  readonly audience?: string;
   readonly authenticatePrincipal: GovernedReadPrincipalAuthentication<
     VerifierRequirements,
     Authentication,
@@ -435,6 +438,8 @@ export function makeGovernedReadHttpHandler<
   DomainErrorMapper extends ((error: DomainErrorSchema['Type']) => GovernedReadDomainProblem) | undefined = undefined,
 >(
   options: {
+    /** Trusted receiver configuration, never supplied by the HTTP caller. */
+    readonly audience?: string;
     readonly authenticatePrincipal: GovernedReadPrincipalAuthentication<
       VerifierRequirements,
       Authentication,
@@ -476,8 +481,13 @@ export function makeGovernedReadHttpHandler<
         unavailable: options.problems.unavailable,
       });
       const runtime = yield* ReadRuntime;
+      let receivingAudience: Pick<OperationalScopeRequest, 'audience'> = {};
+      if (options.audience !== undefined) {
+        receivingAudience = { audience: options.audience };
+      }
       return yield* runtime
         .runRead({
+          ...receivingAudience,
           input: payload,
           principal,
           registration: options.registration,

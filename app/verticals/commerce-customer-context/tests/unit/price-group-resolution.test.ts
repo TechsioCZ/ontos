@@ -12,7 +12,11 @@ import {
   customerPriceGroupResolutionRead,
   resolveCustomerPriceGroupFromServices,
 } from '../../src/api/customer-price-group-resolution.read.ts';
-import { CustomerPriceGroupResolutionRequestSchema } from '../../shared/apis/customer-price-group-resolution.ts';
+import {
+  CustomerPriceGroupResolutionRequestSchema,
+  CustomerPriceGroupResolutionResponseSchema,
+  customerPriceGroupResolutionPredicateRef,
+} from '../../shared/apis/customer-price-group-resolution.ts';
 import type {
   CustomerPriceGroupAssignment,
   PriceGroupCatalogOutcome,
@@ -27,6 +31,8 @@ import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain
 import { resolveCustomerPriceGroupAt } from '../../shared/domain/price-group-resolution.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
+const requestedEffectiveAt = '2026-02-15T00:00:00.000Z';
+const observedAt = '2026-03-01T00:00:00.000Z';
 const profile = {
   kind: 'RETAIL',
   moduleId: 'commerce.customer-context',
@@ -55,9 +61,20 @@ const counterpartyProfile = {
 } as const;
 const compatibility = {
   catalogRevision: 7,
-  contractId: CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
-  contractRevision: 1,
-  definitionRevision: 4,
+  definitionEffectivePeriod: {
+    effectiveFrom: '2026-01-01T00:00:00.000Z',
+    effectiveTo: null,
+  },
+  definitionRevisionId: '44444444-4444-4444-8444-444444444444',
+  definitionRevisionNumber: 4,
+  meaningFingerprint: 'a'.repeat(64),
+  priceGroupRef,
+  requiredContract: {
+    contractId: CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
+    version: 1,
+  },
+  trustedOperationAt: '2026-03-01T00:00:00.000Z',
+  verifiedAt: '2026-03-01T00:00:01.000Z',
 } as const;
 
 const assignment = (
@@ -146,7 +163,7 @@ it.effect('threads one trusted Read instant and exact Counterparty association t
       }),
     );
     yield* Effect.exit(
-      resolveCustomerPriceGroupFromServices(request, tenantId, {
+      resolveCustomerPriceGroupFromServices({ ...request, effectiveAt: requestedEffectiveAt }, tenantId, {
         catalog: catalog({ _tag: 'MISSING' }),
         now,
         profileValidation,
@@ -155,7 +172,7 @@ it.effect('threads one trusted Read instant and exact Counterparty association t
     );
     expect(inspected).toEqual([
       [counterpartyProfile, '2026-03-01T00:00:00.000Z', counterpartyRef],
-      [counterpartyProfile, '2026-03-01T00:00:00.000Z', counterpartyRef],
+      [counterpartyProfile, requestedEffectiveAt, counterpartyRef],
     ]);
   }),
 );
@@ -166,12 +183,13 @@ it.effect('resolves from the dedicated current-at lookup instead of capped histo
     const result = yield* resolveCustomerPriceGroupFromServices(
       {
         authorizationSubject: { kind: 'RETAIL' },
+        effectiveAt: requestedEffectiveAt,
         profile,
       },
       tenantId,
       {
         catalog: catalog({ _tag: 'MISSING' }),
-        now: Effect.succeed('2026-03-01T00:00:00.000Z'),
+        now: Effect.succeed(observedAt),
         profileValidation: {
           inspect: () =>
             Effect.succeed({
@@ -190,12 +208,89 @@ it.effect('resolves from the dedicated current-at lookup instead of capped histo
         },
       },
     );
-    expect(resolvedAt).toBe('2026-03-01T00:00:00.000Z');
+    expect(resolvedAt).toBe(requestedEffectiveAt);
+    expect(result.effectiveAt).toBe(requestedEffectiveAt);
+    expect(result.observedAt).toBe(observedAt);
     expect(result.resolution).toEqual({ _tag: 'NONE' });
+    expect(result.completenessEvidence).toEqual({
+      observedAt,
+      ownerRevision: result.generation,
+      scope: {
+        kind: 'EXACT_PREDICATE',
+        predicateRef: customerPriceGroupResolutionPredicateRef(profile, requestedEffectiveAt),
+      },
+    });
+    expect(result.currentnessEvidence).toMatchObject({
+      evaluatedAt: result.effectiveAt,
+      generation: result.generation,
+      observedAt: result.observedAt,
+      ownerRevision: result.generation,
+      revalidatedAt: result.observedAt,
+      verificationMode: 'OWNER_CURRENT_SET_REVALIDATED',
+    });
+    expect(result.verificationReceipt).toMatchObject({
+      generation: result.generation,
+      issuedAt: result.observedAt,
+      ownerModuleId: 'commerce.customer-context',
+      ownerRevision: result.generation,
+    });
+    expect(result.verificationReceipt.verificationRef).toContain(
+      'commerce.customer-context.customer-price-group.verification:v1:sha256:',
+    );
+    expect(Schema.is(CustomerPriceGroupResolutionResponseSchema)(result)).toBe(true);
   }),
 );
 
-it.effect('reports every unusable catalog state as BROKEN instead of falling back', () =>
+it.effect('rejects owner evidence that echoes another Profile predicate or generation', () =>
+  Effect.gen(function* ownerEvidenceBinding() {
+    const result = yield* resolveCustomerPriceGroupFromServices(
+      { authorizationSubject: { kind: 'RETAIL' }, effectiveAt: requestedEffectiveAt, profile },
+      tenantId,
+      {
+        catalog: catalog({ _tag: 'MISSING' }),
+        now: Effect.succeed('2026-03-01T00:00:00.000Z'),
+        profileValidation: {
+          inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
+        },
+        store: { ...unreachableStore, resolve: () => Effect.succeed({ _tag: 'found', assignments: [] }) },
+      },
+    );
+    const assignedResult = yield* resolveCustomerPriceGroupFromServices(
+      { authorizationSubject: { kind: 'RETAIL' }, effectiveAt: requestedEffectiveAt, profile },
+      tenantId,
+      {
+        catalog: catalog({ _tag: 'USABLE', compatibility, priceGroupRef }),
+        now: Effect.succeed('2026-03-01T00:00:00.000Z'),
+        profileValidation: {
+          inspect: () => Effect.succeed({ _tag: 'CURRENT', counterpartyRef: null, revision: 1, state: 'ACTIVE' }),
+        },
+        store: {
+          ...unreachableStore,
+          resolve: () => Effect.succeed({ _tag: 'found', assignments: [assignment('authoritative-current')] }),
+        },
+      },
+    );
+    expect(assignedResult.generation).not.toBe(result.generation);
+    expect(assignedResult.verificationReceipt.verificationRef).not.toBe(result.verificationReceipt.verificationRef);
+    expect(
+      Schema.is(CustomerPriceGroupResolutionResponseSchema)({
+        ...result,
+        completenessEvidence: {
+          ...result.completenessEvidence,
+          scope: { kind: 'EXACT_PREDICATE', predicateRef: 'caller-echoed-profile' },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      Schema.is(CustomerPriceGroupResolutionResponseSchema)({
+        ...result,
+        verificationReceipt: { ...result.verificationReceipt, generation: 'caller-generation' },
+      }),
+    ).toBe(false);
+  }),
+);
+
+it.effect('reports every precise catalog rejection as BROKEN instead of falling back', () =>
   Effect.gen(function* brokenResolution() {
     const missing = yield* resolveCustomerPriceGroupAt(
       profile,
@@ -212,6 +307,14 @@ it.effect('reports every unusable catalog state as BROKEN instead of falling bac
       catalog({ _tag: 'RETIRED', catalogRevision: 8 }),
     );
     expect(retired).toMatchObject({ _tag: 'BROKEN', catalogRevision: 8, reason: 'RETIRED' });
+
+    const incompatible = yield* resolveCustomerPriceGroupAt(
+      profile,
+      [assignment('incompatible')],
+      '2026-03-01T00:00:00.000Z',
+      catalog({ _tag: 'INCOMPATIBLE', catalogRevision: 9, contractId: 'pricing.other-contract.v1' }),
+    );
+    expect(incompatible).toMatchObject({ _tag: 'BROKEN', catalogRevision: 9, reason: 'INCOMPATIBLE' });
   }),
 );
 
@@ -271,6 +374,7 @@ it.effect('rejects invalid periods and declares tagged business-plus-resource Re
     expect(
       Schema.is(CustomerPriceGroupResolutionRequestSchema)({
         authorizationSubject: { kind: 'COUNTERPARTY' },
+        effectiveAt: requestedEffectiveAt,
         profile,
       }),
     ).toBe(false);

@@ -1,0 +1,2 @@
+ALTER TABLE "catalog"."commercial_sku_assignment_revisions" DROP CONSTRAINT "catalog_sku_assignment_revisions_invocation_uk";--> statement-breakpoint
+ALTER TABLE "catalog"."commercial_sku_assignment_revisions" ADD CONSTRAINT "catalog_sku_assignment_revisions_invocation_uk" UNIQUE("tenant_id","normalized_code","action_invocation_id");

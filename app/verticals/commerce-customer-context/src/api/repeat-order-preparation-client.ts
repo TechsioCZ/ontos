@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RepeatOrderPreparationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RepeatOrderPreparationAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executeRepeatOrderPreparationWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RepeatOrderPreparationAuthorizedInvocation
 ) =>
   repeatOrderPreparationClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.repeatOrderPreparation.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.repeatOrderPreparation.execute({ payload })),
   );
 
 export const executeRepeatOrderPreparation = (
   payload: RepeatOrderPreparationRequest,
   ...[requestCorrelation, options = {}]: RepeatOrderPreparationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRepeatOrderPreparationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRepeatOrderPreparationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

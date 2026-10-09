@@ -1,6 +1,6 @@
 import { Effect, Equal, Hash, Schema } from 'effect';
 import { addEqualityTesters, describe, expect, it } from 'effect-rstest';
-import { FastCheck } from 'effect/testing';
+import { Arbitrary } from 'effect/unstable/arbitrary';
 
 class SemanticValue implements Equal.Equal {
   readonly #key: string;
@@ -29,7 +29,7 @@ it('the installed package honors Effect equality without replacing native assert
 
 it.prop(
   'the installed package generates tuple schemas',
-  [Schema.Literal('schema'), FastCheck.integer()],
+  [Schema.Literal('schema'), Arbitrary.schema(Schema.Int)],
   ([label, value]) => {
     expect(label).toBe('schema');
     expect(Number.isInteger(value)).toBe(true);

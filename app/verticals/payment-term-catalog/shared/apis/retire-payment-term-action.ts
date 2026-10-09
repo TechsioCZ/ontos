@@ -8,10 +8,6 @@ import { RetirePaymentTermPayloadSchema, RetirePaymentTermResultSchema } from '.
 
 export { RetirePaymentTermPayloadSchema } from '../actions/retire-payment-term.ts';
 
-const RetirePaymentTermActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetirePaymentTermActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetirePaymentTermActionInvalidProblem',
   400,
@@ -144,7 +140,6 @@ export const RetirePaymentTermActionApi = HttpApi.make('RetirePaymentTermActionA
     .add(
       HttpApiEndpoint.post('execute', '/payment-term-catalog/actions/retire-payment-term', {
         error: actionErrors,
-        headers: RetirePaymentTermActionHeadersSchema,
         payload: Schema.toEncoded(RetirePaymentTermPayloadSchema),
         success: RetirePaymentTermResultSchema,
       }),

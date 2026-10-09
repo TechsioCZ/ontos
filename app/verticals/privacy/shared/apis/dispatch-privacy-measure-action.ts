@@ -11,10 +11,6 @@ import {
 
 export { DispatchPrivacyMeasurePayloadSchema } from '../actions/dispatch-privacy-measure.ts';
 
-const DispatchPrivacyMeasureActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const DispatchPrivacyMeasureActionInvalidProblemSchema = makeProblemDetailsSchema(
   'DispatchPrivacyMeasureActionInvalidProblem',
   400,
@@ -128,15 +124,37 @@ const actionErrors = [
   DispatchPrivacyMeasureActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const dispatchPrivacyMeasureActionGroupDefinition = HttpApiGroup.make('dispatchPrivacyMeasureAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/dispatch-privacy-measure', {
+      error: actionErrors,
+      payload: Schema.toEncoded(DispatchPrivacyMeasurePayloadSchema),
+      success: DispatchPrivacyMeasureResultSchema,
+    }),
+  )
+  .middleware(DispatchPrivacyMeasureActionSchemaErrorMiddleware);
+
+export type DispatchPrivacyMeasureActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'dispatchPrivacyMeasureAction',
+  HttpApiGroup.Endpoints<typeof dispatchPrivacyMeasureActionGroupDefinition>
+>;
+
+const DispatchPrivacyMeasureActionGroup: DispatchPrivacyMeasureActionGroupContract =
+  dispatchPrivacyMeasureActionGroupDefinition;
+
 export const DispatchPrivacyMeasureActionApi = HttpApi.make('DispatchPrivacyMeasureActionApi').add(
-  HttpApiGroup.make('dispatchPrivacyMeasureAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/dispatch-privacy-measure', {
-        error: actionErrors,
-        headers: DispatchPrivacyMeasureActionHeadersSchema,
-        payload: Schema.toEncoded(DispatchPrivacyMeasurePayloadSchema),
-        success: DispatchPrivacyMeasureResultSchema,
-      }),
-    )
-    .middleware(DispatchPrivacyMeasureActionSchemaErrorMiddleware),
+  DispatchPrivacyMeasureActionGroup,
 );

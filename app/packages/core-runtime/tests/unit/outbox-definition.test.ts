@@ -25,6 +25,7 @@ const makeWorker = (workerKey = 'consumer.message-logger') =>
         role: 'worker',
       }),
       leaseDurationMs: 30_000,
+      legalEntityScope: 'required',
       payloadSchema,
       producerModuleKey: 'producer',
       retryPolicy: {
@@ -52,6 +53,7 @@ it.effect('defines an exact immutable registration while keeping the handler opa
         scope: 'tenant',
       },
       leaseDurationMs: 30_000,
+      legalEntityScope: 'required',
       payloadSchema,
       producerModuleKey: 'producer',
       retryPolicy: {
@@ -74,6 +76,7 @@ it.effect('defines an exact immutable registration while keeping the handler opa
     yield* getOutboxWorkerHandler(worker)(payload, {
       attemptNumber: 1,
       claimId: 'claim-1',
+      compositionRevision: 'a'.repeat(64),
       deliveryId: 'delivery-1',
       domainEventId: 'event-1',
       messageId: 'message-1',
@@ -114,8 +117,31 @@ it('preserves schema inference for a typed handler payload', () => {
     },
   );
 });
+it('allows an owner to opt into an explicit tenant-only worker scope', () => {
+  const required = makeWorker();
+  const workerKey = 'consumer.tenant-only';
+  const tenantOnly = defineOutboxWorker(
+    {
+      ...required.descriptor,
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        authorization: { kind: 'owner_local_background' },
+        entrypointKey: workerKey,
+        moduleKey: 'consumer',
+        role: 'worker',
+      }),
+      legalEntityScope: 'forbidden',
+      workerKey,
+    },
+    () => Effect.void,
+  );
+  expect(required.descriptor.legalEntityScope).toBe('required');
+  expect(tenantOnly.descriptor.legalEntityScope).toBe('forbidden');
+});
 it('rejects invalid identities, retry policies, and lease policies', () => {
   const valid = makeWorker().descriptor;
+  const invalidLegalEntityScope = { ...valid };
+  Reflect.set(invalidLegalEntityScope, 'legalEntityScope', 'optional');
   const invalidDescriptors = [
     { ...valid, workerKey: 'producer.foreign-worker' },
     {
@@ -130,6 +156,7 @@ it('rejects invalid identities, retry policies, and lease policies', () => {
     },
     { ...valid, topic: 'Invalid' },
     { ...valid, leaseDurationMs: 999 },
+    invalidLegalEntityScope,
     { ...valid, retryPolicy: { ...valid.retryPolicy, maxAttempts: 0 } },
     {
       ...valid,

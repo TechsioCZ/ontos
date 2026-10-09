@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ResponsibilityAssignmentsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ResponsibilityAssignmentsAuthorizedInvocation = readonly [
@@ -40,15 +41,17 @@ export const executeResponsibilityAssignmentsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ResponsibilityAssignmentsAuthorizedInvocation
 ) =>
   responsibilityAssignmentsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.responsibilityAssignments.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.responsibilityAssignments.execute({ payload })),
   );
 
 export const executeResponsibilityAssignments = (
   payload: ResponsibilityAssignmentsRequest,
   ...[requestCorrelation, options = {}]: ResponsibilityAssignmentsOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeResponsibilityAssignmentsWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeResponsibilityAssignmentsWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

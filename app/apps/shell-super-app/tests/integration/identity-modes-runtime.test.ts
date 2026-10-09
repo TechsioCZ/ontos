@@ -11,13 +11,17 @@ import {
   makeSupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
 import { and, eq, inArray } from 'drizzle-orm';
-import { Context, Effect, Predicate } from 'effect';
+import { Context, Effect, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
-import { Pool } from 'pg';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import { AuthenticationNamespaceRegistrationSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import {
   PrincipalManagementRepository,
   principalManagementRepositoryFromTransaction,
@@ -33,7 +37,10 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { createNonHumanPrincipalAction } from '../../../../packages/core-runtime/src/modules/actions/create-non-human-principal.action.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
@@ -62,6 +69,18 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   }
   return [...cookies.values()].join('; ');
 };
+const staffAuthenticationNamespaceId = 'test.staff.better-auth.v1';
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeUnknownSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['identity-integration'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'better-auth',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user', 'api_key'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
 it.live.each([
   {
     name: 'finds stale pending API keys with current and legacy metadata orders',
@@ -75,17 +94,23 @@ it.live.each([
   '$name',
   Effect.fnUntraced(function* runIntegration1({ pendingCleanupOnly }) {
     const baseConfiguration = yield* loadAuthConfig();
-    const corePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: baseConfiguration.connectionString })),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
-    );
+    const coreClient = yield* makeTestPgClient(baseConfiguration.connectionString);
     const authPersistence = yield* makeAuthDatabase(baseConfiguration);
     const authDatabase = authPersistence.executor;
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
-    const principalManagementRepository = principalManagementRepositoryFromTransaction(coreDatabase);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
+    const principalManagementRepository = principalManagementRepositoryFromTransaction(
+      coreDatabase,
+      staffAuthenticationNamespaceId,
+    );
+    const provideAuthenticationNamespaceRegistry = <Success, Failure, Requirements>(
+      effect: Effect.Effect<Success, Failure, Requirements>,
+    ) => effect.pipe(Effect.provideService(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry));
     const providePrincipalManagementRepository = <Success, Failure, Requirements>(
       effect: Effect.Effect<Success, Failure, Requirements>,
-    ) => effect.pipe(Effect.provideService(PrincipalManagementRepository, principalManagementRepository));
+    ) =>
+      provideAuthenticationNamespaceRegistry(
+        effect.pipe(Effect.provideService(PrincipalManagementRepository, principalManagementRepository)),
+      );
     const tenantId = randomUUID();
     const originalPrincipalId = randomUUID();
     const targetPrincipalId = randomUUID();
@@ -97,7 +122,10 @@ it.live.each([
     const targetEmail = `support-target-${randomUUID()}@example.test`;
     const secondAdministratorEmail = `identity-admin-${randomUUID()}@example.test`;
     const password = 'correct-horse-battery-staple';
-    const resolver = makePrincipalResolver({ executor: coreDatabase });
+    const resolver = makePrincipalResolver(
+      { executor: coreDatabase },
+      { authenticationNamespaceId: staffAuthenticationNamespaceId },
+    );
     let supportPermissionAllowed = true;
     const allowedContextAccess = {
       legalEntities: () => Effect.succeed([]),
@@ -128,7 +156,8 @@ it.live.each([
     };
     const provideContextAccess = <Success, Failure, Requirements>(
       effect: Effect.Effect<Success, Failure, Requirements>,
-    ) => effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess));
+    ) =>
+      provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
     const operationalScope = makeOperationalScopeResolver(
       makeOperationalScopeRepository({ executor: coreDatabase }),
       allowedContextAccess,
@@ -215,6 +244,7 @@ it.live.each([
     ]);
     yield* coreDatabase.insert(principalAuthBindings).values([
       {
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         principalAuthBindingId: originalAuthBindingId,
         principalId: originalPrincipalId,
         provider: 'better_auth',
@@ -224,6 +254,7 @@ it.live.each([
         tenantId,
       },
       {
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         principalAuthBindingId: targetAuthBindingId,
         principalId: targetPrincipalId,
         provider: 'better_auth',
@@ -233,6 +264,7 @@ it.live.each([
         tenantId,
       },
       {
+        authenticationNamespaceId: staffAuthenticationNamespaceId,
         principalAuthBindingId: secondAdministratorAuthBindingId,
         principalId: secondAdministratorPrincipalId,
         provider: 'better_auth',
@@ -316,14 +348,16 @@ it.live.each([
       return;
     }
     const lifecycle = makeIdentityLifecycleService(actionRuntime, keys, resolver);
-    const issued = yield* lifecycle.issue({
-      correlationId: randomUUID(),
-      idempotencyKey: `identity-integration-key-${randomUUID()}`,
-      name: 'Identity integration key',
-      principal: resolvedOriginal.principal,
-      requestHeaders: originalHeaders,
-    });
-    const verified = yield* keys.verify(issued.secret);
+    const issued = yield* provideAuthenticationNamespaceRegistry(
+      lifecycle.issue({
+        correlationId: randomUUID(),
+        idempotencyKey: `identity-integration-key-${randomUUID()}`,
+        name: 'Identity integration key',
+        principal: resolvedOriginal.principal,
+        requestHeaders: originalHeaders,
+      }),
+    );
+    const verified = yield* keys.verify(Redacted.value(issued.secret));
     const apiKeyAuthBindingId = issued.authBindingId;
     const apiKeyIdentity = yield* resolver.resolveBetterAuthApiKey(verified.providerKeyId);
     const { privateKey, publicKey } = yield* Effect.tryPromise(() =>
@@ -335,6 +369,7 @@ it.live.each([
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(privateKey));
     const assertion = yield* issueGatewayContextAssertion({
       audience: 'identity-integration',
+      compositionRevision: 'a'.repeat(64),
       principal: {
         authBindingId: apiKeyIdentity.authBindingId,
         authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
@@ -347,7 +382,10 @@ it.live.each([
         makeGatewayIssuerLayer({
           currentTimeSeconds: Effect.succeed(1_800_000_000),
           generateJti: Effect.succeed(randomUUID()),
-          loadAudiences: Effect.succeed(new Set(['identity-integration'])),
+          loadAdmission: Effect.succeed({
+            audiences: new Map([['identity-integration', 'identity-integration-build']]),
+            revision: 'a'.repeat(64),
+          }),
           loadConfig: Effect.succeed({
             issuer: 'https://shell.identity-integration.test',
             privateJwk: {
@@ -378,13 +416,16 @@ it.live.each([
       principalId: originalPrincipalId,
       tenantId,
     });
-    expect(JSON.stringify(verifiedAssertion.payload).includes(issued.secret)).toBe(false);
+    expect(verifiedAssertion.payload['compositionRevision']).toBe('a'.repeat(64));
+    expect(verifiedAssertion.payload['targetBuildMarker']).toBe('identity-integration-build');
+    expect(JSON.stringify(verifiedAssertion.payload).includes(Redacted.value(issued.secret))).toBe(false);
     yield* providePrincipalManagementRepository(
       actionRuntime.runAction({
         payload: { displayName: 'API-key evidence target', kind: 'service' },
         principal: {
           authBindingId: apiKeyAuthBindingId,
           authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+          authenticationNamespaceId: staffAuthenticationNamespaceId,
           authMethod: 'api_key',
           principalId: originalPrincipalId,
           tenantId,
@@ -397,7 +438,7 @@ it.live.each([
       }),
     );
     yield* keys.setEnabled(verified.providerKeyId, false);
-    const invalidKey = yield* Effect.flip(keys.verify(issued.secret));
+    const invalidKey = yield* Effect.flip(keys.verify(Redacted.value(issued.secret)));
     expect(Predicate.isTagged(invalidKey, 'ApiKeyCredentialInvalidError')).toBe(true);
     const managedPrincipal = yield* providePrincipalManagementRepository(
       lifecycle.createNonHumanPrincipal({
@@ -410,14 +451,16 @@ it.live.each([
         principal: resolvedOriginal.principal,
       }),
     );
-    const managedKey = yield* lifecycle.issue({
-      correlationId: randomUUID(),
-      idempotencyKey: randomUUID(),
-      managedPrincipalId: managedPrincipal.principalId,
-      name: 'Cross-admin key',
-      principal: resolvedOriginal.principal,
-      requestHeaders: originalHeaders,
-    });
+    const managedKey = yield* provideAuthenticationNamespaceRegistry(
+      lifecycle.issue({
+        correlationId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        managedPrincipalId: managedPrincipal.principalId,
+        name: 'Cross-admin key',
+        principal: resolvedOriginal.principal,
+        requestHeaders: originalHeaders,
+      }),
+    );
     const secondAdministratorSignIn = yield* authentication.signIn(
       secondAdministratorEmail,
       password,
@@ -435,21 +478,26 @@ it.live.each([
     if (secondAdministratorContext.state !== 'authenticated') {
       throw new Error('The second live tenant administrator did not resolve');
     }
-    const crossAdminDisabled = yield* lifecycle.setStatus({
-      authBindingId: managedKey.authBindingId,
-      correlationId: randomUUID(),
-      expectedStatus: 'active',
-      idempotencyKey: randomUUID(),
-      managedPrincipalId: managedPrincipal.principalId,
-      newStatus: 'disabled',
-      principal: secondAdministratorContext.principal,
-      reason: 'Cross-admin lifecycle integration proof',
-    });
+    const crossAdminDisabled = yield* provideAuthenticationNamespaceRegistry(
+      lifecycle.setStatus({
+        authBindingId: managedKey.authBindingId,
+        correlationId: randomUUID(),
+        expectedStatus: 'active',
+        idempotencyKey: randomUUID(),
+        managedPrincipalId: managedPrincipal.principalId,
+        newStatus: 'disabled',
+        principal: secondAdministratorContext.principal,
+        reason: 'Cross-admin lifecycle integration proof',
+      }),
+    );
     expect(crossAdminDisabled.enabled).toBe(false);
     expect(crossAdminDisabled.cleanupPending).toBe(false);
-    const supportRecoveryPrincipal = makeSupportRecoveryPrincipalContextResolver({
-      executor: coreDatabase,
-    });
+    const supportRecoveryPrincipal = makeSupportRecoveryPrincipalContextResolver(
+      {
+        executor: coreDatabase,
+      },
+      { authenticationNamespaceId: staffAuthenticationNamespaceId },
+    );
     const support = makeSupportImpersonationService(
       Context.empty().pipe(
         Context.add(ActionRuntime, actionRuntime),

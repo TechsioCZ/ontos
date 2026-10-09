@@ -41,10 +41,9 @@ export const NoticeVersionsApi = HttpApi.make('NoticeVersionsApi').add(
         NoticeVersionsUnavailableProblemSchema,
         NoticeVersionsInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: NoticeVersionsRequestSchema,
-      query: {},
+
       success: NoticeVersionsResponseSchema,
     }),
   ),

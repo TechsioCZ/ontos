@@ -98,7 +98,7 @@ const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /** Workspace-internal module specifiers: first-party code can never be the "existing authority". */
-const DEFAULT_INTERNAL_MODULES: readonly string[] = ['@app/**', '@ontos/**', '@akros/**', '~/**', '#*', '#*/**'];
+const DEFAULT_INTERNAL_MODULES: readonly string[] = ['@app/**', '@ontos/**', '~/**', '#*', '#*/**'];
 
 const DEFAULT_ALLOW_DELEGATED_GUARDS: readonly string[] = [];
 

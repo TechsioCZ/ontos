@@ -1,0 +1,96 @@
+# Stage services for every deployable unit in zerops.yaml plus the PostgreSQL service they share, created with
+#   zcli project service-import zerops-import.yaml --project-id <stage project id>
+# Import only the entries whose hostname is missing from the project: Zerops rejects a duplicate hostname.
+# Every non-worker unit serves a public subdomain from creation, so deploys never re-enable one.
+# Hostnames are at most 25 lowercase letters or digits; CI finds each service by its
+# ZEROPS_<SETUP>_SERVICE_ID environment variable, not by hostname.
+# Stage runs in single-container mode. `scripts/ops/production-environment.mts` derives production's
+# import from this file: `:single` managed services become `:ha`, runtime services run at least two
+# containers, and the stage-only Cloudflare Tunnel connector and Outbox Worker host are left out.
+services:
+  - hostname: db18
+    type: postgresql:single@18
+  # SpiceDB runs the pinned authzed/spicedb image in a Docker VM against db18.
+  - hostname: spicedb
+    type: docker@26.1.5
+  # Runs the owner migrations and is stopped after each deploy.
+  - hostname: migrator
+    type: nodejs@24
+  - hostname: shellsuperapp
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: partyregistry
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: commercecustomercontext
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: paymenttermcatalog
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: commercemarketcatalog
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: catalog
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: assortment
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: pricing
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: storefrontregistry
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: pricegroupcatalog
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: inventory
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: partyregistryworker
+    type: nodejs@24
+  - hostname: commercecstmrcntxtworker
+    type: nodejs@24
+  - hostname: pricegroupcatalogworker
+    type: nodejs@24
+  - hostname: inventoryworker
+    type: nodejs@24
+  # Stage-only services carry hard autoscaling ceilings, so a runaway container cannot grow the bill.
+  - hostname: outboxworkerhost
+    type: nodejs@24
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 1
+      startCpuCoreCount: 1
+      minRam: 0.125
+      maxRam: 1
+      minDisk: 1
+      maxDisk: 2
+  # The Cloudflare Tunnel connector for Workers VPC; `stage:cloudflare provision` imports it with its TUNNEL_TOKEN secret.
+  # One connector is enough for stage: a restart pauses Workers VPC traffic for seconds, not longer.
+  - hostname: cloudflared
+    type: alpine@3.23
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 1
+      startCpuCoreCount: 1
+      minRam: 0.125
+      maxRam: 0.5
+      minDisk: 1
+      maxDisk: 1
+  # <generated-vertical-provider-imports>
+  - hostname: availability
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: privacy
+    type: nodejs@24
+    enableSubdomainAccess: true
+  # </generated-vertical-provider-imports>

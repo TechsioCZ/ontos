@@ -8,8 +8,8 @@ import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
-  acquireTestPool,
-  makeTestDatabaseFromPool,
+  makeTestPgClient,
+  makeTestDatabaseFromClient,
   privacyMeasureDeferredCases,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
@@ -54,10 +54,10 @@ it.live('records unsupported Commerce measures without changing canonical lifecy
   Effect.scoped(
     Effect.gen(function* commercePrivacyMeasurePostgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquireTestPool(connections.admin.connectionString);
-      const runtimePool = yield* acquireTestPool(connections.runtime.connectionString);
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+      const adminPool = yield* makeTestPgClient(connections.admin.connectionString);
+      const runtimePool = yield* makeTestPgClient(connections.runtime.connectionString);
+      const admin = yield* makeTestDatabaseFromClient(adminPool, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimePool, commerceCustomerContextRelations);
       const scope = {
         authMethod: 'system' as const,
         correlationId: 'commerce-owner-postgres',

@@ -17,10 +17,6 @@ export * from './domain/engagement-profile.ts';
 export * from './apis/organization-engagement-profile.ts';
 export * from './apis/person-engagement-profile.ts';
 
-export const ContactsMutationHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ContactsInvalidRequestProblemSchema = makeProblemDetailsSchema('ContactsInvalidRequestProblem', 400);
 export const ContactsAuthenticationProblemSchema = makeProblemDetailsSchema('ContactsAuthenticationProblem', 401);
 export const ContactsForbiddenProblemSchema = makeProblemDetailsSchema('ContactsForbiddenProblem', 403);
@@ -69,7 +65,6 @@ export const organizationEngagementMutationApi = HttpApi.make('OrganizationEngag
     .add(
       HttpApiEndpoint.post('attach', '/contacts/engagement/organizations/attach', {
         error: mutationErrors,
-        headers: ContactsMutationHeadersSchema,
         payload: AttachOrganizationEngagementPayloadSchema,
         success: OrganizationEngagementProfileSchema,
       }),
@@ -77,7 +72,6 @@ export const organizationEngagementMutationApi = HttpApi.make('OrganizationEngag
     .add(
       HttpApiEndpoint.post('archive', '/contacts/engagement/organizations/archive', {
         error: lifecycleErrors,
-        headers: ContactsMutationHeadersSchema,
         payload: OrganizationEngagementLifecyclePayloadSchema,
         success: OrganizationEngagementProfileSchema,
       }),
@@ -85,7 +79,6 @@ export const organizationEngagementMutationApi = HttpApi.make('OrganizationEngag
     .add(
       HttpApiEndpoint.post('unarchive', '/contacts/engagement/organizations/unarchive', {
         error: lifecycleErrors,
-        headers: ContactsMutationHeadersSchema,
         payload: OrganizationEngagementLifecyclePayloadSchema,
         success: OrganizationEngagementProfileSchema,
       }),
@@ -97,7 +90,6 @@ export const personEngagementMutationApi = HttpApi.make('PersonEngagementMutatio
     .add(
       HttpApiEndpoint.post('attach', '/contacts/engagement/people/attach', {
         error: mutationErrors,
-        headers: ContactsMutationHeadersSchema,
         payload: AttachPersonEngagementPayloadSchema,
         success: PersonEngagementProfileSchema,
       }),
@@ -105,7 +97,6 @@ export const personEngagementMutationApi = HttpApi.make('PersonEngagementMutatio
     .add(
       HttpApiEndpoint.post('archive', '/contacts/engagement/people/archive', {
         error: lifecycleErrors,
-        headers: ContactsMutationHeadersSchema,
         payload: PersonEngagementLifecyclePayloadSchema,
         success: PersonEngagementProfileSchema,
       }),
@@ -113,7 +104,6 @@ export const personEngagementMutationApi = HttpApi.make('PersonEngagementMutatio
     .add(
       HttpApiEndpoint.post('unarchive', '/contacts/engagement/people/unarchive', {
         error: lifecycleErrors,
-        headers: ContactsMutationHeadersSchema,
         payload: PersonEngagementLifecyclePayloadSchema,
         success: PersonEngagementProfileSchema,
       }),

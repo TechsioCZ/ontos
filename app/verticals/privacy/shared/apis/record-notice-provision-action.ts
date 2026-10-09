@@ -11,10 +11,6 @@ import {
 
 export { RecordNoticeProvisionPayloadSchema } from '../actions/record-notice-provision.ts';
 
-const RecordNoticeProvisionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecordNoticeProvisionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordNoticeProvisionActionInvalidProblem',
   400,
@@ -132,15 +128,37 @@ const actionErrors = [
   RecordNoticeProvisionActionInternalProblemSchema,
 ] as const;
 
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const recordNoticeProvisionActionGroupDefinition = HttpApiGroup.make('recordNoticeProvisionAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/record-notice-provision', {
+      error: actionErrors,
+      payload: Schema.toEncoded(RecordNoticeProvisionPayloadSchema),
+      success: RecordNoticeProvisionResultSchema,
+    }),
+  )
+  .middleware(RecordNoticeProvisionActionSchemaErrorMiddleware);
+
+export type RecordNoticeProvisionActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'recordNoticeProvisionAction',
+  HttpApiGroup.Endpoints<typeof recordNoticeProvisionActionGroupDefinition>
+>;
+
+const RecordNoticeProvisionActionGroup: RecordNoticeProvisionActionGroupContract =
+  recordNoticeProvisionActionGroupDefinition;
+
 export const RecordNoticeProvisionActionApi = HttpApi.make('RecordNoticeProvisionActionApi').add(
-  HttpApiGroup.make('recordNoticeProvisionAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/record-notice-provision', {
-        error: actionErrors,
-        headers: RecordNoticeProvisionActionHeadersSchema,
-        payload: Schema.toEncoded(RecordNoticeProvisionPayloadSchema),
-        success: RecordNoticeProvisionResultSchema,
-      }),
-    )
-    .middleware(RecordNoticeProvisionActionSchemaErrorMiddleware),
+  RecordNoticeProvisionActionGroup,
 );

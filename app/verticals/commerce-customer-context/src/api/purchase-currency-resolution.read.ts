@@ -33,56 +33,81 @@ import type {
 } from '../../shared/domain/purchase-currency-resolution.ts';
 import { PurchaseCurrencyDependencyUnavailable } from '../../shared/domain/purchase-currency-dependency.ts';
 import { PurchaseCurrencyPurchasingContextPort } from '../../shared/domain/purchase-currency-context-port.ts';
-import type { PurchaseCurrencyTrustedScope } from '../../shared/domain/purchase-currency-context-port.ts';
+import type {
+  PurchaseCurrencyPurchasingContextPortService,
+  PurchaseCurrencyTrustedScope,
+} from '../../shared/domain/purchase-currency-context-port.ts';
 import { PurchaseCurrencyPolicyPort } from '../../shared/domain/purchase-currency-policy-port.ts';
+import type { PurchaseCurrencyPolicyPortService } from '../../shared/domain/purchase-currency-policy-port.ts';
 import { PurchaseCurrencyPricingPort } from '../../shared/domain/purchase-currency-pricing-port.ts';
+import type { PurchaseCurrencyPricingPortService } from '../../shared/domain/purchase-currency-pricing-port.ts';
+import { purchaseCurrencyPolicyPortForRepository } from '../integrations/purchase-currency-policy.ts';
+import { purchaseCurrencyPricingPortFromEnvironment } from '../integrations/purchase-currency-pricing.ts';
+import { customerCommercePolicyRepositoryForScope } from '../persistence/customer-commerce-policy-persistence.ts';
 
 export interface PurchaseCurrencyResolutionServices {
   /** Resolves Current Commerce policy, pricing support, and trusted purchasing context. */
   readonly loadCurrent: (
     input: PurchaseCurrencyResolutionRequest,
     observedAt: string,
-  ) => Effect.Effect<PurchaseCurrencyCurrentFacts, PurchaseCurrencyDependencyUnavailable>;
+  ) => Effect.Effect<
+    PurchaseCurrencyCurrentFacts,
+    PurchaseCurrencyDependencyUnavailable | PurchaseCurrencyResolutionFailure
+  >;
 }
 
 const moduleKey = 'commerce.customer-context';
+
+/* oxlint-disable effect-native/no-dependency-parameters -- These owner-local ports are captured only inside the governed Read transaction; tracked in #333; remove when ReadServiceFactory supports transaction-scoped Layer construction. */
+const purchaseCurrencyResolutionServicesFromPorts = (
+  scope: PurchaseCurrencyTrustedScope,
+  contextPort: PurchaseCurrencyPurchasingContextPortService,
+  policyPort: PurchaseCurrencyPolicyPortService,
+  pricingPort: PurchaseCurrencyPricingPortService,
+): PurchaseCurrencyResolutionServices => {
+  const loadCurrent = Effect.fn('PurchaseCurrencyResolutionRead.loadCurrent')(
+    function* loadCurrentPurchaseCurrencyFacts(request: PurchaseCurrencyResolutionRequest, observedAt: string) {
+      const currentContext = yield* contextPort.resolveCurrent({
+        claimedContext: request.purchasingContext,
+        claimedContextRevision: request.contextRevision,
+        claimedSubject: request.subject,
+        observedAt,
+        scope,
+      });
+      const [policy, pricing] = yield* Effect.all(
+        [
+          policyPort.resolveCurrent({
+            context: currentContext,
+            observedAt,
+            subject: currentContext.subject,
+          }),
+          pricingPort.resolveCurrent({
+            effectiveAt: observedAt,
+            tenantId: currentContext.purchasingContext.tenantId,
+          }),
+        ],
+        { concurrency: 2 },
+      );
+      const current = {
+        ...currentContext,
+        policy,
+        pricing,
+      };
+      return current;
+    },
+  );
+  return {
+    loadCurrent,
+  } satisfies PurchaseCurrencyResolutionServices;
+};
+/* oxlint-enable effect-native/no-dependency-parameters */
 
 export const makePurchaseCurrencyResolutionServices = Effect.fn('PurchaseCurrencyResolutionRead.makeServices')(
   function* makePurchaseCurrencyResolutionServicesEffect(input: { readonly scope: PurchaseCurrencyTrustedScope }) {
     const contextPort = yield* PurchaseCurrencyPurchasingContextPort;
     const policyPort = yield* PurchaseCurrencyPolicyPort;
     const pricingPort = yield* PurchaseCurrencyPricingPort;
-    const loadCurrent = Effect.fn('PurchaseCurrencyResolutionRead.loadCurrent')(
-      function* loadCurrentPurchaseCurrencyFacts(request: PurchaseCurrencyResolutionRequest, observedAt: string) {
-        const currentContext = yield* contextPort.resolveCurrent({
-          claimedContext: request.purchasingContext,
-          claimedContextRevision: request.contextRevision,
-          claimedSubject: request.subject,
-          observedAt,
-          scope: input.scope,
-        });
-        const [policy, pricing] = yield* Effect.all(
-          [
-            policyPort.resolveCurrent({
-              context: currentContext,
-              observedAt,
-              subject: currentContext.subject,
-            }),
-            pricingPort.resolveCurrent({ context: currentContext, observedAt }),
-          ],
-          { concurrency: 2 },
-        );
-        const current = {
-          ...currentContext,
-          policy,
-          pricing,
-        };
-        return current;
-      },
-    );
-    return {
-      loadCurrent,
-    } satisfies PurchaseCurrencyResolutionServices;
+    return purchaseCurrencyResolutionServicesFromPorts(input.scope, contextPort, policyPort, pricingPort);
   },
 );
 
@@ -316,7 +341,13 @@ export const purchaseCurrencyResolutionRead = defineRead(
   },
   handlePurchaseCurrencyResolution,
   Effect.fn('PurchaseCurrencyResolutionRead.serviceFactory')(
-    function* purchaseCurrencyResolutionServiceFactory(_transaction, scope) {
+    function* purchaseCurrencyResolutionServiceFactory(transaction, scope, compositionRevision) {
+      if (compositionRevision === undefined) {
+        return yield* new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Cross-owner Read credentials require a verified composition revision',
+        });
+      }
       if (scope.legalEntityId === undefined) {
         return yield* new OperationContextUnavailable({
           code: 'operation_context_unavailable',
@@ -330,13 +361,23 @@ export const purchaseCurrencyResolutionRead = defineRead(
           reason: 'Purchase Currency Resolution requires a trusted Storefront scope',
         });
       }
-      return yield* makePurchaseCurrencyResolutionServices({
-        scope: {
+      const repository = yield* customerCommercePolicyRepositoryForScope(transaction, scope);
+      const contextPort = yield* PurchaseCurrencyPurchasingContextPort;
+      const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment({
+        compositionRevision,
+        legalEntityId: scope.legalEntityId,
+        requestCorrelation: scope.correlationId,
+      });
+      return purchaseCurrencyResolutionServicesFromPorts(
+        {
           legalEntityId: scope.legalEntityId,
           storefrontId,
           tenantId: scope.tenantId,
         },
-      });
+        contextPort,
+        purchaseCurrencyPolicyPortForRepository(repository),
+        pricingPort,
+      );
     },
   ),
   purchaseCurrencyResolutionPermission,

@@ -86,6 +86,8 @@ export interface ActionHandlerContext<
   Services = Readonly<Record<string, never>>,
 > extends ActionCollectorMethods<DomainEvents> {
   readonly actionInvocationId: string;
+  /** The exact approved release rechecked by this owner's transaction before handler entry. */
+  readonly compositionRevision: string;
   readonly scope: OperationalScope;
   readonly services: Services;
 }

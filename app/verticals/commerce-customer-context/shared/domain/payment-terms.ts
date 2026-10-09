@@ -553,55 +553,12 @@ export const PaymentTermsResolutionOutcomeSchema = Schema.Union([
   }),
   Schema.TaggedStruct('NO_USABLE_PAYMENT_TERM', { reason: Schema.String }),
   Schema.TaggedStruct('INCONSISTENT_CONFIGURATION', { reason: Schema.String }),
+  Schema.TaggedStruct('MISSING_PAYMENT_TERM_POLICY', { reason: Schema.String }),
+  Schema.TaggedStruct('INCONSISTENT_PAYMENT_TERM_POLICY', { reason: Schema.String }),
+  Schema.TaggedStruct('BROKEN_PAYMENT_TERM_POLICY', { reason: Schema.String }),
+  Schema.TaggedStruct('PAYMENT_TERM_POLICY_UNVERIFIABLE', { reason: Schema.String }),
 ]);
 export type PaymentTermsResolutionOutcome = typeof PaymentTermsResolutionOutcomeSchema.Type;
-
-const paymentTermsPolicyIdentifier = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const paymentTermsPolicyChannelId = paymentTermsPolicyIdentifier.pipe(
-  Schema.brand('CustomerCommercePaymentTermsPolicyChannelId'),
-  Schema.decodeTo(Schema.String),
-);
-const paymentTermsPolicyMarketId = paymentTermsPolicyIdentifier.pipe(
-  Schema.brand('CustomerCommercePaymentTermsPolicyMarketId'),
-  Schema.decodeTo(Schema.String),
-);
-const paymentTermsPolicyStorefrontId = paymentTermsPolicyIdentifier.pipe(
-  Schema.brand('CustomerCommercePaymentTermsPolicyStorefrontId'),
-  Schema.decodeTo(Schema.String),
-);
-const paymentTermsPolicyLegalEntityId = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('CustomerCommercePaymentTermsPolicyLegalEntityId'),
-  Schema.decodeTo(Schema.String),
-);
-const paymentTermsPolicyTenantId = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('CustomerCommercePaymentTermsPolicyTenantId'),
-  Schema.decodeTo(Schema.String),
-);
-
-const CustomerCommercePaymentTermsPolicyRuleSchema = Schema.Struct({
-  audience: Schema.Literals(['BOTH', 'GUEST', 'PROFILE']),
-  effectiveFrom: PaymentTermsTimestampSchema,
-  effectiveTo: Schema.optionalKey(PaymentTermsTimestampSchema),
-  eligiblePaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(Schema.isMaxLength(200)),
-  explicitlyPermittedPaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(Schema.isMaxLength(200)),
-  fallbackPaymentTermRefs: Schema.Array(PaymentTermReferenceSchema).check(Schema.isMaxLength(200)),
-  policyRevision: paymentTermsPolicyIdentifier,
-  scope: Schema.Struct({
-    channelId: paymentTermsPolicyChannelId,
-    marketId: paymentTermsPolicyMarketId,
-    sellingLegalEntityId: paymentTermsPolicyLegalEntityId,
-    storefrontId: paymentTermsPolicyStorefrontId,
-    tenantId: paymentTermsPolicyTenantId,
-  }),
-});
-
-export const CustomerCommercePaymentTermsPolicyConfigurationSchema = Schema.Struct({
-  configurationRevision: paymentTermsPolicyIdentifier,
-  policySource: paymentTermsPolicyIdentifier,
-  rules: Schema.Array(CustomerCommercePaymentTermsPolicyRuleSchema).check(Schema.isMaxLength(500)),
-});
-export type CustomerCommercePaymentTermsPolicyConfiguration =
-  typeof CustomerCommercePaymentTermsPolicyConfigurationSchema.Type;
 
 export interface CustomerCommercePaymentTermsPolicyContext {
   readonly at: string;
@@ -627,82 +584,17 @@ export interface PaymentTermsPolicyDecision {
 
 export type PaymentTermsPolicyResolution =
   | PaymentTermsPolicyDecision
-  | Extract<PaymentTermsResolutionOutcome, { readonly _tag: 'INCONSISTENT_CONFIGURATION' }>;
-
-const uniquePaymentTermReferences = (references: readonly PaymentTermReference[]): readonly PaymentTermReference[] => [
-  ...new Map(references.map((ref) => [refKey(ref), ref])).values(),
-];
-
-const policyConflict = (reason: string): PaymentTermsPolicyResolution => ({
-  _tag: 'INCONSISTENT_CONFIGURATION',
-  reason,
-});
-
-/**
- * Resolves the launch Payment Terms policy from owner-authored rules. The trusted Storefront selects
- * the rule; request Channel/Market/Storefront values are only claims verified against that rule.
- */
-export const resolveCustomerCommercePaymentTermsPolicy = (
-  configuration: CustomerCommercePaymentTermsPolicyConfiguration,
-  context: CustomerCommercePaymentTermsPolicyContext,
-): PaymentTermsPolicyResolution => {
-  if (context.purchasingContext.storefrontId !== context.trustedStorefrontId) {
-    return policyConflict('The purchasing context does not match the trusted Storefront');
-  }
-  const currentRules = configuration.rules.filter(
-    (rule) =>
-      rule.scope.tenantId === context.tenantId &&
-      rule.scope.sellingLegalEntityId === context.purchasingContext.sellingLegalEntityId &&
-      rule.scope.storefrontId === context.trustedStorefrontId &&
-      (rule.audience === 'BOTH' || rule.audience === context.audience) &&
-      isEffectiveAt(rule, context.at),
-  );
-  if (currentRules.length > 1) {
-    return policyConflict('Several Current Payment Terms policy rules match the trusted scope');
-  }
-  const [rule] = currentRules;
-  if (rule === undefined) {
-    return {
-      eligiblePaymentTermRefs: [],
-      explicitlyPermittedPaymentTermRefs: [],
-      fallbackPaymentTermRefs: [],
-      policyRevision: configuration.configurationRevision,
-      policySource: configuration.policySource,
-    };
-  }
-  if (
-    rule.scope.channelId !== context.purchasingContext.channelId ||
-    rule.scope.marketId !== context.purchasingContext.marketId
-  ) {
-    return policyConflict(
-      'The purchasing Channel or Commerce Market does not match the authoritative Storefront policy',
-    );
-  }
-  const eligiblePaymentTermRefs = uniquePaymentTermReferences(rule.eligiblePaymentTermRefs);
-  const eligibleKeys = new Set(eligiblePaymentTermRefs.map(refKey));
-  const configuredRefs = [
-    ...rule.eligiblePaymentTermRefs,
-    ...rule.explicitlyPermittedPaymentTermRefs,
-    ...rule.fallbackPaymentTermRefs,
-  ];
-  if (configuredRefs.some((ref) => ref.tenantId !== context.tenantId)) {
-    return policyConflict('The Payment Terms policy contains a cross-Tenant reference');
-  }
-  if (
-    [...rule.explicitlyPermittedPaymentTermRefs, ...rule.fallbackPaymentTermRefs].some(
-      (ref) => !eligibleKeys.has(refKey(ref)),
-    )
-  ) {
-    return policyConflict('Permitted choices and fallbacks must be included in policy eligibility');
-  }
-  return {
-    eligiblePaymentTermRefs,
-    explicitlyPermittedPaymentTermRefs: uniquePaymentTermReferences(rule.explicitlyPermittedPaymentTermRefs),
-    fallbackPaymentTermRefs: uniquePaymentTermReferences(rule.fallbackPaymentTermRefs),
-    policyRevision: rule.policyRevision,
-    policySource: configuration.policySource,
-  };
-};
+  | Extract<
+      PaymentTermsResolutionOutcome,
+      {
+        readonly _tag:
+          | 'BROKEN_PAYMENT_TERM_POLICY'
+          | 'INCONSISTENT_CONFIGURATION'
+          | 'INCONSISTENT_PAYMENT_TERM_POLICY'
+          | 'MISSING_PAYMENT_TERM_POLICY'
+          | 'PAYMENT_TERM_POLICY_UNVERIFIABLE';
+      }
+    >;
 
 const PaymentTermsResolutionInputSchema = Schema.Struct({
   at: PaymentTermsTimestampSchema,

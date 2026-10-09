@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PaymentTermHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PaymentTermHistoryAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executePaymentTermHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PaymentTermHistoryAuthorizedInvocation
 ) =>
   paymentTermHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.paymentTermHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.paymentTermHistory.execute({ payload })),
   );
 
 export const executePaymentTermHistory = (
   payload: PaymentTermHistoryRequest,
   ...[requestCorrelation, options = {}]: PaymentTermHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePaymentTermHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePaymentTermHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -1,19 +1,24 @@
-import { Effect, Redacted, Predicate } from 'effect';
+import { Duration, Effect, Redacted, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from '../../src/db/pool-configuration.ts';
 
 const runtimeUrl = 'postgresql://runtime:secret@localhost:5432/ontos';
 
-it.effect('uses acquisition and statement deadlines without opting into a lock deadline', () =>
+it.effect('uses connect and statement deadlines without opting into a lock deadline', () =>
   Effect.gen(function* verifyDefaults() {
     const connectionString = Redacted.make(`${runtimeUrl}?sslmode=require`);
     const configuration = yield* configureDatabasePool(connectionString);
 
-    expect(configuration.connectionTimeoutMillis).toBe(DEFAULT_DATABASE_POOL_DEADLINES.connectionTimeoutMillis);
-    expect(configuration.statement_timeout).toBe(DEFAULT_DATABASE_POOL_DEADLINES.statement_timeout);
-    expect(Object.hasOwn(configuration, 'lock_timeout')).toBe(false);
-    expect(configuration.connectionString).toBe(`${runtimeUrl}?sslmode=require`);
+    expect(configuration.connectTimeout).toStrictEqual(
+      Duration.millis(DEFAULT_DATABASE_POOL_DEADLINES.connectTimeoutMillis),
+    );
+    expect(configuration.startupParameters).toStrictEqual({
+      statement_timeout: `${DEFAULT_DATABASE_POOL_DEADLINES.statement_timeout}ms`,
+    });
+    expect(configuration.url === undefined ? undefined : Redacted.value(configuration.url)).toBe(
+      `${runtimeUrl}?sslmode=require`,
+    );
   }),
 );
 
@@ -24,13 +29,14 @@ it.effect('includes an explicitly opted-in lock deadline', () =>
       lock_timeout: 250,
     });
 
-    expect(configuration.lock_timeout).toBe(250);
+    expect(configuration.startupParameters?.['lock_timeout']).toBe('250ms');
   }),
 );
 
 it.effect('rejects URL deadline overrides with a typed configuration failure', () =>
   Effect.forEach(
     [
+      'connectTimeoutMillis=1',
       'connectionTimeoutMillis=1',
       'connect_timeout=1',
       'lock_timeout=1',

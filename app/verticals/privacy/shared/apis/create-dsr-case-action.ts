@@ -8,10 +8,6 @@ import { CreateDsrCasePayloadSchema, CreateDsrCaseResultSchema } from '../action
 
 export { CreateDsrCasePayloadSchema } from '../actions/create-dsr-case.ts';
 
-const CreateDsrCaseActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateDsrCaseActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateDsrCaseActionInvalidProblem',
   400,
@@ -125,15 +121,34 @@ const actionErrors = [
   CreateDsrCaseActionInternalProblemSchema,
 ] as const;
 
-export const CreateDsrCaseActionApi = HttpApi.make('CreateDsrCaseActionApi').add(
-  HttpApiGroup.make('createDsrCaseAction')
-    .add(
-      HttpApiEndpoint.post('execute', '/privacy/actions/create-dsr-case', {
-        error: actionErrors,
-        headers: CreateDsrCaseActionHeadersSchema,
-        payload: Schema.toEncoded(CreateDsrCasePayloadSchema),
-        success: CreateDsrCaseResultSchema,
-      }),
-    )
-    .middleware(CreateDsrCaseActionSchemaErrorMiddleware),
-);
+/**
+ * The endpoint chain stays a `const`. The MicroVertical API boundary checker walks a root API's
+ * operands through const bindings only, so a class declaration hides the composed endpoints from
+ * it. The exported group is annotated with a named type alias so its type still has a name: the
+ * vertical's `shared/api.ts` merges every group type into one `HttpApi` and declaration emit
+ * serializes that union verbatim, so an anonymous group type pushes the composed contract past
+ * the compiler's serialization limit (TS7056).
+ *
+ * Exported only so the named contract type can reference it; the merged vertical HttpApi prints
+ * this group by name (declaration-emit size).
+ *
+ * @public
+ */
+export const createDsrCaseActionGroupDefinition = HttpApiGroup.make('createDsrCaseAction')
+  .add(
+    HttpApiEndpoint.post('execute', '/privacy/actions/create-dsr-case', {
+      error: actionErrors,
+      payload: Schema.toEncoded(CreateDsrCasePayloadSchema),
+      success: CreateDsrCaseResultSchema,
+    }),
+  )
+  .middleware(CreateDsrCaseActionSchemaErrorMiddleware);
+
+export type CreateDsrCaseActionGroupContract = HttpApiGroup.HttpApiGroup<
+  'createDsrCaseAction',
+  HttpApiGroup.Endpoints<typeof createDsrCaseActionGroupDefinition>
+>;
+
+const CreateDsrCaseActionGroup: CreateDsrCaseActionGroupContract = createDsrCaseActionGroupDefinition;
+
+export const CreateDsrCaseActionApi = HttpApi.make('CreateDsrCaseActionApi').add(CreateDsrCaseActionGroup);

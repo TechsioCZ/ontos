@@ -18,4 +18,4 @@ export const RootConfigProvider = Layer.setConfigProvider(
   ),
 );
 
-export const databaseUrl = Effect.map(Config.redacted('DATABASE_URL'), Redacted.value);
+export const databaseUrl = Effect.map(Config.Redacted('DATABASE_URL'), Redacted.value);

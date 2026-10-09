@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerProfileTradingGateClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerProfileTradingGateAuthorizedInvocation = readonly [
@@ -40,15 +41,17 @@ export const executeCustomerProfileTradingGateWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerProfileTradingGateAuthorizedInvocation
 ) =>
   customerProfileTradingGateClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerProfileTradingGate.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.customerProfileTradingGate.execute({ payload })),
   );
 
 export const executeCustomerProfileTradingGate = (
   payload: CustomerProfileTradingGateRequest,
   ...[requestCorrelation, options = {}]: CustomerProfileTradingGateOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerProfileTradingGateWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerProfileTradingGateWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -48,6 +48,46 @@ it('defines immutable read metadata while keeping handler and service factory pr
   expect(Object.isFrozen(registration.descriptor)).toBe(true);
   expect(Object.isFrozen(registration.descriptor.policies)).toBe(true);
 });
+it('retains an exact Assortment permission resolver as an immutable read declaration', () => {
+  const registration = defineRead(
+    {
+      accessKind: 'detail',
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'context_permission', permission: 'assortment.configuration.read' },
+        entrypointKey: 'core.assortment.configuration',
+        moduleKey: 'core.assortment',
+        role: 'api',
+      }),
+      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.assortment.configuration.v1' },
+      inputSchema: Schema.Struct({}),
+      legalEntityScope: 'required',
+      owningModuleKey: 'core.assortment',
+      permissionTarget: 'assortment_permission',
+      policies: [],
+      readKey: 'core.assortment.configuration',
+      resultSchema: Schema.String,
+      schemaVersion: '1',
+    },
+    () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' }),
+    () => Effect.succeed({}),
+    () => ({
+      assortmentPermission: {
+        kind: 'assortment_configuration' as const,
+        permission: 'assortment.configuration.read' as const,
+        resource: {
+          moduleId: 'commerce.assortment',
+          resourceId: 'configuration-1',
+          resourceType: 'commerce.assortment.configuration',
+        },
+      },
+      kind: 'assortment_permission' as const,
+    }),
+  );
+  expect(Object.keys(registration)).toEqual(['descriptor']);
+  expect(registration.descriptor.permissionTarget).toBe('assortment_permission');
+  expect(Object.isFrozen(registration.descriptor)).toBe(true);
+});
 it('requires an explicit valid owner-scoped read entrypoint', () => {
   expect(() =>
     validateReadDescriptorInput({

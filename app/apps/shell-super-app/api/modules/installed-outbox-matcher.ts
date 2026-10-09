@@ -1,34 +1,46 @@
 import { matchOutboxMessages } from '@app/core-runtime';
 import type {
-  InstalledModuleCatalog,
+  ApplicationCompositionAuthorityError,
   MatchOutboxMessagesInput,
   OutboxRuntime,
   OutboxMatchResult,
-  OutboxPersistenceError,
+  PersistenceFailure,
   OutboxWorkerDescriptorError,
 } from '@app/core-runtime';
 import { Duration, Effect, Layer, Schedule } from 'effect';
 
 import { installedModuleCatalog } from './installed-module-catalog.ts';
-import type { ShellInstalledModuleCatalog } from './installed-module-catalog.ts';
+import type { ShellInstalledModuleCatalog, ShellInstalledCatalog } from './installed-module-catalog.ts';
 
 export type InstalledOutboxMatch<Requirements = OutboxRuntime> = (
   input: MatchOutboxMessagesInput,
-) => Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, Requirements>;
+) => Effect.Effect<
+  OutboxMatchResult,
+  ApplicationCompositionAuthorityError | PersistenceFailure | OutboxWorkerDescriptorError,
+  Requirements
+>;
 
 /** One explicit provenance seam from the validated installed catalog into Core matching. */
 export function matchInstalledOutboxMessagesOnce(
-  catalog: InstalledModuleCatalog,
-): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, OutboxRuntime>;
+  catalog: ShellInstalledCatalog,
+): Effect.Effect<
+  OutboxMatchResult,
+  ApplicationCompositionAuthorityError | PersistenceFailure | OutboxWorkerDescriptorError,
+  OutboxRuntime
+>;
 export function matchInstalledOutboxMessagesOnce<Requirements>(
-  catalog: InstalledModuleCatalog,
+  catalog: ShellInstalledCatalog,
   match: InstalledOutboxMatch<Requirements>,
-): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, Requirements>;
+): Effect.Effect<
+  OutboxMatchResult,
+  ApplicationCompositionAuthorityError | PersistenceFailure | OutboxWorkerDescriptorError,
+  Requirements
+>;
 export function matchInstalledOutboxMessagesOnce<Requirements>(
-  catalog: InstalledModuleCatalog,
+  catalog: ShellInstalledCatalog,
   match?: InstalledOutboxMatch<Requirements>,
 ) {
-  const input = { subscriptions: catalog.outboxSubscriptions };
+  const input = { compositionRevision: catalog.composition.revision };
   return match === undefined ? matchOutboxMessages(input) : match(input);
 }
 
@@ -47,7 +59,8 @@ const installedOutboxMatcherTick = installedModuleCatalog.pipe(
       : Effect.void,
   ),
   Effect.matchEffect({
-    onFailure: (error) => Effect.logError('Installed Outbox catalog matching failed', error),
+    onFailure: (error) =>
+      Effect.annotateLogs(Effect.logError('Installed Outbox catalog matching failed'), { errorTag: error._tag }),
     onSuccess: () => Effect.void,
   }),
 );

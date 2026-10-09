@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerPaymentTermEntitlementReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerPaymentTermEntitlementReadAuthorizedInvocation = readonly [
@@ -40,20 +41,17 @@ export const executeCustomerPaymentTermEntitlementReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerPaymentTermEntitlementReadAuthorizedInvocation
 ) =>
   customerPaymentTermEntitlementReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerPaymentTermEntitlementRead.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.customerPaymentTermEntitlementRead.execute({ payload })),
   );
 
 export const executeCustomerPaymentTermEntitlementRead = (
   payload: CustomerPaymentTermEntitlementReadRequest,
   ...[requestCorrelation, options = {}]: CustomerPaymentTermEntitlementReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerPaymentTermEntitlementReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerPaymentTermEntitlementReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

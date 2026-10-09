@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/packages__customer-market-retirement-contracts",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__customer-market-retirement-contracts.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src", "tests"],
+  "references": [
+    { "path": "../shared-contracts" }
+  ]
+}

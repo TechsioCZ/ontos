@@ -137,13 +137,13 @@ const resolveAssignCounterpartyPriceGroupCatalog = Effect.fn(
   'AssignCounterpartyPriceGroupAction.resolveAssignCounterpartyPriceGroupCatalog',
 )(function* resolveAssignCounterpartyPriceGroupCatalogEffect(
   priceGroupRef: AssignCounterpartyPriceGroupPayload['priceGroupRef'],
-  effectiveFrom: AssignCounterpartyPriceGroupPayload['effectiveFrom'],
+  trustedOperationAt: string,
   catalog: PriceGroupCatalogPort,
 ) {
   const catalogOutcome = yield* catalog.resolveCurrent(
     priceGroupRef,
     CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
-    effectiveFrom,
+    trustedOperationAt,
   );
   if (catalogOutcome._tag !== 'USABLE') {
     return yield* new CustomerPriceGroupCatalogRejected({
@@ -154,7 +154,8 @@ const resolveAssignCounterpartyPriceGroupCatalog = Effect.fn(
   }
   if (
     !samePriceGroupRef(catalogOutcome.priceGroupRef, priceGroupRef) ||
-    catalogOutcome.compatibility.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT
+    catalogOutcome.compatibility.requiredContract.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT ||
+    catalogOutcome.compatibility.requiredContract.version !== 1
   ) {
     return yield* new CustomerPriceGroupCatalogRejected({
       code: 'customer_price_group_catalog_rejected',
@@ -296,7 +297,7 @@ const handleAssignCounterpartyPriceGroup = Effect.fn(
 
   const catalogOutcome = yield* resolveAssignCounterpartyPriceGroupCatalog(
     payload.priceGroupRef,
-    payload.effectiveFrom,
+    recordedAt,
     context.services.catalog,
   );
 

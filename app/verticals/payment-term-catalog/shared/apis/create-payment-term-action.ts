@@ -8,10 +8,6 @@ import { CreatePaymentTermPayloadSchema, CreatePaymentTermResultSchema } from '.
 
 export { CreatePaymentTermPayloadSchema } from '../actions/create-payment-term.ts';
 
-const CreatePaymentTermActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreatePaymentTermActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreatePaymentTermActionInvalidProblem',
   400,
@@ -135,7 +131,6 @@ export const CreatePaymentTermActionApi = HttpApi.make('CreatePaymentTermActionA
     .add(
       HttpApiEndpoint.post('execute', '/payment-term-catalog/actions/create-payment-term', {
         error: actionErrors,
-        headers: CreatePaymentTermActionHeadersSchema,
         payload: Schema.toEncoded(CreatePaymentTermPayloadSchema),
         success: CreatePaymentTermResultSchema,
       }),

@@ -3,9 +3,11 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
 import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
@@ -28,11 +30,7 @@ const legalEntityId = 'd7000000-0000-4000-8000-000000000002';
 const principalId = 'd7000000-0000-4000-8000-000000000003';
 const subjectId = 'd7100000-0000-4000-8000-000000000001';
 
-const pool = (connectionString: string) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString, max: 6 })),
-    (clientPool) => Effect.promise(() => clientPool.end()).pipe(Effect.orDie),
-  );
+const pool = makeTestPgClient;
 
 const trustedScope = (scopedTenantId = tenantId) => ({
   authMethod: 'system' as const,
@@ -48,8 +46,8 @@ it.live('proves consent replay, ordering, conflicts, tenant isolation, and immut
       const connections = yield* loadDatabaseConnectionPair();
       const adminPool = yield* pool(connections.admin.connectionString);
       const runtimePool = yield* pool(connections.runtime.connectionString);
-      const admin = yield* makeTestDatabaseFromPool(adminPool, privacyRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, privacyRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminPool, privacyRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimePool, privacyRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

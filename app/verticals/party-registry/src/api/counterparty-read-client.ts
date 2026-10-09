@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CounterpartyReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CounterpartyReadAuthorizedInvocation = readonly [
@@ -41,20 +42,17 @@ export const executeCounterpartyReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CounterpartyReadAuthorizedInvocation
 ) =>
   counterpartyReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.counterpartyRead.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.counterpartyRead.execute({ payload })),
   );
 
 export const executeCounterpartyRead = (
   payload: CounterpartyReadRequest,
   ...[requestCorrelation, options = {}]: CounterpartyReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCounterpartyReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCounterpartyReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

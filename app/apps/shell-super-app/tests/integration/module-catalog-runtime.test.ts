@@ -10,14 +10,14 @@ import {
   getVerticalRuntimeOutboxWorkers,
 } from '@app/core-runtime';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
-import { deriveDeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
-import type { ModuleContractFetch } from '../../api/modules/installed-module-catalog.ts';
 import { matchInstalledOutboxMessagesOnce } from '../../api/modules/installed-outbox-matcher.ts';
+import { makeCompositionSnapshot, sealComposition } from '../fixtures/application-composition.ts';
 
 const contract = (
   appId: string,
@@ -177,77 +177,21 @@ const propertyRuntimeRegistration = defineVerticalRuntimeRegistration({
 });
 const propertySafeRuntime = extractVerticalRuntimeSafeDescriptors(propertyRuntimeRegistration);
 const ContractDocumentJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
-const makeContractFetch =
-  (documents: ReadonlyMap<string, unknown>, requests: Map<string, number>): ModuleContractFetch =>
-  (input) => {
-    const { url } = new Request(input);
-    const document = documents.get(url);
-    if (document === undefined) {
-      return Promise.resolve(new Response(null, { status: 404 }));
-    }
-    requests.set(url, (requests.get(url) ?? 0) + 1);
-    const encodedDocument = Schema.encodeUnknownSync(ContractDocumentJsonSchema)(document);
-    return Promise.resolve(
-      new Response(encodedDocument, {
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
-  };
 it.effect(
   'keeps discovered metadata separate from one complete owner-local runtime',
   Effect.fnUntraced(function* runIntegration1() {
-    const propertyUrl = 'https://property-registry.test/.well-known/ontos-module-manifest.json';
-    const documentsUrl = 'https://documents-center.test/.well-known/ontos-module-manifest.json';
-    const requests = new Map<string, number>();
-    const contractFetch = makeContractFetch(
-      new Map([
-        [
-          propertyUrl,
-          contract('property-registry', 'property.registry', {
-            actions: propertySafeRuntime.actions,
-            api: [
-              {
-                key: 'property.registry.api',
-                operationKeys: ['property.listUnits'],
-              },
-            ],
-            components: [
-              {
-                expose: './Dashboard',
-                key: 'property.registry.dashboard',
-                mfBoundaryId: 'verticalPropertyRegistry',
-              },
-            ],
-            outboxSubscriptions: propertySafeRuntime.outboxSubscriptions,
-          }),
-        ],
-        [documentsUrl, contract('documents-center', 'documents.center')],
-      ]),
-      requests,
-    );
-    const allowlist = yield* deriveDeploymentAllowlist({
-      environment: 'development',
-      overlay: {
-        environment: 'development',
-        ontosModuleManifests: {
-          'documents-center': documentsUrl,
-          'property-registry': propertyUrl,
-        },
-        schemaVersion: 1,
-      },
-      topology: {
-        verticals: [
-          { id: 'property-registry', kind: 'vertical' },
-          { id: 'documents-center', kind: 'vertical' },
-        ],
-      },
+    const propertyContract = contract('property-registry', 'property.registry', {
+      actions: propertySafeRuntime.actions,
+      api: [{ key: 'property.registry.api', operationKeys: ['property.listUnits'] }],
+      components: [
+        { expose: './Dashboard', key: 'property.registry.dashboard', mfBoundaryId: 'verticalPropertyRegistry' },
+      ],
+      outboxSubscriptions: propertySafeRuntime.outboxSubscriptions,
     });
-    const loader = makeInstalledModuleCatalogLoader(allowlist, contractFetch);
+    const documentsContract = contract('documents-center', 'documents.center');
+    const snapshot = yield* makeCompositionSnapshot([propertyContract, documentsContract]);
+    const loader = makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
     const first = yield* loader;
-    const second = yield* loader;
-    expect(first).toBe(second);
-    expect(requests.get(propertyUrl)).toBe(1);
-    expect(requests.get(documentsUrl)).toBe(1);
     expect(first.getByDeploymentAppId('property-registry')?.manifest.module.id).toBe('property.registry');
     expect(first.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
     expect(first.moduleIds).toEqual(['documents.center', 'property.registry']);
@@ -263,14 +207,15 @@ it.effect(
     expect(getVerticalRuntimeActions(propertyRuntimeRegistration)[0]).toBe(PropertyAction);
     expect(getVerticalRuntimeOutboxWorkers(propertyRuntimeRegistration)[0]).toBe(PropertyOutboxWorker);
     expect(Object.keys(propertyRuntimeRegistration)).toEqual(['moduleId']);
-    let matchedSubscriptions: readonly object[] = [];
+    let matchedRevision = '';
     yield* matchInstalledOutboxMessagesOnce(first, (input) => {
-      matchedSubscriptions = input.subscriptions;
+      matchedRevision = input.compositionRevision;
       return Effect.succeed({ deliveriesCreated: 1, messagesMatched: 1 });
     });
-    expect(matchedSubscriptions).toEqual(propertySafeRuntime.outboxSubscriptions);
+    expect(matchedRevision).toBe(snapshot.composition.revision);
+    expect(first.outboxSubscriptions).toEqual(propertySafeRuntime.outboxSubscriptions);
     const propertyClientReference = makeEffectHttpApiClient(PropertyApi, {
-      baseUrl: new URL('/api', propertyUrl),
+      baseUrl: new URL('https://property-registry.test/api'),
     });
     expect(Effect.isEffect(propertyClientReference)).toBe(true);
     expect(first.getByModuleId('property.registry')?.manifest.publicSurface.components).toEqual([
@@ -287,5 +232,69 @@ it.effect(
     expect(serialized.includes('leaseDurationMs')).toBe(false);
     expect(serialized.includes('PropertyDashboard')).toBe(false);
     expect(serialized.includes('handler')).toBe(false);
+  }),
+);
+
+it.effect('retains every approved Outbox subscription when a consumer deployment is offline', () =>
+  Effect.gen(function* approvedOutboxSubscriptions() {
+    const snapshot = yield* makeCompositionSnapshot([
+      contract('property-registry', 'property.registry', {
+        outboxSubscriptions: propertySafeRuntime.outboxSubscriptions,
+      }),
+      contract('documents-center', 'documents.center'),
+    ]);
+    const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+    let submittedRevision = '';
+    yield* matchInstalledOutboxMessagesOnce(catalog, ({ compositionRevision }) => {
+      submittedRevision = compositionRevision;
+      return Effect.succeed({ deliveriesCreated: 1, messagesMatched: 1 });
+    });
+    expect(submittedRevision).toBe(snapshot.composition.revision);
+    expect(catalog.outboxSubscriptions).toEqual(propertySafeRuntime.outboxSubscriptions);
+    expect(catalog.moduleIds).toEqual(['documents.center', 'property.registry']);
+  }),
+);
+
+it.effect('does not submit any message for matching when authority expires or the bundle becomes contradictory', () =>
+  Effect.gen(function* matchingRequiresCompleteAuthority() {
+    const snapshot = yield* makeCompositionSnapshot([
+      contract('property-registry', 'property.registry', {
+        outboxSubscriptions: propertySafeRuntime.outboxSubscriptions,
+      }),
+      contract('documents-center', 'documents.center'),
+    ]);
+    const now = yield* TestClock.testClockWith((clock) => clock.currentTimeMillis);
+    let matches = 0;
+    const match = () => {
+      matches += 1;
+      return Effect.succeed({ deliveriesCreated: 1, messagesMatched: 1 });
+    };
+    const expired = { ...snapshot, observedAt: DateTime.makeUnsafe(now - 1000), validUntil: DateTime.makeUnsafe(now) };
+    yield* Effect.flip(
+      makeInstalledModuleCatalogLoader(Effect.succeed(expired)).pipe(
+        Effect.flatMap((catalog) => matchInstalledOutboxMessagesOnce(catalog, match)),
+      ),
+    );
+    const [module] = snapshot.composition.modules;
+    if (module === undefined) {
+      throw new Error('missing fixture module');
+    }
+    const contradictory = {
+      ...snapshot,
+      composition: sealComposition({
+        ...snapshot.composition,
+        modules: [{ ...module, moduleId: 'other.module' }, ...snapshot.composition.modules.slice(1)],
+      }),
+    };
+    yield* Effect.flip(
+      makeInstalledModuleCatalogLoader(Effect.succeed(contradictory)).pipe(
+        Effect.flatMap((catalog) => matchInstalledOutboxMessagesOnce(catalog, match)),
+      ),
+    );
+    expect(matches).toBe(0);
+    yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot)).pipe(
+      Effect.flatMap((catalog) => matchInstalledOutboxMessagesOnce(catalog, match)),
+    );
+    expect(matches).toBe(1);
   }),
 );

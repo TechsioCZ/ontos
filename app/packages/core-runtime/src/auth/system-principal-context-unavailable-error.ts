@@ -1,9 +1,7 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class SystemPrincipalContextUnavailableError extends Schema.TaggedError<SystemPrincipalContextUnavailableError>()(
-  'SystemPrincipalContextUnavailableError',
-  {
-    code: Schema.Literal('system_principal_context_unavailable'),
-    reason: Schema.String,
-  },
-) {}
+export class SystemPrincipalContextUnavailableError extends Data.TaggedError('SystemPrincipalContextUnavailableError')<{
+  readonly cause?: unknown;
+  readonly code: 'system_principal_context_unavailable';
+  readonly reason: string;
+}> {}

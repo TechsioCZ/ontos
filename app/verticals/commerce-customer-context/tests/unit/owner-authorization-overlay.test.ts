@@ -1,6 +1,6 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
 import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
-import { Deferred, Effect, Fiber, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { ProfileRetailPermissionReaderFactoryService } from '../../src/integrations/retail-permission-reader.ts';
@@ -10,6 +10,7 @@ const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
 const principalId = '50000000-0000-4000-8000-000000000001';
 const counterpartyId = 'counterparty-one';
+const operationAt = DateTime.makeUnsafe(new Date('2026-09-09T09:00:00.000Z'));
 
 const scope = Object.freeze({
   authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -89,6 +90,7 @@ const input = (
   target: Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'business_permission' }>,
 ): OwnerAuthorizationInput => ({
   operation: 'action',
+  operationAt,
   operationKey: 'commerce.customer-context.grant-counterparty-commerce-access',
   owningModuleKey: 'commerce.customer-context',
   scope,
@@ -160,6 +162,48 @@ it.effect('returns unavailable when owner reconciliation is required', () =>
     const decision = yield* overlay.authorize(transaction, input(counterpartyTarget()));
 
     expect(decision).toBe('unavailable');
+  }),
+);
+
+it.effect('rejects Pricing business targets before entering Counterparty persistence', () =>
+  Effect.gen(function* rejectsPricingTargets() {
+    const calls: string[] = [];
+    const transaction = transactionWith((routineKey) => {
+      calls.push(routineKey);
+      return [];
+    });
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
+    const decision = yield* overlay.authorize(transaction, {
+      operation: 'read',
+      operationAt,
+      operationKey: 'pricing.price-group.read',
+      owningModuleKey: 'commerce.customer-context',
+      scope,
+      targets: [
+        {
+          kind: 'business_permission',
+          permission: 'pricing.price_group.read',
+          target: {
+            kind: 'pricing_catalog',
+            pricingCatalogId: 'catalog-one',
+            tenantId,
+          },
+        },
+        {
+          kind: 'business_permission',
+          permission: 'pricing.price_group.read',
+          target: {
+            kind: 'price_group',
+            priceGroupId: 'price-group-one',
+            pricingCatalogId: 'catalog-one',
+            tenantId,
+          },
+        },
+      ],
+    });
+
+    expect(decision).toBe('unavailable');
+    expect(calls).toEqual([]);
   }),
 );
 

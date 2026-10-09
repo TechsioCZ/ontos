@@ -1,11 +1,13 @@
 import { DateTime, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
 import {
   decodeTrustedPrincipalContext,
   isVerifiedGatewayPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
   trustVerifiedGatewayPrincipalContext,
 } from '../../src/auth/system-principal-context-provenance.ts';
 import {
@@ -21,15 +23,16 @@ import {
   OperationContextUnavailable,
 } from '../../src/operations/errors.ts';
 
-const principal = {
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',
-  authContextRef: 'better-auth-session:test-session',
-  authMethod: 'session' as const,
+  authContextRef: 'opaque-session-reference',
+  authMethod: 'session',
   legalEntityId: '00000000-0000-4000-8000-000000000002',
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
-};
+});
 const active = {
+  bindingAuthenticationNamespaceId: null,
   bindingPrincipalId: principal.principalId,
   bindingRevokedAt: null,
   bindingStatus: 'active',
@@ -180,10 +183,13 @@ it.effect('preserves resolver-issued system provenance across operational scope 
 
 it.effect('preserves verified Storefront scope through persisted tenant and legal-entity checks', () =>
   Effect.gen(function* verifiedStorefrontScope() {
-    const storefrontPrincipal = trustVerifiedGatewayPrincipalContext({
-      ...principal,
-      trustedStorefrontId: 'storefront-akros-b2b',
-    });
+    const storefrontPrincipal = trustVerifiedGatewayPrincipalContext(
+      {
+        ...principal,
+        trustedStorefrontId: 'storefront-tenant-a-b2b',
+      },
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
     const resolver = makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('allowed'));
 
     const resolved = yield* resolver.resolve({
@@ -192,8 +198,14 @@ it.effect('preserves verified Storefront scope through persisted tenant and lega
       principal: storefrontPrincipal,
     });
 
-    expect(resolved.trustedStorefrontId).toBe('storefront-akros-b2b');
+    expect(resolved.trustedStorefrontId).toBe('storefront-tenant-a-b2b');
     expect(isVerifiedGatewayPrincipalContext(resolved)).toBe(true);
+    expect(Object.isFrozen(storefrontPrincipal)).toBe(true);
+    expect(Object.isFrozen(resolved)).toBe(true);
+    expect(readVerifiedGatewayCompositionRevision(resolved)).toBe(
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    expect(readVerifiedGatewayCompositionRevision({ ...resolved })).toBeUndefined();
     expect(Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext({ ...resolved })))).toBe(true);
   }),
 );
@@ -210,7 +222,7 @@ it.effect('permits only a resolver-branded support-stop recovery through inactiv
           tenantId: principal.tenantId,
         }).pipe(Effect.asSome),
     }).resolveStoppedImpersonation({
-      originalAuthBindingId: principal.authBindingId,
+      originalAuthBindingId: principal.authBindingId ?? '00000000-0000-0000-0000-000000000004',
       originalPrincipalId: principal.principalId,
       originalSessionId: 'expired-original-session',
       tenantId: principal.tenantId,

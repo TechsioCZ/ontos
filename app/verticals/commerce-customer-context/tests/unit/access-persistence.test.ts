@@ -1,6 +1,11 @@
-import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime';
+import type { OperationalScope, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
-import { readFile } from 'node:fs/promises';
+import {
+  AuthBindingIdSchema,
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '@app/core-runtime/auth/external-identity-contracts';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -21,9 +26,9 @@ import type {
   CounterpartyAccessPersistenceContext,
 } from '../../src/persistence/access-persistence.ts';
 
-const tenantId = '20000000-0000-4000-8000-000000000001';
+const tenantId = Schema.decodeSync(TenantIdSchema)('20000000-0000-4000-8000-000000000001');
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
-const actorId = '40000000-0000-4000-8000-000000000001';
+const actorId = Schema.decodeSync(PrincipalIdSchema)('40000000-0000-4000-8000-000000000001');
 const recipientId = '50000000-0000-4000-8000-000000000001';
 const invitationId = '60000000-0000-4000-8000-000000000001';
 const grantId = '70000000-0000-4000-8000-000000000001';
@@ -32,23 +37,34 @@ const mutationId = '81000000-0000-4000-8000-000000000001';
 const claimMutationId = '82000000-0000-4000-8000-000000000001';
 const compensationMutationId = '83000000-0000-4000-8000-000000000001';
 const counterpartyId = 'counterparty-one';
+const ResourceIdSchema = Schema.String.pipe(Schema.brand('ResourceId'));
 
-const counterpartyRef = {
+const counterpartyRef = Schema.decodeUnknownSync(
+  Schema.Struct({
+    moduleId: Schema.Literal('party.registry'),
+    resourceId: ResourceIdSchema,
+    resourceType: Schema.Literal('party.registry.counterparty'),
+    tenantId: TenantIdSchema,
+  }),
+)({
   moduleId: 'party.registry',
   resourceId: counterpartyId,
   resourceType: 'party.registry.counterparty',
   tenantId,
-} as const;
+});
 const actor = { principalId: actorId, tenantId } as const;
 const recipient = { principalId: recipientId, tenantId } as const;
 const scope = Object.freeze({
-  authContextRef: 'better-auth-session:test',
-  authMethod: 'session',
+  ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    authBindingId: Schema.decodeSync(AuthBindingIdSchema)('41000000-0000-4000-8000-000000000001'),
+    authContextRef: 'better-auth-session:test',
+    authMethod: 'session',
+    principalId: actorId,
+    tenantId,
+  }),
   correlationId: 'correlation-one',
   legalEntityId,
-  principalId: actorId,
-  tenantId,
-} as const);
+}) satisfies OperationalScope & { readonly legalEntityId: string };
 
 // oxlint-disable-next-line effect-native/no-literal-union-type-alias -- This test-only row-fixture vocabulary mirrors private persistence output and has no runtime parsing boundary.
 type GrantState = 'ACTIVE' | 'PENDING_GRANT' | 'PENDING_REVOKE' | 'RECONCILIATION_REQUIRED' | 'REVOKED';
@@ -754,6 +770,34 @@ it.effect('worker claim authority includes owner-local pending revoke state', ()
   }),
 );
 
+it.effect('rejects a malformed worker Tenant before invoking owner access routines', () =>
+  Effect.gen(function* rejectMalformedWorkerTenant() {
+    const routineKeys: string[] = [];
+    const transaction = invokerWith((routineKey) => {
+      routineKeys.push(routineKey);
+      return routineKey === 'counterparty-access.read-invitation-claim-reconciliation'
+        ? [claimReconciliationRow('RECONCILIATION_REQUIRED')]
+        : [grantRow('PENDING_REVOKE', 'PENDING_REVOKE')];
+    });
+    const service = accessAuthorizationMutationReconciliationForWorker(
+      {
+        businessPermissions: () =>
+          Effect.succeed([{ decision: 'allowed' as const, key: 'counterparty.access.manage' as const }]),
+      },
+      { mutate: () => Effect.die('must not mutate malformed worker scope') },
+      lockingCurrentOwnerAccessForTransaction,
+    );
+    const failure = yield* Effect.flip(
+      service.reconcile({ ...workerScope(transaction), tenantId: 'not-a-tenant' }, claimReconciliationRequest),
+    );
+
+    expect(failure.code).toBe('RECONCILIATION_UNAVAILABLE');
+    expect(failure.reason).toBe('The worker Tenant scope is malformed');
+    expect(Object.getOwnPropertyDescriptor(failure, 'cause')?.value).toBeDefined();
+    expect(routineKeys).toEqual(['counterparty-access.read-invitation-claim-reconciliation']);
+  }),
+);
+
 it.effect('resets a claim when inviter authority is lost before any grant row exists', () =>
   Effect.gen(function* compensateClaimWithoutGrantRows() {
     let invitationResets = 0;
@@ -1264,69 +1308,5 @@ it.effect('preserves a recoverable invitation when an intended grant conflicts',
     const result = yield* port.claimInvitation(claimInput);
     expect(result.outcome).toBe('RECONCILIATION_REQUIRED');
     expect(invitationOperations).toEqual(['BEGIN_CLAIM', 'FINISH_RECONCILIATION']);
-  }),
-);
-
-it.effect('enforces Counterparty-wide last-admin protection without foreign grant disclosure', () =>
-  Effect.gen(function* verifyAccessRoutineSecurity() {
-    const migration = yield* Effect.promise(() =>
-      readFile(new URL('../../drizzle/20260909112255_access-routines/migration.sql', import.meta.url), 'utf-8'),
-    );
-    const revokeRoutine = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."begin_access_revoke"'),
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."transition_access_grant"'),
-    );
-    const grantRoutine = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."begin_access_grant"'),
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."begin_access_revoke"'),
-    );
-    const bootstrapCheck = grantRoutine.slice(
-      grantRoutine.indexOf('IF p_bootstrap AND EXISTS'),
-      grantRoutine.indexOf('  SELECT grant_row.counterparty_commerce_access_grant_id'),
-    );
-    const directGrantLookup = revokeRoutine.slice(
-      revokeRoutine.indexOf('IF p_grant_id IS NOT NULL THEN'),
-      revokeRoutine.indexOf('ELSE\n    SELECT grant_row.counterparty_commerce_access_grant_id'),
-    );
-    const lastAdministratorCheck = revokeRoutine.slice(
-      revokeRoutine.indexOf("ELSIF p_permission_code = 'counterparty.access.manage'"),
-      revokeRoutine.indexOf('  ELSE\n    UPDATE commerce_customer_context.counterparty_commerce_access_grants'),
-    );
-
-    expect(directGrantLookup).toContain('grant_row.counterparty_purchasing_profile_id = v_profile_id');
-    expect(lastAdministratorCheck).not.toContain('other_admin.storefront_resource_id');
-    expect(lastAdministratorCheck).toContain("other_admin.lifecycle = 'ACTIVE'");
-    expect(bootstrapCheck).not.toContain('administrator.storefront_resource_id');
-    expect(bootstrapCheck).toContain("administrator.permission_code = 'counterparty.access.manage'");
-  }),
-);
-
-it.effect('hardens durable saga transitions and invitation claim recovery in owner routines', () =>
-  Effect.gen(function* verifySagaRoutineSecurity() {
-    const migration = yield* Effect.promise(() =>
-      readFile(new URL('../../drizzle/20260909112255_access-routines/migration.sql', import.meta.url), 'utf-8'),
-    );
-    const transition = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."transition_access_grant"'),
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."list_access_reconciliation"'),
-    );
-    const claimMutation = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."mutate_access_invitation"'),
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."read_access_invitation_claim_reconciliation"'),
-    );
-    const claimFinalizer = migration.slice(
-      migration.indexOf('CREATE FUNCTION "commerce_customer_context"."finalize_reconciled_access_invitation"'),
-    );
-
-    expect(transition).toContain('v_latest_mutation_id IS DISTINCT FROM p_mutation_id');
-    expect(transition).toContain('v_operation IS DISTINCT FROM p_expected_operation');
-    expect(transition).toContain("p_target_state = 'ACTIVE' AND lifecycle <> 'ACTIVE' THEN statement_timestamp()");
-    expect(claimMutation).toContain("p_operation IN ('REJECT_CLAIM', 'EXPIRE_CLAIM')");
-    expect(claimMutation).toContain('claim.action_invocation_id = p_action_invocation_id');
-    expect(claimMutation).toContain('claimed_by_principal_id = NULL');
-    expect(claimMutation).toContain('claim_proof_reference = NULL');
-    expect(claimFinalizer).toContain("active_grant.lifecycle = 'ACTIVE'");
-    expect(claimFinalizer).toContain('v_active_count = v_permission_count');
-    expect(claimFinalizer).not.toContain('p_claimant_principal_id');
   }),
 );

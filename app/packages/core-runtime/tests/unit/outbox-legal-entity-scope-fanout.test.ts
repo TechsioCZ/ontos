@@ -19,6 +19,7 @@ const legalEntityTwo = '30000000-0000-4000-8000-000000000002';
 const context = {
   attemptNumber: 1,
   claimId: 'claim-1',
+  compositionRevision: 'a'.repeat(64),
   deliveryId: 'delivery-1',
   domainEventId: 'event-1',
   messageId: 'message-1',
@@ -69,6 +70,28 @@ it.effect('rejects caller-created worker evidence before legal-entity enumeratio
   });
   return Effect.gen(function* rejectUnverifiedContext() {
     const failure = yield* Effect.flip(fanout.forEachScope(context, () => Effect.void));
+    expect(failure.code).toBe('outbox_worker_scope_context_invalid');
+    expect(failure.retryable).toBe(false);
+    expect(listed).toBe(0);
+  });
+});
+
+it.effect('rejects a tenant-only worker before legal-entity enumeration', () => {
+  let listed = 0;
+  const fanout = makeOutboxWorkerLegalEntityScopeFanout({
+    list: () => {
+      listed += 1;
+      return Effect.succeed([active(legalEntityOne)]);
+    },
+    run: () => Effect.void,
+  });
+  return Effect.gen(function* rejectTenantOnlyContext() {
+    const failure = yield* Effect.flip(
+      fanout.forEachScope(
+        attestOutboxWorkerHandlerContext({ ...context, legalEntityScope: 'forbidden' }),
+        () => Effect.void,
+      ),
+    );
     expect(failure.code).toBe('outbox_worker_scope_context_invalid');
     expect(failure.retryable).toBe(false);
     expect(listed).toBe(0);

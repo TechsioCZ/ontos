@@ -1,8 +1,8 @@
+// @effect-diagnostics strictEffectProvide:off multipleEffectProvide:off -- Test-owned scripted database entrypoint for Action fixtures; Reactivity feeds both the scripted client and the executor. expires: 2026-12-31.
 import { randomUUID } from 'node:crypto';
 
-import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { DateTime, Deferred, Effect, Layer, Schema, Stream } from 'effect';
+import { DateTime, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { Connection } from 'effect/unstable/sql/SqlConnection';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
@@ -17,6 +17,7 @@ import {
 import type { DomainEventContractMap } from '../actions/events.ts';
 import type {
   ActionInvocationRecord,
+  ActionRecordedRejection,
   ActionRepositoryService,
   FinalizeActionPolicyDenialInput,
   FlushActionSuccessInput,
@@ -34,6 +35,7 @@ import type { TenantModuleState } from '../modules/tenant-module-state-service.t
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
+import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
@@ -200,6 +202,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
             completedAt: completionTime(),
             status: 'rejected',
           });
+          return Option.none<ActionRecordedRejection>();
         }),
       ),
     );
@@ -209,6 +212,16 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     flushSuccess: (_transaction, input) =>
       Effect.sync(() => {
         pendingCommit.push(commitSuccess(input));
+      }),
+    loadRecordedRejection: (_executor, id) =>
+      Effect.sync(() => {
+        const policyDenial = policyDenials.find((denial) => denial.actionInvocationId === id);
+        if (policyDenial !== undefined) {
+          return Option.some({ policyReasonCode: policyDenial.reasonCode, stage: 'policy' as const });
+        }
+        return permissionDenials.some((denial) => denial.actionInvocationId === id)
+          ? Option.some({ stage: 'authz' as const })
+          : Option.none();
       }),
     lockInvocation: (_transaction, id) => Effect.suspend(() => find(id)),
     rejectPermissionDenied: (_executor, input) => recordRejection(input, permissionDenials),
@@ -270,6 +283,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
           },
         ],
       };
+    } else if (sql.includes('transaction_timestamp')) {
+      return {
+        rows: [{ operation_at: completionTime() }],
+      };
     } else {
       return yield* Effect.die('Owner SQL is unavailable in the Action test harness; bind typed services');
     }
@@ -303,16 +320,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
   });
   const database = yield* Effect.scoped(
     Effect.gen(function* makeTestDatabase() {
-      const reactivity = yield* Reactivity.make;
-      const client = yield* PgClient.makeWith({
-        acquirer: acquireConnection,
-        config: {},
-        listenAcquirer: Effect.die('Notifications are unavailable in the Action test harness'),
-        transactionAcquirer: acquireConnection,
-      }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.orDie);
       return {
         executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
-          Effect.provideService(PgClient.PgClient, client),
+          Effect.provide(scriptedPgClientLayer(acquireConnection)),
+          Effect.provide(Reactivity.layer),
         ),
       };
     }),
@@ -355,6 +366,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
               }),
             )
           : Effect.succeed({
+              // Fixture principals carry no authenticationNamespaceId, so the persisted
+              // binding must claim none either, matching how the live repository always
+              // reports the column explicitly instead of leaving it unset.
+              bindingAuthenticationNamespaceId: principal.authenticationNamespaceId ?? null,
               bindingPrincipalId: principal.principalId,
               bindingRevokedAt: null,
               bindingStatus: 'active',
@@ -439,11 +454,14 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     scopeResolver,
     {
       contextAccess,
+      // This scripted harness rejects owner SQL and tests the Action lifecycle only.
+      lockCompositionAuthority: () => Effect.succeed([]),
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       onStage: (stage) => {
         stages.push(stage);
       },
+      resolveCompositionRevision: () => Effect.succeed('a'.repeat(64)),
       resolveServiceFactory,
     },
   );

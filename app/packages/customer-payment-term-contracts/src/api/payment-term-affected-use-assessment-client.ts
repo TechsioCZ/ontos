@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PaymentTermAffectedUseAssessmentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PaymentTermAffectedUseAssessmentAuthorizedInvocation = readonly [
@@ -41,20 +42,17 @@ export const executePaymentTermAffectedUseAssessmentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PaymentTermAffectedUseAssessmentAuthorizedInvocation
 ) =>
   paymentTermAffectedUseAssessmentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.paymentTermAffectedUseAssessment.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.paymentTermAffectedUseAssessment.execute({ payload })),
   );
 
 export const executePaymentTermAffectedUseAssessment = (
   payload: PaymentTermAffectedUseAssessmentRequest,
   ...[requestCorrelation, options = {}]: PaymentTermAffectedUseAssessmentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePaymentTermAffectedUseAssessmentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePaymentTermAffectedUseAssessmentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

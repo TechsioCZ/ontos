@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
@@ -12,6 +12,9 @@ const permission = Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
 const principalId = '40000000-0000-4000-8000-000000000001';
+const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
+const priceGroupId = '60000000-0000-4000-8000-000000000001';
+const inventoryResourceId = '70000000-0000-4000-8000-000000000001';
 
 it.effect('writes the exact legal-entity and grantee relationships idempotently for a grant', () =>
   Effect.gen(function* grantBusinessPermission() {
@@ -86,6 +89,88 @@ it.effect('uses an idempotent delete and retains the scope relationship for revo
   }),
 );
 
+it.effect('writes only tenant and grantee relationships for an exact Price Group grant', () =>
+  Effect.gen(function* grantPriceGroupPermission() {
+    const requests: v1.WriteRelationshipsRequest[] = [];
+    const service = makeBusinessPermissionRelationshipMutation({
+      writeRelationships: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return v1.WriteRelationshipsResponse.create({});
+        }),
+    });
+    const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const target = {
+      kind: 'price_group' as const,
+      priceGroupId,
+      pricingCatalogId,
+      tenantId,
+    };
+    yield* service.mutate({
+      operation: 'grant',
+      permission: pricingPermission,
+      principal: { principalId, tenantId },
+      target,
+    });
+
+    expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['tenant', 'grantee']);
+  }),
+);
+
+it.effect('writes only the tenant scope and grantee for an exact Pricing Catalog grant', () =>
+  Effect.gen(function* grantPricingCatalogPermission() {
+    const requests: v1.WriteRelationshipsRequest[] = [];
+    const service = makeBusinessPermissionRelationshipMutation({
+      writeRelationships: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return v1.WriteRelationshipsResponse.create({});
+        }),
+    });
+    yield* service.mutate({
+      operation: 'grant',
+      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.create'),
+      principal: { principalId, tenantId },
+      target: {
+        kind: 'pricing_catalog',
+        pricingCatalogId,
+        tenantId,
+      },
+    });
+
+    expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['tenant', 'grantee']);
+  }),
+);
+
+it.effect('writes tenant and grantee relationships for one exact Inventory Resource grant', () =>
+  Effect.gen(function* grantInventoryResourcePermission() {
+    const requests: v1.WriteRelationshipsRequest[] = [];
+    const service = makeBusinessPermissionRelationshipMutation({
+      writeRelationships: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return v1.WriteRelationshipsResponse.create({});
+        }),
+    });
+    yield* service.mutate({
+      operation: 'grant',
+      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct'),
+      principal: { principalId, tenantId },
+      target: {
+        kind: 'inventory_resource',
+        resource: {
+          moduleId: 'commerce.inventory',
+          resourceId: inventoryResourceId,
+          resourceType: 'commerce.inventory.stock-position',
+        },
+        tenantId,
+      },
+    });
+
+    expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['tenant', 'grantee']);
+  }),
+);
+
 it.effect('fails closed before transport for cross-tenant or untrusted storefront input', () =>
   Effect.gen(function* rejectUntrustedScope() {
     let calls = 0;
@@ -124,6 +209,68 @@ it.effect('fails closed before transport for cross-tenant or untrusted storefron
     );
     expect(crossTenant).toBeInstanceOf(BusinessPermissionMutationUnavailable);
     expect(untrustedStorefront).toBeInstanceOf(BusinessPermissionMutationUnavailable);
+    expect(calls).toBe(0);
+  }),
+);
+
+it.effect('rejects incompatible permission targets and noncanonical Pricing identifiers before transport', () =>
+  Effect.gen(function* rejectInvalidBusinessTarget() {
+    let calls = 0;
+    const service = makeBusinessPermissionRelationshipMutation({
+      writeRelationships: () => {
+        calls += 1;
+        return Effect.succeed(v1.WriteRelationshipsResponse.create({}));
+      },
+    });
+    const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');
+    const invalidInputs = [
+      {
+        operation: 'grant' as const,
+        permission: pricingPermission,
+        principal: { principalId, tenantId },
+        target: { counterpartyId: 'counterparty-one', kind: 'counterparty' as const, legalEntityId, tenantId },
+      },
+      {
+        operation: 'grant' as const,
+        permission,
+        principal: { principalId, tenantId },
+        target: { kind: 'price_group' as const, priceGroupId, pricingCatalogId, tenantId },
+      },
+      {
+        operation: 'grant' as const,
+        permission: pricingPermission,
+        principal: { principalId, tenantId },
+        target: { kind: 'price_group' as const, priceGroupId: 'DEALER', pricingCatalogId, tenantId },
+      },
+      {
+        operation: 'grant' as const,
+        permission: pricingPermission,
+        principal: { principalId, tenantId },
+        target: { kind: 'pricing_catalog' as const, pricingCatalogId: 'DEALER', tenantId },
+      },
+      {
+        operation: 'grant' as const,
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct'),
+        principal: { principalId, tenantId },
+        target: {
+          kind: 'inventory_resource' as const,
+          resource: {
+            moduleId: 'commerce.inventory' as const,
+            resourceId: inventoryResourceId,
+            resourceType: 'commerce.catalog.stock-position',
+          },
+          tenantId,
+        },
+      },
+    ];
+
+    const failures: BusinessPermissionMutationUnavailable[] = [];
+    for (const input of invalidInputs) {
+      failures.push(yield* Effect.flip(service.mutate(input)));
+    }
+    expect(failures.every((failure) => Predicate.isTagged(failure, 'BusinessPermissionMutationUnavailable'))).toBe(
+      true,
+    );
     expect(calls).toBe(0);
   }),
 );

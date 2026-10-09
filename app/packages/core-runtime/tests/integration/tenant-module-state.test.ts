@@ -5,6 +5,14 @@ import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import {
+  AuthenticationNamespaceIdSchema,
+  AuthenticationNamespaceRegistrationSchema,
+} from '../../src/auth/external-identity-contracts.ts';
+import {
+  AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistry,
+} from '../../src/auth/external-identity/verifier.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -23,10 +31,13 @@ import {
   TenantModuleStateService,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
+import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
+import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
+import { injectStatementFaults } from '../support/database-faults.ts';
 import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
 
 const tenantOne = '70000000-0000-4000-8000-000000000001';
@@ -38,6 +49,44 @@ const bindingTwo = '72000000-0000-4000-8000-000000000002';
 const FailureTagSchema = Schema.Struct({ _tag: Schema.String });
 const decodeFailureTag = Schema.decodeUnknownOption(FailureTagSchema);
 const tenantIds = [tenantOne, tenantTwo] as const;
+const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
+const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
+  Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+    allowedAudiences: ['core-runtime-test'],
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    provider: 'test-provider',
+    requiresOperationAdmission: false,
+    reservationPrincipalKind: 'human',
+    subjectTypes: ['user'],
+    trustedAttesterPrincipalIds: [],
+  }),
+]);
+const testOperationalScopeResolver: OperationalScopeResolverService = {
+  resolve: (input) =>
+    Effect.gen(function* registeredTestOperationalScope() {
+      const namespaceId = input.principal.authenticationNamespaceId;
+      if (namespaceId !== undefined) {
+        const registration = yield* authenticationNamespaceRegistry
+          .lookup(AuthenticationNamespaceIdSchema.make(namespaceId))
+          .pipe(
+            Effect.mapError(
+              () =>
+                new OperationContextUnavailable({
+                  code: 'operation_context_unavailable',
+                  reason: 'The test authentication namespace registry is unavailable',
+                }),
+            ),
+          );
+        if (Option.isNone(registration)) {
+          return yield* new OperationAuthenticationRequired({
+            code: 'operation_authentication_required',
+            reason: 'The test authentication namespace is not registered',
+          });
+        }
+      }
+      return yield* baseTestOperationalScopeResolver.resolve(input);
+    }),
+};
 
 type DatabaseService = Parameters<typeof makeActionRuntime>[0];
 
@@ -65,7 +114,7 @@ const withDatabase = <Value, Error>(
   Effect.scoped(
     Effect.gen(function* tenantModuleStateDatabaseScope() {
       const configuration = yield* loadDatabaseConfig();
-      const database = yield* makeFaultInjectableCoreDatabase(configuration);
+      const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database).pipe(
         Effect.provideService(InstalledModuleCatalogService, {
           load: Effect.succeed(installedCatalog),
@@ -131,6 +180,7 @@ const setup = Effect.gen(function* initializeTenantModuleStateFixtures() {
       ]);
       yield* database.executor.insert(principalAuthBindings).values([
         {
+          authenticationNamespaceId: staffAuthenticationNamespaceId,
           principalAuthBindingId: bindingOne,
           principalId: principalOne,
           provider: 'better_auth',
@@ -140,6 +190,7 @@ const setup = Effect.gen(function* initializeTenantModuleStateFixtures() {
           tenantId: tenantOne,
         },
         {
+          authenticationNamespaceId: staffAuthenticationNamespaceId,
           principalAuthBindingId: bindingTwo,
           principalId: principalTwo,
           provider: 'better_auth',
@@ -153,7 +204,10 @@ const setup = Effect.gen(function* initializeTenantModuleStateFixtures() {
   );
 });
 
-const Fixtures = Layer.effectDiscard(Effect.acquireRelease(setup, () => cleanup.pipe(Effect.orDie)));
+const Fixtures = Layer.merge(
+  Layer.effectDiscard(Effect.acquireRelease(setup, () => cleanup.pipe(Effect.orDie))),
+  Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+);
 
 const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
@@ -162,6 +216,7 @@ const allowedPermission = {
 const principal = (tenantId = tenantOne, principalId = principalOne) => ({
   authBindingId: tenantId === tenantOne ? bindingOne : bindingTwo,
   authContextRef: `better-auth-session:tenant-module-state-${principalId}`,
+  authenticationNamespaceId: staffAuthenticationNamespaceId,
   authMethod: 'session' as const,
   principalId,
   tenantId,
@@ -458,7 +513,7 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
   const transaction: DatabaseService['executor']['transaction'] = (operation) =>
     database.executor.transaction((currentTransaction) =>
       operation(currentTransaction).pipe(
-        Effect.provideService(TestQueryHook, (statement) =>
+        injectStatementFaults((statement) =>
           statement.startsWith('insert into "core"."tenant_module_states"')
             ? Effect.fail(
                 new SqlError({

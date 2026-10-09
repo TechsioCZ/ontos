@@ -1,0 +1,190 @@
+relationships:
+  - resourceType: tenant
+    resourceId: tenant-a
+    relation: member
+    subjectType: principal
+    subjectId: enrollment-service
+  - resourceType: tenant
+    resourceId: tenant-a
+    relation: member
+    subjectType: principal
+    subjectId: other-namespace-service
+  - resourceType: tenant
+    resourceId: tenant-a
+    relation: member
+    subjectType: principal
+    subjectId: member-only
+  - resourceType: tenant
+    resourceId: tenant-a
+    relation: member
+    subjectType: principal
+    subjectId: ordinary-application
+  - resourceType: tenant
+    resourceId: tenant-a
+    relation: member
+    subjectType: principal
+    subjectId: identity-administrator
+  - resourceType: tenant
+    resourceId: tenant-a
+    relation: identity_admin
+    subjectType: principal
+    subjectId: identity-administrator
+  - resourceType: tenant
+    resourceId: tenant-b
+    relation: member
+    subjectType: principal
+    subjectId: other-tenant-member
+  - resourceType: identity_namespace
+    resourceId: namespace-a
+    relation: tenant
+    subjectType: tenant
+    subjectId: tenant-a
+  - resourceType: identity_namespace
+    resourceId: namespace-a
+    relation: provisioner
+    subjectType: principal
+    subjectId: enrollment-service
+  - resourceType: identity_namespace
+    resourceId: namespace-b
+    relation: tenant
+    subjectType: tenant
+    subjectId: tenant-a
+  - resourceType: identity_namespace
+    resourceId: namespace-b
+    relation: provisioner
+    subjectType: principal
+    subjectId: other-namespace-service
+  - resourceType: identity_namespace
+    resourceId: namespace-c
+    relation: tenant
+    subjectType: tenant
+    subjectId: tenant-b
+  - resourceType: identity_namespace
+    resourceId: namespace-c
+    relation: provisioner
+    subjectType: principal
+    subjectId: enrollment-service
+  - resourceType: identity_namespace
+    resourceId: namespace-d
+    relation: tenant
+    subjectType: tenant
+    subjectId: tenant-a
+  - resourceType: identity_namespace
+    resourceId: namespace-d
+    relation: provisioner
+    subjectType: principal
+    subjectId: relation-only
+  - resourceType: action
+    resourceId: reserve-action
+    relation: restriction
+    subjectType: action
+    subjectId: reserve-action
+  - resourceType: action
+    resourceId: reserve-action
+    relation: executor
+    subjectType: principal
+    subjectId: enrollment-service
+  - resourceType: action
+    resourceId: activate-action
+    relation: restriction
+    subjectType: action
+    subjectId: activate-action
+  - resourceType: action
+    resourceId: activate-action
+    relation: executor
+    subjectType: principal
+    subjectId: enrollment-service
+  - resourceType: action
+    resourceId: status-action
+    relation: restriction
+    subjectType: action
+    subjectId: status-action
+  - resourceType: action
+    resourceId: status-action
+    relation: executor
+    subjectType: principal
+    subjectId: identity-administrator
+
+assertions:
+  assertTrue:
+    - resourceType: identity_namespace
+      resourceId: namespace-a
+      permission: provision
+      subjectType: principal
+      subjectId: enrollment-service
+    - resourceType: action
+      resourceId: reserve-action
+      permission: execute
+      subjectType: principal
+      subjectId: enrollment-service
+    - resourceType: action
+      resourceId: activate-action
+      permission: execute
+      subjectType: principal
+      subjectId: enrollment-service
+    - resourceType: action
+      resourceId: status-action
+      permission: execute
+      subjectType: principal
+      subjectId: identity-administrator
+    - resourceType: tenant
+      resourceId: tenant-a
+      permission: manage_identity
+      subjectType: principal
+      subjectId: identity-administrator
+  assertFalse:
+    - resourceType: identity_namespace
+      resourceId: namespace-a
+      permission: provision
+      subjectType: principal
+      subjectId: member-only
+    - resourceType: identity_namespace
+      resourceId: namespace-a
+      permission: provision
+      subjectType: principal
+      subjectId: ordinary-application
+    - resourceType: identity_namespace
+      resourceId: namespace-a
+      permission: provision
+      subjectType: principal
+      subjectId: other-tenant-member
+    - resourceType: identity_namespace
+      resourceId: namespace-b
+      permission: provision
+      subjectType: principal
+      subjectId: enrollment-service
+    - resourceType: identity_namespace
+      resourceId: namespace-c
+      permission: provision
+      subjectType: principal
+      subjectId: enrollment-service
+    - resourceType: identity_namespace
+      resourceId: namespace-d
+      permission: provision
+      subjectType: principal
+      subjectId: relation-only
+    - resourceType: tenant
+      resourceId: tenant-a
+      permission: manage_identity
+      subjectType: principal
+      subjectId: enrollment-service
+    - resourceType: tenant
+      resourceId: tenant-a
+      permission: manage_identity
+      subjectType: principal
+      subjectId: member-only
+    - resourceType: action
+      resourceId: reserve-action
+      permission: execute
+      subjectType: principal
+      subjectId: member-only
+    - resourceType: action
+      resourceId: activate-action
+      permission: execute
+      subjectType: principal
+      subjectId: relation-only
+    - resourceType: action
+      resourceId: status-action
+      permission: execute
+      subjectType: principal
+      subjectId: enrollment-service

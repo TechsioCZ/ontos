@@ -55,9 +55,9 @@ Use these files to implement the feature:
 - `scripts/initialize-local-development.mts` — fixed development Tenant/Principal context and membership data; provisioning must reuse but not join automatic initialization.
 - `scripts/locki-feature.sh` — sandbox preparation contract that must continue to omit Action authorization provisioning for the first checkpoint.
 - `scripts/tests/initialize-local-development.test.mts` — fixed local context and relationship tests.
-- `packages/core-runtime/src/install/stage-context-bootstrap.ts` — fixed stage Tenant/Principal contexts and membership relationships.
-- `apps/shell-super-app/api/auth/stage-demo-bootstrap-runtime-infrastructure.ts` — existing operator-invoked stage context boundary that must remain ordered before Action grants.
-- `apps/shell-super-app/scripts/bootstrap-stage-demo.sh` — existing secret-safe operator workflow; it must not make Action provisioning an automatic startup effect.
+- `packages/core-runtime/src/install/stage-context-bootstrap.ts` — stage Tenant/Principal contexts derived from the operator stage accounts file, and their membership relationships.
+- `apps/shell-super-app/api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts` — existing operator-invoked stage context boundary that must remain ordered before Action grants.
+- `apps/shell-super-app/scripts/bootstrap-stage-accounts.mts` — existing secret-safe operator workflow (identities from the operator accounts file); it must not make Action provisioning an automatic startup effect.
 - `package.json` — root operator command and focused validation scripts.
 - `scripts/validate-ultramodern-workspace.mts` — repository contract proving provisioning remains explicit and is not wired into startup/deploy paths.
 - `packages/core-runtime/tests/unit/action-permission.test.ts` — low-level request, decision, sanitization, and compatibility tests.
@@ -137,7 +137,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 ### 5. Add the explicit current-Action provisioning command
 
 - [x] Implement `packages/core-runtime/src/install/action-authorization-provisioning.ts` as a typed Effect service that publishes the compatible schema, writes idempotent `TOUCH` updates for every derived Action and fixed Tenant membership set, then verifies every expected allowed relation and representative denied Principal without logging secrets.
-- [x] Implement `scripts/provision-current-action-authorization.mts` and the root `authorization:provision-current-actions` package script with no Tenant, Principal, Action, endpoint, or environment CLI parameters. In `development`, accept only the existing loopback SpiceDB configuration and `LOCAL_DEVELOPMENT_CONTEXT`; in `stage`, accept only the existing stage-private SpiceDB configuration and both `STAGE_CONTEXTS`; reject production and every other environment.
+- [x] Implement `scripts/provision-current-action-authorization.mts` and the root `authorization:provision-current-actions` package script with no Tenant, Principal, Action, endpoint, or environment CLI parameters. In `development`, accept only the existing loopback SpiceDB configuration and `LOCAL_DEVELOPMENT_CONTEXT`; in `stage`, accept only the existing stage-private SpiceDB configuration and the stage contexts from the operator stage accounts file; reject production and every other environment.
 - [x] Require the fixed Tenant/Principal membership checks to succeed before granting Actions. Build subjects as `tenant:<fixed-tenant>#member`, never a global Principal wildcard, and preserve authentication/active-Principal resolution as a separate prerequisite before the Action runtime.
 - [x] Add `scripts/tests/provision-current-action-authorization.test.mts` for exact environment selection, current Action discovery, lossless `toSpiceDbActionObjectId` encoding, expected relationship counts (16 development grants and 32 stage grants for the present baseline), subject relation `member`, deterministic ordering, duplicate rejection, safe reruns, partial-discovery failure, and sanitized configuration/service errors.
 - [x] Extend `scripts/validate-ultramodern-workspace.mts` to assert that neither `scripts/locki-feature.sh`, ordinary `local:initialize`, `zerops.yaml`, SpiceDB/application startup, nor automatic deployment invokes the provisioning command.

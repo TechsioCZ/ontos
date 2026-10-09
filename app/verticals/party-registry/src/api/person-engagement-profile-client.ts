@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PersonEngagementProfileClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PersonEngagementProfileAuthorizedInvocation = readonly [
@@ -41,20 +42,17 @@ export const executePersonEngagementProfileWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PersonEngagementProfileAuthorizedInvocation
 ) =>
   personEngagementProfileClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.personEngagementProfile.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.personEngagementProfile.execute({ payload })),
   );
 
 export const executePersonEngagementProfile = (
   payload: PersonEngagementProfileRequest,
   ...[requestCorrelation, options = {}]: PersonEngagementProfileOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePersonEngagementProfileWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePersonEngagementProfileWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

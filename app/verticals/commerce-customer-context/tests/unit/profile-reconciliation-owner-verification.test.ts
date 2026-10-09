@@ -13,6 +13,7 @@ import { RECONCILIATION_REQUIRED_OWNERS } from '../../shared/domain/profile-cont
 import type { ReconciliationOwnerOutcome } from '../../shared/domain/profile-contracts.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
+const originalCompositionRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const payload = Schema.decodeUnknownSync(ResolveProfileReconciliationPayloadSchema)({
   caseRef: {
     moduleId: 'commerce.customer-context',
@@ -70,6 +71,7 @@ it.effect('accepts evidence only from trusted owner verifiers and preserves conf
       actionInvocationId: '44444444-4444-4444-8444-444444444444',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: originalCompositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,
@@ -169,6 +171,7 @@ it.effect('resumes from durable terminal outcomes without replacing their attrib
       actionInvocationId: '55555555-5555-4555-8555-555555555555',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: originalCompositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,

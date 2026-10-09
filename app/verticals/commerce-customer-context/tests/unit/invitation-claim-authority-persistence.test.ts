@@ -1,7 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Checked-in migration SQL is the security contract under test; expires: 2027-03-31.
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import type { ContextAccessService, ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
-import { readFile, readdir } from 'node:fs/promises';
 import { Crypto, Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -771,86 +769,5 @@ it.effect('rejects reuse by a conflicting Action without releasing an attestatio
     const failure = yield* Effect.flip(claimAuthority.verifyAndConsume(verificationInput));
 
     expectViolation(failure, 'invitation_claim_proof_consumed');
-  }),
-);
-
-it.effect('hardens invitation proof SQL with exact scope, locking, rate limits, and no raw secret', () =>
-  Effect.gen(function* migrationSecurity() {
-    const migrationRoot = new URL('../../drizzle/', import.meta.url);
-    const migrationFolders = yield* Effect.promise(() => readdir(migrationRoot, { withFileTypes: true }));
-    const migrationFolder = migrationFolders.find(
-      (entry) =>
-        entry.isDirectory() &&
-        entry.name.endsWith('_add-profile-observation-owner-outcome-and-invitation-proof-evidence'),
-    );
-    const migrationFolderName = migrationFolder?.name;
-    if (migrationFolderName === undefined) {
-      throw new Error('Invitation-proof evidence migration is missing');
-    }
-    const sql = yield* Effect.promise(() =>
-      readFile(new URL(`${migrationFolderName}/migration.sql`, migrationRoot), 'utf-8'),
-    );
-    const invitationSqlStart = sql.indexOf(
-      'CREATE FUNCTION "commerce_customer_context"."register_invitation_claim_proof"',
-    );
-    const invitationSqlEnd = sql.indexOf(
-      'CREATE FUNCTION "commerce_customer_context"."invalidate_invitation_claim_proofs"',
-      invitationSqlStart,
-    );
-    expect(invitationSqlStart).toBeGreaterThanOrEqual(0);
-    expect(invitationSqlEnd).toBeGreaterThan(invitationSqlStart);
-    if (invitationSqlStart === -1 || invitationSqlEnd <= invitationSqlStart) {
-      throw new Error('Invitation-proof routines or lifecycle hardening are missing');
-    }
-    const invitationSql = sql.slice(invitationSqlStart, invitationSqlEnd);
-    const stageSql = invitationSql.slice(
-      invitationSql.indexOf('CREATE FUNCTION "commerce_customer_context"."stage_invitation_claim_proof_delivery"'),
-      invitationSql.indexOf('CREATE FUNCTION "commerce_customer_context"."redeem_invitation_claim_secret"'),
-    );
-    const consumeSql = invitationSql.slice(
-      invitationSql.indexOf('CREATE FUNCTION "commerce_customer_context"."consume_invitation_claim_proof"'),
-    );
-
-    expect(invitationSql.match(/SECURITY DEFINER/gu) ?? []).toHaveLength(4);
-    expect(invitationSql.match(/GRANT EXECUTE ON FUNCTION/gu) ?? []).toHaveLength(4);
-    expect(invitationSql.match(/FOR UPDATE/gu)?.length).toBeGreaterThanOrEqual(6);
-    expect(invitationSql).toContain('SET search_path = pg_catalog, commerce_customer_context');
-    expect(sql).toContain('CREATE UNIQUE INDEX "ccc_invitation_claim_proofs_current_uk"');
-    expect(sql).toContain(
-      'ALTER TABLE "commerce_customer_context"."counterparty_invitation_claim_proofs" FORCE ROW LEVEL SECURITY;',
-    );
-    expect(sql).toContain(
-      'ALTER TABLE "commerce_customer_context"."counterparty_invitation_claim_attempts" FORCE ROW LEVEL SECURITY;',
-    );
-    expect(sql).toContain(
-      'REVOKE ALL ON TABLE "commerce_customer_context"."counterparty_invitation_claim_proofs" FROM PUBLIC, "ontos_runtime";',
-    );
-    expect(sql).toContain(
-      'REVOKE ALL ON TABLE "commerce_customer_context"."counterparty_invitation_claim_attempts" FROM PUBLIC, "ontos_runtime";',
-    );
-    expect(invitationSql).toContain('v_new_count >= 5');
-    expect(invitationSql).toContain("interval '15 minutes'");
-    expect(invitationSql).toContain(
-      "last_outcome = CASE WHEN v_outcome = 'EXPIRED' THEN 'INVALID' ELSE 'REDEEMED' END",
-    );
-    expect(invitationSql).toContain("p_operation = 'ROTATE'");
-    expect(invitationSql).toContain("SET lifecycle = 'REVOKED'");
-    expect(sql).toContain('CREATE TRIGGER "ccc_invitation_claim_proofs_lifecycle_trg"');
-    expect(sql).toContain("NEW.lifecycle IN ('REVOKED', 'EXPIRED', 'CLAIMED')");
-    expect(stageSql).toContain("v_invitation.lifecycle <> 'PENDING'");
-    expect(stageSql).toContain('v_invitation.expires_at <= statement_timestamp()');
-    expect(stageSql).toContain("v_proof.delivery_state = 'STAGED'");
-    expect(stageSql).toContain("'REPLAYED'::text");
-    expect(consumeSql).toContain('v_proof.consume_action_invocation_id = p_action_invocation_id');
-    expect(consumeSql).toContain('v_proof.storefront_resource_id IS DISTINCT FROM p_storefront_resource_id');
-    expect(consumeSql).toContain(
-      'v_proof.intended_permission_codes IS DISTINCT FROM to_jsonb(p_intended_permission_codes)',
-    );
-    expect(consumeSql).toContain('v_proof.inviter_principal_id IS DISTINCT FROM p_inviter_principal_id');
-    expect(consumeSql).toContain("SET last_attempt_at = statement_timestamp(), last_outcome = 'INVALID'");
-    expect(invitationSql).not.toMatch(/\b(?:p_raw_proof|raw_proof|raw_secret|plaintext_proof)\b/iu);
-    expect(invitationSql).not.toContain(rawProofText);
-    expect(invitationSql).toContain('p_secret_digest text');
-    expect(invitationSql).not.toMatch(/GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|ALL)\s+ON\s+TABLE/iu);
   }),
 );

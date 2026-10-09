@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CounterpartyAllOrderHistoryDetailClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CounterpartyAllOrderHistoryDetailAuthorizedInvocation = readonly [
@@ -40,20 +41,17 @@ export const executeCounterpartyAllOrderHistoryDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CounterpartyAllOrderHistoryDetailAuthorizedInvocation
 ) =>
   counterpartyAllOrderHistoryDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.counterpartyAllOrderHistoryDetail.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.counterpartyAllOrderHistoryDetail.execute({ payload })),
   );
 
 export const executeCounterpartyAllOrderHistoryDetail = (
   payload: CounterpartyAllOrderHistoryDetailRequest,
   ...[requestCorrelation, options = {}]: CounterpartyAllOrderHistoryDetailOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCounterpartyAllOrderHistoryDetailWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCounterpartyAllOrderHistoryDetailWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

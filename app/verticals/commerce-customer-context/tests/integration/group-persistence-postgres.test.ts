@@ -2,9 +2,11 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   commerceCustomerContextRelations,
   customerGroupLifecyclePeriods,
@@ -61,25 +63,14 @@ const one = <Row>(rows: readonly Row[]): Row => {
   return row;
 };
 
-const acquireGroupPool = (connectionString: string, maximumConnections?: number) =>
-  Effect.acquireRelease(
-    Effect.sync(
-      () =>
-        new Pool(
-          maximumConnections === undefined ? { connectionString } : { connectionString, max: maximumConnections },
-        ),
-    ),
-    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-  );
-
 it.live('preserves Customer Group temporal, replay, and concurrency invariants in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquireGroupPool(connections.admin.connectionString);
-      const runtimePool = yield* acquireGroupPool(connections.runtime.connectionString, 4);
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+      const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+      const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

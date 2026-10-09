@@ -96,6 +96,7 @@ const contextFor = (governanceAuthority: RetentionRuleGovernanceAuthorityService
       actionInvocationId,
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: 'test-composition',
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,

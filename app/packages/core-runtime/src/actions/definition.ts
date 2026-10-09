@@ -1,31 +1,35 @@
 import { Effect, Schema, Predicate } from 'effect';
 import type { ActionHandlerContext, CommittedActionDomainRejection } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
-import type { ActionCollectorError } from './errors.ts';
+import type { ActionCollectorError, ActionCoreError } from './errors.ts';
 import type { ActionAccessEvidencePolicy, DomainEventContractMap } from './events.ts';
 import { isActionPolicy } from './policy.ts';
 import type { ActionPolicy } from './policy.ts';
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
-import type { OperationalScope, LegalEntityScope } from '../operations/context.ts';
+import type { OperationalScope } from '../operations/context.ts';
+import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
+import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type {
+  AssortmentPermissionAccessTarget,
   BusinessPermissionAccessTarget,
   ResourceAccessTarget,
-  TenantPermissionKey,
 } from '../permissions/context-access.ts';
+import type { TenantPermissionKey } from '../permissions/context-permissions.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
 const actionResourcePermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/resource-permission');
 const actionBusinessPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/business-permission');
+const actionAssortmentPermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/assortment-permissions');
 
 class ActionPrivateStorage<Value> {
   declare readonly [actionRegistration]?: true;
   declare readonly [actionResourcePermissionDeclaration]?: true;
   declare readonly [actionBusinessPermissionDeclaration]?: true;
+  declare readonly [actionAssortmentPermissionDeclaration]?: true;
   declare readonly descriptor?: unknown;
-  declare readonly kind?: 'business_permission' | 'resource';
+  declare readonly kind?: 'assortment_permission' | 'business_permission' | 'resource';
   readonly #value: Value;
 
   constructor(value: Value) {
@@ -100,6 +104,18 @@ export type ActionBusinessPermissionDeclaration<Payload> = ActionPrivateStorage<
   readonly kind: 'business_permission';
 };
 
+export type ActionAssortmentPermissionTarget = AssortmentPermissionAccessTarget;
+export type ActionAssortmentPermissionTargetResolver<Payload> = (
+  payload: Payload,
+  scope: OperationalScope,
+) => readonly ActionAssortmentPermissionTarget[];
+export type ActionAssortmentPermissionDeclaration<Payload> = ActionPrivateStorage<
+  ActionAssortmentPermissionTargetResolver<Payload>
+> & {
+  readonly [actionAssortmentPermissionDeclaration]: true;
+  readonly kind: 'assortment_permission';
+};
+
 const ActionDefinitionInvariantError = Schema.TaggedError<Error>()('ActionDefinitionInvariantError', {
   message: Schema.String,
 });
@@ -121,7 +137,7 @@ export const defineActionResourcePermission = <Payload>(
   });
 };
 
-/** Declares one exact profile/counterparty permission resolved before policy or handler code. */
+/** Declares one exact business permission resolved before policy or handler code. */
 export const defineActionBusinessPermission = <Payload>(
   resolver: ActionBusinessPermissionTargetResolver<Payload>,
 ): ActionBusinessPermissionDeclaration<Payload> => {
@@ -131,6 +147,19 @@ export const defineActionBusinessPermission = <Payload>(
   return ActionPrivateStorage.create(resolver, {
     [actionBusinessPermissionDeclaration]: true as const,
     kind: 'business_permission' as const,
+  });
+};
+
+/** Declares one or more exact Assortment policy meanings checked conjunctively. */
+export const defineActionAssortmentPermissions = <Payload>(
+  resolver: ActionAssortmentPermissionTargetResolver<Payload>,
+): ActionAssortmentPermissionDeclaration<Payload> => {
+  if (!Predicate.isFunction(resolver)) {
+    return failActionDefinition('Action Assortment permission resolver must be a function');
+  }
+  return ActionPrivateStorage.create(resolver, {
+    [actionAssortmentPermissionDeclaration]: true as const,
+    kind: 'assortment_permission' as const,
   });
 };
 
@@ -152,6 +181,15 @@ const ActionBusinessPermissionDeclarationSchema = Schema.instanceOf(ActionPrivat
       : 'Expected an immutable Action business permission declaration',
   ),
 );
+const ActionAssortmentPermissionDeclarationSchema = Schema.instanceOf(ActionPrivateStorage).check(
+  Schema.makeFilter((declaration) =>
+    declaration[actionAssortmentPermissionDeclaration] === true &&
+    declaration.kind === 'assortment_permission' &&
+    Object.isFrozen(declaration)
+      ? undefined
+      : 'Expected an immutable Action Assortment permission declaration',
+  ),
+);
 
 export interface ActionDescriptor<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -168,6 +206,8 @@ export interface ActionDescriptor<
    * target resources must never replace or derive it.
    */
   readonly actionKey: string;
+  /** Declares one or more exact Assortment permission targets checked conjunctively. */
+  readonly assortmentPermissions?: ActionAssortmentPermissionDeclaration<PayloadSchema['Type']>;
   readonly auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>;
   readonly auditProfile: ActionAuditProfile;
   /** Declares one exact business permission resolved from decoded input and trusted scope. */
@@ -214,7 +254,18 @@ export type ActionHandler<
 export type ActionServiceFactory<Services, Requirements = never> = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
+  compositionRevision: string,
 ) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
+
+/** Runs only for a decoded successful result inside the owning Action transaction. */
+export type ActionDecodedSuccessHook<Result, Services, DomainError, Requirements = never> = (
+  context: Readonly<{
+    readonly actionInvocationId: string;
+    readonly result: Result;
+    readonly scope: OperationalScope;
+    readonly services: Services;
+  }>,
+) => Effect.Effect<void, ActionCoreError | DomainError, Requirements>;
 
 type EmptyActionServices = Readonly<Record<string, never>>;
 const emptyActionServices: EmptyActionServices = Object.freeze({});
@@ -230,6 +281,12 @@ type ActionRegistrationPrivateValue<
 > = readonly [
   handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
   serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+  onDecodedSuccess?: ActionDecodedSuccessHook<
+    ResultSchema['Type'],
+    Services,
+    DomainErrorSchema['Type'],
+    HandlerRequirements
+  >,
 ];
 
 export type ActionRegistration<
@@ -296,6 +353,7 @@ export type ActionRequirements<Registration> =
     : never;
 
 export interface ActionDescriptorValidationInput<Policy> {
+  readonly assortmentPermissions?: ActionAssortmentPermissionDeclaration<never>;
   readonly businessPermission?: ActionBusinessPermissionDeclaration<never>;
   readonly entrypoint: ModuleEntrypointDescriptor;
   readonly legalEntityPermission?: unknown;
@@ -334,6 +392,8 @@ const validateActionLegalEntityScope = <Policy>(descriptor: ActionDescriptorVali
 };
 const validateActionPermissions = <Policy>(descriptor: ActionDescriptorValidationInput<Policy>): void => {
   if (
+    (descriptor.assortmentPermissions !== undefined &&
+      !Schema.is(ActionAssortmentPermissionDeclarationSchema)(descriptor.assortmentPermissions)) ||
     (descriptor.businessPermission !== undefined &&
       !Schema.is(ActionBusinessPermissionDeclarationSchema)(descriptor.businessPermission)) ||
     (descriptor.resourcePermission !== undefined &&
@@ -366,6 +426,35 @@ export const validateActionDescriptorInput = <Policy>(descriptor: ActionDescript
   validateActionPolicies(descriptor, descriptor.policies);
 };
 
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  ...definition: readonly [
+    handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+    serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+    onDecodedSuccess: ActionDecodedSuccessHook<
+      ResultSchema['Type'],
+      Services,
+      DomainErrorSchema['Type'],
+      HandlerRequirements
+    >,
+  ]
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  HandlerRequirements
+>;
 export function defineAction<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -427,7 +516,7 @@ export function defineAction<
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ...definition:
     | readonly [
-        handler: ActionHandler<
+        ActionHandler<
           PayloadSchema,
           ResultSchema,
           DomainErrorSchema,
@@ -437,17 +526,33 @@ export function defineAction<
         >,
       ]
     | readonly [
-        handler: ActionHandler<
-          PayloadSchema,
-          ResultSchema,
-          DomainErrorSchema,
-          DomainEvents,
-          Services,
-          HandlerRequirements
-        >,
-        serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+        ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+        ActionServiceFactory<Services, HandlerRequirements>,
       ]
-) {
+    | readonly [
+        ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+        ActionServiceFactory<Services, HandlerRequirements>,
+        ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>,
+      ]
+):
+  | ActionRegistration<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      EmptyActionServices,
+      HandlerRequirements
+    >
+  | ActionRegistration<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      Services,
+      HandlerRequirements
+    > {
   validateActionDescriptorInput(descriptor);
 
   const frozenDescriptor = Object.freeze({
@@ -464,8 +569,17 @@ export function defineAction<
       descriptor: frozenDescriptor,
     });
   }
-  const [handler, serviceFactory] = definition;
-  return ActionPrivateStorage.create([handler, serviceFactory] as const, {
+  const [handler, serviceFactory, onDecodedSuccess] = definition;
+  if (definition.length === 3 && !Predicate.isFunction(onDecodedSuccess)) {
+    return failActionDefinition('Action decoded-success hook must be a function');
+  }
+  if (onDecodedSuccess === undefined) {
+    return ActionPrivateStorage.create([handler, serviceFactory] as const, {
+      [actionRegistration]: true as const,
+      descriptor: frozenDescriptor,
+    });
+  }
+  return ActionPrivateStorage.create([handler, serviceFactory, onDecodedSuccess] as const, {
     [actionRegistration]: true as const,
     descriptor: frozenDescriptor,
   });
@@ -525,6 +639,27 @@ export const getActionServiceFactory = <
   >,
 ): ActionServiceFactory<Services, HandlerRequirements> => ActionPrivateStorage.getValue(registration)[1];
 
+/** Internal Core runtime seam; never part of the public Action descriptor. */
+export const getActionDecodedSuccessHook = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+) => ActionPrivateStorage.getValue(registration)[2];
+
 export const getActionResourcePermissionTargetResolver = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -571,6 +706,29 @@ export const getActionBusinessPermissionTargetResolver = <
     ? undefined
     : ActionPrivateStorage.getValue(registration.descriptor.businessPermission);
 
+export const getActionAssortmentPermissionTargetResolver = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+): ActionAssortmentPermissionTargetResolver<PayloadSchema['Type']> | undefined =>
+  registration.descriptor.assortmentPermissions === undefined
+    ? undefined
+    : ActionPrivateStorage.getValue(registration.descriptor.assortmentPermissions);
+
 const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', {
     configurable: false,
@@ -594,7 +752,7 @@ export const decodeActionPayload = <PayloadSchema extends Schema.ConstraintDecod
     );
   }
 
-  return Schema.decodeUnknownEffect(schema)(payload).pipe(
+  return Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })(payload).pipe(
     Effect.mapError((cause) =>
       preserveFailureCause(
         new ActionPayloadValidationError({

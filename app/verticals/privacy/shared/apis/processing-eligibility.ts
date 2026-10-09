@@ -56,10 +56,9 @@ export const ProcessingEligibilityApi = HttpApi.make('ProcessingEligibilityApi')
         ProcessingEligibilityUnavailableProblemSchema,
         ProcessingEligibilityInternalProblemSchema,
       ],
-      headers: {},
-      params: {},
+
       payload: ProcessingEligibilityRequestSchema,
-      query: {},
+
       success: ProcessingEligibilityResponseSchema,
     }),
   ),

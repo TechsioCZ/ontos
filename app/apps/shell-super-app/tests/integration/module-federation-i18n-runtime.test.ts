@@ -31,6 +31,15 @@ registerHooks({
 });
 
 describe('module-federation-i18n-runtime', () => {
+  it.effect('builds the Shell without a deployment-specific remote registry', () =>
+    Effect.gen(function* omitsCompileTimeRemotes() {
+      const { default: shellConfig } = yield* Effect.promise(() => import(shellConfigUrl.href));
+
+      expect(shellConfig.remotes).toEqual({});
+      expect(shellConfig.dts?.consumeTypes).toBe(false);
+    }),
+  );
+
   it.effect('Shell and Party Registry share the i18n runtime that owns the federated provider context', () =>
     Effect.gen(function* sharesFederatedI18nRuntime() {
       const [{ default: shellConfig }, { default: partyRegistryConfig }] = yield* Effect.promise(() =>
@@ -50,6 +59,11 @@ describe('module-federation-i18n-runtime', () => {
 
       expect(shellConfig.shared?.['@modern-js/plugin-i18n/runtime']).toEqual(expectedSharedRuntime);
       expect(partyRegistryConfig.shared?.['@modern-js/plugin-i18n/runtime']).toEqual(expectedSharedRuntime);
+      for (const config of [shellConfig, partyRegistryConfig]) {
+        for (const shared of Object.values(config.shared ?? {})) {
+          expect(shared).toMatchObject({ singleton: true, strictVersion: true, treeShaking: false });
+        }
+      }
     }),
   );
 });

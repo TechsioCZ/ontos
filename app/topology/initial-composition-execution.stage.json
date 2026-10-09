@@ -1,0 +1,91 @@
+{
+  "applicationIds": [
+    "assortment",
+    "catalog",
+    "commerce-customer-context",
+    "commerce-market-catalog",
+    "inventory",
+    "outbox-worker-host",
+    "party-registry",
+    "payment-term-catalog",
+    "price-group-catalog",
+    "pricing",
+    "shell-super-app",
+    "storefront-registry"
+  ],
+  "cloudflare": {
+    "accountId": "e8608e0073bff00c7875f171ac38b8c6",
+    "compositionPointer": {
+      "namespaceId": "d51f044c49bc4757a5613c61b19b46d8",
+      "sha256": "4d3bd2b98c40e0d125646ee3f5d62ea8146d6e5b105200f50ec6111b76c0a884"
+    },
+    "workers": [
+      {
+        "appId": "assortment",
+        "name": "app-assortment",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "catalog",
+        "name": "app-catalog",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "commerce-customer-context",
+        "name": "app-commerce-customer-context",
+        "roles": ["ingress", "producer", "hosted_job"]
+      },
+      {
+        "appId": "commerce-market-catalog",
+        "name": "app-commerce-market-catalog",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "inventory",
+        "name": "app-inventory",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "party-registry",
+        "name": "app-party-registry",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "payment-term-catalog",
+        "name": "app-payment-term-catalog",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "price-group-catalog",
+        "name": "app-price-group-catalog",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "pricing",
+        "name": "app-pricing",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "shell-super-app",
+        "name": "app-shell-super-app",
+        "roles": ["ingress", "producer"]
+      },
+      {
+        "appId": "storefront-registry",
+        "name": "app-storefront-registry",
+        "roles": ["ingress", "producer"]
+      }
+    ]
+  },
+  "environment": "stage",
+  "schemaVersion": "2",
+  "sourceRevision": "a6741ac119c28ec5b174711b92b233eed29a37e1",
+  "zerops": [
+    {
+      "appId": "outbox-worker-host",
+      "kind": "node-runtime",
+      "roles": ["matcher", "worker"],
+      "serviceId": "CtExzcDCTVCzKt5mMZhuRA"
+    }
+  ]
+}

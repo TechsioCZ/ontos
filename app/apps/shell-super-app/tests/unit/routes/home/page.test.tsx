@@ -1,3 +1,4 @@
+import { getDocumentCompositionRevision } from '@app/shared-contracts';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
@@ -14,7 +15,7 @@ import {
   TenantAuthenticationRequiredProblemSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
-import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
+import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
@@ -73,6 +74,7 @@ const translations = new Map(
     'shell.modules.state.active': 'Active',
     'shell.modules.state.readOnly': 'Read only',
     'shell.modules.unavailable': 'Module access unavailable',
+    'shell.moduleTarget.reload_required': 'Reload this page to continue',
     'shell.search.label': 'Search this legal entity',
     'shell.search.submit': 'Search',
   }),
@@ -94,7 +96,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   }),
 }));
 
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+rstest.mock('@tanstack/react-router', () => ({
   useLoaderData: rstest.fn(),
   useNavigate: () => navigateMock,
 }));
@@ -106,7 +108,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  browserRuntime: { runPromise: browserRunPromiseMock },
+  browserRuntime: { runPromise: browserRunPromiseMock, runSyncExit: browserRuntime.runSyncExit },
 }));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');
@@ -117,8 +119,10 @@ const legalEntityId2 = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0
 const inventoryAppId = Schema.decodeUnknownSync(AppIdSchema)('inventory-app');
 const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.modules');
 const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
+const compositionRevision = '1'.repeat(64);
 
 const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): HomePageModel => ({
+  compositionRevision,
   contextState: 'authenticated',
   identity: {
     displayName: 'Ada Lovelace',
@@ -203,6 +207,37 @@ it('the unavailable dashboard exposes no navigable affordance', () => {
   expect(screen.queryAllByRole('link')).toHaveLength(0);
   expect(localizedLinkCalls).toHaveLength(0);
 });
+
+it('the reload-required dashboard exposes no navigable affordance', () => {
+  render(<HomeView initialModel={{ state: 'reload_required' }} />);
+  expect(screen.getByText('Reload this page to continue')).toBeTruthy();
+  expect(screen.queryAllByRole('link')).toHaveLength(0);
+});
+
+it.effect('pins the server-rendered release during authenticated hydration', () =>
+  Effect.gen(function* serverRenderedReleaseIsPinnedDuringHydration() {
+    render(<HomeView initialModel={authenticatedModel()} />);
+    expect(yield* getDocumentCompositionRevision()).toBe(compositionRevision);
+    expect(document.head.querySelectorAll('meta[name="ontos-composition-revision"]')).toHaveLength(1);
+    expect(document.head.querySelector('meta[name="ontos-composition-revision"]')?.getAttribute('content')).toBe(
+      compositionRevision,
+    );
+  }),
+);
+
+it.effect('keeps the hydrated document pinned when another release is rendered', () =>
+  Effect.gen(function* hydrationKeepsTheOriginalRelease() {
+    const model = authenticatedModel();
+    if (model.state !== 'authenticated') {
+      throw new Error('Expected the authenticated dashboard fixture.');
+    }
+    const { rerender } = render(<HomeView initialModel={model} />);
+    rerender(<HomeView initialModel={{ ...model, compositionRevision: '2'.repeat(64) }} />);
+    expect(screen.getByText('Reload this page to continue')).toBeTruthy();
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    expect(yield* getDocumentCompositionRevision()).toBe(compositionRevision);
+  }),
+);
 
 it('a disabled module affordance stays non-interactive text', () => {
   render(<HomeView initialModel={authenticatedModel({ moduleEnabled: false })} />);

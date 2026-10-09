@@ -13,7 +13,13 @@ import { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
-import { toBusinessPermissionAccessObjectId, toLegalEntityAccessObjectId } from './context-access.ts';
+import {
+  hasCanonicalInventoryAuthorizationTarget,
+  hasCanonicalPricingAuthorizationTargetIds,
+  isBusinessPermissionTargetCompatible,
+  toBusinessPermissionAccessObjectId,
+  toLegalEntityAccessObjectId,
+} from './context-access.ts';
 import type { BusinessAccessTarget } from './context-access.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 import { BusinessPermissionMutationUnavailable } from './business-permission-mutation-error.ts';
@@ -21,12 +27,11 @@ import type { PrincipalRef } from './principal-ref.ts';
 
 export { BusinessPermissionMutationUnavailable } from './business-permission-mutation-error.ts';
 
-const unavailable = (cause?: unknown): BusinessPermissionMutationUnavailable => {
-  const failure = new BusinessPermissionMutationUnavailable({
+const unavailable = (cause?: unknown): BusinessPermissionMutationUnavailable =>
+  new BusinessPermissionMutationUnavailable({
+    cause,
     reason: 'The business permission relationship mutation could not be completed safely',
   });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-};
 
 export interface BusinessPermissionRelationshipMutationInput {
   readonly operation: 'grant' | 'revoke';
@@ -65,28 +70,48 @@ export const createBusinessPermissionRelationshipMutationClient = (
 const prepare = (
   input: BusinessPermissionRelationshipMutationInput,
 ): PermissionRelationshipMutationPreparation | undefined => {
+  const targetRequiresLegalEntity =
+    input.target.kind === 'retail_profile' ||
+    input.target.kind === 'counterparty' ||
+    input.target.kind === 'counterparty_storefront';
   const invalidScope =
+    !isBusinessPermissionTargetCompatible({ permission: input.permission, target: input.target }) ||
+    !hasCanonicalPricingAuthorizationTargetIds(input.target) ||
+    !hasCanonicalInventoryAuthorizationTarget(input.target) ||
     input.principal.tenantId !== input.target.tenantId ||
     input.principal.principalId.length === 0 ||
-    input.target.legalEntityId.length === 0 ||
+    (targetRequiresLegalEntity && input.target.legalEntityId.length === 0) ||
     (input.target.kind === 'counterparty_storefront' &&
       (input.trustedStorefrontId === undefined || input.trustedStorefrontId !== input.target.storefrontId));
   if (invalidScope) {
     return undefined;
   }
   const resourceId = toBusinessPermissionAccessObjectId(input.permission, input.target);
-  const legalEntityId = toLegalEntityAccessObjectId(input.target.tenantId, input.target.legalEntityId);
-  if (resourceId === undefined || legalEntityId === undefined) {
+  if (resourceId === undefined) {
+    return undefined;
+  }
+  const scopeRelationships: PermissionRelationshipMutationPreparation['scopeRelationships'] = targetRequiresLegalEntity
+    ? [
+        {
+          relation: 'legal_entity',
+          subjectId: toLegalEntityAccessObjectId(input.target.tenantId, input.target.legalEntityId) ?? '',
+          subjectType: 'legal_entity',
+        },
+      ]
+    : [
+        {
+          relation: 'tenant',
+          subjectId: input.target.tenantId,
+          subjectType: 'tenant',
+        },
+      ];
+  if (scopeRelationships.some(({ subjectId }) => subjectId.length === 0)) {
     return undefined;
   }
   return {
     granteeId: input.principal.principalId,
     resourceId,
-    scopeRelationship: {
-      relation: 'legal_entity',
-      subjectId: legalEntityId,
-      subjectType: 'legal_entity',
-    },
+    scopeRelationships,
   };
 };
 

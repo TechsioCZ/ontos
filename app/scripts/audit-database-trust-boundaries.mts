@@ -2,8 +2,9 @@
 import { pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, FileSystem, Path, Schema } from 'effect';
-import { Client } from 'pg';
+import { PgClient } from '@effect/sql-pg';
+import { Config, Console, Effect, Exit, FileSystem, Path, Redacted, Schema } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { collectSnapshot } from './database-trust-audit/collect-snapshot.mts';
@@ -14,6 +15,7 @@ import {
   DatabaseTrustBoundaryAuditError,
   genericAuditFailureMessage,
   getDatabaseTrustBoundaryFailureMessage,
+  getEffectiveDatabaseEndpoint,
 } from './database-trust-audit/report.mts';
 import type { DatabaseTrustBoundaryReport } from './database-trust-audit/report.mts';
 
@@ -36,9 +38,15 @@ export type {
 } from './database-trust-audit/report.mts';
 export { hasTrustedContextValue } from './database-trust-audit/collect-snapshot.mts';
 
+const collectionFailure = (): DatabaseTrustBoundaryAuditError =>
+  new DatabaseTrustBoundaryAuditError({
+    reason: 'Database trust-boundary evidence could not be collected',
+  });
+
 export const auditDatabaseTrustBoundaries = (): Effect.Effect<
   DatabaseTrustBoundaryReport,
-  DatabaseTrustBoundaryAuditError
+  DatabaseTrustBoundaryAuditError,
+  Reactivity.Reactivity
 > =>
   Effect.gen(function* auditDatabaseTrustBoundariesEffect() {
     const connections = yield* loadDatabaseConnectionPair().pipe(
@@ -49,50 +57,29 @@ export const auditDatabaseTrustBoundaries = (): Effect.Effect<
           }),
       ),
     );
-    const admin = new Client({
-      connectionString: connections.admin.connectionString,
+    const adminUrl = Redacted.make(connections.admin.connectionString);
+    const runtimeUrl = Redacted.make(connections.runtime.connectionString);
+    const endpoints = yield* Effect.all({
+      admin: Effect.fromResult(getEffectiveDatabaseEndpoint(adminUrl)),
+      runtime: Effect.fromResult(getEffectiveDatabaseEndpoint(runtimeUrl)),
     });
-    const runtime = new Client({
-      connectionString: connections.runtime.connectionString,
-    });
-    let adminConnected = false;
-    let runtimeConnected = false;
-    return yield* Effect.gen(function* collectDatabaseTrustBoundaryReport() {
-      yield* Effect.tryPromise({
-        catch: () =>
+    const [admin, runtime] = yield* Effect.all(
+      [PgClient.makeClient({ url: adminUrl }), PgClient.makeClient({ url: runtimeUrl })],
+      { concurrency: 1 },
+    ).pipe(Effect.mapError(collectionFailure));
+    const snapshot = yield* collectSnapshot(admin, runtime, endpoints).pipe(
+      Effect.mapError(
+        (error) =>
           new DatabaseTrustBoundaryAuditError({
-            reason: 'Database trust-boundary evidence could not be collected',
+            reason:
+              Schema.is(DatabaseTargetMismatchError)(error) || Schema.is(DatabaseSessionIdentityError)(error)
+                ? error.message
+                : 'Database trust-boundary evidence could not be collected',
           }),
-        try: async () => {
-          await admin.connect();
-          adminConnected = true;
-          await runtime.connect();
-          runtimeConnected = true;
-        },
-      });
-      const snapshot = yield* collectSnapshot(admin, runtime).pipe(
-        Effect.mapError(
-          (error) =>
-            new DatabaseTrustBoundaryAuditError({
-              reason:
-                Schema.is(DatabaseTargetMismatchError)(error) || Schema.is(DatabaseSessionIdentityError)(error)
-                  ? error.message
-                  : 'Database trust-boundary evidence could not be collected',
-            }),
-        ),
-      );
-      return buildDatabaseTrustBoundaryReport(snapshot);
-    }).pipe(
-      Effect.ensuring(
-        Effect.promise(async () => {
-          await Promise.allSettled([
-            ...(runtimeConnected ? [runtime.end()] : []),
-            ...(adminConnected ? [admin.end()] : []),
-          ]);
-        }),
       ),
     );
-  });
+    return buildDatabaseTrustBoundaryReport(snapshot);
+  }).pipe(Effect.scoped);
 
 const DatabaseTrustBoundaryReportJsonSchema = Schema.fromJsonString(Schema.Unknown, { space: 2 });
 
@@ -100,7 +87,7 @@ const writeDatabaseTrustBoundaryReport = Effect.gen(function* writeDatabaseTrust
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const defaultWorkspaceRoot = path.resolve(import.meta.dirname, '..');
-  const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
+  const workspaceRoot = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(
     Config.withDefault(defaultWorkspaceRoot),
     Effect.mapError(
       () =>
@@ -140,7 +127,9 @@ const writeDatabaseTrustBoundaryReport = Effect.gen(function* writeDatabaseTrust
 
 const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
-  const exit = await Effect.runPromiseExit(writeDatabaseTrustBoundaryReport.pipe(Effect.provide(NodeServices.layer)));
+  const exit = await Effect.runPromiseExit(
+    writeDatabaseTrustBoundaryReport.pipe(Effect.provide(NodeServices.layer), Effect.provide(Reactivity.layer)),
+  );
   process.exitCode = Exit.match(exit, {
     onFailure: () => 1,
     onSuccess: () => 0,

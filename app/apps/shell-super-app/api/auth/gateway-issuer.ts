@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 
+import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
+
 import {
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   GatewayTrustedPrincipalContextSchema,
@@ -23,8 +26,8 @@ import {
 } from 'effect';
 import { SignJWT, importJWK } from 'jose';
 
-import { installedVerticalIds } from '../verticals/installed-verticals.ts';
-import type { InstalledVerticalTopologyError } from '../verticals/installed-verticals.ts';
+import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
+import type { InstalledModuleCatalogError } from '../modules/installed-module-catalog.ts';
 import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
 import type { GatewayIssuerConfigError, GatewayIssuerConfigValue } from './gateway-issuer-config.ts';
 
@@ -34,7 +37,7 @@ const GatewayIssuerFailureCauseSchema = Schema.Defect();
 type GatewayIssuerFailureCause = Schema.Schema.Type<typeof GatewayIssuerFailureCauseSchema>;
 
 const gatewayIssuerErrorFields = {
-  code: Schema.Literals(['gateway_audience_invalid', 'gateway_issuer_unavailable']),
+  code: Schema.Literals(['gateway_audience_invalid', 'gateway_issuer_unavailable', 'gateway_revision_unsupported']),
   failureCause: Schema.optionalKey(GatewayIssuerFailureCauseSchema),
   reason: Schema.String,
   stage: Schema.Literals(['audience', 'clock', 'configuration', 'principal', 'signing']),
@@ -49,13 +52,17 @@ export type GatewayIssuerError = Schema.Schema.Type<typeof GatewayIssuerErrorSch
 
 export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalContext> {
   readonly audience: string;
+  readonly compositionRevision: string;
   readonly principal: Principal;
 }
 
 export interface GatewayIssuerLayerOptions {
   readonly currentTimeSeconds: Effect.Effect<number>;
   readonly generateJti: Effect.Effect<string, GatewayIssuerError>;
-  readonly loadAudiences: Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError | GatewayIssuerError>;
+  readonly loadAdmission: Effect.Effect<
+    { readonly audiences: ReadonlyMap<string, string>; readonly revision: string },
+    InstalledModuleCatalogError | GatewayIssuerError
+  >;
   readonly loadConfig: Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError>;
 }
 
@@ -131,12 +138,7 @@ const gatewayCrypto = Crypto.make({
   randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
 });
 
-const gatewayIssuerLiveOptions: GatewayIssuerLayerOptions = {
-  currentTimeSeconds: Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000))),
-  generateJti: gatewayCrypto.randomUUIDv4.pipe(Effect.mapError((failureCause) => unavailable('signing', failureCause))),
-  loadAudiences: installedVerticalIds,
-  loadConfig: loadGatewayIssuerConfig(),
-};
+export const ShellCryptoLive = Layer.succeed(Crypto.Crypto, gatewayCrypto);
 
 const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssuerService(
   options: GatewayIssuerLayerOptions,
@@ -191,13 +193,22 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
       onExcessProperty: 'error',
     })(input.principal).pipe(Effect.mapError((failureCause) => unavailable('principal', failureCause)));
-    const audiences = yield* options.loadAudiences.pipe(
+    const admission = yield* options.loadAdmission.pipe(
       Effect.mapError((failureCause) => unavailable('audience', failureCause)),
     );
-    if (!audiences.has(input.audience)) {
+    const targetBuildMarker = admission.audiences.get(input.audience);
+    if (targetBuildMarker === undefined) {
       return yield* new GatewayIssuerErrorConstructor({
         code: 'gateway_audience_invalid',
-        reason: 'The requested gateway audience is not a generated MicroVertical',
+        reason: 'The requested audience and document release are not in the current approved Application Composition',
+        stage: 'audience',
+      });
+    }
+
+    if (input.compositionRevision !== admission.revision) {
+      return yield* new GatewayIssuerErrorConstructor({
+        code: 'gateway_revision_unsupported',
+        reason: 'The document release is no longer admitted. Reload to continue.',
         stage: 'audience',
       });
     }
@@ -215,8 +226,13 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       kid: configuration.privateJwk.kid,
     };
     const signer = new SignJWT({
+      compositionRevision: admission.revision,
       principal,
-      ver: GATEWAY_ASSERTION_VERSION,
+      targetBuildMarker,
+      ver:
+        principal.authenticationNamespaceId === undefined
+          ? GATEWAY_ASSERTION_VERSION
+          : EXTERNAL_GATEWAY_ASSERTION_VERSION,
     })
       .setProtectedHeader({
         alg: 'EdDSA',
@@ -236,7 +252,15 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       () => unavailable('signing', 'Assertion signing timed out'),
     );
 
-    return { expiresAt, token };
+    return {
+      apiBaseUrl:
+        input.audience === 'shell-super-app'
+          ? '/shell-super-app-api'
+          : moduleReleaseApiBaseUrl(input.audience, targetBuildMarker),
+      compositionRevision: admission.revision,
+      expiresAt,
+      token,
+    };
   });
 
   return {
@@ -247,7 +271,28 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
 export const makeGatewayIssuerLayer = (options: GatewayIssuerLayerOptions) =>
   Layer.effect(GatewayIssuer, makeGatewayIssuer(options));
 
-export const GatewayIssuerLive = makeGatewayIssuerLayer(gatewayIssuerLiveOptions);
+export const GatewayIssuerLive = Layer.unwrap(
+  ShellInstalledModuleCatalog.pipe(
+    Effect.map((catalog) =>
+      makeGatewayIssuerLayer({
+        currentTimeSeconds: Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000))),
+        generateJti: gatewayCrypto.randomUUIDv4.pipe(
+          Effect.mapError((failureCause) => unavailable('signing', failureCause)),
+        ),
+        loadAdmission: catalog.load.pipe(
+          Effect.map(({ composition, contracts }) => ({
+            audiences: new Map([
+              [composition.shell.deployment.appId, composition.shell.deployment.buildMarker],
+              ...contracts.map(({ deployment }) => [deployment.appId, deployment.buildMarker] as const),
+            ]),
+            revision: composition.revision,
+          })),
+        ),
+        loadConfig: loadGatewayIssuerConfig(),
+      }),
+    ),
+  ),
+);
 
 export const issueGatewayContextAssertion = Effect.fn('GatewayIssuer.issueGatewayContextAssertion')(
   function* issueGatewayContextAssertionEffect<Principal>(input: IssueGatewayAssertionInput<Principal>) {

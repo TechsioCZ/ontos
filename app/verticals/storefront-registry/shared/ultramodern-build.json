@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "storefront-registry",
+    "buildMarker": "6e1423f340df12ea",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/storefront-registry",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/storefront-registry",
+    "version": "0.1.0",
+    "build": "6e1423f340df12ea"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "storefront-registry",
+      "buildMarker": "6e1423f340df12ea",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/storefront-registry",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/storefront-registry",
+      "version": "0.1.0",
+      "build": "6e1423f340df12ea",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "storefront-registry",
+      "buildMarker": "6e1423f340df12ea",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/storefront-registry",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/storefront-registry",
+      "version": "0.1.0",
+      "build": "6e1423f340df12ea",
+      "surface": "ui"
+    }
+  }
+}

@@ -3,6 +3,7 @@
 // @ontos-action-boundary-audience party-registry
 import { issueGatewayContext, makeOperationGateway as makeSharedOperationGateway } from '@app/shared-contracts';
 import type {
+  DocumentCompositionRevisionError,
   GatewayContextClientError,
   GatewayContextClientOptions,
   OperationGatewayIssuer as SharedOperationGatewayIssuer,
@@ -118,6 +119,7 @@ interface AresActionInvocationRequest {
 
 export interface AresActionInvocationOptions extends AresActionInvocationRequest {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly idempotencyKey: string;
 }
 
@@ -189,7 +191,7 @@ export type AresApplyOutcome<Failure> =
       readonly completed: readonly AresAppliedAction[];
       readonly skipped: readonly AresSkippedAction[];
       readonly failed: {
-        readonly error: Failure | GatewayContextClientError;
+        readonly error: Failure | GatewayContextClientError | DocumentCompositionRevisionError | Schema.SchemaError;
         readonly idempotencyKey: string;
         readonly recovery: 'RESOLVE_STANDARD_ACTION_BEFORE_RETRY';
         readonly fact: ExecutableSelection['fact'];
@@ -383,13 +385,20 @@ const invokeSelection = <Failure>(
   gateway: ReturnType<typeof makeOperationGateway>,
   options: GatewayContextClientOptions,
   commandOptions: AresActionInvocationOptions,
-): Effect.Effect<AresAppliedAction, Failure | GatewayContextClientError> =>
+): Effect.Effect<
+  AresAppliedAction,
+  Failure | GatewayContextClientError | DocumentCompositionRevisionError | Schema.SchemaError
+> =>
   Match.value(selection).pipe(
     Match.when({ route: 'PARTY_UPDATE' }, (selected) =>
       gateway
         .invoke(
-          (authorization) =>
-            invoker.updateParty({ ...selected.payload, externalEvidence: evidence }, authorization, commandOptions),
+          (authorization, { apiBaseUrl, compositionRevision }) =>
+            invoker.updateParty({ ...selected.payload, externalEvidence: evidence }, authorization, {
+              ...commandOptions,
+              baseUrl: apiBaseUrl,
+              compositionRevision,
+            }),
           options,
         )
         .pipe(
@@ -404,12 +413,12 @@ const invokeSelection = <Failure>(
     Match.when({ route: 'IDENTIFIER_ADD' }, (selected) =>
       gateway
         .invoke(
-          (authorization) =>
-            invoker.addPartyOfficialIdentifier(
-              { ...selected.payload, externalEvidence: evidence },
-              authorization,
-              commandOptions,
-            ),
+          (authorization, { apiBaseUrl, compositionRevision }) =>
+            invoker.addPartyOfficialIdentifier({ ...selected.payload, externalEvidence: evidence }, authorization, {
+              ...commandOptions,
+              baseUrl: apiBaseUrl,
+              compositionRevision,
+            }),
           options,
         )
         .pipe(
@@ -430,7 +439,15 @@ const invokeSelection = <Failure>(
         },
       };
       return gateway
-        .invoke((authorization) => invoker.addContactPoint(payload, authorization, commandOptions), options)
+        .invoke(
+          (authorization, { apiBaseUrl, compositionRevision }) =>
+            invoker.addContactPoint(payload, authorization, {
+              ...commandOptions,
+              baseUrl: apiBaseUrl,
+              compositionRevision,
+            }),
+          options,
+        )
         .pipe(
           Effect.map((result) => ({
             evidence,
@@ -597,14 +614,14 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
   if (request.partyRef !== null) {
     const { partyRef } = request;
     const detail = yield* gateway.invoke(
-      (authorization) =>
+      (authorization, { apiBaseUrl, compositionRevision }) =>
         reads.party(
           request.selections.some((selection) => selection.route === 'PARTY_CORRECTION')
             ? { includeFactHistory: true, partyRef }
             : { partyRef },
           authorization,
           request.correlationId,
-          clientOptions,
+          { ...clientOptions, baseUrl: apiBaseUrl, compositionRevision },
         ),
       options.gatewayContext,
     );
@@ -616,16 +633,21 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
     const [identifiers, contactPoints] = yield* Effect.all(
       [
         gateway.invoke(
-          (authorization) => reads.identifiers({ partyRef }, authorization, request.correlationId, clientOptions),
+          (authorization, { apiBaseUrl, compositionRevision }) =>
+            reads.identifiers({ partyRef }, authorization, request.correlationId, {
+              ...clientOptions,
+              baseUrl: apiBaseUrl,
+              compositionRevision,
+            }),
           options.gatewayContext,
         ),
         gateway.invoke(
-          (authorization) =>
+          (authorization, { apiBaseUrl, compositionRevision }) =>
             reads.contactPoints(
               { includeHistorical: false, partyRef, type: 'ADDRESS' },
               authorization,
               request.correlationId,
-              clientOptions,
+              { ...clientOptions, baseUrl: apiBaseUrl, compositionRevision },
             ),
           options.gatewayContext,
         ),
@@ -726,8 +748,12 @@ export const applyAresObservationWithActions = Effect.fn('ActionGateway.applyAre
     const reads = options.reads ?? (yield* loadDefaultReads());
     const clientOptions = options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl };
     const loadedObservation = yield* gateway.invoke(
-      (authorization) =>
-        reads.observation({ ico: supplied.queryIco }, authorization, request.correlationId, clientOptions),
+      (authorization, { apiBaseUrl, compositionRevision }) =>
+        reads.observation({ ico: supplied.queryIco }, authorization, request.correlationId, {
+          ...clientOptions,
+          baseUrl: apiBaseUrl,
+          compositionRevision,
+        }),
       options.gatewayContext,
     );
     const observation = yield* decodeReadObservation(loadedObservation).pipe(Effect.mapError(invalidObservation));
@@ -867,7 +893,11 @@ export const applyAresObservation = (
   options: AresApplyOptions = {},
 ): Effect.Effect<
   AresApplyOutcome<AresApplyCommandError>,
-  AresApplySelectionInvalid | AresApplyReadError | GatewayContextClientError
+  | AresApplySelectionInvalid
+  | AresApplyReadError
+  | GatewayContextClientError
+  | DocumentCompositionRevisionError
+  | Schema.SchemaError
 > =>
   Effect.promise(() => import('./party-command-client.ts')).pipe(
     Effect.flatMap((commands) =>

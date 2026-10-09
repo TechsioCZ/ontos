@@ -3,14 +3,24 @@
 // @ontos-action-boundary-audience commerce-customer-context
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
-import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
-import { Effect } from 'effect';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { Effect, Layer } from 'effect';
 import type { Redacted } from 'effect';
 
-const ACTION_GATEWAY_AUDIENCE = 'commerce-customer-context' as const;
-export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
-const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
+const ACTION_GATEWAY_AUDIENCE = 'commerce-customer-context' as const;
+// The staff namespace registration the generated boundary merges in here is part of this vertical's
+// own registry (`CommerceAuthenticationNamespaceRegistryLive`, installed by the API runtime), since a
+// runtime has exactly one registry and this one also registers the Commerce portal namespace.
+export const ActionPrincipalVerifierLive: Layer.Layer<
+  Layer.Success<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive>,
+  Layer.Error<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive>,
+  Layer.Services<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive>
+> = Layer.mergeAll(GatewayPrincipalVerifierLive, ActiveApplicationCompositionConfigLive);
+
+const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker);
 
 const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
   GatewayAssertionRedemptionService.pipe(
@@ -19,3 +29,14 @@ const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | unde
 
 /** Shared HTTP acquisition bound to this deployment's audience-specific verifier. */
 export const authenticateOperationPrincipal = makeMicroverticalHttpPrincipalAuthentication(verifyOperationPrincipal);
+
+/**
+ * The same audience-bound verification the governed Action transport performs, deliberately without
+ * the one-time redemption. A route that must decide something before it dispatches its Action — that
+ * the caller is a verifiable gateway principal at all — may only read the assertion, never spend it:
+ * redeeming here would mark the assertion used and the Action that follows would refuse its own
+ * caller as a replay. The governed Action still redeems exactly as it always did.
+ */
+export const verifyOperationPrincipalWithoutRedemption = makeMicroverticalHttpPrincipalAuthentication(
+  (authorization: Redacted.Redacted<string | undefined>) => principalVerifier.verify(authorization),
+);

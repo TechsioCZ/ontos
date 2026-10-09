@@ -129,11 +129,15 @@ const validateAssignableProfile = Effect.fn('AssignCustomerPriceGroupAction.vali
 
 const resolveAssignableCatalogPriceGroup = Effect.fn(
   'AssignCustomerPriceGroupAction.resolveAssignableCatalogPriceGroup',
-)(function* resolve(payload: AssignCustomerPriceGroupPayload, context: AssignCustomerPriceGroupContext) {
+)(function* resolve(
+  payload: AssignCustomerPriceGroupPayload,
+  context: AssignCustomerPriceGroupContext,
+  trustedOperationAt: string,
+) {
   const catalogOutcome = yield* context.services.catalog.resolveCurrent(
     payload.priceGroupRef,
     CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
-    payload.effectiveFrom,
+    trustedOperationAt,
   );
   if (catalogOutcome._tag !== 'USABLE') {
     return yield* new CustomerPriceGroupCatalogRejected({
@@ -144,7 +148,8 @@ const resolveAssignableCatalogPriceGroup = Effect.fn(
   }
   if (
     !samePriceGroupRef(catalogOutcome.priceGroupRef, payload.priceGroupRef) ||
-    catalogOutcome.compatibility.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT
+    catalogOutcome.compatibility.requiredContract.contractId !== CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT ||
+    catalogOutcome.compatibility.requiredContract.version !== 1
   ) {
     return yield* new CustomerPriceGroupCatalogRejected({
       code: 'customer_price_group_catalog_rejected',
@@ -272,7 +277,7 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
   yield* validateAssignmentScope(payload, context);
   const recordedAt = yield* recordAssignmentTime(payload, context);
   yield* validateAssignableProfile(payload, context);
-  const catalogOutcome = yield* resolveAssignableCatalogPriceGroup(payload, context);
+  const catalogOutcome = yield* resolveAssignableCatalogPriceGroup(payload, context, recordedAt);
   const stored = yield* context.services.store.assign({
     actionInvocationId: context.actionInvocationId,
     compatibility: catalogOutcome.compatibility,

@@ -40,14 +40,15 @@ const facts = (root: string) =>
   });
 const fixture = () =>
   Effect.gen(function* testEffect3() {
+    // The app workspace sits in app/ below the repository root, as in the real repository.
     const root = yield* Effect.acquireRelease(
       Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'ontos-knip-runtime-'))),
       (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
-    ).pipe(Effect.map((directory) => realpathSync(directory)));
+    ).pipe(Effect.map((directory) => path.join(realpathSync(directory), 'app')));
     write(
       root,
       'package.json',
-      '{"name":"runtime-controls","private":true,"type":"module","devDependencies":{"@effect/tsgo":"0.19.0"}}',
+      '{"name":"runtime-controls","private":true,"type":"module","devDependencies":{"@effect/tsgo":"0.19.0"},"scripts":{"typecheck":"ultramodern-create ultramodern typecheck --build tsconfig.json","performance:readiness":"ultramodern-create ultramodern performance-readiness"}}',
     );
     write(root, tsgoPackage, '{"name":"@effect/tsgo","version":"0.19.0"}');
     write(
@@ -86,21 +87,11 @@ const fixture = () =>
     );
     write(
       root,
-      'scripts/ultramodern-typecheck.mts',
-      "const forwardedArgs = []; const args = ['ultramodern', 'typecheck', ...forwardedArgs]; void args;",
-    );
-    write(
-      root,
       `${vendorRoot}/ultramodern-typecheck.mjs`,
       "resolveEffectTsgoCompiler({ from: pathToFileURL(join(workspaceRoot, 'package.json')) });",
     );
     write(root, tsgoReadme, compilerDocumentation);
     write(root, compilerConfig, yield* stringify({ compilerOptions: { plugins: [{ name: pluginName }] } }));
-    write(
-      root,
-      'scripts/ultramodern-performance-readiness.mts',
-      "const forwardedArgs=[]; const args=['ultramodern', 'performance-readiness', ...forwardedArgs]; void args;",
-    );
     write(
       root,
       `${vendorRoot}/ultramodern-performance-readiness.mjs`,
@@ -228,15 +219,19 @@ it.live(
   'Lefthook configuration proves only intended tool usage and ignores commented hook text',
   Effect.fn(function* testEffect8() {
     const root = yield* fixture();
-    const source = 'pre-commit:\n  commands:\n    format:\n      run: pnpm format\n';
+    const source =
+      'pre-commit:\n  jobs:\n    - name: format\n      root: "app/"\n      run: pnpm exec oxfmt {staged_files}\n';
     write(root, 'lefthook.yml', source);
+    const insideApp = yield* facts(root);
+    expect(!insideApp.some((fact) => fact.target === 'lefthook')).toBe(true);
+    write(root, '../lefthook.yml', source);
     const configured = yield* facts(root);
     const tool = configured.find((fact) => fact.target === 'lefthook');
     expect(tool?.kind).toBe('dependency');
     expect(tool?.reason ?? '').toMatch(/does not establish hook activation/u);
     write(
       root,
-      'lefthook.yml',
+      '../lefthook.yml',
       source
         .split('\n')
         .map((line) => `# ${line}`)
@@ -307,20 +302,12 @@ it.live(
 );
 
 it.live(
-  'shared framework runner retains compiler/readiness evidence without accepting unused neighbors',
-  Effect.fn(function* mergedScenario1() {
+  'direct framework commands retain compiler and readiness evidence only while invoked',
+  Effect.fn(function* directFrameworkCommands() {
     const root = yield* fixture();
-    const runnerFile = 'scripts/shared/ultramodern-command.mts';
+    const packageFile = 'package.json';
+    const original = readFileSync(path.join(root, packageFile), 'utf-8');
     try {
-      const runner = readFileSync(new URL('../shared/ultramodern-command.mts', import.meta.url), 'utf-8');
-      write(root, runnerFile, runner);
-      for (const command of ['typecheck', 'performance-readiness']) {
-        write(
-          root,
-          `scripts/ultramodern-${command}.mts`,
-          readFileSync(new URL(`../ultramodern-${command}.mts`, import.meta.url), 'utf-8'),
-        );
-      }
       const modeled = yield* facts(root);
       for (const target of [tsgoName, pluginName, readinessConfig, `${readinessConfig}#default`]) {
         expect(
@@ -328,28 +315,30 @@ it.live(
           target,
         ).toBeTruthy();
       }
+      write(root, packageFile, original.replace('ultramodern-create ultramodern typecheck', 'unrelated typecheck'));
+      const disconnectedTypecheck = yield* facts(root);
+      expect(disconnectedTypecheck.some((fact) => fact.target === tsgoName)).toBe(false);
       write(
         root,
-        runnerFile,
-        runner.replace('ChildProcess.make(launch.executable, launch.args,', 'ChildProcess.make("unrelated", [],'),
+        packageFile,
+        original.replace('ultramodern-create ultramodern performance-readiness', 'unrelated performance-readiness'),
       );
-      const disconnected = yield* facts(root);
-      expect(!disconnected.some((fact) => fact.target === tsgoName)).toBeTruthy();
-      expect(!disconnected.some((fact) => fact.target === readinessConfig)).toBeTruthy();
-      write(root, runnerFile, runner);
+      const disconnectedReadiness = yield* facts(root);
+      expect(disconnectedReadiness.some((fact) => fact.target === readinessConfig)).toBe(false);
       write(
         root,
-        'scripts/ultramodern-typecheck.mts',
-        "import { runUltramodernScript } from './shared/unrelated.mts'; runUltramodernScript({ command: 'typecheck' });",
+        packageFile,
+        original
+          .replace('ultramodern-create ultramodern typecheck', 'unrelated typecheck')
+          .replace(
+            '"ultramodern-create ultramodern performance-readiness"',
+            '"echo ultramodern-create ultramodern performance-readiness"',
+          )
+          .replace('"scripts":{', '"description":"ultramodern-create ultramodern typecheck","scripts":{'),
       );
-      write(
-        root,
-        'scripts/ultramodern-performance-readiness.mts',
-        "import { runUltramodernScript } from './shared/ultramodern-command.mts'; runUltramodernScript({ command: 'unrelated' });",
-      );
-      const neighbors = yield* facts(root);
-      expect(!neighbors.some((fact) => fact.target === tsgoName)).toBeTruthy();
-      expect(!neighbors.some((fact) => fact.target === readinessConfig)).toBeTruthy();
+      const describedOnly = yield* facts(root);
+      expect(describedOnly.some((fact) => fact.target === tsgoName)).toBe(false);
+      expect(describedOnly.some((fact) => fact.target === readinessConfig)).toBe(false);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

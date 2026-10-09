@@ -61,7 +61,7 @@ const handleArchiveCustomerGroup = Effect.fn('ArchiveCustomerGroupAction.handle'
           ),
           Match.exhaustive,
         ),
-      // eslint-disable-next-line perfectionist/sort-objects -- resolve establishes the inferred result type for later callbacks.
+      // Partition: invoke and resolve establish the inferred result type for the callbacks below.
       auditEvidence: ({ payload: evidencePayload, resolved }) => ({
         affectedMembershipCount: resolved.endedCount + resolved.cancelledCount,
         changed: resolved.changed,

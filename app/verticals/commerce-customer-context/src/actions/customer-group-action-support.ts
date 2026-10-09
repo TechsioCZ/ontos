@@ -1,4 +1,4 @@
-import type { ActionHandlerContext, ReadServiceFactory } from '@app/core-runtime';
+import type { ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { DateTime, Effect } from 'effect';
 import type { CustomerGroupPersistence } from '../../shared/domain/group-service.ts';
@@ -7,11 +7,6 @@ import { CustomerGroupScopeMismatch } from '../../shared/domain/group-errors.ts'
 import type { CustomerGroupMembershipRef } from '../../shared/resources/customer-group-membership.ts';
 import type { CustomerGroupRef } from '../../shared/resources/customer-group.ts';
 import { customerGroupPersistenceForTransaction } from '../persistence/group-persistence.ts';
-
-export type CustomerGroupActionContext = ActionHandlerContext<
-  Readonly<Record<string, never>>,
-  CustomerGroupPersistence
->;
 
 export const customerGroupRecordedAt = DateTime.now.pipe(Effect.map((instant) => DateTime.formatIso(instant)));
 

@@ -87,8 +87,8 @@ export const changePrincipalStatusAction = defineAction(
     tenantPermission: () => 'manage_identity',
   },
   handle,
-  (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+  (transaction, scope) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({ change: repository.changePrincipalStatus });
   },
 );

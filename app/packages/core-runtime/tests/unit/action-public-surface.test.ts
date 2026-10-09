@@ -1,14 +1,18 @@
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/repository.ts';
 import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
 import * as publicSurface from '../../src/index.ts';
 
-const principal = {
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
+  authBindingId: '00000000-0000-4000-8000-000000000004',
+  authContextRef: 'better-auth-session:action-public-surface',
   authMethod: 'session',
   principalId: '00000000-0000-4000-8000-000000000002',
   tenantId: '00000000-0000-4000-8000-000000000001',
-} as const;
+});
 
 it('computes deterministic hashes independent of object key ordering', () => {
   const left = computeActionRequestHash({

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PurchaseLimitEvaluationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PurchaseLimitEvaluationAuthorizedInvocation = readonly [
@@ -40,13 +41,17 @@ export const executePurchaseLimitEvaluationWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PurchaseLimitEvaluationAuthorizedInvocation
 ) =>
   purchaseLimitEvaluationClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.purchaseLimitEvaluation.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.purchaseLimitEvaluation.execute({ payload })),
   );
 
 export const executePurchaseLimitEvaluation = (
   payload: PurchaseLimitEvaluationRequest,
   ...[requestCorrelation, options = {}]: PurchaseLimitEvaluationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePurchaseLimitEvaluationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePurchaseLimitEvaluationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -8,10 +8,6 @@ import { CorrectPaymentTermPayloadSchema, CorrectPaymentTermResultSchema } from 
 
 export { CorrectPaymentTermPayloadSchema } from '../actions/correct-payment-term.ts';
 
-const CorrectPaymentTermActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CorrectPaymentTermActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CorrectPaymentTermActionInvalidProblem',
   400,
@@ -135,7 +131,6 @@ export const CorrectPaymentTermActionApi = HttpApi.make('CorrectPaymentTermActio
     .add(
       HttpApiEndpoint.post('execute', '/payment-term-catalog/actions/correct-payment-term', {
         error: actionErrors,
-        headers: CorrectPaymentTermActionHeadersSchema,
         payload: Schema.toEncoded(CorrectPaymentTermPayloadSchema),
         success: CorrectPaymentTermResultSchema,
       }),

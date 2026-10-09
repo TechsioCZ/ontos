@@ -1,9 +1,12 @@
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
+import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Redacted, Schema } from 'effect';
+import { Redacted } from 'effect';
+import type { Schema } from 'effect';
+import type { HttpServerRequest } from 'effect/unstable/http';
 
 import { partyRegistryApi } from '../shared/api.ts';
-import type { ContactsMutationHeadersSchema, ContactsProblem } from '../shared/engagement-profile-api.ts';
+import type { ContactsProblem } from '../shared/engagement-profile-api.ts';
 import { archiveOrganizationEngagementAction } from '../src/actions/archive-organization-engagement.action.ts';
 import { archivePersonEngagementAction } from '../src/actions/archive-person-engagement.action.ts';
 import { attachOrganizationEngagementAction } from '../src/actions/attach-organization-engagement.action.ts';
@@ -24,10 +27,6 @@ const runActionHttp = bindActionHttpRunner({
   authentication: engagementProblem.authentication,
   unavailable: engagementProblem.unavailable,
 });
-
-const RequestHeadersSchema = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Undefined]));
-type RequestHeaders = Schema.Schema.Type<typeof RequestHeadersSchema>;
-type ContactsMutationHeaders = Schema.Schema.Type<typeof ContactsMutationHeadersSchema>;
 
 const attachActionProblem = (error: EngagementActionError): EngagementAttachProblem => {
   const mapped = mapEngagementActionProblem(error);
@@ -58,29 +57,30 @@ const engagementActionHandler =
   ) =>
   ({
     payload,
-    headers,
     request,
   }: {
     readonly payload: Schema.Schema.Type<PayloadSchema>;
-    readonly headers: ContactsMutationHeaders;
-    readonly request: { readonly headers: RequestHeaders };
+    readonly request: HttpServerRequest.HttpServerRequest;
   }) => {
     const requestHeaders = request.headers;
-    return runActionHttp({
-      endpointHeaders: {
-        idempotencyKey: headers['idempotency-key'],
-        traceId: requestHeaders['x-trace-id'],
-      },
-      internalProblem: engagementProblem.internal,
-      invalidCorrelationProblem: engagementProblem.invalid,
-      mapError,
-      payload,
-      registration,
-      requestHeaders: {
-        authorization: Redacted.make(requestHeaders['authorization']),
-        'x-correlation-id': requestHeaders['x-correlation-id'],
-      },
-    }).pipe(Effect.catchIf(isEngagementAuthenticationProblem, failEngagementProblem));
+    return decodeActionEndpointHeaders(requestHeaders).pipe(
+      Effect.mapError(engagementProblem.invalid),
+      Effect.flatMap((endpointHeaders) =>
+        runActionHttp({
+          endpointHeaders,
+          internalProblem: engagementProblem.internal,
+          invalidCorrelationProblem: engagementProblem.invalid,
+          mapError,
+          payload,
+          registration,
+          requestHeaders: {
+            authorization: Redacted.make(requestHeaders['authorization']),
+            'x-correlation-id': requestHeaders['x-correlation-id'],
+          },
+        }),
+      ),
+      Effect.catchIf(isEngagementAuthenticationProblem, failEngagementProblem),
+    );
   };
 
 export const organizationEngagementMutationsLive = HttpApiBuilder.group(

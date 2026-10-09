@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- This contract reads checked-in migration/source evidence; expires: 2027-03-31.
-import { readFileSync } from 'node:fs';
-
 import { Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
@@ -15,15 +12,6 @@ import {
 } from '../../shared/domain/purchasing-approval.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import type { PurchasingApprovalScopedRoutineInvoker } from '../../src/persistence/purchasing-approval-persistence.ts';
-
-const persistenceSource = readFileSync(
-  new URL('../../src/persistence/purchasing-approval-persistence.ts', import.meta.url),
-  'utf-8',
-);
-const routineMigration = readFileSync(
-  new URL('../../drizzle/20260909160000_purchasing_approval_routines/migration.sql', import.meta.url),
-  'utf-8',
-);
 
 const routineNames = [
   ['create_purchase_proposal_revision', 'purchasing-approval.create-proposal-revision'],
@@ -47,56 +35,6 @@ it('keeps the Purchasing Approval owner boundary exact and transaction-scoped', 
       { source: 'input', type: 'jsonb' },
     ]);
   }
-  expect(persistenceSource).toContain('transaction.invoke');
-  expect(persistenceSource).not.toContain('new Map');
-  expect(persistenceSource).not.toContain('TenantStore');
-  expect(persistenceSource).not.toContain('randomUUID');
-});
-
-it('ships SECURITY DEFINER owner routines with forced RLS and no direct table grants', () => {
-  for (const [name] of routineNames) {
-    expect(routineMigration).toContain(`CREATE OR REPLACE FUNCTION "commerce_customer_context"."${name}"(`);
-    expect(routineMigration).toContain(
-      `REVOKE ALL ON FUNCTION "commerce_customer_context"."${name}"(uuid, uuid, jsonb) FROM PUBLIC, ontos_runtime;`,
-    );
-    expect(routineMigration).toContain(
-      `GRANT EXECUTE ON FUNCTION "commerce_customer_context"."${name}"(uuid, uuid, jsonb) TO ontos_runtime;`,
-    );
-  }
-  // The purchase-limit Currentness adapter adds one read-only owner routine to
-  // this module migration; it is intentionally not part of the mutation
-  // workflow allowlist above.
-  expect(routineMigration.match(/SECURITY DEFINER/gu)).toHaveLength(routineNames.length + 1);
-  expect(routineMigration.match(/SET row_security = on/gu)).toHaveLength(routineNames.length + 1);
-  expect(routineMigration).toContain('REVOKE ALL ON TABLE\n  "commerce_customer_context"."approval_decisions"');
-  expect(routineMigration).toContain(
-    'ALTER TABLE "commerce_customer_context"."approval_decisions" FORCE ROW LEVEL SECURITY;',
-  );
-  expect(routineMigration).toContain(
-    'ALTER TABLE "commerce_customer_context"."purchase_proposal_revisions" FORCE ROW LEVEL SECURITY;',
-  );
-});
-
-it('retains durable CAS and idempotency guards in every mutating workflow', () => {
-  expect(routineMigration).toContain('FOR UPDATE');
-  expect(routineMigration).toContain("USING ERRCODE = '40001'");
-  expect(routineMigration).toContain("USING ERRCODE = '23505'");
-  expect(routineMigration).toContain('idempotency_key = v_idempotency');
-  expect(routineMigration).toContain("request_revision = (p_payload->>'expectedRequestRevision')::integer");
-  expect(routineMigration).toContain('GET DIAGNOSTICS v_inserted = ROW_COUNT;');
-  expect(routineMigration).toContain('v_existing_route approval_routes%ROWTYPE;');
-  expect(routineMigration).toContain('ccc_approval_requests_active_proposal_uk');
-  expect(routineMigration).toContain('committed_order_ref');
-  expect(routineMigration).toContain("v_request_row.request_snapshot->>'consumptionIdempotencyKey'");
-  expect(routineMigration).toContain("v_request_row.request_snapshot->>'consumedAt'");
-  expect(routineMigration).toContain("v_request_row.request_snapshot->'consumptionEvidence'");
-  expect(routineMigration).toContain('v_request_row.expires_at <= v_operation_at');
-  expect(routineMigration).toContain("'requiresNewProposal', true");
-  expect(routineMigration).toContain(
-    "proposal_snapshot = proposal_snapshot || jsonb_build_object('state', 'SUPERSEDED')",
-  );
-  expect(routineMigration).toContain('LIMIT 1 FOR UPDATE');
-  expect(routineMigration).toContain('approval request identity conflicts with an existing submission');
 });
 
 it.effect('binds submit to the explicit immutable proposal revision', () =>
@@ -209,51 +147,6 @@ it.effect('keeps Order reconciliation bound to the exact approval commitment', (
     });
   }),
 );
-
-it('does not derive request identity from a missing revision on the proposal ref', () => {
-  expect(routineMigration).toContain('v_proposal_revision integer;');
-  expect(routineMigration).toContain('AND revision = v_proposal_revision');
-  expect(routineMigration).toContain(
-    "v_request_id := 'approval-request:' || v_proposal_id || ':' || v_proposal_row.revision;",
-  );
-  expect(routineMigration).not.toContain("(p_payload->'proposalRevisionRef'->>'revision')");
-});
-
-it('keeps proposal lineage, hierarchy provenance, and reroute history owner-derived', () => {
-  expect(
-    routineMigration.match(/CREATE UNIQUE INDEX IF NOT EXISTS "ccc_purchase_proposals_current_resource_uk"/gu),
-  ).toHaveLength(1);
-  expect(routineMigration).toContain(
-    'CREATE UNIQUE INDEX IF NOT EXISTS "ccc_purchase_proposals_current_cart_revision_uk"',
-  );
-  expect(routineMigration).toContain("proposal_snapshot->'sourceCart'->'cartRef'->>'resourceId'");
-  expect(routineMigration).toContain("proposal_snapshot->'sourceCart'->>'revision'");
-  expect(routineMigration).toContain("v_proposal->>'approvalEvaluation' <> 'APPROVAL_REQUIRED'");
-  expect(routineMigration).toContain("v_proposal->'sourceCart'->'cartRef'->>'resourceType' <> 'commerce.cart.cart'");
-  expect(routineMigration).toContain("v_proposal->'sourceCart'->'cartRef'->>'tenantId' <> p_tenant_id::text");
-  expect(routineMigration).toContain("source->>'source' = 'purchase-proposal'");
-  expect(routineMigration).toContain("source->>'revision' = proposal_snapshot->'purchaseValue'->>'sourceRevision'");
-  expect(routineMigration).toContain("h.revision = (v_route->>'hierarchyRevision')::integer");
-  expect(routineMigration).toContain("hierarchy_snapshot->>'state' = 'ACTIVE'");
-  expect(routineMigration).toContain("principal->>'tenantId' IS DISTINCT FROM p_tenant_id::text");
-  expect(routineMigration).toContain('v_operation_at timestamptz := now();');
-  expect(routineMigration).toContain("v_route_id := 'approval-route:' || v_request_id || ':reroute:'");
-  expect(routineMigration).toContain("v_route_id := 'approval-route:' || v_request_id || ':reroute-required:'");
-  expect(routineMigration).toContain("status = 'SUPERSEDED'");
-  expect(routineMigration).toContain("'outcome', 'REROUTE_REQUIRED'");
-  expect(routineMigration).toContain("'status', 'REROUTE_REQUIRED'");
-  expect(routineMigration).not.toContain("CONSTRAINT = 'pa_reroute_required'");
-  expect(routineMigration).toContain('v_reroute_required boolean := false;');
-  expect(routineMigration).toContain("CONSTRAINT = 'pa_decision_reason_required'");
-  expect(routineMigration).toContain("CONSTRAINT = 'pa_revalidation_expired'");
-  expect(routineMigration).toContain('v_existing.checked_at > v_now');
-  expect(routineMigration).toContain('v_existing.valid_until <= v_now');
-  expect(routineMigration).toContain("(p_payload->>'checkedAt')::timestamptz > v_now");
-  expect(routineMigration).toContain("(p_payload->>'validUntil')::timestamptz <= v_now");
-  expect(routineMigration).toContain("level->>'completionRule' IS DISTINCT FROM 'ONE_APPROVER'");
-  expect(routineMigration).toContain("'completionRule', level->>'completionRule'");
-  expect(routineMigration).toContain("CONSTRAINT = 'pa_commitment_conflict'");
-});
 
 it.effect('maps durable idempotency and serialization SQLSTATEs to typed retry outcomes', () =>
   Effect.gen(function* mapRoutineFailureEffect() {

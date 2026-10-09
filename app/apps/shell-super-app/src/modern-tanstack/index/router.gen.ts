@@ -13,8 +13,8 @@ import {
 
 import { loader as loader_0 } from "../../routes/[lang]/page.data";
 import component_0 from "../../routes/[lang]/page";
-import { loader as loader_1 } from "../../routes/[lang]/contacts/page.data";
-import component_1 from "../../routes/[lang]/contacts/page";
+import { loader as loader_1 } from "../../routes/[lang]/$.data";
+import component_1 from "../../routes/[lang]/$";
 import component_2 from "../../routes/[lang]/login/page";
 import { loader as loader_2 } from "../../routes/[lang]/modules/[moduleId]/page.data";
 import component_3 from "../../routes/[lang]/modules/[moduleId]/page";
@@ -29,12 +29,13 @@ export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
   staticData: createRouteStaticData({
     modernRouteId: "layout",
   }),
+
 });
 
 const route__lang__page = createRoute({
   getParentRoute: () => rootRoute,
+  path: "$lang/",
   component: component_0,
-  path: "$lang",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_0),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/page",
@@ -42,21 +43,21 @@ const route__lang__page = createRoute({
   }),
 });
 
-const route__lang__contacts_page = createRoute({
+const route__lang__$ = createRoute({
   getParentRoute: () => rootRoute,
+  path: "$lang/$",
   component: component_1,
-  path: "$lang/contacts",
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_1),
+  loader: modernLoaderToTanstack({ hasSplat: true }, loader_1),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/contacts/page",
+    modernRouteId: "(lang)/$",
     modernRouteLoader: loader_1,
   }),
 });
 
 const route__lang__login_page = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_2,
   path: "$lang/login",
+  component: component_2,
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/login/page",
   }),
@@ -64,8 +65,8 @@ const route__lang__login_page = createRoute({
 
 const route__lang__modules__moduleId__page = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_3,
   path: "$lang/modules/$moduleId",
+  component: component_3,
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_2),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/modules/(moduleId)/page",
@@ -75,8 +76,8 @@ const route__lang__modules__moduleId__page = createRoute({
 
 const route__lang__resources__moduleId___resourceType___resourceId__page = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_4,
   path: "$lang/resources/$moduleId/$resourceType/$resourceId",
+  component: component_4,
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/resources/(moduleId)/(resourceType)/(resourceId)/page",
@@ -86,8 +87,8 @@ const route__lang__resources__moduleId___resourceType___resourceId__page = creat
 
 const route__lang__search_page = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_5,
   path: "$lang/search",
+  component: component_5,
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_4),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/search/page",
@@ -95,7 +96,7 @@ const route__lang__search_page = createRoute({
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__contacts_page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page]);
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__$, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

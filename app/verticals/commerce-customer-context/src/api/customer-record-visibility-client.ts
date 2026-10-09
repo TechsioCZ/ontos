@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerRecordVisibilityClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerRecordVisibilityAuthorizedInvocation = readonly [
@@ -40,15 +41,17 @@ export const executeCustomerRecordVisibilityWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerRecordVisibilityAuthorizedInvocation
 ) =>
   customerRecordVisibilityClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerRecordVisibility.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.customerRecordVisibility.execute({ payload })),
   );
 
 export const executeCustomerRecordVisibility = (
   payload: CustomerRecordVisibilityRequest,
   ...[requestCorrelation, options = {}]: CustomerRecordVisibilityOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerRecordVisibilityWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerRecordVisibilityWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

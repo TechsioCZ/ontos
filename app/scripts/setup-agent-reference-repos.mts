@@ -55,7 +55,7 @@ class AgentReferenceRepoSetupError extends Schema.TaggedError<AgentReferenceRepo
 const setupError = (reason: string) => new AgentReferenceRepoSetupError({ reason });
 const truthy = (value: string): boolean => /^(?:1|true|yes|on)$/iu.test(value);
 const falsy = (value: string): boolean => /^(?:0|false|no|off)$/iu.test(value);
-const environmentValue = (name: string) => Config.string(name).pipe(Config.withDefault(''));
+const environmentValue = (name: string) => Config.String(name).pipe(Config.withDefault(''));
 const identityValue = (value: string, fallback: string): string => (value.length > 0 ? value : fallback);
 const SetupEnvironment = Config.all({
   agentRepos: environmentValue('ULTRAMODERN_AGENT_REPOS'),
@@ -396,7 +396,7 @@ const reportSetupFailure = (checkOnly: boolean) => (error: AgentReferenceRepoSet
   });
 const setupCommand = Command.make(
   'setup-agent-reference-repos',
-  { checkOnly: Flag.boolean('check').pipe(Flag.withDefault(false)) },
+  { checkOnly: Flag.Boolean('check').pipe(Flag.withDefault(false)) },
   ({ checkOnly }) =>
     runSetup(checkOnly).pipe(
       Effect.mapError((cause) => (Schema.is(AgentReferenceRepoSetupError)(cause) ? cause : setupError(String(cause)))),
