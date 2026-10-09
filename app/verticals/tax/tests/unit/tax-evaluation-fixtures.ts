@@ -91,12 +91,26 @@ export const selected = (ratePercent: string, taxRuleId: string, revisionNumber 
   outcome: 'SELECTED',
 });
 
+export const DECLARED_VAT_PAYER = {
+  _tag: 'DECLARED' as const,
+  declarationRevisionRef: { revision: 1 },
+  regime: 'VAT_PAYER' as const,
+};
+
+export const DECLARED_NON_PAYER = {
+  _tag: 'DECLARED' as const,
+  declarationRevisionRef: { revision: 1 },
+  regime: 'NON_PAYER' as const,
+};
+
+export const NOT_DECLARED = { _tag: 'NOT_DECLARED' as const };
+
 export const ownState = (overrides: Partial<TaxEvaluationOwnState> = {}): TaxEvaluationOwnState => ({
   ruleSets: new Map([
     [STANDARD_CODE, selected('21', 'rule-standard')],
     [REDUCED_CODE, selected('12', 'rule-reduced')],
   ]),
-  sellerVatRegistration: 'CURRENT_POSITIVE',
+  sellerVatRegime: DECLARED_VAT_PAYER,
   ...overrides,
 });
 
@@ -107,4 +121,4 @@ export const evaluate = (
   state: TaxEvaluationOwnState = ownState(),
   taxEvaluationTime = evaluationTime,
 ): TaxOutcome =>
-  evaluateProspectiveLaunchTax(request, state, { fingerprint: taxMeaningFingerprint, taxEvaluationTime });
+  evaluateProspectiveLaunchTax(request, state, { fingerprint: taxMeaningFingerprint, taxEvaluationTime }).outcome;

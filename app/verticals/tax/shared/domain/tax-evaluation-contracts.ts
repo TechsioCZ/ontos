@@ -128,6 +128,7 @@ export const TaxEvidenceDifferenceSchema = Schema.Literals([
   'PURCHASE_CANDIDATE',
   'TAX_RELEVANT_TIME',
   'TAX_EVALUATION_TIME',
+  'SELLER_VAT_REGIME_DECLARATION_REVISION',
 ]);
 export type TaxEvidenceDifference = typeof TaxEvidenceDifferenceSchema.Type;
 

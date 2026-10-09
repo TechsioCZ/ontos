@@ -19,6 +19,7 @@ import {
 import type { TaxPurchaseBinding } from '../../shared/domain/tax-kernel/purchase-binding.ts';
 import { ShippingAllocationBasisSchema } from '../../shared/domain/tax-kernel/shipping-allocation.ts';
 import type { ShippingAllocationBasis } from '../../shared/domain/tax-kernel/shipping-allocation.ts';
+import { TaxableDecisionUnitSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import type { TaxDecisionUnit } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import { taxDecisionIdFor } from './tax-evaluation.ts';
 import type { TaxMeaningFingerprint } from './tax-evaluation.ts';
@@ -61,6 +62,7 @@ const isSuccess = Schema.is(TaxOutcomeSuccessSchema);
 /** Published binding-only shape: scope is checked on every determined outcome, consistent or not. */
 const isDetermined = Schema.is(BoundTaxOutcomeSuccessSchema);
 const isLine = Schema.is(LineCommercialValueBasisSchema);
+const isTaxableDecisionUnit = Schema.is(TaxableDecisionUnitSchema);
 const isShipping = Schema.is(ShippingAllocationBasisSchema);
 const exactText = ({ denominator, numerator }: TaxExactRational) => `${numerator}/${denominator}`;
 /** Exact code-unit order: locale collation can rank distinct identifiers as equal, so it never orders identities. */
@@ -79,17 +81,22 @@ const lineComponents = (unit: TaxDecisionUnit): readonly LineCommercialValueBasi
 const shippingComponents = (unit: TaxDecisionUnit): readonly ShippingAllocationBasis[] =>
   unit.taxableBasisInterpretation.components.flatMap((component) => (isShipping(component) ? [component] : []));
 
-/** Material meaning of one unit; evidence identities are deliberately absent (#943 F2-F7). */
+/**
+ * Material meaning of one unit; evidence identities are deliberately absent (#943 F2-F7). A non-payer unit has no
+ * classification, so a payer-vs-non-payer change is reported through TREATMENT alone (Unit 10 A5).
+ */
 const unitMeaning = (unit: TaxDecisionUnit) => ({
   applicability: unit.applicability,
   basis: lineComponents(unit)
     .map(({ amount, occurrenceId }) => joinParts([occurrenceId, exactText(amount)]))
     .toSorted(byText),
-  classification: unit.taxClassification.classificationCode,
+  classification: isTaxableDecisionUnit(unit) ? unit.taxClassification.classificationCode : 'NONE',
   jurisdiction: unit.jurisdiction.jurisdiction,
   mapping: unit.taxableSupplyUnit.mapping._tag,
   shipping: shippingComponents(unit).map(({ amount }) => exactText(amount)),
-  treatment: `${unit.treatment._tag}:${exactText(taxExactFractionOfPercent(unit.treatment.ratePercent))}`,
+  treatment: isTaxableDecisionUnit(unit)
+    ? `${unit.treatment._tag}:${exactText(taxExactFractionOfPercent(unit.treatment.ratePercent))}`
+    : unit.treatment._tag,
 });
 
 /** Material Tax meaning of one successful outcome: per-unit Decision meaning plus the published Result (#943 F2-F5). */
@@ -147,16 +154,25 @@ const materialChanges = (previous: MaterialMeaning, current: MaterialMeaning): r
   ];
 };
 
-/** Evidence identities of one unit; fact and line sets are ordered, so array position is never a difference (#937 F7). */
+/**
+ * Evidence identities of one unit; fact and line sets are ordered, so array position is never a difference
+ * (#937 F7). `governing` is the governing Tax Rule Revision for a taxable unit, or the declaration revision plus
+ * legal-basis revision for a non-payer unit; catalog evidence is empty for a non-payer unit (Unit 10 A5).
+ */
 const unitEvidence = (unit: TaxDecisionUnit) => ({
-  catalog: joinParts([
-    unit.taxClassification.completenessEvidenceRef,
-    ...unit.taxClassification.materialCatalogEvidence
-      .map(({ catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef }) =>
-        joinParts([catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef]),
-      )
-      .toSorted(byText),
-  ]),
+  catalog: isTaxableDecisionUnit(unit)
+    ? joinParts([
+        unit.taxClassification.completenessEvidenceRef,
+        ...unit.taxClassification.materialCatalogEvidence
+          .map(({ catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef }) =>
+            joinParts([catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef]),
+          )
+          .toSorted(byText),
+      ])
+    : joinParts([]),
+  governing: isTaxableDecisionUnit(unit)
+    ? joinParts([unit.governingTaxRuleRevisionRef.taxRuleId, unit.governingTaxRuleRevisionRef.revision])
+    : joinParts([unit.governingReference.declarationRevisionRef.revision, unit.governingReference.legalBasis.revision]),
   place: joinParts([
     unit.jurisdiction.placeEvidenceRefs.sellingLegalEntity,
     unit.jurisdiction.placeEvidenceRefs.deliveryDestination,
@@ -167,7 +183,6 @@ const unitEvidence = (unit: TaxDecisionUnit) => ({
       .map(({ pricingLineRef }) => pricingLineRef)
       .toSorted(byText),
   ),
-  rule: joinParts([unit.governingTaxRuleRevisionRef.taxRuleId, unit.governingTaxRuleRevisionRef.revision]),
   shippingWeights: joinParts(
     shippingComponents(unit).map(({ allocationWeightsEvidenceRef }) => allocationWeightsEvidenceRef),
   ),
@@ -194,7 +209,7 @@ const evidenceDifferences = (
   const left = previous.decision;
   const right = current.decision;
   const checks: readonly (readonly [TaxEvidenceDifference, boolean])[] = [
-    ['GOVERNING_TAX_RULE_REVISION', anyUnitDiffers(previous, current, ({ rule }) => rule)],
+    ['GOVERNING_TAX_RULE_REVISION', anyUnitDiffers(previous, current, ({ governing }) => governing)],
     ['CATALOG_EVIDENCE', anyUnitDiffers(previous, current, ({ catalog }) => catalog)],
     ['PLACE_EVIDENCE', anyUnitDiffers(previous, current, ({ place }) => place)],
     [
@@ -212,6 +227,11 @@ const evidenceDifferences = (
     ['PURCHASE_CANDIDATE', left.purchaseBinding.purchaseCandidateRef !== right.purchaseBinding.purchaseCandidateRef],
     ['TAX_RELEVANT_TIME', left.taxRelevantTime.epochMilliseconds !== right.taxRelevantTime.epochMilliseconds],
     ['TAX_EVALUATION_TIME', left.taxEvaluationTime.epochMilliseconds !== right.taxEvaluationTime.epochMilliseconds],
+    // A later declaration revision alone proves no equivalence of the covered instant (#943 F28 patch).
+    [
+      'SELLER_VAT_REGIME_DECLARATION_REVISION',
+      left.declarationRevisionRef.revision !== right.declarationRevisionRef.revision,
+    ],
   ];
   return checks.flatMap(([difference, differs]) => (differs ? [difference] : []));
 };

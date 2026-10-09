@@ -2,21 +2,21 @@ import { ReadHandlerUnavailable } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import type { SellingLegalEntityVatRegistrationState } from '../../shared/domain/tax-kernel/selling-legal-entity-vat-registration.ts';
 import { readTaxEvaluation } from '../../src/api/tax-evaluation.read.ts';
 import { taxEvaluationRequestRejections } from '../../src/domain/tax-evaluation-request.ts';
 import { requiredTaxClassificationCodes, taxDecisionIdFor } from '../../src/domain/tax-evaluation.ts';
+import { SellerNotVatPayerTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 import {
   TaxCaseUnsupportedSchema,
   TaxDependencyUnavailableSchema,
   TaxInputStaleSchema,
-  TaxPrerequisiteNotMetSchema,
   TaxRuleConflictSchema,
   TaxRuleMissingSchema,
   TaxRuleOverlapSchema,
   TaxStateIndeterminateSchema,
 } from '../../src/domain/tax-non-success-outcome.ts';
 import type { TaxNonSuccessOutcome } from '../../src/domain/tax-non-success-outcome.ts';
+import type { SellerVatRegimeSelection } from '../../shared/domain/tax-kernel/seller-vat-regime.ts';
 import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
 import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
@@ -24,6 +24,8 @@ import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerp
 import { unavailable } from '../../src/services/tax-governance-persistence.ts';
 import { exactDecimal, occurrenceInput, purchaseBindingInput } from './tax-domain-fixtures.ts';
 import {
+  DECLARED_NON_PAYER,
+  NOT_DECLARED,
   PRICING_RESULT_REF,
   REDUCED_CODE,
   STANDARD_CODE,
@@ -92,8 +94,8 @@ const setRequestInput = (
     ['o1'],
   );
 
-const forSeller = (sellerVatRegistration: SellingLegalEntityVatRegistrationState) =>
-  evaluate(evaluationRequest(), ownState({ sellerVatRegistration }));
+const forSeller = (sellerVatRegime: SellerVatRegimeSelection) =>
+  evaluate(evaluationRequest(), ownState({ sellerVatRegime }));
 
 const withReducedOutcome = (outcome: 'TAX_RULE_MISSING' | 'TAX_RULE_OVERLAP' | 'TAX_RULE_CONFLICT') =>
   evaluate(
@@ -125,14 +127,35 @@ describe('Prospective Launch Tax evaluation', () => {
       ]),
     );
     expect(outcome.result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
-    expect(outcome.decision.units.map(({ governingTaxRuleRevisionRef }) => governingTaxRuleRevisionRef)).toEqual([
+    const taxableUnits = outcome.decision.units.filter(
+      (unit): unit is Extract<(typeof outcome.decision.units)[number], { readonly taxClassification: unknown }> =>
+        'taxClassification' in unit,
+    );
+    expect(taxableUnits.map(({ governingTaxRuleRevisionRef }) => governingTaxRuleRevisionRef)).toEqual([
       { revision: 1, taxRuleId: 'rule-standard' },
       { revision: 1, taxRuleId: 'rule-reduced' },
     ]);
-    expect(outcome.decision.units.map(({ taxClassification }) => taxClassification.classificationCode)).toEqual([
+    expect(taxableUnits.map(({ taxClassification }) => taxClassification.classificationCode)).toEqual([
       STANDARD_CODE,
       REDUCED_CODE,
     ]);
+  });
+
+  it('Unit 10 A4 a NON_PAYER seller publishes 0.00 with no classification, rule or shipping read', () => {
+    const outcome = success(evaluate(evaluationRequest(), ownState({ sellerVatRegime: DECLARED_NON_PAYER })));
+
+    expect(publishedByUnit(outcome)).toEqual(
+      new Map([
+        ['taxable-supply-unit:o1', '0.00'],
+        ['taxable-supply-unit:o2', '0.00'],
+      ]),
+    );
+    expect(outcome.result.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
+    expect(outcome.decision.sellerVatRegime).toBe('NON_PAYER');
+    for (const unit of outcome.decision.units) {
+      expect('taxClassification' in unit).toBe(false);
+      expect(Schema.is(SellerNotVatPayerTreatmentSchema)(unit.treatment)).toBe(true);
+    }
   });
 
   it('#941 F1 #937 F33-F35 Tax-Relevant Time and Tax Evaluation Time are kept as distinct meanings', () => {
@@ -207,14 +230,8 @@ describe('Prospective Launch Tax evaluation', () => {
   });
 
   describe('#938 typed non-success, never a guessed Decision', () => {
-    it('#942 F4-F5 each seller state keeps its own meaning', () => {
-      expect(forSeller('KNOWN_ENDED_OR_NON_REGISTERED')).toEqual(
-        TaxPrerequisiteNotMetSchema.make({ unmetPrerequisite: 'SELLING_LEGAL_ENTITY_CURRENT_CZ_VAT_REGISTRATION' }),
-      );
-      expect(forSeller('STALE')).toEqual(TaxInputStaleSchema.make({}));
-      expect(forSeller('UNAVAILABLE')).toEqual(TaxDependencyUnavailableSchema.make({}));
-      expect(forSeller('UNKNOWN')).toEqual(indeterminate);
-      expect(forSeller('UNRESOLVED')).toEqual(indeterminate);
+    it('Unit 10 A4 a not-declared seller is TAX_STATE_INDETERMINATE, with the reason apart from the outcome', () => {
+      expect(forSeller(NOT_DECLARED)).toEqual(indeterminate);
     });
 
     it('#942 F12-F15 a complete rule set outcome is reported as is', () => {
@@ -243,7 +260,7 @@ describe('Prospective Launch Tax evaluation', () => {
         },
       });
 
-      expect(evaluate(request, ownState({ sellerVatRegistration: 'KNOWN_ENDED_OR_NON_REGISTERED' }))).toEqual(
+      expect(evaluate(request, ownState({ sellerVatRegime: NOT_DECLARED }))).toEqual(
         TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NON_CZECH_DOMESTIC_TAX_PLACE' }),
       );
     });
@@ -309,9 +326,7 @@ describe('Prospective Launch Tax evaluation', () => {
     });
 
     it('a known-negative seller never masks an unsupported unit', () => {
-      expect(evaluate(eurLineOnO2(), ownState({ sellerVatRegistration: 'KNOWN_ENDED_OR_NON_REGISTERED' }))).toEqual(
-        nonCzk,
-      );
+      expect(evaluate(eurLineOnO2(), ownState({ sellerVatRegime: NOT_DECLARED }))).toEqual(nonCzk);
     });
 
     it('#938 F7 a known-negative seller is not reported while a material place is not established', () => {
@@ -322,7 +337,7 @@ describe('Prospective Launch Tax evaluation', () => {
         },
       });
 
-      expect(evaluate(request, ownState({ sellerVatRegistration: 'KNOWN_ENDED_OR_NON_REGISTERED' }))).toEqual(
+      expect(evaluate(request, ownState({ sellerVatRegime: NOT_DECLARED }))).toEqual(
         TaxDependencyUnavailableSchema.make({}),
       );
     });
