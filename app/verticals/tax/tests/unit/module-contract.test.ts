@@ -11,6 +11,7 @@ const governanceActionKeys = [
   'commerce.tax.end-tax-fact-authority-contract',
   'commerce.tax.end-tax-rule-revision',
   'commerce.tax.establish-tax-fact-authority-contract',
+  'commerce.tax.finalize-order-tax',
   'commerce.tax.record-tax-source-assertion',
   'commerce.tax.revise-tax-fact-authority-contract',
 ];
@@ -20,6 +21,7 @@ describe('Tax module contract', () => {
     expect(taxManifest.module.id).toBe('commerce.tax');
     expect(Object.keys(taxManifest.publicSurface.api).toSorted()).toEqual([
       'applicable-tax-rule-set',
+      'final-order-tax',
       'selling-legal-entity-vat-registration-state',
       'tax-evaluation',
       'tax-fact-authority-current',
@@ -32,6 +34,7 @@ describe('Tax module contract', () => {
       governanceActionKeys,
     );
     expect(taxManifest.publicSurface.resourceTypes.map(({ key }) => key).toSorted()).toEqual([
+      'commerce.tax.order-tax-finalization',
       'commerce.tax.tax-fact-authority-contract',
       'commerce.tax.tax-rule',
       'commerce.tax.tax-rule-revision',
@@ -82,5 +85,17 @@ describe('Tax module contract', () => {
         .map(({ descriptor }) => descriptor.actionKey)
         .filter((actionKey) => forbidden.test(actionKey)),
     ).toEqual([]);
+  });
+
+  it('#944 finalizes Order Tax through explicit Action provisioning, without a Core business Permission scope', () => {
+    const finalize = taxManifest.publicSurface.actions.find(
+      ({ descriptor }) => descriptor.actionKey === 'commerce.tax.finalize-order-tax',
+    );
+    expect(Object.keys(finalize?.descriptor ?? {})).not.toContain('businessPermission');
+    expect(finalize?.descriptor.entrypoint.authorization).toEqual({
+      kind: 'action_execution',
+      provisioning: 'explicit',
+    });
+    expect(finalize?.descriptor.legalEntityScope).toBe('required');
   });
 });

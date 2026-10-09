@@ -18,6 +18,7 @@ export const taxGovernedReadPermission = defineBusinessPermission({
     'commerce.tax.api.selling-legal-entity-vat-registration-state',
     'commerce.tax.api.tax-evaluation',
     'commerce.tax.api.tax-materiality-comparison',
+    'commerce.tax.api.final-order-tax',
   ],
   schemaVersion: '1',
 });

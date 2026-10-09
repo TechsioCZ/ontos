@@ -15,6 +15,8 @@ import { CreateTaxRuleRevisionActionApi } from './apis/create-tax-rule-revision-
 import { EndTaxFactAuthorityContractActionApi } from './apis/end-tax-fact-authority-contract-action.ts';
 import { EndTaxRuleRevisionActionApi } from './apis/end-tax-rule-revision-action.ts';
 import { EstablishTaxFactAuthorityContractActionApi } from './apis/establish-tax-fact-authority-contract-action.ts';
+import { FinalizeOrderTaxActionApi } from './apis/finalize-order-tax-action.ts';
+import { FinalOrderTaxApi } from './apis/final-order-tax.ts';
 import { RecordTaxSourceAssertionActionApi } from './apis/record-tax-source-assertion-action.ts';
 import { ReviseTaxFactAuthorityContractActionApi } from './apis/revise-tax-fact-authority-contract-action.ts';
 import { SellingLegalEntityVatRegistrationStateApi } from './apis/selling-legal-entity-vat-registration-state.ts';
@@ -59,6 +61,8 @@ export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(EndTaxFactAuthorityContractActionApi)
   .addHttpApi(EndTaxRuleRevisionActionApi)
   .addHttpApi(EstablishTaxFactAuthorityContractActionApi)
+  .addHttpApi(FinalizeOrderTaxActionApi)
+  .addHttpApi(FinalOrderTaxApi)
   .addHttpApi(RecordTaxSourceAssertionActionApi)
   .addHttpApi(ReviseTaxFactAuthorityContractActionApi)
   .addHttpApi(SellingLegalEntityVatRegistrationStateApi)

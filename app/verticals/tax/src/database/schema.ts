@@ -3,6 +3,8 @@ import { defineRelations, sql } from 'drizzle-orm';
 import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
+import type { TaxEvaluationEvidenceSchema } from '../../shared/domain/tax-evaluation-contracts.ts';
+import type { TaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax-outcome.ts';
 import type { TaxSourceConflictDetail } from '../../shared/domain/tax-source-read-contracts.ts';
 
 /** Private TAX persistence schema. Other owners use generated TAX contracts. */
@@ -17,6 +19,7 @@ export const TAX_TABLE_INVENTORY = [
   'tax_fact_authority_contract_revisions',
   'tax_source_assertions',
   'tax_source_conflicts',
+  'tax_order_tax_finalizations',
 ] as const;
 
 export const taxSchema = pgSchema(TAX_SCHEMA_NAME);
@@ -406,9 +409,58 @@ export const taxSourceConflicts = taxSchema.table.withRLS(
   ],
 );
 
+/** Governing Tax Rule Revision of one final Decision unit, kept for correction evidence (#930 F13). */
+export interface GoverningTaxRuleRevision {
+  readonly revision: number;
+  readonly taxRuleId: string;
+}
+
+/**
+ * One durable, immutable final Launch Order Tax per submission (#944 F10-F13, #941 F9): the Decision with its Result
+ * fixed at Order Commitment Time T, the evidence of the evaluation that produced it and the frozen intent it
+ * answers. Only successful finals are stored; a proven non-finalization may run again (#944 F12). Append-only: a
+ * later rule change or correction never refreshes it (#930 F10-F11, J3).
+ */
+export const taxOrderTaxFinalizations = taxSchema.table.withRLS(
+  'tax_order_tax_finalizations',
+  {
+    taxOrderTaxFinalizationId: uuid('tax_order_tax_finalization_id').defaultRandom().primaryKey(),
+    ...scopeColumns(),
+    decisionId: text('decision_id').notNull(),
+    decompositionNeed: text('decomposition_need').notNull(),
+    evidence: jsonb('evidence').$type<typeof TaxEvaluationEvidenceSchema.Encoded>().notNull(),
+    governingRuleRevisions: jsonb('governing_rule_revisions').$type<readonly GoverningTaxRuleRevision[]>().notNull(),
+    intentFingerprint: text('intent_fingerprint').notNull(),
+    orderCommitmentTime: timestamp('order_commitment_time', { withTimezone: true }).notNull(),
+    outcome: jsonb('outcome').$type<typeof TaxOutcomeSuccessSchema.Encoded>().notNull(),
+    submissionRef: text('submission_ref').notNull(),
+    taxEvaluationTime: timestamp('tax_evaluation_time', { withTimezone: true }).notNull(),
+    ...attribution(),
+  },
+  (table) => [
+    scopeIdentity('tax_order_tax_finalizations_scope_id_uk', table, table.taxOrderTaxFinalizationId),
+    unique('tax_order_tax_finalizations_submission_uk').on(table.tenantId, table.legalEntityId, table.submissionRef),
+    unique('tax_order_tax_finalizations_idempotency_uk').on(table.tenantId, table.idempotencyKey),
+    ownerReference('tax_order_tax_finalizations_submission_ck', table.submissionRef),
+    ownerReference('tax_order_tax_finalizations_decision_ck', table.decisionId),
+    fingerprint('tax_order_tax_finalizations_intent_ck', table.intentFingerprint),
+    check(
+      'tax_order_tax_finalizations_decomposition_ck',
+      sql`${table.decompositionNeed} in ('NOT_NEEDED', 'PER_TAXABLE_SUPPLY_UNIT')`,
+    ),
+    check('tax_order_tax_finalizations_outcome_ck', sql`jsonb_typeof(${table.outcome}) = 'object'`),
+    check('tax_order_tax_finalizations_evidence_ck', sql`jsonb_typeof(${table.evidence}) = 'object'`),
+    check('tax_order_tax_finalizations_governing_ck', sql`jsonb_typeof(${table.governingRuleRevisions}) = 'array'`),
+    check('tax_order_tax_finalizations_times_ck', sql`${table.orderCommitmentTime} <= ${table.taxEvaluationTime}`),
+    trimmed('tax_order_tax_finalizations_provenance_ck', table.provenanceRef),
+    ...scopedPolicies('tax_order_tax_finalizations_scope', table),
+  ],
+);
+
 const databaseSchema = {
   taxFactAuthorityContractRevisions,
   taxFactAuthorityContracts,
+  taxOrderTaxFinalizations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
@@ -426,6 +478,7 @@ export const TAX_TABLES = [
   taxFactAuthorityContractRevisions,
   taxSourceAssertions,
   taxSourceConflicts,
+  taxOrderTaxFinalizations,
 ] as const;
 
 export const taxRelations = defineRelations(databaseSchema);

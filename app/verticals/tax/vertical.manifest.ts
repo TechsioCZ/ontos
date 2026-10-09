@@ -11,6 +11,9 @@ import { createTaxRuleRevisionAction } from './src/actions/create-tax-rule-revis
 import { endTaxFactAuthorityContractAction } from './src/actions/end-tax-fact-authority-contract.action.ts';
 import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
 import { establishTaxFactAuthorityContractAction } from './src/actions/establish-tax-fact-authority-contract.action.ts';
+import { finalizeOrderTaxAction } from './src/actions/finalize-order-tax.action.ts';
+import { FinalOrderTaxApi } from './shared/apis/final-order-tax.ts';
+import { orderTaxFinalizationResourceDescriptor } from './shared/resources/order-tax-finalization.ts';
 import { recordTaxSourceAssertionAction } from './src/actions/record-tax-source-assertion.action.ts';
 import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
 import { SellingLegalEntityVatRegistrationStateApi } from './shared/apis/selling-legal-entity-vat-registration-state.ts';
@@ -54,6 +57,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       endTaxFactAuthorityContractAction,
       endTaxRuleRevisionAction,
       establishTaxFactAuthorityContractAction,
+      finalizeOrderTaxAction,
       recordTaxSourceAssertionAction,
       reviseTaxFactAuthorityContractAction,
       // </generated-module-manifest-actions>
@@ -61,6 +65,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
     api: {
       // <generated-module-manifest-apis>
       'applicable-tax-rule-set': ApplicableTaxRuleSetApi,
+      'final-order-tax': FinalOrderTaxApi,
       'selling-legal-entity-vat-registration-state': SellingLegalEntityVatRegistrationStateApi,
       'tax-evaluation': TaxEvaluationApi,
       'tax-fact-authority-current': TaxFactAuthorityCurrentApi,
@@ -90,6 +95,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
+      orderTaxFinalizationResourceDescriptor,
       taxFactAuthorityContractResourceDescriptor,
       taxRuleResourceDescriptor,
       taxRuleRevisionResourceDescriptor,
