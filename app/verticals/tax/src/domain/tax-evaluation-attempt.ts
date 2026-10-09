@@ -2,7 +2,6 @@ import { Effect, Option } from 'effect';
 
 import type { TaxEvaluationDiscardReason } from '../../shared/domain/tax-evaluation-contracts.ts';
 
-export { TaxEvaluationDiscardReasonSchema } from '../../shared/domain/tax-evaluation-contracts.ts';
 export type { TaxEvaluationDiscardReason } from '../../shared/domain/tax-evaluation-contracts.ts';
 
 /** Bounded number of evaluation attempts; there is no TTL, expiry or renewal anywhere (#942 F18-F19, E). */
