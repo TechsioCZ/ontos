@@ -11,13 +11,15 @@ import {
 import type { OutboxPayload } from '@app/privacy/outbox/privacy-consent-decision-recorded';
 
 const encodePayload = Schema.encodeResult(OutboxPayloadSchema);
-// oxlint-disable-next-line effect-native/no-json-schema-as-document-contract -- OutboxMessage intentionally stores a validated contract payload as opaque JSON.
-const decodeJson = Schema.decodeUnknownResult(Schema.Json);
+// The typed contract is encoded first; durable outbox storage accepts only opaque JSON.
+const decodeEnvelope = Schema.decodeUnknownResult(Schema.Struct({ payloadJson: Schema.Json }));
 
 export const createRecordConsentDecisionPrivacyConsentDecisionRecordedOutboxMessage = (
   payload: OutboxPayload,
 ): OutboxMessage => ({
-  payloadJson: Result.getOrThrow(Result.flatMap(encodePayload(payload), decodeJson)),
+  payloadJson: Result.getOrThrow(
+    Result.flatMap(encodePayload(payload), (payloadJson) => decodeEnvelope({ payloadJson })),
+  ).payloadJson,
   producerModuleKey: outboxProducerModuleKey,
   topic: outboxTopic,
 });

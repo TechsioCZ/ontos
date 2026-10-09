@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-nullable-schema-field -- The owner routine returns nullable PostgreSQL columns for not-found and not-due outcomes; expires: 2027-03-31. */
 import { defineScopedRoutine } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { Schema } from 'effect';
@@ -9,7 +8,7 @@ const RoutineTimestampSchema = Schema.Union([Schema.Date, Schema.String]);
 
 const RetentionEvaluationRoutineRowSchema = Schema.Struct({
   blocker_refs: Schema.Array(Schema.String),
-  evaluated_at: Schema.NullOr(RoutineTimestampSchema),
+  evaluated_at: Schema.toEncoded(Schema.OptionFromNullOr(RoutineTimestampSchema)),
   outcome: Schema.Literals([
     'EVALUATED',
     'INVALID_INPUT',
@@ -20,11 +19,11 @@ const RetentionEvaluationRoutineRowSchema = Schema.Struct({
     'STATE_AMBIGUOUS',
     'STATE_UNAVAILABLE',
   ]),
-  owner_outcome_ref: Schema.NullOr(Schema.String),
+  owner_outcome_ref: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
   reason: Schema.String,
-  status: Schema.NullOr(RetentionWorkStatusSchema),
-  work_record: Schema.NullOr(Schema.Unknown),
-  work_ref: Schema.NullOr(Schema.String),
+  status: Schema.toEncoded(Schema.OptionFromNullOr(RetentionWorkStatusSchema)),
+  work_record: Schema.toEncoded(Schema.OptionFromNullOr(Schema.Unknown)),
+  work_ref: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
 });
 export type RetentionEvaluationRoutineRow = typeof RetentionEvaluationRoutineRowSchema.Type;
 

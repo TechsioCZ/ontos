@@ -36,10 +36,8 @@ const handleCreatePrivacySubject = Effect.fn('CreatePrivacySubjectAction.handle'
   const now = DateTime.formatIso(yield* DateTime.now);
   const record = { createdAt: now, subject: payload.subject, subjectRef: payload.subjectRef, updatedAt: now };
   const result = yield* context.services.createSubject(
-    scope.tenantId,
-    scope.legalEntityId,
-    context.actionInvocationId,
-    record,
+    { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
+    { actionInvocationId: context.actionInvocationId, subject: record },
   );
   return yield* completePrivacyAction(context, 'create-privacy-subject', result.subjectRef.resourceId, result);
 });

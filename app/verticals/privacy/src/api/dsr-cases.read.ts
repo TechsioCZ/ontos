@@ -12,28 +12,31 @@ const MODULE_KEY = 'privacy.core' as const;
 
 interface DsrCaseWorkflowRead {
   readonly caseRecord: DsrCase;
+  readonly context: ReadHandlerContext<PrivacyOperationRepositoryService>;
   readonly legalEntityId: string;
-  readonly services: PrivacyOperationRepositoryService;
   readonly tenantId: string;
 }
 
-const readDsrCaseWorkflow = Effect.fn('PrivacyDsrCasesRead.caseWorkflow')(
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- The governed read passes its already-injected owner repository together with per-case scope.
-  function* readDsrCaseWorkflowEffect({ caseRecord, legalEntityId, services, tenantId }: DsrCaseWorkflowRead) {
-    const workflow = yield* services.listDsrWorkflow(tenantId, legalEntityId, caseRecord.caseRef);
-    const ownerContributions = yield* Effect.forEach(
-      caseRecord.controllerObligations,
-      ({ obligationRef }) => services.listOwnerContributions(tenantId, legalEntityId, obligationRef),
-      { concurrency: 1 },
-    );
-    return {
-      caseRecord,
-      ...workflow,
-      ownerContributions: ownerContributions.flat(),
-      summary: summarizeDsrCase(caseRecord, workflow.decisions, workflow.tasks),
-    };
-  },
-);
+const readDsrCaseWorkflow = Effect.fn('PrivacyDsrCasesRead.caseWorkflow')(function* readDsrCaseWorkflowEffect({
+  caseRecord,
+  context,
+  legalEntityId,
+  tenantId,
+}: DsrCaseWorkflowRead) {
+  const { services } = context;
+  const workflow = yield* services.listDsrWorkflow(tenantId, legalEntityId, caseRecord.caseRef);
+  const ownerContributions = yield* Effect.forEach(
+    caseRecord.controllerObligations,
+    ({ obligationRef }) => services.listOwnerContributions(tenantId, legalEntityId, obligationRef),
+    { concurrency: 1 },
+  );
+  return {
+    caseRecord,
+    ...workflow,
+    ownerContributions: ownerContributions.flat(),
+    summary: summarizeDsrCase(caseRecord, workflow.decisions, workflow.tasks),
+  };
+});
 
 const unavailable = (cause: unknown) => {
   const error = new ReadHandlerUnavailable({
@@ -80,7 +83,7 @@ export const dsrCasesRead = defineRead(
       const selected = refs.size === 0 ? all : all.filter(({ caseRef }) => refs.has(caseRef));
       const items = yield* Effect.forEach(
         selected,
-        (caseRecord) => readDsrCaseWorkflow({ caseRecord, legalEntityId, services: context.services, tenantId }),
+        (caseRecord) => readDsrCaseWorkflow({ caseRecord, context, legalEntityId, tenantId }),
         { concurrency: 1 },
       );
       return {

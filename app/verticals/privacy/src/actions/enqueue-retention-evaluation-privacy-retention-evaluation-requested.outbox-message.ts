@@ -11,13 +11,11 @@ import {
 import type { OutboxPayload } from '@app/privacy/outbox/privacy-retention-evaluation-requested';
 
 const encodePayload = Schema.encodeResult(OutboxPayloadSchema);
-// oxlint-disable-next-line effect-native/no-json-schema-as-document-contract -- OutboxMessage intentionally stores a validated contract payload as opaque JSON.
-const decodeJson = Schema.decodeUnknownResult(Schema.Json);
 
 export const createEnqueueRetentionEvaluationPrivacyRetentionEvaluationRequestedOutboxMessage = (
   payload: OutboxPayload,
 ): OutboxMessage => ({
-  payloadJson: Result.getOrThrow(Result.flatMap(encodePayload(payload), decodeJson)),
+  payloadJson: Result.getOrThrow(encodePayload(payload)),
   producerModuleKey: outboxProducerModuleKey,
   topic: outboxTopic,
 });

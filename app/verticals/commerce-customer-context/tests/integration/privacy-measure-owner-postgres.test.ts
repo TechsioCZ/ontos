@@ -50,63 +50,68 @@ const handoff: PrivacyMeasureHandoff = {
   tenantId,
 };
 
-it.live('records unsupported Commerce measures without changing canonical lifecycle state', () =>
-  Effect.scoped(
-    Effect.gen(function* commercePrivacyMeasurePostgresAcceptance() {
-      const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* makeTestPgClient(connections.admin.connectionString);
-      const runtimePool = yield* makeTestPgClient(connections.runtime.connectionString);
-      const admin = yield* makeTestDatabaseFromClient(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromClient(runtimePool, commerceCustomerContextRelations);
-      const scope = {
-        authMethod: 'system' as const,
-        correlationId: 'commerce-owner-postgres',
-        legalEntityId,
-        principalId,
-        tenantId,
-      };
-      const cleanup = () =>
-        admin.transaction((transaction) =>
-          Effect.gen(function* cleanCommerceOwnerFixture() {
-            yield* transaction.execute(sql`set local session_replication_role = 'replica'`);
-            yield* transaction.delete(privacyMeasureExecutions).where(eq(privacyMeasureExecutions.tenantId, tenantId));
-            yield* transaction
-              .delete(customerProfileLifecycleHistory)
-              .where(eq(customerProfileLifecycleHistory.tenantId, tenantId));
-            yield* transaction.delete(customerProfiles).where(eq(customerProfiles.tenantId, tenantId));
-          }),
-        );
-      const execute = (actionInvocationId: string, input = handoff) =>
-        runtime.transaction((transaction) =>
-          Effect.gen(function* executeInScope() {
-            yield* transaction.execute(
-              sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
-              'objects',
-            );
-            const invoker = scopedRoutineInvokerFromTransaction(
-              // oxlint-disable-next-line sonarjs/no-nested-functions -- This transaction-bound adapter must close over the current runtime transaction to preserve atomic scoped-routine execution.
-              (statement) => transaction.execute(statement, 'objects'),
-              scope,
-            );
-            const service = yield* privacyMeasureExecutionService(invoker, scope);
-            return yield* service.execute(input, actionInvocationId);
-          }),
-        );
-      const transitionLifecycle = (
-        targetState: 'ACTIVE' | 'SUSPENDED',
-        actionInvocationId: string,
-        expectedRevision: number,
-        expectedState: 'ACTIVE' | 'SUSPENDED',
-        effectiveAt: string,
-      ) =>
-        runtime.transaction((transaction) =>
-          Effect.gen(function* transitionInScope() {
-            yield* transaction.execute(
-              sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
-              'objects',
-            );
-            yield* transaction.execute(
-              sql`select * from commerce_customer_context.transition_profile(
+it.live(
+  'records unsupported Commerce measures without changing canonical lifecycle state',
+  Effect.fn('commercePrivacyMeasurePostgresAcceptance')(function* commercePrivacyMeasurePostgresAcceptance() {
+    const connections = yield* loadDatabaseConnectionPair();
+    const adminPool = yield* makeTestPgClient(connections.admin.connectionString);
+    const runtimePool = yield* makeTestPgClient(connections.runtime.connectionString);
+    const admin = yield* makeTestDatabaseFromClient(adminPool, commerceCustomerContextRelations);
+    const runtime = yield* makeTestDatabaseFromClient(runtimePool, commerceCustomerContextRelations);
+    const scope = {
+      authMethod: 'system' as const,
+      correlationId: 'commerce-owner-postgres',
+      legalEntityId,
+      principalId,
+      tenantId,
+    };
+    const cleanup = () =>
+      admin.transaction(
+        Effect.fn('cleanCommerceOwnerFixture')(function* cleanCommerceOwnerFixture(
+          transaction: Parameters<Parameters<typeof admin.transaction>[0]>[0],
+        ) {
+          yield* transaction.execute(sql`set local session_replication_role = 'replica'`);
+          yield* transaction.delete(privacyMeasureExecutions).where(eq(privacyMeasureExecutions.tenantId, tenantId));
+          yield* transaction
+            .delete(customerProfileLifecycleHistory)
+            .where(eq(customerProfileLifecycleHistory.tenantId, tenantId));
+          yield* transaction.delete(customerProfiles).where(eq(customerProfiles.tenantId, tenantId));
+        }),
+      );
+    const execute = (actionInvocationId: string, input = handoff) =>
+      runtime.transaction(
+        Effect.fn('executeInScope')(function* executeInScope(
+          transaction: Parameters<Parameters<typeof runtime.transaction>[0]>[0],
+        ) {
+          yield* transaction.execute(
+            sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
+            'objects',
+          );
+          const invoker = scopedRoutineInvokerFromTransaction(
+            (statement) => transaction.execute(statement, 'objects'),
+            scope,
+          );
+          const service = yield* privacyMeasureExecutionService(invoker, scope);
+          return yield* service.execute(input, actionInvocationId);
+        }),
+      );
+    const transitionLifecycle = (
+      targetState: 'ACTIVE' | 'SUSPENDED',
+      actionInvocationId: string,
+      expectedRevision: number,
+      expectedState: 'ACTIVE' | 'SUSPENDED',
+      effectiveAt: string,
+    ) =>
+      runtime.transaction(
+        Effect.fn('transitionInScope')(function* transitionInScope(
+          transaction: Parameters<Parameters<typeof runtime.transaction>[0]>[0],
+        ) {
+          yield* transaction.execute(
+            sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
+            'objects',
+          );
+          yield* transaction.execute(
+            sql`select * from commerce_customer_context.transition_profile(
                 ${tenantId}::uuid,
                 ${legalEntityId}::uuid,
                 ${profileId}::uuid,
@@ -121,109 +126,108 @@ it.live('records unsupported Commerce measures without changing canonical lifecy
                 ${actionInvocationId}::uuid,
                 ${principalId}::uuid
               )`,
-              'objects',
-            );
-          }),
-        );
+            'objects',
+          );
+        }),
+      );
 
-      yield* cleanup();
-      yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
-      yield* admin.insert(customerProfiles).values({
-        customerProfileId: profileId,
-        legalEntityId,
-        profileKind: 'RETAIL',
-        tenantId,
-      });
-      yield* admin.insert(customerProfileLifecycleHistory).values({
-        actionInvocationId: firstInvocationId,
-        actorPrincipalId: principalId,
-        customerProfileId: profileId,
-        fromLifecycle: null,
-        legalEntityId,
-        reason: 'Commerce owner PostgreSQL fixture',
-        revision: 1,
-        tenantId,
-        toLifecycle: 'ACTIVE',
-      });
+    yield* cleanup();
+    yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
+    yield* admin.insert(customerProfiles).values({
+      customerProfileId: profileId,
+      legalEntityId,
+      profileKind: 'RETAIL',
+      tenantId,
+    });
+    yield* admin.insert(customerProfileLifecycleHistory).values({
+      actionInvocationId: firstInvocationId,
+      actorPrincipalId: principalId,
+      customerProfileId: profileId,
+      fromLifecycle: null,
+      legalEntityId,
+      reason: 'Commerce owner PostgreSQL fixture',
+      revision: 1,
+      tenantId,
+      toLifecycle: 'ACTIVE',
+    });
 
-      const first = yield* execute(firstInvocationId);
-      const replay = yield* execute(replayInvocationId);
-      expect(first.status).toBe('BUSINESS_REJECTED');
-      expect(first.includedResourceRefs).toEqual([]);
-      expect(first.remainingResourceRefs).toEqual(handoff.resourceRefs);
-      expect(replay).toEqual(first);
-      const [profile] = yield* admin
+    const first = yield* execute(firstInvocationId);
+    const replay = yield* execute(replayInvocationId);
+    expect(first.status).toBe('BUSINESS_REJECTED');
+    expect(first.includedResourceRefs).toEqual([]);
+    expect(first.remainingResourceRefs).toEqual(handoff.resourceRefs);
+    expect(replay).toEqual(first);
+    const [profile] = yield* admin
+      .select({ lifecycle: customerProfiles.lifecycle, revision: customerProfiles.revision })
+      .from(customerProfiles)
+      .where(eq(customerProfiles.customerProfileId, profileId));
+    expect(profile).toEqual({ lifecycle: 'ACTIVE', revision: 1 });
+    expect(
+      yield* admin
+        .select({ outcomeId: privacyMeasureExecutions.outcomeId })
+        .from(privacyMeasureExecutions)
+        .where(eq(privacyMeasureExecutions.tenantId, tenantId)),
+    ).toEqual([{ outcomeId: first.outcomeId }]);
+    expect(
+      yield* admin
+        .select({ toLifecycle: customerProfileLifecycleHistory.toLifecycle })
+        .from(customerProfileLifecycleHistory)
+        .where(eq(customerProfileLifecycleHistory.tenantId, tenantId)),
+    ).toEqual([{ toLifecycle: 'ACTIVE' }]);
+
+    const processingRestriction = yield* execute('e6000000-0000-4000-8000-000000000008', {
+      ...handoff,
+      dispositionDecision: null,
+      expectedEvidenceRefs: ['commerce.customer-context.customer-profile.processing-restricted'],
+      idempotencyKey: 'commerce-owner-postgres:processing-restriction',
+      measureId: 'measure:commerce-owner-postgres:processing-restriction',
+      requestedResult: 'SUSPENDED',
+      right: 'RESTRICTION',
+    });
+    expect(processingRestriction.status).toBe('BUSINESS_REJECTED');
+    expect(processingRestriction.includedResourceRefs).toEqual([]);
+    expect(processingRestriction.remainingResourceRefs).toEqual(handoff.resourceRefs);
+
+    for (const [index, measure] of privacyMeasureDeferredCases.entries()) {
+      const later = yield* execute(`f5100000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`, {
+        ...handoff,
+        ...measure,
+        idempotencyKey: `commerce-owner-postgres:${measure.kind.toLowerCase()}`,
+        measureId: `measure:commerce-owner-postgres:${measure.kind.toLowerCase()}`,
+        requestedResult: `${measure.kind.toLowerCase()} deferred`,
+      });
+      expect(later.status).toBe('BUSINESS_REJECTED');
+      expect(later.includedResourceRefs).toEqual([]);
+      expect(later.remainingResourceRefs).toEqual(handoff.resourceRefs);
+    }
+
+    yield* transitionLifecycle(
+      'SUSPENDED',
+      'f5200000-0000-4000-8000-000000000001',
+      1,
+      'ACTIVE',
+      '2026-09-15T11:00:00.000Z',
+    );
+    yield* transitionLifecycle(
+      'ACTIVE',
+      'f5200000-0000-4000-8000-000000000002',
+      2,
+      'SUSPENDED',
+      '2026-09-15T12:00:00.000Z',
+    );
+    expect(
+      yield* admin
         .select({ lifecycle: customerProfiles.lifecycle, revision: customerProfiles.revision })
         .from(customerProfiles)
-        .where(eq(customerProfiles.customerProfileId, profileId));
-      expect(profile).toEqual({ lifecycle: 'ACTIVE', revision: 1 });
-      expect(
-        yield* admin
-          .select({ outcomeId: privacyMeasureExecutions.outcomeId })
-          .from(privacyMeasureExecutions)
-          .where(eq(privacyMeasureExecutions.tenantId, tenantId)),
-      ).toEqual([{ outcomeId: first.outcomeId }]);
-      expect(
-        yield* admin
-          .select({ toLifecycle: customerProfileLifecycleHistory.toLifecycle })
-          .from(customerProfileLifecycleHistory)
-          .where(eq(customerProfileLifecycleHistory.tenantId, tenantId)),
-      ).toEqual([{ toLifecycle: 'ACTIVE' }]);
+        .where(eq(customerProfiles.customerProfileId, profileId)),
+    ).toEqual([{ lifecycle: 'ACTIVE', revision: 3 }]);
 
-      const processingRestriction = yield* execute('e6000000-0000-4000-8000-000000000008', {
-        ...handoff,
-        dispositionDecision: null,
-        expectedEvidenceRefs: ['commerce.customer-context.customer-profile.processing-restricted'],
-        idempotencyKey: 'commerce-owner-postgres:processing-restriction',
-        measureId: 'measure:commerce-owner-postgres:processing-restriction',
-        requestedResult: 'SUSPENDED',
-        right: 'RESTRICTION',
-      });
-      expect(processingRestriction.status).toBe('BUSINESS_REJECTED');
-      expect(processingRestriction.includedResourceRefs).toEqual([]);
-      expect(processingRestriction.remainingResourceRefs).toEqual(handoff.resourceRefs);
-
-      for (const [index, measure] of privacyMeasureDeferredCases.entries()) {
-        const later = yield* execute(`f5100000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`, {
-          ...handoff,
-          ...measure,
-          idempotencyKey: `commerce-owner-postgres:${measure.kind.toLowerCase()}`,
-          measureId: `measure:commerce-owner-postgres:${measure.kind.toLowerCase()}`,
-          requestedResult: `${measure.kind.toLowerCase()} deferred`,
-        });
-        expect(later.status).toBe('BUSINESS_REJECTED');
-        expect(later.includedResourceRefs).toEqual([]);
-        expect(later.remainingResourceRefs).toEqual(handoff.resourceRefs);
-      }
-
-      yield* transitionLifecycle(
-        'SUSPENDED',
-        'f5200000-0000-4000-8000-000000000001',
-        1,
-        'ACTIVE',
-        '2026-09-15T11:00:00.000Z',
-      );
-      yield* transitionLifecycle(
-        'ACTIVE',
-        'f5200000-0000-4000-8000-000000000002',
-        2,
-        'SUSPENDED',
-        '2026-09-15T12:00:00.000Z',
-      );
-      expect(
-        yield* admin
-          .select({ lifecycle: customerProfiles.lifecycle, revision: customerProfiles.revision })
-          .from(customerProfiles)
-          .where(eq(customerProfiles.customerProfileId, profileId)),
-      ).toEqual([{ lifecycle: 'ACTIVE', revision: 3 }]);
-
-      const immutableFailure = yield* Effect.flip(
-        admin
-          .update(privacyMeasureExecutions)
-          .set({ occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-14T11:00:00.000Z')) })
-          .where(eq(privacyMeasureExecutions.tenantId, tenantId)),
-      );
-      expect(Option.exists(findPostgresFailure(immutableFailure), ({ code }) => code === '55000')).toBe(true);
-    }),
-  ),
+    const immutableFailure = yield* Effect.flip(
+      admin
+        .update(privacyMeasureExecutions)
+        .set({ occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-14T11:00:00.000Z')) })
+        .where(eq(privacyMeasureExecutions.tenantId, tenantId)),
+    );
+    expect(Option.exists(findPostgresFailure(immutableFailure), ({ code }) => code === '55000')).toBe(true);
+  }, Effect.scoped),
 );

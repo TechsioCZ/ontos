@@ -1,16 +1,16 @@
-/* eslint-disable effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Schema } from 'effect';
 
 const Text = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const Reference = Text;
-const Timestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u));
+const Timestamp = PrivacyIsoTimestampSchema;
 
 const OwnerCoverageResultSchema = Schema.Literals(['COMPLETE', 'NO_DATA', 'PARTIAL', 'UNAVAILABLE', 'INDETERMINATE']);
 
 const OwnerContributionCompletionSchema = Schema.Literals(['OPEN', 'COMPLETE', 'INCOMPLETE']);
 
 const OwnerContributionBatchSchema = Schema.Struct({
-  batchId: Reference,
+  batchId: Schema.toEncoded(Reference.pipe(Schema.brand('PrivacyBatchId'))),
   capturedAt: Timestamp,
   consistency: Schema.Literals(['CONSISTENT', 'INDETERMINATE']),
   coveredScopeRefs: Schema.Array(Reference).check(Schema.isMaxLength(256)),
@@ -29,7 +29,7 @@ export const OwnerContributionSchema = Schema.Struct({
   batches: Schema.Array(OwnerContributionBatchSchema).check(Schema.isMaxLength(256)),
   captureTime: Timestamp,
   completion: OwnerContributionCompletionSchema,
-  contributionId: Reference,
+  contributionId: Schema.toEncoded(Reference.pipe(Schema.brand('PrivacyContributionId'))),
   controllerObligationRef: Reference,
   coverageResult: OwnerCoverageResultSchema,
   decisionScope: Reference,

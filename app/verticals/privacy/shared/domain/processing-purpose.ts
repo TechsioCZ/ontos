@@ -1,5 +1,3 @@
-/* eslint-disable effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
-/* oxlint-disable effect-native/no-nullable-schema-field -- Purpose Version JSONB preserves explicit null for the first version, which has no prior materiality assessment. expires: 2027-03-31. */
 import { Schema } from 'effect';
 
 import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
@@ -15,9 +13,11 @@ const ProcessingPurposeLifecycleSchema = Schema.Literals(['ACTIVE', 'RETIRED']);
 const MaterialScopeRefSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 
 export const PurposeVersionMaterialScopeSchema = Schema.Struct({
-  applicabilityKey: MaterialScopeRefSchema,
+  applicabilityKey: Schema.toEncoded(MaterialScopeRefSchema.pipe(Schema.brand('PrivacyApplicabilityKey'))),
   consentRequired: Schema.Boolean,
-  consentScopeKey: Schema.NullOr(MaterialScopeRefSchema),
+  consentScopeKey: Schema.toEncoded(
+    Schema.toEncoded(Schema.OptionFromNullOr(MaterialScopeRefSchema)).pipe(Schema.brand('PrivacyConsentScopeKey')),
+  ),
   controllerRef: MaterialScopeRefSchema,
   dataCategoryRefs: Schema.Array(MaterialScopeRefSchema),
   processingScopeRef: MaterialScopeRefSchema,
@@ -41,14 +41,14 @@ export const PurposeVersionSchema = Schema.Struct({
   effectiveFrom: PrivacyIsoTimestampSchema,
   effectiveTo: Schema.toEncoded(Schema.OptionFromNullOr(PrivacyIsoTimestampSchema)),
   /** Immutable governance evidence retained with the version that it authorized. */
-  materialChangeAssessment: Schema.NullOr(PrivacyMaterialChangeAssessmentSchema),
+  materialChangeAssessment: Schema.toEncoded(Schema.OptionFromNullOr(PrivacyMaterialChangeAssessmentSchema)),
   /** Absent only on legacy versions; a later revision then fails closed. */
-  materialScope: Schema.optionalKey(Schema.NullOr(PurposeVersionMaterialScopeSchema)),
+  materialScope: Schema.optionalKey(Schema.toEncoded(Schema.OptionFromNullOr(PurposeVersionMaterialScopeSchema))),
   meaning: PurposeTextSchema,
   recordedAt: PrivacyIsoTimestampSchema,
   /** Material dimensions required by this authoritative catalog version. */
   requiredConsentDimensions: Schema.optionalKey(RequiredConsentDimensionsSchema),
-  versionId: UuidSchema,
+  versionId: Schema.toEncoded(UuidSchema.pipe(Schema.brand('PrivacyVersionId'))),
   versionNumber: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type PurposeVersion = typeof PurposeVersionSchema.Type;
@@ -56,8 +56,8 @@ export type PurposeVersion = typeof PurposeVersionSchema.Type;
 export const ProcessingPurposeSchema = Schema.Struct({
   businessCode: PurposeCodeSchema,
   createdAt: PrivacyIsoTimestampSchema,
-  governanceOwnerId: UuidSchema,
-  legalEntityId: UuidSchema,
+  governanceOwnerId: Schema.toEncoded(UuidSchema.pipe(Schema.brand('PrivacyGovernanceOwnerId'))),
+  legalEntityId: Schema.toEncoded(UuidSchema.pipe(Schema.brand('PrivacyLegalEntityId'))),
   lifecycle: ProcessingPurposeLifecycleSchema,
   purposeRef: ProcessingPurposeRefSchema,
   retiredAt: Schema.toEncoded(Schema.OptionFromNullOr(PrivacyIsoTimestampSchema)),
@@ -68,7 +68,7 @@ export type ProcessingPurpose = typeof ProcessingPurposeSchema.Type;
 export const CreateProcessingPurposeInputSchema = Schema.Struct({
   businessCode: PurposeCodeSchema,
   effectiveFrom: PrivacyIsoTimestampSchema,
-  governanceOwnerId: UuidSchema,
+  governanceOwnerId: Schema.toEncoded(UuidSchema.pipe(Schema.brand('PrivacyGovernanceOwnerId'))),
   materialScope: Schema.optionalKey(PurposeVersionMaterialScopeSchema),
   meaning: PurposeTextSchema,
   requiredConsentDimensions: Schema.optionalKey(RequiredConsentDimensionsSchema),

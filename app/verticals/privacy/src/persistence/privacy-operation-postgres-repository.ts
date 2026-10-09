@@ -1,3 +1,5 @@
+import { PrivacyOperationRepository, PrivacyOperationPersistenceError } from './privacy-operation-repository.ts';
+import type { PrivacyOperationRepositoryService } from './privacy-operation-repository.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { isPostgresUniqueViolation, OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
@@ -154,8 +156,6 @@ import {
   retentionRules,
   temporaryDsrExports,
 } from '../database/schema.ts';
-import { PrivacyOperationPersistenceError } from './privacy-operation-repository.ts';
-import type { PrivacyOperationRepositoryService } from './privacy-operation-repository.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 const DSR_RESOLVER_ASSIGNMENT_LABEL = 'DSR Resolver Assignment';
@@ -1050,26 +1050,38 @@ const makeRepository = (
 
   const consentNoticeEvidenceIsValid = Effect.fn('PrivacyOperationPostgresRepository.consentNoticeEvidenceIsValid')(
     function* consentNoticeEvidenceIsValidEffect(tenantId: string, legalEntityId: string, decision: ConsentDecision) {
-      const provisionRows = yield* transaction
-        .select({ record: noticeProvisions.provisionRecord })
-        .from(noticeProvisions)
-        .where(and(eq(noticeProvisions.tenantId, tenantId), eq(noticeProvisions.legalEntityId, legalEntityId)))
-        .pipe(Effect.mapError((cause) => persistenceFailure('Notice provision evidence could not be resolved', cause)));
-      const provisions = yield* decodeAll(
-        PrivacyNoticeProvisionSchema,
-        provisionRows.map(({ record }) => record),
-        'Notice Provision',
-      );
-      // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Concurrent statements are not safe on one scoped transaction client.
-      const noticeRows = yield* transaction
-        .select({ record: noticeVersions.noticeRecord })
-        .from(noticeVersions)
-        .where(and(eq(noticeVersions.tenantId, tenantId), eq(noticeVersions.legalEntityId, legalEntityId)))
-        .pipe(Effect.mapError((cause) => persistenceFailure('Notice Version evidence could not be resolved', cause)));
-      const notices = yield* decodeAll(
-        PrivacyNoticeVersionSchema,
-        noticeRows.map(({ record }) => record),
-        'Notice Version',
+      const [provisions, notices] = yield* Effect.all(
+        [
+          transaction
+            .select({ record: noticeProvisions.provisionRecord })
+            .from(noticeProvisions)
+            .where(and(eq(noticeProvisions.tenantId, tenantId), eq(noticeProvisions.legalEntityId, legalEntityId)))
+            .pipe(
+              Effect.mapError((cause) => persistenceFailure('Notice provision evidence could not be resolved', cause)),
+              Effect.flatMap((rows) =>
+                decodeAll(
+                  PrivacyNoticeProvisionSchema,
+                  rows.map(({ record }) => record),
+                  'Notice Provision',
+                ),
+              ),
+            ),
+          transaction
+            .select({ record: noticeVersions.noticeRecord })
+            .from(noticeVersions)
+            .where(and(eq(noticeVersions.tenantId, tenantId), eq(noticeVersions.legalEntityId, legalEntityId)))
+            .pipe(
+              Effect.mapError((cause) => persistenceFailure('Notice Version evidence could not be resolved', cause)),
+              Effect.flatMap((rows) =>
+                decodeAll(
+                  PrivacyNoticeVersionSchema,
+                  rows.map(({ record }) => record),
+                  'Notice Version',
+                ),
+              ),
+            ),
+        ],
+        { concurrency: 1 },
       );
       return decision.noticeEvidenceRefs.every((evidenceRef) =>
         noticeEvidenceRefMatchesConsent(evidenceRef, provisions, notices, decision),
@@ -1803,33 +1815,35 @@ const makeRepository = (
         return assignment;
       },
     ),
-    createDsrCase: Effect.fn('PrivacyOperationPostgresRepository.createDsrCase')(
-      // oxlint-disable-next-line effect-native/no-wide-factory-signature -- Fixed owner-repository port signature carries scope, invocation identity, and decoded input; expires: 2027-03-31.
-      function* createDsrCaseEffect(tenantId, legalEntityId, _actionInvocationId, caseRecord) {
-        yield* assertScope(tenantId, legalEntityId);
-        const existing = yield* getDsrCase(tenantId, legalEntityId, caseRecord.caseRef);
-        if (Option.isSome(existing)) {
-          return yield* conflict('DSR Case identity already exists');
-        }
-        yield* transaction
-          .insert(dsrCases)
-          .values({
-            caseRecord: encode(DsrCaseSchema, caseRecord),
-            caseRef: caseRecord.caseRef,
-            caseStatus: caseRecord.status,
-            legalEntityId,
-            originalReceivedAt: date(caseRecord.originalReceivedAt),
-            tenantId,
-            updatedAt: date(caseRecord.createdAt),
-          })
-          .pipe(Effect.mapError((cause) => persistenceFailure('DSR Case could not be created', cause)));
-        return caseRecord;
-      },
-    ),
-    /* oxlint-disable effect-native/no-wide-factory-signature -- Fixed owner-repository port signature carries scope, invocation identity, resource identity, and decoded input; expires: 2027-03-31. */
+    createDsrCase: Effect.fn('PrivacyOperationPostgresRepository.createDsrCase')(function* createDsrCaseEffect(
+      { legalEntityId, tenantId },
+      { actionInvocationId: _actionInvocationId, caseRecord },
+    ) {
+      yield* assertScope(tenantId, legalEntityId);
+      const existing = yield* getDsrCase(tenantId, legalEntityId, caseRecord.caseRef);
+      if (Option.isSome(existing)) {
+        return yield* conflict('DSR Case identity already exists');
+      }
+      yield* transaction
+        .insert(dsrCases)
+        .values({
+          caseRecord: encode(DsrCaseSchema, caseRecord),
+          caseRef: caseRecord.caseRef,
+          caseStatus: caseRecord.status,
+          legalEntityId,
+          originalReceivedAt: date(caseRecord.originalReceivedAt),
+          tenantId,
+          updatedAt: date(caseRecord.createdAt),
+        })
+        .pipe(Effect.mapError((cause) => persistenceFailure('DSR Case could not be created', cause)));
+      return caseRecord;
+    }),
     createNoticeVersion: Effect.fn('PrivacyOperationPostgresRepository.createNoticeVersion')(
       // fallow-ignore-next-line complexity -- The owner transaction keeps notice version ordering, replay, scope, and evidence invariants in one atomic operation.
-      function* createNoticeVersionEffect(tenantId, legalEntityId, _actionInvocationId, noticeId, input) {
+      function* createNoticeVersionEffect(
+        { legalEntityId, tenantId },
+        { actionInvocationId: _actionInvocationId, input, noticeId },
+      ) {
         yield* assertScope(tenantId, legalEntityId);
         if (input.wording === null && input.evidenceArtifactRef === null) {
           return yield* conflict('Notice Version requires wording or an evidence artifact reference');
@@ -1897,43 +1911,42 @@ const makeRepository = (
         return version;
       },
     ),
-    /* oxlint-enable effect-native/no-wide-factory-signature */
-    createSubject: Effect.fn('PrivacyOperationPostgresRepository.createSubject')(
-      // oxlint-disable-next-line effect-native/no-wide-factory-signature -- Fixed owner-repository port signature carries scope, invocation identity, and decoded input; expires: 2027-03-31.
-      function* createSubjectEffect(tenantId, legalEntityId, _actionInvocationId, subject) {
-        yield* assertScope(tenantId, legalEntityId);
-        const rows = yield* transaction
-          .select({ record: privacySubjects.subjectRecord })
-          .from(privacySubjects)
-          .where(
-            and(
-              eq(privacySubjects.tenantId, tenantId),
-              eq(privacySubjects.legalEntityId, legalEntityId),
-              eq(privacySubjects.privacySubjectId, subject.subjectRef.resourceId),
-            ),
-          )
-          .limit(1)
-          .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Subject could not be loaded', cause)));
-        const row = rows.at(0);
-        if (row !== undefined) {
-          const current = yield* decode(PrivacySubjectRecordSchema, row.record, 'Privacy Subject');
-          return subjectEquivalent(current, subject) ? current : yield* conflict('Privacy Subject identity conflict');
-        }
-        yield* transaction
-          .insert(privacySubjects)
-          .values({
-            createdAt: date(subject.createdAt),
-            legalEntityId,
-            privacySubjectId: subject.subjectRef.resourceId,
-            subjectKind: subject.subject.kind,
-            subjectRecord: encode(PrivacySubjectRecordSchema, subject),
-            tenantId,
-            updatedAt: date(subject.updatedAt),
-          })
-          .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Subject could not be created', cause)));
-        return subject;
-      },
-    ),
+    createSubject: Effect.fn('PrivacyOperationPostgresRepository.createSubject')(function* createSubjectEffect(
+      { legalEntityId, tenantId },
+      { actionInvocationId: _actionInvocationId, subject },
+    ) {
+      yield* assertScope(tenantId, legalEntityId);
+      const rows = yield* transaction
+        .select({ record: privacySubjects.subjectRecord })
+        .from(privacySubjects)
+        .where(
+          and(
+            eq(privacySubjects.tenantId, tenantId),
+            eq(privacySubjects.legalEntityId, legalEntityId),
+            eq(privacySubjects.privacySubjectId, subject.subjectRef.resourceId),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Subject could not be loaded', cause)));
+      const row = rows.at(0);
+      if (row !== undefined) {
+        const current = yield* decode(PrivacySubjectRecordSchema, row.record, 'Privacy Subject');
+        return subjectEquivalent(current, subject) ? current : yield* conflict('Privacy Subject identity conflict');
+      }
+      yield* transaction
+        .insert(privacySubjects)
+        .values({
+          createdAt: date(subject.createdAt),
+          legalEntityId,
+          privacySubjectId: subject.subjectRef.resourceId,
+          subjectKind: subject.subject.kind,
+          subjectRecord: encode(PrivacySubjectRecordSchema, subject),
+          tenantId,
+          updatedAt: date(subject.updatedAt),
+        })
+        .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Subject could not be created', cause)));
+      return subject;
+    }),
     dispatchMeasure: Effect.fn('PrivacyOperationPostgresRepository.dispatchMeasure')(
       function* dispatchMeasureEffect(tenantId, legalEntityId, _actionInvocationId, handoff) {
         yield* assertScope(tenantId, legalEntityId);
@@ -3043,7 +3056,7 @@ const makeRepository = (
                 Effect.mapError((cause) => persistenceFailure('Applicability Decision could not be resolved', cause)),
               ),
             listLegalBasisAssignments(tenantId, legalEntityId),
-            makeRepository(transaction, trustedScope).readCurrentConsent(
+            PrivacyOperationRepository.of(makeRepository(transaction, trustedScope)).readCurrentConsent(
               tenantId,
               legalEntityId,
               intendedScope.processingScopeRef.scopeId,
@@ -3468,8 +3481,10 @@ export const privacyOperationRepositoryForScope = (
   scope.legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
     : Effect.succeed(
-        makeRepository(transaction, {
-          legalEntityId: scope.legalEntityId,
-          tenantId: scope.tenantId,
-        }),
+        PrivacyOperationRepository.of(
+          makeRepository(transaction, {
+            legalEntityId: scope.legalEntityId,
+            tenantId: scope.tenantId,
+          }),
+        ),
       );

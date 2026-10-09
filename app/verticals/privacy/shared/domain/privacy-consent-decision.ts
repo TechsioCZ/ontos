@@ -1,5 +1,5 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null for the actor-or-flow attribution boundary, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
-import { Effect, Schema } from 'effect';
+import { ConsentDecisionInvariantError } from './consent-decision-invariant-error.ts';
+import { Context, Effect, Schema } from 'effect';
 
 import { PrincipalAttributionSchema, PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { ConsentScopeSchema, validateConsentScope } from './privacy-consent-scope.ts';
@@ -16,9 +16,9 @@ export type ConsentDecisionKind = typeof ConsentDecisionKindSchema.Type;
 
 /** An immutable decision fact. Scope and evidence are retained on every revision. */
 export const ConsentDecisionSchema = Schema.Struct({
-  actorEvidence: Schema.NullOr(PrincipalAttributionSchema),
+  actorEvidence: Schema.toEncoded(Schema.OptionFromNullOr(PrincipalAttributionSchema)),
   decision: ConsentDecisionKindSchema,
-  decisionId: Ref,
+  decisionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyDecisionId'))),
   effectiveAt: PrivacyIsoTimestampSchema,
   flowEvidenceRefs: OptionalEvidenceRefs,
   flowEvidenceTrust: Schema.optional(Schema.Literal('TRUSTED_OPERATION_CONTEXT')),
@@ -27,7 +27,7 @@ export const ConsentDecisionSchema = Schema.Struct({
   recordedAt: PrivacyIsoTimestampSchema,
   scope: ConsentScopeSchema,
   /** Public Action retries carry the same key; it is not business ordering. */
-  idempotencyKey: Schema.optional(Ref),
+  idempotencyKey: Schema.toEncoded(Schema.optional(Ref).pipe(Schema.brand('PrivacyIdempotencyKey'))),
 });
 export type ConsentDecision = typeof ConsentDecisionSchema.Type;
 
@@ -78,7 +78,6 @@ const compareDecisions = (left: ConsentDecision, right: ConsentDecision): number
   decisionOrder(left).localeCompare(decisionOrder(right));
 
 /** In-memory append-only decision store used by the domain and contract tests. */
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- This deterministic owner-local test store is constructed directly and is not a runtime Context service. expires: 2027-03-31.
 export interface ConsentDecisionStore {
   readonly current: (scopeRef: string) => ConsentCurrentResolution;
   readonly currentResolution: (scopeRef: string) => ConsentCurrentResolution;
@@ -88,6 +87,11 @@ export interface ConsentDecisionStore {
     purposeVersion?: PurposeVersion,
   ) => Effect.Effect<ConsentDecision, ConsentDecisionInvariantError>;
 }
+
+/** Owner-local service contract; scope is supplied by its transaction factory. */
+export class ConsentDecisionStoreTag extends Context.Service<ConsentDecisionStoreTag, ConsentDecisionStore>()(
+  '@app/privacy/shared/domain/privacy-consent-decision/ConsentDecisionStoreTag',
+) {}
 
 export type ConsentCurrentResolution =
   | { readonly decision: ConsentDecision; readonly outcome: 'CURRENT' }
@@ -101,10 +105,7 @@ export type ConsentCurrentResolution =
 const decisionsAreEquivalent = Schema.toEquivalence(ConsentDecisionSchema);
 const consentScopesAreEquivalent = Schema.toEquivalence(ConsentScopeSchema);
 
-export class ConsentDecisionInvariantError extends Schema.TaggedError<ConsentDecisionInvariantError>()(
-  'ConsentDecisionInvariantError',
-  { reason: Schema.String },
-) {}
+export { ConsentDecisionInvariantError } from './consent-decision-invariant-error.ts';
 
 const resolveCurrentConsent = (decisions: readonly ConsentDecision[], scopeRef: string): ConsentCurrentResolution => {
   const history = decisions.filter(({ scope }) => scope.scopeRef === scopeRef);
@@ -135,7 +136,7 @@ const resolveCurrentConsent = (decisions: readonly ConsentDecision[], scopeRef: 
 export const makeConsentDecisionStore = (): ConsentDecisionStore => {
   const decisions: ConsentDecision[] = [];
   const byIdempotencyKey = new Map<string, ConsentDecision>();
-  return {
+  return ConsentDecisionStoreTag.of({
     current: (scopeRef) => resolveCurrentConsent(decisions, scopeRef),
     currentResolution: (scopeRef) => resolveCurrentConsent(decisions, scopeRef),
     history: (scopeRef) => decisions.filter(({ scope }) => scope.scopeRef === scopeRef).toSorted(compareDecisions),
@@ -167,5 +168,5 @@ export const makeConsentDecisionStore = (): ConsentDecisionStore => {
       }
       return Effect.succeed(retained);
     },
-  };
+  });
 };

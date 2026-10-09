@@ -1,6 +1,6 @@
-/* oxlint-disable effect-native/no-wide-factory-signature -- The owner repository port explicitly carries trusted Tenant/Legal Entity scope, Action invocation identity, resource identity, and decoded input. expires: 2027-03-31. */
+import type { PrivacyOperationPersistenceError } from './privacy-operation-persistence-error.ts';
 import type { Effect, Option } from 'effect';
-import { Schema } from 'effect';
+import { Context } from 'effect';
 
 import type {
   AntiResurrectionEnforcementReceipt,
@@ -74,18 +74,7 @@ import type { PrivacySubjectRecord, Representation } from '../../shared/domain/p
 
 type PrivacyResponsibilityAssignment = typeof PrivacyResponsibilityAssignmentSchema.Type;
 
-export class PrivacyOperationPersistenceError extends Schema.TaggedError<PrivacyOperationPersistenceError>()(
-  'PrivacyOperationPersistenceError',
-  {
-    code: Schema.Literals([
-      'privacy_operation_conflict',
-      'privacy_operation_not_found',
-      'privacy_operation_persistence_unavailable',
-      'privacy_operation_scope_mismatch',
-    ]),
-    reason: Schema.String,
-  },
-) {}
+export { PrivacyOperationPersistenceError } from './privacy-operation-persistence-error.ts';
 
 export interface PrivacyEligibilityRecord {
   readonly evidence: PrivacyEligibilityEvidence;
@@ -108,7 +97,11 @@ interface DsrWorkflowRecords {
   readonly verifications: readonly DsrVerification[];
 }
 
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- Generated Actions and reads receive this owner-local repository from their scoped Core transaction factory. expires: 2027-03-31.
+export interface PrivacyOperationScope {
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+}
+
 export interface PrivacyOperationRepositoryService {
   readonly assignDsrResolver: (
     tenantId: string,
@@ -129,23 +122,20 @@ export interface PrivacyOperationRepositoryService {
     assignment: PrivacyResponsibilityAssignment,
   ) => Effect.Effect<PrivacyResponsibilityAssignment, PrivacyOperationPersistenceError>;
   readonly createDsrCase: (
-    tenantId: string,
-    legalEntityId: string,
-    actionInvocationId: string,
-    caseRecord: DsrCase,
+    scope: PrivacyOperationScope,
+    input: { readonly actionInvocationId: string; readonly caseRecord: DsrCase },
   ) => Effect.Effect<DsrCase, PrivacyOperationPersistenceError>;
   readonly createNoticeVersion: (
-    tenantId: string,
-    legalEntityId: string,
-    actionInvocationId: string,
-    noticeId: string,
-    input: CreatePrivacyNoticeVersionInput,
+    scope: PrivacyOperationScope,
+    request: {
+      readonly actionInvocationId: string;
+      readonly input: CreatePrivacyNoticeVersionInput;
+      readonly noticeId: string;
+    },
   ) => Effect.Effect<PrivacyNoticeVersion, PrivacyOperationPersistenceError>;
   readonly createSubject: (
-    tenantId: string,
-    legalEntityId: string,
-    actionInvocationId: string,
-    subject: PrivacySubjectRecord,
+    scope: PrivacyOperationScope,
+    input: { readonly actionInvocationId: string; readonly subject: PrivacySubjectRecord },
   ) => Effect.Effect<PrivacySubjectRecord, PrivacyOperationPersistenceError>;
   readonly dispatchMeasure: (
     tenantId: string,
@@ -402,3 +392,9 @@ export interface PrivacyOperationRepositoryService {
     temporaryExport: TemporaryDsrExport,
   ) => Effect.Effect<TemporaryDsrExport, PrivacyOperationPersistenceError>;
 }
+
+/** Owner-local service contract; scope is supplied by its transaction factory. */
+export class PrivacyOperationRepository extends Context.Service<
+  PrivacyOperationRepository,
+  PrivacyOperationRepositoryService
+>()('@app/privacy/persistence/privacy-operation-repository/PrivacyOperationRepository') {}

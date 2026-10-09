@@ -1,3 +1,4 @@
+import { Context } from 'effect';
 import type { Effect, Option } from 'effect';
 
 import type {
@@ -11,7 +12,6 @@ import type { ProcessingPurposePersistenceUnavailableError } from './processing-
 
 export { ProcessingPurposePersistenceUnavailable } from './processing-purpose-persistence-unavailable.ts';
 
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- Action and governed-read factories inject this owner-local repository through their scoped service factories; it has no global Context lifetime. expires: 2027-03-31.
 export interface ProcessingPurposeRepositoryService {
   readonly addVersion: (
     tenantId: string,
@@ -39,3 +39,9 @@ export interface ProcessingPurposeRepositoryService {
     legalEntityId: string,
   ) => Effect.Effect<readonly ProcessingPurpose[], ProcessingPurposePersistenceUnavailableError>;
 }
+
+/** Owner-local service contract; scope is supplied by its transaction factory. */
+export class ProcessingPurposeRepository extends Context.Service<
+  ProcessingPurposeRepository,
+  ProcessingPurposeRepositoryService
+>()('@app/privacy/persistence/processing-purpose-repository/ProcessingPurposeRepository') {}

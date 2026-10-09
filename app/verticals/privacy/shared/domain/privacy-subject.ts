@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-string-timestamp-schema -- Privacy protocols expose canonical UTC `Z` timestamps on JSON wires; this shared codec rejects offsets and malformed values before domain ordering. expires: 2027-03-31. */
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { DateTime, Option, Schema } from 'effect';
 
@@ -6,8 +5,9 @@ import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
 import { PrivacyPartyRefSchema } from './party-reference.ts';
 
 const NonEmptyText = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const PrivacyIsoTimestampSchema = Schema.String.check(
+export const PrivacyIsoTimestampSchema = Schema.toEncoded(Schema.DateTimeUtcFromString).check(
   Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u),
+  Schema.makeFilter((value) => (Option.isSome(DateTime.make(value)) ? undefined : 'invalid UTC timestamp')),
 );
 
 const privacyTimestampMillis = (value: string): number | undefined =>

@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { DateTime, Option, Schema } from 'effect';
 
@@ -30,7 +29,7 @@ export const PrivacyLegalBasisScopeSchema = Schema.Struct({
   operation: Ref,
   processingScopeRef: ProcessingScopeRefSchema,
   purposeRef: ProcessingPurposeRefSchema,
-  purposeVersionId: Ref,
+  purposeVersionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyPurposeVersionId'))),
 });
 export type PrivacyLegalBasisScope = typeof PrivacyLegalBasisScopeSchema.Type;
 
@@ -52,7 +51,7 @@ export const PrivacyLegalBasisAssignmentSchema = Schema.Struct({
   basisVersion: Ref,
   decision: PrivacyLegalBasisDecisionSchema,
   effectiveFrom: PrivacyIsoTimestampSchema,
-  effectiveTo: Schema.NullOr(PrivacyIsoTimestampSchema),
+  effectiveTo: Schema.toEncoded(Schema.OptionFromNullOr(PrivacyIsoTimestampSchema)),
   provenance: PrivacyLegalBasisProvenanceSchema,
   scope: PrivacyLegalBasisScopeSchema,
 });
@@ -66,7 +65,7 @@ export const PrivacyLegalBasisAssignmentInputSchema = Schema.Struct({
   basisVersion: Ref,
   decision: PrivacyLegalBasisDecisionSchema,
   effectiveFrom: PrivacyIsoTimestampSchema,
-  effectiveTo: Schema.NullOr(PrivacyIsoTimestampSchema),
+  effectiveTo: Schema.toEncoded(Schema.OptionFromNullOr(PrivacyIsoTimestampSchema)),
   provenance: PrivacyLegalBasisProvenanceSchema,
   scope: PrivacyLegalBasisScopeSchema,
 });

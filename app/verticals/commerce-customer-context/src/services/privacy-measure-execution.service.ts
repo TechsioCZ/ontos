@@ -6,7 +6,7 @@ import { OperationContextUnavailable, defineScopedRoutine } from '@app/core-runt
 import type { OperationalScope, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Option, Schema } from 'effect';
 
 import { ExecutePrivacyMeasureRejected } from '../../shared/actions/execute-privacy-measure.ts';
 import type { ProfileScopedRoutineInvoker } from '../persistence/profile-persistence.ts';
@@ -61,7 +61,6 @@ export interface PrivacyMeasureExecutionReceipt {
   readonly handoffFingerprint: string;
   readonly outcome: OwnerExecutionOutcome;
 }
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- The scoped Action/Read factory constructs and injects this owner-local transaction service; it has no independent Context lifetime. expires: 2027-03-31.
 export interface PrivacyMeasureExecutionService {
   readonly execute: (
     handoff: PrivacyMeasureHandoff,
@@ -71,6 +70,11 @@ export interface PrivacyMeasureExecutionService {
     idempotencyKey: string,
   ) => Effect.Effect<Option.Option<PrivacyMeasureExecutionReceipt>, ExecutePrivacyMeasureRejected>;
 }
+
+/** Owner-local service contract; scope is supplied by its transaction factory. */
+export class PrivacyMeasureExecution extends Context.Service<PrivacyMeasureExecution, PrivacyMeasureExecutionService>()(
+  '@app/commerce-customer-context/services/privacy-measure-execution.service/PrivacyMeasureExecution',
+) {}
 
 const rejected = (code: ExecutePrivacyMeasureRejected['code'], reason: string, retryable: boolean, cause?: unknown) => {
   const error = new ExecutePrivacyMeasureRejected({ code, reason, retryable });
@@ -204,6 +208,6 @@ export const privacyMeasureExecutionService = (
       return receipt.outcome;
     },
   );
-  return Effect.succeed({ execute, load });
+  return Effect.succeed(PrivacyMeasureExecution.of({ execute, load }));
 };
 /* jscpd:ignore-end */

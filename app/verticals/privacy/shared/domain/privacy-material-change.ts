@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
 import { Schema } from 'effect';
 
 import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
@@ -19,9 +18,11 @@ export type PrivacyMaterialChangeDimension = typeof Dimension.Type;
 
 /** Only business meaning and material scope participate in materiality. Wording is evidence, not a heuristic. */
 export const PrivacyChangeSnapshotSchema = Schema.Struct({
-  applicabilityKey: Ref,
+  applicabilityKey: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyApplicabilityKey'))),
   consentRequired: Schema.Boolean,
-  consentScopeKey: Schema.NullOr(Ref),
+  consentScopeKey: Schema.toEncoded(
+    Schema.toEncoded(Schema.OptionFromNullOr(Ref)).pipe(Schema.brand('PrivacyConsentScopeKey')),
+  ),
   controllerRef: Ref,
   dataCategoryRefs: Schema.Array(Ref),
   meaning: Ref,

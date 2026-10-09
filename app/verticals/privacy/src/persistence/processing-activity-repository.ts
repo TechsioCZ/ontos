@@ -1,3 +1,4 @@
+import { Context } from 'effect';
 import type { Effect, Option } from 'effect';
 
 import type { PrincipalRef } from '@app/core-runtime';
@@ -9,7 +10,6 @@ import type {
 } from '../domain/processing-activity-registry.ts';
 import type { ProcessingActivityAuthoritativeCoverage } from '../../shared/domain/processing-coverage.ts';
 
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- Action factories inject this owner-local repository through their scoped service factories; it has no global Context lifetime. expires: 2027-03-31.
 export interface ProcessingActivityRepositoryService {
   readonly create: (
     tenantId: string,
@@ -39,3 +39,9 @@ export interface ProcessingActivityRepositoryService {
     authoritativeCoverage?: ProcessingActivityAuthoritativeCoverage,
   ) => Effect.Effect<ProcessingActivity, ProcessingActivityRegistryError>;
 }
+
+/** Owner-local service contract; scope is supplied by its transaction factory. */
+export class ProcessingActivityRepository extends Context.Service<
+  ProcessingActivityRepository,
+  ProcessingActivityRepositoryService
+>()('@app/privacy/persistence/processing-activity-repository/ProcessingActivityRepository') {}

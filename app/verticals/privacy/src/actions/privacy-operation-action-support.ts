@@ -5,7 +5,6 @@ import type {
   OutboxMessage,
   OperationalScope,
 } from '@app/core-runtime';
-/* eslint-disable effect-native/no-unbranded-identifier-schema -- Audit evidence retains the owner-issued opaque record identity from a validated Privacy result. expires: 2027-03-31. */
 import { Effect, Option, Schema } from 'effect';
 
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
@@ -37,7 +36,7 @@ export const PrivacyActionErrorSchema = Schema.Union([
 
 export const PrivacyActionAuditEvidenceSchema = Schema.Struct({
   operationKind: Schema.String,
-  recordId: Schema.String,
+  recordId: Schema.toEncoded(Schema.String.pipe(Schema.brand('PrivacyRecordId'))),
 });
 
 export const privacyActionDomainEvents = {} as const;

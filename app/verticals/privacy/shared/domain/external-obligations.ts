@@ -1,8 +1,8 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Schema } from 'effect';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const Timestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u));
+const Timestamp = PrivacyIsoTimestampSchema;
 
 export const ExternalPrivacyRoleSchema = Schema.Literals(['CONTROLLER', 'PROCESSOR', 'RECIPIENT']);
 export type ExternalPrivacyRole = typeof ExternalPrivacyRoleSchema.Type;
@@ -33,20 +33,20 @@ export const ExternalRoleHolderSchema = Schema.Struct({
   role: ExternalPrivacyRoleSchema,
   /** A real role holder reference, never an External Business System or route. */
   holderKnown: Schema.Boolean,
-  holderRef: Schema.NullOr(Ref),
-  unknownReason: Schema.NullOr(Ref),
+  holderRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  unknownReason: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
 });
 export type ExternalRoleHolder = typeof ExternalRoleHolderSchema.Type;
 
 export const ExternalObligationSchema = Schema.Struct({
-  measureId: Ref,
-  obligationId: Ref,
+  measureId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyMeasureId'))),
+  obligationId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyObligationId'))),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   roleHolder: ExternalRoleHolderSchema,
   sourceDecisionRef: Ref,
   sourceDecisionRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   subjectRef: Ref,
-  tenantId: Ref,
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
   /** Original processing/disclosure relation, retained across route changes. */
   affectedScopeRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   createdAt: Timestamp,
@@ -56,7 +56,7 @@ export const ExternalObligationSchema = Schema.Struct({
   notificationStatus: ExternalDeliveryStatusSchema,
   processingRelationshipRef: Ref,
   provenanceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
-  reason: Schema.NullOr(Ref),
+  reason: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   requiredResult: Ref,
   updatedAt: Timestamp,
 });

@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
 import { Effect, Schema } from 'effect';
 
 import { ConsentScopeSchema, validateConsentScope } from './privacy-consent-scope.ts';
@@ -122,7 +121,7 @@ export const evaluateMarketingVerification = (input: {
 export const CommunicationsSubscriptionChangeSchema = Schema.Struct({
   action: Schema.Literals(['SUBSCRIBE', 'UNSUBSCRIBE']),
   programRef: Ref,
-  subscriptionId: Ref,
+  subscriptionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacySubscriptionId'))),
 });
 export type CommunicationsSubscriptionChange = typeof CommunicationsSubscriptionChangeSchema.Type;
 
@@ -134,10 +133,12 @@ export type CommunicationPreferenceChange = typeof CommunicationPreferenceChange
 
 /** Explicitly carries independent owner transitions; no change is inferred from another fact. */
 export const MarketingCommunicationTransitionSchema = Schema.Struct({
-  consentDecisionId: Schema.NullOr(Ref),
-  preferenceChange: Schema.NullOr(CommunicationPreferenceChangeSchema),
-  subscriptionChange: Schema.NullOr(CommunicationsSubscriptionChangeSchema),
-  transitionId: Ref,
+  consentDecisionId: Schema.toEncoded(
+    Schema.toEncoded(Schema.OptionFromNullOr(Ref)).pipe(Schema.brand('PrivacyConsentDecisionId')),
+  ),
+  preferenceChange: Schema.toEncoded(Schema.OptionFromNullOr(CommunicationPreferenceChangeSchema)),
+  subscriptionChange: Schema.toEncoded(Schema.OptionFromNullOr(CommunicationsSubscriptionChangeSchema)),
+  transitionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTransitionId'))),
 });
 export type MarketingCommunicationTransition = typeof MarketingCommunicationTransitionSchema.Type;
 

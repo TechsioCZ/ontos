@@ -3,17 +3,11 @@
 // @ontos-outbox-worker-owner privacy.core
 // @ontos-outbox-worker-producer privacy.core
 // @ontos-outbox-worker-topic privacy.retention.evaluation.requested
-/* oxlint-disable effect-native/no-effect-provide-in-library effect-native/no-layer-provide-in-library -- The task forbids changing the generated worker-host layer, so this worker entrypoint builds and closes its verified Core fan-out layer per delivery; expires: 2027-03-31. */
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScopeError } from '@app/core-runtime/outbox/worker';
-import {
-  CorePersistenceLive,
-  DatabaseConfigLive,
-  OutboxWorkerLegalEntityScopeFanout,
-  OutboxWorkerLegalEntityScopeFanoutLive,
-} from '@app/core-runtime/outbox/worker';
-import { Context, DateTime, Effect, Layer, Option, Predicate, Ref, Schema } from 'effect';
+import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
+import { DateTime, Effect, Option, Predicate, Ref, Schema } from 'effect';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
@@ -356,22 +350,6 @@ export const handleRetentionEvaluation = Effect.fn('RetentionEvaluationWorker.ha
   },
 );
 
-const retentionEvaluationFanoutLive = OutboxWorkerLegalEntityScopeFanoutLive.pipe(
-  Layer.provide(CorePersistenceLive),
-  Layer.provide(DatabaseConfigLive),
-);
-
-const handleRetentionEvaluationLive = (payload: OutboxPayload, context: OutboxWorkerHandlerContext) =>
-  Effect.scoped(
-    Effect.gen(function* runWithVerifiedFanout() {
-      const services = yield* Layer.build(retentionEvaluationFanoutLive);
-      const fanout = Context.get(services, OutboxWorkerLegalEntityScopeFanout);
-      return yield* handleRetentionEvaluation(payload, context).pipe(
-        Effect.provideService(OutboxWorkerLegalEntityScopeFanout, fanout),
-      );
-    }),
-  );
-
 export const retentionEvaluationWorker = defineOutboxWorker(
   {
     consumerModuleKey: moduleKey,
@@ -394,5 +372,5 @@ export const retentionEvaluationWorker = defineOutboxWorker(
     topic: outboxTopic,
     workerKey,
   },
-  handleRetentionEvaluationLive,
+  handleRetentionEvaluation,
 );

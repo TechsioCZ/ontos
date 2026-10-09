@@ -1,4 +1,4 @@
-/* eslint-disable effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Schema } from 'effect';
 
 import type { PrivacyOwnerResourceRef } from './privacy-owner-resource-ref.ts';
@@ -18,7 +18,7 @@ export interface ProcessingActivityOwnerInventoryInput {
 }
 
 const Text = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-const Timestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T/u));
+const Timestamp = PrivacyIsoTimestampSchema;
 
 export const PrivacyOwnerAvailabilitySchema = Schema.Literals(['AVAILABLE', 'UNAVAILABLE']);
 export type PrivacyOwnerAvailability = typeof PrivacyOwnerAvailabilitySchema.Type;
@@ -44,7 +44,7 @@ export const PrivacyOwnerObservationOutcomeSchema = Schema.Literals([
 export type PrivacyOwnerObservationOutcome = typeof PrivacyOwnerObservationOutcomeSchema.Type;
 
 export const PrivacyOwnerObservationSchema = Schema.Struct({
-  moduleId: Text,
+  moduleId: Schema.toEncoded(Text.pipe(Schema.brand('PrivacyModuleId'))),
   observedAt: Timestamp,
   outcome: PrivacyOwnerObservationOutcomeSchema,
   reason: Schema.optional(Text),
@@ -64,7 +64,7 @@ export const PrivacyOwnerInventoryStatusSchema = Schema.Literals([
 export type PrivacyOwnerInventoryStatus = typeof PrivacyOwnerInventoryStatusSchema.Type;
 
 export const PrivacyOwnerInventoryEntrySchema = Schema.Struct({
-  moduleId: Text,
+  moduleId: Schema.toEncoded(Text.pipe(Schema.brand('PrivacyModuleId'))),
   observedAt: Schema.toEncoded(Schema.OptionFromNullOr(Timestamp)),
   reason: Schema.toEncoded(Schema.OptionFromNullOr(Text)),
   requiredByCoverageRefs: Schema.Array(Text).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
@@ -77,7 +77,7 @@ export const PrivacyOwnerInventoryResultSchema = Schema.Struct({
   activityRef: Text,
   complete: Schema.Boolean,
   entries: Schema.Array(PrivacyOwnerInventoryEntrySchema),
-  tenantId: Text,
+  tenantId: Schema.toEncoded(Text.pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type PrivacyOwnerInventoryResult = typeof PrivacyOwnerInventoryResultSchema.Type;
 

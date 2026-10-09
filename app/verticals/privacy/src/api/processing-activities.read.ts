@@ -25,16 +25,15 @@ const requestedActivities = (
   input: ProcessingActivitiesRequest,
   tenantId: string,
   legalEntityId: string,
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- This owner-local selector receives the repository already injected into the governed read handler.
-  services: ProcessingActivityRepositoryService,
+  context: Pick<ReadHandlerContext<ProcessingActivityRepositoryService>, 'services'>,
 ) =>
   input.activityRefs.length === 0
-    ? services.list(tenantId, legalEntityId)
+    ? context.services.list(tenantId, legalEntityId)
     : Effect.forEach(
         input.activityRefs,
         (reference) =>
           reference.tenantId === tenantId
-            ? services.get(tenantId, legalEntityId, reference.resourceId)
+            ? context.services.get(tenantId, legalEntityId, reference.resourceId)
             : Effect.succeedNone,
         { concurrency: 1 },
       ).pipe(Effect.map((items) => items.flatMap((item) => (Option.isSome(item) ? [item.value] : []))));
@@ -70,7 +69,7 @@ export const processingActivitiesRead = defineRead(
       return Effect.fail(unavailable('A trusted Legal Entity scope is required'));
     }
     return Effect.gen(function* readActivities() {
-      const activities = yield* requestedActivities(input, context.scope.tenantId, legalEntityId, context.services);
+      const activities = yield* requestedActivities(input, context.scope.tenantId, legalEntityId, context);
       const items = input.includeEnded
         ? activities
         : activities.filter(({ currentLifecycle }) => currentLifecycle !== 'ENDED');

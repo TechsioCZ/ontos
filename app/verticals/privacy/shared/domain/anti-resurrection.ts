@@ -1,4 +1,4 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Effect, Schema } from 'effect';
 
 import { validateOwnerExecutionAuthorityResult } from './privacy-measure-handoff.ts';
@@ -9,7 +9,7 @@ import type {
 } from './privacy-measure-handoff.ts';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const Timestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u));
+const Timestamp = PrivacyIsoTimestampSchema;
 
 export const AntiResurrectionMeasureSchema = Schema.Literals(['RESTRICT', 'DELETE', 'ANONYMIZE']);
 export type AntiResurrectionMeasure = typeof AntiResurrectionMeasureSchema.Type;
@@ -29,12 +29,12 @@ export const AntiResurrectionEnforcementReceiptSchema = Schema.Struct({
   evidenceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   measure: AntiResurrectionMeasureSchema,
   operations: Schema.Array(AntiResurrectionOperationSchema).check(Schema.isMinLength(4), Schema.isMaxLength(4)),
-  ownerModuleId: Ref,
+  ownerModuleId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyOwnerModuleId'))),
   receiptRef: Ref,
   resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   subjectRef: Ref,
-  taskId: Ref,
-  tenantId: Ref,
+  taskId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTaskId'))),
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type AntiResurrectionEnforcementReceipt = typeof AntiResurrectionEnforcementReceiptSchema.Type;
 
@@ -47,12 +47,12 @@ export const AntiResurrectionProtectionSchema = Schema.Struct({
   outcomeStatus: Schema.Literal('SUCCEEDED'),
   ownerExecutionOutcomeRef: Ref,
   protectedAt: Timestamp,
-  protectionId: Ref,
+  protectionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyProtectionId'))),
   resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   sourceDecisionRef: Ref,
   sourceDecisionRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   subjectRef: Ref,
-  tenantId: Ref,
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type AntiResurrectionProtection = typeof AntiResurrectionProtectionSchema.Type;
 
@@ -61,10 +61,10 @@ export const AntiResurrectionAttemptSchema = Schema.Struct({
   operation: AntiResurrectionOperationSchema,
   resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   subjectRef: Ref,
-  tenantId: Ref,
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
   /** Only a separately proven new source may start lawful new processing. */
   sourceInputIsNew: Schema.Boolean,
-  sourceInputRef: Schema.NullOr(Ref),
+  sourceInputRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
 });
 export type AntiResurrectionAttempt = typeof AntiResurrectionAttemptSchema.Type;
 
@@ -75,7 +75,7 @@ export const AntiResurrectionNewSourceEvidenceSchema = Schema.Struct({
   resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   sourceInputRef: Ref,
   subjectRef: Ref,
-  tenantId: Ref,
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
   verifiedAt: Timestamp,
 });
 export type AntiResurrectionNewSourceEvidence = typeof AntiResurrectionNewSourceEvidenceSchema.Type;
@@ -115,7 +115,7 @@ export interface CreateAntiResurrectionProtectionInput {
   readonly authority: OwnerExecutionAuthorityResult;
   readonly enforcementReceipt: AntiResurrectionEnforcementReceipt;
   readonly handoff: PrivacyMeasureHandoff;
-  readonly protectedAt: string;
+  readonly protectedAt: typeof PrivacyIsoTimestampSchema.Type;
   readonly protectionId: string;
 }
 

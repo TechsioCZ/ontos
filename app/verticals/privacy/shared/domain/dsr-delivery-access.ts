@@ -1,7 +1,7 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Schema } from 'effect';
 
-const Timestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u));
+const Timestamp = PrivacyIsoTimestampSchema;
 
 const Text = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const Ref = Text;
@@ -12,7 +12,7 @@ export type DeliveryAccessState = typeof DeliveryAccessStateSchema.Type;
 
 /** A capability for one approved output and one verified recipient scope only. */
 export const DsrDeliveryAccessSchema = Schema.Struct({
-  accessId: Ref,
+  accessId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyAccessId'))),
   authorityRef: Schema.optionalKey(Ref),
   caseRef: Ref,
   channel: Text,
@@ -23,29 +23,29 @@ export const DsrDeliveryAccessSchema = Schema.Struct({
   effectiveFrom: Timestamp,
   evidenceRefs: Schema.optionalKey(Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32))),
   expiresAt: Timestamp,
-  idempotencyKey: Ref,
+  idempotencyKey: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyIdempotencyKey'))),
   issuedAt: Timestamp,
   policyRef: Ref,
   receiptRef: Schema.optionalKey(Ref),
   recipientRef: Ref,
   representationRef: Ref,
-  revocationReason: Schema.NullOr(Text),
-  revokedAt: Schema.NullOr(Timestamp),
-  supersedesAccessRef: Schema.NullOr(Ref),
+  revocationReason: Schema.toEncoded(Schema.OptionFromNullOr(Text)),
+  revokedAt: Schema.toEncoded(Schema.OptionFromNullOr(Timestamp)),
+  supersedesAccessRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
 });
 export type DsrDeliveryAccess = typeof DsrDeliveryAccessSchema.Type;
 
 export const DsrDeliveryAccessAuthorityResultSchema = Schema.Struct({
   access: DsrDeliveryAccessSchema,
-  actionInvocationId: Ref,
+  actionInvocationId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyActionInvocationId'))),
   authorityRef: Ref,
   caseRef: Ref,
   controllerRef: Ref,
   evidenceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   issuedAt: Timestamp,
-  legalEntityId: Ref,
+  legalEntityId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyLegalEntityId'))),
   receiptRef: Ref,
-  tenantId: Ref,
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type DsrDeliveryAccessAuthorityResult = typeof DsrDeliveryAccessAuthorityResultSchema.Type;
 
@@ -58,18 +58,18 @@ export const DeliveryEvidenceOutcomeSchema = Schema.Literals([
 export type DeliveryEvidenceOutcome = typeof DeliveryEvidenceOutcomeSchema.Type;
 
 export const DsrDeliveryEvidenceSchema = Schema.Struct({
-  accessId: Ref,
+  accessId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyAccessId'))),
   /** Legacy evidence may omit the Case; new writes require an exact open Case. */
   caseRef: Schema.optionalKey(Ref),
   channel: Text,
   deliveryOutputRef: Ref,
   deliveryOutputRevision: Revision,
   deliveryScopeRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
-  evidenceId: Ref,
+  evidenceId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyEvidenceId'))),
   occurredAt: Timestamp,
   outcome: DeliveryEvidenceOutcomeSchema,
   policyRef: Ref,
-  providerReference: Schema.NullOr(Ref),
+  providerReference: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   reason: Text,
   recipientRef: Ref,
   recordedAt: Timestamp,
@@ -82,8 +82,8 @@ export const TemporaryDsrExportSchema = Schema.Struct({
   createdAt: Timestamp,
   deliveryOutputRef: Ref,
   deliveryOutputRevision: Revision,
-  disposedAt: Schema.NullOr(Timestamp),
-  dispositionEvidenceRef: Schema.NullOr(Ref),
+  disposedAt: Schema.toEncoded(Schema.OptionFromNullOr(Timestamp)),
+  dispositionEvidenceRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   exportRef: Ref,
   retainUntil: Timestamp,
   storageRef: Ref,
@@ -112,9 +112,9 @@ export interface DeliveryAccessRequest {
   readonly deliveryOutputRevision: number;
   readonly deliveryScopeRefs: readonly string[];
   readonly effectiveFrom: string;
-  readonly expiresAt: string;
+  readonly expiresAt: typeof PrivacyIsoTimestampSchema.Type;
   readonly idempotencyKey: string;
-  readonly issuedAt: string;
+  readonly issuedAt: typeof PrivacyIsoTimestampSchema.Type;
   readonly policyRef: string;
   readonly recipientRef: string;
   readonly representationRef: string;

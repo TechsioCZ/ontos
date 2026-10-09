@@ -1,11 +1,10 @@
-/* oxlint-disable unicorn/prefer-export-from -- This Action contract gives the shared owner outcome schema a capability-specific result name. expires: 2027-03-31. */
 import { OwnerExecutionOutcomeSchema, PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import { Schema } from 'effect';
 
 export const ExecutePrivacyMeasurePayloadSchema = Schema.Struct({ handoff: PrivacyMeasureHandoffSchema });
 export type ExecutePrivacyMeasurePayload = typeof ExecutePrivacyMeasurePayloadSchema.Type;
 
-export const ExecutePrivacyMeasureResultSchema = OwnerExecutionOutcomeSchema;
+export { OwnerExecutionOutcomeSchema as ExecutePrivacyMeasureResultSchema } from '@app/privacy/domain/privacy-measure-handoff';
 
 export const ExecutePrivacyMeasureAuditEvidenceSchema = Schema.Struct({
   evidenceRefs: Schema.Array(Schema.String),

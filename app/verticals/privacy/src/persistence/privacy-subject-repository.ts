@@ -1,5 +1,5 @@
 import type { Effect, Option } from 'effect';
-import { Schema } from 'effect';
+import { Context, Schema } from 'effect';
 
 import type { PrivacySubjectRecord } from '../../shared/domain/privacy-subject.ts';
 import type { PrivacySubjectRef } from '../../shared/resources/privacy-subject.ts';
@@ -15,10 +15,15 @@ export const PrivacySubjectPersistenceUnavailable = Schema.TaggedError<typeof pe
 type PrivacySubjectPersistenceUnavailableError = InstanceType<typeof PrivacySubjectPersistenceUnavailable>;
 
 /** Owner-local persistence seam. Implementations must bind tenant/RLS context before access. */
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- Acceptance adapters inject this owner-local repository explicitly; it has no global Context lifetime. expires: 2027-03-31.
 export interface PrivacySubjectRepositoryService {
   readonly findByRef: (
     ref: PrivacySubjectRef,
   ) => Effect.Effect<Option.Option<PrivacySubjectRecord>, PrivacySubjectPersistenceUnavailableError>;
   readonly save: (record: PrivacySubjectRecord) => Effect.Effect<void, PrivacySubjectPersistenceUnavailableError>;
 }
+
+/** Owner-local service contract; scope is supplied by its transaction factory. */
+export class PrivacySubjectRepository extends Context.Service<
+  PrivacySubjectRepository,
+  PrivacySubjectRepositoryService
+>()('@app/privacy/persistence/privacy-subject-repository/PrivacySubjectRepository') {}

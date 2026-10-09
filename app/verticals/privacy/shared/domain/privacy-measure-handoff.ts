@@ -1,10 +1,10 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Effect, Schema } from 'effect';
 
 const Text = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const Ref = Text;
 const Revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
-const Timestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u));
+const Timestamp = PrivacyIsoTimestampSchema;
 
 export const PrivacyMeasureKindSchema = Schema.Literals(['RECTIFY', 'RESTRICT', 'ANONYMIZE', 'DELETE', 'EXPORT']);
 export type PrivacyMeasureKind = typeof PrivacyMeasureKindSchema.Type;
@@ -12,25 +12,29 @@ export type PrivacyMeasureKind = typeof PrivacyMeasureKindSchema.Type;
 /** The only payload the coordinator may send to an owning capability. */
 export const PrivacyMeasureHandoffSchema = Schema.Struct({
   contentScopeRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
-  controllerObligationRef: Schema.NullOr(Ref),
-  dispositionDecision: Schema.NullOr(Schema.Literals(['RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE'])),
+  controllerObligationRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  dispositionDecision: Schema.toEncoded(
+    Schema.OptionFromNullOr(Schema.Literals(['RETAIN', 'RESTRICT', 'ANONYMIZE', 'DELETE'])),
+  ),
   expectedEvidenceRefs: Schema.Array(Ref).check(Schema.isMaxLength(128)),
-  idempotencyKey: Ref,
+  idempotencyKey: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyIdempotencyKey'))),
   kind: PrivacyMeasureKindSchema,
-  measureId: Ref,
+  measureId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyMeasureId'))),
   owningCapability: Ref,
   preconditionRefs: Schema.Array(Ref).check(Schema.isMaxLength(128)),
   requestedAt: Timestamp,
   requestedResult: Ref,
   resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
-  right: Schema.NullOr(
-    Schema.Literals(['ACCESS', 'PORTABILITY', 'RECTIFICATION', 'ERASURE', 'RESTRICTION', 'OBJECTION']),
+  right: Schema.toEncoded(
+    Schema.OptionFromNullOr(
+      Schema.Literals(['ACCESS', 'PORTABILITY', 'RECTIFICATION', 'ERASURE', 'RESTRICTION', 'OBJECTION']),
+    ),
   ),
   sourceDecisionRef: Ref,
   sourceDecisionRevision: Revision,
   subjectRef: Ref,
-  taskId: Ref,
-  tenantId: Ref,
+  taskId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTaskId'))),
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type PrivacyMeasureHandoff = typeof PrivacyMeasureHandoffSchema.Type;
 
@@ -50,11 +54,11 @@ export type OwnerExecutionStatus = typeof OwnerExecutionStatusSchema.Type;
 export const OwnerExecutionOutcomeSchema = Schema.Struct({
   attempt: Revision,
   evidenceRefs: Schema.Array(Ref).check(Schema.isMaxLength(128)),
-  idempotencyKey: Ref,
+  idempotencyKey: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyIdempotencyKey'))),
   includedResourceRefs: Schema.Array(Ref).check(Schema.isMaxLength(256)),
-  measureId: Ref,
+  measureId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyMeasureId'))),
   occurredAt: Timestamp,
-  outcomeId: Ref,
+  outcomeId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyOutcomeId'))),
   owningCapability: Ref,
   reason: Ref,
   recordedAt: Timestamp,
@@ -62,15 +66,15 @@ export const OwnerExecutionOutcomeSchema = Schema.Struct({
   sourceDecisionRef: Ref,
   sourceDecisionRevision: Revision,
   status: OwnerExecutionStatusSchema,
-  taskId: Ref,
+  taskId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTaskId'))),
 });
 export type OwnerExecutionOutcome = typeof OwnerExecutionOutcomeSchema.Type;
 
 /** Public coordinator input identifies an attempt but cannot carry an owner result. */
 export const OwnerExecutionOutcomeRequestSchema = Schema.Struct({
   attempt: Revision,
-  measureId: Ref,
-  taskId: Ref,
+  measureId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyMeasureId'))),
+  taskId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTaskId'))),
 });
 export type OwnerExecutionOutcomeRequest = typeof OwnerExecutionOutcomeRequestSchema.Type;
 
@@ -87,7 +91,7 @@ export const OwnerExecutionAuthorityResultSchema = Schema.Struct({
   receiptRef: Ref,
   resourceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   subjectRef: Ref,
-  tenantId: Ref,
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type OwnerExecutionAuthorityResult = typeof OwnerExecutionAuthorityResultSchema.Type;
 
@@ -101,12 +105,12 @@ export interface PrivacyMeasureAttempt {
   readonly attempt: number;
   readonly outcome: OwnerExecutionOutcome | null;
   readonly request: OwnerActionRequest;
-  readonly startedAt: string;
+  readonly startedAt: typeof PrivacyIsoTimestampSchema.Type;
 }
 
 export interface PrivacyMeasureDispatch {
   readonly attempts: readonly PrivacyMeasureAttempt[];
-  readonly createdAt: string;
+  readonly createdAt: typeof PrivacyIsoTimestampSchema.Type;
   readonly handoff: PrivacyMeasureHandoff;
   readonly status: OwnerExecutionStatus;
 }

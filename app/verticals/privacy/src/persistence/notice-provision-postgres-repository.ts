@@ -1,12 +1,13 @@
+import { NoticeProvisionRepository } from './notice-provision-repository.ts';
+import type { NoticeProvisionRepositoryService } from './notice-provision-repository.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { flow, DateTime, Effect, Option, Schema } from 'effect';
 
 import { PrivacyNoticeProvisionSchema } from '../../shared/domain/privacy-notice-provision.ts';
 import { noticeProvisions } from '../database/schema.ts';
 import { NoticeProvisionPersistenceError } from './notice-provision-persistence-error.ts';
-import type { NoticeProvisionRepositoryService } from './notice-provision-repository.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
@@ -34,11 +35,10 @@ const scopeUnavailable = () =>
     reason: 'Notice Provision operations require a trusted Legal Entity scope',
   });
 
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- PostgreSQL jsonb is decoded immediately through the public Notice Provision schema.
-const decodeProvision = (value: unknown) =>
-  Schema.decodeUnknownEffect(PrivacyNoticeProvisionSchema)(value).pipe(
-    Effect.mapError((cause) => persistenceFailure('Stored Notice Provision could not be decoded', cause)),
-  );
+const decodeProvision = flow(
+  Schema.decodeUnknownEffect(PrivacyNoticeProvisionSchema),
+  Effect.mapError((cause) => persistenceFailure('Stored Notice Provision could not be decoded', cause)),
+);
 
 const provisionsAreEquivalent = Schema.toEquivalence(PrivacyNoticeProvisionSchema);
 
@@ -148,4 +148,8 @@ export const noticeProvisionRepositoryForScope = (
 ): Effect.Effect<NoticeProvisionRepositoryService, OperationContextUnavailable> =>
   scope.legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
-    : Effect.succeed(makeRepository(transaction, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }));
+    : Effect.succeed(
+        NoticeProvisionRepository.of(
+          makeRepository(transaction, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }),
+        ),
+      );

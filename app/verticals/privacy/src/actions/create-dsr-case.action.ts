@@ -73,10 +73,8 @@ export const handleCreateDsrCase = Effect.fn('CreateDsrCaseAction.handle')(funct
     Effect.mapError(({ reason }) => new PrivacyActionRejected({ code: 'privacy_action_rejected', reason })),
   );
   const result = yield* context.services.createDsrCase(
-    scope.tenantId,
-    scope.legalEntityId,
-    context.actionInvocationId,
-    caseRecord,
+    { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
+    { actionInvocationId: context.actionInvocationId, caseRecord },
   );
   yield* context.recordAuditEvidence({ operationKind: 'create-dsr-case', recordId: result.caseRef });
   return result;

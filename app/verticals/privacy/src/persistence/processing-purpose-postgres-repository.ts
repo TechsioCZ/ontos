@@ -1,18 +1,17 @@
-/* eslint-disable anti-slop/no-unknown-parameters -- PostgreSQL JSONB values are untrusted unknowns and are decoded immediately by owner schemas at this repository boundary. expires: 2027-03-31. */
+import { ProcessingPurposeRepository } from './processing-purpose-repository.ts';
+import type { ProcessingPurposeRepositoryService } from './processing-purpose-repository.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { flow, DateTime, Effect, Option, Schema } from 'effect';
 import { randomUUID } from 'node:crypto';
 
 import type {
   CreatePurposeVersionInput,
   ProcessingPurpose,
   PurposeVersion,
-  PurposeVersionMaterialScope,
 } from '../../shared/domain/processing-purpose.ts';
 import { ConsentMaterialDimensionKindSchema } from '../../shared/domain/privacy-consent-scope.ts';
-import type { ConsentMaterialDimensionKind } from '../../shared/domain/privacy-consent-scope.ts';
 import {
   CreatePurposeVersionInputSchema,
   PurposeNotFound,
@@ -20,11 +19,9 @@ import {
   PurposeVersionMaterialScopeSchema,
 } from '../../shared/domain/processing-purpose.ts';
 import { PrivacyMaterialChangeAssessmentSchema } from '../../shared/domain/privacy-material-change.ts';
-import type { PrivacyMaterialChangeAssessment } from '../../shared/domain/privacy-material-change.ts';
 import type { ProcessingPurposeRef } from '../../shared/resources/processing-purpose.ts';
 import { deriveMaterialVersionEvidence } from '../domain/processing-purpose-materiality.ts';
 import { processingPurposes, purposeVersions } from '../database/schema.ts';
-import type { ProcessingPurposeRepositoryService } from './processing-purpose-repository.ts';
 import { ProcessingPurposePersistenceUnavailable } from './processing-purpose-persistence-unavailable.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
@@ -57,75 +54,64 @@ const purposeRef = (tenantId: string, resourceId: string): ProcessingPurposeRef 
 
 const iso = (value: Date): string => DateTime.formatIso(DateTime.fromDateUnsafe(value));
 
-const decodeMaterialityAssessment = (
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- JSONB is decoded immediately at this owner repository boundary.
-  value: unknown,
-): Effect.Effect<PrivacyMaterialChangeAssessment, ProcessingPurposePersistenceUnavailable> =>
-  Schema.decodeUnknownEffect(PrivacyMaterialChangeAssessmentSchema)(value).pipe(
-    Effect.mapError((cause) => unavailable('Stored materiality assessment could not be decoded', cause)),
-  );
+const decodeMaterialityAssessment = flow(
+  Schema.decodeUnknownEffect(PrivacyMaterialChangeAssessmentSchema),
+  Effect.mapError((cause) => unavailable('Stored materiality assessment could not be decoded', cause)),
+);
 
-const decodeMaterialScope = (
-  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- JSONB is decoded immediately at this owner repository boundary.
-  value: unknown,
-): Effect.Effect<PurposeVersionMaterialScope, ProcessingPurposePersistenceUnavailable> =>
-  Schema.decodeUnknownEffect(PurposeVersionMaterialScopeSchema)(value).pipe(
-    Effect.mapError((cause) => unavailable('Stored Purpose Version material scope could not be decoded', cause)),
-  );
+const decodeMaterialScope = flow(
+  Schema.decodeUnknownEffect(PurposeVersionMaterialScopeSchema),
+  Effect.mapError((cause) => unavailable('Stored Purpose Version material scope could not be decoded', cause)),
+);
 
-const decodeRequiredConsentDimensions = (
-  value: unknown,
-): Effect.Effect<readonly ConsentMaterialDimensionKind[], ProcessingPurposePersistenceUnavailable> =>
-  Schema.decodeUnknownEffect(Schema.Array(ConsentMaterialDimensionKindSchema))(value).pipe(
-    Effect.mapError((cause) => unavailable('Stored required consent dimensions could not be decoded', cause)),
-  );
+const decodeRequiredConsentDimensions = flow(
+  Schema.decodeUnknownEffect(Schema.Array(ConsentMaterialDimensionKindSchema)),
+  Effect.mapError((cause) => unavailable('Stored required consent dimensions could not be decoded', cause)),
+);
 
 const loadVersions = Effect.fn('ProcessingPurposePostgresRepository.loadVersions')(
-  (
+  Effect.fn('loadPurposeVersions')(function* loadPurposeVersions(
     transaction: ScopedTransaction,
     tenantId: string,
     legalEntityId: string,
     processingPurposeId: string,
-  ): Effect.Effect<readonly PurposeVersion[], ProcessingPurposePersistenceUnavailable> =>
-    Effect.gen(function* loadPurposeVersions() {
-      const rows = yield* transaction
-        .select()
-        .from(purposeVersions)
-        .where(
-          and(
-            eq(purposeVersions.tenantId, tenantId),
-            eq(purposeVersions.legalEntityId, legalEntityId),
-            eq(purposeVersions.processingPurposeId, processingPurposeId),
-          ),
-        )
-        .orderBy(asc(purposeVersions.versionNumber))
-        .pipe(Effect.mapError((cause) => unavailable(PERSISTENCE_UNAVAILABLE, cause)));
-      return yield* Effect.forEach(
-        rows,
-        (row): Effect.Effect<PurposeVersion, ProcessingPurposePersistenceUnavailable> =>
-          // oxlint-disable-next-line effect-native/prefer-effect-fn-for-operations -- Row decoding is an inner callback of the named repository operation.
-          Effect.gen(function* decodePurposeVersion() {
-            const materialChangeAssessment =
-              row.materialChangeAssessment === null
-                ? null
-                : yield* decodeMaterialityAssessment(row.materialChangeAssessment);
-            const requiredConsentDimensions = yield* decodeRequiredConsentDimensions(row.requiredConsentDimensions);
-            const materialScope = row.materialScope === null ? null : yield* decodeMaterialScope(row.materialScope);
-            return {
-              effectiveFrom: iso(row.effectiveFrom),
-              effectiveTo: row.effectiveTo === null ? null : iso(row.effectiveTo),
-              materialChangeAssessment,
-              materialScope,
-              meaning: row.meaning,
-              recordedAt: iso(row.recordedAt),
-              requiredConsentDimensions,
-              versionId: row.purposeVersionId,
-              versionNumber: row.versionNumber,
-            };
-          }),
-        { concurrency: 1 },
-      );
-    }),
+  ) {
+    const rows = yield* transaction
+      .select()
+      .from(purposeVersions)
+      .where(
+        and(
+          eq(purposeVersions.tenantId, tenantId),
+          eq(purposeVersions.legalEntityId, legalEntityId),
+          eq(purposeVersions.processingPurposeId, processingPurposeId),
+        ),
+      )
+      .orderBy(asc(purposeVersions.versionNumber))
+      .pipe(Effect.mapError((cause) => unavailable(PERSISTENCE_UNAVAILABLE, cause)));
+    return yield* Effect.forEach(
+      rows,
+      Effect.fn('decodePurposeVersion')(function* decodePurposeVersion(row: (typeof rows)[number]) {
+        const materialChangeAssessment =
+          row.materialChangeAssessment === null
+            ? null
+            : yield* decodeMaterialityAssessment(row.materialChangeAssessment);
+        const requiredConsentDimensions = yield* decodeRequiredConsentDimensions(row.requiredConsentDimensions);
+        const materialScope = row.materialScope === null ? null : yield* decodeMaterialScope(row.materialScope);
+        return {
+          effectiveFrom: iso(row.effectiveFrom),
+          effectiveTo: row.effectiveTo === null ? null : iso(row.effectiveTo),
+          materialChangeAssessment,
+          materialScope,
+          meaning: row.meaning,
+          recordedAt: iso(row.recordedAt),
+          requiredConsentDimensions,
+          versionId: row.purposeVersionId,
+          versionNumber: row.versionNumber,
+        };
+      }),
+      { concurrency: 1 },
+    );
+  }),
 );
 
 const makeRepository = (
@@ -397,4 +383,8 @@ export const processingPurposeRepositoryForScope = (
 ): Effect.Effect<ProcessingPurposeRepositoryService, OperationContextUnavailable> =>
   scope.legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
-    : Effect.succeed(makeRepository(transaction, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }));
+    : Effect.succeed(
+        ProcessingPurposeRepository.of(
+          makeRepository(transaction, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }),
+        ),
+      );

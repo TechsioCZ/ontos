@@ -26,11 +26,8 @@ const handleCreateNoticeVersion = Effect.fn('CreateNoticeVersionAction.handle')(
 ) {
   const scope = yield* requirePrivacyActionScope(context.scope);
   const result = yield* context.services.createNoticeVersion(
-    scope.tenantId,
-    scope.legalEntityId,
-    context.actionInvocationId,
-    payload.noticeId,
-    payload.input,
+    { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
+    { actionInvocationId: context.actionInvocationId, input: payload.input, noticeId: payload.noticeId },
   );
   return yield* completePrivacyAction(context, 'create-notice-version', result.versionId, result);
 });

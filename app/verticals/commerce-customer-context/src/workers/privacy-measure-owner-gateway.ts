@@ -141,8 +141,7 @@ const makeGateway = (configured: {
         ),
         Effect.asVoid,
         Effect.catchIf(isAlreadyRecorded, () => Effect.void),
-        // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Effect.mapError transforms the typed Effect failure channel; this is not Promise callback control flow.
-        Effect.mapError((error) => workerFailure(error, 'Privacy owner-outcome recording')),
+        Effect.mapError((cause) => workerFailure(cause, 'Privacy owner-outcome recording')),
       ),
   };
 };

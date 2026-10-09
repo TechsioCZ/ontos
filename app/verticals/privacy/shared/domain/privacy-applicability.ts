@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-unbranded-identifier-schema -- Privacy authority refs are decoded opaque cross-owner wire identities; their tenant/resource provenance is enforced by exact typed-reference checks. expires: 2027-03-31. */
 import { DateTime, Option, Schema } from 'effect';
 
 import { PrivacyResponsibilityAssignmentRefSchema } from '../resources/privacy-responsibility-assignment.ts';
@@ -51,17 +50,17 @@ const PrivacyApplicabilityFactSchema = Schema.Struct({
 
 const PrivacyPurposeVersionRefSchema = Schema.Struct({
   moduleId: Schema.Literal('privacy.core'),
-  resourceId: Schema.String.check(Schema.isUUID()),
+  resourceId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyResourceId'))),
   resourceType: Schema.Literal('privacy.core.processing-purpose-version'),
-  tenantId: Schema.String.check(Schema.isUUID()),
+  tenantId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyTenantId'))),
 });
 
 export const PrivacyApplicabilityAuthoritySchema = Schema.Struct({
   controllerRef: PrivacyOwnerResourceRefSchema,
-  legalEntityId: Schema.String.check(Schema.isUUID()),
+  legalEntityId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyLegalEntityId'))),
   purposeRef: ProcessingPurposeRefSchema,
   purposeVersionRef: PrivacyPurposeVersionRefSchema,
-  tenantId: Schema.String.check(Schema.isUUID()),
+  tenantId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type PrivacyApplicabilityAuthority = typeof PrivacyApplicabilityAuthoritySchema.Type;
 
@@ -165,7 +164,7 @@ export const PrivacyApplicabilityEligibilityUseSchema = Schema.Struct({
   operation: Text,
   processingScopeRef: ProcessingScopeRefSchema,
   purposeRef: Text,
-  purposeVersionId: Text,
+  purposeVersionId: Schema.toEncoded(Text.pipe(Schema.brand('PrivacyPurposeVersionId'))),
   recipientRefs: Schema.Array(Text).check(Schema.isMaxLength(64)),
   subjectRef: PrivacySubjectRefSchema,
 });

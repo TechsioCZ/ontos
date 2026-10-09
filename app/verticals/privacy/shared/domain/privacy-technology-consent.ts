@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
 import { Schema } from 'effect';
 
 import { ConsentScopeSchema } from './privacy-consent-scope.ts';
@@ -49,7 +48,7 @@ export const validateTechnologyProviderSet = (set: TechnologyProviderSet): strin
 export const TechnologyConsentContextSchema = Schema.Struct({
   addressableUntil: PrivacyIsoTimestampSchema,
   contextRef: Ref,
-  deviceContextRef: Schema.NullOr(Ref),
+  deviceContextRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   evidenceRefs: Schema.Array(Ref).check(Schema.isMaxLength(32)),
   siteRef: Ref,
   subject: PrivacySubjectSchema,
@@ -117,7 +116,7 @@ export const TechnologyConsentReassessmentSchema = Schema.Struct({
   currentScope: ConsentScopeSchema,
   explicitMateriality: Schema.Boolean,
   outcome: Schema.Literals(['NO_REPROMPT_REQUIRED', 'REPROMPT_REQUIRED', 'BLOCK_UNTIL_NEW_DECISION']),
-  policyRef: Schema.NullOr(Ref),
+  policyRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   previousScope: ConsentScopeSchema,
 });
 export type TechnologyConsentReassessment = typeof TechnologyConsentReassessmentSchema.Type;
@@ -155,7 +154,7 @@ export const TechnologyConsentWithdrawalSchema = Schema.Struct({
   historicalProcessingPreserved: Schema.Literal(true),
   scope: ConsentScopeSchema,
   stopsFutureUse: Schema.Literal(true),
-  withdrawalDecisionId: Ref,
+  withdrawalDecisionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyWithdrawalDecisionId'))),
 });
 export type TechnologyConsentWithdrawal = typeof TechnologyConsentWithdrawalSchema.Type;
 

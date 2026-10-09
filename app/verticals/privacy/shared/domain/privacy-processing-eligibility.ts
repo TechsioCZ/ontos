@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
 import { Schema } from 'effect';
 
 import type { ConsentDecision } from './privacy-consent-decision.ts';
@@ -38,7 +37,7 @@ export const IntendedProcessingScopeSchema = Schema.Struct({
   operation: Ref,
   processingScopeRef: ProcessingScopeRefSchema,
   purposeRef: Ref,
-  purposeVersionId: Ref,
+  purposeVersionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyPurposeVersionId'))),
   recipientRefs: RefList,
   subjectRef: PrivacySubjectRefSchema,
 });
@@ -105,14 +104,14 @@ export const ProcessingInterventionAuthorityRequestSchema = Schema.Struct({
 export type ProcessingInterventionAuthorityRequest = typeof ProcessingInterventionAuthorityRequestSchema.Type;
 
 export const ProcessingInterventionAuthorityResultSchema = Schema.Struct({
-  actionInvocationId: Ref,
+  actionInvocationId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyActionInvocationId'))),
   asOf: PrivacyIsoTimestampSchema,
   authorityRef: Ref,
   evidenceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   intervention: PrivacyProcessingInterventionSchema,
-  legalEntityId: Ref,
+  legalEntityId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyLegalEntityId'))),
   receiptRef: Ref,
-  tenantId: Ref,
+  tenantId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type ProcessingInterventionAuthorityResult = typeof ProcessingInterventionAuthorityResultSchema.Type;
 

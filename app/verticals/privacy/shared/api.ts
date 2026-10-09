@@ -1,4 +1,3 @@
-/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- The published Effect API entrypoint composes and exports the governed Privacy read contract. expires: 2027-03-31. */
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -60,18 +59,177 @@ import { UpsertRetentionRuleActionApi } from './apis/upsert-retention-rule-actio
 import { UpsertTemporaryDsrExportActionApi } from './apis/upsert-temporary-dsr-export-action.ts';
 // </generated-governed-http-api-imports>
 
-export * from './apis/applicability-decisions.ts';
-export * from './apis/current-consent.ts';
-export * from './apis/dsr-cases.ts';
-export * from './apis/legal-basis-assignments.ts';
-export * from './apis/notice-versions.ts';
-export * from './apis/owner-inventory.ts';
-export * from './apis/privacy-subjects.ts';
-export * from './apis/processing-activities.ts';
-export * from './apis/processing-eligibility.ts';
-export * from './apis/processing-purposes.ts';
-export * from './apis/responsibility-assignments.ts';
-export * from './apis/retention-rules.ts';
+export {
+  ApplicabilityDecisionsRequestSchema,
+  ApplicabilityDecisionsResponseSchema,
+  ApplicabilityDecisionsAuthenticationProblemSchema,
+  ApplicabilityDecisionsInvalidProblemSchema,
+  ApplicabilityDecisionsUnavailableProblemSchema,
+  ApplicabilityDecisionsForbiddenProblemSchema,
+  ApplicabilityDecisionsNotFoundProblemSchema,
+  ApplicabilityDecisionsPolicyProblemSchema,
+  ApplicabilityDecisionsPolicyConflictProblemSchema,
+  ApplicabilityDecisionsInternalProblemSchema,
+  ApplicabilityDecisionsApi,
+} from './apis/applicability-decisions.ts';
+export type { ApplicabilityDecisionsRequest, ApplicabilityDecisionsResponse } from './apis/applicability-decisions.ts';
+export {
+  CurrentConsentRequestSchema,
+  CurrentConsentResponseSchema,
+  CurrentConsentAuthenticationProblemSchema,
+  CurrentConsentInvalidProblemSchema,
+  CurrentConsentUnavailableProblemSchema,
+  CurrentConsentForbiddenProblemSchema,
+  CurrentConsentNotFoundProblemSchema,
+  CurrentConsentPolicyProblemSchema,
+  CurrentConsentPolicyConflictProblemSchema,
+  CurrentConsentInternalProblemSchema,
+  CurrentConsentApi,
+} from './apis/current-consent.ts';
+export type { CurrentConsentRequest, CurrentConsentResponse } from './apis/current-consent.ts';
+export {
+  DsrCasesRequestSchema,
+  DsrCasesResponseSchema,
+  DsrCasesAuthenticationProblemSchema,
+  DsrCasesInvalidProblemSchema,
+  DsrCasesUnavailableProblemSchema,
+  DsrCasesForbiddenProblemSchema,
+  DsrCasesNotFoundProblemSchema,
+  DsrCasesPolicyProblemSchema,
+  DsrCasesPolicyConflictProblemSchema,
+  DsrCasesInternalProblemSchema,
+  DsrCasesApi,
+} from './apis/dsr-cases.ts';
+export type { DsrCasesRequest, DsrCasesResponse } from './apis/dsr-cases.ts';
+export {
+  LegalBasisAssignmentsRequestSchema,
+  LegalBasisAssignmentsResponseSchema,
+  LegalBasisAssignmentsAuthenticationProblemSchema,
+  LegalBasisAssignmentsInvalidProblemSchema,
+  LegalBasisAssignmentsUnavailableProblemSchema,
+  LegalBasisAssignmentsForbiddenProblemSchema,
+  LegalBasisAssignmentsNotFoundProblemSchema,
+  LegalBasisAssignmentsPolicyProblemSchema,
+  LegalBasisAssignmentsPolicyConflictProblemSchema,
+  LegalBasisAssignmentsInternalProblemSchema,
+  LegalBasisAssignmentsApi,
+} from './apis/legal-basis-assignments.ts';
+export type { LegalBasisAssignmentsRequest, LegalBasisAssignmentsResponse } from './apis/legal-basis-assignments.ts';
+export {
+  NoticeVersionsRequestSchema,
+  NoticeVersionsResponseSchema,
+  NoticeVersionsAuthenticationProblemSchema,
+  NoticeVersionsInvalidProblemSchema,
+  NoticeVersionsUnavailableProblemSchema,
+  NoticeVersionsForbiddenProblemSchema,
+  NoticeVersionsNotFoundProblemSchema,
+  NoticeVersionsPolicyProblemSchema,
+  NoticeVersionsPolicyConflictProblemSchema,
+  NoticeVersionsInternalProblemSchema,
+  NoticeVersionsApi,
+} from './apis/notice-versions.ts';
+export type { NoticeVersionsRequest, NoticeVersionsResponse } from './apis/notice-versions.ts';
+export {
+  OwnerInventoryRequestSchema,
+  OwnerInventoryResponseSchema,
+  OwnerInventoryAuthenticationProblemSchema,
+  OwnerInventoryInvalidProblemSchema,
+  OwnerInventoryUnavailableProblemSchema,
+  OwnerInventoryForbiddenProblemSchema,
+  OwnerInventoryNotFoundProblemSchema,
+  OwnerInventoryPolicyProblemSchema,
+  OwnerInventoryPolicyConflictProblemSchema,
+  OwnerInventoryInternalProblemSchema,
+  OwnerInventoryApi,
+} from './apis/owner-inventory.ts';
+export type { OwnerInventoryRequest, OwnerInventoryResponse } from './apis/owner-inventory.ts';
+export {
+  PrivacySubjectsRequestSchema,
+  PrivacySubjectsResponseSchema,
+  PrivacySubjectsAuthenticationProblemSchema,
+  PrivacySubjectsInvalidProblemSchema,
+  PrivacySubjectsUnavailableProblemSchema,
+  PrivacySubjectsForbiddenProblemSchema,
+  PrivacySubjectsNotFoundProblemSchema,
+  PrivacySubjectsPolicyProblemSchema,
+  PrivacySubjectsPolicyConflictProblemSchema,
+  PrivacySubjectsInternalProblemSchema,
+  PrivacySubjectsApi,
+} from './apis/privacy-subjects.ts';
+export type { PrivacySubjectsRequest, PrivacySubjectsResponse } from './apis/privacy-subjects.ts';
+export {
+  ProcessingActivitiesRequestSchema,
+  ProcessingActivitiesResponseSchema,
+  ProcessingActivitiesAuthenticationProblemSchema,
+  ProcessingActivitiesInvalidProblemSchema,
+  ProcessingActivitiesUnavailableProblemSchema,
+  ProcessingActivitiesForbiddenProblemSchema,
+  ProcessingActivitiesNotFoundProblemSchema,
+  ProcessingActivitiesPolicyProblemSchema,
+  ProcessingActivitiesPolicyConflictProblemSchema,
+  ProcessingActivitiesInternalProblemSchema,
+  ProcessingActivitiesApi,
+} from './apis/processing-activities.ts';
+export type { ProcessingActivitiesRequest, ProcessingActivitiesResponse } from './apis/processing-activities.ts';
+export {
+  ProcessingEligibilityRequestSchema,
+  ProcessingEligibilityResponseSchema,
+  ProcessingEligibilityAuthenticationProblemSchema,
+  ProcessingEligibilityInvalidProblemSchema,
+  ProcessingEligibilityUnavailableProblemSchema,
+  ProcessingEligibilityForbiddenProblemSchema,
+  ProcessingEligibilityNotFoundProblemSchema,
+  ProcessingEligibilityPolicyProblemSchema,
+  ProcessingEligibilityPolicyConflictProblemSchema,
+  ProcessingEligibilityInternalProblemSchema,
+  ProcessingEligibilityApi,
+} from './apis/processing-eligibility.ts';
+export type { ProcessingEligibilityRequest, ProcessingEligibilityResponse } from './apis/processing-eligibility.ts';
+export {
+  ProcessingPurposesRequestSchema,
+  ProcessingPurposesResponseSchema,
+  ProcessingPurposesAuthenticationProblemSchema,
+  ProcessingPurposesInvalidProblemSchema,
+  ProcessingPurposesUnavailableProblemSchema,
+  ProcessingPurposesForbiddenProblemSchema,
+  ProcessingPurposesNotFoundProblemSchema,
+  ProcessingPurposesPolicyProblemSchema,
+  ProcessingPurposesPolicyConflictProblemSchema,
+  ProcessingPurposesInternalProblemSchema,
+  ProcessingPurposesApi,
+} from './apis/processing-purposes.ts';
+export type { ProcessingPurposesRequest, ProcessingPurposeReadItem } from './apis/processing-purposes.ts';
+export {
+  ResponsibilityAssignmentsRequestSchema,
+  ResponsibilityAssignmentsResponseSchema,
+  ResponsibilityAssignmentsAuthenticationProblemSchema,
+  ResponsibilityAssignmentsInvalidProblemSchema,
+  ResponsibilityAssignmentsUnavailableProblemSchema,
+  ResponsibilityAssignmentsForbiddenProblemSchema,
+  ResponsibilityAssignmentsNotFoundProblemSchema,
+  ResponsibilityAssignmentsPolicyProblemSchema,
+  ResponsibilityAssignmentsPolicyConflictProblemSchema,
+  ResponsibilityAssignmentsInternalProblemSchema,
+  ResponsibilityAssignmentsApi,
+} from './apis/responsibility-assignments.ts';
+export type {
+  ResponsibilityAssignmentsRequest,
+  ResponsibilityAssignmentsResponse,
+} from './apis/responsibility-assignments.ts';
+export {
+  RetentionRulesRequestSchema,
+  RetentionRulesResponseSchema,
+  RetentionRulesAuthenticationProblemSchema,
+  RetentionRulesInvalidProblemSchema,
+  RetentionRulesUnavailableProblemSchema,
+  RetentionRulesForbiddenProblemSchema,
+  RetentionRulesNotFoundProblemSchema,
+  RetentionRulesPolicyProblemSchema,
+  RetentionRulesPolicyConflictProblemSchema,
+  RetentionRulesInternalProblemSchema,
+  RetentionRulesApi,
+} from './apis/retention-rules.ts';
+export type { RetentionRulesRequest, RetentionRulesResponse } from './apis/retention-rules.ts';
 
 export const privacyMarkerSchema = Schema.Struct({
   ...MicroVerticalBuildMarkerSchema.fields,

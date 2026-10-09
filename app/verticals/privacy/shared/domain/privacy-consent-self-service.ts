@@ -1,4 +1,3 @@
-/* oxlint-disable perfectionist/sort-interfaces, perfectionist/sort-object-types, perfectionist/sort-objects -- These schemas and decision records follow the published cross-owner contract order. expires: 2027-03-31. */
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Effect, Schema } from 'effect';
 
@@ -18,11 +17,9 @@ export type ConsentSelfServiceOperation = typeof ConsentOperationSchema.Type;
 const RetailProfileRefSchema = Schema.Struct({
   kind: Schema.Literal('RETAIL'),
   moduleId: Schema.Literal('commerce.customer-context'),
-  // oxlint-disable-next-line effect-native/no-unbranded-identifier-schema -- Consumer-side opaque owner reference; the Commerce owner validates its branded resource contract. expires: 2027-03-31.
-  resourceId: Ref,
+  resourceId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyResourceId'))),
   resourceType: Schema.Literal('commerce.customer-context.retail-customer-profile'),
-  // oxlint-disable-next-line effect-native/no-unbranded-identifier-schema -- Consumer-side tenant boundary is revalidated by the trusted owner/Core scope. expires: 2027-03-31.
-  tenantId: Schema.String.check(Schema.isUUID()),
+  tenantId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyTenantId'))),
 });
 export type RetailProfileRef = typeof RetailProfileRefSchema.Type;
 
@@ -116,8 +113,7 @@ export type ConsentSelfServiceOutcome = typeof ConsentSelfServiceOutcomeSchema.T
 const FreshnessSchema = Schema.Struct({
   observedAt: PrivacyIsoTimestampSchema,
   revision: Schema.optionalKey(Ref),
-  // oxlint-disable-next-line effect-native/no-unbranded-identifier-schema -- Source module is an owner-issued bounded reference in this cross-module fact. expires: 2027-03-31.
-  sourceModuleId: Ref,
+  sourceModuleId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacySourceModuleId'))),
   status: Schema.Literals(['CURRENT', 'STALE', 'UNAVAILABLE', 'INDETERMINATE']),
 });
 export type ConsentSelfServiceFreshness = typeof FreshnessSchema.Type;
@@ -143,8 +139,8 @@ export const TrustedPortalConsentAuthorityFactSchema = Schema.Struct({
   ...CommonAuthorityFields,
   binding: Schema.Struct({
     bindingRef: Ref,
-    profileRef: RetailProfileRefSchema,
     principalRef: PrincipalRefSchema,
+    profileRef: RetailProfileRefSchema,
     state: Schema.Literals(['ACTIVE', 'REVOKED']),
   }),
   bindingFreshness: FreshnessSchema,
@@ -339,7 +335,7 @@ const authorizeProfileBinding = (
   };
   const statusOutcome = profileBindingStatusOutcome(fact);
   if (statusOutcome !== undefined) {
-    return denied({ ...base, outcome: statusOutcome, actorPrincipalRef });
+    return denied({ ...base, actorPrincipalRef, outcome: statusOutcome });
   }
   const requestedProfileRef = request.path.kind === 'CURRENT_PROFILE_BINDING' ? request.path.profileRef : undefined;
   const sameTenant =
@@ -350,9 +346,9 @@ const authorizeProfileBinding = (
     !sameTenant ||
     !fact.permissions.includes('retail.consent.manage')
   ) {
-    return denied({ ...base, outcome: 'PROFILE_PERMISSION_REQUIRED', actorPrincipalRef });
+    return denied({ ...base, actorPrincipalRef, outcome: 'PROFILE_PERMISSION_REQUIRED' });
   }
-  return allowed({ ...base, outcome: 'ALLOWED_PROFILE', actorPrincipalRef });
+  return allowed({ ...base, actorPrincipalRef, outcome: 'ALLOWED_PROFILE' });
 };
 
 const authorizeOperationScoped = (
@@ -361,10 +357,10 @@ const authorizeOperationScoped = (
   now: string,
 ): ConsentSelfServiceAuthorization => {
   const base = {
+    actorPrincipalRef: fact.actorPrincipalRef,
     authority: 'CONSENT_ONLY' as const,
     evidenceRefs: fact.evidenceRefs,
     scopeRef: request.scope.scopeRef,
-    actorPrincipalRef: fact.actorPrincipalRef,
   };
   if (fact.status === 'REVOKED' || fact.status === 'STALE') {
     return denied({ ...base, outcome: 'OPERATION_CONTEXT_STALE' });
@@ -392,10 +388,10 @@ const authorizeSupportAssisted = (
   request: ConsentSelfServiceRequest,
 ): ConsentSelfServiceAuthorization => {
   const base = {
+    actorPrincipalRef: fact.actorPrincipalRef,
     authority: 'SUPPORT_ASSISTED_CONSENT' as const,
     evidenceRefs: fact.evidenceRefs,
     scopeRef: request.scope.scopeRef,
-    actorPrincipalRef: fact.actorPrincipalRef,
   };
   if (fact.status === 'STALE' || fact.status === 'REVOKED') {
     return denied({ ...base, outcome: 'SUPPORT_AUTHORITY_STALE' });
@@ -446,17 +442,17 @@ export interface ConsentSelfServiceAuthorityPorts {
     readonly profileRef: string;
     readonly request: ConsentSelfServiceRequest;
   }) => Effect.Effect<TrustedPortalConsentAuthorityFact, ConsentSelfServiceAuthorizationError>;
+  /** Adapter over the governed support representation/verification evidence. */
+  readonly resolveSupportAuthority: (input: {
+    readonly principalRef: typeof PrincipalRefSchema.Type;
+    readonly request: ConsentSelfServiceRequest;
+  }) => Effect.Effect<TrustedSupportConsentAuthorityFact, ConsentSelfServiceAuthorizationError>;
   /** Adapter over the supported operation-scoped verification provider. */
   readonly verifyOperationCredential: (input: {
     readonly credentialRef: string;
     readonly now: string;
     readonly request: ConsentSelfServiceRequest;
   }) => Effect.Effect<TrustedOperationConsentAuthorityFact, ConsentSelfServiceAuthorizationError>;
-  /** Adapter over the governed support representation/verification evidence. */
-  readonly resolveSupportAuthority: (input: {
-    readonly principalRef: typeof PrincipalRefSchema.Type;
-    readonly request: ConsentSelfServiceRequest;
-  }) => Effect.Effect<TrustedSupportConsentAuthorityFact, ConsentSelfServiceAuthorizationError>;
 }
 
 /**
@@ -465,9 +461,9 @@ export interface ConsentSelfServiceAuthorityPorts {
  */
 export const resolveAndAuthorizeConsentSelfService = (input: {
   readonly now: string;
+  readonly ports: ConsentSelfServiceAuthorityPorts;
   readonly principalRef: typeof PrincipalRefSchema.Type;
   readonly request: ConsentSelfServiceRequest;
-  readonly ports: ConsentSelfServiceAuthorityPorts;
 }): Effect.Effect<ConsentSelfServiceAuthorization, ConsentSelfServiceAuthorizationError> => {
   const { now, ports, principalRef, request } = input;
   if (request.scope.privacySubjectRef.tenantId !== principalRef.tenantId) {

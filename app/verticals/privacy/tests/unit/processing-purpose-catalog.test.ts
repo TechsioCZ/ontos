@@ -100,13 +100,13 @@ describe('Processing Purpose catalog', () => {
         { at: '2026-03-01T00:00:00Z', includeRetired: true, purposeRefs: [created.purposeRef] },
         tenantId,
         legalEntityId,
-        repository,
+        { services: repository },
       );
       const current = yield* readProcessingPurposes(
         { at: '2026-07-01T00:00:00Z', includeRetired: true, purposeRefs: [created.purposeRef] },
         tenantId,
         legalEntityId,
-        repository,
+        { services: repository },
       );
 
       expect(historical.items[0]?.effectiveVersion?.versionNumber).toBe(1);

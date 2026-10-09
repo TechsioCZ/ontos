@@ -317,7 +317,7 @@ describe('DSR authority-bound Actions', () => {
       let retainedCase: unknown;
       const { context } = createCaseContext({
         authority: { resolve: () => Effect.succeed(intakeReceipt) },
-        createDsrCase: (_tenant, _legalEntity, _invocation, caseRecord) =>
+        createDsrCase: (_scope, { caseRecord }) =>
           Effect.sync(() => {
             retainedCase = caseRecord;
             return caseRecord;

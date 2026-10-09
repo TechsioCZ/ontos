@@ -1,7 +1,7 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Effect, Schema } from 'effect';
 
-const Timestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u));
+const Timestamp = PrivacyIsoTimestampSchema;
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const Outcome = Schema.Literals([
   'PROVEN_PROVISION',
@@ -13,15 +13,15 @@ const Outcome = Schema.Literals([
 
 /** Proof emitted by the trusted owner of the concrete delivery channel. */
 const PrivacyNoticeChannelProofSchema = Schema.Struct({
-  anonymousContextRef: Schema.NullOr(Ref),
+  anonymousContextRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   authorityRef: Ref,
-  businessInteractionRef: Schema.NullOr(Ref),
+  businessInteractionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   channel: Ref,
   controllerRef: Ref,
   evidenceRef: Ref,
   noticeVersionRef: Ref,
   observedAt: Timestamp,
-  privacySubjectRef: Schema.NullOr(Ref),
+  privacySubjectRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   processingPurposeRef: Ref,
   processingScopeRef: Ref,
   proofKind: Schema.Literals(['DELIVERY_CONFIRMED', 'INTERACTIVE_ACKNOWLEDGEMENT', 'IN_PERSON_ACKNOWLEDGEMENT']),
@@ -31,24 +31,24 @@ export type PrivacyNoticeChannelProof = typeof PrivacyNoticeChannelProofSchema.T
 
 /** A minimal, immutable fact about one notice information step. Raw page or transport payloads are deliberately absent. */
 const privacyNoticeProvisionFields = {
-  actionRef: Schema.NullOr(Ref),
-  anonymousContextRef: Schema.NullOr(Ref),
-  businessInteractionRef: Schema.NullOr(Ref),
-  channel: Schema.NullOr(Ref),
-  channelProof: Schema.optional(Schema.NullOr(PrivacyNoticeChannelProofSchema)),
+  actionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  anonymousContextRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  businessInteractionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  channel: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  channelProof: Schema.optional(Schema.toEncoded(Schema.OptionFromNullOr(PrivacyNoticeChannelProofSchema))),
   controllerRef: Ref,
-  evidenceRef: Schema.NullOr(Ref),
-  failureReason: Schema.NullOr(Ref),
+  evidenceRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  failureReason: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   noticeVersionRef: Ref,
   outcome: Outcome,
-  privacySubjectRef: Schema.NullOr(Ref),
+  privacySubjectRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   processingPurposeRef: Ref,
   processingScopeRef: Ref,
   providedLanguage: Ref,
   provisionedAt: Timestamp,
-  provisionId: Ref,
+  provisionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyProvisionId'))),
   recordedAt: Timestamp,
-  supersedesProvisionRef: Schema.NullOr(Ref),
+  supersedesProvisionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
 } as const;
 
 export const PrivacyNoticeProvisionSchema = Schema.Struct(privacyNoticeProvisionFields);
@@ -69,7 +69,7 @@ export type PrivacyNoticeAuthorityFact = typeof PrivacyNoticeAuthorityFactSchema
 
 export interface TrustedPrivacyNoticeProvisionContext {
   readonly authoritativeProof: PrivacyNoticeChannelProof | null;
-  readonly recordedAt: string;
+  readonly recordedAt: typeof PrivacyIsoTimestampSchema.Type;
 }
 
 export class PrivacyNoticeProvisionInvariantError extends Schema.TaggedError<PrivacyNoticeProvisionInvariantError>()(

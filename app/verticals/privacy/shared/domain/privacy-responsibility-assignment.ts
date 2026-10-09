@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 
@@ -7,14 +6,16 @@ import { PrivacyPartyRefSchema } from './party-reference.ts';
 import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 
 const BoundedTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-const BoundedIdSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const BoundedIdSchema = Schema.toEncoded(
+  Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('PrivacyBoundedId')),
+);
 
 /** Canonical Core identity reference. Kept distinct from PartyRef by design. */
 export const LegalEntityRefSchema = Schema.Struct({
   moduleId: Schema.Literal('core.identity'),
   resourceId: BoundedIdSchema,
   resourceType: Schema.Literal('core.identity.legal-entity'),
-  tenantId: Schema.String.check(Schema.isUUID()),
+  tenantId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrivacyTenantId'))),
 });
 
 export const ProcessingScopeRefSchema = Schema.Struct({

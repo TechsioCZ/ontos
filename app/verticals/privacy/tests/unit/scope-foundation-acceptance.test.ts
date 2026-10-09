@@ -3,7 +3,10 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { createProcessingPurposeAction } from '../../src/actions/create-processing-purpose.action.ts';
 import { privacyManifest } from '../../vertical.manifest.ts';
-import { PrivacySubjectPersistenceUnavailable } from '../../src/persistence/privacy-subject-repository.ts';
+import {
+  PrivacySubjectPersistenceUnavailable,
+  PrivacySubjectRepository,
+} from '../../src/persistence/privacy-subject-repository.ts';
 import type { PrivacySubjectRepositoryService } from '../../src/persistence/privacy-subject-repository.ts';
 import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 
@@ -34,13 +37,13 @@ const record = (tenantId: string) =>
 
 const tenantScopedRepository = (): PrivacySubjectRepositoryService => {
   const records = new Map<string, ReturnType<typeof record>>();
-  return {
+  return PrivacySubjectRepository.of({
     findByRef: (ref) => Effect.succeed(Option.fromNullishOr(records.get(`${ref.tenantId}:${ref.resourceId}`))),
     save: (value) =>
       Effect.sync(() => {
         records.set(`${value.subjectRef.tenantId}:${value.subjectRef.resourceId}`, value);
       }),
-  };
+  });
 };
 
 describe('privacy scope-foundation acceptance boundary', () => {

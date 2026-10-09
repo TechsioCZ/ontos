@@ -119,7 +119,6 @@ const required = <Value>(value: Value | undefined, reason: string): Value => {
   return value;
 };
 
-/* oxlint-disable sonarjs/no-nested-functions -- The test double mirrors Core's nested owner transaction and scoped routine lifetime. */
 const fanout = (
   results: Readonly<Record<string, RetentionEvaluationRoutineRow>>,
   captures: RoutineCapture[] = [],
@@ -144,7 +143,7 @@ const fanout = (
           },
           tenantId: workerContext.tenantId,
         }).pipe(
-          Effect.tap(() =>
+          Effect.tap(
             Effect.sync(() => {
               if (callbackCompleted !== undefined) {
                 callbackCompleted.value = true;
@@ -155,7 +154,6 @@ const fanout = (
       { concurrency: 1, discard: true },
     ),
 });
-/* oxlint-enable sonarjs/no-nested-functions */
 
 const runWorker = (
   results: Readonly<Record<string, RetentionEvaluationRoutineRow>>,

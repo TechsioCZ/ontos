@@ -1,5 +1,5 @@
 import type { Effect, Option } from 'effect';
-import { Effect as EffectValue, Option as OptionValue, Schema } from 'effect';
+import { Context, Effect as EffectValue, Option as OptionValue, Schema } from 'effect';
 
 import { PrivacyNoticeProvisionSchema } from '../../shared/domain/privacy-notice-provision.ts';
 import type { PrivacyNoticeProvision } from '../../shared/domain/privacy-notice-provision.ts';
@@ -7,7 +7,6 @@ import { NoticeProvisionPersistenceError } from './notice-provision-persistence-
 
 export { NoticeProvisionPersistenceError } from './notice-provision-persistence-error.ts';
 
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- Action and governed-read factories inject this owner-local repository through their scoped service factories; it has no global Context lifetime. expires: 2027-03-31.
 export interface NoticeProvisionRepositoryService {
   readonly findById: (
     tenantId: string,
@@ -26,6 +25,12 @@ export interface NoticeProvisionRepositoryService {
     provision: PrivacyNoticeProvision,
   ) => Effect.Effect<PrivacyNoticeProvision, NoticeProvisionPersistenceError>;
 }
+
+/** Owner-local service contract; scope is supplied by its transaction factory. */
+export class NoticeProvisionRepository extends Context.Service<
+  NoticeProvisionRepository,
+  NoticeProvisionRepositoryService
+>()('@app/privacy/persistence/notice-provision-repository/NoticeProvisionRepository') {}
 
 const provisionsAreEquivalent = Schema.toEquivalence(PrivacyNoticeProvisionSchema);
 const noticeProvisionScopedKey = (tenantId: string, legalEntityId: string, value: string): string =>

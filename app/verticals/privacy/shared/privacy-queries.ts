@@ -1,4 +1,3 @@
-/* eslint-disable effect-native/no-nullable-schema-field -- Query filters preserve explicit absence on public Privacy wires. expires: 2027-03-31. */
 import { Schema } from 'effect';
 
 import { OwnerContributionSchema } from './domain/owner-contribution.ts';
@@ -56,7 +55,7 @@ export const ResponsibilityAssignmentsResponseSchema = Schema.Struct({
 });
 
 export const ApplicabilityDecisionsRequestSchema = Schema.Struct({
-  operation: Schema.NullOr(Ref),
+  operation: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   processingScopeRefs: Refs,
 });
 export const ApplicabilityDecisionsResponseSchema = Schema.Struct({

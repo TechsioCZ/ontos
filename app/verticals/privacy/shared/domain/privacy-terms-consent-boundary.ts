@@ -1,18 +1,18 @@
-/* eslint-disable effect-native/no-nullable-schema-field, effect-native/no-string-timestamp-schema, effect-native/no-unbranded-identifier-schema -- Privacy cross-owner wire contracts preserve explicit JSON null, canonical UTC string encodings, and owner-issued opaque references; generated API and Resource boundaries validate provenance without a misleading shared brand. expires: 2027-03-31. */
+import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Schema } from 'effect';
 
 import { PrivacyNoticeProvisionSchema } from './privacy-notice-provision.ts';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const Timestamp = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u));
+const Timestamp = PrivacyIsoTimestampSchema;
 
 /** A Terms acceptance is a legal/product fact, not evidence of notice provision or consent. */
 export const TermsAcceptanceSchema = Schema.Struct({
-  acceptanceId: Ref,
+  acceptanceId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyAcceptanceId'))),
   acceptedAt: Timestamp,
-  anonymousContextRef: Schema.NullOr(Ref),
-  evidenceRef: Schema.NullOr(Ref),
-  privacySubjectRef: Schema.NullOr(Ref),
+  anonymousContextRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  evidenceRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
+  privacySubjectRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   recordedAt: Timestamp,
   termsVersionRef: Ref,
 });
@@ -23,8 +23,8 @@ export const ExplicitConsentDecisionSchema = Schema.Struct({
   controllerRef: Ref,
   decidedAt: Timestamp,
   decision: Schema.Literals(['GRANTED', 'REFUSED', 'WITHDRAWN']),
-  decisionId: Ref,
-  evidenceRef: Schema.NullOr(Ref),
+  decisionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyDecisionId'))),
+  evidenceRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   privacySubjectRef: Ref,
   processingPurposeRef: Ref,
   processingScopeRef: Ref,
@@ -37,10 +37,10 @@ export type ExplicitConsentDecision = typeof ExplicitConsentDecisionSchema.Type;
  * no member is derived from either of the other two.
  */
 export const CombinedPrivacySubmissionSchema = Schema.Struct({
-  consentDecision: Schema.NullOr(ExplicitConsentDecisionSchema),
-  noticeProvision: Schema.NullOr(PrivacyNoticeProvisionSchema),
-  submissionId: Ref,
-  termsAcceptance: Schema.NullOr(TermsAcceptanceSchema),
+  consentDecision: Schema.toEncoded(Schema.OptionFromNullOr(ExplicitConsentDecisionSchema)),
+  noticeProvision: Schema.toEncoded(Schema.OptionFromNullOr(PrivacyNoticeProvisionSchema)),
+  submissionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacySubmissionId'))),
+  termsAcceptance: Schema.toEncoded(Schema.OptionFromNullOr(TermsAcceptanceSchema)),
 });
 export type CombinedPrivacySubmission = typeof CombinedPrivacySubmissionSchema.Type;
 

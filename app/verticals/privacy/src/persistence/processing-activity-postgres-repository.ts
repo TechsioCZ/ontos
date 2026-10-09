@@ -1,7 +1,9 @@
+import { ProcessingActivityRepository } from './processing-activity-repository.ts';
+import type { ProcessingActivityRepositoryService } from './processing-activity-repository.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { flow, DateTime, Effect, Option, Schema } from 'effect';
 import { randomUUID } from 'node:crypto';
 
 import { PrivacyApplicabilityDecisionSchema } from '../../shared/domain/privacy-applicability.ts';
@@ -34,7 +36,6 @@ import {
   responsibilityAssignments,
   retentionRules,
 } from '../database/schema.ts';
-import type { ProcessingActivityRepositoryService } from './processing-activity-repository.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 const samePurposeRef = Schema.toEquivalence(ProcessingPurposeRefSchema);
@@ -56,26 +57,25 @@ const scopeUnavailable = () =>
     reason: 'Processing Activity operations require a trusted Legal Entity scope',
   });
 
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- PostgreSQL jsonb is decoded immediately through the public Processing Activity schema.
-const decodeActivity = (value: unknown) =>
-  Schema.decodeUnknownEffect(ProcessingActivitySchema)(value).pipe(
-    Effect.mapError((cause) => failure('Stored Processing Activity could not be decoded', cause)),
-  );
+const decodeActivity = flow(
+  Schema.decodeUnknownEffect(ProcessingActivitySchema),
+  Effect.mapError((cause) => failure('Stored Processing Activity could not be decoded', cause)),
+);
 
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- JSONB is decoded immediately at this repository boundary.
-const decodePrerequisite = <A, I>(schema: Schema.Codec<A, I>, value: unknown, label: string) =>
-  Schema.decodeUnknownEffect(schema)(value).pipe(
+const decodePrerequisite = <A, I>(schema: Schema.Codec<A, I>, label: string) =>
+  flow(
+    Schema.decodeUnknownEffect(schema),
     Effect.mapError((cause) => failure(`Stored ${label} could not be decoded`, cause)),
   );
 
 const decodeNullablePrerequisite = <A, I>(schema: Schema.Codec<A, I>, value: I | null, label: string) =>
-  value === null ? Effect.succeed(null) : decodePrerequisite(schema, value, label);
+  value === null ? Effect.succeed(null) : decodePrerequisite(schema, label)(value);
 
 const decodePrerequisiteRows = <A, I>(
   schema: Schema.Codec<A, I>,
   rows: readonly { readonly record: unknown }[],
   label: string,
-) => Effect.forEach(rows, ({ record }) => decodePrerequisite(schema, record, label), { concurrency: 1 });
+) => Effect.forEach(rows, ({ record }) => decodePrerequisite(schema, label)(record), { concurrency: 1 });
 
 const isoOrNull = (value: Date | null): string | null =>
   value === null ? null : DateTime.formatIso(DateTime.fromDateUnsafe(value));
@@ -462,4 +462,8 @@ export const processingActivityRepositoryForScope = (
 ): Effect.Effect<ProcessingActivityRepositoryService, OperationContextUnavailable> =>
   scope.legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())
-    : Effect.succeed(makeRepository(transaction, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }));
+    : Effect.succeed(
+        ProcessingActivityRepository.of(
+          makeRepository(transaction, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }),
+        ),
+      );

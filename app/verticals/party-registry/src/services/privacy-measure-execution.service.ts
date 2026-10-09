@@ -4,7 +4,7 @@ import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Option } from 'effect';
+import { Context, DateTime, Effect, Option } from 'effect';
 
 import { ExecutePrivacyMeasureRejected } from '../../shared/actions/execute-privacy-measure.ts';
 import { privacyMeasureExecutions } from '../db/schema.ts';
@@ -19,7 +19,6 @@ export interface PrivacyMeasureExecutionReceipt {
   readonly outcome: OwnerExecutionOutcome;
 }
 
-// oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- The scoped Action/Read factory constructs and injects this owner-local transaction service; it has no independent Context lifetime. expires: 2027-03-31.
 export interface PrivacyMeasureExecutionService {
   readonly execute: (
     handoff: PrivacyMeasureHandoff,
@@ -29,6 +28,11 @@ export interface PrivacyMeasureExecutionService {
     idempotencyKey: string,
   ) => Effect.Effect<Option.Option<PrivacyMeasureExecutionReceipt>, ExecutePrivacyMeasureRejected>;
 }
+
+/** Owner-local service contract; scope is supplied by its transaction factory. */
+export class PrivacyMeasureExecution extends Context.Service<PrivacyMeasureExecution, PrivacyMeasureExecutionService>()(
+  '@app/party-registry/services/privacy-measure-execution.service/PrivacyMeasureExecution',
+) {}
 
 const rejected = (code: ExecutePrivacyMeasureRejected['code'], reason: string, retryable: boolean, cause?: unknown) => {
   const error = new ExecutePrivacyMeasureRejected({ code, reason, retryable });
@@ -167,5 +171,5 @@ export const privacyMeasureExecutionService = (
       return outcome;
     },
   );
-  return Effect.succeed({ execute, load });
+  return Effect.succeed(PrivacyMeasureExecution.of({ execute, load }));
 };
