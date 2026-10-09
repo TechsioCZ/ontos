@@ -1,82 +1,68 @@
 import { Schema } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
-import { isSamePurchaseIdentity, isSameShippingSourceRef } from './purchase-binding.ts';
-import { ShippingAllocationBasisSchema } from './shipping-allocation.ts';
-import type { ShippingAllocationBasis } from './shipping-allocation.ts';
-import { TaxDecisionIdSchema } from './tax-decision.ts';
-import type { TaxDecisionUnit } from './tax-decision.ts';
+import {
+  TaxMaterialChangeConclusionSchema,
+  TaxMaterialityUnverifiableSchema,
+  TaxNonMaterialAttestationSchema,
+} from '../../shared/domain/tax-evaluation-contracts.ts';
+import type {
+  TaxEvidenceDifference,
+  TaxMaterialChange,
+  TaxMaterialityConclusion,
+} from '../../shared/domain/tax-evaluation-contracts.ts';
+
+import {
+  isSameExactTaxPurchaseBinding,
+  isSameShippingSourceRef,
+} from '../../shared/domain/tax-kernel/purchase-binding.ts';
+import type { TaxPurchaseBinding } from '../../shared/domain/tax-kernel/purchase-binding.ts';
+import { ShippingAllocationBasisSchema } from '../../shared/domain/tax-kernel/shipping-allocation.ts';
+import type { ShippingAllocationBasis } from '../../shared/domain/tax-kernel/shipping-allocation.ts';
+import type { TaxDecisionUnit } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import { taxDecisionIdFor } from './tax-evaluation.ts';
 import type { TaxMeaningFingerprint } from './tax-evaluation.ts';
-import { taxExactFractionOfPercent } from './tax-exact-rational.ts';
-import type { TaxExactRational } from './tax-exact-rational.ts';
+import { taxExactFractionOfPercent } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { TaxOutcomeSuccessSchema } from './tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from './tax-outcome.ts';
-import { LineCommercialValueBasisSchema } from './taxable-basis.ts';
+import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 
 type LineCommercialValueBasis = typeof LineCommercialValueBasisSchema.Type;
 
-/** Declared use of the compared meanings; the same states and use give the same conclusion (#943 F10). */
-export const TaxMaterialityDeclaredUseSchema = Schema.Literal('LAUNCH_PURCHASE');
-
-/** Tax meaning that changed (#943 F2-F5, #937 F39-F45). */
-export const TaxMaterialChangeSchema = Schema.Literals([
-  'TAXABLE_SUPPLY_UNITS',
-  'APPLICABILITY',
-  'JURISDICTION',
-  'TREATMENT',
-  'CLASSIFICATION',
-  'TAXABLE_BASIS',
-  'SHIPPING_ALLOCATION',
-  'PUBLISHED_TAX_AMOUNT',
-  'PURCHASE_TAX_TOTAL',
-  'TAX_ROUNDING_POLICY',
-]);
-export type TaxMaterialChange = typeof TaxMaterialChangeSchema.Type;
-
-/** Provenance/evidence that changed while the material meaning was preserved (#943 F6-F7, F9; #937 F59-F63). */
-export const TaxEvidenceDifferenceSchema = Schema.Literals([
-  'GOVERNING_TAX_RULE_REVISION',
-  'CATALOG_EVIDENCE',
-  'PLACE_EVIDENCE',
-  'PRICING_SOURCE',
-  'SHIPPING_SOURCE',
-  'PURCHASE_CANDIDATE',
-  'TAX_RELEVANT_TIME',
-  'TAX_EVALUATION_TIME',
-]);
-export type TaxEvidenceDifference = typeof TaxEvidenceDifferenceSchema.Type;
-
-const FingerprintSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
-const ComparedMeaningSchema = Schema.Struct({ decisionId: TaxDecisionIdSchema, meaningFingerprint: FingerprintSchema });
-
-/** TAX cannot attest anything about the pair; consumers must not infer equivalence from it (#943 F8). */
-export const TaxMaterialityUnverifiableSchema = Schema.TaggedStruct('UNVERIFIABLE', {
-  reason: Schema.Literals(['NOT_DETERMINED', 'DECISION_IDENTITY_MISMATCH', 'DIFFERENT_PURCHASE']),
-});
-
-/** At least one material Tax meaning changed (#943 F2-F5, F14). */
-export const TaxMaterialChangeConclusionSchema = Schema.TaggedStruct('MATERIAL', {
-  current: ComparedMeaningSchema,
-  previous: ComparedMeaningSchema,
-  reasons: Schema.NonEmptyArray(TaxMaterialChangeSchema),
-});
-
-/** Preserved material meaning; changed provenance is named, never fabricated as unchanged (#943 F7, F9, F16). */
-export const TaxNonMaterialAttestationSchema = Schema.TaggedStruct('ATTESTED_NON_MATERIAL', {
-  currentDecisionId: TaxDecisionIdSchema,
-  evidenceDifferences: Schema.Array(TaxEvidenceDifferenceSchema),
-  preservedMeaningFingerprint: FingerprintSchema,
-  previousDecisionId: TaxDecisionIdSchema,
-});
-
-/** TAX-owned materiality conclusion of one exact old/new pair (#943 F1-F10). */
-export const TaxMaterialityConclusionSchema = Schema.Union([
-  TaxMaterialityUnverifiableSchema,
+export {
+  TaxEvidenceDifferenceSchema,
   TaxMaterialChangeConclusionSchema,
+  TaxMaterialChangeSchema,
+  TaxMaterialityConclusionSchema,
+  TaxMaterialityDeclaredUseSchema,
+  TaxMaterialityUnverifiableSchema,
   TaxNonMaterialAttestationSchema,
-]);
-export type TaxMaterialityConclusion = typeof TaxMaterialityConclusionSchema.Type;
+} from '../../shared/domain/tax-evaluation-contracts.ts';
+export type {
+  TaxEvidenceDifference,
+  TaxMaterialChange,
+  TaxMaterialityConclusion,
+} from '../../shared/domain/tax-evaluation-contracts.ts';
+
+/**
+ * Same exact purchase/use for a Tax materiality comparison: Tenant, Selling Legal Entity, Purchasing Subject,
+ * currency and the exact occurrence set with Catalog Selection and Quantity + Unit. Candidate, Pricing Result and
+ * Shipping source revisions may differ between an approved prospective and a final evaluation; whether that change
+ * is material is the comparison's own conclusion (#943 F1, F9, F11-F12; #937 F1-F14, F59-F62).
+ */
+export const isSamePurchaseIdentity = (left: TaxPurchaseBinding, right: TaxPurchaseBinding): boolean => {
+  const { shippingSourceRef: _rightShipping, ...rightWithoutShipping } = right;
+  const aligned = {
+    ...rightWithoutShipping,
+    pricingResultRef: left.pricingResultRef,
+    purchaseCandidateRef: left.purchaseCandidateRef,
+  };
+  return isSameExactTaxPurchaseBinding(
+    left,
+    left.shippingSourceRef === undefined ? aligned : { ...aligned, shippingSourceRef: left.shippingSourceRef },
+  );
+};
 
 const isSuccess = Schema.is(TaxOutcomeSuccessSchema);
 const isLine = Schema.is(LineCommercialValueBasisSchema);
