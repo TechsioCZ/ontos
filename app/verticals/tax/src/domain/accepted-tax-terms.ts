@@ -19,7 +19,6 @@ import type { AcceptedTaxTerms } from '../../shared/domain/tax-kernel/accepted-t
 export {
   AcceptedTaxTermsSchema,
   AuthoritativeOriginalAcceptedRecordSchema,
-  OrderLineageSchema,
 } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 export type { AcceptedTaxTerms } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 

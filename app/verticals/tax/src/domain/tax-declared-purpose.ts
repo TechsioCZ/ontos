@@ -8,9 +8,6 @@ import type {
 } from '../../shared/domain/tax-kernel/tax-declared-purpose.ts';
 
 export {
-  DeclaredTaxPurposeOutcomeSchema,
-  DeclaredTaxPurposeRequestSchema,
-  DeclaredTaxPurposeSchema,
   HistoricalReadUsesAcceptedTaxTermsSchema,
   NewEventDeterminationUnsupportedSchema,
   NoNewTaxEventSchema,

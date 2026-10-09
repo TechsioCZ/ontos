@@ -35,27 +35,19 @@ import type {
 } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 
 export {
-  AcceptedCumulativeCorrectionStateSchema,
   CumulativeUnitTaxStateSchema,
   OriginalRecordUnavailableSchema,
-  TaxCorrectionChangeSchema,
   TaxCorrectionDeltaSchema,
-  TaxCorrectionFactsSchema,
   TaxCorrectionHistoricalInputUnresolvedSchema,
   TaxCorrectionOutOfBoundsSchema,
-  TaxCorrectionOutcomeSchema,
   TaxCorrectionRequestSchema,
-  TaxCorrectionUnitDeltaSchema,
-  TaxCorrectionUnitRequestSchema,
 } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 export type {
   AcceptedCumulativeCorrectionState,
-  CumulativeUnitTaxState,
   TaxCorrectionChange,
   TaxCorrectionDelta,
   TaxCorrectionOutcome,
   TaxCorrectionRequest,
-  TaxCorrectionUnitDelta,
   TaxCorrectionUnitRequest,
 } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 
