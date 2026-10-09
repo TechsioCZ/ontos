@@ -12,7 +12,11 @@ import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/t
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { EstablishTaxFactAuthorityContractPayloadSchema } from '../../shared/actions/tax-governance.ts';
+import { FinalizeOrderTaxPayloadSchema } from '../../shared/actions/order-tax-finalization.ts';
+import {
+  CreateTaxRulePayloadSchema,
+  EstablishTaxFactAuthorityContractPayloadSchema,
+} from '../../shared/actions/tax-governance.ts';
 import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
 import { TaxPrivacyOwnerCoverageRequestSchema } from '../../shared/apis/tax-privacy-owner-coverage.ts';
 import type {
@@ -25,12 +29,20 @@ import {
   taxFactAuthorityContracts,
   taxOrderTaxFinalizations,
   taxRelations,
+  taxRuleCorrections,
+  taxRuleRevisionEndFacts,
+  taxRuleRevisions,
+  taxRules,
   taxSourceAssertions,
   taxSourceConflicts,
 } from '../../src/database/schema.ts';
+import { orderTaxFinalizationsForScope } from '../../src/services/order-tax-finalization.service.ts';
 import { taxAuthorityGovernancePersistenceForScope } from '../../src/services/tax-authority-governance.service.ts';
 import { taxPrivacyCoverageForScope } from '../../src/services/tax-privacy-coverage.service.ts';
+import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
 import { taxSourceAssertionPersistenceForScope } from '../../src/services/tax-source-assertion.service.ts';
+import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
+import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
 const tenantId = randomUUID();
 const otherTenantId = randomUUID();
@@ -90,6 +102,10 @@ const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
           .where(eq(taxFactAuthorityContractRevisions.tenantId, tenant));
         yield* transaction.delete(taxFactAuthorityContracts).where(eq(taxFactAuthorityContracts.tenantId, tenant));
         yield* transaction.delete(taxOrderTaxFinalizations).where(eq(taxOrderTaxFinalizations.tenantId, tenant));
+        yield* transaction.delete(taxRuleCorrections).where(eq(taxRuleCorrections.tenantId, tenant));
+        yield* transaction.delete(taxRuleRevisionEndFacts).where(eq(taxRuleRevisionEndFacts.tenantId, tenant));
+        yield* transaction.delete(taxRuleRevisions).where(eq(taxRuleRevisions.tenantId, tenant));
+        yield* transaction.delete(taxRules).where(eq(taxRules.tenantId, tenant));
       }
     }),
   );
@@ -246,6 +262,71 @@ it.live('#956 F27 #950 F24-F28 coverage never reaches another seller or Tenant',
       const otherTenant = scopeFor(otherTenantId, sellerA);
       const isolated = Option.getOrThrow(yield* coverageOf(runtime, otherTenant, [seller(sellerA)]));
       expect(isolated.coverage.contentStatus).toBe('NO_DATA');
+    }),
+  ),
+);
+
+/** Creates one launched TAX rule so a finalization candidate's classification can resolve against it. */
+const createLaunchRule = (
+  runtime: CoreTestDatabase,
+  scope: OperationalScope,
+  stableCode: string,
+  taxClassificationCode: string,
+  ratePercent: string,
+) =>
+  Schema.decodeEffect(CreateTaxRulePayloadSchema)({
+    initialRevision: {
+      compositionKind: 'EXCLUSIVE',
+      effectiveFrom: '2026-01-01T00:00:00.000Z',
+      jurisdiction: 'CZ_DOMESTIC',
+      ratePercent,
+      taxClassificationCode,
+      treatmentCategory: 'TAXABLE',
+    },
+    meaningKind: 'VAT_RATE',
+    provenanceRef: `acceptance:privacy-finalization:${stableCode}`,
+    reason: 'Czech VAT rate for privacy coverage finalization fixture',
+    stableCode,
+  }).pipe(
+    Effect.flatMap((payload) =>
+      runScoped(runtime, scope, (transaction) =>
+        taxRuleGovernancePersistenceForScope(transaction, scope).createTaxRule({ ...payload, ...invocation(scope) }),
+      ),
+    ),
+  );
+
+/** Finalizes one Order Tax for seller A so the owner coverage lookup has a real finalization row. */
+const finalizeOrderForSellerA = (runtime: CoreTestDatabase) =>
+  Effect.gen(function* finalizeOrderTaxForPrivacyCoverage() {
+    // Both occurrence classification codes used by the default evaluation fixture need a launched rule.
+    yield* createLaunchRule(runtime, scopeA, 'cz.standard.privacy-finalization', 'cz-standard-goods', '21');
+    yield* createLaunchRule(runtime, scopeA, 'cz.reduced.privacy-finalization', 'cz-reduced-food', '12');
+    const { taxRelevantTime: _taxRelevantTime, ...candidate } = evaluationRequestInput({
+      purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: sellerA, tenantId }),
+    });
+    const payload = yield* Schema.decodeEffect(FinalizeOrderTaxPayloadSchema)({
+      candidate,
+      orderCommitmentTime: '2026-06-01T10:00:00.000Z',
+      provenanceRef: 'acceptance:privacy-finalization',
+      reason: 'Final Order Tax at Order Commitment Time',
+      submissionRef: `submission-privacy-${randomUUID()}`,
+    });
+    return yield* runScoped(runtime, scopeA, (transaction) =>
+      orderTaxFinalizationsForScope(transaction, scopeA).finalize({ ...payload, ...invocation(scopeA) }),
+    );
+  });
+
+it.live('#956 F13-F16 a seller with a finalized Order Tax finds its own finalization evidence', () =>
+  Effect.scoped(
+    Effect.gen(function* finalizedSellerCoverage() {
+      const runtime = yield* acquireSeededDatabase;
+      const outcome = yield* finalizeOrderForSellerA(runtime);
+      if ('kind' in outcome) {
+        throw new Error(`Expected a finalization result, got ${outcome.kind}`);
+      }
+      const result = yield* coverageOf(runtime, scopeA, [seller(sellerA)]);
+      expect(Option.getOrThrow(result).coverage.contentStatus).toBe('FOUND');
+      expect(foundIn(result, 'ORDER_TAX_FINALIZATION_DECISION_EVIDENCE')).toEqual(['order-tax-finalization']);
     }),
   ),
 );

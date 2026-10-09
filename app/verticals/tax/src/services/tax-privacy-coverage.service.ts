@@ -63,7 +63,7 @@ const coverageTables = {
   tax_order_tax_finalizations: coverageTable(
     taxOrderTaxFinalizations,
     taxOrderTaxFinalizations.taxOrderTaxFinalizationId,
-    'tax-order-tax-finalization',
+    'order-tax-finalization',
   ),
   tax_rule_corrections: coverageTable(
     taxRuleCorrections,
