@@ -18,12 +18,15 @@ import type {
 } from '../../shared/domain/tax-migration-contracts.ts';
 import { resolveSellingLegalEntityVatRegistration } from './selling-legal-entity-vat-registration-resolution.ts';
 import type { CompleteSellingLegalEntityVatRegistrationState } from './selling-legal-entity-vat-registration-resolution.ts';
-import type { SellingLegalEntityVatRegistrationState } from './selling-legal-entity-vat-registration.ts';
-import { taxExactRationalFromDecimal, taxExactRationalsEqual } from './tax-exact-rational.ts';
 import { isOpenTaxMigrationOutcome, taxMigrationFamilies } from './tax-fact-migration.ts';
 import { selectApplicableTaxRuleRevision } from './tax-rule-selection.ts';
 import type { CompleteTaxRuleState } from './tax-rule-selection.ts';
-import type { TaxRelevantTime } from './tax-time.ts';
+import {
+  taxExactRationalFromDecimal,
+  taxExactRationalsEqual,
+} from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import type { SellingLegalEntityVatRegistrationState } from '../../shared/domain/tax-kernel/selling-legal-entity-vat-registration.ts';
+import type { TaxRelevantTime } from '../../shared/domain/tax-kernel/tax-time.ts';
 
 /**
  * Shadow comparison of the applicable VAT rate for one Tax Classification at a Tax-Relevant Time: the declared
