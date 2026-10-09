@@ -43,6 +43,12 @@ const collatingEqualIntent = (reversed: boolean) => {
   });
 };
 
+const contribution = (contributionRef: string, contributionFamily: string, numerator: string) => ({
+  amount: { amount: { denominator: '1', numerator }, currency: 'CZK' },
+  contributionFamily,
+  contributionRef,
+});
+
 const withSecondFact = (entry: ReturnType<typeof catalogEntry>, reversed: boolean): ReturnType<typeof catalogEntry> => {
   const [category] = entry.classificationInput.materialCatalogEvidence;
   const origin = { ...category, catalogFactRef: `${entry.occurrenceId}:origin`, factKind: 'ORIGIN', factValue: 'CZ' };
@@ -86,6 +92,21 @@ describe('Final Order Tax intent (#944 F10-F12, #941 F2-F4)', () => {
       });
 
     expect(facts(true)).toBe(facts(false));
+  });
+
+  it('#937 F7 the order of Pricing breakdown contributions is not part of the intent', () => {
+    const price = contribution('price-1', 'PRICE', '1100');
+    const discount = contribution('discount-1', 'DISCOUNT', '-100');
+    const breakdown = (contributions: ReturnType<typeof contribution>[]) =>
+      intent({
+        pricing: {
+          pricingResultRef: PRICING_RESULT_REF,
+          publishedLines: [{ ...pricingLine('o1', '1000.00'), breakdown: contributions }, pricingLine('o2', '500.00')],
+        },
+      });
+
+    expect(breakdown([discount, price])).toBe(breakdown([price, discount]));
+    expect(breakdown([price])).not.toBe(breakdown([price, discount]));
   });
 
   it('#937 F38 traceability-only context is not part of the frozen intent', () => {

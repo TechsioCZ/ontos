@@ -43,10 +43,10 @@ export const FinalizeOrderTaxPayloadSchema = Schema.Struct({
 export type FinalizeOrderTaxPayload = typeof FinalizeOrderTaxPayloadSchema.Type;
 
 /**
- * The exact final Tax content the #330 Bundle embeds before its Attempt. TAX re-checks that the Result's amounts
- * follow from the Decision whenever it accepts one; the published outcome schema binds them only (#944 F19, #907 F158; PO decision D6 default):
+ * The exact final Tax content the #330 Bundle embeds before its Attempt (#944 F19, #907 F158; PO decision D6 default):
  * submission identity, T, the immutable Decision with its Result, and where its foreign facts came from. Under the
- * human decision A1 on #907 they are caller-supplied until #892, and the label travels with the result.
+ * human decision A1 on #907 they are caller-supplied until #892, and the label travels with the result. The published
+ * outcome schema only binds the Result to its Decision; TAX re-checks that the amounts follow whenever it accepts one.
  */
 export const FinalOrderTaxHandoffSchema = Schema.Struct({
   foreignEvidenceOrigin: TaxForeignEvidenceOriginSchema,
