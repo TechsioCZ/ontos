@@ -6,10 +6,7 @@ import type {
   TaxEvaluationRequestRejectionReason,
 } from '../../shared/domain/tax-evaluation-contracts.ts';
 
-export {
-  TaxEvaluationRequestSchema,
-  TaxEvaluationRequestRejectionReasonSchema,
-} from '../../shared/domain/tax-evaluation-contracts.ts';
+export { TaxEvaluationRequestSchema } from '../../shared/domain/tax-evaluation-contracts.ts';
 export type {
   TaxEvaluationRequest,
   TaxEvaluationRequestRejectionReason,

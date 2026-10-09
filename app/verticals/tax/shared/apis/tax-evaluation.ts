@@ -2,7 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 import {
-  TaxEvaluationRequestContractSchema,
+  TaxEvaluationRequestSchema as TaxEvaluationRequestContractSchema,
   TaxEvaluationResponseContractSchema,
 } from '../domain/tax-evaluation-contracts.ts';
 

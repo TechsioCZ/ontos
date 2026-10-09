@@ -171,8 +171,6 @@ const AttemptSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
  */
 export const TaxForeignEvidenceOriginSchema = Schema.Literal('CALLER_SUPPLIED_UNVERIFIED');
 
-export const TaxEvaluationRequestContractSchema = TaxEvaluationRequestSchema;
-
 /** Completeness evidence of one decisive rule predicate actually used (#942 F16, #937 F31, F36-F37). */
 const RuleSetEvidenceSchema = Schema.Struct({
   outcome: ApplicableTaxRuleSetResponseContractSchema.fields.outcome,
@@ -226,6 +224,3 @@ export const TaxMaterialityComparisonRequestContractSchema = Schema.Struct({
   declaredUse: TaxMaterialityDeclaredUseSchema,
   previous: TaxOutcomeSchema,
 });
-
-/** TAX-owned materiality conclusion (#943 F1-F10). */
-export const TaxMaterialityComparisonResponseContractSchema = TaxMaterialityConclusionSchema;
