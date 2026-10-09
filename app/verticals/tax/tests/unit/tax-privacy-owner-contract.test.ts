@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { PrivacyOwnerCoverageResultSchema, PrivacyOwnerExecutionOutcomeSchema } from '@app/shared-contracts';
 
-import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
+import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import { TaxPrivacyOwnerCoverageRequestSchema } from '../../shared/apis/tax-privacy-owner-coverage.ts';
 import { taxEvidenceReadPermission } from '../../shared/permissions/tax-evidence-read.ts';
 import {
@@ -33,7 +33,7 @@ const scope = {
   trustedLookupRefs: ['seller-lookup:956'],
 } as const;
 
-const assertionContent = 'commerce.tax.tax-source-assertion:assertion-956';
+const declarationContent = 'commerce.tax.seller-vat-regime-declaration:declaration-956';
 
 const completeObservations = (foundByPart: Partial<Record<string, readonly string[]>> = {}) =>
   taxPrivacyOwnerScopeParts.map((scopePart): TaxPrivacyScopeObservation => ({
@@ -52,9 +52,7 @@ const assess = (observations: readonly TaxPrivacyScopeObservation[]) =>
     scope,
   });
 
-const foundCoverage = assess(
-  completeObservations({ SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY: [assertionContent] }),
-);
+const foundCoverage = assess(completeObservations({ SELLER_VAT_REGIME_DECLARATION_HISTORY: [declarationContent] }));
 
 const measure = {
   expectedEvidenceRefs: ['privacy:expected-owner-outcome-956'],
@@ -66,7 +64,7 @@ const measure = {
   scope,
   sourceDecisionRef: 'privacy-disposition-decision:956',
   sourceDecisionRevision: 'revision-1',
-  targetContentRefs: [assertionContent],
+  targetContentRefs: [declarationContent],
 } as const;
 
 const evaluate = (overrides: Partial<TaxPrivacyMeasureEvaluationInput> = {}) =>
@@ -133,7 +131,7 @@ describe('#956 TAX Owner Contribution', () => {
 
   it('keeps an unavailable TAX part unresolved rather than NO_DATA (BDD "TAX is temporarily unavailable")', () => {
     const observations = completeObservations().map((observation) =>
-      observation.scopePart === 'SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY'
+      observation.scopePart === 'SELLER_VAT_REGIME_DECLARATION_HISTORY'
         ? { ...observation, coverageStatus: 'UNAVAILABLE' as const, unresolvedReason: 'TAX_PERSISTENCE_UNAVAILABLE' }
         : observation,
     );
@@ -235,13 +233,13 @@ describe('#956 TAX Privacy Measure execution', () => {
     const outcome = evaluate();
     expect(decodeOutcome(outcome).status).toBe('BUSINESS_REJECTED');
     expect(outcome.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
-    expect(outcome.remainingContentRefs).toEqual([assertionContent]);
+    expect(outcome.remainingContentRefs).toEqual([declarationContent]);
     expect(outcome.affectedContentRefs).toEqual([]);
   });
 
   it('reports BLOCKED under a Current Legal Hold instead of bypassing it (F33-F35, BDD required evidence)', () => {
     const outcome = evaluate({
-      blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [assertionContent], kind: 'LEGAL_HOLD' }],
+      blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [declarationContent], kind: 'LEGAL_HOLD' }],
     });
     expect(decodeOutcome(outcome).status).toBe('BLOCKED');
     expect(outcome.reason).toBe('LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT');
@@ -249,7 +247,7 @@ describe('#956 TAX Privacy Measure execution', () => {
 
   it('blocks only destructive measures: a restriction under a Legal Hold is rejected as unsupported (F33-F35)', () => {
     const outcome = evaluate({
-      blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [assertionContent], kind: 'LEGAL_HOLD' }],
+      blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [declarationContent], kind: 'LEGAL_HOLD' }],
       measure: { ...measure, intendedOutcome: 'ENFORCE_PROCESSING_RESTRICTION' },
     });
     expect(outcome.status).toBe('BUSINESS_REJECTED');
@@ -271,7 +269,7 @@ describe('#956 TAX Privacy Measure execution', () => {
 
   it('settles a found target on partial coverage but never rejects a target that partial coverage cannot see (F20)', () => {
     const partialFound = assess(
-      completeObservations({ SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY: [assertionContent] }).map((observation) =>
+      completeObservations({ SELLER_VAT_REGIME_DECLARATION_HISTORY: [declarationContent] }).map((observation) =>
         observation.scopePart === 'ACTOR_PRINCIPAL_ATTRIBUTION'
           ? { ...observation, coverageStatus: 'PARTIAL' as const, unresolvedReason: 'OTHER_SELLERS_NOT_OBSERVED' }
           : observation,
@@ -332,21 +330,15 @@ describe('#956 TAX Privacy Measure execution', () => {
 
 describe('#956 TAX data minimization', () => {
   const payload = {
-    factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-    jurisdiction: 'CZ_DOMESTIC',
-    provenanceRef: 'acceptance:source-assertion',
-    reason: 'Record seller VAT registration evidence',
-    registrationMeaning: 'REGISTERED',
-    sourceAssertionKey: 'erp-assertion-1',
-    sourceRecordRef: 'erp-record-1',
-    sourceRef: 'erp.finance',
-    validFrom: '2026-01-01T00:00:00.000Z',
+    effectiveFrom: '2026-01-01T00:00:00.000Z',
+    expectedCurrentRevision: 0,
+    regime: 'VAT_PAYER',
   };
 
   it.each(['rawPayload', 'providerResponse', 'legalName', 'address', 'contactPoint', 'apiKey', 'token'])(
-    'does not accept %s as TAX source evidence (F6-F11, BDD provider payload with unrelated fields)',
+    'does not accept %s as TAX seller VAT regime declaration evidence (F6-F11, BDD provider payload with unrelated fields)',
     (field) => {
-      const decode = Schema.decodeUnknownResult(RecordTaxSourceAssertionPayloadSchema, { onExcessProperty: 'error' });
+      const decode = Schema.decodeUnknownResult(DeclareSellerVatRegimePayloadSchema, { onExcessProperty: 'error' });
       expect(Result.isSuccess(decode(payload))).toBe(true);
       expect(Result.isSuccess(decode({ ...payload, [field]: 'unrelated provider content' }))).toBe(false);
     },

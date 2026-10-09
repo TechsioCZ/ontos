@@ -18,25 +18,16 @@ import {
   CorrectTaxRuleRevisionPayloadSchema,
   CreateTaxRulePayloadSchema,
   CreateTaxRuleRevisionPayloadSchema,
-  EndTaxFactAuthorityContractPayloadSchema,
   EndTaxRuleRevisionPayloadSchema,
-  EstablishTaxFactAuthorityContractPayloadSchema,
-  ReviseTaxFactAuthorityContractPayloadSchema,
 } from '../../shared/actions/tax-governance.ts';
+import { ApplicableTaxRuleSetRequestContractSchema } from '../../shared/domain/tax-governed-read-contracts.ts';
 import {
-  ApplicableTaxRuleSetRequestContractSchema,
-  TaxFactAuthorityCurrentRequestContractSchema,
-} from '../../shared/domain/tax-governed-read-contracts.ts';
-import {
-  taxFactAuthorityContractRevisions,
-  taxFactAuthorityContracts,
   taxRelations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
   taxRules,
 } from '../../src/database/schema.ts';
-import { taxAuthorityGovernancePersistenceForScope } from '../../src/services/tax-authority-governance.service.ts';
 import { taxGovernedReadsForScope } from '../../src/services/tax-governed-read.service.ts';
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
 
@@ -97,14 +88,6 @@ const revisionRef = (resourceId: string) =>
     resourceType: 'commerce.tax.tax-rule-revision',
     tenantId,
   }) as const;
-const contractRef = (resourceId: string) =>
-  ({
-    moduleId: 'commerce.tax',
-    resourceId,
-    resourceType: 'commerce.tax.tax-fact-authority-contract',
-    tenantId,
-  }) as const;
-
 const baseContent = {
   compositionKind: 'EXCLUSIVE',
   effectiveFrom: '2026-01-01T00:00:00.000Z',
@@ -124,7 +107,6 @@ const content = (
 
 const RuleIdSchema = Schema.String.pipe(Schema.brand('TaxTestRuleId'));
 const RevisionIdSchema = Schema.String.pipe(Schema.brand('TaxTestRevisionId'));
-const ContractIdSchema = Schema.String.pipe(Schema.brand('TaxTestContractId'));
 
 const CreatedRuleSchema = Schema.Struct({
   created: Schema.Boolean,
@@ -145,11 +127,6 @@ const CorrectedSchema = Schema.Struct({
   created: Schema.Boolean,
   wrongRevisionId: RevisionIdSchema,
 });
-const ContractOutcomeSchema = Schema.Struct({
-  contractId: ContractIdSchema,
-  created: Schema.Boolean,
-  revisionNumber: Schema.Int,
-});
 
 const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
   admin.transaction((transaction) =>
@@ -161,28 +138,17 @@ const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
         yield* transaction.delete(taxRuleRevisionEndFacts).where(eq(taxRuleRevisionEndFacts.tenantId, tenant));
         yield* transaction.delete(taxRuleRevisions).where(eq(taxRuleRevisions.tenantId, tenant));
         yield* transaction.delete(taxRules).where(eq(taxRules.tenantId, tenant));
-        yield* transaction
-          .delete(taxFactAuthorityContractRevisions)
-          .where(eq(taxFactAuthorityContractRevisions.tenantId, tenant));
-        yield* transaction.delete(taxFactAuthorityContracts).where(eq(taxFactAuthorityContracts.tenantId, tenant));
       }
     }),
   );
 
 type RulePersistence = ReturnType<typeof taxRuleGovernancePersistenceForScope>;
-type AuthorityPersistence = ReturnType<typeof taxAuthorityGovernancePersistenceForScope>;
 type GovernedReads = ReturnType<typeof taxGovernedReadsForScope>;
 
 const withRules =
   (runtime: CoreTestDatabase, scope: OperationalScope) =>
   <Value, Failure>(operation: (persistence: RulePersistence) => Effect.Effect<Value, Failure>) =>
     runScoped(runtime, scope, (transaction) => operation(taxRuleGovernancePersistenceForScope(transaction, scope)));
-const withAuthority =
-  (runtime: CoreTestDatabase, scope: OperationalScope) =>
-  <Value, Failure>(operation: (persistence: AuthorityPersistence) => Effect.Effect<Value, Failure>) =>
-    runScoped(runtime, scope, (transaction) =>
-      operation(taxAuthorityGovernancePersistenceForScope(transaction, scope)),
-    );
 const withReads =
   (runtime: CoreTestDatabase, scope: OperationalScope) =>
   <Value, Failure>(operation: (reads: GovernedReads) => Effect.Effect<Value, Failure>) =>
@@ -207,19 +173,6 @@ const applicableSet = (runtime: CoreTestDatabase, scope: OperationalScope) => (t
     Effect.flatMap((request) => withReads(runtime, scope)((read) => read.applicableTaxRuleSet(request))),
   );
 
-const authorityRequest = (instant: string) =>
-  Schema.decodeEffect(TaxFactAuthorityCurrentRequestContractSchema)({
-    factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-    instant,
-  });
-const establishPayload = (stableCode: string, authorityFrom: string, systemOfRecordRef: string) =>
-  Schema.decodeEffect(EstablishTaxFactAuthorityContractPayloadSchema)({
-    authority: { authorityFrom, evidenceSourceRefs: ['tax.vies-check'], systemOfRecordRef },
-    factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-    provenanceRef: `acceptance:${stableCode}`,
-    reason: 'Govern VAT registration authority',
-    stableCode,
-  });
 const createRulePayload = (stableCode: string, initialRevision: ReturnType<typeof content>) =>
   Schema.decodeEffect(CreateTaxRulePayloadSchema)({
     initialRevision,
@@ -525,165 +478,6 @@ it.live('#929 F2 #930 F8 Tax Rule revisions and facts are immutable for the runt
       expect(stored).toEqual([{ ratePercent: '21' }]);
     }),
   ),
-);
-
-it.live(
-  '#949 F22-F32 competing System-of-Record authority is rejected from the complete set and never resolved newest-wins',
-  () =>
-    Effect.scoped(
-      Effect.gen(function* taxFactAuthorityAcceptance() {
-        const { admin, runtime } = yield* acquireDatabases;
-        const authority = withAuthority(runtime, scopeA);
-        const reads = withReads(runtime, scopeA);
-        const currentAt = (instant: string) =>
-          authorityRequest(instant).pipe(
-            Effect.flatMap((request) => reads((read) => read.taxFactAuthorityCurrent(request))),
-          );
-
-        const firstInput = {
-          ...(yield* establishPayload('vat-registration.party', '2026-01-01T00:00:00.000Z', 'party.registry')),
-          ...invocation(scopeA),
-        };
-        const first = yield* authority((persistence) => persistence.establishContract(firstInput)).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(ContractOutcomeSchema)),
-        );
-        expect(first).toMatchObject({ created: true, revisionNumber: 1 });
-        const firstReplay = yield* authority((persistence) => persistence.establishContract(firstInput)).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(ContractOutcomeSchema)),
-        );
-        expect(firstReplay).toEqual({ ...first, created: false });
-
-        // A second System of Record for the same fact family at a shared instant is an authority conflict.
-        const erpInput = {
-          ...(yield* establishPayload('vat-registration.erp', '2026-06-01T00:00:00.000Z', 'erp.vat-ledger')),
-          ...invocation(scopeA),
-        };
-        const competing = yield* authority((persistence) => persistence.establishContract(erpInput));
-        expect(competing).toEqual({ conflict: 'AUTHORITY_CONFLICT', kind: 'conflict' });
-
-        const established = yield* currentAt('2026-06-01T00:00:00.000Z');
-        expect(established.outcome).toBe('AUTHORITY_ESTABLISHED');
-        const reviseInput = {
-          ...(yield* Schema.decodeEffect(ReviseTaxFactAuthorityContractPayloadSchema)({
-            authority: {
-              authorityFrom: '2026-01-01T00:00:00.000Z',
-              evidenceSourceRefs: ['tax.vies-check', 'tax.ares-check'],
-              systemOfRecordRef: 'party.registry',
-            },
-            contractRef: contractRef(first.contractId),
-            expectedBasisFingerprint: '0'.repeat(64),
-            provenanceRef: 'acceptance:revise',
-            reason: 'Add ARES evidence role',
-          })),
-          ...invocation(scopeA),
-        };
-        const staleRevise = yield* authority((persistence) => persistence.reviseContract(reviseInput));
-        expect(staleRevise).toEqual({ kind: 'stale_basis' });
-
-        // #949 F30-F32 F44 revising never moves the System of Record or the authority window; that would rewrite
-        // past authority or leave the present without one. A transition is an end plus a successor contract.
-        const currentBasis = established.authorities[0]?.basisFingerprint ?? '';
-        for (const authorityChange of [
-          { ...reviseInput.authority, systemOfRecordRef: 'erp.vat-ledger' },
-          { ...reviseInput.authority, authorityFrom: DateTime.makeUnsafe('2025-01-01T00:00:00.000Z') },
-          { ...reviseInput.authority, authorityTo: DateTime.makeUnsafe('2027-01-01T00:00:00.000Z') },
-        ]) {
-          const moved = yield* authority((persistence) =>
-            persistence.reviseContract({
-              ...reviseInput,
-              ...invocation(scopeA),
-              authority: authorityChange,
-              expectedBasisFingerprint: currentBasis,
-            }),
-          );
-          expect(moved).toEqual({ conflict: 'LIFECYCLE', kind: 'conflict' });
-        }
-        const revised = yield* authority((persistence) =>
-          persistence.reviseContract({
-            ...reviseInput,
-            expectedBasisFingerprint: established.authorities[0]?.basisFingerprint ?? '',
-          }),
-        ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ContractOutcomeSchema)));
-        expect(revised).toMatchObject({ created: true, revisionNumber: 2 });
-
-        const revisedBasis = (yield* currentAt('2026-06-01T00:00:00.000Z')).authorities[0]?.basisFingerprint ?? '';
-        const endInput = {
-          ...(yield* Schema.decodeEffect(EndTaxFactAuthorityContractPayloadSchema)({
-            authorityTo: '2027-01-01T00:00:00.000Z',
-            contractRef: contractRef(first.contractId),
-            expectedBasisFingerprint: revisedBasis,
-            provenanceRef: 'acceptance:end-authority',
-            reason: 'Authority moves to the ERP ledger',
-          })),
-          ...invocation(scopeA),
-        };
-        // #929 F19 #949 F16-F17 authority is never ended before the trusted operation time.
-        const backdatedEnd = yield* authority((persistence) =>
-          persistence.endContract({
-            ...endInput,
-            ...invocation(scopeA),
-            authorityTo: DateTime.makeUnsafe('2026-01-15T00:00:00.000Z'),
-          }),
-        );
-        expect(backdatedEnd).toEqual({ conflict: 'LIFECYCLE', kind: 'conflict' });
-        const ended = yield* authority((persistence) => persistence.endContract(endInput)).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(ContractOutcomeSchema)),
-        );
-        expect(ended).toMatchObject({ created: true, revisionNumber: 3 });
-
-        const successorInput = {
-          ...(yield* establishPayload('vat-registration.erp', '2027-01-01T00:00:00.000Z', 'erp.vat-ledger')),
-          ...invocation(scopeA),
-        };
-        const successor = yield* authority((persistence) => persistence.establishContract(successorInput)).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(ContractOutcomeSchema)),
-        );
-        expect(successor.created).toBe(true);
-        expect((yield* currentAt('2026-12-31T23:59:59.999Z')).authorities[0]?.systemOfRecordRef).toBe('party.registry');
-        expect((yield* currentAt('2027-01-01T00:00:00.000Z')).authorities[0]?.systemOfRecordRef).toBe('erp.vat-ledger');
-
-        // State written around the governed path still cannot produce a newest-wins answer.
-        const outOfBandId = randomUUID();
-        const attribution = {
-          actionInvocationId: outOfBandId,
-          actorPrincipalId: principalId,
-          idempotencyKey: outOfBandId,
-          legalEntityId: sellerA,
-          provenanceRef: 'acceptance:out-of-band',
-          reason: 'Out-of-band competitor',
-          tenantId,
-        };
-        const competitorFrom = DateTime.toDateUtc(DateTime.makeUnsafe('2027-06-01T00:00:00.000Z'));
-        yield* admin.transaction((transaction) =>
-          Effect.gen(function* insertOutOfBandCompetitor() {
-            const [contract] = yield* transaction
-              .insert(taxFactAuthorityContracts)
-              .values({
-                ...attribution,
-                factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-                stableCode: 'vat-registration.out-of-band',
-              })
-              .returning({ contractId: taxFactAuthorityContracts.taxFactAuthorityContractId });
-            yield* transaction.insert(taxFactAuthorityContractRevisions).values({
-              ...attribution,
-              authorityFrom: competitorFrom,
-              evidenceSourceRefs: [],
-              revisionNumber: 1,
-              semanticFingerprint: 'f'.repeat(64),
-              systemOfRecordRef: 'crm.vat-notes',
-              taxFactAuthorityContractId: contract?.contractId ?? '',
-            });
-          }),
-        );
-        const conflicted = yield* currentAt('2027-07-01T00:00:00.000Z');
-        expect(conflicted.outcome).toBe('AUTHORITY_CONFLICT');
-        expect(conflicted.authorities.map(({ systemOfRecordRef }) => systemOfRecordRef).toSorted()).toEqual([
-          'crm.vat-notes',
-          'erp.vat-ledger',
-        ]);
-        expect((yield* currentAt('2025-01-01T00:00:00.000Z')).outcome).toBe('AUTHORITY_MISSING');
-      }),
-    ),
 );
 
 it.live(

@@ -1,7 +1,7 @@
 import { DateTime, Match, Option, Result, Schema } from 'effect';
 
+import { SellerVatRegimeDeclarationMigrationContentSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import { TaxRuleRevisionContentSchema } from '../../shared/actions/tax-governance.ts';
-import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
 import {
   TaxMigrationCompleteSchema,
   TaxMigrationConflictingSchema,
@@ -29,7 +29,7 @@ export const TAX_OWNER_CAPABILITY = 'commerce.tax';
 
 export const taxMigrationFamilies = [
   'TAX_RULE',
-  'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+  'SELLER_VAT_REGIME_DECLARATION',
 ] as const satisfies readonly TaxMigrationFamily[];
 
 type TargetMeaning = Readonly<Record<string, string>>;
@@ -42,16 +42,7 @@ const launchScope = {
 } as const;
 
 const requiredKeys = {
-  SELLING_LEGAL_ENTITY_VAT_REGISTRATION: [
-    'factFamily',
-    'jurisdiction',
-    'provenanceRef',
-    'reason',
-    'registrationMeaning',
-    'sourceAssertionKey',
-    'sourceRecordRef',
-    'sourceRef',
-  ],
+  SELLER_VAT_REGIME_DECLARATION: ['effectiveFrom', 'regime'],
   TAX_RULE: [
     'compositionKind',
     'effectiveFrom',
@@ -63,7 +54,9 @@ const requiredKeys = {
 } as const satisfies Record<TaxMigrationFamily, readonly string[]>;
 
 const TaxRuleTargetTextSchema = Schema.fromJsonString(TaxRuleRevisionContentSchema);
-const VatRegistrationTargetTextSchema = Schema.fromJsonString(RecordTaxSourceAssertionPayloadSchema);
+const SellerVatRegimeDeclarationTargetTextSchema = Schema.fromJsonString(
+  SellerVatRegimeDeclarationMigrationContentSchema,
+);
 const strict = { onExcessProperty: 'error' } as const;
 
 /** Exact decimal text without insignificant trailing zeros: `21.00` and `21` are the same rate (#938, #960 F15). */
@@ -116,17 +109,13 @@ const canonicalTarget = (
         ),
       )
     : Schema.decodeUnknownResult(
-        RecordTaxSourceAssertionPayloadSchema,
+        SellerVatRegimeDeclarationMigrationContentSchema,
         strict,
       )(targetMeaning).pipe(
-        Result.flatMap((payload) =>
-          Schema.encodeResult(VatRegistrationTargetTextSchema)(payload).pipe(
+        Result.flatMap((content) =>
+          Schema.encodeResult(SellerVatRegimeDeclarationTargetTextSchema)(content).pipe(
             Result.map((text) => ({
-              factKey: tupleKey([
-                'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-                payload.sourceRef,
-                payload.sourceAssertionKey,
-              ]),
+              factKey: tupleKey(['SELLER_VAT_REGIME_DECLARATION', DateTime.formatIso(content.effectiveFrom)]),
               targetMeaningKey: TaxMigrationTargetMeaningKeySchema.make(text),
             })),
           ),
@@ -145,16 +134,6 @@ const outsideLaunchScope = (targetMeaning: TargetMeaning): boolean =>
     ([key, launchValue]) => targetMeaning[key] !== undefined && targetMeaning[key] !== launchValue,
   );
 
-/** A source assertion's own source and record identity must be the record it was migrated from (#960 F11). */
-const contradictsProvenance = (
-  family: TaxMigrationFamily,
-  targetMeaning: TargetMeaning,
-  provenance: TaxMigrationProvenance,
-): boolean =>
-  family === 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION' &&
-  (targetMeaning['sourceRef'] !== provenance.sourceSystemRef ||
-    targetMeaning['sourceRecordRef'] !== provenance.sourceRecordRef);
-
 interface EvaluatedCandidate {
   readonly factKey: Option.Option<string>;
   readonly outcome: TaxMigrationOutcome;
@@ -172,22 +151,6 @@ export const byTaxMigrationText = (left: string, right: string): number => {
     return 0;
   }
   return left < right ? -1 : 1;
-};
-
-/**
- * A source assertion without the business validity its meaning needs cannot establish VAT registration state, so it is
- * INCOMPLETE rather than mapped: REGISTERED / NON_REGISTERED need `validFrom`, ENDED needs `validTo` (#958 F26).
- */
-const requiredValidityKeys = (family: TaxMigrationFamily, targetMeaning: TargetMeaning): readonly string[] => {
-  if (family !== 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION') {
-    return [];
-  }
-  // Only a recognised meaning selects its validity key; a missing or invalid meaning is classified by the schema.
-  const meaning = targetMeaning['registrationMeaning'];
-  if (meaning === 'ENDED') {
-    return ['validTo'];
-  }
-  return meaning === 'REGISTERED' || meaning === 'NON_REGISTERED' ? ['validFrom'] : [];
 };
 
 const rawMeaningOf = (family: TaxMigrationFamily, targetMeaning: TargetMeaning): string =>
@@ -216,24 +179,11 @@ const evaluateTaxOwned = (
       rawMeaning,
     };
   }
-  const missing = [...requiredKeys[family], ...requiredValidityKeys(family, targetMeaning)].filter(
-    (key) => targetMeaning[key] === undefined,
-  );
+  const missing = requiredKeys[family].filter((key) => targetMeaning[key] === undefined);
   if (missing.length > 0) {
     return {
       factKey: Option.none(),
       outcome: TaxMigrationIncompleteSchema.make({ missing, provenance, sourceFamily: Option.some(family) }),
-      rawMeaning,
-    };
-  }
-  if (contradictsProvenance(family, targetMeaning, provenance)) {
-    return {
-      factKey: Option.none(),
-      outcome: TaxMigrationReviewRequiredSchema.make({
-        provenance,
-        reason: 'PROVENANCE_MISMATCH',
-        sourceFamily: Option.some(family),
-      }),
       rawMeaning,
     };
   }
