@@ -61,11 +61,97 @@ const getRange = (values: number[]): NumericRange | null => {
 const isWithinRange = (value: number, [minimum, maximum]: NumericRange) =>
   value >= minimum && value <= maximum;
 
-const formatMeasurementRange = (values: number[]) =>
-  values.map((value) => measurementFormatter.format(value)).join(" – ");
+const filterGroupClassName =
+  "min-w-0 border-base-dark border-b-(length:--border-sm) py-(--dimension-12) md:border-b-0 md:border-r-(length:--border-sm) md:px-(--dimension-12) md:py-0";
 
-const formatPriceRange = (values: number[]) =>
-  values.map((value) => formatPrice(value)).join(" – ");
+interface VariantRangeFilterProps {
+  bounds: NumericRange;
+  label: string;
+  onChange: (value: NumericRange) => void;
+  price?: boolean;
+  step: number;
+  value: NumericRange;
+}
+
+function VariantRangeFilter({
+  bounds,
+  label,
+  onChange,
+  price = false,
+  step,
+  value,
+}: VariantRangeFilterProps) {
+  const scale = price ? 100 : 1;
+  // Keep the NumericInput editing buffer (empty text and decimal separators).
+  // Slider changes replace that buffer with the newly selected range.
+  const [sliderRevision, setSliderRevision] = useState(0);
+  const updateEndpoint = (index: 0 | 1, nextValue: number) => {
+    if (!Number.isFinite(nextValue)) return;
+    const next = price ? Math.round(nextValue * scale) : nextValue;
+    if (next < bounds[0] || next > bounds[1]) return;
+    if (index === 0 && next > value[1]) return;
+    if (index === 1 && next < value[0]) return;
+    onChange(index === 0 ? [next, value[1]] : [value[0], next]);
+  };
+
+  return (
+    <div
+      className={`akros-variant-filter-range ${filterGroupClassName} w-full ${price ? "akros-variant-filter-range--price md:w-(--akros-variant-filter-price-width)" : "md:w-(--akros-variant-filter-measurement-width)"}`}
+    >
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-(--dimension-8)">
+        <NumericInput
+          key={`minimum-${sliderRevision}`}
+          className="w-(--akros-variant-filter-input-width)"
+          locale="cs-CZ"
+          min={bounds[0] / scale}
+          max={value[1] / scale}
+          precision={2}
+          step={step / scale}
+          defaultValue={value[0] / scale}
+          onChange={(next) => updateEndpoint(0, next)}
+          size="sm"
+        >
+          <NumericInput.Control>
+            <NumericInput.Input aria-label={`Minimum – ${label}`} />
+          </NumericInput.Control>
+        </NumericInput>
+        <Slider
+          className="[&>div:first-child]:justify-center [&_label]:whitespace-nowrap [&_label]:text-(length:--akros-variant-filter-label-font-size) [&_label]:leading-(--akros-variant-filter-label-line-height) [&_[data-part=control]]:min-h-(--height-form-control-sm)"
+          formatValue={price ? formatPrice : (next) => measurementFormatter.format(next)}
+          label={label}
+          max={bounds[1]}
+          min={bounds[0]}
+          minStepsBetweenThumbs={0}
+          onChange={(next) => {
+            if (next[0] !== undefined && next[1] !== undefined) {
+              onChange([next[0], next[1]]);
+              setSliderRevision((revision) => revision + 1);
+            }
+          }}
+          size="sm"
+          step={step}
+          value={value}
+        />
+        <NumericInput
+          key={`maximum-${sliderRevision}`}
+          className="w-(--akros-variant-filter-input-width)"
+          locale="cs-CZ"
+          min={value[0] / scale}
+          max={bounds[1] / scale}
+          precision={2}
+          step={step / scale}
+          defaultValue={value[1] / scale}
+          onChange={(next) => updateEndpoint(1, next)}
+          size="sm"
+        >
+          <NumericInput.Control>
+            <NumericInput.Input aria-label={`Maximum – ${label}`} />
+          </NumericInput.Control>
+        </NumericInput>
+      </div>
+    </div>
+  );
+}
 
 const materialPattern =
   /\b(?:A[124](?:\s*-\s*\d+)?|AL(?:\/AL)?|1\.\d{4}|chrom|nerez|ocel|pozink|zinek)\b/i;
@@ -491,53 +577,46 @@ export function ProductPurchaseForm({
 
   return (
     <div className="akros-variant-purchase">
-      <section className="akros-variant-purchase__controls">
+      <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit">
         <form
           aria-label="Filtrování variant"
-          className="akros-variant-purchase__filter-bar"
+          className="akros-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-center"
           onSubmit={(event) => {
             event.preventDefault();
             applyFilters();
           }}
         >
           {dimensionBounds && dimensionBounds.diameter[0] < dimensionBounds.diameter[1] && (
-            <Slider
-              className="akros-variant-purchase__filter-group akros-variant-purchase__filter-group--slider"
-              formatRangeText={formatMeasurementRange}
-              formatValue={(value) => measurementFormatter.format(value)}
+            <VariantRangeFilter
+              bounds={dimensionBounds.diameter}
               label="Průměr (mm)"
-              max={dimensionBounds.diameter[1]}
-              min={dimensionBounds.diameter[0]}
-              onChange={(values) => setDiameterRange(values as NumericRange)}
-              showValueText
-              size="sm"
+              onChange={setDiameterRange}
               step={dimensionBounds.diameterStep}
               value={diameterRange}
             />
           )}
 
           {dimensionBounds && dimensionBounds.length[0] < dimensionBounds.length[1] && (
-            <Slider
-              className="akros-variant-purchase__filter-group akros-variant-purchase__filter-group--slider"
-              formatRangeText={formatMeasurementRange}
-              formatValue={(value) => measurementFormatter.format(value)}
+            <VariantRangeFilter
+              bounds={dimensionBounds.length}
               label="Délka (mm)"
-              max={dimensionBounds.length[1]}
-              min={dimensionBounds.length[0]}
-              onChange={(values) => setLengthRange(values as NumericRange)}
-              showValueText
-              size="sm"
+              onChange={setLengthRange}
               step={dimensionBounds.lengthStep}
               value={lengthRange}
             />
           )}
 
           {materialOptions.length > 0 && (
-            <fieldset className="akros-variant-purchase__filter-group akros-variant-purchase__filter-group--material">
-              <legend>Materiál</legend>
-              <div className="akros-variant-purchase__material-options">
+            <fieldset className={`${filterGroupClassName} m-0 min-w-0`}>
+              <legend className="mx-auto mb-(--dimension-6) text-(length:--akros-variant-filter-label-font-size) leading-(--akros-variant-filter-label-line-height) font-medium">
+                Materiál
+              </legend>
+              <div
+                className={`grid gap-x-(--dimension-12) gap-y-(--dimension-4) ${materialOptions.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}
+              >
                 {materialOptions.map((material) => (
                   <FormCheckbox
+                    className="[&_[data-part=indicator][data-state=checked]]:token-icon-akros-checkbox-selected"
                     checked={selectedMaterials.includes(material)}
                     key={material}
                     label={material}
@@ -556,23 +635,24 @@ export function ProductPurchaseForm({
           )}
 
           {priceBounds && priceBounds[0] < priceBounds[1] && (
-            <Slider
-              className="akros-variant-purchase__filter-group akros-variant-purchase__filter-group--slider akros-variant-purchase__filter-group--price"
-              formatRangeText={formatPriceRange}
-              formatValue={(value) => formatPrice(value)}
+            <VariantRangeFilter
+              bounds={priceBounds}
               label={`Cena (Kč/${product.unit})`}
-              max={priceBounds[1]}
-              min={priceBounds[0]}
-              onChange={(values) => setPriceRange(values as NumericRange)}
-              showValueText
-              size="sm"
+              onChange={setPriceRange}
+              price
               step={1}
               value={priceRange}
             />
           )}
 
-          <Button size="sm" type="submit" uppercase variant="primary">
-            Filtrovat
+          <Button
+            className="akros-variant-filter-submit w-full font-bold md:ml-(--dimension-12) md:w-(--akros-variant-filter-submit-width)"
+            size="sm"
+            type="submit"
+            uppercase
+            variant="primary"
+          >
+            Filtruj
           </Button>
         </form>
       </section>

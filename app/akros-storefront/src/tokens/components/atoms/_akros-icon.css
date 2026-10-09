@@ -16,3 +16,8 @@
 @utility token-icon-akros-youtube {
   @apply akros-icon-[akros--youtube];
 }
+
+@utility token-icon-akros-checkbox-selected {
+  @apply akros-icon-[akros--checkbox-selected];
+  @apply size-(--akros-variant-filter-checkbox-indicator-size);
+}

@@ -15,12 +15,14 @@
   --akros-product-detail-thumbnail-width: 148px;
   --akros-variant-filter-background: var(--color-base);
   --akros-variant-filter-label-color: var(--color-fg-primary);
-  --akros-variant-filter-separator-color: var(--color-border-primary);
   --akros-variant-filter-padding: var(--dimension-8);
-  --akros-variant-filter-label-font-size: var(--text-sm);
-  --akros-variant-filter-measurement-width: 185px;
-  --akros-variant-filter-material-width: 190px;
-  --akros-variant-filter-price-width: 245px;
+  --akros-variant-filter-label-font-size: 13px;
+  --akros-variant-filter-label-line-height: var(--dimension-16);
+  --akros-variant-filter-measurement-width: 212px;
+  --akros-variant-filter-price-width: 242px;
+  --akros-variant-filter-input-width: var(--dimension-32);
+  --akros-variant-filter-submit-width: 113px;
+  --akros-variant-filter-checkbox-indicator-size: var(--dimension-12);
 }
 
 .akros-purchase-form {
@@ -37,8 +39,52 @@
   --radius-button-md: var(--radius-sm);
 }
 
+.akros-variant-filter-range {
+  --height-form-control-sm: 19px;
+  --border-width-form-control: 0.5px;
+  --color-numeric-input-border: var(--color-base-dark);
+  --radius-numeric-input-sm: 5px;
+  --text-numeric-input-sm: var(--text-sm);
+  --padding-numeric-input-input-sm: var(--dimension-2);
+  --padding-input-sm: var(--dimension-2);
+  --padding-input-md: var(--dimension-2);
+  --color-numeric-input-input-bg: var(--color-base);
+  --spacing-slider: var(--dimension-6);
+  --size-slider-track-sm: var(--dimension-2);
+  --spacing-slider-track-sm: var(--dimension-2);
+  --spacing-slider-thumb-sm: var(--dimension-8);
+  --border-width-slider: var(--dimension-0);
+  --color-slider-thumb-bg: var(--color-bg-primary-base);
+  --color-slider-thumb-bg-hover: var(--color-bg-primary-hover);
+  --color-slider-track-bg: var(--color-border-primary);
+  --color-slider-track-bg-hover: var(--color-border-primary);
+  --shadow-slider-thumb: none;
+}
+
+.akros-variant-filter-range--price {
+  --akros-variant-filter-input-width: var(--dimension-48);
+}
+
+.akros-variant-filter-submit {
+  --height-form-control-sm: 38px;
+  --text-button-sm: var(--akros-variant-filter-label-font-size);
+}
+
 .akros-variant-purchase__filter-bar {
-  --height-form-control-sm: var(--dimension-40);
+  --size-checkbox: var(--dimension-20);
+  --radius-checkbox: 5px;
+  --color-checkbox-bg-base: var(--color-base);
+  --color-checkbox-border-base: var(--color-fg-secondary);
+  --color-checkbox-bg-checked: var(--color-base);
+  --color-checkbox-border-checked: var(--color-fg-secondary);
+  --color-checkbox-fg-checked: var(--color-bg-primary-base);
+  --text-label-sm: var(--text-sm);
+}
+
+@media (max-width: 767px) {
+  .akros-variant-filter-range {
+    --height-form-control-sm: var(--dimension-32);
+  }
 }
 
 @media (max-width: 1023px) {

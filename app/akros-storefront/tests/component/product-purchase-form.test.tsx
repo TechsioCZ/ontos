@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -72,6 +72,71 @@ function CartLines() {
 afterEach(cleanup);
 
 describe("ProductPurchaseForm", () => {
+  it("synchronizes typed range limits and slider values, applying them only on submit", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={variants} />
+      </CartProvider>,
+    );
+    let minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
+    await user.clear(minimum);
+    await user.type(minimum, "3");
+    const sliders = screen.getAllByRole("slider", { name: /Průměr/ });
+    expect(sliders[0].getAttribute("aria-valuenow")).toBe("3");
+    expect(screen.getByRole("button", { name: /Koupit M 2/ })).toBeTruthy();
+    await user.click(sliders[0]);
+    await user.keyboard("{ArrowLeft}");
+    minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
+    expect((minimum as HTMLInputElement).value).toBe("2");
+    await user.clear(minimum);
+    await user.type(minimum, "3");
+    await user.click(screen.getByRole("button", { name: "Filtruj" }));
+    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
+  });
+
+  it("converts Czech decimal price inputs to minor units without changing quantity inputs", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={variants} />
+      </CartProvider>,
+    );
+    const minimum = screen.getByRole("spinbutton", { name: "Minimum – Cena (Kč/ks)" });
+    await user.click(minimum);
+    // Dispatch the resulting input text without relying on jsdom's caret emulation.
+    fireEvent.input(minimum, { target: { value: "1,25" } });
+    expect((minimum as HTMLInputElement).value).toBe("1,25");
+    await user.tab();
+    expect(screen.getAllByRole("slider", { name: /Cena/ })[0].getAttribute("aria-valuenow")).toBe(
+      "125",
+    );
+    await user.click(screen.getByRole("button", { name: "Filtruj" }));
+    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
+    expect(
+      (screen.getByRole("spinbutton", { name: "Množství M 4 × 16" }) as HTMLInputElement).value,
+    ).toBe("10");
+  });
+
+  it("keeps range limits ordered when an input exceeds the other endpoint", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={variants} />
+      </CartProvider>,
+    );
+    const maximum = screen.getByRole("spinbutton", { name: "Maximum – Průměr (mm)" });
+    await user.clear(maximum);
+    await user.type(maximum, "1");
+    await user.tab();
+    const sliders = screen.getAllByRole("slider", { name: /Průměr/ });
+    expect(Number(sliders[0].getAttribute("aria-valuenow"))).toBeLessThanOrEqual(
+      Number(sliders[1].getAttribute("aria-valuenow")),
+    );
+    expect(Number((maximum as HTMLInputElement).value)).toBeGreaterThanOrEqual(2);
+  });
+
   it("keeps source SKU and the unit of the price in each responsive variant row", () => {
     render(
       <CartProvider storage={null}>
@@ -190,7 +255,7 @@ describe("ProductPurchaseForm", () => {
     );
 
     await user.click(screen.getByRole("checkbox", { name: "A2" }));
-    await user.click(screen.getByRole("button", { name: "Filtrovat" }));
+    await user.click(screen.getByRole("button", { name: "Filtruj" }));
 
     expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
