@@ -180,11 +180,3 @@ export const lockTaxScopeKey = (
       .from(sql`(values (1)) as tax_scope_lock_anchor(value)`),
   );
 };
-
-/**
- * @deprecated Use `lockTaxScopeKey` (Unit 10 generalized this beyond the authority/assertion fact family). Kept so
- * Stage C's `order-tax-finalization.service.ts` call site is untouched here; that file has its own unrelated
- * Stage-C type-chain gap (§0) and is out of scope for this stage.
- */
-export const lockTaxFactFamily = (transaction: ScopedTransaction, input: GovernedInvocation, factFamily: string) =>
-  lockTaxScopeKey(transaction, input, factFamily, 'exclusive');
