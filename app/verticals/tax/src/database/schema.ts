@@ -1,11 +1,22 @@
 import { tenantLegalEntityRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
-import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  pgSchema,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import type { TaxEvaluationEvidenceSchema } from '../../shared/domain/tax-evaluation-contracts.ts';
 import type { TaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax-outcome.ts';
-import type { TaxSourceConflictDetail } from '../../shared/domain/tax-source-read-contracts.ts';
 
 /** Private TAX persistence schema. Other owners use generated TAX contracts. */
 export const TAX_SCHEMA_NAME = 'tax';
@@ -15,10 +26,7 @@ export const TAX_TABLE_INVENTORY = [
   'tax_rule_revisions',
   'tax_rule_revision_end_facts',
   'tax_rule_corrections',
-  'tax_fact_authority_contracts',
-  'tax_fact_authority_contract_revisions',
-  'tax_source_assertions',
-  'tax_source_conflicts',
+  'tax_seller_vat_regime_declarations',
   'tax_order_tax_finalizations',
 ] as const;
 
@@ -199,213 +207,52 @@ export const taxRuleCorrections = taxSchema.table.withRLS(
   ],
 );
 
-/** Stable Tax Fact Authority Contract identity for one exact fact family and seller scope (#949 F22-F23). */
-export const taxFactAuthorityContracts = taxSchema.table.withRLS(
-  'tax_fact_authority_contracts',
-  {
-    taxFactAuthorityContractId: uuid('tax_fact_authority_contract_id').defaultRandom().primaryKey(),
-    ...scopeColumns(),
-    factFamily: text('fact_family').notNull(),
-    stableCode: text('stable_code').notNull(),
-    ...attribution(),
-  },
-  (table) => [
-    scopeIdentity('tax_fact_authority_contracts_scope_id_uk', table, table.taxFactAuthorityContractId),
-    unique('tax_fact_authority_contracts_code_uk').on(table.tenantId, table.legalEntityId, table.stableCode),
-    unique('tax_fact_authority_contracts_idempotency_uk').on(table.tenantId, table.idempotencyKey),
-    index('tax_fact_authority_contracts_family_idx').on(table.tenantId, table.legalEntityId, table.factFamily),
-    check('tax_fact_authority_contracts_family_ck', sql`${table.factFamily} = 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION'`),
-    stableCode('tax_fact_authority_contracts_code_ck', table.stableCode),
-    trimmed('tax_fact_authority_contracts_provenance_ck', table.provenanceRef),
-    ...scopedPolicies('tax_fact_authority_contracts_scope', table),
-  ],
-);
-
-/**
- * Immutable authority revision: one System of Record plus distinct evidence-only source roles over an explicit
- * authority period (#949 F24-F32). Competing authorities are detected from the complete set, never newest-wins.
- */
-export const taxFactAuthorityContractRevisions = taxSchema.table.withRLS(
-  'tax_fact_authority_contract_revisions',
-  {
-    taxFactAuthorityContractRevisionId: uuid('tax_fact_authority_contract_revision_id').defaultRandom().primaryKey(),
-    ...scopeColumns(),
-    authorityFrom: timestamp('authority_from', { withTimezone: true }).notNull(),
-    authorityTo: timestamp('authority_to', { withTimezone: true }),
-    evidenceSourceRefs: jsonb('evidence_source_refs').$type<readonly string[]>().notNull(),
-    revisionNumber: integer('revision_number').notNull(),
-    semanticFingerprint: text('semantic_fingerprint').notNull(),
-    systemOfRecordRef: text('system_of_record_ref').notNull(),
-    taxFactAuthorityContractId: uuid('tax_fact_authority_contract_id').notNull(),
-    ...attribution(),
-  },
-  (table) => [
-    scopeIdentity('tax_fact_authority_revisions_scope_id_uk', table, table.taxFactAuthorityContractRevisionId),
-    unique('tax_fact_authority_revisions_number_uk').on(
-      table.tenantId,
-      table.taxFactAuthorityContractId,
-      table.revisionNumber,
-    ),
-    unique('tax_fact_authority_revisions_idempotency_uk').on(table.tenantId, table.idempotencyKey),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId, table.taxFactAuthorityContractId],
-      foreignColumns: [
-        taxFactAuthorityContracts.tenantId,
-        taxFactAuthorityContracts.legalEntityId,
-        taxFactAuthorityContracts.taxFactAuthorityContractId,
-      ],
-      name: 'tax_fact_authority_revisions_contract_fk',
-    }).onDelete('restrict'),
-    check('tax_fact_authority_revisions_number_ck', sql`${table.revisionNumber} >= 1`),
-    check(
-      'tax_fact_authority_revisions_period_ck',
-      sql`${table.authorityTo} is null or ${table.authorityTo} > ${table.authorityFrom}`,
-    ),
-    check('tax_fact_authority_revisions_evidence_ck', sql`jsonb_typeof(${table.evidenceSourceRefs}) = 'array'`),
-    trimmed('tax_fact_authority_revisions_system_of_record_ck', table.systemOfRecordRef),
-    fingerprint('tax_fact_authority_revisions_fingerprint_ck', table.semanticFingerprint),
-    trimmed('tax_fact_authority_revisions_provenance_ck', table.provenanceRef),
-    ...scopedPolicies('tax_fact_authority_revisions_scope', table),
-  ],
-);
-
 const ownerReference = (name: string, column: AnyPgColumn) =>
   check(name, sql`${column} = btrim(${column}) and length(${column}) between 1 and 300`);
 
 /**
- * One immutable source assertion about the Selling Legal Entity VAT Registration of this seller scope. Provider
- * identity, Source Record Reference and assertion key stay distinct (#958 F1-F8); the canonical fact subject is
- * `{fact_family, legal_entity_id, jurisdiction}`. Source times are nullable and never derived; `recorded_at` is
- * the OntOS receipt time (#958 F12-F16, F26). No adapter identity is stored, so a route change keeps provenance
- * (#958 F21-F22). `eligibility` is the only stored acceptance input; the #957 acceptance outcome depends on the
- * authority contracts and is always evaluated, never stored (#959 F25).
+ * Merchant-declared, append-only Seller VAT Regime Declaration revisions (#907 Unit 10, LEGAL §1). The seller is
+ * never verified: `provenance` only distinguishes a merchant-declared revision from one imported by the step-9
+ * migration cutover. `recorded_at` is the trusted Action operation time, never the DB default, so the backdating
+ * check and the row agree (F4); the DB check repeats the rule as a race backstop.
  */
-export const taxSourceAssertions = taxSchema.table.withRLS(
-  'tax_source_assertions',
+export const taxSellerVatRegimeDeclarations = taxSchema.table.withRLS(
+  'tax_seller_vat_regime_declarations',
   {
-    taxSourceAssertionId: uuid('tax_source_assertion_id').defaultRandom().primaryKey(),
+    taxSellerVatRegimeDeclarationId: uuid('tax_seller_vat_regime_declaration_id').defaultRandom().primaryKey(),
     ...scopeColumns(),
-    authorityContractRevisionId: uuid('authority_contract_revision_id'),
-    authorityRole: text('authority_role').notNull(),
-    deliveryRef: text('delivery_ref'),
-    eligibility: text('eligibility').notNull(),
-    factFamily: text('fact_family').notNull(),
-    issuedAt: timestamp('issued_at', { withTimezone: true }),
-    jurisdiction: text('jurisdiction').notNull(),
-    observedAt: timestamp('observed_at', { withTimezone: true }),
-    registrationMeaning: text('registration_meaning').notNull(),
-    semanticFingerprint: text('semantic_fingerprint').notNull(),
-    sourceAssertionKey: text('source_assertion_key').notNull(),
-    sourceRecordRef: text('source_record_ref').notNull(),
-    sourceRef: text('source_ref').notNull(),
-    validFrom: timestamp('valid_from', { withTimezone: true }),
-    validTo: timestamp('valid_to', { withTimezone: true }),
-    ...attribution(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actorPrincipalId: uuid('actor_principal_id').notNull(),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    intentFingerprint: text('intent_fingerprint').notNull(),
+    provenance: text('provenance').notNull(),
+    reason: text('reason'),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    regime: text('regime').notNull(),
+    replacesScheduled: boolean('replaces_scheduled').notNull(),
+    revision: integer('revision').notNull(),
   },
   (table) => [
-    scopeIdentity('tax_source_assertions_scope_id_uk', table, table.taxSourceAssertionId),
-    unique('tax_source_assertions_key_uk').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.sourceRef,
-      table.sourceAssertionKey,
-    ),
-    unique('tax_source_assertions_idempotency_uk').on(table.tenantId, table.idempotencyKey),
-    index('tax_source_assertions_family_idx').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.factFamily,
-      table.sourceRef,
-    ),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId, table.authorityContractRevisionId],
-      foreignColumns: [
-        taxFactAuthorityContractRevisions.tenantId,
-        taxFactAuthorityContractRevisions.legalEntityId,
-        taxFactAuthorityContractRevisions.taxFactAuthorityContractRevisionId,
-      ],
-      name: 'tax_source_assertions_authority_fk',
-    }).onDelete('restrict'),
-    check('tax_source_assertions_family_ck', sql`${table.factFamily} = 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION'`),
-    check('tax_source_assertions_jurisdiction_ck', sql`${table.jurisdiction} = 'CZ_DOMESTIC'`),
+    scopeIdentity('tax_seller_vat_regime_declarations_scope_id_uk', table, table.taxSellerVatRegimeDeclarationId),
+    unique('tax_seller_vat_regime_declarations_revision_uk').on(table.tenantId, table.legalEntityId, table.revision),
+    unique('tax_seller_vat_regime_declarations_idempotency_uk').on(table.tenantId, table.idempotencyKey),
+    check('tax_seller_vat_regime_declarations_revision_ck', sql`${table.revision} >= 1`),
+    check('tax_seller_vat_regime_declarations_regime_ck', sql`${table.regime} in ('VAT_PAYER', 'NON_PAYER')`),
     check(
-      'tax_source_assertions_meaning_ck',
-      sql`${table.registrationMeaning} in ('REGISTERED', 'ENDED', 'NON_REGISTERED')`,
+      'tax_seller_vat_regime_declarations_provenance_ck',
+      sql`${table.provenance} in ('MERCHANT_DECLARED', 'MIGRATED')`,
     ),
-    check('tax_source_assertions_eligibility_ck', sql`${table.eligibility} in ('ELIGIBLE', 'VALIDITY_UNKNOWN')`),
-    check('tax_source_assertions_role_ck', sql`${table.authorityRole} in ('SYSTEM_OF_RECORD', 'EVIDENCE', 'NONE')`),
     check(
-      'tax_source_assertions_validity_ck',
-      sql`${table.validFrom} is null or ${table.validTo} is null or ${table.validTo} > ${table.validFrom}`,
+      'tax_seller_vat_regime_declarations_reason_ck',
+      sql`${table.reason} is null or (${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 1000)`,
     ),
-    ownerReference('tax_source_assertions_source_ck', table.sourceRef),
-    ownerReference('tax_source_assertions_record_ck', table.sourceRecordRef),
-    ownerReference('tax_source_assertions_key_ck', table.sourceAssertionKey),
     check(
-      'tax_source_assertions_delivery_ck',
-      sql`${table.deliveryRef} is null or (${table.deliveryRef} = btrim(${table.deliveryRef}) and length(${table.deliveryRef}) between 1 and 300)`,
+      'tax_seller_vat_regime_declarations_backdating_reason_ck',
+      sql`${table.reason} is not null or ${table.effectiveFrom} >= ${table.recordedAt}`,
     ),
-    fingerprint('tax_source_assertions_fingerprint_ck', table.semanticFingerprint),
-    trimmed('tax_source_assertions_provenance_ck', table.provenanceRef),
-    ...scopedPolicies('tax_source_assertions_scope', table),
-  ],
-);
-
-/**
- * Append-only source conflict detections. Resolution is a later governed step, so every row stays `OPEN`. One
- * invocation may detect several pairwise conflicts; each is unique per invocation, kind and counterpart.
- */
-export const taxSourceConflicts = taxSchema.table.withRLS(
-  'tax_source_conflicts',
-  {
-    taxSourceConflictId: uuid('tax_source_conflict_id').defaultRandom().primaryKey(),
-    ...scopeColumns(),
-    conflictKind: text('conflict_kind').notNull(),
-    detail: jsonb('detail').$type<TaxSourceConflictDetail>().notNull(),
-    detectedAt: timestamp('detected_at', { withTimezone: true }).notNull(),
-    factFamily: text('fact_family').notNull(),
-    relatedAssertionId: uuid('related_assertion_id'),
-    status: text('status').notNull(),
-    subjectAssertionId: uuid('subject_assertion_id'),
-    ...attribution(),
-  },
-  (table) => [
-    scopeIdentity('tax_source_conflicts_scope_id_uk', table, table.taxSourceConflictId),
-    unique('tax_source_conflicts_idempotency_uk')
-      .on(table.tenantId, table.idempotencyKey, table.conflictKind, table.relatedAssertionId)
-      .nullsNotDistinct(),
-    index('tax_source_conflicts_family_idx').on(table.tenantId, table.legalEntityId, table.factFamily),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId, table.subjectAssertionId],
-      foreignColumns: [
-        taxSourceAssertions.tenantId,
-        taxSourceAssertions.legalEntityId,
-        taxSourceAssertions.taxSourceAssertionId,
-      ],
-      name: 'tax_source_conflicts_subject_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId, table.relatedAssertionId],
-      foreignColumns: [
-        taxSourceAssertions.tenantId,
-        taxSourceAssertions.legalEntityId,
-        taxSourceAssertions.taxSourceAssertionId,
-      ],
-      name: 'tax_source_conflicts_related_fk',
-    }).onDelete('restrict'),
-    check('tax_source_conflicts_family_ck', sql`${table.factFamily} = 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION'`),
-    check(
-      'tax_source_conflicts_kind_ck',
-      sql`${table.conflictKind} in ('ASSERTION_INTEGRITY', 'EVIDENCE_DISAGREEMENT', 'INCOMPATIBLE_AUTHORITATIVE_ASSERTIONS', 'AUTHORITY_CONFIGURATION')`,
-    ),
-    check('tax_source_conflicts_status_ck', sql`${table.status} = 'OPEN'`),
-    check('tax_source_conflicts_detail_ck', sql`jsonb_typeof(${table.detail}) = 'object'`),
-    check(
-      'tax_source_conflicts_distinct_ck',
-      sql`${table.relatedAssertionId} is null or ${table.subjectAssertionId} is distinct from ${table.relatedAssertionId}`,
-    ),
-    trimmed('tax_source_conflicts_provenance_ck', table.provenanceRef),
-    ...scopedPolicies('tax_source_conflicts_scope', table),
+    fingerprint('tax_seller_vat_regime_declarations_fingerprint_ck', table.intentFingerprint),
+    ...scopedPolicies('tax_seller_vat_regime_declarations_scope', table),
   ],
 );
 
@@ -458,15 +305,12 @@ export const taxOrderTaxFinalizations = taxSchema.table.withRLS(
 );
 
 const databaseSchema = {
-  taxFactAuthorityContractRevisions,
-  taxFactAuthorityContracts,
   taxOrderTaxFinalizations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
   taxRules,
-  taxSourceAssertions,
-  taxSourceConflicts,
+  taxSellerVatRegimeDeclarations,
 } as const;
 
 export const TAX_TABLES = [
@@ -474,10 +318,7 @@ export const TAX_TABLES = [
   taxRuleRevisions,
   taxRuleRevisionEndFacts,
   taxRuleCorrections,
-  taxFactAuthorityContracts,
-  taxFactAuthorityContractRevisions,
-  taxSourceAssertions,
-  taxSourceConflicts,
+  taxSellerVatRegimeDeclarations,
   taxOrderTaxFinalizations,
 ] as const;
 

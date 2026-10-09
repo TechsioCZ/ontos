@@ -114,8 +114,8 @@ it('accepts Inventory permissions only for exact Inventory Resource scope', () =
   ).toThrow(/incompatible target scope/u);
 });
 
-it('accepts TAX management and source-recording permissions only for exact Selling Legal Entity scope', () => {
-  for (const key of ['tax.rule.manage', 'tax.authority_contract.manage', 'tax.source_assertion.record']) {
+it('accepts TAX management permissions only for exact Selling Legal Entity scope', () => {
+  for (const key of ['tax.rule.manage']) {
     expect(
       defineBusinessPermission({
         ...readPermission,

@@ -7,13 +7,11 @@ import {
   TAX_SCHEMA_NAME,
   TAX_TABLES,
   TAX_TABLE_INVENTORY,
-  taxFactAuthorityContractRevisions,
+  taxOrderTaxFinalizations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
-  taxOrderTaxFinalizations,
   taxRuleRevisions,
-  taxSourceAssertions,
-  taxSourceConflicts,
+  taxSellerVatRegimeDeclarations,
 } from '../../src/database/schema.ts';
 
 const migrationRoot = new URL('../../drizzle/', import.meta.url);
@@ -25,6 +23,11 @@ const migrations = () =>
 const columnNames = (table: (typeof TAX_TABLES)[number]) => getTableConfig(table).columns.map(({ name }) => name);
 const uniqueColumns = (table: (typeof TAX_TABLES)[number]) =>
   getTableConfig(table).uniqueConstraints.map((constraint) => constraint.columns.map(({ name }) => name).join(','));
+
+/** `tax_seller_vat_regime_declarations` is merchant-attributed, not Core-governance-attributed (F2-F4); it has no
+ * `provenance_ref` and its `reason` is nullable (backdated effect only), so it is exempt from the generic
+ * governance-attribution shape checked below. */
+const GOVERNANCE_ATTRIBUTED_TABLES = TAX_TABLES.filter((table) => table !== taxSellerVatRegimeDeclarations);
 
 it('owns only the private, tenant and Selling Legal Entity scoped TAX governance catalog', () => {
   const names = EffectArray.sort(
@@ -47,6 +50,14 @@ it('owns only the private, tenant and Selling Legal Entity scoped TAX governance
     expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
     expect(config.columns.some(({ name, notNull }) => name === 'legal_entity_id' && notNull)).toBe(true);
     expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
+    // Core invocation identity is unique per row.
+    expect(
+      uniqueColumns(table).some((columns) => columns.startsWith('tenant_id,idempotency_key')),
+      `${config.name} idempotency`,
+    ).toBe(true);
+  }
+  for (const table of GOVERNANCE_ATTRIBUTED_TABLES) {
+    const config = getTableConfig(table);
     for (const column of [
       'action_invocation_id',
       'actor_principal_id',
@@ -59,11 +70,6 @@ it('owns only the private, tenant and Selling Legal Entity scoped TAX governance
         `${config.name}.${column}`,
       ).toBe(true);
     }
-    // Core invocation identity is unique per row; a conflict row is unique per invocation, kind and counterpart.
-    expect(
-      uniqueColumns(table).some((columns) => columns.startsWith('tenant_id,idempotency_key')),
-      `${config.name} idempotency`,
-    ).toBe(true);
   }
 });
 
@@ -76,9 +82,6 @@ it('models immutable revisions, end facts and correction provenance without tech
   expect(columnNames(taxRuleRevisions)).not.toContain('updated_at');
   expect(uniqueColumns(taxRuleRevisionEndFacts)).toContain('tenant_id,tax_rule_revision_id');
   expect(uniqueColumns(taxRuleCorrections)).toContain('tenant_id,wrong_revision_id,correcting_revision_id');
-  expect(columnNames(taxFactAuthorityContractRevisions)).toEqual(
-    expect.arrayContaining(['system_of_record_ref', 'evidence_source_refs', 'authority_from', 'authority_to']),
-  );
   const sql = migrations();
   expect(sql).toContain('CREATE SCHEMA "tax"');
   expect(sql).toContain('GRANT USAGE ON SCHEMA "tax" TO "ontos_runtime"');
@@ -91,46 +94,44 @@ it('models immutable revisions, end facts and correction provenance without tech
   }
 });
 
-it('#958 F1-F16 F21-F22 keeps provider, Source Record, assertion and fact identities and every time meaning distinct', () => {
-  expect(columnNames(taxSourceAssertions)).toEqual(
+it('#907 Unit 10 stores merchant-declared, append-only Seller VAT Regime revisions, never verified', () => {
+  expect(columnNames(taxSellerVatRegimeDeclarations)).toEqual(
     expect.arrayContaining([
-      'source_ref',
-      'source_record_ref',
-      'source_assertion_key',
-      'fact_family',
-      'jurisdiction',
-      'registration_meaning',
-      'valid_from',
-      'valid_to',
-      'observed_at',
-      'issued_at',
+      'revision',
+      'regime',
+      'effective_from',
       'recorded_at',
-      'semantic_fingerprint',
-      'eligibility',
-      'authority_role',
-      'authority_contract_revision_id',
-      'delivery_ref',
+      'actor_principal_id',
+      'reason',
+      'provenance',
+      'replaces_scheduled',
+      'action_invocation_id',
+      'idempotency_key',
+      'intent_fingerprint',
     ]),
   );
-  // Canonical TAX semantics are never keyed on an adapter or route identity (#958 F22).
-  expect(columnNames(taxSourceAssertions).filter((name) => /adapter|connector|route|payload/u.test(name))).toEqual([]);
-  for (const name of ['valid_from', 'valid_to', 'observed_at', 'issued_at']) {
-    expect(getTableConfig(taxSourceAssertions).columns.find((column) => column.name === name)?.notNull, name).toBe(
-      false,
-    );
-  }
-  expect(uniqueColumns(taxSourceAssertions)).toContain('tenant_id,legal_entity_id,source_ref,source_assertion_key');
-  expect(uniqueColumns(taxSourceConflicts)).toContain('tenant_id,idempotency_key,conflict_kind,related_assertion_id');
-  expect(columnNames(taxSourceAssertions)).not.toContain('updated_at');
+  // Not the shared `attribution()` shape: no `provenance_ref`, and `recorded_at` has no DB default (F2, F4).
+  expect(columnNames(taxSellerVatRegimeDeclarations)).not.toContain('provenance_ref');
+  expect(
+    getTableConfig(taxSellerVatRegimeDeclarations).columns.find((column) => column.name === 'recorded_at')?.hasDefault,
+  ).toBe(false);
+  expect(
+    getTableConfig(taxSellerVatRegimeDeclarations).columns.find((column) => column.name === 'reason')?.notNull,
+  ).toBe(false);
+  expect(uniqueColumns(taxSellerVatRegimeDeclarations)).toContain('tenant_id,legal_entity_id,revision');
   const sql = migrations();
-  expect(sql).toContain('"tax_source_assertions_validity_ck" CHECK ("valid_from" is null or "valid_to" is null');
-  expect(sql).toContain('"tax_source_conflicts_status_ck" CHECK ("status" = \'OPEN\')');
-  // Only time-independent eligibility is stored; the #957 acceptance depends on the authority contracts and is
-  // always evaluated, never stored (#959 F25).
   expect(sql).toContain(
-    '"tax_source_assertions_eligibility_ck" CHECK ("eligibility" in (\'ELIGIBLE\', \'VALIDITY_UNKNOWN\'))',
+    '"tax_seller_vat_regime_declarations_regime_ck" CHECK ("regime" in (\'VAT_PAYER\', \'NON_PAYER\'))',
   );
-  expect(columnNames(taxSourceAssertions)).not.toContain('acceptance_outcome');
+  expect(sql).toContain(
+    '"tax_seller_vat_regime_declarations_provenance_ck" CHECK ("provenance" in (\'MERCHANT_DECLARED\', \'MIGRATED\'))',
+  );
+  expect(sql).toContain('"tax_seller_vat_regime_declarations_backdating_reason_ck"');
+  // The four retired authority/source-assertion tables are gone from the catalog, dropped in this migration.
+  expect(sql).toContain('DROP TABLE "tax"."tax_fact_authority_contract_revisions"');
+  expect(sql).toContain('DROP TABLE "tax"."tax_fact_authority_contracts"');
+  expect(sql).toContain('DROP TABLE "tax"."tax_source_assertions"');
+  expect(sql).toContain('DROP TABLE "tax"."tax_source_conflicts"');
 });
 
 it('#944 F10-F13 stores one immutable final Order Tax per submission with its T and frozen intent', () => {

@@ -15,8 +15,7 @@ export const taxEvidenceReadPermission = defineBusinessPermission({
   protectedEntrypoints: [
     'commerce.tax.api.tax-privacy-owner-coverage',
     'commerce.tax.api.tax-rule-history',
-    'commerce.tax.api.tax-source-conflict-detail',
-    'commerce.tax.api.tax-source-assertion-history',
+    'commerce.tax.api.seller-vat-regime-history',
   ],
   schemaVersion: '1',
 });

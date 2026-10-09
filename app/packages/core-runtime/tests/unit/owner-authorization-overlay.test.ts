@@ -82,10 +82,6 @@ it('lets Core decide a TAX Selling Legal Entity target only for the exact truste
   );
 
   expect(taxDecision(scope.legalEntityId)).toBe('allowed');
-  expect(taxDecision(scope.legalEntityId, scope.tenantId, 'tax.source_assertion.record')).toBe('allowed');
-  expect(taxDecision('30000000-0000-4000-8000-000000000002', scope.tenantId, 'tax.source_assertion.record')).toBe(
-    'unavailable',
-  );
   expect(taxDecision('30000000-0000-4000-8000-000000000002')).toBe('unavailable');
   expect(taxDecision(scope.legalEntityId, '10000000-0000-4000-8000-000000000002')).toBe('unavailable');
   expect(ownerHeldDecision).toBe('unavailable');
