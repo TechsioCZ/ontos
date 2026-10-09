@@ -15,8 +15,7 @@ import { TaxDecisionIdSchema } from './tax-kernel/tax-decision.ts';
 import { BoundedIdentifierSchema, distinctBy } from './tax-kernel/tax-domain-primitives.ts';
 import { NonNegativeTaxExactRationalSchema } from './tax-kernel/tax-exact-rational.ts';
 import { TaxJurisdictionInputSchema } from './tax-kernel/tax-jurisdiction.ts';
-import { TaxNonSuccessOutcomeSchema } from './tax-kernel/tax-non-success-outcome.ts';
-import { TaxOutcomeSuccessSchema } from './tax-kernel/tax-outcome.ts';
+import { TaxOutcomeSchema } from './tax-kernel/tax-outcome.ts';
 import { TaxEvaluationTimeSchema, TaxRelevantTimeSchema } from './tax-kernel/tax-time.ts';
 import { PublishedPricingLineSchema } from './tax-kernel/taxable-basis.ts';
 import { TaxSourceAssertionRefSchema } from '../resources/tax-source-assertion.ts';
@@ -28,12 +27,6 @@ import {
 } from './tax-source-read-contracts.ts';
 
 const FingerprintSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
-
-/**
- * Published Tax Outcome: a successful Decision bound to its Result, or one typed non-success. Whether the Result's
- * amounts follow from the Decision is a Tax calculation that TAX itself re-checks on every accepted outcome.
- */
-export const TaxOutcomeContractSchema = Schema.Union([TaxOutcomeSuccessSchema, TaxNonSuccessOutcomeSchema]);
 
 const distinctOccurrenceIds = distinctBy(
   ({ occurrenceId }: Readonly<{ occurrenceId: string }>) => occurrenceId,
@@ -220,7 +213,7 @@ export const TaxEvaluationResponseContractSchema = Schema.Union([
   Schema.TaggedStruct('EVALUATED', {
     customerSafe: CustomerSafeTaxProjectionSchema,
     evidence: TaxEvaluationEvidenceSchema,
-    outcome: TaxOutcomeContractSchema,
+    outcome: TaxOutcomeSchema,
   }),
   Schema.TaggedStruct('TAX_EVALUATION_REQUEST_REJECTED', {
     reasons: Schema.NonEmptyArray(TaxEvaluationRequestRejectionReasonSchema),
@@ -229,9 +222,9 @@ export const TaxEvaluationResponseContractSchema = Schema.Union([
 
 /** Exact old and new Tax meanings of one purchase/use; no Bundle, Attempt or approval identity (#943 F11-F13). */
 export const TaxMaterialityComparisonRequestContractSchema = Schema.Struct({
-  current: TaxOutcomeContractSchema,
+  current: TaxOutcomeSchema,
   declaredUse: TaxMaterialityDeclaredUseSchema,
-  previous: TaxOutcomeContractSchema,
+  previous: TaxOutcomeSchema,
 });
 
 /** TAX-owned materiality conclusion (#943 F1-F10). */
