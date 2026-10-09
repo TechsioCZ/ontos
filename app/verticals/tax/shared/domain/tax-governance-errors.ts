@@ -9,6 +9,8 @@ const AuditResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.
 /**
  * Why a governed TAX mutation was rejected without changing canonical state (#949 F20, #955).
  * `MEANING_CHANGED`: a revision would silently reinterpret the stable Tax Rule meaning (#929 F1-F3).
+ * `SUBMISSION_INTENT_CHANGED`: a final Order Tax already exists for the submission with another frozen intent
+ * (#944 F11).
  */
 export const TaxGovernanceConflictKindSchema = Schema.Literals([
   'IDEMPOTENCY_REUSED',
@@ -17,6 +19,7 @@ export const TaxGovernanceConflictKindSchema = Schema.Literals([
   'LIFECYCLE',
   'MEANING_CHANGED',
   'AUTHORITY_CONFLICT',
+  'SUBMISSION_INTENT_CHANGED',
 ]);
 export type TaxGovernanceConflictKind = typeof TaxGovernanceConflictKindSchema.Type;
 

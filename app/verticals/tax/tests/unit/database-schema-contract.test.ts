@@ -10,6 +10,7 @@ import {
   taxFactAuthorityContractRevisions,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
+  taxOrderTaxFinalizations,
   taxRuleRevisions,
   taxSourceAssertions,
   taxSourceConflicts,
@@ -130,4 +131,24 @@ it('#958 F1-F16 F21-F22 keeps provider, Source Record, assertion and fact identi
     '"tax_source_assertions_eligibility_ck" CHECK ("eligibility" in (\'ELIGIBLE\', \'VALIDITY_UNKNOWN\'))',
   );
   expect(columnNames(taxSourceAssertions)).not.toContain('acceptance_outcome');
+});
+
+it('#944 F10-F13 stores one immutable final Order Tax per submission with its T and frozen intent', () => {
+  expect(uniqueColumns(taxOrderTaxFinalizations)).toContain('tenant_id,legal_entity_id,submission_ref');
+  expect(columnNames(taxOrderTaxFinalizations)).toEqual(
+    expect.arrayContaining([
+      'order_commitment_time',
+      'tax_evaluation_time',
+      'intent_fingerprint',
+      'decision_id',
+      'outcome',
+      'evidence',
+      'governing_rule_revisions',
+    ]),
+  );
+  // The customer-safe projection is recomputed, never stored as a second truth (#940 F19).
+  expect(columnNames(taxOrderTaxFinalizations)).not.toContain('customer_safe');
+  expect(migrations()).toContain(
+    '"tax_order_tax_finalizations_times_ck" CHECK ("order_commitment_time" <= "tax_evaluation_time")',
+  );
 });
