@@ -625,7 +625,7 @@ jobs:
           - {
               shard: 5,
               proof: node,
-              units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog,
+              units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy,
             }
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
@@ -748,7 +748,7 @@ jobs:
           - {
               shard: 5,
               proof: none,
-              units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog,
+              units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog verticals/privacy,
             }
     env:
       # Placeholder data-plane IDs: locally a Worker's HYPERDRIVE binding connects to the proof's
@@ -788,6 +788,7 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
+          ULTRAMODERN_PUBLIC_URL_PRIVACY: https://privacy.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
         run: |
@@ -911,6 +912,7 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
+          ULTRAMODERN_PUBLIC_URL_PRIVACY: https://privacy.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}

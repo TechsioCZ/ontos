@@ -13,6 +13,7 @@ import { CommercePortalAuthSessionApi } from './portal-auth/session-api.ts';
 import { CommercePortalAuthStepUpApi } from './portal-auth/step-up-api.ts';
 
 // <generated-governed-http-api-imports>
+import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
 import { AddSavedAddressActionApi } from './apis/add-saved-address-action.ts';
 import { ArchiveCustomerGroupActionApi } from './apis/archive-customer-group-action.ts';
 import { ArchiveCustomerProfileActionApi } from './apis/archive-customer-profile-action.ts';
@@ -62,6 +63,7 @@ import { DeliveryDestinationResolutionApi } from './apis/delivery-destination-re
 import { EffectiveCustomerGroupMembershipsApi } from './apis/effective-customer-group-memberships.ts';
 import { EffectiveCustomerGroupMembershipSetV1Api } from './apis/effective-customer-group-membership-set-v1.ts';
 import { EnsureRetailCustomerProfileActionApi } from './apis/ensure-retail-customer-profile-action.ts';
+import { ExecutePrivacyMeasureActionApi } from './apis/execute-privacy-measure-action.ts';
 import { GrantCounterpartyCommerceAccessActionApi } from './apis/grant-counterparty-commerce-access-action.ts';
 import { GuestAttributionStatusApi } from './apis/guest-attribution-status.ts';
 import { GuestPaymentTermsResolutionApi } from './apis/guest-payment-terms-resolution.ts';
@@ -165,6 +167,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CommercePortalAuthStepUpApi)
   .addHttpApi(CommercePortalAuthEnrollmentApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(PrivacyMeasureExecutionApi)
   .addHttpApi(AddSavedAddressActionApi)
   .addHttpApi(ArchiveCustomerGroupActionApi)
   .addHttpApi(ArchiveCustomerProfileActionApi)
@@ -214,6 +217,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(EffectiveCustomerGroupMembershipsApi)
   .addHttpApi(EffectiveCustomerGroupMembershipSetV1Api)
   .addHttpApi(EnsureRetailCustomerProfileActionApi)
+  .addHttpApi(ExecutePrivacyMeasureActionApi)
   .addHttpApi(GrantCounterpartyCommerceAccessActionApi)
   .addHttpApi(GuestAttributionStatusApi)
   .addHttpApi(GuestPaymentTermsResolutionApi)

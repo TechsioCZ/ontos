@@ -180,7 +180,7 @@ export type {
   DatabaseDriverFailureKind,
 } from './database/driver-failure.ts';
 export { PersistenceFailure } from './database/persistence-failure.ts';
-export { findPostgresFailure } from './database/postgres-failure.ts';
+export { findPostgresFailure, isPostgresUniqueViolation } from './database/postgres-failure.ts';
 export type { PostgresFailureMetadata } from './database/postgres-failure.ts';
 export {
   ContextAccess,

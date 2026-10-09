@@ -4,6 +4,7 @@ import { outboxWorkerEntry as partyRegistryOutboxWorkerEntry } from '@app/party-
 import { outboxWorkerEntry as commerceCustomerContextOutboxWorkerEntry } from '@app/commerce-customer-context/outbox-worker-host';
 import { outboxWorkerEntry as priceGroupCatalogOutboxWorkerEntry } from '@app/price-group-catalog/outbox-worker-host';
 import { outboxWorkerEntry as inventoryOutboxWorkerEntry } from '@app/inventory/outbox-worker-host';
+import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outbox-worker-host';
 
 startOutboxWorkerHost({
   entries: [
@@ -11,6 +12,7 @@ startOutboxWorkerHost({
     commerceCustomerContextOutboxWorkerEntry,
     priceGroupCatalogOutboxWorkerEntry,
     inventoryOutboxWorkerEntry,
+    privacyOutboxWorkerEntry,
   ],
   health: true,
 });

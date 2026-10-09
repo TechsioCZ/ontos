@@ -1,6 +1,7 @@
 import type { AnyOutboxWorkerRegistration } from '@app/core-runtime';
 
 // <generated-outbox-worker-imports>
+import { executePrivacyMeasureWorker } from './execute-privacy-measure.worker.ts';
 import { projectContactPointAddedToSearchWorker } from './project-contact-point-added-to-search.worker.ts';
 import { projectContactPointEndedToSearchWorker } from './project-contact-point-ended-to-search.worker.ts';
 import { projectContactPointUpdatedToSearchWorker } from './project-contact-point-updated-to-search.worker.ts';
@@ -20,6 +21,7 @@ import { rebuildSearchWorker } from './rebuild-search.worker.ts';
 
 export const outboxWorkers = Object.freeze([
   // <generated-outbox-worker-registrations>
+  executePrivacyMeasureWorker,
   projectContactPointAddedToSearchWorker,
   projectContactPointEndedToSearchWorker,
   projectContactPointUpdatedToSearchWorker,

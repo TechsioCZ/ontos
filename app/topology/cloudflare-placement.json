@@ -14,6 +14,7 @@
     "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG": "https://ontos-stage-payment-term-catalog.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG": "https://ontos-stage-price-group-catalog.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_PRICING": "https://ontos-stage-pricing.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_PRIVACY": "https://ontos-stage-privacy.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP": "https://ontos-stage.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY": "https://ontos-stage-storefront-registry.bleeding.dev"
   },
@@ -31,6 +32,7 @@
     "storefront-registry",
     "price-group-catalog",
     "inventory",
+    "privacy",
     "shell-super-app"
   ]
 }

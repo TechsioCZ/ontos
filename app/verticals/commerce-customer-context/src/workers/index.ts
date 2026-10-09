@@ -1,6 +1,7 @@
 import type { AnyOutboxWorkerRegistration } from '@app/core-runtime';
 
 // <generated-outbox-worker-imports>
+import { executePrivacyMeasureWorker } from './execute-privacy-measure.worker.ts';
 import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
 import { reconcileCounterpartyAccessGrantAuthorizationMutationWorker } from './reconcile-counterparty-access-grant-authorization-mutation.worker.ts';
 import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from './reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
@@ -13,6 +14,7 @@ import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorke
 
 export const outboxWorkers = Object.freeze([
   // <generated-outbox-worker-registrations>
+  executePrivacyMeasureWorker,
   reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker,
   reconcileCounterpartyAccessGrantAuthorizationMutationWorker,
   reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker,

@@ -41,6 +41,7 @@ export * from './create-customer-group-action-client.ts';
 export * from './create-purchase-proposal-revision-action-client.ts';
 export * from './decide-purchase-approval-request-action-client.ts';
 export * from './ensure-retail-customer-profile-action-client.ts';
+export * from './execute-privacy-measure-action-client.ts';
 export * from './grant-counterparty-commerce-access-action-client.ts';
 export * from './migrate-counterparty-price-group-action-client.ts';
 export * from './migrate-customer-price-group-action-client.ts';
@@ -87,6 +88,7 @@ export * from './retail-purchasing-subject-current-v1-client.ts';
 export * from './verify-effective-customer-group-membership-set-v1-client.ts';
 export * from './verify-retail-purchasing-subject-current-v1-client.ts';
 export * from './payment-term-affected-use-assessment-client.ts';
+export * from './privacy-measure-execution-client.ts';
 export {
   PaymentTermAffectedUseAssessmentRequestSchema,
   PaymentTermAffectedUseAssessmentResponseSchema,

@@ -85,6 +85,45 @@ const currentActionKeys = [
 ] as const;
 
 const addedVerticalActionKeys = [
+  'commerce.customer-context.execute-privacy-measure',
+  'party.registry.execute-privacy-measure',
+  'privacy.core.add-processing-purpose-version',
+  'privacy.core.assign-dsr-resolver',
+  'privacy.core.assign-legal-basis',
+  'privacy.core.assign-privacy-responsibility',
+  'privacy.core.consent-self-service',
+  'privacy.core.create-dsr-case',
+  'privacy.core.create-notice-version',
+  'privacy.core.create-privacy-subject',
+  'privacy.core.create-processing-activity',
+  'privacy.core.create-processing-purpose',
+  'privacy.core.dispatch-privacy-measure',
+  'privacy.core.enqueue-retention-evaluation',
+  'privacy.core.evaluate-processing-eligibility',
+  'privacy.core.issue-dsr-delivery-access',
+  'privacy.core.record-anti-resurrection-protection',
+  'privacy.core.record-applicability-policy',
+  'privacy.core.record-consent-decision',
+  'privacy.core.record-disposition-decision',
+  'privacy.core.record-dsr-deadline',
+  'privacy.core.record-dsr-delivery-evidence',
+  'privacy.core.record-dsr-response',
+  'privacy.core.record-dsr-substantive-decision',
+  'privacy.core.record-dsr-verification',
+  'privacy.core.record-external-obligation',
+  'privacy.core.record-legal-hold',
+  'privacy.core.record-notice-provision',
+  'privacy.core.record-owner-contribution',
+  'privacy.core.record-owner-execution-outcome',
+  'privacy.core.record-privacy-applicability',
+  'privacy.core.record-privacy-representation',
+  'privacy.core.record-processing-intervention',
+  'privacy.core.record-retention-exception',
+  'privacy.core.transition-processing-activity',
+  'privacy.core.update-dsr-case',
+  'privacy.core.upsert-dsr-owner-task',
+  'privacy.core.upsert-retention-rule',
+  'privacy.core.upsert-temporary-dsr-export',
   'commerce.catalog.activate-local-override',
   'commerce.catalog.activate-package-definition',
   'commerce.catalog.activate-package-option',
@@ -503,7 +542,8 @@ it.effect(
     expect(currentActionKeys.filter((key) => key.startsWith('core.')).length).toBe(8);
     expect(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length).toBe(30);
     expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
-    expect(completeCurrentActionKeys).toHaveLength(246);
+    expect(completeCurrentActionKeys).toHaveLength(285);
+    expect(completeCurrentActionKeys.filter((key) => key.startsWith('privacy.core.'))).toHaveLength(37);
     expect(completeCurrentActionKeys.filter((key) => key.startsWith('commerce.pricing.'))).toHaveLength(13);
     expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
     expect(completeCurrentActionKeys).toContain('commerce.catalog.publish-product-configuration');

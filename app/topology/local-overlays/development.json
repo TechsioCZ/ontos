@@ -10,7 +10,8 @@
     "storefront-registry": "http://localhost:4107/.well-known/ontos-module-manifest.json",
     "price-group-catalog": "http://localhost:4108/.well-known/ontos-module-manifest.json",
     "inventory": "http://localhost:4110/.well-known/ontos-module-manifest.json",
-    "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json"
+    "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json",
+    "privacy": "http://localhost:4112/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -27,14 +28,16 @@
     "storefront-registry": 4107,
     "price-group-catalog": 4108,
     "inventory": 4110,
-    "availability": 4111
+    "availability": 4111,
+    "privacy": 4112
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
     "party-registry": "http://localhost:4102/mf-manifest.json",
     "commerce-market-catalog": "http://localhost:4109/mf-manifest.json",
     "catalog": "http://localhost:4105/mf-manifest.json",
-    "inventory": "http://localhost:4110/mf-manifest.json"
+    "inventory": "http://localhost:4110/mf-manifest.json",
+    "privacy": "http://localhost:4112/mf-manifest.json"
   },
   "serverExecution": {
     "party-registry": {
@@ -595,6 +598,57 @@
           "buildMarker": "7b0e5ab486adc9c0"
         }
       }
+    },
+    "privacy": {
+      "apiBaseUrl": "http://localhost:4112/privacy-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/privacy",
+        "buildMarker": "00f31ee28a035d1a"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-privacy",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRIVACY",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_PRIVACY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PRIVACY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PRIVACY_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_PRIVACY_WORKER",
+          "serviceBindingEnv": "VERTICAL_PRIVACY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PRIVACY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PRIVACY_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalPrivacyBackend",
+        "manifestEnv": "VERTICAL_PRIVACY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4112/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4112/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/privacy",
+          "buildMarker": "00f31ee28a035d1a"
+        }
+      }
     }
   },
   "apis": {
@@ -608,6 +662,7 @@
     "price-group-catalog": "http://localhost:4108/price-group-catalog-api",
     "assortment": "http://localhost:4104/assortment-api",
     "inventory": "http://localhost:4110/inventory-api",
-    "availability": "http://localhost:4111/availability-api"
+    "availability": "http://localhost:4111/availability-api",
+    "privacy": "http://localhost:4112/privacy-api"
   }
 }

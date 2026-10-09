@@ -36,6 +36,7 @@ interface VerificationRow {
 
 const EXPECTED_RUNTIME_ROUTINES = [
   'add_saved_address',
+  'apply_privacy_measure_profile_restriction',
   'archive_customer_group',
   'assess_market_retirement_affected_use',
   'assess_payment_term_entitlement_use',
@@ -104,6 +105,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_portal_enrollment_owner_operation',
   'read_price_group_assignment_compatibility_evidence',
   'read_price_group_assignments',
+  'read_privacy_measure_execution',
   'read_profile_reconciliation',
   'read_profile_trading_gate',
   'read_purchase_limit_policies',
@@ -117,6 +119,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'record_address_book_reconciliation_receipt',
   'record_guest_attribution',
   'record_portal_enrollment_outcome',
+  'record_privacy_measure_execution',
   'record_profile_reconciliation_owner_outcome',
   'redeem_invitation_claim_secret',
   'register_invitation_claim_proof',
@@ -161,6 +164,7 @@ const EXPECTED_TRIGGER_NAMES = [
   'ccc_portal_enrollment_attempts_identity_guard',
   'ccc_portal_enrollment_owner_operations_composition_fence',
   'ccc_portal_enrollment_owner_operations_identity_guard',
+  'ccc_privacy_measure_executions_immutable',
   'ccc_profile_aliases_append_only',
   'ccc_profile_history_append_only',
   'ccc_purchase_currency_policy_revision_guard',

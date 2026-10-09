@@ -1,3 +1,5 @@
+// fallow-ignore-file code-duplication -- Owner-local protocol code intentionally mirrors its peer owner while preserving separate deployment and persistence authority.
+/* jscpd:ignore-start -- Owner-local protocol code intentionally mirrors its peer owner while preserving separate deployment and persistence authority. */
 import { defineConfig } from '@rstest/core';
 
 const swc = { jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } } } as const;
@@ -22,3 +24,4 @@ export default defineConfig({
   ],
   root: new URL('.', import.meta.url).pathname,
 });
+/* jscpd:ignore-end */

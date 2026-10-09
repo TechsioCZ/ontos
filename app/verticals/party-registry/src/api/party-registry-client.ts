@@ -72,7 +72,11 @@ export * from './party-merge-readiness-client.ts';
 export * from './party-official-identifier-detail-client.ts';
 export * from './party-official-identifier-history-client.ts';
 export * from './party-relationship-detail-client.ts';
+export * from './privacy-measure-execution-client.ts';
 export * from './party-command-client.ts';
+// <generated-action-http-client-exports>
+export * from './execute-privacy-measure-action-client.ts';
+// </generated-action-http-client-exports>
 export {
   AresApplySelectionInvalid,
   applyAresObservation,

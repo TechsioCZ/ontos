@@ -48,6 +48,7 @@ const privateRoutines = [
 /** Routines the runtime role must be able to execute; every owner surface reaches the database through one. */
 const grantedRoutines = [
   'add_saved_address',
+  'apply_privacy_measure_profile_restriction',
   'archive_customer_group',
   'assess_market_retirement_affected_use',
   'assess_payment_term_entitlement_use',
@@ -116,6 +117,7 @@ const grantedRoutines = [
   'read_portal_enrollment_owner_operation',
   'read_price_group_assignment_compatibility_evidence',
   'read_price_group_assignments',
+  'read_privacy_measure_execution',
   'read_profile_reconciliation',
   'read_profile_trading_gate',
   'read_purchase_limit_policies',
@@ -129,6 +131,7 @@ const grantedRoutines = [
   'record_address_book_reconciliation_receipt',
   'record_guest_attribution',
   'record_portal_enrollment_outcome',
+  'record_privacy_measure_execution',
   'record_profile_reconciliation_owner_outcome',
   'redeem_invitation_claim_secret',
   'register_invitation_claim_proof',

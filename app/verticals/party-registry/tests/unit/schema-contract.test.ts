@@ -98,6 +98,7 @@ it('owns the complete Party Registry operational catalog in the party schema', (
     'party_merges',
     'party_official_identifiers',
     'party_relationships',
+    'privacy_measure_executions',
   ]);
   expect(qualifiedNames).toEqual(PARTY_TABLE_INVENTORY.map((name) => `party.${name}`));
 });
@@ -605,10 +606,10 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
         fs.readFileString(fileURLToPath(new URL(`${migrationFolders[0] ?? ''}/migration.sql`, migrationDirectory))),
       );
       expect(migration.match(/ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu)?.length).toBe(
-        PARTY_TABLE_INVENTORY.length,
+        PARTY_TABLE_INVENTORY.length - 1,
       );
       expect(migration.match(/ALTER TABLE "party"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu)?.length).toBe(
-        PARTY_TABLE_INVENTORY.length,
+        PARTY_TABLE_INVENTORY.length - 1,
       );
       expect(migration).not.toMatch(/REFERENCES "(?:core|auth|contacts)"\./u);
       expect(migration).toMatch(/party_reject_correction_mutation/u);
@@ -635,9 +636,9 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party', 'catalog', 'inventory'\]/u);
+      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party', 'catalog', 'inventory', 'privacy'\]/u);
       expect(verifier).toMatch(
-        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'storefront_registry',\s*\]/u,
+        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'storefront_registry',\s*\]/u,
       );
       expect(verifier).toMatch(/__drizzle_migrations_assortment/u);
       expect(verifier).toMatch(/__drizzle_migrations_catalog/u);

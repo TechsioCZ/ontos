@@ -14,6 +14,7 @@ const apiNames = [
   'counterpartyRead',
   'counterpartyRoleHistory',
   'duplicateCandidateDetail',
+  'executePrivacyMeasureAction',
   'foundation',
   'guestPartyResolution',
   'organizationEngagementMutations',
@@ -33,6 +34,7 @@ const apiNames = [
   'partyRelationshipDetail',
   'personEngagementMutations',
   'personEngagementProfile',
+  'privacyMeasureExecution',
 ] as const;
 
 type Equal<Left, Right> =
