@@ -264,10 +264,11 @@ preference may fall back without changing the stored preference. No usable unamb
 means the purchase cannot be Accepted.
 
 **Payment Term** — Payment-owned reusable semantic definition of when and under which commercial
-conditions an amount becomes due, for example immediate payment, `NET_14`, or `NET_30`. A material
-semantic change creates a new immutable definition revision/identity; it does not rewrite existing
-entitlements or Accepted Orders silently. A Payment Term is distinct from a Payment transaction,
-receivable, invoice, customer entitlement, and Principal authorization.
+conditions an amount becomes due, for example immediate payment, `NET_14`, or `NET_30`. One
+`PaymentTermRef` has one contractual meaning for life: a material semantic change creates a new
+Payment Term with a new `PaymentTermRef`; it is never only another semantic revision under the old
+Ref and never silently rewrites existing entitlements or Accepted Orders. A Payment Term is distinct
+from a Payment transaction, receivable, invoice, customer entitlement, and Principal authorization.
 
 **Customer Payment Term Entitlement** — Time-bounded Commerce-owned assignment making one Payment
 Term commercially available to one Commerce Customer Profile. A profile may have `0..N` Current
@@ -808,10 +809,55 @@ hash that identified the Attempt.
 **Reservation Confirmation** — Inventory-owned Attempt-bound proof issued by the selected Reservation Authority through Inventory's public boundary that one exact Inventory Reservation is provisionally guaranteed within its declared validity interval. Commerce consumes this proof in the Order Commitment Proof Set; its cardinality, health, renewal and recovery semantics remain owned by Inventory.
 _Avoid_: Availability as issuer, treating the proof as an Order or Availability promise, or redefining Inventory proof lifecycle in Commerce.
 
+**Payment Method** — Business way an exact purchase is paid: online gateway, advance bank transfer,
+Cash on Delivery, deferred invoice under an accepted Payment Term, or pay-on-pickup/on-site. A gateway
+name is execution routing, not the Payment Method. QR is an instruction/presentation for bank transfer,
+not proof of collection.
+_Avoid_: Stripe/GoPay/Comgate as the business method, QR-created = paid, carrier delivery = paid.
+
+**Payment** — Payment-owned canonical intent for one exact non-split purchase payment meaning, exact
+Monetary Amount + currency, selected Payment Method and resolved Payment Term. It owns its logical
+Payment Operations and derived monetary outcomes. At most one collection lineage may be live or
+proven for that Payment; a different operation key never authorizes a second concurrent/full
+collection. It is not an accounting receivable or an Order.
+_Avoid_: provider PaymentIntent/session as canonical Payment, invoice as Payment, Payment state as Order state.
+
+**Payment Operation** — One immutable logical attempt to cause or control one Payment monetary effect,
+such as collect, cancel/void, or refund. Safe transport/provider retry of the exact same operation
+retains its identity; changed amount/currency/method/refundable-item set is not the same operation.
+_Avoid_: HTTP request as operation identity, new idempotency key as timeout recovery, Order Commitment Attempt.
+
+**Payment Observation** — Immutable qualified evidence from a gateway, bank/accounting source, carrier
+or explicitly authorized local/POS source about one Payment operation or monetary fact. An observation
+is evidence to interpret and reconcile, not automatically a new monetary effect.
+_Avoid_: webhook name as canonical state, arrival order as authority, same amount/reference as sufficient dedupe.
+
+**Payment Collection** — Proven receipt/collection of customer funds for one Payment according to the
+selected method. For COD, customer collection is distinct from later carrier remittance to the merchant.
+_Avoid_: authorization, redirect success, QR generation, invoice existence, merchant settlement.
+
+**Payment Refund** — Separate monetary effect returning previously collected funds. Ordinary business
+refunds are item-atomic: partial means partial relative to the whole Order by selecting complete
+authoritative refundable items. When collection occurred but commitment authoritatively proves no
+Order was created and the predecessor is closed against late commit, the same Refund capability may
+instead compensate the exact remaining unrefunded collection without fabricating Order items.
+_Avoid_: refund request/provider acceptance as completed refund, timeout as compensation authority,
+refund erasing original collection.
+
+**Payment Settlement / Remittance** — Evidence that already-collected funds were subsequently settled
+or remitted to the merchant. Launch preserves authoritative settlement/remittance observations when
+available but does not require active merchant-payout matching.
+_Avoid_: customer collection as proof of merchant settlement.
+
 **Payment Authorization** — Payment-owned proof that the required Payment method/amount/currency is
-authorized for one exact Order Commitment Attempt under the resolved Payment Term. It is distinct
-from capture, settlement, refund, and Order. It has explicit provider correlation, idempotency,
-Current status, and validity; secrets or payment instruments never enter Commerce business payloads.
+authorized for one exact Order Commitment Attempt under the resolved Payment Term. For prepaid methods
+the exact required Payment coverage must be Current, not merely historically collected; a pending or
+confirmed refund/reversal/compensation affecting that coverage makes the prepaid proof unusable until
+the owner again proves sufficient Current coverage. For accepted deferred/handover methods the exact
+method condition may satisfy the proof without pre-collection. It is distinct from provider
+preauthorization, collection, settlement, refund, Principal authorization, and Order. It has explicit
+Payment/evidence correlation, idempotency, Current status, and validity; secrets or payment instruments
+never enter Commerce business payloads.
 
 **Order Commitment Time** — Trusted server-side business instant captured once when the final
 Checkout submission freezes one exact purchase candidate for commitment. Every commitment-time
@@ -1126,9 +1172,11 @@ handoff to Purchasing Approval or Order Commitment Gate. It owns no source facts
 commercial terms, source evidence and Actor attribution. It remains the System of Record for the
 historical purchase even when Current Catalog or other source definitions later change.
 
-**Payment** — Domain owning Payment Term definitions plus Payment authorization, collection,
-settlement, cancellation, refund, and reconciliation outcomes. Customer entitlement, preference,
-purchase selection, and Order Snapshot remain separate facts.
+**Payment domain family** — Owns reusable Payment Term definitions plus canonical Payment intents,
+Payment Operations, Payment Observations, collection/refund outcomes, settlement/remittance
+observations, authorization proofs and Payment reconciliation. Customer entitlement/preference,
+purchase selection, Billing receivable/documents, Fulfillment and Order Snapshot remain separate
+owner facts.
 
 **Fulfillment** — Domain for preparation, handoff, delivery, tracking, partial fulfillment and
 delivery exceptions. It acts on Accepted line and component meaning; current Catalog revisions do
