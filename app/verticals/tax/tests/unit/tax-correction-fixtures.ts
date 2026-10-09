@@ -2,10 +2,10 @@ import { Schema } from 'effect';
 
 import { AcceptedTaxTermsSchema } from '../../src/domain/accepted-tax-terms.ts';
 import type { AcceptedTaxTerms } from '../../src/domain/accepted-tax-terms.ts';
-import type { TaxDecisionSchema } from '../../src/domain/tax-decision.ts';
-import { sumTaxExactRationals } from '../../src/domain/tax-exact-rational.ts';
+import type { TaxDecisionSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
+import { sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { TaxResultSchema } from '../../src/domain/tax-result.ts';
-import { TaxableSupplyUnitIdSchema } from '../../src/domain/taxable-supply-unit.ts';
+import { TaxableSupplyUnitIdSchema } from '../../shared/domain/tax-kernel/taxable-supply-unit.ts';
 import type { TaxableSupplyUnitId } from '../../src/domain/taxable-supply-unit.ts';
 import {
   catalogSelectionInput,
@@ -120,8 +120,14 @@ export const originalDecisionInput = (
   };
 };
 
-/** Encoded Accepted Tax Terms of a B2C final Order Snapshot whose Order Commitment Time is the Decision's T. */
-export const acceptedTaxTermsInput = (units: readonly [OriginalUnitInput, ...OriginalUnitInput[]]) => {
+/**
+ * Encoded Accepted Tax Terms of a B2C final Order Snapshot whose Order Commitment Time is the Decision's T. A
+ * different `resultUnits` input publishes a Result bound to the Decision whose amounts do not follow from it.
+ */
+export const acceptedTaxTermsInput = (
+  units: readonly [OriginalUnitInput, ...OriginalUnitInput[]],
+  resultUnits: readonly [OriginalUnitInput, ...OriginalUnitInput[]] = units,
+) => {
   const decision = decodeTaxDecision(originalDecisionInput(units));
   const encodedDecision = encodeTaxDecision(decision);
   return {
@@ -129,7 +135,7 @@ export const acceptedTaxTermsInput = (units: readonly [OriginalUnitInput, ...Ori
     finalTax: {
       _tag: 'TAX_DETERMINED' as const,
       decision: encodedDecision,
-      result: encodeResult(composeResult(decision)),
+      result: encodeResult(composeResult(decodeTaxDecision(originalDecisionInput(resultUnits)))),
     },
     orderCommitmentTime: encodedDecision.taxRelevantTime,
     orderLineage: { bundleRef: 'bundle-1', orderRef: 'order-1' },
