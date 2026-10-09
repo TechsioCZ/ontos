@@ -947,3 +947,13 @@ describe('#960 PR review regressions (Codex, round 2)', () => {
     expect(outcomes.some((outcome) => Schema.is(TaxMigrationConflictingSchema)(outcome))).toBe(false);
   });
 });
+
+describe('#960 PR review regressions (Codex, round 3)', () => {
+  it('names conflicting contracts in the same order whatever the input order, even for equal-looking ids (F27)', () => {
+    const composed = contract('caf\u00E9', 'commerce.tax', Option.some('2026-05-01T00:00:00.000Z'));
+    const decomposed = contract('cafe\u0301', 'fixture:legacy-vat', Option.some('2026-05-01T00:00:00.000Z'));
+    expect(evaluateTaxAuthorityHandoff([decomposed, composed])).toEqual(
+      evaluateTaxAuthorityHandoff([composed, decomposed]),
+    );
+  });
+});

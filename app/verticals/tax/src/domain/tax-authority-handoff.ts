@@ -14,6 +14,7 @@ import type {
 } from '../../shared/domain/tax-migration-contracts.ts';
 import { authoritiesCoveringInstant } from './selling-legal-entity-vat-registration-resolution.ts';
 import type { TaxSourceAuthorityPeriod } from './selling-legal-entity-vat-registration-resolution.ts';
+import { byTaxMigrationText } from './tax-fact-migration.ts';
 
 /**
  * One fact-level authority period for one exact fact family and Selling Legal Entity, in the shape of a step-3 Tax
@@ -32,7 +33,7 @@ const knownStart = (period: TaxAuthorityHandoffPeriod): readonly TaxSourceAuthor
 
 const byStart = (left: TaxSourceAuthorityPeriod, right: TaxSourceAuthorityPeriod) =>
   DateTime.toEpochMillis(left.authorityFrom) - DateTime.toEpochMillis(right.authorityFrom) ||
-  left.contractId.localeCompare(right.contractId, 'en');
+  byTaxMigrationText(left.contractId, right.contractId);
 
 /**
  * Evaluates the fact-level authority handoff for one exact fact family and seller (#960 F19-F29). Exactly one System
@@ -59,7 +60,7 @@ export const evaluateTaxAuthorityHandoff = (
         return covering.length > 1 ? covering.map(({ contractId }) => contractId) : [];
       }),
     ),
-  ].toSorted((left, right) => left.localeCompare(right, 'en'));
+  ].toSorted(byTaxMigrationText);
   if (conflicting.length > 0) {
     return TaxAuthorityConflictSchema.make({
       contractIds: conflicting.map((contractId) => TaxMigrationAuthorityContractIdSchema.make(contractId)),
