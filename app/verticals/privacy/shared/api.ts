@@ -1,5 +1,4 @@
 /* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- The published Effect API entrypoint composes and exports the governed Privacy read contract. expires: 2027-03-31. */
-// oxlint-disable-next-line typescript/consistent-type-imports -- The strict API boundary requires Schema in the framework value import so generated contracts remain visibly schema-backed. expires: 2027-03-31.
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -74,12 +73,17 @@ export * from './apis/processing-purposes.ts';
 export * from './apis/responsibility-assignments.ts';
 export * from './apis/retention-rules.ts';
 
-export const privacyMarkerSchema: Schema.Codec<typeof MicroVerticalBuildMarkerSchema.Type> =
-  MicroVerticalBuildMarkerSchema;
+export const privacyMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export type PrivacyMarker = typeof privacyMarkerSchema.Type;
 
-export const privacyReadinessSchema: Schema.Codec<typeof MicroVerticalReadinessSchema.Type> =
-  MicroVerticalReadinessSchema;
+export const privacyReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: privacyMarkerSchema,
+});
 export type PrivacyReadiness = typeof privacyReadinessSchema.Type;
 
 export type OperationContext = MicroVerticalOperationContext;
