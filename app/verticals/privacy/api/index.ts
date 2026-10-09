@@ -21,7 +21,7 @@ import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/module
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
-import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import { Effect, HttpApiBuilder, Layer, Schema } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 
@@ -82,7 +82,7 @@ import { upsertRetentionRuleActionApiLive } from './upsert-retention-rule-action
 import { upsertTemporaryDsrExportActionApiLive } from './upsert-temporary-dsr-export-action-server.ts';
 // </generated-governed-http-handler-imports>
 
-import { privacyApi, privacyOperationContexts } from '../shared/api.ts';
+import { privacyApi, privacyMarkerSchema, privacyOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 import { ConsentSelfServiceAuthorityUnavailableLive } from '../src/actions/consent-self-service.action.ts';
 import { PrivacyApplicabilityBusinessFactAuthorityUnavailableLive } from '../src/actions/privacy-applicability-business-fact-authority-service.ts';
@@ -118,17 +118,19 @@ const operationAttributes = (operationContext: OperationContext) => {
 // fallow-ignore-next-line code-duplication -- Generated MicroVertical readiness and runtime-layer assembly follows the shared deployable-owner contract.
 const privacyReadinessLayer = HttpApiBuilder.group(privacyApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
-    Effect.succeed({
-      checks: {
-        api: 'ready' as const,
-        moduleFederation: 'ready' as const,
-        ssr: 'ready' as const,
-        translations: 'ready' as const,
-      },
-      marker: ultramodernApiMarker,
-      status: 'ready' as const,
-      versionSkew: 'none' as const,
-    }).pipe(
+    Schema.decodeUnknownEffect(privacyMarkerSchema)(ultramodernApiMarker).pipe(
+      Effect.orDie,
+      Effect.map((marker) => ({
+        checks: {
+          api: 'ready' as const,
+          moduleFederation: 'ready' as const,
+          ssr: 'ready' as const,
+          translations: 'ready' as const,
+        },
+        marker,
+        status: 'ready' as const,
+        versionSkew: 'none' as const,
+      })),
       Effect.withSpan('ultramodern.api.privacy.readiness', {
         attributes: operationAttributes(privacyOperationContexts.readiness),
         kind: 'server',
