@@ -34,6 +34,11 @@ const scope = {
 } satisfies OperationalScope;
 
 const terms = acceptedTaxTermsInput([{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }]);
+/** Bound to its Decision, but the published Tax does not follow from the 899.90 CZK basis. */
+const inconsistentTerms = acceptedTaxTermsInput(
+  [{ lineValue: '899.90', occurrenceId: 'o-1', quantity: '10' }],
+  [{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }],
+);
 
 const preview = (input: PreviewRequestInput, at: OperationalScope = scope) =>
   readTaxCorrectionPreview(decodeRequest(input), {
@@ -108,10 +113,12 @@ describe('Tax correction preview read', () => {
         { ...scope, legalEntityId: 'selling-legal-entity-2' },
         { ...scope, tenantId: 'tenant-2' },
       ]) {
-        const failure = yield* Effect.flip(
-          preview({ acceptedTaxTerms: terms, declaredPurpose: { _tag: 'HISTORICAL_READ' } }, foreign),
-        );
-        expect(failure.code).toBe('read_handler_not_found');
+        for (const handedOver of [terms, inconsistentTerms]) {
+          const failure = yield* Effect.flip(
+            preview({ acceptedTaxTerms: handedOver, declaredPurpose: { _tag: 'HISTORICAL_READ' } }, foreign),
+          );
+          expect(failure.code).toBe('read_handler_not_found');
+        }
       }
     }),
   );
@@ -134,18 +141,17 @@ describe('Tax correction preview read', () => {
 
   it.effect('#946 F12 #947 F13 a record whose Tax Result does not follow from its Decision is unresolved input', () =>
     Effect.gen(function* answersInconsistentRecord() {
-      const inconsistent = acceptedTaxTermsInput(
-        [{ lineValue: '899.90', occurrenceId: 'o-1', quantity: '10' }],
-        [{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }],
-      );
-      const result = yield* preview({ acceptedTaxTerms: inconsistent, declaredPurpose: { _tag: 'HISTORICAL_READ' } });
+      const result = yield* preview({
+        acceptedTaxTerms: inconsistentTerms,
+        declaredPurpose: { _tag: 'HISTORICAL_READ' },
+      });
 
       expect(Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema)(result)).toBe(true);
       expect(encodeResponse(result)).toMatchObject({ unresolved: { _tag: 'ORIGINAL_RECORD_INCONSISTENT' } });
     }),
   );
 
-  it('#946 F8-F9 a malformed or inconsistent handover is a contract violation, not a guessed baseline', () => {
+  it('#946 F8-F9 a structurally malformed handover is a contract violation, not a guessed baseline', () => {
     const { finalTax, ...withoutFinalTax } = terms;
     for (const malformed of [
       withoutFinalTax,

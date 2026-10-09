@@ -3,12 +3,6 @@ import { DateTime, Schema } from 'effect';
 import { BoundedIdentifierSchema } from './tax-domain-primitives.ts';
 import { TaxOutcomeSuccessSchema } from './tax-outcome.ts';
 import { OrderCommitmentTimeSchema } from './tax-time.ts';
-import { ShippingAllocationBasisSchema } from './shipping-allocation.ts';
-import { LineCommercialValueBasisSchema } from './taxable-basis.ts';
-
-export const isLineCommercialValue = Schema.is(LineCommercialValueBasisSchema);
-
-export const isShippingAllocation = Schema.is(ShippingAllocationBasisSchema);
 
 /**
  * The Authoritative Original Accepted Record whose recorded Tax is the return baseline: the final accepted B2C Order
