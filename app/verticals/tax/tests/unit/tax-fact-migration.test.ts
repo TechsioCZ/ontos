@@ -998,3 +998,29 @@ describe('#960 PR review regressions (Codex, round 4)', () => {
     );
   });
 });
+
+describe('#960 PR review regressions (Codex, round 5)', () => {
+  it('never keeps an assertion Current across an authority overlap between its instants (F21, F27)', () => {
+    const periods = [
+      {
+        ...legacyAuthority,
+        authorityFrom: at('2026-01-01T00:00:00.000Z'),
+        authorityTo: Option.some(at('2026-08-01T00:00:00.000Z')),
+      },
+      {
+        ...legacyAuthority,
+        authorityFrom: at('2026-06-01T00:00:00.000Z'),
+        authorityTo: Option.none(),
+        contractId: 'legacy-overlapping',
+      },
+    ];
+    expect(
+      placeTaxMigrationAssertion({
+        businessInstant: at('2026-03-01T00:00:00.000Z'),
+        evaluationInstant: at('2026-09-01T00:00:00.000Z'),
+        periods,
+        sourceRef: 'fixture:legacy-vat',
+      }),
+    ).toEqual({ placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() });
+  });
+});
