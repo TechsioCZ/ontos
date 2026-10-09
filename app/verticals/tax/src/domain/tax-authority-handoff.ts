@@ -142,7 +142,14 @@ export const placeTaxMigrationAssertion = (input: {
   // Placement needs exactly one System of Record at the evaluation instant too: a gap or an overlap there is never
   // guessed (#960 F21-F22, F27-F29). The assertion stays Current while that same source is still the authority.
   const [authorityNow, ...competingNow] = authoritiesCoveringInstant(input.periods, input.evaluationInstant);
-  if (authorityNow === undefined || competingNow.length > 0) {
+  // Any overlap starting between the two instants is the same configuration conflict the handoff evaluator reports.
+  const overlapInBetween = input.periods.some(
+    (period) =>
+      DateTime.isGreaterThan(period.authorityFrom, input.businessInstant) &&
+      DateTime.isLessThanOrEqualTo(period.authorityFrom, input.evaluationInstant) &&
+      authoritiesCoveringInstant(input.periods, period.authorityFrom).length > 1,
+  );
+  if (authorityNow === undefined || competingNow.length > 0 || overlapInBetween) {
     return { placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() };
   }
   // Once any other System of Record held authority after the business instant, the assertion became historical and a
