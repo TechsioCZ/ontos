@@ -84,6 +84,13 @@ const isShipping = Schema.is(ShippingAllocationBasisSchema);
 const exactText = ({ denominator, numerator }: TaxExactRational) => `${numerator}/${denominator}`;
 const byText = (left: string, right: string) => left.localeCompare(right, 'en');
 
+/**
+ * Unambiguous text of a tuple of opaque owner identifiers: each part is percent-encoded, so no part can contain the
+ * `|` separator and distinct tuples never collide; an absent part is a raw space, which encoding never produces.
+ */
+const joinParts = (parts: readonly (number | string | undefined)[]): string =>
+  parts.map((part) => (part === undefined ? ' ' : encodeURIComponent(String(part)))).join('|');
+
 const lineComponents = (unit: TaxDecisionUnit): readonly LineCommercialValueBasis[] =>
   unit.taxableBasisInterpretation.components.flatMap((component) => (isLine(component) ? [component] : []));
 const shippingComponents = (unit: TaxDecisionUnit): readonly ShippingAllocationBasis[] =>
@@ -93,7 +100,7 @@ const shippingComponents = (unit: TaxDecisionUnit): readonly ShippingAllocationB
 const unitMeaning = (unit: TaxDecisionUnit) => ({
   applicability: unit.applicability,
   basis: lineComponents(unit)
-    .map(({ amount, occurrenceId }) => `${occurrenceId}=${exactText(amount)}`)
+    .map(({ amount, occurrenceId }) => joinParts([occurrenceId, exactText(amount)]))
     .toSorted(byText),
   classification: unit.taxClassification.classificationCode,
   jurisdiction: unit.jurisdiction.jurisdiction,
@@ -128,8 +135,8 @@ const unitChecks: readonly (readonly [TaxMaterialChange, (unit: UnitMaterialMean
   ['JURISDICTION', (unit) => unit.jurisdiction],
   ['TREATMENT', (unit) => unit.treatment],
   ['CLASSIFICATION', (unit) => unit.classification],
-  ['TAXABLE_BASIS', (unit) => unit.basis.join('|')],
-  ['SHIPPING_ALLOCATION', (unit) => unit.shipping.join('|')],
+  ['TAXABLE_BASIS', (unit) => joinParts(unit.basis)],
+  ['SHIPPING_ALLOCATION', (unit) => joinParts(unit.shipping)],
   ['PUBLISHED_TAX_AMOUNT', (unit) => unit.publishedTaxAmount],
 ];
 
@@ -158,25 +165,23 @@ const materialChanges = (previous: MaterialMeaning, current: MaterialMeaning): r
 };
 
 const unitEvidence = (unit: TaxDecisionUnit) => ({
-  catalog: [
+  catalog: joinParts([
     unit.taxClassification.completenessEvidenceRef,
     ...unit.taxClassification.materialCatalogEvidence.map(
       ({ catalogFactRef, catalogFactRevisionRef, ownerEvidenceRef }) =>
-        `${catalogFactRef}@${catalogFactRevisionRef}#${ownerEvidenceRef}`,
+        joinParts([catalogFactRef, catalogFactRevisionRef, ownerEvidenceRef]),
     ),
-  ].join('|'),
-  place: [
+  ]),
+  place: joinParts([
     unit.jurisdiction.placeEvidenceRefs.sellingLegalEntity,
-    unit.jurisdiction.placeEvidenceRefs.deliveryDestination ?? '',
-    unit.jurisdiction.placeEvidenceRefs.invoiceRecipient ?? '',
-  ].join('|'),
-  pricingLine: lineComponents(unit)
-    .map(({ pricingLineRef }) => pricingLineRef)
-    .join('|'),
-  rule: `${unit.governingTaxRuleRevisionRef.taxRuleId}@${unit.governingTaxRuleRevisionRef.revision}`,
-  shippingWeights: shippingComponents(unit)
-    .map(({ allocationWeightsEvidenceRef }) => allocationWeightsEvidenceRef ?? '')
-    .join('|'),
+    unit.jurisdiction.placeEvidenceRefs.deliveryDestination,
+    unit.jurisdiction.placeEvidenceRefs.invoiceRecipient,
+  ]),
+  pricingLine: joinParts(lineComponents(unit).map(({ pricingLineRef }) => pricingLineRef)),
+  rule: joinParts([unit.governingTaxRuleRevisionRef.taxRuleId, unit.governingTaxRuleRevisionRef.revision]),
+  shippingWeights: joinParts(
+    shippingComponents(unit).map(({ allocationWeightsEvidenceRef }) => allocationWeightsEvidenceRef),
+  ),
 });
 type UnitEvidence = ReturnType<typeof unitEvidence>;
 
