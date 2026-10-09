@@ -39,6 +39,7 @@ zerops:
         - 'app/verticals/payment-term-catalog'
         - 'app/verticals/price-group-catalog'
         - 'app/verticals/pricing'
+        - 'app/verticals/privacy'
         - 'app/verticals/storefront-registry'
     deploy:
       temporaryShutdown: false
