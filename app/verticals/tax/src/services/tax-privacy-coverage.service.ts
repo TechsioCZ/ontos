@@ -17,6 +17,7 @@ import {
   TAX_TABLE_INVENTORY,
   taxFactAuthorityContractRevisions,
   taxFactAuthorityContracts,
+  taxOrderTaxFinalizations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
@@ -33,6 +34,7 @@ type TaxTableName = (typeof TAX_TABLE_INVENTORY)[number];
 type CoverageTableSource =
   | typeof taxFactAuthorityContractRevisions
   | typeof taxFactAuthorityContracts
+  | typeof taxOrderTaxFinalizations
   | typeof taxRuleCorrections
   | typeof taxRuleRevisionEndFacts
   | typeof taxRuleRevisions
@@ -57,6 +59,11 @@ const coverageTables = {
     taxFactAuthorityContracts,
     taxFactAuthorityContracts.taxFactAuthorityContractId,
     'tax-fact-authority-contract',
+  ),
+  tax_order_tax_finalizations: coverageTable(
+    taxOrderTaxFinalizations,
+    taxOrderTaxFinalizations.taxOrderTaxFinalizationId,
+    'tax-order-tax-finalization',
   ),
   tax_rule_corrections: coverageTable(
     taxRuleCorrections,
@@ -85,11 +92,16 @@ const coverageTables = {
 /**
  * Private TAX tables examined per owner scope part. Attribution columns exist on every table; the Selling Legal
  * Entity content parts own disjoint table sets. A part with no tables holds no TAX persistence by declaration.
+ *
+ * `ORDER_TAX_FINALIZATION_DECISION_EVIDENCE` covers only TAX's own Tax Decision / Tax Result evidence for the
+ * Launch Order Tax finalized at Order Commitment Time (ADR-0027); TAX never persists an Order or invoice copy
+ * (#907 D2 default).
  */
 export const taxPrivacyScopePartTables = {
   ACCEPTED_TAX_TERMS_COPIES: [],
   ACTOR_PRINCIPAL_ATTRIBUTION: TAX_TABLE_INVENTORY,
   EXTERNAL_COPY_AND_RECOVERY_RESPONSIBILITIES: [],
+  ORDER_TAX_FINALIZATION_DECISION_EVIDENCE: ['tax_order_tax_finalizations'],
   SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY: ['tax_source_assertions'],
   SOURCE_CONFLICT_DETECTION_EVIDENCE: ['tax_source_conflicts'],
   TAX_FACT_AUTHORITY_CONTRACT_HISTORY: ['tax_fact_authority_contracts', 'tax_fact_authority_contract_revisions'],
