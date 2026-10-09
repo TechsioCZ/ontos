@@ -5,16 +5,10 @@ import type { TaxTreatmentCategory } from '../../shared/domain/tax-kernel/tax-tr
 
 export {
   SellerNotVatPayerTreatmentSchema,
-  TaxDecisionTreatmentSchema,
   TaxRatePercentSchema,
   TaxableTreatmentSchema,
 } from '../../shared/domain/tax-kernel/tax-treatment.ts';
-export type {
-  SellerNotVatPayerTreatment,
-  TaxDecisionTreatment,
-  TaxTreatmentCategory,
-  TaxableTreatment,
-} from '../../shared/domain/tax-kernel/tax-treatment.ts';
+export type { TaxDecisionTreatment, TaxTreatmentCategory } from '../../shared/domain/tax-kernel/tax-treatment.ts';
 
 /** Launch-activated treatment categories (#918 F2-F3, #939 J). */
 export type LaunchActivatedTaxTreatmentCategory = Extract<TaxTreatmentCategory, 'TAXABLE'>;

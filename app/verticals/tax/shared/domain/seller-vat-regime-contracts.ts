@@ -19,7 +19,6 @@ const CompletenessSchema = Schema.Struct({ rowCount: RowCountSchema, setFingerpr
 
 /** The seller comes from the trusted Operational Scope, never the payload (#950 F24). */
 export const SellerVatRegimeHistoryRequestContractSchema = Schema.Struct({});
-export type SellerVatRegimeHistoryRequestContract = typeof SellerVatRegimeHistoryRequestContractSchema.Type;
 
 /** Every declaration revision for the seller, in revision order, with its full attribution (tax.evidence.read). */
 export const SellerVatRegimeHistoryResponseContractSchema = Schema.Struct({
