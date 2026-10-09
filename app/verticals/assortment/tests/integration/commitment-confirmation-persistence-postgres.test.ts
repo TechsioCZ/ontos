@@ -12,7 +12,6 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
-import type { CoreTransaction } from '../../../../packages/core-runtime/src/db/types.ts';
 import {
   AssortmentCommitmentConfirmationInvalid,
   AssortmentCommitmentConfirmationPayloadSchema,
@@ -235,10 +234,7 @@ const runRepositoryScoped = <Value>(
     Effect.gen(function* runRepositoryOperation() {
       // SAFETY: The assortment and Core transactions expose the same Drizzle transaction
       // protocol; the shared scope installer only consumes that structural database boundary.
-      const scopedTransaction = yield* installOperationalScope(
-        transaction,
-        operationScope,
-      );
+      const scopedTransaction = yield* installOperationalScope(transaction, operationScope);
       return yield* operation(scopedTransaction);
     }),
   );
