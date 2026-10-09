@@ -2,7 +2,10 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { TaxRuleMissingSchema } from '../../src/domain/tax-non-success-outcome.ts';
-import { TaxOutcomeSuccessSchema as PublishedTaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax-outcome.ts';
+import {
+  TaxOutcomeSchema as PublishedTaxOutcomeSchema,
+  TaxOutcomeSuccessSchema as PublishedTaxOutcomeSuccessSchema,
+} from '../../shared/domain/tax-kernel/tax-outcome.ts';
 import { TaxOutcomeSchema, TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import { TaxResultSchema } from '../../src/domain/tax-result.ts';
 import {
@@ -17,6 +20,7 @@ import {
 
 const decodeOutcome = Schema.decodeUnknownSync(TaxOutcomeSchema);
 const decodePublishedSuccess = Schema.decodeUnknownSync(PublishedTaxOutcomeSuccessSchema);
+const decodePublishedOutcome = Schema.decodeUnknownSync(PublishedTaxOutcomeSchema);
 const encodeResult = Schema.encodeSync(TaxResultSchema);
 const decodeResult = Schema.decodeUnknownSync(TaxResultSchema);
 
@@ -114,5 +118,18 @@ describe('Tax Outcome', () => {
     ]) {
       expect(() => decodePublishedSuccess(unbound)).toThrow();
     }
+  });
+
+  it('#938 A F1-F2 the published outcome decodes a bound success and every typed non-success', () => {
+    const decision = decodeTaxDecision(taxDecisionInput(['o-1']));
+    const success = decodePublishedOutcome({
+      _tag: 'TAX_DETERMINED',
+      decision: encodeTaxDecision(decision),
+      result: encodeResult(composeResult(decision)),
+    });
+
+    expect(Schema.is(PublishedTaxOutcomeSuccessSchema)(success)).toBe(true);
+    expect(Schema.is(TaxRuleMissingSchema)(decodePublishedOutcome({ _tag: 'TAX_RULE_MISSING' }))).toBe(true);
+    expect(() => decodePublishedOutcome({ _tag: 'TAX_DETERMINED', result: zeroResultInput })).toThrow();
   });
 });
