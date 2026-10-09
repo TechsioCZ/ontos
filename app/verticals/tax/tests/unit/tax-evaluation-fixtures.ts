@@ -5,7 +5,7 @@ import type { TaxEvaluationRequest } from '../../src/domain/tax-evaluation-reque
 import { evaluateProspectiveLaunchTax } from '../../src/domain/tax-evaluation.ts';
 import type { TaxEvaluationOwnState, TaxRuleSetObservation } from '../../src/domain/tax-evaluation.ts';
 import type { TaxOutcome } from '../../src/domain/tax-outcome.ts';
-import { TaxEvaluationTimeSchema } from '../../src/domain/tax-time.ts';
+import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { exactDecimal, purchaseBindingInput } from './tax-domain-fixtures.ts';
 

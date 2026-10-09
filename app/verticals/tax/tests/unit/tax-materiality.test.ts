@@ -3,21 +3,22 @@ import { DateTime, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { readTaxMaterialityComparison } from '../../src/api/tax-materiality-comparison.read.ts';
-import { TaxDecisionIdSchema } from '../../src/domain/tax-decision.ts';
+import { TaxDecisionIdSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import {
   TaxMaterialChangeConclusionSchema,
   TaxMaterialityUnverifiableSchema,
   TaxNonMaterialAttestationSchema,
   compareTaxMateriality,
+  isSamePurchaseIdentity,
   taxOutcomeVisibleInScope,
 } from '../../src/domain/tax-materiality.ts';
 import type { TaxMaterialityConclusion } from '../../src/domain/tax-materiality.ts';
 import { TaxRuleMissingSchema } from '../../src/domain/tax-non-success-outcome.ts';
 import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
-import { TaxEvaluationTimeSchema } from '../../src/domain/tax-time.ts';
+import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
-import { exactDecimal, purchaseBindingInput } from './tax-domain-fixtures.ts';
+import { decodePurchaseBinding, exactDecimal, occurrenceInput, purchaseBindingInput } from './tax-domain-fixtures.ts';
 import {
   PRICING_RESULT_REF,
   REDUCED_CODE,
@@ -271,4 +272,37 @@ describe('Tax materiality comparison read handler', () => {
       expect(attestedDifferences(result)).toEqual(Option.some([]));
     }),
   );
+});
+
+describe('Same purchase/use for materiality (#943 F1, F9, F11-F12)', () => {
+  it('survives a new candidate, Pricing Result and Shipping source revision', () => {
+    const approved = decodePurchaseBinding(purchaseBindingInput(['o-1']));
+    const finalCandidate = decodePurchaseBinding(
+      purchaseBindingInput(['o-1'], {
+        pricingResultRef: { pricingResultId: 'pricing-result-2', revision: 3 },
+        purchaseCandidateRef: 'purchase-final',
+        shippingSourceRef: { revision: 2, shippingAmountId: 'shipping-1' },
+      }),
+    );
+
+    expect(isSamePurchaseIdentity(approved, finalCandidate)).toBe(true);
+    expect(isSamePurchaseIdentity(finalCandidate, approved)).toBe(true);
+  });
+
+  it('#937 F12-F20 changed quantity, subject or seller is not the same purchase/use', () => {
+    const original = decodePurchaseBinding(purchaseBindingInput(['o-1']));
+    const changedQuantity = decodePurchaseBinding(
+      purchaseBindingInput(['o-1'], {
+        purchaseDemandOccurrences: [{ ...occurrenceInput('o-1'), quantity: { amount: '2', unitRef: 'piece' } }],
+      }),
+    );
+    const otherSubject = decodePurchaseBinding(
+      purchaseBindingInput(['o-1'], { purchasingSubject: { _tag: 'COUNTERPARTY', counterpartyRef: 'counterparty-1' } }),
+    );
+    const otherSeller = decodePurchaseBinding(purchaseBindingInput(['o-1'], { sellingLegalEntityRef: 'seller-2' }));
+
+    expect(isSamePurchaseIdentity(original, changedQuantity)).toBe(false);
+    expect(isSamePurchaseIdentity(original, otherSubject)).toBe(false);
+    expect(isSamePurchaseIdentity(original, otherSeller)).toBe(false);
+  });
 });

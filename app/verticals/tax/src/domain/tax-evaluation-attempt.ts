@@ -1,11 +1,12 @@
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option } from 'effect';
+
+import type { TaxEvaluationDiscardReason } from '../../shared/domain/tax-evaluation-contracts.ts';
+
+export { TaxEvaluationDiscardReasonSchema } from '../../shared/domain/tax-evaluation-contracts.ts';
+export type { TaxEvaluationDiscardReason } from '../../shared/domain/tax-evaluation-contracts.ts';
 
 /** Bounded number of evaluation attempts; there is no TTL, expiry or renewal anywhere (#942 F18-F19, E). */
 export const TAX_EVALUATION_MAX_ATTEMPTS = 3;
-
-/** Why an evaluation candidate was discarded before publication (#942 F17-F18). */
-export const TaxEvaluationDiscardReasonSchema = Schema.Literals(['RULE_SET_CHANGED', 'SELLER_STATE_CHANGED']);
-export type TaxEvaluationDiscardReason = typeof TaxEvaluationDiscardReasonSchema.Type;
 
 /** Completeness tokens of the TAX own state one attempt used; append-only owner tables make them monotonic. */
 export interface TaxEvaluationStateTokens {
