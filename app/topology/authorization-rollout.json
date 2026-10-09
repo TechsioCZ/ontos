@@ -1,7 +1,7 @@
 {
   "activatedAt": "2026-09-02T00:00:00.000Z",
-  "baselineInventoryHash": "b23415277563320f18457973790ab608e86ef8eda68c4a84a99ba0f560fbc32c",
-  "baselineSourceRevision": "ac85f6119d6072e4b42b2d38d15764080ec34d93",
+  "baselineInventoryHash": "1d66bfa8701f7111ddc0c7acf584b52a328dbb4b7d5230630b8b1e750bddc00e",
+  "baselineSourceRevision": "2cd189b4e9a75a799e2b60011126731f4d63bf21",
   "compatibilityEligibleEntrypoints": [],
   "decisionReference": "https://github.com/TechsioCZ/ontos/issues/173",
   "expiresAt": "2026-09-30T23:59:59.000Z",
