@@ -21,6 +21,23 @@ const encodeRequest = Schema.encodeResult(TaxEvaluationRequestSchema);
 const byText = Order.String;
 const byOccurrence = <Entry extends Readonly<{ occurrenceId: string }>>(entries: readonly Entry[]) =>
   entries.toSorted((left, right) => byText(left.occurrenceId, right.occurrenceId));
+type EncodedContribution = Readonly<{
+  amount: Readonly<{ amount: Readonly<{ denominator: string; numerator: string }>; currency: string }>;
+  contributionFamily: string;
+  contributionRef: string;
+}>;
+
+/** Total order of Pricing contributions; identical records are interchangeable, so duplicates stay harmless. */
+const byContribution = <Contribution extends EncodedContribution>(breakdown: readonly Contribution[]) =>
+  breakdown.toSorted(
+    Order.combineAll([
+      Order.mapInput(byText, ({ contributionRef }: Contribution) => contributionRef),
+      Order.mapInput(byText, ({ contributionFamily }: Contribution) => contributionFamily),
+      Order.mapInput(byText, ({ amount }: Contribution) => amount.currency),
+      Order.mapInput(byText, ({ amount }: Contribution) => amount.amount.numerator),
+      Order.mapInput(byText, ({ amount }: Contribution) => amount.amount.denominator),
+    ]),
+  );
 const byCatalogFact = <Evidence extends Readonly<{ catalogFactRef: string }>>(evidence: readonly Evidence[]) =>
   evidence.toSorted((left, right) => byText(left.catalogFactRef, right.catalogFactRef));
 
@@ -45,7 +62,13 @@ export const orderTaxIntentFingerprint = (
         materialCatalogEvidence: byCatalogFact(entry.classificationInput.materialCatalogEvidence),
       },
     })),
-    pricing: { ...encoded.pricing, publishedLines: byOccurrence(encoded.pricing.publishedLines) },
+    pricing: {
+      ...encoded.pricing,
+      publishedLines: byOccurrence(encoded.pricing.publishedLines).map((line) => ({
+        ...line,
+        breakdown: byContribution(line.breakdown),
+      })),
+    },
     purchase: { ...purchase, purchaseDemandOccurrences: byOccurrence(purchase.purchaseDemandOccurrences) },
     setSupplyMeanings: byOccurrence(encoded.setSupplyMeanings ?? []),
     shipping:
