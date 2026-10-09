@@ -231,7 +231,7 @@ overrides:
 
 patchedDependencies:
   '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.28': a544cbf27c9b8d6e5f5f7469fc96142c267fa8269881ae875c41b78d5742c98f
-  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28': 198c625d3aff5d18f747b91b145726da6fd8c5c7a6aeb4387d76334fb953fe1f
+  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28': e637eba8978bc238fce75fe747e8fcd25f4c415d6bac9aa36cff0f05b70a65f7
   '@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.28': a24d2cd516ebfce14856460194abe7c0e6731c278f72ce9a5d78f2bdf22ad9b8
   '@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.28': 032c0e5bea700ff3e5d1d246ddc76b4535526183442f095e0fa102c6bf29913c
   '@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.28': 5fcd3789e8a8a0ce91af838b83dcd94f5bf039302d17032ba43cfd2ca0660e9b
@@ -297,7 +297,7 @@ importers:
         version: '@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@effect/opentelemetry@4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117))(core-js@3.50.0)(effect@4.0.0-rc.117)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.6.5)'
       '@modern-js/code-tools':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28(patch_hash=198c625d3aff5d18f747b91b145726da6fd8c5c7a6aeb4387d76334fb953fe1f)(oxlint-tsgolint@7.0.2001)'
+        version: '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28(patch_hash=e637eba8978bc238fce75fe747e8fcd25f4c415d6bac9aa36cff0f05b70a65f7)(oxlint-tsgolint@7.0.2001)'
       '@modern-js/codesmith':
         specifier: 2.6.9
         version: 2.6.9(supports-color@10.2.2)
@@ -11617,7 +11617,7 @@ snapshots:
       - typescript
       - webpack
 
-  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28(patch_hash=198c625d3aff5d18f747b91b145726da6fd8c5c7a6aeb4387d76334fb953fe1f)(oxlint-tsgolint@7.0.2001)':
+  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28(patch_hash=e637eba8978bc238fce75fe747e8fcd25f4c415d6bac9aa36cff0f05b70a65f7)(oxlint-tsgolint@7.0.2001)':
     dependencies:
       '@babel/parser': 8.0.6
       '@babel/traverse': 8.0.6
