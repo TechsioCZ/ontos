@@ -1,4 +1,4 @@
-import { Option, Result, Schema } from 'effect';
+import { Order, Result, Schema } from 'effect';
 
 import type { FrozenOrderCandidate } from '../../shared/actions/order-tax-finalization.ts';
 import { TaxEvaluationRequestSchema } from '../../shared/domain/tax-evaluation-contracts.ts';
@@ -7,8 +7,8 @@ import type { OrderCommitmentTime } from '../../shared/domain/tax-kernel/tax-tim
 import type { TaxMeaningFingerprint } from './tax-evaluation.ts';
 import { finalLaunchOrderTaxRelevantTime } from './tax-time.ts';
 
-export { FrozenOrderCandidateSchema, OrderSubmissionRefSchema } from '../../shared/actions/order-tax-finalization.ts';
-export type { FrozenOrderCandidate, OrderSubmissionRef } from '../../shared/actions/order-tax-finalization.ts';
+export { OrderSubmissionRefSchema } from '../../shared/actions/order-tax-finalization.ts';
+export type { FrozenOrderCandidate } from '../../shared/actions/order-tax-finalization.ts';
 
 /** The evaluation request of the final determination: the frozen candidate at T. */
 export const finalEvaluationRequest = (
@@ -17,9 +17,12 @@ export const finalEvaluationRequest = (
 ): TaxEvaluationRequest => ({ ...candidate, taxRelevantTime: finalLaunchOrderTaxRelevantTime(orderCommitmentTime) });
 
 const encodeRequest = Schema.encodeResult(TaxEvaluationRequestSchema);
-const byText = (left: string, right: string) => left.localeCompare(right, 'en');
+/** Exact code-unit order: distinct identifiers never collate equal, so input order never leaks into the intent. */
+const byText = Order.String;
 const byOccurrence = <Entry extends Readonly<{ occurrenceId: string }>>(entries: readonly Entry[]) =>
   entries.toSorted((left, right) => byText(left.occurrenceId, right.occurrenceId));
+const byCatalogFact = <Evidence extends Readonly<{ catalogFactRef: string }>>(evidence: readonly Evidence[]) =>
+  evidence.toSorted((left, right) => byText(left.catalogFactRef, right.catalogFactRef));
 
 /**
  * Canonical frozen intent of one submission: the whole candidate at T in identity order, without traceability-only
@@ -35,7 +38,13 @@ export const orderTaxIntentFingerprint = (
   const { traceabilityContext: _traceability, ...purchase } = encoded.purchase;
   return fingerprint({
     ...encoded,
-    catalog: byOccurrence(encoded.catalog),
+    catalog: byOccurrence(encoded.catalog).map((entry) => ({
+      ...entry,
+      classificationInput: {
+        ...entry.classificationInput,
+        materialCatalogEvidence: byCatalogFact(entry.classificationInput.materialCatalogEvidence),
+      },
+    })),
     pricing: { ...encoded.pricing, publishedLines: byOccurrence(encoded.pricing.publishedLines) },
     purchase: { ...purchase, purchaseDemandOccurrences: byOccurrence(purchase.purchaseDemandOccurrences) },
     setSupplyMeanings: byOccurrence(encoded.setSupplyMeanings ?? []),
@@ -55,20 +64,3 @@ export const orderTaxIntentFingerprint = (
           },
   });
 };
-
-/** What a finalization request does for its submission identity (#944 F10-F12, #941 F9). */
-export const OrderTaxFinalizationStepSchema = Schema.Literals(['RECOVER', 'CONFLICT', 'FINALIZE']);
-export type OrderTaxFinalizationStep = typeof OrderTaxFinalizationStepSchema.Type;
-
-/**
- * A durable final for the submission is recovered unchanged for the same frozen intent, without any rule or source
- * read; a different intent conflicts; only a submission without a final is evaluated (#944 F10-F12, #942 H).
- */
-export const decideOrderTaxFinalization = (
-  existingIntentFingerprint: Option.Option<string>,
-  intentFingerprint: string,
-): OrderTaxFinalizationStep =>
-  Option.match(existingIntentFingerprint, {
-    onNone: () => 'FINALIZE',
-    onSome: (existing) => (existing === intentFingerprint ? 'RECOVER' : 'CONFLICT'),
-  });
