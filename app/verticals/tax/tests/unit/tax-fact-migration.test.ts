@@ -884,3 +884,66 @@ describe('#960 PR review regressions (Codex)', () => {
     );
   });
 });
+
+describe('#960 PR review regressions (Codex, round 2)', () => {
+  it('keeps a VAT assertion without the business validity its meaning needs INCOMPLETE (#958 F26, #960 F16)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([
+      candidate('no-from', {
+        _tag: 'TAX_OWNED',
+        family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+        targetMeaning: Object.fromEntries(Object.entries(vatMeaning('no-from')).filter(([key]) => key !== 'validFrom')),
+      }),
+      vatCandidate('ended-no-to', { registrationMeaning: 'ENDED' }),
+    ]);
+    expect(outcomes).toEqual([
+      TaxMigrationIncompleteSchema.make({
+        missing: ['validTo'],
+        provenance: prov('ended-no-to'),
+        sourceFamily: Option.some('SELLING_LEGAL_ENTITY_VAT_REGISTRATION'),
+      }),
+      TaxMigrationIncompleteSchema.make({
+        missing: ['validFrom'],
+        provenance: prov('no-from'),
+        sourceFamily: Option.some('SELLING_LEGAL_ENTITY_VAT_REGISTRATION'),
+      }),
+    ]);
+  });
+
+  it('keeps an assertion historical after authority was handed away and back (F24-F26, F30)', () => {
+    const periods = [
+      { ...legacyAuthority, authorityFrom: at('2026-01-01T00:00:00.000Z') },
+      {
+        ...ontosAuthority,
+        authorityFrom: at('2026-06-01T00:00:00.000Z'),
+        authorityTo: Option.some(at('2026-08-01T00:00:00.000Z')),
+      },
+      {
+        ...legacyAuthority,
+        authorityFrom: at('2026-08-01T00:00:00.000Z'),
+        authorityTo: Option.none(),
+        contractId: 'legacy-back',
+      },
+    ];
+    expect(
+      placeTaxMigrationAssertion({
+        businessInstant: at('2026-03-01T00:00:00.000Z'),
+        evaluationInstant: at('2026-09-01T00:00:00.000Z'),
+        periods,
+        sourceRef: 'fixture:legacy-vat',
+      }),
+    ).toEqual({ placement: 'HISTORICAL_OR_RECONCILIATION_ONLY', systemOfRecordRef: Option.some('fixture:legacy-vat') });
+  });
+
+  it('compares raw content independently of key insertion order, even for keys that collate as equal (G)', () => {
+    const composedKey = 'caf\u00E9';
+    const decomposedKey = 'cafe\u0301';
+    const first = taxRule('raw-order', { [composedKey]: '1', [decomposedKey]: '2', jurisdiction: 'EU_OSS' });
+    const second = candidate('raw-order', {
+      _tag: 'TAX_OWNED',
+      family: 'TAX_RULE',
+      targetMeaning: { ...standardRate, [composedKey]: '1', [decomposedKey]: '2', jurisdiction: 'EU_OSS' },
+    });
+    const outcomes = evaluateTaxMigrationCandidates([first, second]);
+    expect(outcomes.some((outcome) => Schema.is(TaxMigrationConflictingSchema)(outcome))).toBe(false);
+  });
+});
