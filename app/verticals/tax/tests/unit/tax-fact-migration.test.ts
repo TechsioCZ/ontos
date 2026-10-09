@@ -43,7 +43,7 @@ import {
   compareShadowTaxRule,
   compareShadowVatRegistration,
 } from '../../src/domain/tax-migration-readiness.ts';
-import { TaxRelevantTimeSchema } from '../../src/domain/tax-time.ts';
+import { TaxRelevantTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 
 /** Every fixture dataset is explicitly NON_PRODUCTION; no real legacy data is used (#960, #907 F271-F272). */
 const prov = (
