@@ -54,7 +54,6 @@ export const FinalOrderTaxHandoffSchema = Schema.Struct({
   outcome: TaxOutcomeSuccessSchema,
   submissionRef: OrderSubmissionRefSchema,
 });
-export type FinalOrderTaxHandoff = typeof FinalOrderTaxHandoffSchema.Type;
 
 /**
  * `FINALIZED` with `created: false` is the recovered original for the same submission and intent; nothing was
