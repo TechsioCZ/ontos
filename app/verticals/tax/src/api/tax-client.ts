@@ -15,12 +15,9 @@ export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
 export * from './correct-tax-rule-revision-action-client.ts';
 export * from './create-tax-rule-action-client.ts';
 export * from './create-tax-rule-revision-action-client.ts';
-export * from './end-tax-fact-authority-contract-action-client.ts';
+export * from './declare-seller-vat-regime-action-client.ts';
 export * from './end-tax-rule-revision-action-client.ts';
-export * from './establish-tax-fact-authority-contract-action-client.ts';
 export * from './finalize-order-tax-action-client.ts';
-export * from './record-tax-source-assertion-action-client.ts';
-export * from './revise-tax-fact-authority-contract-action-client.ts';
 // </generated-action-http-client-exports>
 export * from './tax-correction-preview-client.ts';
 

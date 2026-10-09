@@ -1,7 +1,6 @@
 import { Schema } from 'effect';
 
-import { TaxFactFamilySchema, TaxRuleMeaningKindSchema } from '../actions/tax-governance.ts';
-import { TaxFactAuthorityContractRefSchema } from '../resources/tax-fact-authority-contract.ts';
+import { TaxRuleMeaningKindSchema } from '../actions/tax-governance.ts';
 import { TaxRuleRevisionRefSchema } from '../resources/tax-rule-revision.ts';
 import { TaxRuleRefSchema } from '../resources/tax-rule.ts';
 
@@ -104,32 +103,4 @@ export const TaxRuleHistoryResponseContractSchema = Schema.Struct({
   ),
   stableCode: Schema.String,
   taxRuleRef: TaxRuleRefSchema,
-});
-
-export const TaxFactAuthorityCurrentRequestContractSchema = Schema.Struct({
-  factFamily: TaxFactFamilySchema,
-  instant: InstantSchema,
-});
-
-/**
- * Current authority for one fact family at an instant from the complete contract set. Several competing
- * Systems of Record are reported as a conflict, never resolved newest-wins (#949 F24-F32).
- */
-export const TaxFactAuthorityCurrentResponseContractSchema = Schema.Struct({
-  authorities: Schema.Array(
-    Schema.Struct({
-      authorityFrom: InstantSchema,
-      authorityTo: Schema.OptionFromNullOr(InstantSchema),
-      basisFingerprint: FingerprintSchema,
-      contractRef: TaxFactAuthorityContractRefSchema,
-      evidenceSourceRefs: Schema.Array(OwnerReferenceSchema),
-      revisionNumber: RevisionNumberSchema,
-      stableCode: Schema.String,
-      systemOfRecordRef: OwnerReferenceSchema,
-    }),
-  ),
-  completeness: Schema.Struct({ rowCount: RowCountSchema, setFingerprint: FingerprintSchema }),
-  factFamily: TaxFactFamilySchema,
-  instant: InstantSchema,
-  outcome: Schema.Literals(['AUTHORITY_ESTABLISHED', 'AUTHORITY_MISSING', 'AUTHORITY_CONFLICT']),
 });

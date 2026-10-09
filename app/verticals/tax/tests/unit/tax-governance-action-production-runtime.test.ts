@@ -27,7 +27,6 @@ import { openModuleStateGate } from '../../../../packages/core-runtime/tests/sup
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts';
-import { recordTaxSourceAssertionAction } from '../../src/actions/record-tax-source-assertion.action.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -49,7 +48,7 @@ const principalFor = (legalEntityId: string) =>
 /** SpiceDB stand-in: a principal holds one TAX permission only on the exact Selling Legal Entity objects granted. */
 const spiceDbContextAccess = (
   grantedSellers: readonly string[],
-  grantedPermission: 'tax.rule.manage' | 'tax.source_assertion.record',
+  grantedPermission = 'tax.rule.manage',
 ): ContextAccessService => {
   const granted = new Set(
     grantedSellers.map((legalEntityId) =>
@@ -90,7 +89,7 @@ const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionErro
  */
 const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(function* makeProductionComposition(
   grantedSellers: readonly string[],
-  grantedPermission: 'tax.rule.manage' | 'tax.source_assertion.record' = 'tax.rule.manage',
+  grantedPermission = 'tax.rule.manage',
 ) {
   const snapshot = yield* makeApplicationCompositionSnapshotFixture(
     [ultramodernDeliveryUnit.appId],
@@ -226,59 +225,6 @@ it.effect(
 
     const otherSeller = yield* makeProductionComposition([sellerA]);
     expect(Predicate.isTagged(yield* createTaxRule(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(true);
-    expect(otherSeller.ownerStatements).toEqual([]);
-  }),
-);
-
-const recordTaxSourceAssertion = (
-  composition: Effect.Success<ReturnType<typeof makeProductionComposition>>,
-  legalEntityId: string,
-) =>
-  composition.runtime
-    .runAction({
-      payload: {
-        factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-        jurisdiction: 'CZ_DOMESTIC',
-        provenanceRef: 'test:tax-production-runtime',
-        reason: 'Record seller VAT registration evidence',
-        registrationMeaning: 'REGISTERED',
-        sourceAssertionKey: 'erp-assertion-1',
-        sourceRecordRef: 'erp-record-1',
-        sourceRef: 'erp.finance',
-        validFrom: '2027-01-01T00:00:00.000Z',
-      },
-      principal: principalFor(legalEntityId),
-      registration: recordTaxSourceAssertionAction,
-      transport: {
-        correlationId: 'correlation-tax-production-runtime',
-        idempotencyKey: 'tax-production-runtime',
-        targetModuleKey: 'commerce.tax',
-        targetResourceId: legalEntityId,
-        targetResourceType: 'commerce.tax.tax-source-assertion',
-      },
-    })
-    .pipe(Effect.flip);
-
-it.effect(
-  '#950 F18-F28 records source evidence through the production runtime only with the seller-bound record permission',
-  Effect.fn(function* recordThroughProductionComposition() {
-    const permitted = yield* makeProductionComposition([sellerA], 'tax.source_assertion.record');
-    const permittedFailure = yield* recordTaxSourceAssertion(permitted, sellerA);
-    expect(permitted.ownerStatements.length).toBeGreaterThan(0);
-    expect(permitted.permissionDenials).toEqual([]);
-    expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
-
-    // A rule manager holds no source-recording authority (#950 F19).
-    const ruleManager = yield* makeProductionComposition([sellerA], 'tax.rule.manage');
-    expect(Predicate.isTagged(yield* recordTaxSourceAssertion(ruleManager, sellerA), 'ActionPermissionDenied')).toBe(
-      true,
-    );
-    expect(ruleManager.ownerStatements).toEqual([]);
-
-    const otherSeller = yield* makeProductionComposition([sellerA], 'tax.source_assertion.record');
-    expect(Predicate.isTagged(yield* recordTaxSourceAssertion(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(
-      true,
-    );
     expect(otherSeller.ownerStatements).toEqual([]);
   }),
 );

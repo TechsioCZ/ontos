@@ -35,11 +35,7 @@ const assortmentPermissionScopes = {
   'assortment.rule.retire': 'assortment_rule',
   'assortment.rule.revision.create': 'assortment_rule',
 } as const;
-const taxSellingLegalEntityPermissions: ReadonlySet<string> = new Set([
-  'tax.authority_contract.manage',
-  'tax.rule.manage',
-  'tax.source_assertion.record',
-]);
+const taxSellingLegalEntityPermissions: ReadonlySet<string> = new Set(['tax.rule.manage']);
 
 const requirePermissionCode = (value: string): string => {
   if (!permissionCodePattern.test(value)) {
@@ -82,7 +78,7 @@ const requireCompatibleScope = (
   }
   if (taxPermission !== (scope === 'tax_selling_legal_entity')) {
     return raiseScaffoldFailure(
-      'tax.rule.manage, tax.authority_contract.manage and tax.source_assertion.record require tax_selling_legal_entity scope, and that scope rejects other permissions',
+      'tax.rule.manage requires tax_selling_legal_entity scope, and that scope rejects other permissions',
     );
   }
   if (inventoryPermission !== (scope === 'inventory_resource')) {

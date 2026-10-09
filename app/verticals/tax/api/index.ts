@@ -34,22 +34,17 @@ import { applicableTaxRuleSetReadApiLive } from './applicable-tax-rule-set-read-
 import { correctTaxRuleRevisionActionApiLive } from './correct-tax-rule-revision-action-server.ts';
 import { createTaxRuleActionApiLive } from './create-tax-rule-action-server.ts';
 import { createTaxRuleRevisionActionApiLive } from './create-tax-rule-revision-action-server.ts';
-import { endTaxFactAuthorityContractActionApiLive } from './end-tax-fact-authority-contract-action-server.ts';
+import { declareSellerVatRegimeActionApiLive } from './declare-seller-vat-regime-action-server.ts';
 import { endTaxRuleRevisionActionApiLive } from './end-tax-rule-revision-action-server.ts';
-import { establishTaxFactAuthorityContractActionApiLive } from './establish-tax-fact-authority-contract-action-server.ts';
 import { finalizeOrderTaxActionApiLive } from './finalize-order-tax-action-server.ts';
 import { finalOrderTaxReadApiLive } from './final-order-tax-read-server.ts';
-import { recordTaxSourceAssertionActionApiLive } from './record-tax-source-assertion-action-server.ts';
-import { reviseTaxFactAuthorityContractActionApiLive } from './revise-tax-fact-authority-contract-action-server.ts';
-import { sellingLegalEntityVatRegistrationStateReadApiLive } from './selling-legal-entity-vat-registration-state-read-server.ts';
+import { sellerVatRegimeAtInstantReadApiLive } from './seller-vat-regime-at-instant-read-server.ts';
+import { sellerVatRegimeHistoryReadApiLive } from './seller-vat-regime-history-read-server.ts';
 import { taxCorrectionPreviewReadApiLive } from './tax-correction-preview-read-server.ts';
 import { taxEvaluationReadApiLive } from './tax-evaluation-read-server.ts';
-import { taxFactAuthorityCurrentReadApiLive } from './tax-fact-authority-current-read-server.ts';
 import { taxMaterialityComparisonReadApiLive } from './tax-materiality-comparison-read-server.ts';
 import { taxPrivacyOwnerCoverageReadApiLive } from './tax-privacy-owner-coverage-read-server.ts';
 import { taxRuleHistoryReadApiLive } from './tax-rule-history-read-server.ts';
-import { taxSourceAssertionHistoryReadApiLive } from './tax-source-assertion-history-read-server.ts';
-import { taxSourceConflictDetailReadApiLive } from './tax-source-conflict-detail-read-server.ts';
 // </generated-governed-http-handler-imports>
 
 const taxReadinessLayer = HttpApiBuilder.group(taxApi, 'foundation', (handlers) =>
@@ -125,22 +120,17 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   correctTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   createTaxRuleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   createTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  endTaxFactAuthorityContractActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  declareSellerVatRegimeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   endTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  establishTaxFactAuthorityContractActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   finalizeOrderTaxActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   finalOrderTaxReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  recordTaxSourceAssertionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  reviseTaxFactAuthorityContractActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  sellingLegalEntityVatRegistrationStateReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  sellerVatRegimeAtInstantReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  sellerVatRegimeHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxCorrectionPreviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxEvaluationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  taxFactAuthorityCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxMaterialityComparisonReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxPrivacyOwnerCoverageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxRuleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  taxSourceAssertionHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  taxSourceConflictDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>

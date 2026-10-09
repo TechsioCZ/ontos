@@ -73,16 +73,10 @@ const freezeDescriptor = (descriptor: BusinessPermissionDescriptor): Readonly<Bu
   });
 
 /**
- * TAX management authority is seller-specific (#950 F24-F28): it targets one exact Selling Legal Entity. Recording
- * source-owned participant evidence is a separate purpose from authority-contract management (#950 F18-F22) and is
- * seller-bound the same way. TAX reads stay module-scoped context Permissions, which Core already binds to the
- * trusted Legal Entity.
+ * TAX management authority is seller-specific (#950 F24-F28): it targets one exact Selling Legal Entity. TAX reads
+ * stay module-scoped context Permissions, which Core already binds to the trusted Legal Entity.
  */
-const taxSellingLegalEntityPermissions: ReadonlySet<string> = new Set([
-  'tax.authority_contract.manage',
-  'tax.rule.manage',
-  'tax.source_assertion.record',
-]);
+const taxSellingLegalEntityPermissions: ReadonlySet<string> = new Set(['tax.rule.manage']);
 export const isTaxSellingLegalEntityPermission = (permission: string): boolean =>
   taxSellingLegalEntityPermissions.has(permission);
 

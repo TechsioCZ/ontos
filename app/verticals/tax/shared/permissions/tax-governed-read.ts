@@ -14,8 +14,7 @@ export const taxGovernedReadPermission = defineBusinessPermission({
   owningCapability: 'commerce.tax',
   protectedEntrypoints: [
     'commerce.tax.api.applicable-tax-rule-set',
-    'commerce.tax.api.tax-fact-authority-current',
-    'commerce.tax.api.selling-legal-entity-vat-registration-state',
+    'commerce.tax.api.seller-vat-regime-at-instant',
     'commerce.tax.api.tax-correction-preview',
     'commerce.tax.api.tax-evaluation',
     'commerce.tax.api.tax-materiality-comparison',

@@ -8,21 +8,17 @@ import { ApplicableTaxRuleSetApi } from './shared/apis/applicable-tax-rule-set.t
 import { correctTaxRuleRevisionAction } from './src/actions/correct-tax-rule-revision.action.ts';
 import { createTaxRuleAction } from './src/actions/create-tax-rule.action.ts';
 import { createTaxRuleRevisionAction } from './src/actions/create-tax-rule-revision.action.ts';
-import { endTaxFactAuthorityContractAction } from './src/actions/end-tax-fact-authority-contract.action.ts';
+import { declareSellerVatRegimeAction } from './src/actions/declare-seller-vat-regime.action.ts';
 import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
-import { establishTaxFactAuthorityContractAction } from './src/actions/establish-tax-fact-authority-contract.action.ts';
 import { finalizeOrderTaxAction } from './src/actions/finalize-order-tax.action.ts';
 import { FinalOrderTaxApi } from './shared/apis/final-order-tax.ts';
 import { orderTaxFinalizationResourceDescriptor } from './shared/resources/order-tax-finalization.ts';
-import { recordTaxSourceAssertionAction } from './src/actions/record-tax-source-assertion.action.ts';
-import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
-import { SellingLegalEntityVatRegistrationStateApi } from './shared/apis/selling-legal-entity-vat-registration-state.ts';
-import { taxAuthorityContractManagePermission } from './shared/permissions/tax-authority-contract-manage.ts';
+import { SellerVatRegimeAtInstantApi } from './shared/apis/seller-vat-regime-at-instant.ts';
+import { sellerVatRegimeDeclarationResourceDescriptor } from './shared/resources/seller-vat-regime-declaration.ts';
+import { SellerVatRegimeHistoryApi } from './shared/apis/seller-vat-regime-history.ts';
 import { TaxCorrectionPreviewApi } from './shared/apis/tax-correction-preview.ts';
 import { TaxEvaluationApi } from './shared/apis/tax-evaluation.ts';
 import { taxEvidenceReadPermission } from './shared/permissions/tax-evidence-read.ts';
-import { taxFactAuthorityContractResourceDescriptor } from './shared/resources/tax-fact-authority-contract.ts';
-import { TaxFactAuthorityCurrentApi } from './shared/apis/tax-fact-authority-current.ts';
 import { taxGovernedReadPermission } from './shared/permissions/tax-governed-read.ts';
 import { TaxMaterialityComparisonApi } from './shared/apis/tax-materiality-comparison.ts';
 import { TaxPrivacyOwnerCoverageApi } from './shared/apis/tax-privacy-owner-coverage.ts';
@@ -30,11 +26,6 @@ import { TaxRuleHistoryApi } from './shared/apis/tax-rule-history.ts';
 import { taxRuleManagePermission } from './shared/permissions/tax-rule-manage.ts';
 import { taxRuleResourceDescriptor } from './shared/resources/tax-rule.ts';
 import { taxRuleRevisionResourceDescriptor } from './shared/resources/tax-rule-revision.ts';
-import { TaxSourceAssertionHistoryApi } from './shared/apis/tax-source-assertion-history.ts';
-import { taxSourceAssertionRecordPermission } from './shared/permissions/tax-source-assertion-record.ts';
-import { taxSourceAssertionResourceDescriptor } from './shared/resources/tax-source-assertion.ts';
-import { TaxSourceConflictDetailApi } from './shared/apis/tax-source-conflict-detail.ts';
-import { taxSourceConflictResourceDescriptor } from './shared/resources/tax-source-conflict.ts';
 // </generated-module-manifest-imports>
 export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -56,36 +47,29 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       correctTaxRuleRevisionAction,
       createTaxRuleAction,
       createTaxRuleRevisionAction,
-      endTaxFactAuthorityContractAction,
+      declareSellerVatRegimeAction,
       endTaxRuleRevisionAction,
-      establishTaxFactAuthorityContractAction,
       finalizeOrderTaxAction,
-      recordTaxSourceAssertionAction,
-      reviseTaxFactAuthorityContractAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
       'applicable-tax-rule-set': ApplicableTaxRuleSetApi,
       'final-order-tax': FinalOrderTaxApi,
-      'selling-legal-entity-vat-registration-state': SellingLegalEntityVatRegistrationStateApi,
+      'seller-vat-regime-at-instant': SellerVatRegimeAtInstantApi,
+      'seller-vat-regime-history': SellerVatRegimeHistoryApi,
       'tax-correction-preview': TaxCorrectionPreviewApi,
       'tax-evaluation': TaxEvaluationApi,
-      'tax-fact-authority-current': TaxFactAuthorityCurrentApi,
       'tax-materiality-comparison': TaxMaterialityComparisonApi,
       'tax-privacy-owner-coverage': TaxPrivacyOwnerCoverageApi,
       'tax-rule-history': TaxRuleHistoryApi,
-      'tax-source-assertion-history': TaxSourceAssertionHistoryApi,
-      'tax-source-conflict-detail': TaxSourceConflictDetailApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [
       // <generated-module-manifest-business-permissions>
-      taxAuthorityContractManagePermission,
       taxEvidenceReadPermission,
       taxGovernedReadPermission,
       taxRuleManagePermission,
-      taxSourceAssertionRecordPermission,
       // </generated-module-manifest-business-permissions>
     ],
     components: {
@@ -100,11 +84,9 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
     resourceTypes: [
       // <generated-module-manifest-resources>
       orderTaxFinalizationResourceDescriptor,
-      taxFactAuthorityContractResourceDescriptor,
+      sellerVatRegimeDeclarationResourceDescriptor,
       taxRuleResourceDescriptor,
       taxRuleRevisionResourceDescriptor,
-      taxSourceAssertionResourceDescriptor,
-      taxSourceConflictResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [

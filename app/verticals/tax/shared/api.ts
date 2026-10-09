@@ -12,22 +12,17 @@ import { ApplicableTaxRuleSetApi } from './apis/applicable-tax-rule-set.ts';
 import { CorrectTaxRuleRevisionActionApi } from './apis/correct-tax-rule-revision-action.ts';
 import { CreateTaxRuleActionApi } from './apis/create-tax-rule-action.ts';
 import { CreateTaxRuleRevisionActionApi } from './apis/create-tax-rule-revision-action.ts';
-import { EndTaxFactAuthorityContractActionApi } from './apis/end-tax-fact-authority-contract-action.ts';
+import { DeclareSellerVatRegimeActionApi } from './apis/declare-seller-vat-regime-action.ts';
 import { EndTaxRuleRevisionActionApi } from './apis/end-tax-rule-revision-action.ts';
-import { EstablishTaxFactAuthorityContractActionApi } from './apis/establish-tax-fact-authority-contract-action.ts';
 import { FinalizeOrderTaxActionApi } from './apis/finalize-order-tax-action.ts';
 import { FinalOrderTaxApi } from './apis/final-order-tax.ts';
-import { RecordTaxSourceAssertionActionApi } from './apis/record-tax-source-assertion-action.ts';
-import { ReviseTaxFactAuthorityContractActionApi } from './apis/revise-tax-fact-authority-contract-action.ts';
-import { SellingLegalEntityVatRegistrationStateApi } from './apis/selling-legal-entity-vat-registration-state.ts';
+import { SellerVatRegimeAtInstantApi } from './apis/seller-vat-regime-at-instant.ts';
+import { SellerVatRegimeHistoryApi } from './apis/seller-vat-regime-history.ts';
 import { TaxCorrectionPreviewApi } from './apis/tax-correction-preview.ts';
 import { TaxEvaluationApi } from './apis/tax-evaluation.ts';
-import { TaxFactAuthorityCurrentApi } from './apis/tax-fact-authority-current.ts';
 import { TaxMaterialityComparisonApi } from './apis/tax-materiality-comparison.ts';
 import { TaxPrivacyOwnerCoverageApi } from './apis/tax-privacy-owner-coverage.ts';
 import { TaxRuleHistoryApi } from './apis/tax-rule-history.ts';
-import { TaxSourceAssertionHistoryApi } from './apis/tax-source-assertion-history.ts';
-import { TaxSourceConflictDetailApi } from './apis/tax-source-conflict-detail.ts';
 // </generated-governed-http-api-imports>
 
 export const taxMarkerSchema = Schema.Struct({
@@ -60,22 +55,17 @@ export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(CorrectTaxRuleRevisionActionApi)
   .addHttpApi(CreateTaxRuleActionApi)
   .addHttpApi(CreateTaxRuleRevisionActionApi)
-  .addHttpApi(EndTaxFactAuthorityContractActionApi)
+  .addHttpApi(DeclareSellerVatRegimeActionApi)
   .addHttpApi(EndTaxRuleRevisionActionApi)
-  .addHttpApi(EstablishTaxFactAuthorityContractActionApi)
   .addHttpApi(FinalizeOrderTaxActionApi)
   .addHttpApi(FinalOrderTaxApi)
-  .addHttpApi(RecordTaxSourceAssertionActionApi)
-  .addHttpApi(ReviseTaxFactAuthorityContractActionApi)
-  .addHttpApi(SellingLegalEntityVatRegistrationStateApi)
+  .addHttpApi(SellerVatRegimeAtInstantApi)
+  .addHttpApi(SellerVatRegimeHistoryApi)
   .addHttpApi(TaxCorrectionPreviewApi)
   .addHttpApi(TaxEvaluationApi)
-  .addHttpApi(TaxFactAuthorityCurrentApi)
   .addHttpApi(TaxMaterialityComparisonApi)
   .addHttpApi(TaxPrivacyOwnerCoverageApi)
   .addHttpApi(TaxRuleHistoryApi)
-  .addHttpApi(TaxSourceAssertionHistoryApi)
-  .addHttpApi(TaxSourceConflictDetailApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
