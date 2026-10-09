@@ -2,8 +2,17 @@
 
 import { useState } from "react";
 import NextLink from "next/link";
+import localFont from "next/font/local";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+
+const productActionsFont = localFont({
+  src: "../fonts/InterVariable.woff2",
+  weight: "500",
+  style: "normal",
+  display: "swap",
+  variable: "--font-akros-product-actions",
+});
 
 interface ProductDetailActionsProps {
   productId: string;
@@ -64,10 +73,15 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
   };
 
   return (
-    <div className="akros-product-actions" aria-label="Další akce produktu">
+    <div
+      className={`${productActionsFont.variable} akros-product-actions -mt-(--akros-product-actions-offset) flex flex-wrap gap-x-(--akros-product-actions-column-gap) gap-y-(--dimension-8) pt-(--dimension-4) font-sans [&>*]:min-h-(--akros-product-actions-min-height)`}
+      aria-label="Další akce produktu"
+    >
       <Button
         aria-pressed={isWatched}
-        icon={isWatched ? "icon-[mdi--bell-ring]" : "icon-[mdi--bell-ring-outline]"}
+        className="akros-product-actions__watch hover:underline focus-visible:underline"
+        icon="token-icon-akros-product-watch"
+        iconSize="sm"
         onClick={toggleWatch}
         size="sm"
         theme="borderless"
@@ -78,7 +92,9 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
       <LinkButton
         as={NextLink}
         href="/kontakty#primy-kontakt"
-        icon="icon-[mdi--help-circle-outline]"
+        className="akros-product-actions__question hover:underline focus-visible:underline"
+        icon="token-icon-akros-product-question"
+        iconSize="sm"
         size="sm"
         theme="borderless"
         variant="secondary"
@@ -86,7 +102,9 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
         Dotaz na produkt
       </LinkButton>
       <Button
-        icon="icon-[mdi--email-outline]"
+        className="akros-product-actions__email hover:underline focus-visible:underline"
+        icon="token-icon-akros-product-email"
+        iconSize="sm"
         onClick={shareProduct}
         size="sm"
         theme="borderless"

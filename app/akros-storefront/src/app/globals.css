@@ -600,19 +600,6 @@ body {
   margin: 0;
 }
 
-.akros-product-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--dimension-8) var(--dimension-16);
-  padding-top: var(--dimension-8);
-}
-
-.akros-product-actions > * {
-  min-height: 40px;
-  color: var(--color-fg-primary);
-  padding-inline: 0;
-}
-
 .akros-product-parameters {
   display: grid;
   gap: 4px;
@@ -1341,14 +1328,6 @@ body {
 
   .akros-product-detail__surface {
     padding: 16px;
-  }
-
-  .akros-product-actions {
-    display: flex;
-  }
-
-  .akros-product-actions > * {
-    min-height: 44px;
   }
 
   .akros-product-detail__purchase-row {

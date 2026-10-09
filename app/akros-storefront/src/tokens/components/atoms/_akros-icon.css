@@ -5,6 +5,25 @@
   icon-sets: from-folder(akros, "./src/icons/akros");
 }
 
+/* Preserve the non-square frames exported for the product detail actions. */
+@plugin "@iconify/tailwind4" {
+  prefix: "akros-product-icon";
+  square: false;
+  icon-sets: from-folder(akros-product-actions, "./src/icons/akros-product-actions");
+}
+
+@utility token-icon-akros-product-watch {
+  @apply akros-product-icon-[akros-product-actions--watch];
+}
+
+@utility token-icon-akros-product-question {
+  @apply akros-product-icon-[akros-product-actions--question];
+}
+
+@utility token-icon-akros-product-email {
+  @apply akros-product-icon-[akros-product-actions--email];
+}
+
 @utility token-icon-akros-facebook {
   @apply akros-icon-[akros--facebook];
 }

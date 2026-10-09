@@ -39,6 +39,37 @@
   --radius-button-md: var(--radius-sm);
 }
 
+.akros-product-actions {
+  --font-sans: var(--font-akros-product-actions);
+  --akros-product-actions-column-gap: var(--dimension-30);
+  --akros-product-actions-min-height: var(--dimension-40);
+  --akros-product-actions-offset: var(--dimension-0);
+  --text-button-sm: var(--text-base);
+  --spacing-button-sm: var(--dimension-8);
+  --padding-button-sm: var(--dimension-0);
+  --color-button-fg-secondary-borderless: var(--color-fg-secondary);
+  --color-button-bg-borderless-base: var(--color-bg-transparent);
+  --color-button-bg-borderless-hover: var(--color-bg-transparent);
+  --color-button-bg-borderless-active: var(--color-bg-transparent);
+}
+
+.akros-product-detail__stock + .akros-product-actions {
+  --akros-product-actions-offset: var(--dimension-8);
+}
+
+.akros-product-actions__watch {
+  --text-icon-sm: 17px;
+  --color-button-fg-secondary-borderless: var(--color-fg-primary);
+}
+
+.akros-product-actions__question {
+  --text-icon-sm: 22px;
+}
+
+.akros-product-actions__email {
+  --text-icon-sm: 15px;
+}
+
 .akros-variant-filter-range {
   --height-form-control-sm: 19px;
   --border-width-form-control: 0.5px;
@@ -84,6 +115,10 @@
 @media (max-width: 767px) {
   .akros-variant-filter-range {
     --height-form-control-sm: var(--dimension-32);
+  }
+
+  .akros-product-actions {
+    --akros-product-actions-min-height: var(--dimension-44);
   }
 }
 
