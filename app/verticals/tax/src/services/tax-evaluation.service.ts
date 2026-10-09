@@ -1,24 +1,25 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect, Match, Option } from 'effect';
 
 import type { ApplicableTaxRuleSetResponse } from '../../shared/apis/applicable-tax-rule-set.ts';
-import type { SellingLegalEntityVatRegistrationStateResponse } from '../../shared/apis/selling-legal-entity-vat-registration-state.ts';
 import type { TaxEvaluationResponse } from '../../shared/apis/tax-evaluation.ts';
+import type { SellerVatRegimeAtInstantResponseContract } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import { projectCustomerSafeTax } from '../domain/customer-safe-tax-projection.ts';
 import { evaluateWithBoundedRetry } from '../domain/tax-evaluation-attempt.ts';
 import type { TaxEvaluationStateTokens } from '../domain/tax-evaluation-attempt.ts';
 import { taxEvaluationRequestRejections } from '../domain/tax-evaluation-request.ts';
 import type { TaxEvaluationRequest, TaxEvaluationRequestRejectionReason } from '../domain/tax-evaluation-request.ts';
 import { evaluateProspectiveLaunchTax, requiredTaxClassificationCodes } from '../domain/tax-evaluation.ts';
-import type { TaxEvaluationOwnState } from '../domain/tax-evaluation.ts';
+import type { TaxEvaluationOwnState, TaxEvaluationVerdict } from '../domain/tax-evaluation.ts';
 import { TaxStateIndeterminateSchema } from '../domain/tax-non-success-outcome.ts';
 import type { TaxOutcome } from '../domain/tax-outcome.ts';
 import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 import type { TaxEvaluationTime } from '../../shared/domain/tax-kernel/tax-time.ts';
+import { sellerVatRegimeDeclarationsForScope } from './seller-vat-regime-declaration.service.ts';
 import { taxGovernedReadsForScope } from './tax-governed-read.service.ts';
 import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
+import { unavailable } from './tax-governance-persistence.ts';
 import type { PersistenceUnavailable, ScopedTransaction } from './tax-governance-persistence.ts';
-import { taxSourceReadsForScope } from './tax-source-read.service.ts';
 
 /**
  * Origin of the foreign owner facts of every evaluation. Before #892 TAX has no owner fetch, so Pricing, Catalog,
@@ -38,8 +39,28 @@ export interface TaxEvaluations {
 /** TAX's own state read by one attempt, kept with the full read evidence. */
 interface ObservedTaxState {
   readonly ruleSets: ReadonlyMap<string, ApplicableTaxRuleSetResponse>;
-  readonly seller: SellingLegalEntityVatRegistrationStateResponse;
+  readonly seller: SellerVatRegimeAtInstantResponseContract;
 }
+
+const isDeclaredVatPayer = (seller: SellerVatRegimeAtInstantResponseContract) =>
+  Match.value(seller.selection).pipe(
+    Match.tag('DECLARED', ({ regime }) => regime === 'VAT_PAYER'),
+    Match.tag('NOT_DECLARED', () => false),
+    Match.exhaustive,
+  );
+
+const sellerVatRegimeOf = (
+  seller: SellerVatRegimeAtInstantResponseContract,
+): TaxEvaluationOwnState['sellerVatRegime'] =>
+  Match.value(seller.selection).pipe(
+    Match.tag('DECLARED', ({ declarationRevisionRef, regime }) => ({
+      _tag: 'DECLARED' as const,
+      declarationRevisionRef,
+      regime,
+    })),
+    Match.tag('NOT_DECLARED', () => ({ _tag: 'NOT_DECLARED' as const })),
+    Match.exhaustive,
+  );
 
 const ownStateOf = ({ ruleSets, seller }: ObservedTaxState): TaxEvaluationOwnState => ({
   ruleSets: new Map(
@@ -56,7 +77,7 @@ const ownStateOf = ({ ruleSets, seller }: ObservedTaxState): TaxEvaluationOwnSta
       },
     ]),
   ),
-  sellerVatRegistration: seller.state,
+  sellerVatRegime: sellerVatRegimeOf(seller),
 });
 
 const tokensOf = ({ ruleSets, seller }: ObservedTaxState): TaxEvaluationStateTokens => ({
@@ -66,7 +87,7 @@ const tokensOf = ({ ruleSets, seller }: ObservedTaxState): TaxEvaluationStateTok
       { outcome: ruleSet.outcome, setFingerprint: ruleSet.completeness.setFingerprint },
     ]),
   ),
-  seller: { reason: seller.reason, setFingerprint: seller.completeness.setFingerprint, state: seller.state },
+  seller: { headRevision: seller.headRevision, setFingerprint: seller.completeness.setFingerprint },
 });
 
 const evidenceOf = (state: ObservedTaxState, request: TaxEvaluationRequest, taxEvaluationTime: TaxEvaluationTime) => ({
@@ -78,12 +99,11 @@ const evidenceOf = (state: ObservedTaxState, request: TaxEvaluationRequest, taxE
     setFingerprint: completeness.setFingerprint,
     taxClassificationCode,
   })),
-  sellerRegistration: {
-    authorityOutcome: state.seller.authority.outcome,
-    basisAssertionRefs: state.seller.basisAssertionRefs,
-    reason: state.seller.reason,
+  sellerVatRegime: {
+    headRevision: state.seller.headRevision,
+    selectedFor: request.taxRelevantTime,
+    selection: state.seller.selection,
     setFingerprint: state.seller.completeness.setFingerprint,
-    state: state.seller.state,
   },
   taxEvaluationTime,
   taxRelevantTime: request.taxRelevantTime,
@@ -106,7 +126,7 @@ export const visibleInScope = (scope: OperationalScope, { purchase }: Pick<TaxEv
 
 export const taxEvaluationForScope = (transaction: ScopedTransaction, scope: OperationalScope): TaxEvaluations => {
   const governed = taxGovernedReadsForScope(transaction, scope);
-  const sources = taxSourceReadsForScope(transaction, scope);
+  const declarations = sellerVatRegimeDeclarationsForScope(transaction, scope);
 
   const ruleSetFor = (taxClassificationCode: string, request: TaxEvaluationRequest) =>
     governed
@@ -138,14 +158,18 @@ export const taxEvaluationForScope = (transaction: ScopedTransaction, scope: Ope
       });
     }
     const codes = requiredTaxClassificationCodes(request);
-    // Seller currentness at Tax Evaluation Time, rule meaning at Tax-Relevant Time (#942 F21).
+    // Seller VAT Regime at the Tax-Relevant Time, read first; rule meaning at Tax-Relevant Time, read only for a
+    // DECLARED VAT_PAYER seller. A NON_PAYER or NOT_DECLARED seller makes no rule reads (Unit 10 C; #942 F21).
     const observe = Effect.gen(function* observeTaxState() {
-      const seller = yield* sources.sellingLegalEntityVatRegistrationState({ evaluationTime: taxEvaluationTime });
-      const ruleSets = yield* Effect.forEach(codes, (code) => ruleSetFor(code, request), { concurrency: 1 });
-      return { ruleSets: new Map(ruleSets), seller };
+      const sellerOption = yield* declarations.atInstant({ instant: request.taxRelevantTime });
+      const seller = yield* Effect.fromOption(sellerOption, unavailable);
+      const ruleSets = isDeclaredVatPayer(seller)
+        ? new Map(yield* Effect.forEach(codes, (code) => ruleSetFor(code, request), { concurrency: 1 }))
+        : new Map<string, ApplicableTaxRuleSetResponse>();
+      return { ruleSets, seller };
     });
     const run = yield* evaluateWithBoundedRetry({
-      evaluate: (state: ObservedTaxState) =>
+      evaluate: (state: ObservedTaxState): TaxEvaluationVerdict =>
         evaluateProspectiveLaunchTax(request, ownStateOf(state), {
           fingerprint: taxMeaningFingerprint,
           taxEvaluationTime,
@@ -164,7 +188,14 @@ export const taxEvaluationForScope = (transaction: ScopedTransaction, scope: Ope
             exhausted: 'EVALUATION_RACE_UNRESOLVED' as const,
           }),
         onSome: ({ output, state }) =>
-          evaluated(output, request, { ...evidenceOf(state, request, taxEvaluationTime), ...attempts }),
+          evaluated(output.outcome, request, {
+            ...evidenceOf(state, request, taxEvaluationTime),
+            ...attempts,
+            ...Option.match(output.notDeterminedBecause, {
+              onNone: () => ({}),
+              onSome: (notDeterminedBecause) => ({ notDeterminedBecause }),
+            }),
+          }),
       }),
     );
   });
