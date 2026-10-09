@@ -163,7 +163,7 @@ interface EvaluatedCandidate {
 }
 
 /** Readable English collation with a code-point tie-break, so distinct references never compare equal. */
-const byText = (left: string, right: string) => {
+export const byTaxMigrationText = (left: string, right: string): number => {
   const collated = left.localeCompare(right, 'en');
   if (collated !== 0) {
     return collated;
@@ -189,7 +189,7 @@ const rawMeaningOf = (family: TaxMigrationFamily, targetMeaning: TargetMeaning):
   tupleKey([
     family,
     ...Object.entries(targetMeaning)
-      .toSorted(([left], [right]) => byText(left, right))
+      .toSorted(([left], [right]) => byTaxMigrationText(left, right))
       .flatMap(([key, value]) => [key, value]),
   ]);
 
@@ -313,9 +313,9 @@ const provenanceKey = (provenance: TaxMigrationProvenance) =>
 
 /** Stable, readable presentation order by source system, record and dataset; it never picks a winner. */
 const byProvenance = (left: TaxMigrationProvenance, right: TaxMigrationProvenance): number =>
-  byText(left.sourceSystemRef, right.sourceSystemRef) ||
-  byText(left.sourceRecordRef, right.sourceRecordRef) ||
-  byText(left.datasetRef, right.datasetRef);
+  byTaxMigrationText(left.sourceSystemRef, right.sourceSystemRef) ||
+  byTaxMigrationText(left.sourceRecordRef, right.sourceRecordRef) ||
+  byTaxMigrationText(left.datasetRef, right.datasetRef);
 
 interface Entry extends EvaluatedCandidate {
   readonly groupKey: string;
@@ -356,7 +356,8 @@ const duplicateOf = (entry: Entry, original: TaxMigrationOutcome): TaxMigrationO
 const reconcileGroups = (entries: readonly Entry[]): readonly Entry[] => {
   const ordered = entries.toSorted(
     (left, right) =>
-      byProvenance(left.outcome.provenance, right.outcome.provenance) || byText(left.meaning, right.meaning),
+      byProvenance(left.outcome.provenance, right.outcome.provenance) ||
+      byTaxMigrationText(left.meaning, right.meaning),
   );
   return ordered.map((entry) => {
     const group = ordered.filter(({ groupKey }) => groupKey === entry.groupKey);
@@ -440,7 +441,8 @@ export const verifyTaxMigrationCompleteness = (
   const observed = new Map(familyOutcomes.map(({ provenance }) => [sourceKey(provenance), sourceOf(provenance)]));
   const expected = new Map(claim.expectedSourceRecords.map((record) => [sourceKey(record), sourceOf(record)]));
   const bySource = (left: TaxMigrationSourceRecord, right: TaxMigrationSourceRecord) =>
-    byText(left.sourceSystemRef, right.sourceSystemRef) || byText(left.sourceRecordRef, right.sourceRecordRef);
+    byTaxMigrationText(left.sourceSystemRef, right.sourceSystemRef) ||
+    byTaxMigrationText(left.sourceRecordRef, right.sourceRecordRef);
   const missingSourceRecords = [...expected]
     .flatMap(([key, record]) => (observed.has(key) ? [] : [record]))
     .toSorted(bySource);
@@ -516,7 +518,7 @@ export const reconcileTaxMigrationTarget = (
   }
   return differences.toSorted(
     (left, right) =>
-      byText(left.source.sourceSystemRef, right.source.sourceSystemRef) ||
-      byText(left.source.sourceRecordRef, right.source.sourceRecordRef),
+      byTaxMigrationText(left.source.sourceSystemRef, right.source.sourceSystemRef) ||
+      byTaxMigrationText(left.source.sourceRecordRef, right.source.sourceRecordRef),
   );
 };
