@@ -84,7 +84,7 @@ export const ShippingAllocationInputSchema = Schema.Struct({
 
 export type ShippingAllocationInput = typeof ShippingAllocationInputSchema.Type;
 
-export const UnitShippingAllocationSchema = Schema.Struct({
+const UnitShippingAllocationSchema = Schema.Struct({
   basisComponent: ShippingAllocationBasisSchema,
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
 });

@@ -14,7 +14,7 @@ import type {
   TaxRuleOverlap,
   TaxStateIndeterminate,
 } from './tax-non-success-outcome.ts';
-import { isWithinEffectivePeriod } from '../../shared/domain/tax-kernel/tax-time.ts';
+import { isWithinEffectivePeriod } from './tax-time.ts';
 import type { TaxRelevantTime } from '../../shared/domain/tax-kernel/tax-time.ts';
 
 type TaxRuleRevisionRef = typeof TaxRuleRevisionRefSchema.Type;
