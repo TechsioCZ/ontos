@@ -1,35 +1,48 @@
 import { Array as Arr, Match, Order, Result, Schema, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
-import type { SellingLegalEntityVatRegistrationState } from '../../shared/domain/tax-kernel/selling-legal-entity-vat-registration.ts';
-import { UnsupportedTaxRegimeSchema, taxNotEstablishedOutcome } from './tax-non-success-outcome.ts';
-import type { TaxCaseUnsupported, TaxNotEstablishedOutcome, TaxPrerequisiteNotMet } from './tax-non-success-outcome.ts';
+import type { SellerVatRegime, SellerVatRegimeDeclarationRevisionRef } from './seller-vat-regime-timeline.ts';
+import { UnsupportedTaxRegimeSchema } from './tax-non-success-outcome.ts';
+import type { TaxCaseUnsupported } from './tax-non-success-outcome.ts';
 import { requireLaunchActivatedTaxTreatment } from './tax-treatment.ts';
 import { mapTaxableSupplyUnits } from './taxable-supply-unit.ts';
 import type { TaxableSupplyUnit } from './taxable-supply-unit.ts';
 import type { LaunchTaxCoverageInput, RequiredTaxRegime } from '../../shared/domain/tax-kernel/launch-coverage.ts';
+import type { SellerVatRegimeSelection } from '../../shared/domain/tax-kernel/seller-vat-regime.ts';
 
 export { LaunchTaxCoverageInputSchema } from '../../shared/domain/tax-kernel/launch-coverage.ts';
 export type { LaunchTaxCoverageInput } from '../../shared/domain/tax-kernel/launch-coverage.ts';
 
-export type LaunchTaxCoverageFailure = TaxCaseUnsupported | TaxPrerequisiteNotMet | TaxNotEstablishedOutcome;
+/** The seller's state at the relevant instant has no declared VAT Regime (Unit 10 A3). */
+export const SellerVatRegimeNotDeclaredSchema = Schema.TaggedStruct('TAX_STATE_INDETERMINATE', {
+  reason: Schema.Literal('SELLER_VAT_REGIME_NOT_DECLARED'),
+});
+export type SellerVatRegimeNotDeclared = typeof SellerVatRegimeNotDeclaredSchema.Type;
+
+export type LaunchTaxCoverageFailure = TaxCaseUnsupported | SellerVatRegimeNotDeclared;
+
+export interface LaunchTaxCoverageResult {
+  readonly declarationRevisionRef: SellerVatRegimeDeclarationRevisionRef;
+  readonly regime: SellerVatRegime;
+  readonly units: NonEmptyReadonlyArray<TaxableSupplyUnit>;
+}
 
 /**
- * Seller prerequisite meaning. Only known ended/non-registered is TAX_PREREQUISITE_NOT_MET; stale, unavailable,
- * unknown and unresolved keep their own non-negative meanings (#938 F7-F15, F20-F28; #918 F13-F16).
+ * The seller must have an explicitly declared VAT Regime at the relevant instant; absence is a typed internal
+ * failure, stripped of its reason before publication (Unit 10 A3, F10).
  */
-const requireCurrentSellerVatRegistration = (
-  state: SellingLegalEntityVatRegistrationState,
-): Result.Result<void, LaunchTaxCoverageFailure> =>
-  Match.value(state).pipe(
-    Match.when('CURRENT_POSITIVE', () => Result.void),
-    Match.when('KNOWN_ENDED_OR_NON_REGISTERED', () =>
-      Result.fail({
-        _tag: 'TAX_PREREQUISITE_NOT_MET' as const,
-        unmetPrerequisite: 'SELLING_LEGAL_ENTITY_CURRENT_CZ_VAT_REGISTRATION' as const,
-      }),
+const requireDeclaredSellerVatRegime = (
+  selection: SellerVatRegimeSelection,
+): Result.Result<
+  { readonly declarationRevisionRef: SellerVatRegimeDeclarationRevisionRef; readonly regime: SellerVatRegime },
+  SellerVatRegimeNotDeclared
+> =>
+  Match.value(selection).pipe(
+    Match.tag('DECLARED', ({ declarationRevisionRef, regime }) => Result.succeed({ declarationRevisionRef, regime })),
+    Match.tag('NOT_DECLARED', () =>
+      Result.fail(SellerVatRegimeNotDeclaredSchema.make({ reason: 'SELLER_VAT_REGIME_NOT_DECLARED' })),
     ),
-    Match.orElse((notEstablished) => Result.fail(taxNotEstablishedOutcome(notEstablished))),
+    Match.exhaustive,
   );
 
 /** CZK is the Launch currency cutline; foreign Price/FX data never activates another currency (#918 F31-F33). */
@@ -56,7 +69,7 @@ const requireOrdinaryDomesticRegime = (
  */
 export const evaluateLaunchTaxCoverage = (
   input: LaunchTaxCoverageInput,
-): Result.Result<NonEmptyReadonlyArray<TaxableSupplyUnit>, LaunchTaxCoverageFailure> =>
+): Result.Result<LaunchTaxCoverageResult, LaunchTaxCoverageFailure> =>
   pipe(
     requireLaunchCurrency(input.currency),
     Result.flatMap(() => requireOrdinaryDomesticRegime(input.requiredTaxRegimes)),
@@ -68,8 +81,8 @@ export const evaluateLaunchTaxCoverage = (
     Result.flatMap(() => mapTaxableSupplyUnits(input.supplyMeanings)),
     Result.flatMap((units) =>
       pipe(
-        requireCurrentSellerVatRegistration(input.sellingLegalEntityVatRegistration),
-        Result.map(() => units),
+        requireDeclaredSellerVatRegime(input.sellerVatRegime),
+        Result.map(({ declarationRevisionRef, regime }) => ({ declarationRevisionRef, regime, units })),
       ),
     ),
   );

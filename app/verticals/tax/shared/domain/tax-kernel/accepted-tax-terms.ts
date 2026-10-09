@@ -26,7 +26,8 @@ export const OrderLineageSchema = Schema.Struct({
  * acceptance-time determination, an older preview or a Current lookup. The Decision/Result already retain the exact
  * units, occurrence mapping and quantities, basis allocations, rate, governing Tax Rule revisions, Catalog and place
  * evidence, published amounts with currency and the Tax Rounding policy revision; Tax Evaluation Time stays distinct
- * provenance (#945 D, F1-F9; #946 F2-F7; #907 F169-F178; ADR-0027).
+ * provenance. Terms inherit the Seller VAT Regime and its declaration revision through `finalTax.decision`; no new
+ * field is needed here (#945 D, F1-F9; #946 F2-F7; #907 F169-F178; ADR-0027; Unit 10 A5).
  */
 export const AcceptedTaxTermsSchema = Schema.Struct({
   authoritativeRecord: AuthoritativeOriginalAcceptedRecordSchema,

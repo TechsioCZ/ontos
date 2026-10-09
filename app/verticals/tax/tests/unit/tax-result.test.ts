@@ -156,6 +156,8 @@ describe('Tax Result', () => {
     expect(composeResult(decision).purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
     const [unit] = decision.units;
     expect(Schema.is(TaxableTreatmentSchema)(unit.treatment)).toBe(true);
-    expect(unit.treatment.ratePercent).toBe('21');
+    if (Schema.is(TaxableTreatmentSchema)(unit.treatment)) {
+      expect(unit.treatment.ratePercent).toBe('21');
+    }
   });
 });

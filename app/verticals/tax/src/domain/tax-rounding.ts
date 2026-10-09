@@ -1,4 +1,4 @@
-import { Array as Arr, pipe } from 'effect';
+import { Array as Arr, Match, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
 import type {
@@ -8,6 +8,7 @@ import type {
 } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import {
   NonNegativeTaxExactRationalSchema,
+  ZERO_TAX_EXACT_RATIONAL,
   multiplyTaxExactRationals,
   subtractTaxExactRationals,
   sumTaxExactRationals,
@@ -15,7 +16,7 @@ import {
 } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import type { NonNegativeTaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { publishedTaxAmountRoundedHalfUp } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
-import type { TaxableTreatment } from './tax-treatment.ts';
+import type { TaxDecisionTreatment } from './tax-treatment.ts';
 import { exactValueOf } from '../../shared/domain/tax-kernel/tax-rounding.ts';
 import type { TaxRoundingPolicy, TaxUnitRoundingEvidence } from '../../shared/domain/tax-kernel/tax-rounding.ts';
 
@@ -36,17 +37,23 @@ export const LAUNCH_CZK_TAX_ROUNDING_POLICY: TaxRoundingPolicy = {
  */
 export const exactTaxContribution = (
   basis: TaxableBasisInterpretation,
-  treatment: TaxableTreatment,
+  treatment: TaxDecisionTreatment,
 ): NonNegativeTaxExactRational =>
   NonNegativeTaxExactRationalSchema.make(
-    multiplyTaxExactRationals(
-      sumTaxExactRationals(
-        pipe(
-          basis.components,
-          Arr.map(({ amount }) => amount),
+    Match.value(treatment).pipe(
+      Match.tag('SELLER_NOT_VAT_PAYER', () => ZERO_TAX_EXACT_RATIONAL),
+      Match.tag('TAXABLE', ({ ratePercent }) =>
+        multiplyTaxExactRationals(
+          sumTaxExactRationals(
+            pipe(
+              basis.components,
+              Arr.map(({ amount }) => amount),
+            ),
+          ),
+          taxExactFractionOfPercent(ratePercent),
         ),
       ),
-      taxExactFractionOfPercent(treatment.ratePercent),
+      Match.exhaustive,
     ),
   );
 

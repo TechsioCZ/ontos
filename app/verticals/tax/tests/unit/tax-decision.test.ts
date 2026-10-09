@@ -12,6 +12,7 @@ import {
   decisionUnitInput,
   decodeTaxDecision,
   decodeTaxDecisionUnit,
+  decodeTaxableDecisionUnit,
   exactDecimal,
   purchaseBindingInput,
   shippingSourceRefInput,
@@ -255,7 +256,7 @@ describe('Tax Decision', () => {
       taxClassification: { ...unit.taxClassification, catalogSelection: otherSelection },
     };
 
-    expect(decodeTaxDecisionUnit(reselected).taxClassification.catalogSelection.variantRef).toBe('variant-2');
+    expect(decodeTaxableDecisionUnit(reselected).taxClassification.catalogSelection.variantRef).toBe('variant-2');
     expect(() => decodeTaxDecision(taxDecisionInput(['o-1'], { units: [reselected] }))).toThrow();
     expect(() =>
       decodeTaxDecisionUnit({

@@ -31,13 +31,6 @@ export const TaxCaseUnsupportedSchema = Schema.TaggedStruct('TAX_CASE_UNSUPPORTE
 
 export type TaxCaseUnsupported = typeof TaxCaseUnsupportedSchema.Type;
 
-/** Known-negative required Launch prerequisite of an otherwise supported case (#938 F7-F12, #918 F13-F16). */
-export const TaxPrerequisiteNotMetSchema = Schema.TaggedStruct('TAX_PREREQUISITE_NOT_MET', {
-  unmetPrerequisite: Schema.Literal('SELLING_LEGAL_ENTITY_CURRENT_CZ_VAT_REGISTRATION'),
-});
-
-export type TaxPrerequisiteNotMet = typeof TaxPrerequisiteNotMetSchema.Type;
-
 /** Supported case with a complete authoritative empty applicable rule set (#938 F16). */
 export const TaxRuleMissingSchema = Schema.TaggedStruct('TAX_RULE_MISSING', {});
 
@@ -71,7 +64,6 @@ export type TaxStateIndeterminate = typeof TaxStateIndeterminateSchema.Type;
 /** Closed set of typed non-success Tax Outcomes; none of them carries a Tax amount (#938 F2, #939 F14-F25). */
 export const TaxNonSuccessOutcomeSchema = Schema.Union([
   TaxCaseUnsupportedSchema,
-  TaxPrerequisiteNotMetSchema,
   TaxRuleMissingSchema,
   TaxRuleOverlapSchema,
   TaxRuleConflictSchema,

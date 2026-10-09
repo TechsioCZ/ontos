@@ -10,7 +10,6 @@ export {
   TaxDependencyUnavailableSchema,
   TaxInputStaleSchema,
   TaxNonSuccessOutcomeSchema,
-  TaxPrerequisiteNotMetSchema,
   TaxRuleConflictSchema,
   TaxRuleMissingSchema,
   TaxRuleOverlapSchema,
@@ -20,7 +19,6 @@ export {
 export type {
   TaxCaseUnsupported,
   TaxNonSuccessOutcome,
-  TaxPrerequisiteNotMet,
   TaxRuleConflict,
   TaxRuleMissing,
   TaxRuleOverlap,

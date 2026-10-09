@@ -4,8 +4,11 @@ import { PurchaseDemandOccurrenceIdSchema } from './purchase-binding.ts';
 import { TaxMonetaryAmountSchema } from './tax-monetary-amount.ts';
 import { TaxRatePercentSchema } from './tax-treatment.ts';
 
-/** Customer-Safe Tax Projection contract version (#940 F44, glossary: versioned allowlist). */
-export const CUSTOMER_SAFE_TAX_PROJECTION_VERSION = 1;
+/**
+ * Customer-Safe Tax Projection contract version. Bumped to 2 for the SELLER_NOT_VAT_PAYER union member
+ * (#940 F44, Unit 10 A5, F15; glossary: versioned allowlist).
+ */
+export const CUSTOMER_SAFE_TAX_PROJECTION_VERSION = 2;
 
 /** Whether the exact view needs several Tax components explained (#940 F23-F24). */
 export const CustomerSafeTaxDecompositionNeedSchema = Schema.Literals(['NOT_NEEDED', 'PER_TAXABLE_SUPPLY_UNIT']);
@@ -35,9 +38,18 @@ export const CustomerSafeTaxNotDeterminedSchema = Schema.TaggedStruct('TAX_NOT_D
   contractVersion: Schema.Literal(CUSTOMER_SAFE_TAX_PROJECTION_VERSION),
 });
 
+/**
+ * Seller-is-non-payer: no amount, no rate, no components. Shown whenever the Decision's Seller VAT Regime is
+ * NON_PAYER, whatever the decomposition need (Unit 10 A5).
+ */
+export const CustomerSafeSellerNotVatPayerSchema = Schema.TaggedStruct('SELLER_NOT_VAT_PAYER', {
+  contractVersion: Schema.Literal(CUSTOMER_SAFE_TAX_PROJECTION_VERSION),
+});
+
 export const CustomerSafeTaxProjectionSchema = Schema.Union([
   CustomerSafeTaxAmountSchema,
   CustomerSafeTaxNotDeterminedSchema,
+  CustomerSafeSellerNotVatPayerSchema,
 ]);
 
 export type CustomerSafeTaxProjection = typeof CustomerSafeTaxProjectionSchema.Type;

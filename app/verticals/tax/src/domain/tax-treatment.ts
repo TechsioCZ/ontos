@@ -3,8 +3,18 @@ import { Match, Result } from 'effect';
 import type { TaxCaseUnsupported, TaxUnsupportedRequirement } from './tax-non-success-outcome.ts';
 import type { TaxTreatmentCategory } from '../../shared/domain/tax-kernel/tax-treatment.ts';
 
-export { TaxRatePercentSchema, TaxableTreatmentSchema } from '../../shared/domain/tax-kernel/tax-treatment.ts';
-export type { TaxTreatmentCategory, TaxableTreatment } from '../../shared/domain/tax-kernel/tax-treatment.ts';
+export {
+  SellerNotVatPayerTreatmentSchema,
+  TaxDecisionTreatmentSchema,
+  TaxRatePercentSchema,
+  TaxableTreatmentSchema,
+} from '../../shared/domain/tax-kernel/tax-treatment.ts';
+export type {
+  SellerNotVatPayerTreatment,
+  TaxDecisionTreatment,
+  TaxTreatmentCategory,
+  TaxableTreatment,
+} from '../../shared/domain/tax-kernel/tax-treatment.ts';
 
 /** Launch-activated treatment categories (#918 F2-F3, #939 J). */
 export type LaunchActivatedTaxTreatmentCategory = Extract<TaxTreatmentCategory, 'TAXABLE'>;

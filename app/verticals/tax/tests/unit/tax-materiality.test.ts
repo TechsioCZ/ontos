@@ -148,13 +148,17 @@ const withReversedCatalogFacts = (genuine: TaxOutcomeSuccess): TaxOutcomeSuccess
     ...genuine.decision,
     units: pipe(
       genuine.decision.units,
-      Arr.map((unit) => ({
-        ...unit,
-        taxClassification: {
-          ...unit.taxClassification,
-          materialCatalogEvidence: Arr.reverse(unit.taxClassification.materialCatalogEvidence),
-        },
-      })),
+      Arr.map((unit) =>
+        'taxClassification' in unit
+          ? {
+              ...unit,
+              taxClassification: {
+                ...unit.taxClassification,
+                materialCatalogEvidence: Arr.reverse(unit.taxClassification.materialCatalogEvidence),
+              },
+            }
+          : unit,
+      ),
     ),
   },
 });

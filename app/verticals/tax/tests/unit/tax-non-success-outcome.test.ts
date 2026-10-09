@@ -2,11 +2,9 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
-  TaxCaseUnsupportedSchema,
   TaxDependencyUnavailableSchema,
   TaxInputStaleSchema,
   TaxNonSuccessOutcomeSchema,
-  TaxPrerequisiteNotMetSchema,
   TaxStateIndeterminateSchema,
   taxNotEstablishedOutcome,
 } from '../../src/domain/tax-non-success-outcome.ts';
@@ -16,7 +14,6 @@ const decodeNonSuccess = Schema.decodeUnknownSync(TaxNonSuccessOutcomeSchema);
 
 const everyNonSuccess: readonly TaxNonSuccessOutcome[] = [
   { _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'REVERSE_CHARGE' },
-  { _tag: 'TAX_PREREQUISITE_NOT_MET', unmetPrerequisite: 'SELLING_LEGAL_ENTITY_CURRENT_CZ_VAT_REGISTRATION' },
   { _tag: 'TAX_RULE_MISSING' },
   { _tag: 'TAX_RULE_OVERLAP' },
   { _tag: 'TAX_RULE_CONFLICT' },
@@ -26,10 +23,10 @@ const everyNonSuccess: readonly TaxNonSuccessOutcome[] = [
 ];
 
 describe('Typed Tax non-success outcomes', () => {
-  it('#938 A F3-F27 keeps exactly eight distinct Launch non-success codes', () => {
+  it('#938 A F3-F27 keeps exactly seven distinct Launch non-success codes', () => {
     const codes = everyNonSuccess.map((outcome) => decodeNonSuccess(outcome)._tag);
 
-    expect(new Set(codes).size).toBe(8);
+    expect(new Set(codes).size).toBe(7);
     expect(() => decodeNonSuccess({ _tag: 'ERROR' })).toThrow();
     expect(() => decodeNonSuccess({ _tag: 'TAX_PROVIDER_TIMEOUT' })).toThrow();
   });
@@ -43,11 +40,13 @@ describe('Typed Tax non-success outcomes', () => {
     }
   });
 
-  it('#938 F10 known-negative seller prerequisite is not TAX_CASE_UNSUPPORTED', () => {
-    const [, prerequisite] = everyNonSuccess;
-
-    expect(Schema.is(TaxPrerequisiteNotMetSchema)(prerequisite)).toBe(true);
-    expect(Schema.is(TaxCaseUnsupportedSchema)(prerequisite)).toBe(false);
+  it('Unit 10 A3 TAX_PREREQUISITE_NOT_MET is not in TaxNonSuccessOutcomeSchema', () => {
+    expect(() =>
+      decodeNonSuccess({
+        _tag: 'TAX_PREREQUISITE_NOT_MET',
+        unmetPrerequisite: 'SELLING_LEGAL_ENTITY_CURRENT_CZ_VAT_REGISTRATION',
+      }),
+    ).toThrow();
   });
 
   it('#938 F13-F15 F20-F32 an input that cannot be established is stale, unavailable or indeterminate, never negative', () => {
