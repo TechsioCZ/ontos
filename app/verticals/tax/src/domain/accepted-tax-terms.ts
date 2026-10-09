@@ -1,4 +1,4 @@
-import { Option } from 'effect';
+import { Option, Schema } from 'effect';
 
 import {
   NonNegativeTaxExactRationalSchema,
@@ -13,7 +13,8 @@ import type {
 import type { TaxMonetaryAmount } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import type { TaxRoundingPolicy } from './tax-rounding.ts';
 import type { TaxableSupplyUnitId } from './taxable-supply-unit.ts';
-import { isLineCommercialValue, isShippingAllocation } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
+import { ShippingAllocationBasisSchema } from '../../shared/domain/tax-kernel/shipping-allocation.ts';
+import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 import type { AcceptedTaxTerms } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 
 export {
@@ -21,6 +22,9 @@ export {
   AuthoritativeOriginalAcceptedRecordSchema,
 } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 export type { AcceptedTaxTerms } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
+
+const isLineCommercialValue = Schema.is(LineCommercialValueBasisSchema);
+const isShippingAllocation = Schema.is(ShippingAllocationBasisSchema);
 
 /** Exact original meaning of one Taxable Supply Unit as recorded on the Authoritative Original Accepted Record. */
 export interface OriginalUnitBaseline {
