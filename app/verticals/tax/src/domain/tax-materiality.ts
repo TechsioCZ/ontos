@@ -147,20 +147,26 @@ const materialChanges = (previous: MaterialMeaning, current: MaterialMeaning): r
   ];
 };
 
+/** Evidence identities of one unit; fact and line sets are ordered, so array position is never a difference (#937 F7). */
 const unitEvidence = (unit: TaxDecisionUnit) => ({
   catalog: joinParts([
     unit.taxClassification.completenessEvidenceRef,
-    ...unit.taxClassification.materialCatalogEvidence.map(
-      ({ catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef }) =>
+    ...unit.taxClassification.materialCatalogEvidence
+      .map(({ catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef }) =>
         joinParts([catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef]),
-    ),
+      )
+      .toSorted(byText),
   ]),
   place: joinParts([
     unit.jurisdiction.placeEvidenceRefs.sellingLegalEntity,
     unit.jurisdiction.placeEvidenceRefs.deliveryDestination,
     unit.jurisdiction.placeEvidenceRefs.invoiceRecipient,
   ]),
-  pricingLine: joinParts(lineComponents(unit).map(({ pricingLineRef }) => pricingLineRef)),
+  pricingLine: joinParts(
+    lineComponents(unit)
+      .map(({ pricingLineRef }) => pricingLineRef)
+      .toSorted(byText),
+  ),
   rule: joinParts([unit.governingTaxRuleRevisionRef.taxRuleId, unit.governingTaxRuleRevisionRef.revision]),
   shippingWeights: joinParts(
     shippingComponents(unit).map(({ allocationWeightsEvidenceRef }) => allocationWeightsEvidenceRef),
