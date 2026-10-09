@@ -12,6 +12,10 @@ npm run dev
 
 Open <http://localhost:3000>.
 
+With the storefront running, `npm run test:responsive` checks variant-table text and controls
+at 14 widths from 320 to 1920 px. It uses installed Chrome; `AKROS_CHROMIUM_PATH` can select
+another Chromium executable and `AKROS_TEST_BASE_URL` can select another local server.
+
 ## Theme tokens
 
 The storefront imports the generated AKROS variable export from

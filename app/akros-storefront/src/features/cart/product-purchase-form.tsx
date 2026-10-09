@@ -229,7 +229,9 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
   const disabled = maximum <= 0 || variant.priceMinor <= 0;
 
   return (
-    <div className={`akros-variant-table__order akros-variant-table__order--${mode}`}>
+    <div
+      className={`akros-variant-table__order akros-variant-table__order--${mode} @max-akros-variant-table/akros-variants:grid-cols-[var(--akros-variant-table-compact-quantity-width)_minmax(0,1fr)]! @max-akros-variant-table/akros-variants:gap-(--dimension-8)! @max-akros-variant-table/akros-variants:border-0! @max-akros-variant-table/akros-variants:px-(--dimension-0)!`}
+    >
       <NumericInput
         id={inputId}
         locale="cs-CZ"
@@ -240,7 +242,7 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
         step={step}
         value={selectedQuantity}
       >
-        <NumericInput.Control className="akros-variant-table__quantity-control">
+        <NumericInput.Control className="akros-variant-table__quantity-control @max-akros-variant-table/akros-variants:grid-cols-[var(--dimension-44)_minmax(0,1fr)_var(--dimension-44)]!">
           <NumericInput.DecrementTrigger
             aria-label={isPackage ? "Snížit počet balení" : "Snížit množství"}
             icon="token-icon-minus"
@@ -256,7 +258,7 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       </NumericInput>
       <Button
         aria-label={isPackage ? `Koupit celé balení ${label}` : `Koupit ${label}`}
-        className="akros-variant-table__buy-button"
+        className="akros-variant-table__buy-button @max-akros-variant-table/akros-variants:h-auto @max-akros-variant-table/akros-variants:min-h-(--dimension-44) @max-akros-variant-table/akros-variants:px-(--dimension-6) @max-akros-variant-table/akros-variants:py-(--dimension-6) @max-akros-variant-table/akros-variants:whitespace-normal! @max-akros-variant-table/akros-variants:[&>span]:flex-col! @max-akros-variant-table/akros-variants:[&>span]:items-center! @max-akros-variant-table/akros-variants:[&>span]:leading-(--akros-variant-table-compact-button-line-height)! @max-akros-variant-table/akros-variants:[&_small]:text-xs!"
         disabled={disabled}
         onClick={() => onAdd(variant, quantityToAdd)}
         size="sm"
@@ -400,14 +402,16 @@ export function ProductPurchaseForm({
       {
         id: "name",
         header: "Název",
-        meta: { width: "16%" },
+        meta: { width: "12%" },
         cell: ({ row }) => {
           const label = formatVariantLabel(row.original);
 
           return (
-            <div className="akros-variant-table__name">
-              <span>{product.name}</span>
-              <strong>{label}</strong>
+            <div className="akros-variant-table__name min-w-0">
+              <span className="@max-akros-variant-table/akros-variants:hidden">{product.name}</span>
+              <strong className="min-w-0 whitespace-normal wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
+                {label}
+              </strong>
             </div>
           );
         },
@@ -415,10 +419,12 @@ export function ProductPurchaseForm({
       {
         accessorKey: "sku",
         header: "Kód",
-        meta: { width: "12%" },
+        meta: { width: "16%" },
         cell: ({ row }) => (
-          <span className="akros-variant-table__sku">
-            <span className="akros-variant-table__mobile-label">Kód: </span>
+          <span className="akros-variant-table__sku block whitespace-normal break-all @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal @max-akros-variant-table/akros-variants:text-fg-secondary">
+            <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline!">
+              Kód:{" "}
+            </span>
             <span>{row.original.sku}</span>
           </span>
         ),
@@ -436,7 +442,10 @@ export function ProductPurchaseForm({
           const isAvailable = row.original.stockCount >= row.original.minimumQuantity;
 
           return (
-            <strong className="akros-variant-table__availability" data-available={isAvailable}>
+            <strong
+              className="akros-variant-table__availability @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal"
+              data-available={isAvailable}
+            >
               {isAvailable ? "Skladem" : "Není skladem"}
             </strong>
           );
@@ -450,13 +459,18 @@ export function ProductPurchaseForm({
           const basePriceTier = row.original.priceTiers[0];
 
           return (
-            <div className="akros-variant-table__price">
-              <strong>
-                {formatPrice(row.original.priceMinor)}
-                <span className="akros-variant-table__mobile-label"> / {row.original.unit}</span>
+            <div className="akros-variant-table__price min-w-0">
+              <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
+                {formatPrice(row.original.priceMinor).replace(/\s(?=\S+$)/u, " ")}
+                <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline! @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal">
+                  {" "}
+                  / {row.original.unit}
+                </span>
               </strong>
               {basePriceTier && (
-                <small>{formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH</small>
+                <small className="@max-akros-variant-table/akros-variants:text-xs! @max-akros-variant-table/akros-variants:font-normal">
+                  {formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH
+                </small>
               )}
             </div>
           );
@@ -472,7 +486,7 @@ export function ProductPurchaseForm({
           const hasSeparatePackage = packageQuantity > item.minimumQuantity;
 
           return (
-            <div className="akros-variant-table__purchase-cell">
+            <div className="akros-variant-table__purchase-cell @max-akros-variant-table/akros-variants:grid-cols-1! @max-akros-variant-table/akros-variants:gap-(--dimension-8)">
               <VariantOrderControl
                 mode="minimum"
                 onAdd={addVariant}
@@ -487,7 +501,10 @@ export function ProductPurchaseForm({
                   variant={item}
                 />
               ) : (
-                <span aria-hidden="true" className="akros-variant-table__no-package">
+                <span
+                  aria-hidden="true"
+                  className="akros-variant-table__no-package @max-akros-variant-table/akros-variants:hidden"
+                >
                   —
                 </span>
               )}
@@ -576,7 +593,7 @@ export function ProductPurchaseForm({
   };
 
   return (
-    <div className="akros-variant-purchase">
+    <div className="akros-variant-purchase @container/akros-variants">
       <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit">
         <form
           aria-label="Filtrování variant"
@@ -659,7 +676,7 @@ export function ProductPurchaseForm({
 
       <>
         <DataTable
-          className="akros-variant-data-table"
+          className="akros-variant-data-table @max-akros-variant-table/akros-variants:[--akros-variant-table-min-width:var(--dimension-0)] @max-akros-variant-table/akros-variants:[--akros-variant-table-row-gap:var(--dimension-0)] @max-akros-variant-table/akros-variants:[--akros-variant-table-button-font-size:var(--text-sm)] @max-akros-variant-table/akros-variants:[--height-form-control-sm:var(--dimension-48)] @max-akros-variant-table/akros-variants:[--text-numeric-input-sm:var(--text-base)]"
           columns={variantColumns}
           data={paginatedVariants}
           enableSorting={false}
@@ -674,9 +691,13 @@ export function ProductPurchaseForm({
           slotProps={{
             root: {
               "aria-label": "Varianty produktu",
-              className: "akros-variant-data-table__table",
+              className:
+                "akros-variant-data-table__table @max-akros-variant-table/akros-variants:block @max-akros-variant-table/akros-variants:[&_thead]:sr-only @max-akros-variant-table/akros-variants:[&_tbody]:grid @max-akros-variant-table/akros-variants:[&_tbody]:min-w-0 @max-akros-variant-table/akros-variants:[&_tbody]:gap-(--dimension-12)",
             },
-            row: { className: "akros-variant-data-table__row" },
+            row: {
+              className:
+                "akros-variant-data-table__row @max-akros-variant-table/akros-variants:grid @max-akros-variant-table/akros-variants:h-auto! @max-akros-variant-table/akros-variants:min-w-0 @max-akros-variant-table/akros-variants:grid-cols-[minmax(0,1fr)_auto] @max-akros-variant-table/akros-variants:gap-(--dimension-8) @max-akros-variant-table/akros-variants:items-center @max-akros-variant-table/akros-variants:border-(length:--border-sm)! @max-akros-variant-table/akros-variants:border-(--akros-variant-table-border-color)! @max-akros-variant-table/akros-variants:rounded-(--akros-variant-table-row-radius)! @max-akros-variant-table/akros-variants:p-(--dimension-12) @max-akros-variant-table/akros-variants:bg-base! @max-akros-variant-table/akros-variants:[&>td]:block @max-akros-variant-table/akros-variants:[&>td]:w-auto! @max-akros-variant-table/akros-variants:[&>td]:min-w-0 @max-akros-variant-table/akros-variants:[&>td]:border-0! @max-akros-variant-table/akros-variants:[&>td]:rounded-none! @max-akros-variant-table/akros-variants:[&>td]:p-(--dimension-0)! @max-akros-variant-table/akros-variants:[&>td]:bg-(--color-bg-transparent)! @max-akros-variant-table/akros-variants:[&>td:is(:nth-child(1),:nth-child(2),:nth-child(6))]:col-span-full @max-akros-variant-table/akros-variants:[&>td:nth-child(3)]:hidden @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:col-start-2 @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:row-start-3 @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-1 @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-3 @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-(length:--border-sm)! @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-(--akros-variant-table-cell-separator-color)! @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-12)!",
+            },
           }}
           tableLayout="fixed"
           translations={{

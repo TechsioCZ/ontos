@@ -1,19 +1,17 @@
+@theme static {
+  --container-akros-variant-table: 1000px;
+}
+
 :root {
   --akros-variant-table-border-color: var(--color-base-dark);
   --akros-variant-table-button-font-size: 10px;
   --akros-variant-table-cell-separator-color: var(--color-border-primary);
   --akros-variant-table-header-bg: var(--color-base-dark);
   --akros-variant-table-header-fg: var(--color-base-light);
-  --akros-variant-table-min-width: 1000px;
+  --akros-variant-table-min-width: var(--container-akros-variant-table);
   --akros-variant-table-row-gap: var(--dimension-6);
   --akros-variant-table-row-radius: var(--radius-sm);
   --akros-variant-table-stock-fg: var(--color-fg-status-success);
-}
-
-@media (max-width: 1023px) {
-  .akros-variant-data-table {
-    --akros-variant-table-button-font-size: var(--text-sm);
-    --height-form-control-sm: var(--dimension-48);
-    --text-numeric-input-sm: var(--text-base);
-  }
+  --akros-variant-table-compact-quantity-width: 152px;
+  --akros-variant-table-compact-button-line-height: 1.2;
 }
