@@ -9,6 +9,7 @@
     { "appId": "pricing" },
     { "appId": "storefront-registry" },
     { "appId": "price-group-catalog" },
-    { "appId": "inventory" }
+    { "appId": "inventory" },
+    { "appId": "privacy" }
   ]
 }
