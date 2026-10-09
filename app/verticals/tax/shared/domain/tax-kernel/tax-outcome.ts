@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 
 import { TaxDecisionSchema } from './tax-decision.ts';
+import { TaxNonSuccessOutcomeSchema } from './tax-non-success-outcome.ts';
 import { TaxResultSchema } from './tax-result.ts';
 import type { TaxResult } from './tax-result.ts';
 import type { TaxDecision } from './tax-decision.ts';
@@ -34,3 +35,9 @@ export const TaxOutcomeSuccessSchema = Schema.TaggedStruct('TAX_DETERMINED', {
       taxResultBindsToDecision(decision, result) || 'Tax Result must be exactly bound to its Tax Decision',
   ),
 );
+
+/**
+ * Published Tax Outcome: a bound successful Decision + Result, or exactly one typed non-success meaning (#938 A,
+ * F1-F2). TAX's own `src/domain/tax-outcome.ts` additionally checks that the amounts follow from the Decision.
+ */
+export const TaxOutcomeSchema = Schema.Union([TaxOutcomeSuccessSchema, TaxNonSuccessOutcomeSchema]);
