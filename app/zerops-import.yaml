@@ -57,6 +57,8 @@ services:
     type: nodejs@24
   - hostname: inventoryworker
     type: nodejs@24
+  - hostname: privacyworker
+    type: nodejs@24
   # Stage-only services carry hard autoscaling ceilings, so a runaway container cannot grow the bill.
   - hostname: outboxworkerhost
     type: nodejs@24

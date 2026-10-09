@@ -25,6 +25,7 @@ const OUTBOX_WORKERS = [
   'commercecstmrcntxtworker',
   'pricegroupcatalogworker',
   'inventoryworker',
+  'privacyworker',
 ];
 const KEPT_ON_ZEROPS = new Set(['cloudflared', 'db18', 'migrator', 'outboxworkerhost', 'spicedb', ...OUTBOX_WORKERS]);
 
@@ -41,6 +42,7 @@ const STAGE_SERVICE_IDS = new Map(
     paymenttermcatalog: '2FgvrWn9RzCJrfbMapwM6Q',
     pricegroupcatalog: 'aHab72wuSDS4AjkgxNbHDw',
     pricing: 'll1Dd1AiRiKSLlB1QKDhQw',
+    privacy: 'privacy-service-id',
     shellsuperapp: 'E6Wy3B08Rn60XqS6T666fg',
     storefrontregistry: 't9lSg7HFRne0DJblYFwXbg',
   }),
@@ -163,6 +165,7 @@ it('retires exactly the application services zerops-import.yaml declares, each w
     'ZEROPS_PAYMENT_TERM_CATALOG_SERVICE_ID',
     'ZEROPS_PRICE_GROUP_CATALOG_SERVICE_ID',
     'ZEROPS_PRICING_SERVICE_ID',
+    'ZEROPS_PRIVACY_SERVICE_ID',
     'ZEROPS_SHELL_SERVICE_ID',
     'ZEROPS_STOREFRONT_REGISTRY_SERVICE_ID',
   ]);
