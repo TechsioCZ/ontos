@@ -23,7 +23,7 @@ import {
 } from '../database/schema.ts';
 import { selectApplicableTaxRuleRevision } from '../domain/tax-rule-selection.ts';
 import type { TaxRuleRevisionState } from '../domain/tax-rule-selection.ts';
-import { TaxRelevantTimeSchema } from '../domain/tax-time.ts';
+import { TaxRelevantTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 import {
   authorityCoversInstant,
   currentContractRevisions,
