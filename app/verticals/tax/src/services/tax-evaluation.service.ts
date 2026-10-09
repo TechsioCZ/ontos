@@ -13,8 +13,8 @@ import { evaluateProspectiveLaunchTax, requiredTaxClassificationCodes } from '..
 import type { TaxEvaluationOwnState } from '../domain/tax-evaluation.ts';
 import { TaxStateIndeterminateSchema } from '../domain/tax-non-success-outcome.ts';
 import type { TaxOutcome } from '../domain/tax-outcome.ts';
-import { TaxEvaluationTimeSchema } from '../domain/tax-time.ts';
-import type { TaxEvaluationTime } from '../domain/tax-time.ts';
+import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
+import type { TaxEvaluationTime } from '../../shared/domain/tax-kernel/tax-time.ts';
 import { taxGovernedReadsForScope } from './tax-governed-read.service.ts';
 import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
 import type { PersistenceUnavailable, ScopedTransaction } from './tax-governance-persistence.ts';

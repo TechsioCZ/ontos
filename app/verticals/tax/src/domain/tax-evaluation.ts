@@ -2,14 +2,18 @@ import { Array as Arr, Option, Order, Result, Schema, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
 import { evaluateLaunchTaxCoverage } from './launch-coverage.ts';
-import type { PurchaseDemandOccurrence } from './purchase-binding.ts';
-import type { SellingLegalEntityVatRegistrationState } from './selling-legal-entity-vat-registration.ts';
+import type { PurchaseDemandOccurrence } from '../../shared/domain/tax-kernel/purchase-binding.ts';
+import type { SellingLegalEntityVatRegistrationState } from '../../shared/domain/tax-kernel/selling-legal-entity-vat-registration.ts';
 import { allocateShippingTaxableBasis } from './shipping-allocation.ts';
 import type { ShippingAllocation, ShippingAllocationInput } from './shipping-allocation.ts';
 import { classifyCatalogSelection, launchTaxClassificationInterpretation } from './tax-classification.ts';
 import type { TaxClassification } from './tax-classification.ts';
-import { TaxDecisionIdSchema, TaxDecisionSchema, TaxRuleIdSchema } from './tax-decision.ts';
-import type { TaxDecision, TaxDecisionUnit } from './tax-decision.ts';
+import {
+  TaxDecisionIdSchema,
+  TaxDecisionSchema,
+  TaxRuleIdSchema,
+} from '../../shared/domain/tax-kernel/tax-decision.ts';
+import type { TaxDecision, TaxDecisionUnit } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import type { TaxEvaluationRequest } from './tax-evaluation-request.ts';
 import { determineTaxJurisdiction } from './tax-jurisdiction.ts';
 import type { TaxJurisdictionDetermination } from './tax-jurisdiction.ts';
@@ -19,7 +23,7 @@ import { TaxOutcomeSuccessSchema } from './tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from './tax-outcome.ts';
 import { composeTaxResult } from './tax-result.ts';
 import { LAUNCH_CZK_TAX_ROUNDING_POLICY } from './tax-rounding.ts';
-import type { TaxEvaluationTime } from './tax-time.ts';
+import type { TaxEvaluationTime } from '../../shared/domain/tax-kernel/tax-time.ts';
 import { lineTaxableBasisForOccurrence } from './taxable-basis.ts';
 import { mapTaxableSupplyUnits } from './taxable-supply-unit.ts';
 import type { OccurrenceSupplyMeaning, TaxableSupplyUnit, TaxableSupplyUnitId } from './taxable-supply-unit.ts';

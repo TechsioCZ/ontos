@@ -1,87 +1,19 @@
-import { Match, Schema } from 'effect';
+import { Match } from 'effect';
 
-import { CustomerSafeTaxDecompositionNeedSchema } from './customer-safe-tax-projection.ts';
-import {
-  PricingResultRefSchema,
-  PurchaseDemandOccurrenceIdSchema,
-  TaxPurchaseBindingSchema,
-  isSameCatalogSelection,
-} from './purchase-binding.ts';
-import { ShippingSourceObservationSchema } from './shipping-allocation.ts';
-import { TaxClassificationInputSchema } from './tax-classification.ts';
-import { BoundedIdentifierSchema, distinctBy } from './tax-domain-primitives.ts';
-import { NonNegativeTaxExactRationalSchema } from './tax-exact-rational.ts';
-import { TaxJurisdictionInputSchema } from './tax-jurisdiction.ts';
-import { TaxRelevantTimeSchema } from './tax-time.ts';
-import { PublishedPricingLineSchema } from './taxable-basis.ts';
+import { isSameCatalogSelection } from '../../shared/domain/tax-kernel/purchase-binding.ts';
+import type {
+  TaxEvaluationRequest,
+  TaxEvaluationRequestRejectionReason,
+} from '../../shared/domain/tax-evaluation-contracts.ts';
 
-const distinctOccurrenceIds = distinctBy(
-  ({ occurrenceId }: Readonly<{ occurrenceId: string }>) => occurrenceId,
-  'Each Purchase Demand Occurrence appears once',
-);
-
-/** Owner-issued Catalog classification evidence of one exact occurrence (#926 F6, #937 F13). */
-const OccurrenceCatalogEvidenceSchema = Schema.Struct({
-  classificationInput: TaxClassificationInputSchema,
-  occurrenceId: PurchaseDemandOccurrenceIdSchema,
-});
-
-/** Explicit Tax legal supply meaning of a Set occurrence; an ordinary occurrence declares none (#934, #920 F25-F30). */
-const SetSupplyMeaningDeclarationSchema = Schema.Struct({
-  meaning: Schema.Literals(['WHOLE_TREATMENT_SET', 'MULTI_SUPPLY_SET']),
-  occurrenceId: PurchaseDemandOccurrenceIdSchema,
-});
-
-/**
- * Owner-issued Shipping of the exact purchase with the occurrences it relates to and, when several share it, the
- * explicit owner-approved weights keyed by occurrence; TAX maps them to its own Taxable Supply Units (#933 F12-F18,
- * PO decision D3 default, pending on #907).
- */
-const ShippingEvaluationInputSchema = Schema.Struct({
-  affectedOccurrenceIds: Schema.NonEmptyArray(PurchaseDemandOccurrenceIdSchema).check(
-    distinctBy((occurrenceId: string) => occurrenceId, 'Each affected occurrence appears once'),
-  ),
-  allocationWeights: Schema.optionalKey(
-    Schema.Struct({
-      approvalEvidenceRef: BoundedIdentifierSchema,
-      weights: Schema.NonEmptyArray(
-        Schema.Struct({ occurrenceId: PurchaseDemandOccurrenceIdSchema, weight: NonNegativeTaxExactRationalSchema }),
-      ).check(distinctOccurrenceIds),
-    }),
-  ),
-  source: ShippingSourceObservationSchema,
-});
-
-/**
- * Prospective Tax evaluation request for one exact purchase at a caller-declared Tax-Relevant Time (#941 F6). Foreign
- * owner facts (Pricing, Catalog, Shipping, places) arrive as owner-issued evidence the server-side caller holds;
- * Tenant and Selling Legal Entity are checked against the trusted Operational Scope, never trusted from here.
- */
-export const TaxEvaluationRequestSchema = Schema.Struct({
-  catalog: Schema.NonEmptyArray(OccurrenceCatalogEvidenceSchema).check(distinctOccurrenceIds),
-  decompositionNeed: CustomerSafeTaxDecompositionNeedSchema,
-  places: TaxJurisdictionInputSchema,
-  pricing: Schema.Struct({
-    pricingResultRef: PricingResultRefSchema,
-    publishedLines: Schema.Array(PublishedPricingLineSchema),
-  }),
-  purchase: TaxPurchaseBindingSchema,
-  setSupplyMeanings: Schema.optionalKey(Schema.Array(SetSupplyMeaningDeclarationSchema).check(distinctOccurrenceIds)),
-  shipping: Schema.optionalKey(ShippingEvaluationInputSchema),
-  taxRelevantTime: TaxRelevantTimeSchema,
-});
-export type TaxEvaluationRequest = typeof TaxEvaluationRequestSchema.Type;
-
-/**
- * Why a request is not one structurally bound purchase. These are request rejections, never Tax Outcomes: the closed
- * #938 outcome set describes evaluated purchases only.
- */
-export const TaxEvaluationRequestRejectionReasonSchema = Schema.Literals([
-  'STRUCTURAL_BINDING_INVALID',
-  'SET_MEANING_UNDECLARED',
-  'FUTURE_TAX_RELEVANT_TIME',
-]);
-export type TaxEvaluationRequestRejectionReason = typeof TaxEvaluationRequestRejectionReasonSchema.Type;
+export {
+  TaxEvaluationRequestSchema,
+  TaxEvaluationRequestRejectionReasonSchema,
+} from '../../shared/domain/tax-evaluation-contracts.ts';
+export type {
+  TaxEvaluationRequest,
+  TaxEvaluationRequestRejectionReason,
+} from '../../shared/domain/tax-evaluation-contracts.ts';
 
 const subsetOf = (ids: readonly string[], known: ReadonlySet<string>) => ids.every((id) => known.has(id));
 

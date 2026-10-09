@@ -2,7 +2,7 @@ import { ReadHandlerUnavailable } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import type { SellingLegalEntityVatRegistrationState } from '../../src/domain/selling-legal-entity-vat-registration.ts';
+import type { SellingLegalEntityVatRegistrationState } from '../../shared/domain/tax-kernel/selling-legal-entity-vat-registration.ts';
 import { readTaxEvaluation } from '../../src/api/tax-evaluation.read.ts';
 import { taxEvaluationRequestRejections } from '../../src/domain/tax-evaluation-request.ts';
 import { requiredTaxClassificationCodes, taxDecisionIdFor } from '../../src/domain/tax-evaluation.ts';
@@ -19,7 +19,7 @@ import {
 import type { TaxNonSuccessOutcome } from '../../src/domain/tax-non-success-outcome.ts';
 import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
-import { TaxEvaluationTimeSchema } from '../../src/domain/tax-time.ts';
+import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { unavailable } from '../../src/services/tax-governance-persistence.ts';
 import { exactDecimal, occurrenceInput, purchaseBindingInput } from './tax-domain-fixtures.ts';
