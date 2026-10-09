@@ -29,6 +29,7 @@ import {
   pricingLine,
   selected,
 } from './tax-evaluation-fixtures.ts';
+import type { TaxEvaluationRequestInput } from './tax-evaluation-fixtures.ts';
 
 const isSuccess = Schema.is(TaxOutcomeSuccessSchema);
 const isMaterial = Schema.is(TaxMaterialChangeConclusionSchema);
@@ -89,6 +90,27 @@ const withWeights = (o1Weight: string) =>
     }),
   );
 
+const catalogWith = (catalogFactRef: string, completeness: string): TaxEvaluationRequestInput['catalog'][number] => {
+  const base = catalogEntry('o1', STANDARD_CODE);
+  return {
+    ...base,
+    classificationInput: {
+      ...base.classificationInput,
+      materialCatalogEvidence: [
+        {
+          _tag: 'CURRENT' as const,
+          catalogFactRef,
+          catalogFactRevisionRef: 'r1',
+          factKind: 'TAX_CATEGORY',
+          factValue: STANDARD_CODE,
+          ownerEvidenceRef: 'owner-1',
+        },
+      ],
+      materialEvidenceCompleteness: { _tag: 'OWNER_VERIFIED_COMPLETE' as const, ownerEvidenceRef: completeness },
+    },
+  };
+};
+
 describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
   const approved = evaluate();
 
@@ -138,6 +160,14 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     expect(attestedDifferences(compare(approved, current))).toEqual(
       Option.some(['PRICING_SOURCE', 'PURCHASE_CANDIDATE']),
     );
+  });
+
+  it('#943 F7 evidence identifiers containing separators are compared structurally, never by joined text', () => {
+    // Joined with '|', completeness `x` + fact `a|b` and completeness `x|a` + fact `b` would look identical.
+    const previous = evaluate(evaluationRequest({ catalog: [catalogWith('a|b', 'x')] }, ['o1']));
+    const current = evaluate(evaluationRequest({ catalog: [catalogWith('b', 'x|a')] }, ['o1']));
+
+    expect(attestedDifferences(compare(previous, current))).toEqual(Option.some(['CATALOG_EVIDENCE']));
   });
 
   it('#943 F10 the same old/new states give the same conclusion', () => {
