@@ -110,6 +110,9 @@ const acquireDatabases = Effect.gen(function* acquireOrderTaxTestDatabases() {
   return { adminClient, runtime };
 });
 
+type EffectivePeriodInput = Readonly<{ effectiveFrom: string; effectiveTo?: string }>;
+const LAUNCH_PERIOD: EffectivePeriodInput = { effectiveFrom: '2026-01-01T00:00:00.000Z' };
+
 const RuleIdSchema = Schema.String.pipe(Schema.brand('TaxTestRuleId'));
 const RevisionIdSchema = Schema.String.pipe(Schema.brand('TaxTestRevisionId'));
 const DecisionIdSchema = Schema.String.pipe(Schema.brand('TaxTestDecisionId'));
@@ -155,11 +158,16 @@ const seller = (runtime: CoreTestDatabase) => {
       }),
     );
   });
-  const createRule = (stableCode: string, taxClassificationCode: string, ratePercent: string) =>
+  const createRule = (
+    stableCode: string,
+    taxClassificationCode: string,
+    ratePercent: string,
+    period: EffectivePeriodInput = LAUNCH_PERIOD,
+  ) =>
     Schema.decodeEffect(CreateTaxRulePayloadSchema)({
       initialRevision: {
         compositionKind: 'EXCLUSIVE',
-        effectiveFrom: '2026-01-01T00:00:00.000Z',
+        ...period,
         jurisdiction: 'CZ_DOMESTIC',
         ratePercent,
         taxClassificationCode,
@@ -247,6 +255,11 @@ it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and
       const created = resultOf(yield* subject.finalize(subject.payload(submission), invocationId));
       // Core-invocation replay of the same request echoes the original (#955 G).
       expect(finalizedOf(yield* subject.finalize(subject.payload(submission), invocationId)).created).toBe(false);
+      // The same Core invocation carrying another submission is a reused key, never a second final (#955 G).
+      expect(yield* subject.finalize(subject.payload(`submission-${randomUUID()}`), invocationId)).toEqual({
+        conflict: 'IDEMPOTENCY_REUSED',
+        kind: 'conflict',
+      });
 
       // An ordinary rule change after finalization (here: an overlapping rule) never reopens the final (#942 H,
       // #944 F20): the recovery reads no rule state and returns the same Decision.
@@ -375,24 +388,75 @@ it.live('#950 F24 #944 F11 finals are scoped, immutable and converge under concu
       expect(new Set(ids).size).toBe(1);
       expect([finalizedOf(left).created, finalizedOf(right).created].filter(Boolean)).toEqual([true]);
 
-      // Another seller of the same tenant cannot see the final.
-      const otherSeller = scopeFor(randomUUID());
-      expect(Option.isNone(yield* subject.finalOrderTax(submission, otherSeller))).toBe(true);
+      // Another seller of the same tenant, or the same seller id under another tenant, cannot see the final.
+      expect(Option.isNone(yield* subject.finalOrderTax(submission, scopeFor(randomUUID())))).toBe(true);
+      expect(
+        Option.isNone(yield* subject.finalOrderTax(submission, scopeFor(subject.legalEntityId, randomUUID()))),
+      ).toBe(true);
+      // A candidate naming another seller is invisible, even under a submission that already has a final.
+      const foreignCandidate = subject.payload(submission, {
+        purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: randomUUID(), tenantId }),
+      });
+      expect(yield* subject.finalize(foreignCandidate)).toEqual({ kind: 'not_found' });
 
-      // A future T is rejected, never evaluated (#942 F22).
+      // A future T is rejected, never evaluated, and stores nothing (#941 F3, step-5 FUTURE_TAX_RELEVANT_TIME).
+      const futureSubmission = `submission-${randomUUID()}`;
       const future = resultOf(
-        yield* subject.finalize(subject.payload(`submission-${randomUUID()}`, {}, '2099-01-01T00:00:00.000Z')),
+        yield* subject.finalize(subject.payload(futureSubmission, {}, '2099-01-01T00:00:00.000Z')),
       );
       expect((yield* Schema.decodeUnknownEffect(RejectedSchema)(future)).reasons).toEqual(['FUTURE_TAX_RELEVANT_TIME']);
+      expect(Option.isNone(yield* subject.finalOrderTax(futureSubmission))).toBe(true);
 
-      // The stored final is append-only.
-      const update = yield* Effect.exit(
-        adminClient.unsafe(
+      // The stored final is append-only: neither rewritten nor deleted.
+      const rewrite = (statement: string) =>
+        Effect.exit(adminClient.unsafe(statement, [tenantId, submission])).pipe(Effect.map(Exit.isFailure));
+      expect(
+        yield* rewrite(
           `update tax.tax_order_tax_finalizations set reason = 'rewritten' where tenant_id = $1 and submission_ref = $2`,
-          [tenantId, submission],
         ),
+      ).toBe(true);
+      expect(
+        yield* rewrite(`delete from tax.tax_order_tax_finalizations where tenant_id = $1 and submission_ref = $2`),
+      ).toBe(true);
+      expect(Option.isSome(yield* subject.finalOrderTax(submission))).toBe(true);
+    }),
+  ),
+);
+
+it.live('#941 F5 F10 the final selects rules at T, not at the later Tax Evaluation Time', () =>
+  Effect.scoped(
+    Effect.gen(function* boundaryAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.setUp;
+      // A rate boundary after T and before E: [Jan, Aug) at 21 %, [Aug, ...) at 23 %.
+      const BOUNDARY = '2026-08-01T00:00:00.000Z';
+      const [beforeBoundary, fromBoundary] = yield* Effect.all(
+        [
+          subject.createRule('cz.standard', 'cz-standard-goods', '21', {
+            effectiveFrom: '2026-01-01T00:00:00.000Z',
+            effectiveTo: BOUNDARY,
+          }),
+          subject.createRule('cz.standard-august', 'cz-standard-goods', '23', { effectiveFrom: BOUNDARY }),
+          subject.createRule('cz.reduced', 'cz-reduced-food', '12'),
+        ],
+        { concurrency: 1 },
       );
-      expect(Exit.isFailure(update)).toBe(true);
+      const governingRulesAt = Effect.fn('governingRulesAt')(function* governingRulesAtEffect(at: string) {
+        const submission = `submission-${randomUUID()}`;
+        finalizedOf(yield* subject.finalize(subject.payload(submission, {}, at)));
+        const { handoff } = Option.getOrThrow(yield* subject.finalOrderTax(submission));
+        expect(DateTime.formatIso(handoff.outcome.decision.taxRelevantTime)).toBe(at);
+        return handoff.outcome.decision.units.map(
+          ({ governingTaxRuleRevisionRef }) => governingTaxRuleRevisionRef.taxRuleId,
+        );
+      });
+
+      expect(yield* governingRulesAt(T)).toContain(beforeBoundary.taxRuleId);
+      expect(yield* governingRulesAt(T)).not.toContain(fromBoundary.taxRuleId);
+      // Half-open period: T exactly at the boundary belongs to the later rule only.
+      expect(yield* governingRulesAt(BOUNDARY)).toContain(fromBoundary.taxRuleId);
+      expect(yield* governingRulesAt(BOUNDARY)).not.toContain(beforeBoundary.taxRuleId);
     }),
   ),
 );

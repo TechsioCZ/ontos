@@ -1,6 +1,6 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Order, Schema } from 'effect';
 
 import type { FinalizeOrderTaxPayload, FinalizeOrderTaxResult } from '../../shared/actions/order-tax-finalization.ts';
 import type { FinalOrderTaxRequest, FinalOrderTaxResponse } from '../../shared/apis/final-order-tax.ts';
@@ -13,13 +13,12 @@ import { OrderCommitmentTimeSchema } from '../../shared/domain/tax-kernel/tax-ti
 import { projectCustomerSafeTax } from '../domain/customer-safe-tax-projection.ts';
 import {
   OrderSubmissionRefSchema,
-  decideOrderTaxFinalization,
   finalEvaluationRequest,
   orderTaxIntentFingerprint,
 } from '../domain/order-tax-finalization.ts';
 import { TaxOutcomeSuccessSchema } from '../domain/tax-outcome.ts';
 import type { TaxOutcomeSuccess } from '../domain/tax-outcome.ts';
-import { taxEvaluationForScope } from './tax-evaluation.service.ts';
+import { taxEvaluationForScope, visibleInScope } from './tax-evaluation.service.ts';
 import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
 import {
   conflict,
@@ -41,11 +40,12 @@ import type {
 import { taxRuleRevisionRef } from './tax-rule-governance.service.ts';
 
 const MODULE_KEY = 'commerce.tax' as const;
+const FINALIZATION_RESOURCE_TYPE = 'commerce.tax.order-tax-finalization' as const;
 
 export const orderTaxFinalizationRef = (tenantId: string, resourceId: string) => ({
   moduleId: MODULE_KEY,
   resourceId,
-  resourceType: 'commerce.tax.order-tax-finalization' as const,
+  resourceType: FINALIZATION_RESOURCE_TYPE,
   tenantId,
 });
 
@@ -73,7 +73,7 @@ const decodeEvidence = Schema.decodeUnknownEffect(TaxEvaluationEvidenceSchema);
 const decodeDecompositionNeed = Schema.decodeUnknownEffect(CustomerSafeTaxDecompositionNeedSchema);
 const encodeOutcome = Schema.encodeEffect(TaxOutcomeSuccessSchema);
 const encodeEvidence = Schema.encodeEffect(TaxEvaluationEvidenceSchema);
-const byText = (left: string, right: string) => left.localeCompare(right, 'en');
+const byText = Order.String;
 
 /** Distinct governing revisions of the Decision in identity order, kept for read-time correction evidence. */
 const governingRuleRevisions = ({ decision }: TaxOutcomeSuccess): readonly GoverningTaxRuleRevision[] =>
@@ -119,13 +119,13 @@ const finalized = (row: FinalizationRow, created: boolean) =>
         changed: created,
         meaningFingerprint: row.intentFingerprint,
         resourceId: row.taxOrderTaxFinalizationId,
-        resourceType: 'commerce.tax.order-tax-finalization',
+        resourceType: FINALIZATION_RESOURCE_TYPE,
       },
       result: { _tag: 'FINALIZED', created, ...final },
     })),
   );
 
-/** A non-finalizing answer stores nothing; the submission identity is the audited resource (#944 F12). */
+/** A non-finalizing answer stores nothing; the audited finalization resource is named by its submission (#944 F12). */
 const unstored = (
   input: Invocation<FinalizeOrderTaxPayload>,
   intentFingerprint: string,
@@ -135,7 +135,7 @@ const unstored = (
     changed: false,
     meaningFingerprint: intentFingerprint,
     resourceId: input.submissionRef,
-    resourceType: 'commerce.tax.order-submission',
+    resourceType: FINALIZATION_RESOURCE_TYPE,
   },
   result,
 });
@@ -246,6 +246,10 @@ export const orderTaxFinalizationsForScope = (
       if (!trustedInvocation(scope, input, [])) {
         return yield* unavailable();
       }
+      // A candidate of another Tenant or Selling Legal Entity is invisible before any lock or read (#950 F24).
+      if (!visibleInScope(scope, input.candidate)) {
+        return notFound;
+      }
       const intentFingerprint = orderTaxIntentFingerprint(
         input.candidate,
         input.orderCommitmentTime,
@@ -263,15 +267,15 @@ export const orderTaxFinalizationsForScope = (
       // Concurrent requests for one submission converge on one canonical final (#944 F11).
       yield* lockTaxFactFamily(transaction, input, `ORDER_TAX_FINALIZATION:${input.submissionRef}`);
       const [existing] = yield* finalBySubmission(input.submissionRef);
-      const step = decideOrderTaxFinalization(
-        Option.map(Option.fromUndefinedOr(existing), ({ intentFingerprint: stored }) => stored),
-        intentFingerprint,
-      );
-      if (existing !== undefined) {
-        // The same frozen intent recovers the original without any rule or source read (#944 F10, #942 H).
-        return step === 'RECOVER' ? yield* finalized(existing, false) : conflict('SUBMISSION_INTENT_CHANGED');
-      }
-      return yield* finalizeNew(input, intentFingerprint);
+      // The same frozen intent recovers the original without any rule or source read; a different intent conflicts;
+      // only a submission without a final is evaluated (#944 F10-F12, #942 H).
+      return yield* Option.match(Option.fromUndefinedOr(existing), {
+        onNone: () => finalizeNew(input, intentFingerprint),
+        onSome: (row) =>
+          row.intentFingerprint === intentFingerprint
+            ? finalized(row, false)
+            : Effect.succeed(conflict('SUBMISSION_INTENT_CHANGED')),
+      });
     },
   );
 

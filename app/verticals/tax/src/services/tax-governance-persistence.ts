@@ -85,6 +85,7 @@ const writeConflictConstraints = {
   tax_fact_authority_revisions_idempotency_uk: 'IDEMPOTENCY_REUSED',
   tax_fact_authority_revisions_number_uk: 'STALE_BASIS',
   tax_order_tax_finalizations_idempotency_uk: 'IDEMPOTENCY_REUSED',
+  // Backstop only: the submission advisory lock routes every second request to recovery or the intent conflict first.
   tax_order_tax_finalizations_submission_uk: 'SUBMISSION_INTENT_CHANGED',
   tax_rule_corrections_idempotency_uk: 'IDEMPOTENCY_REUSED',
   tax_rule_corrections_pair_uk: 'LIFECYCLE',
