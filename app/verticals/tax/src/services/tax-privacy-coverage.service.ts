@@ -15,15 +15,12 @@ import {
 import type { TaxPrivacyOwnerScopePart, TaxPrivacyScopeObservation } from '../../shared/tax-privacy-owner-contract.ts';
 import {
   TAX_TABLE_INVENTORY,
-  taxFactAuthorityContractRevisions,
-  taxFactAuthorityContracts,
   taxOrderTaxFinalizations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
   taxRules,
-  taxSourceAssertions,
-  taxSourceConflicts,
+  taxSellerVatRegimeDeclarations,
 } from '../database/schema.ts';
 import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
 import { query } from './tax-governance-persistence.ts';
@@ -32,15 +29,12 @@ import type { PersistenceUnavailable, ScopedTransaction } from './tax-governance
 type TaxTableName = (typeof TAX_TABLE_INVENTORY)[number];
 
 type CoverageTableSource =
-  | typeof taxFactAuthorityContractRevisions
-  | typeof taxFactAuthorityContracts
   | typeof taxOrderTaxFinalizations
   | typeof taxRuleCorrections
   | typeof taxRuleRevisionEndFacts
   | typeof taxRuleRevisions
   | typeof taxRules
-  | typeof taxSourceAssertions
-  | typeof taxSourceConflicts;
+  | typeof taxSellerVatRegimeDeclarations;
 
 /** `contentKind` is the stable public name in content refs; private table names never reach Privacy (#956 B). */
 const coverageTable = (table: CoverageTableSource, id: AnyPgColumn, contentKind: string) => ({
@@ -50,16 +44,6 @@ const coverageTable = (table: CoverageTableSource, id: AnyPgColumn, contentKind:
 });
 
 const coverageTables = {
-  tax_fact_authority_contract_revisions: coverageTable(
-    taxFactAuthorityContractRevisions,
-    taxFactAuthorityContractRevisions.taxFactAuthorityContractRevisionId,
-    'tax-fact-authority-contract-revision',
-  ),
-  tax_fact_authority_contracts: coverageTable(
-    taxFactAuthorityContracts,
-    taxFactAuthorityContracts.taxFactAuthorityContractId,
-    'tax-fact-authority-contract',
-  ),
   tax_order_tax_finalizations: coverageTable(
     taxOrderTaxFinalizations,
     taxOrderTaxFinalizations.taxOrderTaxFinalizationId,
@@ -77,15 +61,10 @@ const coverageTables = {
   ),
   tax_rule_revisions: coverageTable(taxRuleRevisions, taxRuleRevisions.taxRuleRevisionId, 'tax-rule-revision'),
   tax_rules: coverageTable(taxRules, taxRules.taxRuleId, 'tax-rule'),
-  tax_source_assertions: coverageTable(
-    taxSourceAssertions,
-    taxSourceAssertions.taxSourceAssertionId,
-    'tax-source-assertion',
-  ),
-  tax_source_conflicts: coverageTable(
-    taxSourceConflicts,
-    taxSourceConflicts.taxSourceConflictId,
-    'tax-source-conflict',
+  tax_seller_vat_regime_declarations: coverageTable(
+    taxSellerVatRegimeDeclarations,
+    taxSellerVatRegimeDeclarations.taxSellerVatRegimeDeclarationId,
+    'seller-vat-regime-declaration',
   ),
 } as const satisfies Record<TaxTableName, ReturnType<typeof coverageTable>>;
 
@@ -102,9 +81,7 @@ export const taxPrivacyScopePartTables = {
   ACTOR_PRINCIPAL_ATTRIBUTION: TAX_TABLE_INVENTORY,
   EXTERNAL_COPY_AND_RECOVERY_RESPONSIBILITIES: [],
   ORDER_TAX_FINALIZATION_DECISION_EVIDENCE: ['tax_order_tax_finalizations'],
-  SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY: ['tax_source_assertions'],
-  SOURCE_CONFLICT_DETECTION_EVIDENCE: ['tax_source_conflicts'],
-  TAX_FACT_AUTHORITY_CONTRACT_HISTORY: ['tax_fact_authority_contracts', 'tax_fact_authority_contract_revisions'],
+  SELLER_VAT_REGIME_DECLARATION_HISTORY: ['tax_seller_vat_regime_declarations'],
   TAX_RULE_GOVERNANCE_HISTORY: [
     'tax_rules',
     'tax_rule_revisions',

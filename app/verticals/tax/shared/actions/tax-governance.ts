@@ -96,10 +96,3 @@ export const CorrectTaxRuleRevisionResultSchema = Schema.Struct({
   created: Schema.Boolean,
   wrongRevisionRef: TaxRuleRevisionRefSchema,
 });
-
-/**
- * Launch fact family governed per Selling Legal Entity (#949 F22-F24, #925). The authority-contract and source
- * assertion schemas that used to live here were retired in Unit 10; this literal stays only until the step-9
- * migration cutover family union is rewritten (Stage D, §0).
- */
-export const TaxFactFamilySchema = Schema.Literal('SELLING_LEGAL_ENTITY_VAT_REGISTRATION');

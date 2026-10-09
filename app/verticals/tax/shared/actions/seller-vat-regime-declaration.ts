@@ -46,3 +46,16 @@ export const DeclareSellerVatRegimeResultSchema = Schema.Union([
   }),
 ]);
 export type DeclareSellerVatRegimeResult = typeof DeclareSellerVatRegimeResultSchema.Type;
+
+/**
+ * Strict legacy-content shape for one migrated Seller VAT Regime Declaration fact (#907 Unit 10 D2). Lives in
+ * `shared/` so step-9's migration domain (`src/domain`) and any future caller share one canonical decode; `shared/`
+ * itself never imports `src/`. Unknown legacy keys fail the strict decode and stay REVIEW_REQUIRED; `regime` is
+ * required, so a missing regime is INCOMPLETE rather than silently mapped.
+ */
+export const SellerVatRegimeDeclarationMigrationContentSchema = Schema.Struct({
+  effectiveFrom: InstantSchema,
+  reason: Schema.optionalKey(ReasonSchema),
+  regime: SellerVatRegimeSchema,
+});
+export type SellerVatRegimeDeclarationMigrationContent = typeof SellerVatRegimeDeclarationMigrationContentSchema.Type;

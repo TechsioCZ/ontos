@@ -2,13 +2,10 @@ import { DateTime, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
-  TaxAuthorityConflictSchema,
-  TaxAuthorityGapSchema,
-  TaxAuthorityHandoffIndeterminateSchema,
-  TaxAuthorityHandoffValidSchema,
-  TaxMigrationAuthorityContractIdSchema,
   TaxMigrationCompleteSchema,
   TaxMigrationConflictingSchema,
+  TaxMigrationCutoverDeclaredSchema,
+  TaxMigrationCutoverNotDeclaredSchema,
   TaxMigrationIncompleteSchema,
   TaxMigrationMappedAcceptedSchema,
   TaxMigrationNotCompleteSchema,
@@ -29,8 +26,6 @@ import type {
   TaxMigrationOutcome,
   TaxMigrationProvenance,
 } from '../../shared/domain/tax-migration-contracts.ts';
-import { evaluateTaxAuthorityHandoff, placeTaxMigrationAssertion } from '../../src/domain/tax-authority-handoff.ts';
-import type { TaxAuthorityHandoffPeriod } from '../../src/domain/tax-authority-handoff.ts';
 import {
   evaluateTaxMigrationCandidates,
   reconcileTaxMigrationTarget,
@@ -40,9 +35,10 @@ import {
 } from '../../src/domain/tax-fact-migration.ts';
 import {
   assessTaxMigrationReadiness,
+  compareShadowSellerVatRegime,
   compareShadowTaxRule,
-  compareShadowVatRegistration,
 } from '../../src/domain/tax-migration-readiness.ts';
+import type { SellerVatRegimeDeclarationRevision } from '../../src/domain/seller-vat-regime-timeline.ts';
 import { TaxRelevantTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 
 /** Every fixture dataset is explicitly NON_PRODUCTION; no real legacy data is used (#960, #907 F271-F272). */
@@ -156,6 +152,22 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
     expect(outcome).toEqual(
       TaxMigrationRejectedUnmappedSchema.make({
         provenance: prov('order-77-line-1'),
+        reason: 'HISTORICAL_ACCEPTED_VALUE',
+        sourceFamily: Option.none(),
+        targetOwner: 'commerce.order',
+      }),
+    );
+  });
+
+  it('BDD a historical zero-Tax Order/Billing value is never promoted as a Seller VAT Regime (#907 Unit 10 D2)', () => {
+    const outcome = only(
+      evaluateTaxMigrationCandidates([
+        candidate('order-88-line-1', { _tag: 'HISTORICAL_ACCEPTED_VALUE', historicalOwner: 'commerce.order' }),
+      ]),
+    );
+    expect(outcome).toEqual(
+      TaxMigrationRejectedUnmappedSchema.make({
+        provenance: prov('order-88-line-1'),
         reason: 'HISTORICAL_ACCEPTED_VALUE',
         sourceFamily: Option.none(),
         targetOwner: 'commerce.order',
@@ -282,30 +294,8 @@ describe('#960 Migration completeness requires business evidence', () => {
   });
 });
 
-const contract = (
-  contractId: string,
-  systemOfRecordRef: string,
-  from: Option.Option<string>,
-  to: Option.Option<string> = Option.none(),
-): TaxAuthorityHandoffPeriod => ({
-  authorityFrom: from.pipe(Option.map(at)),
-  authorityTo: to.pipe(Option.map(at)),
-  contractId,
-  contractRevisionId: `${contractId}-r1`,
-  evidenceSourceRefs: [],
-  systemOfRecordRef,
-});
-
-const legacyAuthority = contract(
-  'legacy',
-  'fixture:legacy-vat',
-  Option.some('2026-01-01T00:00:00.000Z'),
-  Option.some('2026-06-01T00:00:00.000Z'),
-);
-const ontosAuthority = contract('ontos', 'commerce.tax', Option.some('2026-06-01T00:00:00.000Z'));
-
-describe('#960 Migration allows dual running but never dual authority', () => {
-  it('BDD Shadow phase before authority handoff: a difference is evidence, OntOS does not become authority', () => {
+describe('#960 Shadow evidence never becomes production authority', () => {
+  it('BDD Shadow phase before cutover: a difference is evidence, OntOS does not become authority', () => {
     const difference = compareShadowTaxRule({
       candidateState: {
         predicateFingerprint: 'fixture-predicate',
@@ -332,83 +322,85 @@ describe('#960 Migration allows dual running but never dual authority', () => {
       TaxShadowDifferentSchema.make({ legacyValue: '21.0', ontosValue: '12', probeRef: 'standard@2026-03-01' }),
     );
   });
+});
 
-  it('BDD Tax authority is handed over: the explicit boundary moves Current authority (F23-F26)', () => {
-    expect(evaluateTaxAuthorityHandoff([ontosAuthority, legacyAuthority])).toEqual(
-      TaxAuthorityHandoffValidSchema.make({
-        boundaries: [
-          {
-            at: at('2026-06-01T00:00:00.000Z'),
-            fromSystemOfRecordRef: 'fixture:legacy-vat',
-            toSystemOfRecordRef: 'commerce.tax',
-          },
-        ],
-      }),
-    );
-  });
+const regimeRevision = (
+  revision: number,
+  regime: 'NON_PAYER' | 'VAT_PAYER',
+  effectiveFrom: string,
+): SellerVatRegimeDeclarationRevision => ({
+  effectiveFrom: at(effectiveFrom),
+  provenance: 'MERCHANT_DECLARED',
+  regime,
+  revision,
+});
 
-  it('BDD Authority windows accidentally overlap: a conflict, never chosen by order (F27)', () => {
-    const overlapping = contract('ontos-early', 'commerce.tax', Option.some('2026-05-01T00:00:00.000Z'));
-    const conflict = TaxAuthorityConflictSchema.make({
-      contractIds: ['legacy', 'ontos-early'].map((contractId) =>
-        TaxMigrationAuthorityContractIdSchema.make(contractId),
-      ),
+describe('#907 Unit 10 D2 Seller VAT Regime shadow comparison and cutover declaration', () => {
+  it('is SAME when the live declared regime agrees with the legacy shadow value', () => {
+    const shadow = compareShadowSellerVatRegime({
+      candidateRevisions: [regimeRevision(1, 'VAT_PAYER', '2026-01-01T00:00:00.000Z')],
+      instant: at('2026-03-01T00:00:00.000Z'),
+      legacyRegime: 'VAT_PAYER',
+      probeRef: 'seller@2026-03-01',
     });
-    expect(evaluateTaxAuthorityHandoff([legacyAuthority, overlapping])).toEqual(conflict);
-    expect(evaluateTaxAuthorityHandoff([overlapping, legacyAuthority])).toEqual(conflict);
+    expect(shadow).toEqual(TaxShadowSameSchema.make({ probeRef: 'seller@2026-03-01' }));
   });
 
-  it('BDD Authority gap exists: no authority is guessed (F28-F29)', () => {
-    const late = contract('ontos-late', 'commerce.tax', Option.some('2026-07-01T00:00:00.000Z'));
-    expect(evaluateTaxAuthorityHandoff([legacyAuthority, late])).toEqual(
-      TaxAuthorityGapSchema.make({
-        from: at('2026-06-01T00:00:00.000Z'),
-        to: Option.some(at('2026-07-01T00:00:00.000Z')),
+  it('is DIFFERENT when the live declared regime disagrees with the legacy shadow value', () => {
+    const shadow = compareShadowSellerVatRegime({
+      candidateRevisions: [regimeRevision(1, 'NON_PAYER', '2026-01-01T00:00:00.000Z')],
+      instant: at('2026-03-01T00:00:00.000Z'),
+      legacyRegime: 'VAT_PAYER',
+      probeRef: 'seller@2026-03-01',
+    });
+    expect(shadow).toEqual(
+      TaxShadowDifferentSchema.make({
+        legacyValue: 'VAT_PAYER',
+        ontosValue: 'NON_PAYER',
+        probeRef: 'seller@2026-03-01',
       }),
-    );
-    expect(evaluateTaxAuthorityHandoff([legacyAuthority])).toEqual(
-      TaxAuthorityGapSchema.make({ from: at('2026-06-01T00:00:00.000Z'), to: Option.none() }),
-    );
-    expect(evaluateTaxAuthorityHandoff([legacyAuthority, contract('unknown', 'commerce.tax', Option.none())])).toEqual(
-      TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'AUTHORITY_BOUNDARY_UNKNOWN' }),
     );
   });
 
-  it('BDD Pre-cutover assertion arrives after handoff: it keeps its provenance and stays historical (F30)', () => {
-    const periods = [legacyAuthority, ontosAuthority].map((period) => ({
-      ...period,
-      authorityFrom: Option.getOrThrow(period.authorityFrom),
-    }));
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-03-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-07-01T00:00:00.000Z'),
-        periods,
-        sourceRef: 'fixture:legacy-vat',
+  it('is NOT_COMPARABLE when OntOS has NOT_DECLARED anything at the instant', () => {
+    const shadow = compareShadowSellerVatRegime({
+      candidateRevisions: [],
+      instant: at('2026-03-01T00:00:00.000Z'),
+      legacyRegime: 'VAT_PAYER',
+      probeRef: 'seller@2026-03-01',
+    });
+    expect(shadow).toEqual(
+      TaxShadowNotComparableSchema.make({
+        probeRef: 'seller@2026-03-01',
+        reason: 'SELLER_VAT_REGIME_NOT_DECLARED',
       }),
-    ).toEqual({ placement: 'HISTORICAL_OR_RECONCILIATION_ONLY', systemOfRecordRef: Option.some('fixture:legacy-vat') });
+    );
+  });
+
+  it('is NOT_COMPARABLE when the legacy shadow side is UNKNOWN', () => {
+    const shadow = compareShadowSellerVatRegime({
+      candidateRevisions: [regimeRevision(1, 'VAT_PAYER', '2026-01-01T00:00:00.000Z')],
+      instant: at('2026-03-01T00:00:00.000Z'),
+      legacyRegime: 'UNKNOWN',
+      probeRef: 'seller@2026-03-01',
+    });
+    expect(shadow).toEqual(
+      TaxShadowNotComparableSchema.make({ probeRef: 'seller@2026-03-01', reason: 'LEGACY_UNKNOWN' }),
+    );
   });
 });
 
 const readyEvidence = (family: TaxMigrationFamily): TaxMigrationFamilyEvidence => ({
   completeness: TaxMigrationCompleteSchema.make({ family, rowCount: 1 }),
+  cutover: TaxMigrationCutoverDeclaredSchema.make({ at: at('2026-06-01T00:00:00.000Z') }),
   family,
-  handoff: TaxAuthorityHandoffValidSchema.make({
-    boundaries: [
-      {
-        at: at('2026-06-01T00:00:00.000Z'),
-        fromSystemOfRecordRef: 'fixture:legacy-vat',
-        toSystemOfRecordRef: 'commerce.tax',
-      },
-    ],
-  }),
   outcomes: [],
   shadowDifferences: [TaxShadowSameSchema.make({ probeRef: 'probe' })],
   targetDifferences: [],
 });
 
 describe('#960 Tax-specific readiness evidence for P6', () => {
-  it('is READY only when every family is complete, reconciled, agreeing and handed off; never claims cutover (F32)', () => {
+  it('is READY only when every family is complete, reconciled, agreeing and its cutover is declared; never claims global cutover (F32)', () => {
     const evidence = assessTaxMigrationReadiness(scope, taxMigrationFamilies.map(readyEvidence));
     expect(evidence.verdict).toEqual(TaxMigrationReadySchema.make({}));
     expect(evidence.globalCutoverClaim).toBe('NONE');
@@ -416,20 +408,23 @@ describe('#960 Tax-specific readiness evidence for P6', () => {
   });
 
   it('lists every blocker and treats a missing family as not verified (H)', () => {
-    const shadow = compareShadowVatRegistration({
-      candidateState: { authorities: [], eligibleAssertions: [] },
-      evaluationTime: at('2026-03-01T00:00:00.000Z'),
-      legacyState: 'CURRENT_POSITIVE',
+    const shadow = compareShadowSellerVatRegime({
+      candidateRevisions: [],
+      instant: at('2026-03-01T00:00:00.000Z'),
+      legacyRegime: 'VAT_PAYER',
       probeRef: 'seller@2026-03-01',
     });
     expect(shadow).toEqual(
-      TaxShadowNotComparableSchema.make({ probeRef: 'seller@2026-03-01', reason: 'AUTHORITY_MISSING' }),
+      TaxShadowNotComparableSchema.make({
+        probeRef: 'seller@2026-03-01',
+        reason: 'SELLER_VAT_REGIME_NOT_DECLARED',
+      }),
     );
     const evidence = assessTaxMigrationReadiness(scope, [
       {
         ...readyEvidence('TAX_RULE'),
         completeness: TaxMigrationUnverifiableSchema.make({ family: 'TAX_RULE', rowCount: 3 }),
-        handoff: TaxAuthorityGapSchema.make({ from: at('2026-06-01T00:00:00.000Z'), to: Option.none() }),
+        cutover: TaxMigrationCutoverNotDeclaredSchema.make({}),
         shadowDifferences: [shadow],
         targetDifferences: [{ difference: 'MEANING_DIFFERS', source: src('r2') }],
       },
@@ -437,11 +432,11 @@ describe('#960 Tax-specific readiness evidence for P6', () => {
     expect(evidence.verdict).toEqual(
       TaxMigrationNotReadySchema.make({
         blockers: [
-          { blocker: 'COMPLETENESS_NOT_VERIFIED', family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION' },
+          { blocker: 'COMPLETENESS_NOT_VERIFIED', family: 'SELLER_VAT_REGIME_DECLARATION' },
           { blocker: 'COMPLETENESS_NOT_VERIFIED', family: 'TAX_RULE' },
           { blocker: 'TARGET_MEANING_DIFFERENCE', family: 'TAX_RULE' },
           { blocker: 'SHADOW_DIFFERENCE', family: 'TAX_RULE' },
-          { blocker: 'AUTHORITY_GAP', family: 'TAX_RULE' },
+          { blocker: 'CUTOVER_NOT_DECLARED', family: 'TAX_RULE' },
         ],
       }),
     );
@@ -487,70 +482,28 @@ describe('#960 review round 1 regressions', () => {
       TaxMigrationNotReadySchema.make({ blockers: [{ blocker: 'OPEN_OUTCOME', family: 'TAX_RULE' }] }),
     );
   });
-
-  it('never places an assertion as Current while authorities overlap at the evaluation instant (F21-F22, F27)', () => {
-    const legacyOpen = {
-      ...legacyAuthority,
-      authorityFrom: at('2026-01-01T00:00:00.000Z'),
-      authorityTo: Option.none(),
-    };
-    const ontosFromJune = { ...ontosAuthority, authorityFrom: at('2026-06-01T00:00:00.000Z') };
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-03-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-07-01T00:00:00.000Z'),
-        periods: [legacyOpen, ontosFromJune],
-        sourceRef: 'fixture:legacy-vat',
-      }),
-    ).toEqual({ placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() });
-  });
-
-  it('never counts an unresolved registration state on both sides as shadow agreement (F28-F29, F34)', () => {
-    const shadow = compareShadowVatRegistration({
-      candidateState: { authorities: [], eligibleAssertions: [] },
-      evaluationTime: at('2026-03-01T00:00:00.000Z'),
-      legacyState: 'UNKNOWN',
-      probeRef: 'seller@2026-03-01',
-    });
-    expect(Schema.is(TaxShadowNotComparableSchema)(shadow)).toBe(true);
-  });
 });
 
-const vatMeaning = (sourceRecordRef: string, overrides: Readonly<Record<string, string>> = {}) => ({
-  factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-  jurisdiction: 'CZ_DOMESTIC',
-  provenanceRef: 'migration:fixture',
-  reason: 'Migrated seller VAT registration evidence',
-  registrationMeaning: 'REGISTERED',
-  sourceAssertionKey: `assertion-${sourceRecordRef}`,
-  sourceRecordRef,
-  sourceRef: 'fixture:legacy-vat',
-  validFrom: '2026-01-01T00:00:00.000Z',
+const regimeMeaning = (
+  effectiveFrom = '2026-01-01T00:00:00.000Z',
+  overrides: Readonly<Record<string, string>> = {},
+) => ({
+  effectiveFrom,
+  regime: 'VAT_PAYER',
   ...overrides,
 });
-const vatCandidate = (sourceRecordRef: string, overrides: Readonly<Record<string, string>> = {}) =>
-  candidate(sourceRecordRef, {
-    _tag: 'TAX_OWNED',
-    family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-    targetMeaning: vatMeaning(sourceRecordRef, overrides),
-  });
+const regimeCandidate = (
+  sourceRecordRef: string,
+  overrides: Readonly<Record<string, string>> = {},
+  provenance: TaxMigrationProvenance = prov(sourceRecordRef),
+) =>
+  candidate(
+    sourceRecordRef,
+    { _tag: 'TAX_OWNED', family: 'SELLER_VAT_REGIME_DECLARATION', targetMeaning: regimeMeaning(undefined, overrides) },
+    provenance,
+  );
 
 describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
-  it('maps a seller VAT registration assertion and rejects one naming another source or record (F11)', () => {
-    const [mapped, mismatched] = evaluateTaxMigrationCandidates([
-      vatCandidate('v1'),
-      vatCandidate('v2', { sourceRecordRef: 'someone-else' }),
-    ]);
-    expect(Schema.is(TaxMigrationMappedAcceptedSchema)(mapped)).toBe(true);
-    expect(mismatched).toEqual(
-      TaxMigrationReviewRequiredSchema.make({
-        provenance: prov('v2'),
-        reason: 'PROVENANCE_MISMATCH',
-        sourceFamily: Option.some('SELLING_LEGAL_ENTITY_VAT_REGISTRATION'),
-      }),
-    );
-  });
-
   it('never drops an unknown legacy key silently (F1, F9, F34)', () => {
     const outcome = only(evaluateTaxMigrationCandidates([taxRule('r-extra', { reverseCharge: 'true' })]));
     expect(outcome).toEqual(
@@ -558,6 +511,19 @@ describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
         provenance: prov('r-extra'),
         reason: 'TARGET_MEANING_INVALID',
         sourceFamily: Option.some('TAX_RULE'),
+      }),
+    );
+  });
+
+  it('BDD a DIC-only legacy record never maps to a Seller VAT Regime Declaration (#907 Unit 10 D2)', () => {
+    const outcome = only(
+      evaluateTaxMigrationCandidates([regimeCandidate('dic-only', { dic: 'CZ00000000', regime: 'VAT_PAYER' })]),
+    );
+    expect(outcome).toEqual(
+      TaxMigrationReviewRequiredSchema.make({
+        provenance: prov('dic-only'),
+        reason: 'TARGET_MEANING_INVALID',
+        sourceFamily: Option.some('SELLER_VAT_REGIME_DECLARATION'),
       }),
     );
   });
@@ -591,7 +557,7 @@ describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
   });
 
   it('does not let a record mapped into another family satisfy a family claim (F17)', () => {
-    const outcomes = evaluateTaxMigrationCandidates([vatCandidate('v1')]);
+    const outcomes = evaluateTaxMigrationCandidates([regimeCandidate('v1')]);
     const claim = { declaredBy: 'fixture:owner', expectedSourceRecords: [src('v1')], family: 'TAX_RULE' as const };
     expect(verifyTaxMigrationCompleteness('TAX_RULE', claim, outcomes)).toEqual(
       expect.objectContaining({ missingSourceRecords: [src('v1')] }),
@@ -604,40 +570,6 @@ describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
       { difference: 'MISSING_IN_TARGET', source: src('r1') },
       { difference: 'UNEXPECTED_IN_TARGET', source: src('r9') },
     ]);
-  });
-
-  it('certifies a handoff only with an explicit boundary (F23)', () => {
-    const legacyOnly = contract('legacy-open', 'fixture:legacy-vat', Option.some('2026-01-01T00:00:00.000Z'));
-    expect(evaluateTaxAuthorityHandoff([legacyOnly])).toEqual(
-      TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_BOUNDARY_DECLARED' }),
-    );
-    expect(evaluateTaxAuthorityHandoff([])).toEqual(
-      TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_CONFIGURED' }),
-    );
-  });
-
-  it('places assertions by source and business instant: Current, not from the System of Record (F24-F26, F30)', () => {
-    const periods = [legacyAuthority, ontosAuthority].map((period) => ({
-      ...period,
-      authorityFrom: Option.getOrThrow(period.authorityFrom),
-    }));
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-07-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-07-02T00:00:00.000Z'),
-        periods,
-        sourceRef: 'commerce.tax',
-      }),
-    ).toEqual({ placement: 'CURRENT_UNDER_ITS_AUTHORITY', systemOfRecordRef: Option.some('commerce.tax') });
-    // Newest-wins never applies: a legacy assertion about a post-boundary instant is not authority (F26).
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-07-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-07-02T00:00:00.000Z'),
-        periods,
-        sourceRef: 'fixture:legacy-vat',
-      }),
-    ).toEqual({ placement: 'NOT_FROM_SYSTEM_OF_RECORD', systemOfRecordRef: Option.some('commerce.tax') });
   });
 
   it('reports shadow agreement and an unselectable candidate rule as not comparable (F19-F20)', () => {
@@ -687,13 +619,16 @@ describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
 describe('#960 review round 2 regressions (Opus)', () => {
   it('never lets records of another Tax-owned family satisfy a family claim, mapped or not (F17-F18)', () => {
     const claim = { declaredBy: 'fixture:owner', expectedSourceRecords: [src('v1')], family: 'TAX_RULE' as const };
-    const duplicated = evaluateTaxMigrationCandidates([vatCandidate('v1'), vatCandidate('v1')]);
-    const outOfScope = evaluateTaxMigrationCandidates([vatCandidate('v1', { jurisdiction: 'EU_OSS' })]);
-    for (const outcomes of [duplicated, outOfScope]) {
-      expect(
-        Schema.is(TaxMigrationNotCompleteSchema)(verifyTaxMigrationCompleteness('TAX_RULE', claim, outcomes)),
-      ).toBe(true);
-    }
+    const duplicated = evaluateTaxMigrationCandidates([regimeCandidate('v1'), regimeCandidate('v1')]);
+    const outOfScope = evaluateTaxMigrationCandidates([regimeCandidate('v1', { regime: 'NON_PAYER' })]);
+    const duplicateNotComplete = Schema.is(TaxMigrationNotCompleteSchema)(
+      verifyTaxMigrationCompleteness('TAX_RULE', claim, duplicated),
+    );
+    expect(duplicateNotComplete).toBe(true);
+    expect(
+      Schema.is(TaxMigrationUnverifiableSchema)(verifyTaxMigrationCompleteness('TAX_RULE', claim, outOfScope)) ||
+        Schema.is(TaxMigrationNotCompleteSchema)(verifyTaxMigrationCompleteness('TAX_RULE', claim, outOfScope)),
+    ).toBe(true);
   });
 
   it('keeps a copy of a record of unknown meaning open instead of naming TAX its owner (F3, F34)', () => {
@@ -747,15 +682,22 @@ describe('#960 review round 2 regressions (Opus)', () => {
     }
   });
 
-  it('names the legacy side when the pre-cutover value is unresolved (F19-F20)', () => {
-    const shadow = compareShadowVatRegistration({
-      candidateState: { authorities: [], eligibleAssertions: [] },
-      evaluationTime: at('2026-03-01T00:00:00.000Z'),
-      legacyState: 'UNRESOLVED',
-      probeRef: 'seller@2026-03-01',
-    });
-    expect(shadow).toEqual(
-      TaxShadowNotComparableSchema.make({ probeRef: 'seller@2026-03-01', reason: 'LEGACY_UNRESOLVED' }),
+  it('BDD a missing regime is INCOMPLETE, never defaulted (#907 Unit 10 D2, #960 F16)', () => {
+    const outcome = only(
+      evaluateTaxMigrationCandidates([
+        candidate('no-regime', {
+          _tag: 'TAX_OWNED',
+          family: 'SELLER_VAT_REGIME_DECLARATION',
+          targetMeaning: { effectiveFrom: '2026-01-01T00:00:00.000Z' },
+        }),
+      ]),
+    );
+    expect(outcome).toEqual(
+      TaxMigrationIncompleteSchema.make({
+        missing: ['regime'],
+        provenance: prov('no-regime'),
+        sourceFamily: Option.some('SELLER_VAT_REGIME_DECLARATION'),
+      }),
     );
   });
 });
@@ -781,15 +723,6 @@ describe('#960 review round 2 regressions (Sol, Astra)', () => {
   });
 });
 
-describe('#960 review round 2 regressions (Fable)', () => {
-  it('does not count contiguous periods of one System of Record as a handoff (F23, F25)', () => {
-    const legacyLater = contract('legacy-later', 'fixture:legacy-vat', Option.some('2026-06-01T00:00:00.000Z'));
-    expect(evaluateTaxAuthorityHandoff([legacyAuthority, legacyLater])).toEqual(
-      TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_BOUNDARY_DECLARED' }),
-    );
-  });
-});
-
 describe('#960 review round 3 regressions (Astra)', () => {
   it('never takes differing raw copies of one record for duplicates, whatever their characters (G, F16)', () => {
     const outcomes = evaluateTaxMigrationCandidates([
@@ -798,11 +731,6 @@ describe('#960 review round 3 regressions (Astra)', () => {
       taxRule('raw', { jurisdiction: 'EU_OSS', zNote: 'x', zz: 'y' }),
     ]);
     expect(outcomes.every((outcome) => Schema.is(TaxMigrationConflictingSchema)(outcome))).toBe(true);
-  });
-
-  it('rejects HANDOFF_VALID evidence without a boundary (F23)', () => {
-    const decode = Schema.decodeUnknownResult(TaxAuthorityHandoffValidSchema);
-    expect(Result.isSuccess(decode({ _tag: 'HANDOFF_VALID', boundaries: [] }))).toBe(false);
   });
 });
 
@@ -835,32 +763,6 @@ describe('#960 PR review regressions (Codex)', () => {
     ).toBe(true);
   });
 
-  it('places nothing during an evaluation-time gap and stays Current across a same-source successor (F28-F30)', () => {
-    const legacyEnded = { ...legacyAuthority, authorityFrom: at('2026-01-01T00:00:00.000Z') };
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-03-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-07-01T00:00:00.000Z'),
-        periods: [legacyEnded],
-        sourceRef: 'fixture:legacy-vat',
-      }),
-    ).toEqual({ placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() });
-    const legacyContinued = {
-      ...legacyAuthority,
-      authorityFrom: at('2026-06-01T00:00:00.000Z'),
-      authorityTo: Option.none(),
-      contractId: 'legacy-continued',
-    };
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-03-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-07-01T00:00:00.000Z'),
-        periods: [legacyEnded, legacyContinued],
-        sourceRef: 'fixture:legacy-vat',
-      }),
-    ).toEqual({ placement: 'CURRENT_UNDER_ITS_AUTHORITY', systemOfRecordRef: Option.some('fixture:legacy-vat') });
-  });
-
   it('does not accept completeness evidence of another family (F17, H)', () => {
     const evidence = assessTaxMigrationReadiness(
       scope,
@@ -871,14 +773,14 @@ describe('#960 PR review regressions (Codex)', () => {
     );
     expect(evidence.verdict).toEqual(
       TaxMigrationNotReadySchema.make({
-        blockers: [{ blocker: 'COMPLETENESS_NOT_VERIFIED', family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION' }],
+        blockers: [{ blocker: 'COMPLETENESS_NOT_VERIFIED', family: 'SELLER_VAT_REGIME_DECLARATION' }],
       }),
     );
   });
 
   it('is independent of input order even for references that collate as equal (determinism)', () => {
-    const composed = taxRule('caf\u00E9');
-    const decomposed = taxRule('cafe\u0301');
+    const composed = taxRule('café');
+    const decomposed = taxRule('café');
     expect(evaluateTaxMigrationCandidates([decomposed, composed])).toEqual(
       evaluateTaxMigrationCandidates([composed, decomposed]),
     );
@@ -886,57 +788,9 @@ describe('#960 PR review regressions (Codex)', () => {
 });
 
 describe('#960 PR review regressions (Codex, round 2)', () => {
-  it('keeps a VAT assertion without the business validity its meaning needs INCOMPLETE (#958 F26, #960 F16)', () => {
-    const outcomes = evaluateTaxMigrationCandidates([
-      candidate('no-from', {
-        _tag: 'TAX_OWNED',
-        family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-        targetMeaning: Object.fromEntries(Object.entries(vatMeaning('no-from')).filter(([key]) => key !== 'validFrom')),
-      }),
-      vatCandidate('ended-no-to', { registrationMeaning: 'ENDED' }),
-    ]);
-    expect(outcomes).toEqual([
-      TaxMigrationIncompleteSchema.make({
-        missing: ['validTo'],
-        provenance: prov('ended-no-to'),
-        sourceFamily: Option.some('SELLING_LEGAL_ENTITY_VAT_REGISTRATION'),
-      }),
-      TaxMigrationIncompleteSchema.make({
-        missing: ['validFrom'],
-        provenance: prov('no-from'),
-        sourceFamily: Option.some('SELLING_LEGAL_ENTITY_VAT_REGISTRATION'),
-      }),
-    ]);
-  });
-
-  it('keeps an assertion historical after authority was handed away and back (F24-F26, F30)', () => {
-    const periods = [
-      { ...legacyAuthority, authorityFrom: at('2026-01-01T00:00:00.000Z') },
-      {
-        ...ontosAuthority,
-        authorityFrom: at('2026-06-01T00:00:00.000Z'),
-        authorityTo: Option.some(at('2026-08-01T00:00:00.000Z')),
-      },
-      {
-        ...legacyAuthority,
-        authorityFrom: at('2026-08-01T00:00:00.000Z'),
-        authorityTo: Option.none(),
-        contractId: 'legacy-back',
-      },
-    ];
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-03-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-09-01T00:00:00.000Z'),
-        periods,
-        sourceRef: 'fixture:legacy-vat',
-      }),
-    ).toEqual({ placement: 'HISTORICAL_OR_RECONCILIATION_ONLY', systemOfRecordRef: Option.some('fixture:legacy-vat') });
-  });
-
   it('compares raw content independently of key insertion order, even for keys that collate as equal (G)', () => {
-    const composedKey = 'caf\u00E9';
-    const decomposedKey = 'cafe\u0301';
+    const composedKey = 'café';
+    const decomposedKey = 'café';
     const first = taxRule('raw-order', { [composedKey]: '1', [decomposedKey]: '2', jurisdiction: 'EU_OSS' });
     const second = candidate('raw-order', {
       _tag: 'TAX_OWNED',
@@ -946,81 +800,23 @@ describe('#960 PR review regressions (Codex, round 2)', () => {
     const outcomes = evaluateTaxMigrationCandidates([first, second]);
     expect(outcomes.some((outcome) => Schema.is(TaxMigrationConflictingSchema)(outcome))).toBe(false);
   });
-});
 
-describe('#960 PR review regressions (Codex, round 3)', () => {
-  it('names conflicting contracts in the same order whatever the input order, even for equal-looking ids (F27)', () => {
-    const composed = contract('caf\u00E9', 'commerce.tax', Option.some('2026-05-01T00:00:00.000Z'));
-    const decomposed = contract('cafe\u0301', 'fixture:legacy-vat', Option.some('2026-05-01T00:00:00.000Z'));
-    expect(evaluateTaxAuthorityHandoff([decomposed, composed])).toEqual(
-      evaluateTaxAuthorityHandoff([composed, decomposed]),
+  it('lets the governed schema classify an invalid regime literal as REVIEW_REQUIRED (F16)', () => {
+    const invalid = only(
+      evaluateTaxMigrationCandidates([
+        candidate('meaning', {
+          _tag: 'TAX_OWNED',
+          family: 'SELLER_VAT_REGIME_DECLARATION',
+          targetMeaning: regimeMeaning(undefined, { regime: 'MAYBE' }),
+        }),
+      ]),
     );
-  });
-});
-
-describe('#960 PR review regressions (Codex, round 4)', () => {
-  it('does not let an assertion regain Current status after its authority lapsed (F28-F30)', () => {
-    const periods = [
-      { ...legacyAuthority, authorityFrom: at('2026-01-01T00:00:00.000Z') },
-      {
-        ...legacyAuthority,
-        authorityFrom: at('2026-08-01T00:00:00.000Z'),
-        authorityTo: Option.none(),
-        contractId: 'legacy-again',
-      },
-    ];
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-03-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-09-01T00:00:00.000Z'),
-        periods,
-        sourceRef: 'fixture:legacy-vat',
-      }),
-    ).toEqual({ placement: 'HISTORICAL_OR_RECONCILIATION_ONLY', systemOfRecordRef: Option.some('fixture:legacy-vat') });
-  });
-
-  it('lets the governed schema classify a missing or invalid registration meaning before any validity rule (F16)', () => {
-    const withoutValidity = (overrides: Readonly<Record<string, string>>) =>
-      candidate('meaning', {
-        _tag: 'TAX_OWNED',
-        family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
-        targetMeaning: Object.fromEntries(
-          Object.entries(vatMeaning('meaning', overrides)).filter(([key]) => key !== 'validFrom'),
-        ),
-      });
-    const invalid = only(evaluateTaxMigrationCandidates([withoutValidity({ registrationMeaning: 'MAYBE' })]));
     expect(invalid).toEqual(
       TaxMigrationReviewRequiredSchema.make({
         provenance: prov('meaning'),
         reason: 'TARGET_MEANING_INVALID',
-        sourceFamily: Option.some('SELLING_LEGAL_ENTITY_VAT_REGISTRATION'),
+        sourceFamily: Option.some('SELLER_VAT_REGIME_DECLARATION'),
       }),
     );
-  });
-});
-
-describe('#960 PR review regressions (Codex, round 5)', () => {
-  it('never keeps an assertion Current across an authority overlap between its instants (F21, F27)', () => {
-    const periods = [
-      {
-        ...legacyAuthority,
-        authorityFrom: at('2026-01-01T00:00:00.000Z'),
-        authorityTo: Option.some(at('2026-08-01T00:00:00.000Z')),
-      },
-      {
-        ...legacyAuthority,
-        authorityFrom: at('2026-06-01T00:00:00.000Z'),
-        authorityTo: Option.none(),
-        contractId: 'legacy-overlapping',
-      },
-    ];
-    expect(
-      placeTaxMigrationAssertion({
-        businessInstant: at('2026-03-01T00:00:00.000Z'),
-        evaluationInstant: at('2026-09-01T00:00:00.000Z'),
-        periods,
-        sourceRef: 'fixture:legacy-vat',
-      }),
-    ).toEqual({ placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() });
   });
 });

@@ -6,9 +6,6 @@ const References = Schema.Array(ReferenceSchema);
 
 /** Canonical target meaning text of one fact: the governed Action content re-encoded in schema field order. */
 export const TaxMigrationTargetMeaningKeySchema = Schema.String.pipe(Schema.brand('TaxMigrationTargetMeaningKey'));
-export const TaxMigrationAuthorityContractIdSchema = ReferenceSchema.pipe(
-  Schema.brand('TaxMigrationAuthorityContractId'),
-);
 
 /**
  * Only fixtures explicitly labelled NON_PRODUCTION are evaluated by the TAX migration contract: no real legacy data,
@@ -17,7 +14,7 @@ export const TaxMigrationAuthorityContractIdSchema = ReferenceSchema.pipe(
 export const TaxMigrationDatasetLabelSchema = Schema.Literal('NON_PRODUCTION');
 
 /** Launch-critical Tax-owned fact/rule families with an explicit semantic mapping (#960 F2, F4, F8). */
-export const TaxMigrationFamilySchema = Schema.Literals(['TAX_RULE', 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION']);
+export const TaxMigrationFamilySchema = Schema.Literals(['TAX_RULE', 'SELLER_VAT_REGIME_DECLARATION']);
 export type TaxMigrationFamily = typeof TaxMigrationFamilySchema.Type;
 
 /** The real source, dataset and record context of one legacy record; never derived (#960 F11). */
@@ -152,45 +149,19 @@ export const TaxMigrationTargetDifferenceSchema = Schema.Struct({
 });
 export type TaxMigrationTargetDifference = typeof TaxMigrationTargetDifferenceSchema.Type;
 
-export const TaxAuthorityBoundarySchema = Schema.Struct({
-  at: InstantSchema,
-  fromSystemOfRecordRef: ReferenceSchema,
-  toSystemOfRecordRef: ReferenceSchema,
-});
-export type TaxAuthorityBoundary = typeof TaxAuthorityBoundarySchema.Type;
-
-export const TaxAuthorityConflictSchema = Schema.TaggedStruct('AUTHORITY_CONFLICT', {
-  contractIds: Schema.Array(TaxMigrationAuthorityContractIdSchema),
-});
-export const TaxAuthorityGapSchema = Schema.TaggedStruct('AUTHORITY_GAP', {
-  from: InstantSchema,
-  to: Schema.OptionFromNullOr(InstantSchema),
-});
-export const TaxAuthorityHandoffValidSchema = Schema.TaggedStruct('HANDOFF_VALID', {
-  boundaries: Schema.NonEmptyArray(TaxAuthorityBoundarySchema),
-});
-export const TaxAuthorityHandoffIndeterminateSchema = Schema.TaggedStruct('INDETERMINATE', {
-  reason: Schema.Literals(['AUTHORITY_BOUNDARY_UNKNOWN', 'NO_AUTHORITY_BOUNDARY_DECLARED', 'NO_AUTHORITY_CONFIGURED']),
-});
-export const TaxAuthorityHandoffEvaluationSchema = Schema.Union([
-  TaxAuthorityConflictSchema,
-  TaxAuthorityGapSchema,
-  TaxAuthorityHandoffValidSchema,
-  TaxAuthorityHandoffIndeterminateSchema,
+/**
+ * One explicit cutover instant per Selling Legal Entity and family (#907 Unit 10 D2, F18): step 9's authority
+ * handoff is retired in favor of the Seller VAT Regime Declaration timeline, which has no System-of-Record
+ * authority boundary to negotiate. `CUTOVER_DECLARED` is P6's own declaration that legacy writes have stopped
+ * for this family and seller; it is never inferred from TAX's own data.
+ */
+export const TaxMigrationCutoverDeclaredSchema = Schema.TaggedStruct('CUTOVER_DECLARED', { at: InstantSchema });
+export const TaxMigrationCutoverNotDeclaredSchema = Schema.TaggedStruct('CUTOVER_NOT_DECLARED', {});
+export const TaxMigrationCutoverSchema = Schema.Union([
+  TaxMigrationCutoverDeclaredSchema,
+  TaxMigrationCutoverNotDeclaredSchema,
 ]);
-export type TaxAuthorityHandoffEvaluation = typeof TaxAuthorityHandoffEvaluationSchema.Type;
-
-/** Placement of a delayed assertion by its own business instant and source, never by arrival (#960 F30). */
-export const TaxMigrationAssertionPlacementSchema = Schema.Struct({
-  placement: Schema.Literals([
-    'CURRENT_UNDER_ITS_AUTHORITY',
-    'HISTORICAL_OR_RECONCILIATION_ONLY',
-    'NOT_FROM_SYSTEM_OF_RECORD',
-    'NO_SINGLE_AUTHORITY',
-  ]),
-  systemOfRecordRef: Schema.OptionFromNullOr(ReferenceSchema),
-});
-export type TaxMigrationAssertionPlacement = typeof TaxMigrationAssertionPlacementSchema.Type;
+export type TaxMigrationCutover = typeof TaxMigrationCutoverSchema.Type;
 
 export const TaxShadowSameSchema = Schema.TaggedStruct('SAME', { probeRef: ReferenceSchema });
 export const TaxShadowDifferentSchema = Schema.TaggedStruct('DIFFERENT', {
@@ -212,8 +183,8 @@ export type TaxShadowDifference = typeof TaxShadowDifferenceSchema.Type;
 
 export const TaxMigrationFamilyEvidenceSchema = Schema.Struct({
   completeness: TaxMigrationCompletenessSchema,
+  cutover: TaxMigrationCutoverSchema,
   family: TaxMigrationFamilySchema,
-  handoff: TaxAuthorityHandoffEvaluationSchema,
   outcomes: Schema.Array(TaxMigrationOutcomeSchema),
   shadowDifferences: Schema.Array(TaxShadowDifferenceSchema),
   targetDifferences: Schema.Array(TaxMigrationTargetDifferenceSchema),
@@ -222,10 +193,8 @@ export type TaxMigrationFamilyEvidence = typeof TaxMigrationFamilyEvidenceSchema
 
 export const TaxMigrationReadinessBlockerSchema = Schema.Struct({
   blocker: Schema.Literals([
-    'AUTHORITY_CONFLICT',
-    'AUTHORITY_GAP',
-    'AUTHORITY_INDETERMINATE',
     'COMPLETENESS_NOT_VERIFIED',
+    'CUTOVER_NOT_DECLARED',
     'OPEN_OUTCOME',
     'SHADOW_DIFFERENCE',
     'TARGET_MEANING_DIFFERENCE',

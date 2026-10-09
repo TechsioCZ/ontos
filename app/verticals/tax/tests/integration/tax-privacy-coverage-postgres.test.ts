@@ -13,11 +13,8 @@ import { installOperationalScope } from '../../../../packages/core-runtime/src/d
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { FinalizeOrderTaxPayloadSchema } from '../../shared/actions/order-tax-finalization.ts';
-import {
-  CreateTaxRulePayloadSchema,
-  EstablishTaxFactAuthorityContractPayloadSchema,
-} from '../../shared/actions/tax-governance.ts';
-import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
+import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
+import { CreateTaxRulePayloadSchema } from '../../shared/actions/tax-governance.ts';
 import { TaxPrivacyOwnerCoverageRequestSchema } from '../../shared/apis/tax-privacy-owner-coverage.ts';
 import type {
   TaxPrivacyOwnerCoverageResponse,
@@ -25,22 +22,18 @@ import type {
 } from '../../shared/apis/tax-privacy-owner-coverage.ts';
 import { taxPrivacyOwnerScopeRef, taxPrivacyOwnerScopeRefs } from '../../shared/tax-privacy-owner-contract.ts';
 import {
-  taxFactAuthorityContractRevisions,
-  taxFactAuthorityContracts,
   taxOrderTaxFinalizations,
   taxRelations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
   taxRules,
-  taxSourceAssertions,
-  taxSourceConflicts,
+  taxSellerVatRegimeDeclarations,
 } from '../../src/database/schema.ts';
 import { orderTaxFinalizationsForScope } from '../../src/services/order-tax-finalization.service.ts';
-import { taxAuthorityGovernancePersistenceForScope } from '../../src/services/tax-authority-governance.service.ts';
 import { taxPrivacyCoverageForScope } from '../../src/services/tax-privacy-coverage.service.ts';
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
-import { taxSourceAssertionPersistenceForScope } from '../../src/services/tax-source-assertion.service.ts';
+import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
@@ -50,7 +43,6 @@ const sellerA = randomUUID();
 const sellerB = randomUUID();
 const principalId = randomUUID();
 const otherPrincipalId = randomUUID();
-const FACT_FAMILY = 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION';
 const byText = (left: string, right: string) => left.localeCompare(right, 'en');
 
 type TaxPrivacyOwnerLookupEncoded = typeof TaxPrivacyOwnerLookupSchema.Encoded;
@@ -95,12 +87,9 @@ const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
       // Append-only triggers reject deletes; replica mode is the test-only escape for owned fixture rows.
       yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
       for (const tenant of [tenantId, otherTenantId]) {
-        yield* transaction.delete(taxSourceConflicts).where(eq(taxSourceConflicts.tenantId, tenant));
-        yield* transaction.delete(taxSourceAssertions).where(eq(taxSourceAssertions.tenantId, tenant));
         yield* transaction
-          .delete(taxFactAuthorityContractRevisions)
-          .where(eq(taxFactAuthorityContractRevisions.tenantId, tenant));
-        yield* transaction.delete(taxFactAuthorityContracts).where(eq(taxFactAuthorityContracts.tenantId, tenant));
+          .delete(taxSellerVatRegimeDeclarations)
+          .where(eq(taxSellerVatRegimeDeclarations.tenantId, tenant));
         yield* transaction.delete(taxOrderTaxFinalizations).where(eq(taxOrderTaxFinalizations.tenantId, tenant));
         yield* transaction.delete(taxRuleCorrections).where(eq(taxRuleCorrections.tenantId, tenant));
         yield* transaction.delete(taxRuleRevisionEndFacts).where(eq(taxRuleRevisionEndFacts.tenantId, tenant));
@@ -110,7 +99,7 @@ const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
     }),
   );
 
-/** Seller A holds one authority contract and one source assertion, both attributed to `principalId`. */
+/** Seller A holds one Seller VAT Regime Declaration revision, attributed to `principalId`. */
 const acquireSeededDatabase = Effect.gen(function* acquireTaxPrivacyTestDatabase() {
   const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
   const admin = yield* makeTestDatabaseFromClient(adminClient, taxRelations);
@@ -118,33 +107,15 @@ const acquireSeededDatabase = Effect.gen(function* acquireTaxPrivacyTestDatabase
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
   yield* cleanup(admin);
   yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  const contract = yield* Schema.decodeEffect(EstablishTaxFactAuthorityContractPayloadSchema)({
-    authority: { authorityFrom: '2026-01-01T00:00:00.000Z', evidenceSourceRefs: [], systemOfRecordRef: 'erp.finance' },
-    factFamily: FACT_FAMILY,
-    provenanceRef: 'acceptance:privacy',
-    reason: 'Govern VAT registration authority',
-    stableCode: 'vat-registration',
+  const declaration = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+    effectiveFrom: '2026-01-01T00:00:00.000Z',
+    expectedCurrentRevision: 0,
+    reason: 'Merchant-declared Czech VAT payer',
+    regime: 'VAT_PAYER',
   });
   yield* runScoped(runtime, scopeA, (transaction) =>
-    taxAuthorityGovernancePersistenceForScope(transaction, scopeA).establishContract({
-      ...contract,
-      ...invocation(scopeA),
-    }),
-  );
-  const assertion = yield* Schema.decodeEffect(RecordTaxSourceAssertionPayloadSchema)({
-    factFamily: FACT_FAMILY,
-    jurisdiction: 'CZ_DOMESTIC',
-    provenanceRef: 'acceptance:privacy',
-    reason: 'Record seller VAT registration evidence',
-    registrationMeaning: 'REGISTERED',
-    sourceAssertionKey: 'erp-assertion-privacy',
-    sourceRecordRef: 'erp-record-privacy',
-    sourceRef: 'erp.finance',
-    validFrom: '2026-01-01T00:00:00.000Z',
-  });
-  yield* runScoped(runtime, scopeA, (transaction) =>
-    taxSourceAssertionPersistenceForScope(transaction, scopeA).recordAssertion({
-      ...assertion,
+    sellerVatRegimeDeclarationsForScope(transaction, scopeA).declare({
+      ...declaration,
       ...invocation(scopeA),
     }),
   );
@@ -214,11 +185,7 @@ it.live('#956 F13-F16 a sole-trader seller finds exact TAX content per responsib
       const runtime = yield* acquireSeededDatabase;
       const result = yield* coverageOf(runtime, scopeA, [seller(sellerA)]);
       expect(Option.getOrThrow(result).coverage.contentStatus).toBe('FOUND');
-      expect(foundIn(result, 'SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY')).toEqual(['tax-source-assertion']);
-      expect(foundIn(result, 'TAX_FACT_AUTHORITY_CONTRACT_HISTORY').toSorted(byText)).toEqual([
-        'tax-fact-authority-contract',
-        'tax-fact-authority-contract-revision',
-      ]);
+      expect(foundIn(result, 'SELLER_VAT_REGIME_DECLARATION_HISTORY')).toEqual(['seller-vat-regime-declaration']);
       expect(foundIn(result, 'ACCEPTED_TAX_TERMS_COPIES')).toEqual([]);
       expect(foundIn(result, 'ACTOR_PRINCIPAL_ATTRIBUTION')).toEqual([]);
       // Minimization (#907 D2 default, ADR-0027): no Launch Order Tax finalization was recorded for this seller.
@@ -238,11 +205,9 @@ it.live('#956 F19-F25 a staff principal finds only attributing TAX rows and neve
       expect(attribution?.coverageStatus).toBe('PARTIAL');
       expect(attribution?.evidenceRefs.every((ref) => ref.includes(`/${sellerA}/`))).toBe(true);
       expect(foundIn(attributed, 'ACTOR_PRINCIPAL_ATTRIBUTION').toSorted(byText)).toEqual([
-        'tax-fact-authority-contract',
-        'tax-fact-authority-contract-revision',
-        'tax-source-assertion',
+        'seller-vat-regime-declaration',
       ]);
-      expect(foundIn(attributed, 'SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY')).toEqual([]);
+      expect(foundIn(attributed, 'SELLER_VAT_REGIME_DECLARATION_HISTORY')).toEqual([]);
       // The same principal under seller B: rows under seller A are invisible, so coverage stays unresolved.
       const otherSeller = Option.getOrThrow(yield* coverageOf(runtime, scopeB, [principal(principalId)]));
       expect(otherSeller.coverage.coverageStatus).toBe('PARTIAL');

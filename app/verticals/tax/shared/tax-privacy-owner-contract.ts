@@ -11,13 +11,15 @@ export const TAX_PRIVACY_OWNER_CAPABILITY = 'commerce.tax';
 /**
  * TAX-owned privacy responsibilities that must all be accounted for before TAX can truthfully report complete
  * NO_DATA (#956 F13-F19). They are responsibilities, not assertions that every part holds personal data.
+ *
+ * `SELLER_VAT_REGIME_DECLARATION_HISTORY` (#907 Unit 10) replaces the retired Tax Fact Authority Contract,
+ * Source Assertion and Source Conflict parts: it holds the merchant-declared Seller VAT Regime Declaration
+ * revisions, which carry actor principal ids and free-text declaration reasons.
  */
 export const taxPrivacyOwnerScopeParts = [
   'ACTOR_PRINCIPAL_ATTRIBUTION',
   'TAX_RULE_GOVERNANCE_HISTORY',
-  'TAX_FACT_AUTHORITY_CONTRACT_HISTORY',
-  'SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY',
-  'SOURCE_CONFLICT_DETECTION_EVIDENCE',
+  'SELLER_VAT_REGIME_DECLARATION_HISTORY',
   'ORDER_TAX_FINALIZATION_DECISION_EVIDENCE',
   'ACCEPTED_TAX_TERMS_COPIES',
   'EXTERNAL_COPY_AND_RECOVERY_RESPONSIBILITIES',
