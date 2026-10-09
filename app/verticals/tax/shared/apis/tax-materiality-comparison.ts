@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 import {
   TaxMaterialityComparisonRequestContractSchema,
-  TaxMaterialityComparisonResponseContractSchema,
+  TaxMaterialityConclusionSchema as TaxMaterialityComparisonResponseContractSchema,
 } from '../domain/tax-evaluation-contracts.ts';
 
 export const TaxMaterialityComparisonRequestSchema = TaxMaterialityComparisonRequestContractSchema;

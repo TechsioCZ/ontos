@@ -32,19 +32,11 @@ import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/t
 type LineCommercialValueBasis = typeof LineCommercialValueBasisSchema.Type;
 
 export {
-  TaxEvidenceDifferenceSchema,
   TaxMaterialChangeConclusionSchema,
-  TaxMaterialChangeSchema,
-  TaxMaterialityConclusionSchema,
-  TaxMaterialityDeclaredUseSchema,
   TaxMaterialityUnverifiableSchema,
   TaxNonMaterialAttestationSchema,
 } from '../../shared/domain/tax-evaluation-contracts.ts';
-export type {
-  TaxEvidenceDifference,
-  TaxMaterialChange,
-  TaxMaterialityConclusion,
-} from '../../shared/domain/tax-evaluation-contracts.ts';
+export type { TaxMaterialityConclusion } from '../../shared/domain/tax-evaluation-contracts.ts';
 
 /**
  * Same exact purchase/use for a Tax materiality comparison: Tenant, Selling Legal Entity, Purchasing Subject,
