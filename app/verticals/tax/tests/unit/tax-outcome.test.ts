@@ -2,6 +2,7 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { TaxRuleMissingSchema } from '../../src/domain/tax-non-success-outcome.ts';
+import { TaxOutcomeSuccessSchema as PublishedTaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax-outcome.ts';
 import { TaxOutcomeSchema, TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import { TaxResultSchema } from '../../src/domain/tax-result.ts';
 import {
@@ -15,6 +16,7 @@ import {
 } from './tax-domain-fixtures.ts';
 
 const decodeOutcome = Schema.decodeUnknownSync(TaxOutcomeSchema);
+const decodePublishedSuccess = Schema.decodeUnknownSync(PublishedTaxOutcomeSuccessSchema);
 const encodeResult = Schema.encodeSync(TaxResultSchema);
 const decodeResult = Schema.decodeUnknownSync(TaxResultSchema);
 
@@ -94,5 +96,23 @@ describe('Tax Outcome', () => {
     expect(() => decodeOutcome({ amount: '0.00', currency: 'CZK' })).toThrow();
     expect(() => decodeOutcome(null)).toThrow();
     expect(() => decodeOutcome({})).toThrow();
+  });
+
+  it('#936 F28-F29 the published contract binds a Result to its Decision; only TAX checks that its amounts follow', () => {
+    const decision = decodeTaxDecision(taxDecisionInput(['o-1']));
+    const twoUnits = decodeTaxDecision(taxDecisionInput(['o-1', 'o-2']));
+    const bound = { _tag: 'TAX_DETERMINED', decision: encodeTaxDecision(decision) } as const;
+
+    expect(
+      Schema.is(PublishedTaxOutcomeSuccessSchema)(decodePublishedSuccess({ ...bound, result: zeroResultInput })),
+    ).toBe(true);
+    expect(() => decodeOutcome({ ...bound, result: zeroResultInput })).toThrow();
+    for (const unbound of [
+      { ...bound, result: { ...zeroResultInput, taxDecisionId: 'tax-decision-2' } },
+      { _tag: 'TAX_DETERMINED', decision: encodeTaxDecision(twoUnits), result: zeroResultInput },
+      { ...bound, result: encodeResult(composeResult(twoUnits)) },
+    ]) {
+      expect(() => decodePublishedSuccess(unbound)).toThrow();
+    }
   });
 });

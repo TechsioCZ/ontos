@@ -13,7 +13,7 @@ export const CustomerSafeTaxDecompositionNeedSchema = Schema.Literals(['NOT_NEED
 export type CustomerSafeTaxDecompositionNeed = typeof CustomerSafeTaxDecompositionNeedSchema.Type;
 
 /** Presentation-safe treatment/rate meaning; it never creates its own Tax decision (#940 F22, F31). */
-export const CustomerSafeTaxComponentSchema = Schema.Struct({
+const CustomerSafeTaxComponentSchema = Schema.Struct({
   /** Explicit allowlisted join key of this presentation decomposition component to its source occurrences (#940 F18, J). */
   purchaseDemandOccurrenceIds: Schema.NonEmptyArray(PurchaseDemandOccurrenceIdSchema),
   taxAmount: TaxMonetaryAmountSchema,
