@@ -182,7 +182,12 @@ const requiredValidityKeys = (family: TaxMigrationFamily, targetMeaning: TargetM
   if (family !== 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION') {
     return [];
   }
-  return targetMeaning['registrationMeaning'] === 'ENDED' ? ['validTo'] : ['validFrom'];
+  // Only a recognised meaning selects its validity key; a missing or invalid meaning is classified by the schema.
+  const meaning = targetMeaning['registrationMeaning'];
+  if (meaning === 'ENDED') {
+    return ['validTo'];
+  }
+  return meaning === 'REGISTERED' || meaning === 'NON_REGISTERED' ? ['validFrom'] : [];
 };
 
 const rawMeaningOf = (family: TaxMigrationFamily, targetMeaning: TargetMeaning): string =>

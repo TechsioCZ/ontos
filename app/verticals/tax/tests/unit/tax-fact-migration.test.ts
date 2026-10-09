@@ -957,3 +957,44 @@ describe('#960 PR review regressions (Codex, round 3)', () => {
     );
   });
 });
+
+describe('#960 PR review regressions (Codex, round 4)', () => {
+  it('does not let an assertion regain Current status after its authority lapsed (F28-F30)', () => {
+    const periods = [
+      { ...legacyAuthority, authorityFrom: at('2026-01-01T00:00:00.000Z') },
+      {
+        ...legacyAuthority,
+        authorityFrom: at('2026-08-01T00:00:00.000Z'),
+        authorityTo: Option.none(),
+        contractId: 'legacy-again',
+      },
+    ];
+    expect(
+      placeTaxMigrationAssertion({
+        businessInstant: at('2026-03-01T00:00:00.000Z'),
+        evaluationInstant: at('2026-09-01T00:00:00.000Z'),
+        periods,
+        sourceRef: 'fixture:legacy-vat',
+      }),
+    ).toEqual({ placement: 'HISTORICAL_OR_RECONCILIATION_ONLY', systemOfRecordRef: Option.some('fixture:legacy-vat') });
+  });
+
+  it('lets the governed schema classify a missing or invalid registration meaning before any validity rule (F16)', () => {
+    const withoutValidity = (overrides: Readonly<Record<string, string>>) =>
+      candidate('meaning', {
+        _tag: 'TAX_OWNED',
+        family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+        targetMeaning: Object.fromEntries(
+          Object.entries(vatMeaning('meaning', overrides)).filter(([key]) => key !== 'validFrom'),
+        ),
+      });
+    const invalid = only(evaluateTaxMigrationCandidates([withoutValidity({ registrationMeaning: 'MAYBE' })]));
+    expect(invalid).toEqual(
+      TaxMigrationReviewRequiredSchema.make({
+        provenance: prov('meaning'),
+        reason: 'TARGET_MEANING_INVALID',
+        sourceFamily: Option.some('SELLING_LEGAL_ENTITY_VAT_REGISTRATION'),
+      }),
+    );
+  });
+});

@@ -95,6 +95,31 @@ export const evaluateTaxAuthorityHandoff = (
 };
 
 /**
+ * Whether one System of Record held authority without a gap from `from` to `until`: an assertion cannot regain
+ * Current status after its authority lapsed (#960 F28-F30). Each step moves to the end of a covering period.
+ */
+const heldContinuously = (
+  periods: readonly TaxSourceAuthorityPeriod[],
+  systemOfRecordRef: string,
+  from: DateTime.Utc,
+  until: DateTime.Utc,
+): boolean => {
+  const own = periods.filter((period) => period.systemOfRecordRef === systemOfRecordRef);
+  let at = from;
+  for (const _ of own) {
+    const [covering] = authoritiesCoveringInstant(own, at);
+    if (covering === undefined) {
+      return false;
+    }
+    if (Option.isNone(covering.authorityTo) || DateTime.isGreaterThan(covering.authorityTo.value, until)) {
+      return true;
+    }
+    at = covering.authorityTo.value;
+  }
+  return false;
+};
+
+/**
  * Places a delayed pre-cutover assertion by its own business instant and source, never by arrival (#960 F30, BDD
  * "Pre-cutover assertion arrives after handoff"). An assertion from the System of Record of its business instant keeps
  * that meaning; once a later boundary has moved Current authority elsewhere it is historical or reconciliation
@@ -133,7 +158,9 @@ export const placeTaxMigrationAssertion = (input: {
   );
   return {
     placement:
-      !handedAway && authorityNow.systemOfRecordRef === authorityThen.systemOfRecordRef
+      !handedAway &&
+      authorityNow.systemOfRecordRef === authorityThen.systemOfRecordRef &&
+      heldContinuously(input.periods, authorityThen.systemOfRecordRef, input.businessInstant, input.evaluationInstant)
         ? 'CURRENT_UNDER_ITS_AUTHORITY'
         : 'HISTORICAL_OR_RECONCILIATION_ONLY',
     systemOfRecordRef,
