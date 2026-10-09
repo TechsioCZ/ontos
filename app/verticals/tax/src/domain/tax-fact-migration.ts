@@ -162,11 +162,34 @@ interface EvaluatedCandidate {
   readonly rawMeaning: string;
 }
 
+/** Readable English collation with a code-point tie-break, so distinct references never compare equal. */
+const byText = (left: string, right: string) => {
+  const collated = left.localeCompare(right, 'en');
+  if (collated !== 0) {
+    return collated;
+  }
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+};
+
+/**
+ * A source assertion without the business validity its meaning needs cannot establish VAT registration state, so it is
+ * INCOMPLETE rather than mapped: REGISTERED / NON_REGISTERED need `validFrom`, ENDED needs `validTo` (#958 F26).
+ */
+const requiredValidityKeys = (family: TaxMigrationFamily, targetMeaning: TargetMeaning): readonly string[] => {
+  if (family !== 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION') {
+    return [];
+  }
+  return targetMeaning['registrationMeaning'] === 'ENDED' ? ['validTo'] : ['validFrom'];
+};
+
 const rawMeaningOf = (family: TaxMigrationFamily, targetMeaning: TargetMeaning): string =>
   tupleKey([
     family,
     ...Object.entries(targetMeaning)
-      .toSorted(([left], [right]) => left.localeCompare(right, 'en'))
+      .toSorted(([left], [right]) => byText(left, right))
       .flatMap(([key, value]) => [key, value]),
   ]);
 
@@ -188,7 +211,9 @@ const evaluateTaxOwned = (
       rawMeaning,
     };
   }
-  const missing = requiredKeys[family].filter((key) => targetMeaning[key] === undefined);
+  const missing = [...requiredKeys[family], ...requiredValidityKeys(family, targetMeaning)].filter(
+    (key) => targetMeaning[key] === undefined,
+  );
   if (missing.length > 0) {
     return {
       factKey: Option.none(),
@@ -261,18 +286,6 @@ const evaluateCandidate = ({ mapping, provenance }: TaxMigrationCandidate): Eval
     Match.tag('TAX_OWNED', ({ family, targetMeaning }) => evaluateTaxOwned(provenance, family, targetMeaning)),
     Match.exhaustive,
   );
-
-/** Readable English collation with a code-point tie-break, so distinct references never compare equal. */
-const byText = (left: string, right: string) => {
-  const collated = left.localeCompare(right, 'en');
-  if (collated !== 0) {
-    return collated;
-  }
-  if (left === right) {
-    return 0;
-  }
-  return left < right ? -1 : 1;
-};
 
 /** Full business meaning of an outcome, provenance aside: kind, reason, owner, missing meaning or target meaning. */
 const meaningOf = (outcome: TaxMigrationOutcome): string =>

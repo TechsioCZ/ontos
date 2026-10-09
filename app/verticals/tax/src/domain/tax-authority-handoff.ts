@@ -119,9 +119,20 @@ export const placeTaxMigrationAssertion = (input: {
   if (authorityNow === undefined || competingNow.length > 0) {
     return { placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() };
   }
+  // Once any other System of Record held authority after the business instant, the assertion became historical and a
+  // later hand-back does not make it Current again (#960 F24-F26, F30).
+  const handedAway = input.periods.some(
+    (period) =>
+      period.systemOfRecordRef !== authorityThen.systemOfRecordRef &&
+      DateTime.isLessThan(period.authorityFrom, input.evaluationInstant) &&
+      Option.match(period.authorityTo, {
+        onNone: () => true,
+        onSome: (to) => DateTime.isGreaterThan(to, input.businessInstant),
+      }),
+  );
   return {
     placement:
-      authorityNow.systemOfRecordRef === authorityThen.systemOfRecordRef
+      !handedAway && authorityNow.systemOfRecordRef === authorityThen.systemOfRecordRef
         ? 'CURRENT_UNDER_ITS_AUTHORITY'
         : 'HISTORICAL_OR_RECONCILIATION_ONLY',
     systemOfRecordRef,
