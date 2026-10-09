@@ -282,7 +282,18 @@ export const taxDecisionMeaningFingerprint = (decision: TaxDecision, fingerprint
             ),
           },
     taxRelevantTime,
-    units: units.toSorted((left, right) => byText(left.taxableSupplyUnit.unitId, right.taxableSupplyUnit.unitId)),
+    units: units
+      .toSorted((left, right) => byText(left.taxableSupplyUnit.unitId, right.taxableSupplyUnit.unitId))
+      .map((unit) => ({
+        ...unit,
+        taxClassification: {
+          ...unit.taxClassification,
+          // A set of owner facts: their array position is not part of the Decision identity (#937 F7).
+          materialCatalogEvidence: unit.taxClassification.materialCatalogEvidence.toSorted((left, right) =>
+            byText(left.catalogFactRef, right.catalogFactRef),
+          ),
+        },
+      })),
   });
 };
 

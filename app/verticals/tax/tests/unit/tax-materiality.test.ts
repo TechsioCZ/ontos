@@ -1,5 +1,5 @@
 import { ReadHandlerNotFound } from '@app/core-runtime';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Array as Arr, DateTime, Effect, Option, Schema, pipe } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { readTaxMaterialityComparison } from '../../src/api/tax-materiality-comparison.read.ts';
@@ -141,6 +141,24 @@ const withAncestry = (factValue: string): TaxEvaluationRequestInput['catalog'][n
  * A bound outcome whose first unit is internally consistent (published = HALF_UP of its exact contribution) but whose
  * amounts no longer follow from the Decision: the published schema accepts it, only TAX's own check rejects it.
  */
+/** The same successful outcome with every unit's material Catalog facts in reverse array order. */
+const withReversedCatalogFacts = (genuine: TaxOutcomeSuccess): TaxOutcomeSuccess => ({
+  ...genuine,
+  decision: {
+    ...genuine.decision,
+    units: pipe(
+      genuine.decision.units,
+      Arr.map((unit) => ({
+        ...unit,
+        taxClassification: {
+          ...unit.taxClassification,
+          materialCatalogEvidence: Arr.reverse(unit.taxClassification.materialCatalogEvidence),
+        },
+      })),
+    ),
+  },
+});
+
 const withUnfollowingAmounts = (genuine: TaxOutcomeSuccess): TaxOutcome => {
   const [first, ...rest] = genuine.result.units;
   return {
@@ -232,6 +250,14 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     const current = evaluate(evaluationRequest({ catalog: [withAncestry('drinks')] }, ['o1']));
 
     expect(attestedDifferences(compare(previous, current))).toEqual(Option.some(['CATALOG_EVIDENCE']));
+  });
+
+  it('#937 F7 the same Catalog facts in another order keep the Decision identity and differ in no evidence', () => {
+    const previous = success(evaluate(evaluationRequest({ catalog: [withAncestry('food')] }, ['o1'])));
+    const reordered = withReversedCatalogFacts(previous);
+
+    expect(reordered.decision.decisionId).toBe(previous.decision.decisionId);
+    expect(attestedDifferences(compare(previous, reordered))).toEqual(Option.some([]));
   });
 
   it('#943 F10 the same old/new states give the same conclusion', () => {
