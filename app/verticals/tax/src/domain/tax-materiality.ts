@@ -71,11 +71,12 @@ const exactText = ({ denominator, numerator }: TaxExactRational) => `${numerator
 const byText = (left: string, right: string) => left.localeCompare(right, 'en');
 
 /**
- * Unambiguous text of a tuple of opaque owner identifiers: each part is percent-encoded, so no part can contain the
- * `|` separator and distinct tuples never collide; an absent part is a raw space, which encoding never produces.
+ * Unambiguous text of a tuple of opaque owner identifiers: each part is length-prefixed, so any content (separators,
+ * lone surrogates) stays distinct and the encoding never throws; an absent part is `~`, which no length prefix starts
+ * with.
  */
 const joinParts = (parts: readonly (number | string | undefined)[]): string =>
-  parts.map((part) => (part === undefined ? ' ' : encodeURIComponent(String(part)))).join('|');
+  parts.map((part) => (part === undefined ? '~' : `${String(part).length}:${String(part)}`)).join('');
 
 const lineComponents = (unit: TaxDecisionUnit): readonly LineCommercialValueBasis[] =>
   unit.taxableBasisInterpretation.components.flatMap((component) => (isLine(component) ? [component] : []));
@@ -154,8 +155,8 @@ const unitEvidence = (unit: TaxDecisionUnit) => ({
   catalog: joinParts([
     unit.taxClassification.completenessEvidenceRef,
     ...unit.taxClassification.materialCatalogEvidence.map(
-      ({ catalogFactRef, catalogFactRevisionRef, ownerEvidenceRef }) =>
-        joinParts([catalogFactRef, catalogFactRevisionRef, ownerEvidenceRef]),
+      ({ catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef }) =>
+        joinParts([catalogFactRef, catalogFactRevisionRef, factKind, factValue, ownerEvidenceRef]),
     ),
   ]),
   place: joinParts([
