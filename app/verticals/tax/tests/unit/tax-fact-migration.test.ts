@@ -814,3 +814,73 @@ describe('#960 review round 3 regressions (Fable)', () => {
     );
   });
 });
+
+describe('#960 PR review regressions (Codex)', () => {
+  it('excludes records resolved as owned elsewhere from a family claim, but keeps open unknown ones (F3, F17)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([
+      taxRule('r1'),
+      candidate('party-1', { _tag: 'FOREIGN_OWNER', targetOwner: 'commerce.party-registry' }),
+    ]);
+    expect(verifyTaxMigrationCompleteness('TAX_RULE', ruleClaim(['r1']), outcomes)).toEqual(
+      TaxMigrationCompleteSchema.make({ family: 'TAX_RULE', rowCount: 2 }),
+    );
+    const withUnknown = [
+      ...outcomes,
+      ...evaluateTaxMigrationCandidates([candidate('u1', { _tag: 'UNESTABLISHED', legacyFieldNames: ['VAT'] })]),
+    ];
+    expect(
+      Schema.is(TaxMigrationNotCompleteSchema)(
+        verifyTaxMigrationCompleteness('TAX_RULE', ruleClaim(['r1']), withUnknown),
+      ),
+    ).toBe(true);
+  });
+
+  it('places nothing during an evaluation-time gap and stays Current across a same-source successor (F28-F30)', () => {
+    const legacyEnded = { ...legacyAuthority, authorityFrom: at('2026-01-01T00:00:00.000Z') };
+    expect(
+      placeTaxMigrationAssertion({
+        businessInstant: at('2026-03-01T00:00:00.000Z'),
+        evaluationInstant: at('2026-07-01T00:00:00.000Z'),
+        periods: [legacyEnded],
+        sourceRef: 'fixture:legacy-vat',
+      }),
+    ).toEqual({ placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() });
+    const legacyContinued = {
+      ...legacyAuthority,
+      authorityFrom: at('2026-06-01T00:00:00.000Z'),
+      authorityTo: Option.none(),
+      contractId: 'legacy-continued',
+    };
+    expect(
+      placeTaxMigrationAssertion({
+        businessInstant: at('2026-03-01T00:00:00.000Z'),
+        evaluationInstant: at('2026-07-01T00:00:00.000Z'),
+        periods: [legacyEnded, legacyContinued],
+        sourceRef: 'fixture:legacy-vat',
+      }),
+    ).toEqual({ placement: 'CURRENT_UNDER_ITS_AUTHORITY', systemOfRecordRef: Option.some('fixture:legacy-vat') });
+  });
+
+  it('does not accept completeness evidence of another family (F17, H)', () => {
+    const evidence = assessTaxMigrationReadiness(
+      scope,
+      taxMigrationFamilies.map((family) => ({
+        ...readyEvidence(family),
+        completeness: TaxMigrationCompleteSchema.make({ family: 'TAX_RULE', rowCount: 1 }),
+      })),
+    );
+    expect(evidence.verdict).toEqual(
+      TaxMigrationNotReadySchema.make({
+        blockers: [{ blocker: 'COMPLETENESS_NOT_VERIFIED', family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION' }],
+      }),
+    );
+  });
+
+  it('is independent of input order even for references that collate as equal (determinism)', () => {
+    const composed = taxRule('caf\u00E9');
+    const decomposed = taxRule('cafe\u0301');
+    expect(evaluateTaxMigrationCandidates([decomposed, composed])).toEqual(
+      evaluateTaxMigrationCandidates([composed, decomposed]),
+    );
+  });
+});
