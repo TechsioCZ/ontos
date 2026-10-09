@@ -85,6 +85,24 @@ const bootstrapRuntimeRole = (
         }),
       { concurrency: 1, discard: true },
     );
+    // Privacy's immutable ledgers must retain the restrictions installed by their owner migrations.
+    const privacyLedgers = yield* query<{ table_name: string }>(
+      client,
+      `select distinct relation.relname as table_name
+         from pg_catalog.pg_trigger as trigger_record
+         join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
+         join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+         join pg_catalog.pg_proc as routine on routine.oid = trigger_record.tgfoid
+         join pg_catalog.pg_namespace as routine_namespace on routine_namespace.oid = routine.pronamespace
+        where namespace.nspname = 'privacy' and routine_namespace.nspname = 'privacy'
+          and routine.proname = 'reject_immutable_ledger_mutation' and not trigger_record.tgisinternal`,
+    );
+    yield* Effect.forEach(
+      privacyLedgers,
+      ({ table_name }) =>
+        query(client, `revoke update, delete on table privacy.${quoteIdentifier(table_name)} from ontos_runtime`),
+      { concurrency: 1, discard: true },
+    );
     const compositionAuthorityExists = yield* query<{ exists: boolean }>(client, tableExistsQuery, [
       'core.application_composition_authority',
     ]);
