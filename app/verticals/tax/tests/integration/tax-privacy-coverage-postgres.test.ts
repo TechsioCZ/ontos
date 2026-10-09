@@ -23,6 +23,7 @@ import { taxPrivacyOwnerScopeRef, taxPrivacyOwnerScopeRefs } from '../../shared/
 import {
   taxFactAuthorityContractRevisions,
   taxFactAuthorityContracts,
+  taxOrderTaxFinalizations,
   taxRelations,
   taxSourceAssertions,
   taxSourceConflicts,
@@ -88,6 +89,7 @@ const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
           .delete(taxFactAuthorityContractRevisions)
           .where(eq(taxFactAuthorityContractRevisions.tenantId, tenant));
         yield* transaction.delete(taxFactAuthorityContracts).where(eq(taxFactAuthorityContracts.tenantId, tenant));
+        yield* transaction.delete(taxOrderTaxFinalizations).where(eq(taxOrderTaxFinalizations.tenantId, tenant));
       }
     }),
   );
@@ -203,6 +205,8 @@ it.live('#956 F13-F16 a sole-trader seller finds exact TAX content per responsib
       ]);
       expect(foundIn(result, 'ACCEPTED_TAX_TERMS_COPIES')).toEqual([]);
       expect(foundIn(result, 'ACTOR_PRINCIPAL_ATTRIBUTION')).toEqual([]);
+      // Minimization (#907 D2 default, ADR-0027): no Launch Order Tax finalization was recorded for this seller.
+      expect(foundIn(result, 'ORDER_TAX_FINALIZATION_DECISION_EVIDENCE')).toEqual([]);
     }),
   ),
 );

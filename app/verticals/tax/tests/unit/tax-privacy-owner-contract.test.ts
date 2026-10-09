@@ -99,6 +99,18 @@ describe('#956 TAX Privacy Owner coverage declaration', () => {
     expect(taxPrivacyOwnerDeclaration.acceptedTaxTermsCopyHolders.length).toBeGreaterThan(0);
     expect(taxPrivacyOwnerDeclaration.externalCopyRecipients).toEqual([]);
   });
+
+  it('covers the finalized Launch Order Tax table by its own Decision/Result minimization part only (D2 default, ADR-0027)', () => {
+    expect(taxPrivacyScopePartTables.ORDER_TAX_FINALIZATION_DECISION_EVIDENCE).toEqual(['tax_order_tax_finalizations']);
+    // ACTOR_PRINCIPAL_ATTRIBUTION legitimately spans every TAX table (attribution columns exist on all of them);
+    // every other content-specific part must stay disjoint from this minimization part.
+    const otherContentParts = taxPrivacyOwnerScopeParts.filter(
+      (part) => part !== 'ORDER_TAX_FINALIZATION_DECISION_EVIDENCE' && part !== 'ACTOR_PRINCIPAL_ATTRIBUTION',
+    );
+    for (const part of otherContentParts) {
+      expect(taxPrivacyScopePartTables[part]).not.toContain('tax_order_tax_finalizations');
+    }
+  });
 });
 
 describe('#956 TAX Owner Contribution', () => {

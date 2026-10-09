@@ -18,6 +18,7 @@ export const taxPrivacyOwnerScopeParts = [
   'TAX_FACT_AUTHORITY_CONTRACT_HISTORY',
   'SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY',
   'SOURCE_CONFLICT_DETECTION_EVIDENCE',
+  'ORDER_TAX_FINALIZATION_DECISION_EVIDENCE',
   'ACCEPTED_TAX_TERMS_COPIES',
   'EXTERNAL_COPY_AND_RECOVERY_RESPONSIBILITIES',
 ] as const;
@@ -37,6 +38,11 @@ const scopePartByRef = new Map(
  * Accepted Tax Terms copies are held by Order/Billing snapshots under their own Privacy Owner Contracts; TAX
  * persists none (#907 D2 default (a)). TAX has no external recipient (#907 D5 default: no VIES/ARES/Integration
  * Route). Attribution coverage is observed per Selling Legal Entity, the TAX row-level isolation boundary.
+ *
+ * Minimization at Order Commitment Time (#907 D2 default, ADR-0027): TAX persists only its own `Tax Decision` /
+ * `Tax Result` evidence for the finalized Launch Order Tax outcome. TAX never stores a copy of the Order itself
+ * or of any invoice/billing document; those remain owned by Order and Billing under their own Privacy Owner
+ * Contracts.
  */
 export const taxPrivacyOwnerDeclaration = {
   acceptedTaxTermsCopyHolders: ['Order Acceptance Decision Bundle / Order Snapshot', 'Billing Document snapshots'],
