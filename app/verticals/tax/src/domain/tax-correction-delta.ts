@@ -41,6 +41,7 @@ import type {
 
 export {
   CumulativeUnitTaxStateSchema,
+  HistoryOwnerUnavailableSchema,
   OriginalRecordUnavailableSchema,
   TaxCorrectionDeltaSchema,
   TaxCorrectionHistoricalInputUnresolvedSchema,

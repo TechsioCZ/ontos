@@ -10,7 +10,7 @@ import type {
   TaxCorrectionPreviewRequest,
   TaxCorrectionPreviewResponse,
 } from '../../shared/apis/tax-correction-preview.ts';
-import { OriginalRecordUnavailableSchema } from '../domain/tax-correction-delta.ts';
+import { HistoryOwnerUnavailableSchema, OriginalRecordUnavailableSchema } from '../domain/tax-correction-delta.ts';
 import { interpretDeclaredTaxPurpose } from '../domain/tax-declared-purpose.ts';
 import { taxResultFollowsFromDecision } from '../domain/tax-result.ts';
 import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/tax-historical-input-outcome.ts';
@@ -18,6 +18,7 @@ import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/
 const MODULE_KEY = 'commerce.tax';
 
 const isOriginalRecordUnavailable = Schema.is(OriginalRecordUnavailableSchema);
+const isHistoryOwnerUnavailable = Schema.is(HistoryOwnerUnavailableSchema);
 
 /** The preview reads no TAX state, so it needs no services. */
 type TaxCorrectionPreviewServices = Record<never, never>;
@@ -37,6 +38,9 @@ const taxCorrectionPreviewEntrypoint = defineTenantModuleEntrypoint({
  * whose Tax Result does not follow from its Tax Decision is inconsistent historical input, never a guessed baseline.
  * The original record of a correction is the accepted Billing Document; the decode rejects a declared `CORRECTION`
  * over an Order Snapshot as 400 Invalid, like an unsupported `REFUND` change (H10).
+ * A record owner that states it is only temporarily unavailable (`HISTORY_OWNER_UNAVAILABLE`) answers
+ * `TAX_DEPENDENCY_UNAVAILABLE` for every declared purpose, before the tenant check: a typed 200 result, not the
+ * retryable 503 problem reserved for TAX's own runtime unavailability (D4, #938 F22-F26).
  * The preview reads and writes no TAX state, keeps no copy of the record and consumes no Accepted correction state
  * (#946 F15-F17, #948 F26, #945 C, PO default D2).
  */
@@ -45,6 +49,9 @@ export const readTaxCorrectionPreview = (
   { scope }: ReadHandlerContext<TaxCorrectionPreviewServices>,
 ): Effect.Effect<ReadHandlerResult<TaxCorrectionPreviewResponse>, ReadHandlerNotFound> => {
   const terms = input.acceptedTaxTerms;
+  if (isHistoryOwnerUnavailable(terms)) {
+    return Effect.succeed({ evidence: { resultCount: 1 }, result: { _tag: 'TAX_DEPENDENCY_UNAVAILABLE' } });
+  }
   if (isOriginalRecordUnavailable(terms)) {
     return Effect.succeed({
       evidence: { resultCount: 1 },

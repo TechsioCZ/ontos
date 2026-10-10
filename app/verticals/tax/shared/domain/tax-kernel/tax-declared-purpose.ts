@@ -2,6 +2,7 @@ import { Match, Schema } from 'effect';
 
 import { AcceptedTaxTermsSchema, isBillingDocumentRecord } from './accepted-tax-terms.ts';
 import {
+  HistoryOwnerUnavailableSchema,
   TaxCorrectionDeltaSchema,
   TaxCorrectionHistoricalInputUnresolvedSchema,
   TaxCorrectionOutOfBoundsSchema,
@@ -10,6 +11,7 @@ import {
 } from './tax-correction-delta.ts';
 import { TaxDecisionIdSchema } from './tax-decision.ts';
 import { BoundedIdentifierSchema } from './tax-domain-primitives.ts';
+import { TaxDependencyUnavailableSchema } from './tax-non-success-outcome.ts';
 
 /**
  * Explicit declared use of Accepted Tax Terms after acceptance: a historical read, a supported return/correction, or
@@ -31,13 +33,18 @@ const isAcceptedTaxTerms = Schema.is(AcceptedTaxTermsSchema);
 
 /**
  * One declared use of the Accepted Tax Terms handed over by their owner (Order or Billing), or the owner's explicit
- * statement that it cannot establish the original record, which TAX answers with the unresolved historical-input
- * outcome instead of a calculation (#947 F13, #948 F7, #946 F12). A `CORRECTION` declared over established Terms
- * uses the accepted Billing Document as its original record; `HISTORICAL_READ` and `NEW_EVENT` still accept the
- * Order Snapshot, the confirmed pre-document boundary (H10).
+ * statement that it cannot establish the original record, or that the record owner is temporarily unavailable,
+ * which TAX answers with the unresolved historical-input outcome or with `TAX_DEPENDENCY_UNAVAILABLE` instead of a
+ * calculation (#947 F13, #948 F7, F22-F26, #946 F12, D4). A `CORRECTION` declared over established Terms uses the
+ * accepted Billing Document as its original record; `HISTORICAL_READ` and `NEW_EVENT` still accept the Order
+ * Snapshot, the confirmed pre-document boundary (H10).
  */
 export const DeclaredTaxPurposeRequestSchema = Schema.Struct({
-  acceptedTaxTerms: Schema.Union([AcceptedTaxTermsSchema, OriginalRecordUnavailableSchema]),
+  acceptedTaxTerms: Schema.Union([
+    AcceptedTaxTermsSchema,
+    OriginalRecordUnavailableSchema,
+    HistoryOwnerUnavailableSchema,
+  ]),
   declaredPurpose: DeclaredTaxPurposeSchema,
 }).check(
   Schema.makeFilter(({ acceptedTaxTerms, declaredPurpose }) =>
@@ -83,6 +90,7 @@ export const DeclaredTaxPurposeOutcomeSchema = Schema.Union([
   HistoricalReadUsesAcceptedTaxTermsSchema,
   NoNewTaxEventSchema,
   NewEventDeterminationUnsupportedSchema,
+  TaxDependencyUnavailableSchema,
 ]);
 
 export type DeclaredTaxPurposeOutcome = typeof DeclaredTaxPurposeOutcomeSchema.Type;

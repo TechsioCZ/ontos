@@ -160,6 +160,16 @@ export const TaxCorrectionRequestSchema = Schema.Struct({
 
 export type TaxCorrectionRequest = typeof TaxCorrectionRequestSchema.Type;
 
+/**
+ * The Order or Billing owner of the record, or of its Accepted correction state, is **temporarily** unavailable
+ * (PO decision D4 = B on #907). It is not missing, ambiguous or inconsistent history — that stays
+ * `ORIGINAL_RECORD_UNAVAILABLE`/`TAX_HISTORICAL_INPUT_UNRESOLVED`. It carries no transport detail (#938 F26) and is
+ * never placed inside `TaxCorrectionHistoricalInputUnresolvedSchema`.
+ */
+export const HistoryOwnerUnavailableSchema = Schema.TaggedStruct('HISTORY_OWNER_UNAVAILABLE', {});
+
+export type HistoryOwnerUnavailable = typeof HistoryOwnerUnavailableSchema.Type;
+
 const isSellerNotVatPayerTreatment = Schema.is(SellerNotVatPayerTreatmentSchema);
 const isZeroExact = (value: TaxExactRational): boolean => value.numerator === '0';
 const isZeroTaxMonetaryAmount = (value: TaxMonetaryAmount): boolean => taxMonetaryAmountMinorUnits(value) === 0n;
