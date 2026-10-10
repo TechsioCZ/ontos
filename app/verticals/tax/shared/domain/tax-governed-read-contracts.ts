@@ -3,6 +3,7 @@ import { Schema } from 'effect';
 import { TaxRuleMeaningKindSchema } from '../actions/tax-governance.ts';
 import { TaxRuleRevisionRefSchema } from '../resources/tax-rule-revision.ts';
 import { TaxRuleRefSchema } from '../resources/tax-rule.ts';
+import { UtcInstantSchema } from './tax-kernel/tax-time.ts';
 
 const InstantSchema = Schema.DateTimeUtcFromString;
 const FingerprintSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
@@ -15,7 +16,7 @@ const RowCountSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const ApplicableTaxRuleSetRequestContractSchema = Schema.Struct({
   jurisdiction: Schema.Literal('CZ_DOMESTIC'),
   taxClassificationCode: OwnerReferenceSchema,
-  taxRelevantTime: InstantSchema,
+  taxRelevantTime: UtcInstantSchema,
 });
 
 const ApplicableTaxRuleRevisionSchema = Schema.Struct({

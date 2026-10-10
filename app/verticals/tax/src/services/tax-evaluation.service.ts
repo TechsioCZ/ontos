@@ -16,7 +16,9 @@ import type { TaxOutcome } from '../domain/tax-outcome.ts';
 import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 import type { TaxEvaluationTime } from '../../shared/domain/tax-kernel/tax-time.ts';
 import { sellerVatRegimeDeclarationsForScope } from './seller-vat-regime-declaration.service.ts';
+import type { SellerVatRegimeDeclarations } from './seller-vat-regime-declaration.service.ts';
 import { taxGovernedReadsForScope } from './tax-governed-read.service.ts';
+import type { TaxGovernedReads } from './tax-governed-read.service.ts';
 import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
 import { unavailable } from './tax-governance-persistence.ts';
 import type { PersistenceUnavailable, ScopedTransaction } from './tax-governance-persistence.ts';
@@ -124,10 +126,17 @@ export const visibleInScope = (scope: OperationalScope, { purchase }: Pick<TaxEv
   purchase.tenantId === scope.tenantId &&
   purchase.sellingLegalEntityRef === scope.legalEntityId;
 
-export const taxEvaluationForScope = (transaction: ScopedTransaction, scope: OperationalScope): TaxEvaluations => {
-  const governed = taxGovernedReadsForScope(transaction, scope);
-  const declarations = sellerVatRegimeDeclarationsForScope(transaction, scope);
+/** The two owner reads one evaluation observes; production binds both to the same scoped transaction. */
+export interface TaxEvaluationReads {
+  readonly declarations: Pick<SellerVatRegimeDeclarations, 'atInstant'>;
+  readonly governed: Pick<TaxGovernedReads, 'applicableTaxRuleSet'>;
+}
 
+/** Prospective evaluation over the given owner reads; every attempt re-observes both through them (#942 F17-F19). */
+export const taxEvaluationFromReads = (
+  { declarations, governed }: TaxEvaluationReads,
+  scope: OperationalScope,
+): TaxEvaluations => {
   const ruleSetFor = (taxClassificationCode: string, request: TaxEvaluationRequest) =>
     governed
       .applicableTaxRuleSet({
@@ -202,3 +211,12 @@ export const taxEvaluationForScope = (transaction: ScopedTransaction, scope: Ope
 
   return Object.freeze({ evaluate });
 };
+
+export const taxEvaluationForScope = (transaction: ScopedTransaction, scope: OperationalScope): TaxEvaluations =>
+  taxEvaluationFromReads(
+    {
+      declarations: sellerVatRegimeDeclarationsForScope(transaction, scope),
+      governed: taxGovernedReadsForScope(transaction, scope),
+    },
+    scope,
+  );

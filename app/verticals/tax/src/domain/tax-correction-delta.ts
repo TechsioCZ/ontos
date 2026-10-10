@@ -179,9 +179,9 @@ const nextShipping = (
       );
 
 /**
- * Combines every failing basis component of a correction, so a unit may be reported with both an
- * `EXCEEDS_REMAINING_QUANTITY` and an `EXCEEDS_REMAINING_BASIS_COMPONENT` reason when a goods change and a Shipping
- * change each go out of bounds in the same correction (#948 F16, F24).
+ * Reports every failing component of a correction instead of the first one (#948 F16, F24): a returned quantity
+ * beyond the remaining quantity is `EXCEEDS_REMAINING_QUANTITY`, and a line value or Shipping basis that would go
+ * negative is `EXCEEDS_REMAINING_BASIS_COMPONENT`. A unit therefore appears at most twice, once per reason.
  */
 const calculateUnit = (
   terms: AcceptedTaxTerms,
@@ -223,8 +223,8 @@ const calculateUnit = (
     );
   }
 
-  // The three components just passed the out-of-bounds check above, so each is already proven non-negative;
-  // `.make` brands them for `proposedNext` without re-running that check.
+  // `.make` re-validates and brands each component for `proposedNext`; it cannot throw here because the
+  // out-of-bounds check above already rejected every negative one.
   const line = NonNegativeTaxExactRationalSchema.make(
     Result.isSuccess(goods) ? goods.success.line : previous.remainingLineBasis,
   );

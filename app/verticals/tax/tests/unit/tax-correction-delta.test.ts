@@ -742,19 +742,7 @@ describe('Tax Correction Delta', () => {
       expect(sumOfDeltas([...partial.units, ...reversed.units])).toBe(-2100n);
     });
 
-    it('B-9 LEGAL §2 tie 0.14/12 % reached via a quantity return: 0.03 -> 0.02 (-0.01), then -0.02', () => {
-      const terms = acceptedTaxTerms([
-        { amountBasis: 'GROSS', lineValue: '0.28', occurrenceId: 'o-1', quantity: '2', ratePercent: '12' },
-      ]);
-      expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('0.03');
-
-      const steps = returnInSteps(terms, 'o-1', ['1', '1']);
-
-      expect(steps.map(({ proposedNext }) => proposedNext.remainingPublishedTax.amount)).toEqual(['0.02', '0.00']);
-      expect(steps.map(({ taxCorrectionDelta }) => taxCorrectionDelta.amount)).toEqual(['-0.01', '-0.02']);
-    });
-
-    it('B-9v the VALUE-first sibling of B-9: the same 0.14/12 % tie reached via a value change, then a quantity return', () => {
+    it('B-9 LEGAL §2 tie 0.14/12 %: [VALUE LINE -0.14 GROSS] on a GROSS 0.28 line gives 0.03 -> 0.02 (-0.01), then -0.02', () => {
       const terms = acceptedTaxTerms([
         { amountBasis: 'GROSS', lineValue: '0.28', occurrenceId: 'o-1', quantity: '2', ratePercent: '12' },
       ]);
@@ -775,6 +763,18 @@ describe('Tax Correction Delta', () => {
         [afterValue.units[0], afterQuantity.units[0]].map(({ taxCorrectionDelta }) => taxCorrectionDelta.amount),
       ).toEqual(['-0.01', '-0.02']);
       expect(sumOfDeltas([afterValue.units[0], afterQuantity.units[0]])).toBe(-3n);
+    });
+
+    it('B-9q the quantity-first guard of B-9: [QUANTITY -1] reaches the same 0.02 (-0.01), then -0.02', () => {
+      const terms = acceptedTaxTerms([
+        { amountBasis: 'GROSS', lineValue: '0.28', occurrenceId: 'o-1', quantity: '2', ratePercent: '12' },
+      ]);
+      expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('0.03');
+
+      const steps = returnInSteps(terms, 'o-1', ['1', '1']);
+
+      expect(steps.map(({ proposedNext }) => proposedNext.remainingPublishedTax.amount)).toEqual(['0.02', '0.00']);
+      expect(steps.map(({ taxCorrectionDelta }) => taxCorrectionDelta.amount)).toEqual(['-0.01', '-0.02']);
     });
 
     it('B-10 the Unit 11 GROSS quantity row returned one at a time: -1.73, -1.74, -1.73', () => {
@@ -903,7 +903,11 @@ describe('Tax Correction Delta', () => {
 
       const outcome = deltaOf(correct(terms, [unitRequest('o-1', shippingOnlyRefund)]));
 
+      // Only A is corrected: B is untouched, and A keeps its whole line 121 with exactly its line VAT 21.00.
+      expect(outcome.units.map(({ taxableSupplyUnitId }) => taxableSupplyUnitId)).toEqual([unitIdOf('o-1')]);
+      expect(outcome.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('121'));
       expect(outcome.units[0].proposedNext.remainingShippingBasis).toEqual(ZERO_TAX_EXACT_RATIONAL);
+      expect(outcome.units[0].proposedNext.remainingPublishedTax.amount).toBe('21.00');
       expect(outcome.units[0].taxCorrectionDelta.amount).toBe('-8.92');
     });
 

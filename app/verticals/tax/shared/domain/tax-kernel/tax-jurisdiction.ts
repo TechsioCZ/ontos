@@ -36,9 +36,9 @@ export type MaterialityDeclaredTaxPlaceFact = typeof MaterialityDeclaredTaxPlace
 /**
  * Owner-resolved purchase facts from which TAX derives jurisdiction. The Selling Legal Entity place is always
  * material (#937 F40, #927 F19); Delivery Destination and Invoice Recipient are required only when the case declares
- * them material (#937 F52-F54, #923 F1-F2). The seller prerequisite is Current CZ VAT registration, owned by Launch
- * coverage (#918 F13, #907 F5). Commerce Market, Channel, Storefront, hostname, locale, IP and currency are not
- * inputs (#927 F1-F6, F20; glossary Tax Jurisdiction).
+ * them material (#937 F52-F54, #923 F1-F2). The seller prerequisite is the merchant-declared Seller VAT Regime selected
+ * at the Tax-Relevant Time, owned by Launch coverage (#918 F13, #907 F5). Commerce Market, Channel, Storefront,
+ * hostname, locale, IP and currency are not inputs (#927 F1-F6, F20; glossary Tax Jurisdiction).
  */
 export const TaxJurisdictionInputSchema = Schema.Struct({
   deliveryDestination: MaterialityDeclaredTaxPlaceFactSchema,

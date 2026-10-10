@@ -39,9 +39,12 @@ import {
 } from '../../src/domain/tax-non-success-outcome.ts';
 import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcome } from '../../src/domain/tax-outcome.ts';
-import { taxEvaluationForScope } from '../../src/services/tax-evaluation.service.ts';
+import { taxEvaluationForScope, taxEvaluationFromReads } from '../../src/services/tax-evaluation.service.ts';
+import type { TaxEvaluationReads } from '../../src/services/tax-evaluation.service.ts';
+import { taxGovernedReadsForScope } from '../../src/services/tax-governed-read.service.ts';
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
+import type { SellerVatRegimeDeclarations } from '../../src/services/seller-vat-regime-declaration.service.ts';
 import {
   PRICING_RESULT_REF,
   STANDARD_CODE,
@@ -112,8 +115,51 @@ const acquireDatabases = Effect.gen(function* acquireTaxEvaluationTestDatabases(
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
   yield* cleanup(admin);
   yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  return { runtime };
+  return { admin, runtime };
 });
+
+type AdminTestDatabase = TestDatabaseFromClient<typeof taxRelations>;
+
+/** Commits the next VAT_PAYER revision (effective before T) from a separate admin transaction on every run. */
+const concurrentRevisionWriter = (admin: AdminTestDatabase, legalEntityId: string) => {
+  const state = { head: 1 };
+  return Effect.suspend(() => {
+    state.head += 1;
+    return admin.insert(taxSellerVatRegimeDeclarations).values({
+      actionInvocationId: randomUUID(),
+      actorPrincipalId: principalId,
+      effectiveFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-03-01T00:00:00.000Z')),
+      idempotencyKey: randomUUID(),
+      intentFingerprint: '0'.repeat(64),
+      legalEntityId,
+      provenance: 'MERCHANT_DECLARED',
+      reason: 'Concurrent declaration committed between two observations of one evaluation (Unit 10 C)',
+      recordedAt: operationTime,
+      regime: 'VAT_PAYER',
+      replacesScheduled: false,
+      revision: state.head,
+      tenantId,
+    });
+  }).pipe(Effect.orDie);
+};
+
+/** The real declaration reads, except that the numbered `atInstant` observations first run the concurrent writer. */
+const racingDeclarations = (
+  declarations: SellerVatRegimeDeclarations,
+  racedObservations: ReadonlySet<number>,
+  concurrentWriter: Effect.Effect<unknown>,
+): TaxEvaluationReads['declarations'] => {
+  const state = { observation: 0 };
+  return {
+    atInstant: (request) =>
+      Effect.suspend(() => {
+        state.observation += 1;
+        return racedObservations.has(state.observation)
+          ? concurrentWriter.pipe(Effect.andThen(declarations.atInstant(request)))
+          : declarations.atInstant(request);
+      }),
+  };
+};
 
 /** Governed TAX setup of one seller, through the same owner services the Actions use. */
 const seller = (runtime: CoreTestDatabase) => {
@@ -196,6 +242,32 @@ const seller = (runtime: CoreTestDatabase) => {
       Effect.flatMap(Schema.decodeUnknownEffect(TaxEvaluationResponseSchema)),
       Effect.asSome,
     );
+  /**
+   * The production evaluation whose declaration observations race a concurrent writer: before each numbered
+   * `atInstant` observation in `racedObservations`, a separate admin transaction commits the next VAT_PAYER revision
+   * effective before T, so the evaluation's next read (READ COMMITTED) sees a new declaration head (Unit 10 C).
+   */
+  const evaluateRacing = (admin: AdminTestDatabase, racedObservations: ReadonlySet<number>) =>
+    runScoped(runtime, scope, (transaction) =>
+      taxEvaluationFromReads(
+        {
+          declarations: racingDeclarations(
+            sellerVatRegimeDeclarationsForScope(transaction, scope),
+            racedObservations,
+            concurrentRevisionWriter(admin, legalEntityId),
+          ),
+          governed: taxGovernedReadsForScope(transaction, scope),
+        },
+        scope,
+      ).evaluate(
+        decodeEvaluationRequest(
+          evaluationRequestInput({
+            purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: legalEntityId, tenantId }),
+            taxRelevantTime: '2026-06-01T00:00:00.000Z',
+          }),
+        ),
+      ),
+    );
   const launchRules = Effect.all([
     createRule('cz.standard', 'cz-standard-goods', '21'),
     createRule('cz.reduced', 'cz-reduced-food', '12'),
@@ -206,6 +278,7 @@ const seller = (runtime: CoreTestDatabase) => {
     declareNonPayer,
     declareVatPayer,
     evaluate,
+    evaluateRacing,
     launchRules,
     legalEntityId,
     readPublic,
@@ -367,6 +440,63 @@ it.live('Unit 10 C a regime revision effective after T but recorded before E sti
   ),
 );
 
+/** The declaration revision one evidence selection names; throws on `NOT_DECLARED`, which every caller excludes. */
+const selectedRevisionOf = (selection: SellerVatRegimeAtInstantSelection) =>
+  Match.value(selection).pipe(
+    Match.tag('DECLARED', ({ declarationRevisionRef }) => declarationRevisionRef.revision),
+    Match.tag('NOT_DECLARED', () => {
+      throw new Error('Expected a DECLARED Seller VAT Regime selection');
+    }),
+    Match.exhaustive,
+  );
+
+it.live('Unit 10 C #942 F17-F18 a declaration head that moves between observations discards the candidate', () =>
+  Effect.scoped(
+    Effect.gen(function* sellerHeadDiscardAcceptance() {
+      const { admin, runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      // Revision 2 commits between attempt 1's two observations; attempt 2 observes it on both and publishes.
+      const evaluated = evaluatedOf(yield* subject.evaluateRacing(admin, new Set([2])));
+      expect(evaluated.evidence.attempts).toBe(2);
+      expect(evaluated.evidence.discarded).toEqual([{ attempt: 1, discardedBecause: 'SELLER_VAT_REGIME_CHANGED' }]);
+      expect(evaluated.evidence.exhausted).toBeUndefined();
+      // The published candidate rests on the refreshed selection, never on attempt 1's revision 1.
+      expect(evaluated.evidence.sellerVatRegime.headRevision).toBe(2);
+      expect(selectedRevisionOf(evaluated.evidence.sellerVatRegime.selection)).toBe(2);
+      const { outcome } = evaluated;
+      expect(isSuccess(outcome) && outcome.decision.declarationRevisionRef.revision).toBe(2);
+    }),
+  ),
+);
+
+it.live('Unit 10 C #942 F19 a declaration head that moves within every attempt exhausts as indeterminate', () =>
+  Effect.scoped(
+    Effect.gen(function* sellerHeadExhaustionAcceptance() {
+      const { admin, runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      // A new revision commits between the two observations of each of the three bounded attempts.
+      const evaluated = evaluatedOf(yield* subject.evaluateRacing(admin, new Set([2, 4, 6])));
+      expect(evaluated.outcome).toEqual(TaxStateIndeterminateSchema.make({}));
+      expect(evaluated.evidence.exhausted).toBe('EVALUATION_RACE_UNRESOLVED');
+      expect(evaluated.evidence.attempts).toBe(3);
+      expect(evaluated.evidence.discarded).toEqual([
+        { attempt: 1, discardedBecause: 'SELLER_VAT_REGIME_CHANGED' },
+        { attempt: 2, discardedBecause: 'SELLER_VAT_REGIME_CHANGED' },
+        { attempt: 3, discardedBecause: 'SELLER_VAT_REGIME_CHANGED' },
+      ]);
+      // The evidence names the last observed head, kept only as evidence and never published as a candidate.
+      expect(evaluated.evidence.sellerVatRegime.headRevision).toBe(4);
+      expect(selectedRevisionOf(evaluated.evidence.sellerVatRegime.selection)).toBe(4);
+    }),
+  ),
+);
+
 it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time bound every evaluation', () =>
   Effect.scoped(
     Effect.gen(function* scopeAndTimeAcceptance() {
@@ -401,7 +531,7 @@ it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time boun
 );
 
 it.live(
-  'PO decision D3 on #907: a GROSS Shipping allocation round-trips through the stored Decision and jsonb Result',
+  'PO decision D3 on #907: a GROSS Shipping allocation evaluates from real reads and repeats deterministically',
   () =>
     Effect.scoped(
       Effect.gen(function* shippingAllocationAcceptance() {
@@ -430,7 +560,8 @@ it.live(
         }
         expect(outcome.result.purchaseTaxTotal.amount).toBe('47.02');
         // The exact gross-weighted shares (99 * 121/233, 99 * 112/233) and the code-versioned allocation key
-        // round-trip through the jsonb Decision store, not just the rounded published amounts (#907 plan §5.4).
+        // are on the Decision, not just the rounded published amounts (#907 plan §5.4). Storage and same-submission
+        // recovery of the final are covered by `order-tax-finalization-postgres.test.ts`.
         expect(
           outcome.decision.shippingAllocation?.unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
             taxableSupplyUnitId,
@@ -453,8 +584,8 @@ it.live(
           ],
         ]);
 
-        // Same-submission recovery (#942 F23): the identical input and state give back the same Decision identity
-        // and the identical Shipping allocation and Result, read back through the jsonb store.
+        // Repeat-evaluation determinism (#942 F23): the identical input and state give back the same Decision
+        // identity and the identical Shipping allocation and Result.
         const replay = yield* subject.evaluate(shippingRequest);
         const replayOutcome = outcomeOf(replay);
         if (!isSuccess(replayOutcome)) {
