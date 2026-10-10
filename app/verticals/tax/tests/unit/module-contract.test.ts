@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'effect-rstest';
 import { taxApi } from '../../shared/api.ts';
 import { getTaxReadiness } from '../../src/api/tax-client.ts';
+import {
+  FinalizeOrderTaxResultSchema,
+  FinalOrderTaxHandoffSchema,
+} from '../../shared/actions/order-tax-finalization.ts';
+import { correctTaxRuleRevisionAction } from '../../src/actions/correct-tax-rule-revision.action.ts';
+import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts';
+import { createTaxRuleRevisionAction } from '../../src/actions/create-tax-rule-revision.action.ts';
+import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-vat-regime.action.ts';
+import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revision.action.ts';
+import { finalizeOrderTaxAction } from '../../src/actions/finalize-order-tax.action.ts';
 import { taxManifest } from '../../vertical.manifest.ts';
 import { taxRegistration } from '../../vertical.registration.ts';
+
+const taxActionRegistrations = [
+  correctTaxRuleRevisionAction,
+  createTaxRuleAction,
+  createTaxRuleRevisionAction,
+  declareSellerVatRegimeAction,
+  endTaxRuleRevisionAction,
+  finalizeOrderTaxAction,
+];
 
 const governanceActionKeys = [
   'commerce.tax.correct-tax-rule-revision',
@@ -64,12 +83,27 @@ describe('Tax module contract', () => {
     expect(surface.filter((key) => /buyer|customer|counterparty|b2b|b2c/u.test(key))).toEqual([]);
   });
 
-  it('#958 F21-F22 #893 evidence enters only through the governed declare Action, never an Integration Route', () => {
+  it('#964 no external seller route: the Seller VAT Regime enters only through the governed declare Action', () => {
     const actionKeys = taxManifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
     expect(actionKeys.filter((actionKey) => /vies|ares|import|sync|route|assertion/u.test(actionKey))).toEqual([]);
     expect(actionKeys.filter((actionKey) => /seller-vat-regime/u.test(actionKey))).toEqual([
       'commerce.tax.declare-seller-vat-regime',
     ]);
+  });
+
+  it('#961 PO #963 §4-5 the final Order Tax handoff carries no Tax TTL, expiry, renewal or proof', () => {
+    const noTtlPattern = /ttl|expir|renew|proof|confirm|valid(?<suffix>Until|To)/iu;
+    expect(Object.keys(FinalOrderTaxHandoffSchema.fields).filter((key) => noTtlPattern.test(key))).toEqual([]);
+    const finalized = FinalizeOrderTaxResultSchema.members.find((member) => 'handoff' in member.fields);
+    expect(finalized).toBeDefined();
+    expect(Object.keys(finalized?.fields ?? {}).filter((key) => noTtlPattern.test(key))).toEqual([]);
+  });
+
+  it('#963 §6 TAX publishes no Outbox message or domain event, so no delivery debt exists', () => {
+    for (const { descriptor } of taxActionRegistrations) {
+      expect(Object.keys(descriptor.domainEvents), descriptor.actionKey).toEqual([]);
+    }
+    expect(taxManifest.publicSurface.events).toEqual([]);
   });
 
   it('offers no generic edit Action for derived or historical Tax meaning (#949 F33-F42)', () => {
