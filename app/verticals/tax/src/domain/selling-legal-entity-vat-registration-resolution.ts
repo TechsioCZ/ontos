@@ -9,7 +9,7 @@ import type {
   TaxFactAuthorityOutcome,
   TaxSourceRegistrationResolutionReason,
 } from '../../shared/domain/tax-source-read-contracts.ts';
-import type { SellingLegalEntityVatRegistrationState } from './selling-legal-entity-vat-registration.ts';
+import type { SellingLegalEntityVatRegistrationState } from '../../shared/domain/tax-kernel/selling-legal-entity-vat-registration.ts';
 import { evaluateTaxSourceAuthority } from './tax-source-acceptance.ts';
 import type { TaxSourceAcceptance, TaxSourceAuthority } from './tax-source-acceptance.ts';
 

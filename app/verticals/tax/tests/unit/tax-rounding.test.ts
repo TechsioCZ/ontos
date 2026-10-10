@@ -1,8 +1,8 @@
 import { Array as Arr, Schema, pipe } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { sumTaxExactRationals } from '../../src/domain/tax-exact-rational.ts';
-import { sumTaxMonetaryAmounts } from '../../src/domain/tax-monetary-amount.ts';
+import { sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import { sumTaxMonetaryAmounts } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import {
   TaxRoundingPolicySchema,
   TaxUnitRoundingEvidenceSchema,

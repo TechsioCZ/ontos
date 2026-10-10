@@ -1,7 +1,11 @@
 import { DateTime } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import type { TaxDecision, TaxDecisionSchema, TaxDecisionUnitSchema } from '../../src/domain/tax-decision.ts';
+import type {
+  TaxDecision,
+  TaxDecisionSchema,
+  TaxDecisionUnitSchema,
+} from '../../shared/domain/tax-kernel/tax-decision.ts';
 
 import {
   catalogSelectionInput,

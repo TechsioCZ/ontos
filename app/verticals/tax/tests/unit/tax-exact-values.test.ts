@@ -6,12 +6,12 @@ import {
   TaxExactRationalSchema,
   makeTaxExactRational,
   taxExactRationalFromDecimal,
-} from '../../src/domain/tax-exact-rational.ts';
+} from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import {
   publishedTaxAmountRoundedHalfUp,
   sumTaxMonetaryAmounts,
   taxMonetaryAmountMinorUnits,
-} from '../../src/domain/tax-monetary-amount.ts';
+} from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import { exactDecimal } from './tax-domain-fixtures.ts';
 
 describe('Exact Tax values', () => {

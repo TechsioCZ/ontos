@@ -1,10 +1,10 @@
 import { Option, Schema } from 'effect';
 
-import { TaxPurchaseBindingSchema } from '../../src/domain/purchase-binding.ts';
-import { TaxDecisionSchema, TaxDecisionUnitSchema } from '../../src/domain/tax-decision.ts';
-import type { TaxDecision } from '../../src/domain/tax-decision.ts';
-import { taxExactRationalFromDecimal } from '../../src/domain/tax-exact-rational.ts';
-import type { TaxExactRational } from '../../src/domain/tax-exact-rational.ts';
+import { TaxPurchaseBindingSchema } from '../../shared/domain/tax-kernel/purchase-binding.ts';
+import { TaxDecisionSchema, TaxDecisionUnitSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
+import type { TaxDecision } from '../../shared/domain/tax-kernel/tax-decision.ts';
+import { taxExactRationalFromDecimal } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { composeTaxResult } from '../../src/domain/tax-result.ts';
 import type { TaxResult } from '../../src/domain/tax-result.ts';
 import type { TaxRoundingPolicy } from '../../src/domain/tax-rounding.ts';

@@ -1,26 +1,22 @@
 import { Schema } from 'effect';
 
-import { TaxDecisionSchema } from './tax-decision.ts';
+import { TaxOutcomeSuccessSchema as BoundTaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax-outcome.ts';
 import { TaxNonSuccessOutcomeSchema } from './tax-non-success-outcome.ts';
-import { TaxResultSchema, taxResultFollowsFromDecision } from './tax-result.ts';
+import { taxResultFollowsFromDecision } from './tax-result.ts';
 
 /**
- * Successful Tax Outcome: one purchase-scoped Tax Decision with its exactly bound Tax Result whose amounts follow
- * from that Decision (#936 F7, F19-F20, F27-F28, F32; #938 F1; #907 F132). A successful zero is valid only here,
- * explained by its Decision (#936 F27, #939 F2).
+ * Successful Tax Outcome as TAX accepts it: the published bound Decision and Result whose amounts also follow from
+ * that Decision (#936 F7, F19-F20, F27-F28, F32; #938 F1; #907 F132). The amount check is a Tax calculation and stays
+ * owner-local; the published contract (`shared/domain/tax-kernel/tax-outcome.ts`) carries the binding only.
  */
-export const TaxOutcomeSuccessSchema = Schema.TaggedStruct('TAX_DETERMINED', {
-  decision: TaxDecisionSchema,
-  result: TaxResultSchema,
-}).check(
+export const TaxOutcomeSuccessSchema = BoundTaxOutcomeSuccessSchema.check(
   Schema.makeFilter(
     ({ decision, result }) =>
-      taxResultFollowsFromDecision(decision, result) ||
-      'Tax Result must be exactly bound to its Tax Decision and follow from it',
+      taxResultFollowsFromDecision(decision, result) || 'Tax Result must follow from its Tax Decision',
   ),
 );
 export type TaxOutcomeSuccess = typeof TaxOutcomeSuccessSchema.Type;
 
-/** Tax Outcome: successful Decision + Result, or exactly one typed non-success meaning (#938 A, F1-F2). */
+/** Tax Outcome as TAX accepts it: a successful Decision + Result, or exactly one typed non-success meaning (#938 A). */
 export const TaxOutcomeSchema = Schema.Union([TaxOutcomeSuccessSchema, TaxNonSuccessOutcomeSchema]);
 export type TaxOutcome = typeof TaxOutcomeSchema.Type;

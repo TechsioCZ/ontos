@@ -6,9 +6,8 @@ import {
   OrderCommitmentTimeSchema,
   TaxEvaluationTimeSchema,
   TaxRelevantTimeSchema,
-  finalLaunchOrderTaxRelevantTime,
-  isWithinEffectivePeriod,
-} from '../../src/domain/tax-time.ts';
+} from '../../shared/domain/tax-kernel/tax-time.ts';
+import { finalLaunchOrderTaxRelevantTime, isWithinEffectivePeriod } from '../../src/domain/tax-time.ts';
 
 const taxRelevantTime = Schema.decodeUnknownSync(TaxRelevantTimeSchema);
 const taxEvaluationTime = Schema.decodeUnknownSync(TaxEvaluationTimeSchema);
