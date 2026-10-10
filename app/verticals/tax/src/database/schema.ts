@@ -35,8 +35,8 @@ export const taxSchema = pgSchema(TAX_SCHEMA_NAME);
 type ScopedTable = Readonly<Record<'legalEntityId' | 'tenantId', AnyPgColumn>>;
 
 /**
- * Tax Rules and Tax Fact Authority Contracts are governed per Selling Legal Entity (#950 F24-F28, #949 F22-F23):
- * every row carries the trusted Tenant and Selling Legal Entity scope.
+ * Tax Rules and the seller-scoped Seller VAT Regime declaration history are governed per Selling Legal Entity
+ * (#950 F24-F28, #949 F22-F23): every row carries the trusted Tenant and Selling Legal Entity scope.
  */
 const scopeColumns = () => ({
   legalEntityId: uuid('legal_entity_id').notNull(),

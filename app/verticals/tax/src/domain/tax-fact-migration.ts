@@ -335,7 +335,8 @@ const reconcileGroups = (entries: readonly Entry[]): readonly Entry[] => {
 /**
  * Evaluates one NON_PRODUCTION dataset deterministically, independent of input order (#960 G duplicate legacy
  * records, F16, F26-F27). One source record identity is one record; and two records mapped to the same exact target
- * fact (Tax Rule predicate and start, or source assertion identity) must agree, otherwise both are CONFLICTING.
+ * fact (Tax Rule predicate and start, or a Seller VAT Regime declaration's effective time) must agree, otherwise both
+ * are CONFLICTING.
  */
 export const evaluateTaxMigrationCandidates = (
   candidates: readonly TaxMigrationCandidate[],
