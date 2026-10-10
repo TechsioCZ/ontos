@@ -77,13 +77,6 @@ export const orderTaxIntentFingerprint = (
         : {
             ...encoded.shipping,
             affectedOccurrenceIds: encoded.shipping.affectedOccurrenceIds.toSorted(byText),
-            allocationWeights:
-              encoded.shipping.allocationWeights === undefined
-                ? null
-                : {
-                    ...encoded.shipping.allocationWeights,
-                    weights: byOccurrence(encoded.shipping.allocationWeights.weights),
-                  },
           },
   });
 };

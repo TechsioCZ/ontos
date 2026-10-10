@@ -46,12 +46,35 @@ export const catalogEntry = (
 });
 
 type PublishedLineInput = TaxEvaluationRequestInput['pricing']['publishedLines'][number];
+type AmountBasisInput = PublishedLineInput['lineCommercialValue']['amountBasis'];
 
-export const pricingLine = (occurrenceId: string, value: string, currency = 'CZK'): PublishedLineInput => ({
+/** NET by default, so the ~40 pre-D3 arithmetic assertions stay meaningful without rewriting them (PO decision D3 on #907). */
+export const pricingLine = (
+  occurrenceId: string,
+  value: string,
+  options: Readonly<{ amountBasis?: AmountBasisInput; currency?: string }> = {},
+): PublishedLineInput => ({
   breakdown: [],
-  lineCommercialValue: { amount: exactDecimal(value), currency },
+  lineCommercialValue: {
+    amount: exactDecimal(value),
+    amountBasis: options.amountBasis ?? 'NET',
+    currency: options.currency ?? 'CZK',
+  },
   occurrenceId,
   pricingLineRef: `pricing-line-${occurrenceId}`,
+});
+
+/** A GROSS (VAT-inclusive, customer-charged) Pricing Line (PO decision D3 on #907). */
+export const grossLine = (occurrenceId: string, value: string): PublishedLineInput =>
+  pricingLine(occurrenceId, value, { amountBasis: 'GROSS' });
+
+type ShippingSourceInput = NonNullable<TaxEvaluationRequestInput['shipping']>['source'];
+
+/** A Current owner-issued Shipping charge; GROSS by default (Shipping is GROSS-only in Launch). */
+export const shippingCharge = (amount: string, amountBasis: AmountBasisInput = 'GROSS'): ShippingSourceInput => ({
+  _tag: 'CURRENT',
+  amount: { amount: exactDecimal(amount), amountBasis, currency: 'CZK' },
+  shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
 });
 
 /** One CZ domestic purchase; occurrence `o1` is standard-rated at 1000 CZK, `o2` (when present) reduced at 500 CZK. */

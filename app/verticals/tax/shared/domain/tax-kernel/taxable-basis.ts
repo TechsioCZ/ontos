@@ -4,19 +4,37 @@ import { PurchaseDemandOccurrenceIdSchema } from './purchase-binding.ts';
 import { BoundedIdentifierSchema, CurrencyCodeSchema } from './tax-domain-primitives.ts';
 import { NonNegativeTaxExactRationalSchema, TaxExactRationalSchema } from './tax-exact-rational.ts';
 
+/**
+ * Explicit amount basis of an owner-issued monetary amount (PO decision D3 on #907). GROSS is the VAT-inclusive
+ * amount actually charged to the customer; NET is the pre-Tax amount. Launch B2C owners publish GROSS
+ * (LEGAL-FINAL §2). A GROSS amount is never used unchanged as a net base; TAX carves VAT out of it under
+ * § 37 písm. b) instead of multiplying it by the rate.
+ */
+export const TaxAmountBasisSchema = Schema.Literals(['GROSS', 'NET']);
+export type TaxAmountBasis = typeof TaxAmountBasisSchema.Type;
+
 /** Published Line Commercial Value of the Pricing Line for one source occurrence (#937 F27, #920 F19). */
 export const LineCommercialValueBasisSchema = Schema.TaggedStruct('LINE_COMMERCIAL_VALUE', {
   amount: NonNegativeTaxExactRationalSchema,
+  amountBasis: TaxAmountBasisSchema,
   occurrenceId: PurchaseDemandOccurrenceIdSchema,
   pricingLineRef: BoundedIdentifierSchema,
 });
 
+export type LineCommercialValueBasis = typeof LineCommercialValueBasisSchema.Type;
+
 /**
- * Exact owner-issued commercial amount as received by TAX, with explicit currency that TAX never relabels or
- * converts (#931 F14-F16, #933 F4-F5). TAX consumes it; ownership stays with its owner (#931 F1-F2, #933 F1-F4).
+ * Exact owner-issued commercial amount as received by TAX, with explicit currency and amount basis that TAX never
+ * relabels or converts (#931 F14-F16, #933 F4-F5). TAX consumes it; ownership stays with its owner
+ * (#931 F1-F2, #933 F1-F4).
+ *
+ * #931 F3 calls the Line Commercial Value pre-Tax. Under the D3 decision the owner states its basis explicitly,
+ * and F3 holds only when `amountBasis` is NET. A GROSS value is the customer-charged price, and TAX carves VAT
+ * out of it (§ 37 písm. b). The issue text is the PO's to patch.
  */
 export const OwnerIssuedAmountSchema = Schema.Struct({
   amount: NonNegativeTaxExactRationalSchema,
+  amountBasis: TaxAmountBasisSchema,
   currency: CurrencyCodeSchema,
 });
 

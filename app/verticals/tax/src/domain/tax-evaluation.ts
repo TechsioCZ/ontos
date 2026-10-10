@@ -7,8 +7,12 @@ import type { PurchaseDemandOccurrence } from '../../shared/domain/tax-kernel/pu
 import { SELLER_NOT_VAT_PAYER_LEGAL_BASIS, SellerVatRegimeDeclaredSchema } from './seller-vat-regime-timeline.ts';
 import type { SellerVatRegimeDeclarationRevisionRef } from './seller-vat-regime-timeline.ts';
 import type { SellerVatRegimeSelection } from '../../shared/domain/tax-kernel/seller-vat-regime.ts';
-import { allocateShippingTaxableBasis } from './shipping-allocation.ts';
-import type { ShippingAllocation, ShippingAllocationInput } from './shipping-allocation.ts';
+import {
+  allocateShippingTaxableBasis,
+  grossLineValueWeight,
+  requireAllocatableShippingCharge,
+} from './shipping-allocation.ts';
+import type { ShippingAllocation } from './shipping-allocation.ts';
 import { classifyCatalogSelection, launchTaxClassificationInterpretation } from './tax-classification.ts';
 import type { TaxClassification } from './tax-classification.ts';
 import {
@@ -32,9 +36,10 @@ import type { TaxOutcome, TaxOutcomeSuccess } from './tax-outcome.ts';
 import { composeTaxResult } from './tax-result.ts';
 import { LAUNCH_CZK_TAX_ROUNDING_POLICY } from './tax-rounding.ts';
 import type { TaxEvaluationTime } from '../../shared/domain/tax-kernel/tax-time.ts';
-import { lineTaxableBasisForOccurrence } from './taxable-basis.ts';
+import { lineTaxableBasisForOccurrence, requireConsistentLineAmountBasis } from './taxable-basis.ts';
+import type { LineCommercialValueBasis } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 import { mapTaxableSupplyUnits } from './taxable-supply-unit.ts';
-import type { OccurrenceSupplyMeaning, TaxableSupplyUnit, TaxableSupplyUnitId } from './taxable-supply-unit.ts';
+import type { OccurrenceSupplyMeaning, TaxableSupplyUnit } from './taxable-supply-unit.ts';
 
 /** Complete owner rule state for one decisive predicate as returned by the TAX applicable-rule-set read (#942 F9-F15). */
 export interface TaxRuleSetObservation {
@@ -133,7 +138,7 @@ const governingRule = (
 
 interface UnitMeaning {
   readonly classification: TaxClassification;
-  readonly lineComponent: TaxDecisionUnit['taxableBasisInterpretation']['components'][number];
+  readonly lineComponent: LineCommercialValueBasis;
   readonly rule: ApplicableRule;
   readonly unit: TaxableSupplyUnit;
 }
@@ -197,66 +202,45 @@ const nonPayerUnitMeaning = (
   );
 };
 
-/** TAX's own unit identities of the given occurrences; the caller never mints them. */
-const unitIdsOf = (
-  units: NonEmptyReadonlyArray<TaxableSupplyUnit>,
-  occurrenceIds: NonEmptyReadonlyArray<string>,
-): Option.Option<NonEmptyReadonlyArray<TaxableSupplyUnitId>> => {
-  const byOccurrence = new Map<string, TaxableSupplyUnitId>(
-    units.map(({ mapping, unitId }) => [mapping.occurrenceId, unitId]),
-  );
-  return Option.all(
-    pipe(
-      occurrenceIds,
-      Arr.map((occurrenceId) => Option.fromUndefinedOr(byOccurrence.get(occurrenceId))),
-    ),
-  );
-};
-
-/** Occurrence-keyed Shipping evidence restated in TAX unit identities (#933 F12-F18, PO decision D3 default). */
-const shippingAllocationInput = (
-  shipping: NonNullable<TaxEvaluationRequest['shipping']>,
-  units: NonEmptyReadonlyArray<TaxableSupplyUnit>,
-): Option.Option<ShippingAllocationInput> =>
-  Option.flatMap(unitIdsOf(units, shipping.affectedOccurrenceIds), (affectedTaxableSupplyUnitIds) => {
-    const weights = shipping.allocationWeights;
-    if (weights === undefined) {
-      return Option.some({ affectedTaxableSupplyUnitIds, shippingSource: shipping.source });
-    }
-    return Option.map(
-      unitIdsOf(
-        units,
-        pipe(
-          weights.weights,
-          Arr.map(({ occurrenceId }) => occurrenceId),
-        ),
-      ),
-      (weightedUnitIds) => ({
-        affectedTaxableSupplyUnitIds,
-        allocationWeights: {
-          approvalEvidenceRef: weights.approvalEvidenceRef,
-          weights: pipe(
-            weightedUnitIds,
-            Arr.zipWith(weights.weights, (taxableSupplyUnitId, { weight }) => ({ taxableSupplyUnitId, weight })),
-          ),
-        },
-        shippingSource: shipping.source,
-      }),
-    );
-  });
-
-/** Owner-issued Shipping allocated into the Taxable Supply Units of the affected occurrences (#933 F12-F24). */
+/**
+ * Owner-issued Shipping allocated into the Taxable Supply Units of the affected occurrences, with TAX-derived
+ * gross line-value weights (#933 F12-F24, PO decision D3 on #907). An occurrence named by Shipping that does not
+ * map to a taxable unit meaning is indeterminate, as today; a unit's rule failure is reported before an
+ * allocation failure because `unitMeanings` is required to already be the success array.
+ */
 const shippingAllocationOf = (
   request: TaxEvaluationRequest,
-  units: NonEmptyReadonlyArray<TaxableSupplyUnit>,
+  unitMeanings: NonEmptyReadonlyArray<UnitMeaning>,
 ): Evaluated<Option.Option<ShippingAllocation>> => {
   const { shipping } = request;
   if (shipping === undefined) {
     return Result.succeed(Option.none());
   }
-  return Option.match(shippingAllocationInput(shipping, units), {
+  const byOccurrence = new Map<string, UnitMeaning>(
+    unitMeanings.map((meaning) => [meaning.unit.mapping.occurrenceId, meaning]),
+  );
+  const affected = Option.all(
+    pipe(
+      shipping.affectedOccurrenceIds,
+      Arr.map((occurrenceId) => Option.fromUndefinedOr(byOccurrence.get(occurrenceId))),
+    ),
+  );
+  return Option.match(affected, {
     onNone: indeterminate,
-    onSome: (input) => Result.map(allocateShippingTaxableBasis(input), Option.some),
+    onSome: (meanings) =>
+      Result.map(
+        allocateShippingTaxableBasis({
+          affectedTaxableSupplyUnits: pipe(
+            meanings,
+            Arr.map((meaning) => ({
+              grossLineValueWeight: grossLineValueWeight(meaning.lineComponent, meaning.rule.ratePercent),
+              taxableSupplyUnitId: meaning.unit.unitId,
+            })),
+          ),
+          shippingSource: shipping.source,
+        }),
+        Option.some,
+      ),
   });
 };
 
@@ -288,6 +272,28 @@ const taxableDecisionUnitOf = (
   treatment: { _tag: 'TAXABLE', ratePercent: meaning.rule.ratePercent },
 });
 
+/** The first element and the rest, as a `NonEmptyReadonlyArray`, or none when the array is empty. */
+const nonEmpty = <Value>(values: readonly Value[]): Option.Option<NonEmptyReadonlyArray<Value>> => {
+  const [first, ...rest] = values;
+  return first === undefined ? Option.none() : Option.some([first, ...rest]);
+};
+
+/**
+ * Shipping allocation for a VAT_PAYER with at least one unit meaning; NON_PAYER and an empty unit set never
+ * allocate (Unit 10 A2, F14; PO decision D3 on #907).
+ */
+const allocationFor = (
+  request: TaxEvaluationRequest,
+  isVatPayer: boolean,
+  unitMeanings: readonly UnitMeaning[],
+): Evaluated<Option.Option<ShippingAllocation>> =>
+  isVatPayer
+    ? Option.match(nonEmpty(unitMeanings), {
+        onNone: () => Result.succeed(Option.none()),
+        onSome: (meanings) => shippingAllocationOf(request, meanings),
+      })
+    : Result.succeed(Option.none());
+
 /**
  * NON_PAYER unit: the published line only, no classification, no governing rule, no shipping allocation (shipping
  * evidence is ignored for this treatment, not an error) (Unit 10 A4, F14).
@@ -307,6 +313,21 @@ const nonPayerDecisionUnitOf = (
   taxableSupplyUnit: meaning.unit,
   treatment: { _tag: 'SELLER_NOT_VAT_PAYER' },
 });
+
+/** Decision units of a VAT_PAYER or NON_PAYER Decision, for the already-succeeded meanings of each (Unit 10 A2). */
+const decisionUnitsOf = (
+  isVatPayer: boolean,
+  determination: TaxJurisdictionDetermination,
+  shipping: Option.Option<ShippingAllocation>,
+  unitMeanings: readonly UnitMeaning[],
+  nonPayerUnitMeanings: readonly NonPayerUnitMeaning[],
+  sellerVatRegime: SellerVatRegimeSelection & { readonly _tag: 'DECLARED' },
+): readonly TaxDecisionUnit[] =>
+  isVatPayer
+    ? unitMeanings.map((meaning) => taxableDecisionUnitOf(meaning, determination, shipping))
+    : nonPayerUnitMeanings.map((meaning) =>
+        nonPayerDecisionUnitOf(meaning, determination, sellerVatRegime.declarationRevisionRef),
+      );
 
 const encodeDecision = Schema.encodeResult(TaxDecisionSchema);
 /** Exact code-unit order: locale collation can rank distinct identifiers as equal, so it never orders identities. */
@@ -404,6 +425,25 @@ const publish = (
   return isTaxOutcomeSuccess(success) ? Result.succeed(success) : indeterminate();
 };
 
+/** Publishes the Decision/Result built from the already-succeeded meanings and the given Shipping allocation. */
+const publishFromMeanings = (
+  request: TaxEvaluationRequest,
+  sellerVatRegime: SellerVatRegimeSelection & { readonly _tag: 'DECLARED' },
+  isVatPayer: boolean,
+  determination: TaxJurisdictionDetermination,
+  shipping: Option.Option<ShippingAllocation>,
+  unitMeanings: readonly UnitMeaning[],
+  nonPayerUnitMeanings: readonly NonPayerUnitMeaning[],
+  options: EvaluationOptions,
+): Evaluated<TaxOutcomeSuccess> =>
+  Option.match(
+    nonEmpty(decisionUnitsOf(isVatPayer, determination, shipping, unitMeanings, nonPayerUnitMeanings, sellerVatRegime)),
+    {
+      onNone: indeterminate,
+      onSome: (decisionUnits) => publish(request, sellerVatRegime, decisionUnits, shipping, options),
+    },
+  );
+
 type EvaluationFailure = TaxNonSuccessOutcome | LaunchTaxCoverageFailure;
 type AnyEvaluated = Result.Result<unknown, EvaluationFailure>;
 
@@ -459,6 +499,8 @@ export const evaluateProspectiveLaunchTax = (
     ? ownState.sellerVatRegime
     : undefined;
   const isVatPayer = declaredSellerVatRegime?.regime === 'VAT_PAYER';
+  // One Pricing Result cannot be both GROSS and NET; applies to both regimes (evidence integrity, not VAT itself).
+  const lineBasis: Evaluated<void> = requireConsistentLineAmountBasis(request.pricing.publishedLines);
   const taxableMeanings: readonly Evaluated<UnitMeaning>[] =
     isVatPayer && Result.isSuccess(units)
       ? pipe(
@@ -473,12 +515,20 @@ export const evaluateProspectiveLaunchTax = (
           Arr.map((unit) => nonPayerUnitMeaning(request, unit)),
         )
       : [];
-  // NON_PAYER ignores Shipping evidence entirely; it is never allocated and never an error (Unit 10 A2, F14).
-  const allocation: Evaluated<Option.Option<ShippingAllocation>> =
-    isVatPayer && Result.isSuccess(units)
-      ? shippingAllocationOf(request, units.success)
-      : Result.succeed(Option.none());
-  const parts: readonly AnyEvaluated[] = [jurisdiction, coverage, ...taxableMeanings, ...nonPayerMeanings, allocation];
+  // A NET weight needs the unit's rate, so the Shipping source check (independent of the unit meanings) runs
+  // here, and derivation happens only after every unit meaning has succeeded (Unit 10 A2; PO decision D3 on #907).
+  const shippingCharge: AnyEvaluated =
+    isVatPayer && request.shipping !== undefined
+      ? requireAllocatableShippingCharge(request.shipping.source)
+      : Result.void;
+  const parts: readonly AnyEvaluated[] = [
+    jurisdiction,
+    coverage,
+    lineBasis,
+    ...taxableMeanings,
+    ...nonPayerMeanings,
+    shippingCharge,
+  ];
   const verdictOf = (outcome: TaxOutcome, failure: Option.Option<EvaluationFailure>): TaxEvaluationVerdict => ({
     notDeterminedBecause: Option.match(failure, {
       onNone: (): Option.Option<'SELLER_VAT_REGIME_NOT_DECLARED'> => Option.none(),
@@ -492,25 +542,33 @@ export const evaluateProspectiveLaunchTax = (
     onNone: (): Evaluated<TaxOutcomeSuccess> =>
       pipe(
         Result.all({
-          allocation,
           determination: jurisdiction,
           nonPayerUnitMeanings: Result.all(nonPayerMeanings),
           unitMeanings: Result.all(taxableMeanings),
         }),
-        Result.flatMap(({ allocation: shipping, determination, nonPayerUnitMeanings, unitMeanings }) => {
+        Result.flatMap(({ determination, nonPayerUnitMeanings, unitMeanings }) => {
           if (declaredSellerVatRegime === undefined) {
             return indeterminate();
           }
           const sellerVatRegime = declaredSellerVatRegime;
-          const decisionUnits: readonly TaxDecisionUnit[] = isVatPayer
-            ? unitMeanings.map((meaning) => taxableDecisionUnitOf(meaning, determination, shipping))
-            : nonPayerUnitMeanings.map((meaning) =>
-                nonPayerDecisionUnitOf(meaning, determination, sellerVatRegime.declarationRevisionRef),
-              );
-          const [first, ...rest] = decisionUnits;
-          return first === undefined
-            ? indeterminate()
-            : publish(request, sellerVatRegime, [first, ...rest] as const, shipping, options);
+          // NON_PAYER ignores Shipping evidence entirely; it is never allocated and never an error
+          // (Unit 10 A2, F14). The derived weight needs the unit's rate, so allocation runs only now,
+          // after every unit meaning has succeeded (PO decision D3 on #907).
+          return pipe(
+            allocationFor(request, isVatPayer, unitMeanings),
+            Result.flatMap((shipping) =>
+              publishFromMeanings(
+                request,
+                sellerVatRegime,
+                isVatPayer,
+                determination,
+                shipping,
+                unitMeanings,
+                nonPayerUnitMeanings,
+                options,
+              ),
+            ),
+          );
         }),
       ),
     onSome: (failure): Evaluated<TaxOutcomeSuccess> => Result.fail(failure),

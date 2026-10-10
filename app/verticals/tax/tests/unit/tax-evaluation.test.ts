@@ -30,12 +30,15 @@ import {
   REDUCED_CODE,
   STANDARD_CODE,
   catalogEntry,
+  decodeEvaluationRequest,
   evaluate,
   evaluationRequest,
   evaluationRequestInput,
+  grossLine,
   ownState,
   pricingLine,
   selected,
+  shippingCharge,
 } from './tax-evaluation-fixtures.ts';
 import type { TaxEvaluationRequestInput } from './tax-evaluation-fixtures.ts';
 
@@ -63,7 +66,7 @@ type ShippingInput = NonNullable<TaxEvaluationRequestInput['shipping']>;
 
 const shippingInput = (overrides: Partial<ShippingInput> = {}): ShippingInput => ({
   affectedOccurrenceIds: ['o1', 'o2'],
-  source: { _tag: 'CURRENT', amount: { amount: exactDecimal('100.00'), currency: 'CZK' }, shippingSourceRef },
+  source: shippingCharge('100.00'),
   ...overrides,
 });
 
@@ -112,7 +115,7 @@ const eurLineOnO2 = () =>
   evaluationRequest({
     pricing: {
       pricingResultRef: PRICING_RESULT_REF,
-      publishedLines: [pricingLine('o1', '1000.00'), pricingLine('o2', '10', 'EUR')],
+      publishedLines: [pricingLine('o1', '1000.00'), pricingLine('o2', '10', { currency: 'EUR' })],
     },
   });
 
@@ -295,7 +298,12 @@ describe('Prospective Launch Tax evaluation', () => {
 
     it('#931 F15-F16 a non-CZK published line is never relabelled', () => {
       const request = evaluationRequest(
-        { pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '10', 'EUR')] } },
+        {
+          pricing: {
+            pricingResultRef: PRICING_RESULT_REF,
+            publishedLines: [pricingLine('o1', '10', { currency: 'EUR' })],
+          },
+        },
         ['o1'],
       );
 
@@ -323,7 +331,12 @@ describe('Prospective Launch Tax evaluation', () => {
       );
 
       const nonCzkCurrency = evaluationRequest(
-        { pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '10', 'EUR')] } },
+        {
+          pricing: {
+            pricingResultRef: PRICING_RESULT_REF,
+            publishedLines: [pricingLine('o1', '10', { currency: 'EUR' })],
+          },
+        },
         ['o1'],
       );
       expect(evaluate(nonCzkCurrency, nonPayer)).toEqual(
@@ -380,43 +393,226 @@ describe('Prospective Launch Tax evaluation', () => {
     });
   });
 
-  describe('#933 Shipping allocation (PO decision D3 default)', () => {
-    it('owner-approved weights keyed by occurrence are applied exactly to TAX unit identities', () => {
+  describe('LEGAL §2 D3 gross shipping basis: TAX derives the weights (#907 unit 11)', () => {
+    it('D3-1 worked example: GROSS lines, GROSS shipping, exact gross-weighted shares', () => {
       const outcome = success(
         evaluate(
-          withShipping({
-            allocationWeights: {
-              approvalEvidenceRef: 'weights-approval-1',
-              weights: [
-                { occurrenceId: 'o1', weight: exactDecimal('3') },
-                { occurrenceId: 'o2', weight: exactDecimal('1') },
-              ],
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '112.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00') }),
+          }),
+        ),
+      );
+      expect(publishedByUnit(outcome)).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '29.92'],
+          ['taxable-supply-unit:o2', '17.10'],
+        ]),
+      );
+      expect(outcome.result.purchaseTaxTotal.amount).toBe('47.02');
+      expect(outcome.decision.shippingAllocation?.unitAllocations[0]?.basisComponent).toMatchObject({
+        allocationKey: { key: 'GROSS_LINE_VALUE', revision: 1 },
+        amountBasis: 'GROSS',
+      });
+    });
+
+    it('D3-1n the same basket priced NET gives the identical shares and units', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [pricingLine('o1', '100.00'), pricingLine('o2', '100.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00') }),
+          }),
+        ),
+      );
+      expect(publishedByUnit(outcome)).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '29.92'],
+          ['taxable-supply-unit:o2', '17.10'],
+        ]),
+      );
+    });
+
+    it('D3-3s quantity row: the weight is the whole line value, never a per-piece price', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '29.97'), grossLine('o2', '112.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00') }),
+          }),
+        ),
+      );
+      expect(publishedByUnit(outcome)).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '8.83'],
+          ['taxable-supply-unit:o2', '20.37'],
+        ]),
+      );
+    });
+
+    it('D3-4a a zero total weight with a non-zero charge is indeterminate', () => {
+      expect(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '0.00'), grossLine('o2', '0.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00') }),
+          }),
+        ),
+      ).toEqual(indeterminate);
+    });
+
+    it('D3-4b one zero weight among positive ones gets an exact 0 share, never indeterminate', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '0.00'), grossLine('o2', '10.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00') }),
+          }),
+        ),
+      );
+      expect(
+        outcome.decision.shippingAllocation?.unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
+          taxableSupplyUnitId,
+          basisComponent.amount,
+        ]),
+      ).toEqual([
+        ['taxable-supply-unit:o1', exactDecimal('0')],
+        ['taxable-supply-unit:o2', exactDecimal('99.00')],
+      ]);
+    });
+
+    it('D3-4c an unusable rule never guesses a weight', () => {
+      expect(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '10.00'), grossLine('o2', '10.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00') }),
+          }),
+          ownState({ ruleSets: new Map([[STANDARD_CODE, { applicable: [], outcome: 'TAX_RULE_MISSING' }]]) }),
+        ),
+      ).toEqual(TaxRuleMissingSchema.make({}));
+    });
+
+    it('D3-5 inconsistent lines bases (GROSS next to NET) are indeterminate', () => {
+      expect(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '121.00'), pricingLine('o2', '500.00')],
+            },
+          }),
+        ),
+      ).toEqual(indeterminate);
+    });
+
+    it('D3-6 a NET-priced Shipping charge cannot supply the gross control total', () => {
+      expect(evaluate(withShipping({ source: shippingCharge('100.00', 'NET') }))).toEqual(
+        TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NET_SHIPPING_AMOUNT_BASIS' }),
+      );
+    });
+
+    it('D3-7 display (largest-remainder) shares never feed back into the exact tax', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '1.00'), grossLine('o2', '6.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00') }),
+          }),
+        ),
+      );
+      // B's exact share is 594/7; it publishes 9.73, not the 9.74 a rounded display share would give.
+      expect([...publishedByUnit(outcome)].find(([unitId]) => unitId === 'taxable-supply-unit:o2')?.[1]).toBe('9.73');
+    });
+
+    it('D3-8 a non-payer carries no Shipping allocation and ignores its amount basis, GROSS or NET', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest(
+            {
+              pricing: {
+                pricingResultRef: PRICING_RESULT_REF,
+                publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '112.00')],
+              },
+              purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+              shipping: shippingInput({ source: shippingCharge('99.00', 'NET') }),
+            },
+            ['o1', 'o2'],
+          ),
+          ownState({ ruleSets: new Map(), sellerVatRegime: DECLARED_NON_PAYER }),
+        ),
+      );
+      expect(outcome.decision.shippingAllocation).toBeUndefined();
+      expect(publishedByUnit(outcome)).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '0.00'],
+          ['taxable-supply-unit:o2', '0.00'],
+        ]),
+      );
+    });
+
+    it('D3-9 a caller that still sends the old allocationWeights key is ignored, never applied', () => {
+      // The whole request is decoded from an untyped literal so the obsolete `allocationWeights` key, an excess
+      // property Effect `Struct` decoding drops, can be included without widening any typed fixture helper.
+      const outcome = success(
+        evaluate(
+          decodeEvaluationRequest({
+            ...evaluationRequestInput({
+              pricing: {
+                pricingResultRef: PRICING_RESULT_REF,
+                publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '112.00')],
+              },
+              purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            }),
+            shipping: {
+              ...shippingInput({ source: shippingCharge('99.00') }),
+              allocationWeights: { o1: 3, o2: 1 },
             },
           }),
         ),
       );
-
-      // o1: (1000 + 75) * 21 % = 225.75; o2: (500 + 25) * 12 % = 63.00
       expect(publishedByUnit(outcome)).toEqual(
         new Map([
-          ['taxable-supply-unit:o1', '225.75'],
-          ['taxable-supply-unit:o2', '63.00'],
+          ['taxable-supply-unit:o1', '29.92'],
+          ['taxable-supply-unit:o2', '17.10'],
         ]),
       );
-      expect(
-        outcome.decision.shippingAllocation?.unitAllocations.map(({ taxableSupplyUnitId }) => taxableSupplyUnitId),
-      ).toEqual(['taxable-supply-unit:o1', 'taxable-supply-unit:o2']);
-    });
-
-    it('several affected units without owner-approved weights get no guessed split', () => {
-      expect(evaluate(withShipping())).toEqual(indeterminate);
     });
 
     it('one affected unit takes the whole Shipping amount', () => {
+      // o2: NET 500 @ 12 % = 60; GROSS 100 shipping @ 12 % = 100 * 12/112 = 10.7142... -> 60 + 10.7142... = 70.71.
       expect(publishedByUnit(evaluate(withShipping({ affectedOccurrenceIds: ['o2'] })))).toEqual(
         new Map([
           ['taxable-supply-unit:o1', '210.00'],
-          ['taxable-supply-unit:o2', '72.00'],
+          ['taxable-supply-unit:o2', '70.71'],
         ]),
       );
     });
@@ -500,7 +696,7 @@ describe('Structural binding of the evaluation request (#937 F11-F30)', () => {
     const mismatched = withShipping({
       source: {
         _tag: 'CURRENT',
-        amount: { amount: exactDecimal('100.00'), currency: 'CZK' },
+        amount: { amount: exactDecimal('100.00'), amountBasis: 'GROSS', currency: 'CZK' },
         shippingSourceRef: { revision: 2, shippingAmountId: 'shipping-1' },
       },
     });
