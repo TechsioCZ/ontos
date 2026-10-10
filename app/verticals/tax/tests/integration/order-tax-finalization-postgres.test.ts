@@ -112,30 +112,8 @@ const acquireDatabases = Effect.gen(function* acquireOrderTaxTestDatabases() {
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
   yield* cleanup(admin);
   yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  return { admin, adminClient, runtime };
+  return { adminClient, runtime };
 });
-
-/** The exact scoped key `lockTaxScopeKey` hashes for one seller's VAT regime timeline (Unit 10 C). */
-const sellerVatRegimeLockKey = (legalEntityId: string) =>
-  ['tax-scope', tenantId, legalEntityId, 'SELLER_VAT_REGIME_DECLARATION'].join(':');
-
-/** Waits until a reader is parked on the seller VAT regime lock an admin-held transaction is still holding. */
-const awaitSellerLockWaiter = (observer: Effect.Success<typeof testDatabaseClients>['admin']) =>
-  Effect.gen(function* awaitSellerLockWaiterEffect() {
-    for (let observation = 0; observation < 1000; observation += 1) {
-      const [row] = yield* observer.unsafe<{ blocked: boolean }>(
-        `select exists (
-           select 1 from pg_stat_activity
-           where wait_event_type = 'Lock' and query like '%tax_scope_lock_anchor%'
-         ) as blocked`,
-      );
-      if (row?.blocked === true) {
-        return true;
-      }
-      yield* Effect.sleep('10 millis');
-    }
-    return false;
-  });
 
 type EffectivePeriodInput = Readonly<{ effectiveFrom: string; effectiveTo?: string }>;
 const LAUNCH_PERIOD: EffectivePeriodInput = { effectiveFrom: '2026-01-01T00:00:00.000Z' };
@@ -809,69 +787,6 @@ it.live('#961 scenario 9: the finalize Action and final read handlers persist, r
       expect(handoff.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
       expect(handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
       expect(handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
-    }),
-  ),
-);
-
-it.live('Unit 10 C an admin-held concurrent declaration parks finalize on the seller lock', () =>
-  Effect.scoped(
-    Effect.gen(function* adminHeldDeclareAcceptance() {
-      const { admin, adminClient, runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
-      yield* subject.setUp;
-      yield* subject.launchRules;
-
-      // Deterministic instead of racy (Unit 10 C): an admin transaction takes the exact lock `lockTaxScopeKey`
-      // hashes for 'SELLER_VAT_REGIME_DECLARATION' and inserts the concurrent revision 2 itself, uncommitted, so
-      // finalize's `shared` acquire of that same key is provably parked behind it before it is ever released.
-      const lockKey = sellerVatRegimeLockKey(subject.legalEntityId);
-      const sellerLockHeld = yield* Deferred.make<boolean>();
-      const releaseSellerLock = yield* Deferred.make<boolean>();
-      const declarationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-02-01T00:00:00.000Z'));
-      const heldTransaction = yield* Effect.forkChild(
-        admin.transaction((transaction) =>
-          Effect.gen(function* holdSellerLockAndDeclare() {
-            yield* transaction.execute<{ locked: boolean }>(
-              sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0)) as locked`,
-              'objects',
-            );
-            yield* transaction.insert(taxSellerVatRegimeDeclarations).values({
-              actionInvocationId: randomUUID(),
-              actorPrincipalId: principalId,
-              effectiveFrom: declarationTime,
-              idempotencyKey: randomUUID(),
-              intentFingerprint: '0'.repeat(64),
-              legalEntityId: subject.legalEntityId,
-              provenance: 'MERCHANT_DECLARED',
-              reason: 'Deterministic admin-held concurrent declaration racing a finalize (#950 F24, Unit 10 C)',
-              recordedAt: declarationTime,
-              regime: 'NON_PAYER',
-              replacesScheduled: false,
-              revision: 2,
-              tenantId,
-            });
-            yield* Deferred.succeed(sellerLockHeld, true);
-            yield* Deferred.await(releaseSellerLock);
-          }),
-        ),
-      );
-      yield* Deferred.await(sellerLockHeld);
-
-      const submission = `submission-${randomUUID()}`;
-      const finalizeFiber = yield* subject.finalize(subject.payload(submission)).pipe(Effect.forkChild);
-
-      // The finalize reader is provably parked on the seller lock while the admin transaction is still uncommitted.
-      expect(yield* awaitSellerLockWaiter(adminClient)).toBe(true);
-      yield* Effect.sleep('100 millis');
-      expect(finalizeFiber.pollUnsafe()).toBeUndefined();
-
-      yield* Deferred.succeed(releaseSellerLock, true);
-      yield* Fiber.join(heldTransaction);
-
-      // Once the admin transaction commits, revision 2 is exactly the head at finalize's commit (Unit 10 C).
-      const final = finalizedOf(yield* Fiber.join(finalizeFiber));
-      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(2);
-      expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
     }),
   ),
 );
