@@ -35,6 +35,8 @@ const taxCorrectionPreviewEntrypoint = defineTenantModuleEntrypoint({
  * the owner cannot establish is the explicit unresolved historical-input outcome and discloses nothing; an established
  * record must belong to the trusted Tenant and Selling Legal Entity, anything else is not visible. A visible record
  * whose Tax Result does not follow from its Tax Decision is inconsistent historical input, never a guessed baseline.
+ * The original record of a correction is the accepted Billing Document; the decode rejects a declared `CORRECTION`
+ * over an Order Snapshot as 400 Invalid, like an unsupported `REFUND` change (H10).
  * The preview reads and writes no TAX state, keeps no copy of the record and consumes no Accepted correction state
  * (#946 F15-F17, #948 F26, #945 C, PO default D2).
  */

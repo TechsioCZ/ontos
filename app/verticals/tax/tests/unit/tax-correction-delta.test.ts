@@ -2,6 +2,7 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import type { AcceptedTaxTerms } from '../../src/domain/accepted-tax-terms.ts';
+import { AuthoritativeOriginalAcceptedRecordSchema } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 import {
   CumulativeUnitTaxStateSchema,
   TaxCorrectionDeltaSchema,
@@ -400,13 +401,32 @@ describe('Tax Correction Delta', () => {
 
     expect(reversed).toEqual(forward);
     const outcome = deltaOf(forward);
-    expect(outcome.originalRecord).toEqual(terms.authoritativeRecord);
+    // H10: the original record of a correction is the accepted Billing Document (the fixtures' default record).
+    expect(Schema.is(AuthoritativeOriginalAcceptedRecordSchema.members[1])(outcome.originalRecord)).toBe(true);
+    expect(outcome.originalRecord.billingDocumentRef).toBe('invoice-1');
     expect(outcome.originalOrderLineage).toEqual(terms.orderLineage);
     expect(outcome.originalTaxDecisionId).toBe(terms.finalTax.decision.decisionId);
     expect(outcome.taxRoundingPolicy).toEqual(terms.finalTax.result.taxRoundingPolicy);
     expect(outcome.correctionEventRef).toBe('return-1');
     expect(outcome.correctionReason).toBe('CUSTOMER_RETURN');
     expect(outcome.correctionTaxDelta.amount).toBe('-4.20');
+    // C-4: a forged delta claiming the Order Snapshot as its original record fails to decode.
+    expect(() =>
+      Schema.decodeUnknownSync(TaxCorrectionDeltaSchema)({ ...outcome, originalRecord: { _tag: 'ORDER_SNAPSHOT' } }),
+    ).toThrow();
+  });
+
+  describe('Stage C: H10 baseline (#945-#948)', () => {
+    it('C-1 a correction request whose Terms are the Order Snapshot fails to decode (H10)', () => {
+      const request = {
+        acceptedTaxTerms: acceptedTaxTermsInput([tenAt9999], [tenAt9999], { _tag: 'ORDER_SNAPSHOT' }),
+        correctionEventRef: 'return-1',
+        correctionReason: 'CUSTOMER_RETURN',
+        units: [unitRequest('o-1', quantity('-1'))],
+      };
+
+      expect(() => decodeRequest(request)).toThrow(/accepted Billing Document/u);
+    });
   });
 
   it('#948 F9-F16 #948 E accepts only reductions, each original unit once per correction', () => {
