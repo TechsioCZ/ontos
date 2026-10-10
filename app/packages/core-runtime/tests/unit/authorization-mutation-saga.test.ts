@@ -366,6 +366,49 @@ it.effect('reconciles only the exact durable Inventory Resource intent', () =>
   }),
 );
 
+it.effect('reconciles only the exact TAX Selling Legal Entity intent', () =>
+  Effect.gen(function* reconcileTaxSellingLegalEntity() {
+    const taxPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage');
+    const taxTarget = { kind: 'tax_selling_legal_entity' as const, legalEntityId, tenantId };
+    const taxIntent: AuthorizationMutationJournalEntry = {
+      ...intent(),
+      businessTarget: taxTarget,
+      permission: taxPermission,
+    };
+    const writes: unknown[] = [];
+    const result = yield* reconcileCommittedAuthorizationMutation(
+      taxIntent,
+      {
+        mutate: (input) =>
+          Effect.sync(() => {
+            writes.push(input);
+          }),
+      },
+      { finalize: () => Effect.succeed({ ...taxIntent, state: 'ACTIVE' }) },
+    );
+    expect(result.outcome).toBe('FINALIZED');
+    expect(writes).toEqual([
+      { operation: 'grant', permission: taxPermission, principal: { principalId, tenantId }, target: taxTarget },
+    ]);
+
+    const otherSeller = yield* Effect.flip(
+      reconcileCommittedAuthorizationMutation(
+        taxIntent,
+        { mutate: () => Effect.void },
+        {
+          finalize: () =>
+            Effect.succeed({
+              ...taxIntent,
+              businessTarget: { ...taxTarget, legalEntityId: '30000000-0000-4000-8000-000000000002' },
+              state: 'ACTIVE',
+            }),
+        },
+      ),
+    );
+    expect(otherSeller.code).toBe('authorization_mutation_final_state_invalid');
+  }),
+);
+
 it.effect('rejects incompatible or noncanonical Pricing intents before relationship mutation and finalization', () =>
   Effect.gen(function* rejectInvalidPricingIntents() {
     const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');

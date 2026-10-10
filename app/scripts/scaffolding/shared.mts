@@ -263,7 +263,8 @@ export interface PermissionScaffoldConfig {
     | 'module'
     | 'price_group'
     | 'pricing_catalog'
-    | 'retail_profile';
+    | 'retail_profile'
+    | 'tax_selling_legal_entity';
   readonly vertical: string;
 }
 

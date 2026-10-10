@@ -511,6 +511,9 @@ const readBusinessTargetResourceId = (
   if (target.kind === 'price_group') {
     return `${target.pricingCatalogId}:${target.priceGroupId}`;
   }
+  if (target.kind === 'tax_selling_legal_entity') {
+    return target.legalEntityId;
+  }
   return target.resource.resourceId;
 };
 

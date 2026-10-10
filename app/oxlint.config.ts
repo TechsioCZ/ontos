@@ -889,6 +889,7 @@ export default defineConfig({
         'verticals/commerce-customer-context/src/api/commerce-customer-context-client.ts',
         'verticals/payment-term-catalog/shared/api.ts',
         'verticals/payment-term-catalog/src/api/payment-term-catalog-client.ts',
+        'verticals/tax/src/api/tax-client.ts',
       ],
       rules: {
         'oxc/no-barrel-file': 'off',

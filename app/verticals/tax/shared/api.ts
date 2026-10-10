@@ -8,6 +8,16 @@ import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microv
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
+import { ApplicableTaxRuleSetApi } from './apis/applicable-tax-rule-set.ts';
+import { CorrectTaxRuleRevisionActionApi } from './apis/correct-tax-rule-revision-action.ts';
+import { CreateTaxRuleActionApi } from './apis/create-tax-rule-action.ts';
+import { CreateTaxRuleRevisionActionApi } from './apis/create-tax-rule-revision-action.ts';
+import { EndTaxFactAuthorityContractActionApi } from './apis/end-tax-fact-authority-contract-action.ts';
+import { EndTaxRuleRevisionActionApi } from './apis/end-tax-rule-revision-action.ts';
+import { EstablishTaxFactAuthorityContractActionApi } from './apis/establish-tax-fact-authority-contract-action.ts';
+import { ReviseTaxFactAuthorityContractActionApi } from './apis/revise-tax-fact-authority-contract-action.ts';
+import { TaxFactAuthorityCurrentApi } from './apis/tax-fact-authority-current.ts';
+import { TaxRuleHistoryApi } from './apis/tax-rule-history.ts';
 // </generated-governed-http-api-imports>
 
 export const taxMarkerSchema = Schema.Struct({
@@ -36,6 +46,16 @@ export const taxFoundationApi = HttpApi.make('TaxApiFoundation').add(
 export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(taxFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(ApplicableTaxRuleSetApi)
+  .addHttpApi(CorrectTaxRuleRevisionActionApi)
+  .addHttpApi(CreateTaxRuleActionApi)
+  .addHttpApi(CreateTaxRuleRevisionActionApi)
+  .addHttpApi(EndTaxFactAuthorityContractActionApi)
+  .addHttpApi(EndTaxRuleRevisionActionApi)
+  .addHttpApi(EstablishTaxFactAuthorityContractActionApi)
+  .addHttpApi(ReviseTaxFactAuthorityContractActionApi)
+  .addHttpApi(TaxFactAuthorityCurrentApi)
+  .addHttpApi(TaxRuleHistoryApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

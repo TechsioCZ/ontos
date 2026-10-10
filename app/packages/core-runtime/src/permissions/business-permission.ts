@@ -24,6 +24,7 @@ export const BusinessPermissionScopeKindSchema = Schema.Literals([
   'price_group',
   'pricing_catalog',
   'retail_profile',
+  'tax_selling_legal_entity',
 ]);
 export const BusinessPermissionAuditSensitivitySchema = Schema.Literals(['sensitive', 'standard']);
 
@@ -71,14 +72,32 @@ const freezeDescriptor = (descriptor: BusinessPermissionDescriptor): Readonly<Bu
     protectedEntrypoints: Object.freeze([...descriptor.protectedEntrypoints]),
   });
 
+/**
+ * TAX management authority is seller-specific (#950 F24-F28): it targets one exact Selling Legal Entity.
+ * TAX reads stay module-scoped context Permissions, which Core already binds to the trusted Legal Entity.
+ */
+export const isTaxSellingLegalEntityPermission = (permission: string): boolean =>
+  permission === 'tax.authority_contract.manage' || permission === 'tax.rule.manage';
+
+const usesIncompatibleTaxScope = (descriptor: BusinessPermissionDescriptor): boolean =>
+  isTaxSellingLegalEntityPermission(descriptor.key)
+    ? descriptor.allowedScopeKinds.some((scope) => scope !== 'tax_selling_legal_entity')
+    : descriptor.allowedScopeKinds.includes('tax_selling_legal_entity');
+
 const usesIncompatibleTargetScope = (descriptor: BusinessPermissionDescriptor): boolean => {
   const pricingPermission = descriptor.key.startsWith('pricing.price_group.');
   const inventoryPermission = descriptor.key.startsWith('inventory.');
   const retailPermission = descriptor.key.startsWith('retail.');
   const counterpartyPermission = descriptor.key.startsWith('counterparty.');
   const assortmentPermission = descriptor.key.startsWith('assortment.');
+  const taxPermission = isTaxSellingLegalEntityPermission(descriptor.key);
   const modulePermission =
-    !pricingPermission && !inventoryPermission && !retailPermission && !counterpartyPermission && !assortmentPermission;
+    !pricingPermission &&
+    !inventoryPermission &&
+    !retailPermission &&
+    !counterpartyPermission &&
+    !assortmentPermission &&
+    !taxPermission;
   const moduleScope = descriptor.allowedScopeKinds.includes('module');
   const hasPricingScope = descriptor.allowedScopeKinds.some(
     (scope) => scope === 'pricing_catalog' || scope === 'price_group',
@@ -91,6 +110,7 @@ const usesIncompatibleTargetScope = (descriptor: BusinessPermissionDescriptor): 
     (!pricingPermission && hasPricingScope) ||
     (inventoryPermission && descriptor.allowedScopeKinds.some((scope) => scope !== 'inventory_resource')) ||
     (!inventoryPermission && hasInventoryScope) ||
+    usesIncompatibleTaxScope(descriptor) ||
     (modulePermission && !moduleScope) ||
     (!modulePermission && moduleScope)
   );
