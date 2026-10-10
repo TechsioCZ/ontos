@@ -19,7 +19,9 @@ supported domestic Tax Classifications/Tax Rules, including mixed-rate purchases
 ancillary Shipping amount. OSS, reverse charge, export, foreign VAT regimes, generic
 exemption/special-treatment flows, additional selling currencies, and generic multi-supply Set
 monetary decomposition are not activated by Launch. TAX owner activation-ready is not full Commerce
-production readiness.
+production readiness. Activation requires, per activated Selling Legal Entity, a Seller VAT Regime
+Declaration covering activation; legal, Billing and Catalog prerequisites are activation items owned
+outside TAX.
 _Avoid_: legacy feature breadth as Launch scope, implicit domestic fallback, future regime enabled
 by data presence.
 
