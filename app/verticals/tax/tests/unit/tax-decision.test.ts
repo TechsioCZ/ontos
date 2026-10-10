@@ -27,9 +27,14 @@ type ShippingAllocationInput = NonNullable<TaxDecisionInput['shippingAllocation'
 type BasisComponentInput = TaxDecisionUnitInput['taxableBasisInterpretation']['components'][number];
 type ShippingComponentInput = Extract<BasisComponentInput, { readonly _tag: 'SHIPPING_ALLOCATION' }>;
 
-const lineValue = (occurrenceId: string, amount: string): BasisComponentInput => ({
+const lineValue = (
+  occurrenceId: string,
+  amount: string,
+  amountBasis: 'GROSS' | 'NET' = 'NET',
+): BasisComponentInput => ({
   _tag: 'LINE_COMMERCIAL_VALUE',
   amount: exactDecimal(amount),
+  amountBasis,
   occurrenceId,
   pricingLineRef: `pricing-line-${occurrenceId}`,
 });
@@ -37,6 +42,7 @@ const lineValue = (occurrenceId: string, amount: string): BasisComponentInput =>
 const shipping = (amount: string, overrides: Partial<ShippingComponentInput> = {}): ShippingComponentInput => ({
   _tag: 'SHIPPING_ALLOCATION',
   amount: exactDecimal(amount),
+  amountBasis: 'GROSS',
   shippingSourceRef: shippingSourceRefInput,
   ...overrides,
 });
@@ -117,9 +123,7 @@ describe('Tax Decision', () => {
     const misbound = {
       ...decisionUnitInput('o-1'),
       taxableBasisInterpretation: {
-        components: [
-          { _tag: 'LINE_COMMERCIAL_VALUE', amount: exactDecimal('100'), occurrenceId: 'o-2', pricingLineRef: 'line-2' },
-        ],
+        components: [lineValue('o-2', '100')],
       },
     };
 
@@ -149,9 +153,9 @@ describe('Tax Decision', () => {
     ).toThrow();
   });
 
-  it('#933 F17-F18 #936 F19 a split across units keeps the owner-approved allocation-weights evidence', () => {
-    const split = (evidence?: string) => {
-      const attribution = evidence === undefined ? {} : { allocationWeightsEvidenceRef: evidence };
+  it('#933 F17-F18 #936 F19 a split across units keeps the TAX-derived allocation key', () => {
+    const split = (withKey = false) => {
+      const attribution = withKey ? { allocationKey: { key: 'GROSS_LINE_VALUE' as const, revision: 1 as const } } : {};
       return withBoundShipping(
         [
           unitWith('o-1', [lineValue('o-1', '100'), shipping('30', attribution)]),
@@ -165,7 +169,7 @@ describe('Tax Decision', () => {
     };
 
     expect(() => decodeTaxDecision(split())).toThrow();
-    expect(decodeTaxDecision(split('owner-approved-allocation-key-1')).units).toHaveLength(2);
+    expect(decodeTaxDecision(split(true)).units).toHaveLength(2);
     expect(
       decodeTaxDecision(
         withBoundShipping(
@@ -183,7 +187,7 @@ describe('Tax Decision', () => {
   });
 
   it('#907 F85 #933 F8 F12 F21 #935 F14 #920 F32-F34 bound Shipping is allocated completely and exactly', () => {
-    const evidence = { allocationWeightsEvidenceRef: 'owner-approved-allocation-key-1' };
+    const evidence = { allocationKey: { key: 'GROSS_LINE_VALUE' as const, revision: 1 as const } };
     const allocation = allocationOf('120', [
       ['o-1', shipping('30', evidence)],
       ['o-2', shipping('90', evidence)],
@@ -240,6 +244,7 @@ describe('Tax Decision', () => {
       {
         _tag: 'LINE_COMMERCIAL_VALUE',
         amount: exactDecimal('0'),
+        amountBasis: 'NET',
         occurrenceId: 'o-1',
         pricingLineRef: 'pricing-line-o-1',
       },
@@ -284,9 +289,7 @@ describe('Tax Decision', () => {
     const negative = {
       ...decisionUnitInput('o-1'),
       taxableBasisInterpretation: {
-        components: [
-          { _tag: 'LINE_COMMERCIAL_VALUE', amount: exactDecimal('-1'), occurrenceId: 'o-1', pricingLineRef: 'line-1' },
-        ],
+        components: [lineValue('o-1', '-1')],
       },
     };
 
@@ -354,10 +357,7 @@ describe('Tax Decision', () => {
     const withShippingComponent: typeof base = {
       ...base,
       taxableBasisInterpretation: {
-        components: [
-          ...base.taxableBasisInterpretation.components,
-          { _tag: 'SHIPPING_ALLOCATION', amount: exactDecimal('10'), shippingSourceRef: shippingSourceRefInput },
-        ],
+        components: [...base.taxableBasisInterpretation.components, shipping('10')],
       },
     };
     expect(() => decodeTaxDecision(nonPayerTaxDecisionInput(['o-1'], { units: [withShippingComponent] }))).toThrow();
@@ -372,5 +372,30 @@ describe('Tax Decision', () => {
       purchaseBinding: purchaseBindingInput(['o-1'], { shippingSourceRef: shippingSourceRefInput }),
     });
     expect(() => decodeTaxDecision(vatPayerBoundShipping)).toThrow();
+  });
+
+  it('D3-5 a Decision with mixed Line Commercial Value amount bases fails to decode', () => {
+    expect(() =>
+      decodeTaxDecision(
+        taxDecisionInput(['o-1', 'o-2'], {
+          units: [
+            unitWith('o-1', [lineValue('o-1', '100', 'GROSS')]),
+            unitWith('o-2', [lineValue('o-2', '100', 'NET')]),
+          ],
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('D3-6 a Decision with a NET Shipping component fails to decode: Shipping is GROSS-only by type', () => {
+    // SAFETY: decodeTaxDecisionUnit decodes `unknown`; the raw literal intentionally violates the typed Shipping
+    // shape (amountBasis 'NET' instead of the literal 'GROSS') to prove the decoder itself rejects it.
+    const netShipping = { ...shipping('10'), amountBasis: 'NET' };
+    expect(() =>
+      decodeTaxDecisionUnit({
+        ...decisionUnitInput('o-1'),
+        taxableBasisInterpretation: { components: [lineValue('o-1', '100'), netShipping] },
+      }),
+    ).toThrow();
   });
 });

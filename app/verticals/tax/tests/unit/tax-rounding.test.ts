@@ -95,26 +95,57 @@ describe('Tax Rounding', () => {
           {
             _tag: 'LINE_COMMERCIAL_VALUE',
             amount: exactDecimal('100.00'),
+            amountBasis: 'NET',
             occurrenceId: 'o-1',
             pricingLineRef: 'pricing-line-o-1',
           },
           {
             _tag: 'SHIPPING_ALLOCATION',
             amount: { denominator: '7', numerator: '1' },
+            amountBasis: 'GROSS',
             shippingSourceRef: shippingSourceRefInput,
           },
         ],
       },
     });
 
+    // NET line VAT is 100 * 12 % = 12 exactly; the GROSS shipping share's VAT is carved out under § 37 písm. b).
     expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual({
-      denominator: '175',
-      numerator: '2103',
+      denominator: '196',
+      numerator: '2355',
     });
     expect(finalizeTaxableSupplyUnitTax(unit, policy).publishedTaxAmount).toEqual({
       amount: '12.02',
       currency: 'CZK',
     });
+  });
+
+  it('PO decision D3 on #907: the GROSS sibling of the same unit carves VAT out under § 37 písm. b)', () => {
+    const unit = decodeTaxDecisionUnit(decisionUnitInput('o-1', '112.00', '12', 'GROSS'));
+
+    // 112 GROSS @ 12 % -> exact VAT 112 * 12/112 = 12 exactly (the NET base would be 112 * 0.12 = 13.44).
+    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual(exactDecimal('12'));
+    expect(finalizeTaxableSupplyUnitTax(unit, policy).publishedTaxAmount.amount).toBe('12.00');
+  });
+
+  it('D3-2 LEGAL §2 tie 0.14 / 12 %: the exact GROSS VAT is 0.015, which rounds HALF_UP to 0.02, never 0.01', () => {
+    const unit = decodeTaxDecisionUnit(decisionUnitInput('o-1', '0.14', '12', 'GROSS'));
+
+    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual({
+      denominator: '200',
+      numerator: '3',
+    });
+    expect(finalizeTaxableSupplyUnitTax(unit, policy).publishedTaxAmount.amount).toBe('0.02');
+  });
+
+  it('D3-3 a quantity row 3 x 9.99 GROSS @ 21 % publishes 5.20, never 5.19 (per piece) or 6.29 (net math)', () => {
+    const unit = decodeTaxDecisionUnit(decisionUnitInput('o-1', '29.97', '21', 'GROSS'));
+
+    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual({
+      denominator: '12100',
+      numerator: '62937',
+    });
+    expect(finalizeTaxableSupplyUnitTax(unit, policy).publishedTaxAmount.amount).toBe('5.20');
   });
 
   it('#935 F53-F55 retrying the same exact evaluation gives the same haler', () => {

@@ -40,10 +40,13 @@ export const catalogSelectionInput = (variantRef = 'variant-1'): CatalogSelectio
   variantRef,
 });
 
-export const occurrenceInput = (occurrenceId: string): PurchaseBindingInput['purchaseDemandOccurrences'][number] => ({
+export const occurrenceInput = (
+  occurrenceId: string,
+  quantity = '1',
+): PurchaseBindingInput['purchaseDemandOccurrences'][number] => ({
   catalogSelection: catalogSelectionInput(),
   occurrenceId,
-  quantity: { amount: '1', unitRef: 'piece' },
+  quantity: { amount: quantity, unitRef: 'piece' },
 });
 
 export const purchaseBindingInput = (
@@ -53,7 +56,10 @@ export const purchaseBindingInput = (
   currency: 'CZK',
   pricingResultRef: { pricingResultId: 'pricing-result-1', revision: 1 },
   purchaseCandidateRef: 'purchase-a',
-  purchaseDemandOccurrences: [occurrenceInput(occurrenceIds[0]), ...occurrenceIds.slice(1).map(occurrenceInput)],
+  purchaseDemandOccurrences: [
+    occurrenceInput(occurrenceIds[0]),
+    ...occurrenceIds.slice(1).map((occurrenceId) => occurrenceInput(occurrenceId)),
+  ],
   purchasingSubject: { _tag: 'RETAIL_CUSTOMER', purchasingSubjectRef: 'retail-customer-1' },
   sellingLegalEntityRef: 'selling-legal-entity-1',
   tenantId: 'tenant-1',
@@ -65,6 +71,7 @@ export const decisionUnitInput = (
   occurrenceId: string,
   lineValue = '100.00',
   ratePercent = '21',
+  amountBasis: 'GROSS' | 'NET' = 'NET',
 ): TaxDecisionUnitInput => ({
   applicability: 'APPLICABLE',
   governingTaxRuleRevisionRef: { revision: 1, taxRuleId: 'cz-domestic-standard' },
@@ -80,6 +87,7 @@ export const decisionUnitInput = (
       {
         _tag: 'LINE_COMMERCIAL_VALUE',
         amount: exactDecimal(lineValue),
+        amountBasis,
         occurrenceId,
         pricingLineRef: `pricing-line-${occurrenceId}`,
       },
@@ -112,6 +120,7 @@ type SellerNotVatPayerDecisionUnitInput = Exclude<typeof TaxDecisionUnitSchema.E
 export const nonPayerDecisionUnitInput = (
   occurrenceId: string,
   lineValue = '100.00',
+  amountBasis: 'GROSS' | 'NET' = 'NET',
 ): SellerNotVatPayerDecisionUnitInput => ({
   applicability: 'APPLICABLE',
   governingReference: {
@@ -130,6 +139,7 @@ export const nonPayerDecisionUnitInput = (
       {
         _tag: 'LINE_COMMERCIAL_VALUE',
         amount: exactDecimal(lineValue),
+        amountBasis,
         occurrenceId,
         pricingLineRef: `pricing-line-${occurrenceId}`,
       },

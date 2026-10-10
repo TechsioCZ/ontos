@@ -88,7 +88,7 @@ const shippingComponents = (unit: TaxDecisionUnit): readonly ShippingAllocationB
 const unitMeaning = (unit: TaxDecisionUnit) => ({
   applicability: unit.applicability,
   basis: lineComponents(unit)
-    .map(({ amount, occurrenceId }) => joinParts([occurrenceId, exactText(amount)]))
+    .map(({ amount, amountBasis, occurrenceId }) => joinParts([occurrenceId, amountBasis, exactText(amount)]))
     .toSorted(byText),
   classification: isTaxableDecisionUnit(unit) ? unit.taxClassification.classificationCode : 'NONE',
   jurisdiction: unit.jurisdiction.jurisdiction,
@@ -185,9 +185,7 @@ const unitEvidence = (unit: TaxDecisionUnit) => ({
       .map(({ pricingLineRef }) => pricingLineRef)
       .toSorted(byText),
   ),
-  shippingWeights: joinParts(
-    shippingComponents(unit).map(({ allocationWeightsEvidenceRef }) => allocationWeightsEvidenceRef),
-  ),
+  shippingWeights: joinParts(shippingComponents(unit).map(({ allocationKey }) => allocationKey?.revision)),
 });
 type UnitEvidence = ReturnType<typeof unitEvidence>;
 

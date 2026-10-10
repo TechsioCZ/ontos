@@ -1,4 +1,4 @@
-import { Array as Arr, Match, pipe } from 'effect';
+import { Array as Arr, Match, Option, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
 import type {
@@ -8,17 +8,44 @@ import type {
 } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import {
   NonNegativeTaxExactRationalSchema,
+  ONE_TAX_EXACT_RATIONAL,
   ZERO_TAX_EXACT_RATIONAL,
+  addTaxExactRationals,
+  divideTaxExactRationals,
   multiplyTaxExactRationals,
   subtractTaxExactRationals,
   sumTaxExactRationals,
   taxExactFractionOfPercent,
 } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
-import type { NonNegativeTaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import type {
+  NonNegativeTaxExactRational,
+  TaxExactRational,
+} from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import type { TaxAmountBasis } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 import { publishedTaxAmountRoundedHalfUp } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import type { TaxDecisionTreatment } from './tax-treatment.ts';
 import { exactValueOf } from '../../shared/domain/tax-kernel/tax-rounding.ts';
 import type { TaxRoundingPolicy, TaxUnitRoundingEvidence } from '../../shared/domain/tax-kernel/tax-rounding.ts';
+
+/**
+ * Exact § 37 písm. b) VAT of one amount at the given rate, respecting its explicit amount basis (PO decision D3 on
+ * #907). GROSS carves VAT out of the customer-charged amount: `amount * r / (1 + r)`. NET multiplies the pre-Tax
+ * base by the rate, unchanged from before D3. `1 + r` is always positive for a valid rate, so the division is
+ * always exact; `Option.getOrThrow` cannot fail.
+ */
+export const exactVatOfAmount = (
+  amount: NonNegativeTaxExactRational,
+  amountBasis: TaxAmountBasis,
+  rate: TaxExactRational,
+): TaxExactRational =>
+  amountBasis === 'NET'
+    ? multiplyTaxExactRationals(amount, rate)
+    : Option.getOrThrow(
+        divideTaxExactRationals(
+          multiplyTaxExactRationals(amount, rate),
+          addTaxExactRationals(ONE_TAX_EXACT_RATIONAL, rate),
+        ),
+      );
 
 export { TaxRoundingPolicySchema, TaxUnitRoundingEvidenceSchema } from '../../shared/domain/tax-kernel/tax-rounding.ts';
 export type { TaxRoundingPolicy, TaxUnitRoundingEvidence } from '../../shared/domain/tax-kernel/tax-rounding.ts';
@@ -32,8 +59,9 @@ export const LAUNCH_CZK_TAX_ROUNDING_POLICY: TaxRoundingPolicy = {
 };
 
 /**
- * Exact Tax contribution of one unit: its exact non-negative Taxable Basis (all components summed without any
- * rounding) times its exact positive rate, so it is non-negative (#935 F12-F19, F53; #907 F97).
+ * Exact Tax contribution of one unit: the sum, without any rounding, of the exact § 37 písm. b) VAT of each
+ * Taxable Basis component at its own recorded amount basis (goods, quantity and the exact shipping share), so it
+ * is non-negative (#935 F12-F19, F53; #907 F97; PO decision D3 on #907).
  */
 export const exactTaxContribution = (
   basis: TaxableBasisInterpretation,
@@ -42,17 +70,15 @@ export const exactTaxContribution = (
   NonNegativeTaxExactRationalSchema.make(
     Match.value(treatment).pipe(
       Match.tag('SELLER_NOT_VAT_PAYER', () => ZERO_TAX_EXACT_RATIONAL),
-      Match.tag('TAXABLE', ({ ratePercent }) =>
-        multiplyTaxExactRationals(
-          sumTaxExactRationals(
-            pipe(
-              basis.components,
-              Arr.map(({ amount }) => amount),
-            ),
+      Match.tag('TAXABLE', ({ ratePercent }) => {
+        const rate = taxExactFractionOfPercent(ratePercent);
+        return sumTaxExactRationals(
+          pipe(
+            basis.components,
+            Arr.map(({ amount, amountBasis }) => exactVatOfAmount(amount, amountBasis, rate)),
           ),
-          taxExactFractionOfPercent(ratePercent),
-        ),
-      ),
+        );
+      }),
       Match.exhaustive,
     ),
   );

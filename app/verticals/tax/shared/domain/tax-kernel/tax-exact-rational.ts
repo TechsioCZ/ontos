@@ -48,6 +48,8 @@ export type NonNegativeTaxExactRational = typeof NonNegativeTaxExactRationalSche
 
 export const ZERO_TAX_EXACT_RATIONAL: TaxExactRational = { denominator: '1', numerator: '0' };
 
+export const ONE_TAX_EXACT_RATIONAL: TaxExactRational = { denominator: '1', numerator: '1' };
+
 /** Lowest terms with a positive denominator; the denominator must not be zero. */
 const normalize = (numerator: bigint, denominator: bigint): TaxExactRational => {
   const sign = denominator < 0n ? -1n : 1n;

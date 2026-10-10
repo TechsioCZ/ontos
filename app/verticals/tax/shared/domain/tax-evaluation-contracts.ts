@@ -12,8 +12,7 @@ import {
 import { ShippingSourceObservationSchema } from './tax-kernel/shipping-allocation.ts';
 import { TaxClassificationInputSchema } from './tax-kernel/tax-classification.ts';
 import { TaxDecisionIdSchema } from './tax-kernel/tax-decision.ts';
-import { BoundedIdentifierSchema, distinctBy } from './tax-kernel/tax-domain-primitives.ts';
-import { NonNegativeTaxExactRationalSchema } from './tax-kernel/tax-exact-rational.ts';
+import { distinctBy } from './tax-kernel/tax-domain-primitives.ts';
 import { TaxJurisdictionInputSchema } from './tax-kernel/tax-jurisdiction.ts';
 import { TaxOutcomeSchema } from './tax-kernel/tax-outcome.ts';
 import { TaxEvaluationTimeSchema, TaxRelevantTimeSchema } from './tax-kernel/tax-time.ts';
@@ -41,21 +40,13 @@ const SetSupplyMeaningDeclarationSchema = Schema.Struct({
 });
 
 /**
- * Owner-issued Shipping of the exact purchase with the occurrences it relates to and, when several share it, the
- * explicit owner-approved weights keyed by occurrence; TAX maps them to its own Taxable Supply Units (#933 F12-F18,
- * PO decision D3 default, pending on #907).
+ * Owner-issued Shipping charge of the exact purchase, with its explicit amount basis, and the occurrences it
+ * relates to; TAX derives the gross line-value weights itself (PO decision D3 on #907). Effect `Struct` decoding
+ * ignores excess keys, so a caller that still sends the old `allocationWeights` has it dropped, never applied.
  */
 const ShippingEvaluationInputSchema = Schema.Struct({
   affectedOccurrenceIds: Schema.NonEmptyArray(PurchaseDemandOccurrenceIdSchema).check(
     distinctBy((occurrenceId: string) => occurrenceId, 'Each affected occurrence appears once'),
-  ),
-  allocationWeights: Schema.optionalKey(
-    Schema.Struct({
-      approvalEvidenceRef: BoundedIdentifierSchema,
-      weights: Schema.NonEmptyArray(
-        Schema.Struct({ occurrenceId: PurchaseDemandOccurrenceIdSchema, weight: NonNegativeTaxExactRationalSchema }),
-      ).check(distinctOccurrenceIds),
-    }),
   ),
   source: ShippingSourceObservationSchema,
 });
