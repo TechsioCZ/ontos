@@ -4,6 +4,7 @@ import {
   SellerVatRegimeAtInstantSelectionSchema,
   SellerVatRegimeHistoryResponseContractSchema,
 } from './seller-vat-regime-contracts.ts';
+import { distinctBy } from './tax-kernel/tax-domain-primitives.ts';
 
 const InstantSchema = Schema.DateTimeUtcFromString;
 const ReferenceSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
@@ -67,16 +68,11 @@ export const TaxActivationItemOwnerSchema = Schema.Literals([
 ]);
 export type TaxActivationItemOwner = typeof TaxActivationItemOwnerSchema.Type;
 
-const distinctBy =
-  <Value>(key: (value: Value) => string, message: string) =>
-  (values: readonly Value[]) =>
-    new Set(values.map(key)).size === values.length || message;
-
 /** The exact production scope evaluated: one Tenant, the Selling Legal Entities to activate, and the instant. */
 export const TaxActivationScopeSchema = Schema.Struct({
   activationAt: InstantSchema,
   sellingLegalEntityRefs: Schema.NonEmptyArray(ReferenceSchema).check(
-    Schema.makeFilter(distinctBy((ref: string) => ref, 'Each Selling Legal Entity is named once')),
+    distinctBy((ref: string) => ref, 'Each Selling Legal Entity is named once'),
   ),
   tenantRef: ReferenceSchema,
 });
@@ -95,11 +91,9 @@ export type TaxActivationResolution = typeof TaxActivationResolutionSchema.Type;
  */
 export const TaxActivationEvidenceSchema = Schema.Struct({
   resolvedItems: Schema.Array(TaxActivationResolutionSchema).check(
-    Schema.makeFilter(
-      distinctBy(
-        ({ itemId, sellingLegalEntityRef }: TaxActivationResolution) => `${itemId}\u0000${sellingLegalEntityRef ?? ''}`,
-        'Each item is resolved once per seller',
-      ),
+    distinctBy(
+      ({ itemId, sellingLegalEntityRef }: TaxActivationResolution) => `${itemId}\u0000${sellingLegalEntityRef ?? ''}`,
+      'Each item is resolved once per seller',
     ),
   ),
   scope: TaxActivationScopeSchema,
@@ -109,11 +103,9 @@ export const TaxActivationEvidenceSchema = Schema.Struct({
       sellingLegalEntityRef: ReferenceSchema,
     }),
   ).check(
-    Schema.makeFilter(
-      distinctBy(
-        ({ sellingLegalEntityRef }: { readonly sellingLegalEntityRef: string }) => sellingLegalEntityRef,
-        'Each seller has one declaration history',
-      ),
+    distinctBy(
+      ({ sellingLegalEntityRef }: { readonly sellingLegalEntityRef: string }) => sellingLegalEntityRef,
+      'Each seller has one declaration history',
     ),
   ),
 });
