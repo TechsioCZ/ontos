@@ -40,6 +40,23 @@ const inconsistentTerms = acceptedTaxTermsInput(
   [{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }],
 );
 
+/** Stage C: a declared CORRECTION of one unit, over the given handed-over Accepted Tax Terms. */
+const stageCCorrection = (acceptedTaxTerms: PreviewRequestInput['acceptedTaxTerms']): PreviewRequestInput => ({
+  acceptedTaxTerms,
+  declaredPurpose: {
+    _tag: 'CORRECTION',
+    correctionEventRef: 'return-1',
+    correctionReason: 'CUSTOMER_RETURN',
+    units: [
+      {
+        changes: [{ _tag: 'QUANTITY', quantityDelta: exactDecimal('-3') }],
+        expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
+        taxableSupplyUnitId: 'taxable-supply-unit:o-1',
+      },
+    ],
+  },
+});
+
 const preview = (input: PreviewRequestInput, at: OperationalScope = scope) =>
   readTaxCorrectionPreview(decodeRequest(input), {
     readKey: 'commerce.tax.api.tax-correction-preview',
@@ -202,6 +219,31 @@ describe('Tax correction preview read', () => {
         }),
       ).toThrow();
     }
+  });
+
+  describe('Stage C: H10 baseline (#945-#948)', () => {
+    const orderSnapshotTerms = acceptedTaxTermsInput(
+      [{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }],
+      undefined,
+      { _tag: 'ORDER_SNAPSHOT' },
+    );
+
+    it('C-2 a declared CORRECTION over the Order Snapshot fails to decode; over the Billing Document it previews', () => {
+      expect(() => decodeRequest(stageCCorrection(orderSnapshotTerms))).toThrow(/accepted Billing Document/u);
+      expect(() => decodeRequest(stageCCorrection(terms))).not.toThrow();
+    });
+
+    it('C-3 HISTORICAL_READ and NEW_EVENT over the Order Snapshot are still answered (pre-document boundary)', () => {
+      expect(() =>
+        decodeRequest({ acceptedTaxTerms: orderSnapshotTerms, declaredPurpose: { _tag: 'HISTORICAL_READ' } }),
+      ).not.toThrow();
+      expect(() =>
+        decodeRequest({
+          acceptedTaxTerms: orderSnapshotTerms,
+          declaredPurpose: { _tag: 'NEW_EVENT', eventKind: 'PARTIAL_FULFILLMENT', eventRef: 'shipment-4-of-10' },
+        }),
+      ).not.toThrow();
+    });
   });
 
   it('#948 F11 #907 F193-F194 accepts no Payment refund or Fulfillment status as correction facts', () => {

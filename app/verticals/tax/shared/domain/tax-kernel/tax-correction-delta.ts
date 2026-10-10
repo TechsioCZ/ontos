@@ -4,6 +4,7 @@ import {
   AcceptedTaxTermsSchema,
   AuthoritativeOriginalAcceptedRecordSchema,
   OrderLineageSchema,
+  isBillingDocumentRecord,
 } from './accepted-tax-terms.ts';
 import { TaxDecisionIdSchema } from './tax-decision.ts';
 import { BoundedIdentifierSchema, distinctBy } from './tax-domain-primitives.ts';
@@ -141,11 +142,21 @@ export const TaxCorrectionFactsSchema = Schema.Struct({
   ),
 });
 
-/** One supported return/correction of an Authoritative Original Accepted Record (#946 F15, #948 A). */
+/**
+ * One supported return/correction of an Authoritative Original Accepted Record (#946 F15, #948 A). A correction of
+ * an invoiced sale uses the accepted Billing Document as its original record; the Order Snapshot is only ever the
+ * confirmed pre-document boundary and is never a correction baseline (H10).
+ */
 export const TaxCorrectionRequestSchema = Schema.Struct({
   acceptedTaxTerms: AcceptedTaxTermsSchema,
   ...TaxCorrectionFactsSchema.fields,
-});
+}).check(
+  Schema.makeFilter(
+    ({ acceptedTaxTerms }) =>
+      isBillingDocumentRecord(acceptedTaxTerms.authoritativeRecord) ||
+      'A correction of an invoiced sale uses the accepted Billing Document as its original record',
+  ),
+);
 
 export type TaxCorrectionRequest = typeof TaxCorrectionRequestSchema.Type;
 
@@ -211,7 +222,8 @@ export type TaxCorrectionUnitDelta = typeof TaxCorrectionUnitDeltaSchema.Type;
 /**
  * Tax Correction Delta of one correction: a purpose-specific result bound to its original record with its exact
  * Order/Bundle lineage, Decision and rounding policy; not a replacement original Tax Result, a Pricing Result, a
- * refund or a payable amount (#948 F13-F15, #921 F20, #907 F183, F186, F192).
+ * refund or a payable amount (#948 F13-F15, #921 F20, #907 F183, F186, F192). `originalRecord` narrows to the
+ * accepted Billing Document member: the original record of a correction is the accepted Billing Document (H10).
  */
 export const TaxCorrectionDeltaSchema = Schema.TaggedStruct('TAX_CORRECTION_DELTA', {
   correctionEventRef: BoundedIdentifierSchema,
@@ -219,7 +231,7 @@ export const TaxCorrectionDeltaSchema = Schema.TaggedStruct('TAX_CORRECTION_DELT
   correctionTaxDelta: SignedTaxMonetaryAmountSchema,
   currency: TaxCurrencySchema,
   originalOrderLineage: OrderLineageSchema,
-  originalRecord: AuthoritativeOriginalAcceptedRecordSchema,
+  originalRecord: AuthoritativeOriginalAcceptedRecordSchema.members[1],
   originalTaxDecisionId: TaxDecisionIdSchema,
   taxRoundingPolicy: TaxRoundingPolicySchema,
   units: Schema.NonEmptyArray(TaxCorrectionUnitDeltaSchema),

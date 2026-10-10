@@ -1,6 +1,6 @@
 import { Array as Arr, Match, Option, Order, Result, Schema, pipe } from 'effect';
 
-import { originalUnitBaseline } from './accepted-tax-terms.ts';
+import { isBillingDocumentRecord, originalUnitBaseline } from './accepted-tax-terms.ts';
 import type { AcceptedTaxTerms, OriginalUnitBaseline } from './accepted-tax-terms.ts';
 import {
   NonNegativeTaxExactRationalSchema,
@@ -265,6 +265,12 @@ const byUnitId = Order.mapInput(
  * order-independent; it consumes no Accepted state (#948 F17-F24, #946 F16, F19, #907 F186-F192).
  */
 export const calculateTaxCorrectionDelta = (request: TaxCorrectionRequest): TaxCorrectionOutcome => {
+  // H10: the original record of a correction is the accepted Billing Document. `TaxCorrectionRequestSchema`'s
+  // decode-time filter guarantees this at every public boundary, so `Option.getOrThrow` here cannot fail
+  // (the same "cannot fail" idiom `tax-rounding.ts` uses for its own decode-guaranteed invariants).
+  const authoritativeRecord = Option.getOrThrow(
+    Option.liftPredicate(request.acceptedTaxTerms.authoritativeRecord, isBillingDocumentRecord),
+  );
   const calculations = pipe(
     Arr.sort(request.units, byUnitId),
     Arr.map((unit) => calculateUnit(request.acceptedTaxTerms, unit)),
@@ -287,7 +293,7 @@ export const calculateTaxCorrectionDelta = (request: TaxCorrectionRequest): TaxC
       ),
       currency: result.currency,
       originalOrderLineage: request.acceptedTaxTerms.orderLineage,
-      originalRecord: request.acceptedTaxTerms.authoritativeRecord,
+      originalRecord: authoritativeRecord,
       originalTaxDecisionId: decision.decisionId,
       taxRoundingPolicy: result.taxRoundingPolicy,
       units,

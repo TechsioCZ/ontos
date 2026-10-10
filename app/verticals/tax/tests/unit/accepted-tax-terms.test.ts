@@ -58,13 +58,18 @@ describe('Accepted Tax Terms', () => {
     ).toThrow();
   });
 
-  it('#946 F8-F9 #947 F5 the record is either the final B2C Order Snapshot or the accepted Billing Document', () => {
+  it('#945-#948 H10: the record is the accepted Billing Document, the Order Snapshot only before any document', () => {
     const billing = decodeAcceptedTaxTerms({
       ...input(),
       authoritativeRecord: { _tag: 'BILLING_DOCUMENT', billingDocumentRef: 'invoice-1' },
     });
+    const orderSnapshot = decodeAcceptedTaxTerms({ ...input(), authoritativeRecord: { _tag: 'ORDER_SNAPSHOT' } });
 
+    // Both AcceptedTaxTerms tags still decode as Terms; H10 narrows which one a correction may use, not the type.
     expect(Schema.is(AuthoritativeOriginalAcceptedRecordSchema.members[1])(billing.authoritativeRecord)).toBe(true);
+    expect(Schema.is(AuthoritativeOriginalAcceptedRecordSchema.members[0])(orderSnapshot.authoritativeRecord)).toBe(
+      true,
+    );
     expect(() => decodeAcceptedTaxTerms({ ...input(), authoritativeRecord: { _tag: 'CURRENT_CATALOG' } })).toThrow();
   });
 

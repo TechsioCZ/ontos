@@ -2,6 +2,7 @@ import { Schema } from 'effect';
 
 import { AcceptedTaxTermsSchema } from '../../src/domain/accepted-tax-terms.ts';
 import type { AcceptedTaxTerms } from '../../src/domain/accepted-tax-terms.ts';
+import type { AuthoritativeOriginalAcceptedRecordSchema } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 import type { TaxDecisionSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import { TaxExactRationalSchema, sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
@@ -48,6 +49,14 @@ export interface OriginalUnitInput {
 
 export const unitIdOf = (occurrenceId: string): TaxableSupplyUnitId =>
   TaxableSupplyUnitIdSchema.make(`taxable-supply-unit:${occurrenceId}`);
+
+type AuthoritativeRecordInput = typeof AuthoritativeOriginalAcceptedRecordSchema.Encoded;
+
+/** Default record of `acceptedTaxTermsInput`: the accepted Billing Document (H10). */
+const DEFAULT_BILLING_DOCUMENT_RECORD: AuthoritativeRecordInput = {
+  _tag: 'BILLING_DOCUMENT',
+  billingDocumentRef: 'invoice-1',
+};
 
 const isExactRational = Schema.is(TaxExactRationalSchema);
 
@@ -162,17 +171,20 @@ export const originalDecisionInput = (
 };
 
 /**
- * Encoded Accepted Tax Terms of a B2C final Order Snapshot whose Order Commitment Time is the Decision's T. A
- * different `resultUnits` input publishes a Result bound to the Decision whose amounts do not follow from it.
+ * Encoded Accepted Tax Terms retained by an accepted Billing Document, whose Order Commitment Time is the Decision's
+ * T (H10: the record of a correction is the accepted Billing Document). A different `resultUnits` input publishes a
+ * Result bound to the Decision whose amounts do not follow from it. Tests that need the Order Snapshot pass
+ * `record` explicitly.
  */
 export const acceptedTaxTermsInput = (
   units: readonly [OriginalUnitInput, ...OriginalUnitInput[]],
   resultUnits: readonly [OriginalUnitInput, ...OriginalUnitInput[]] = units,
+  record: AuthoritativeRecordInput = DEFAULT_BILLING_DOCUMENT_RECORD,
 ) => {
   const decision = decodeTaxDecision(originalDecisionInput(units));
   const encodedDecision = encodeTaxDecision(decision);
   return {
-    authoritativeRecord: { _tag: 'ORDER_SNAPSHOT' as const },
+    authoritativeRecord: record,
     finalTax: {
       _tag: 'TAX_DETERMINED' as const,
       decision: encodedDecision,

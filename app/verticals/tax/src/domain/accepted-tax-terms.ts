@@ -21,6 +21,7 @@ import type { AcceptedTaxTerms } from '../../shared/domain/tax-kernel/accepted-t
 export {
   AcceptedTaxTermsSchema,
   AuthoritativeOriginalAcceptedRecordSchema,
+  isBillingDocumentRecord,
 } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 export type { AcceptedTaxTerms } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 
