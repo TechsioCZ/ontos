@@ -265,7 +265,7 @@ export type UnresolvedUnit = typeof UnresolvedUnitSchema.Type;
 
 export const isUnresolvedUnit = Schema.is(UnresolvedUnitSchema);
 
-/** A unit may appear twice in `TaxCorrectionOutOfBoundsSchema.units`, once per failing component (F4). */
+/** A unit may appear twice in `TaxCorrectionOutOfBoundsSchema.units`, once per failing reason — quantity vs basis component (F4). */
 const OutOfBoundsUnitSchema = Schema.Struct({
   reason: Schema.Literals(['EXCEEDS_REMAINING_QUANTITY', 'EXCEEDS_REMAINING_BASIS_COMPONENT']),
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
