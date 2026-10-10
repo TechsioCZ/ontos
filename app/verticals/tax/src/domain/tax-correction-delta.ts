@@ -100,7 +100,7 @@ const previousStateOf = (baseline: OriginalUnitBaseline, expected: AcceptedCumul
  * An Accepted state can only have followed from the original record by this arithmetic: remaining quantity and
  * Shipping share within the original, the remaining Line Commercial Value at most the original value per remaining
  * quantity (quantity reductions keep it pro rata, value reductions only lower it, so no goods value is left once no
- * quantity is left), and published at the original rate and boundary. Anything else is an unresolved historical input for Billing to recover, not a state TAX repairs
+ * quantity is left), and published at the original treatment and boundary. Anything else is an unresolved historical input for Billing to recover, not a state TAX repairs
  * (#947 F13-F14, #948 F7).
  */
 const followsFromOriginalRecord = (baseline: OriginalUnitBaseline, state: CumulativeUnitTaxState) =>

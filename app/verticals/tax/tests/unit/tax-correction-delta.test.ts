@@ -658,6 +658,35 @@ describe('Tax Correction Delta', () => {
       // consequence: contribution, adjustment, delta and both remaining published Tax amounts are all zero).
       expect(() => decodeUnitDelta({ ...b1, taxCorrectionDelta: { amount: '-0.01', currency: 'CZK' } })).toThrow();
 
+      // (1b) the treatment-consequence invariant is distinct from the full-reversal invariant: b1 is a full
+      // reversal (QUANTITY -2 leaves nothing remaining), so taxCorrectionDelta -0.01 there is also caught by the
+      // full-reversal filter alone. Forge instead from B-2's *partial* non-payer delta (QUANTITY -1, remaining
+      // quantity 1, remaining line basis 100 — not a full reversal), so only the treatment filter can catch each
+      // conjunct on its own.
+      const partialNonPayerTerms = acceptedTaxTerms([
+        { lineValue: '200.00', nonPayer: true, occurrenceId: 'o-1', quantity: '2' },
+      ]);
+      const {
+        units: [b2],
+      } = deltaOf(correct(partialNonPayerTerms, [unitRequest('o-1', quantity('-1'))]));
+      expect(() => decodeUnitDelta(b2)).not.toThrow();
+
+      expect(() => decodeUnitDelta({ ...b2, taxCorrectionDelta: { amount: '-0.01', currency: 'CZK' } })).toThrow();
+      expect(() =>
+        decodeUnitDelta({
+          ...b2,
+          proposedNext: { ...b2.proposedNext, remainingPublishedTax: { amount: '0.01', currency: 'CZK' } },
+        }),
+      ).toThrow();
+      expect(() =>
+        decodeUnitDelta({
+          ...b2,
+          previous: { ...b2.previous, remainingPublishedTax: { amount: '0.01', currency: 'CZK' } },
+        }),
+      ).toThrow();
+      expect(() => decodeUnitDelta({ ...b2, exactTaxContribution: exactDecimal('1') })).toThrow();
+      expect(() => decodeUnitDelta({ ...b2, taxRoundingAdjustment: exactDecimal('1') })).toThrow();
+
       // (2) a forged zero-remaining proposedNext whose remainingPublishedTax is not 0.00.
       expect(() =>
         decodeUnitDelta({
@@ -723,6 +752,29 @@ describe('Tax Correction Delta', () => {
 
       expect(steps.map(({ proposedNext }) => proposedNext.remainingPublishedTax.amount)).toEqual(['0.02', '0.00']);
       expect(steps.map(({ taxCorrectionDelta }) => taxCorrectionDelta.amount)).toEqual(['-0.01', '-0.02']);
+    });
+
+    it('B-9v the VALUE-first sibling of B-9: the same 0.14/12 % tie reached via a value change, then a quantity return', () => {
+      const terms = acceptedTaxTerms([
+        { amountBasis: 'GROSS', lineValue: '0.28', occurrenceId: 'o-1', quantity: '2', ratePercent: '12' },
+      ]);
+      expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('0.03');
+
+      const afterValue = deltaOf(
+        correct(terms, [unitRequest('o-1', value('-0.14', 'LINE_COMMERCIAL_VALUE', 'GROSS'))]),
+      );
+      expect(afterValue.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('0.14'));
+      expect(afterValue.units[0].proposedNext.remainingPublishedTax.amount).toBe('0.02');
+      expect(afterValue.units[0].taxCorrectionDelta.amount).toBe('-0.01');
+
+      const afterQuantity = deltaOf(correct(terms, [unitRequest('o-1', quantity('-2'), acceptedAs(afterValue, 'v1'))]));
+      expect(afterQuantity.units[0].proposedNext.remainingPublishedTax.amount).toBe('0.00');
+      expect(afterQuantity.units[0].taxCorrectionDelta.amount).toBe('-0.02');
+
+      expect(
+        [afterValue.units[0], afterQuantity.units[0]].map(({ taxCorrectionDelta }) => taxCorrectionDelta.amount),
+      ).toEqual(['-0.01', '-0.02']);
+      expect(sumOfDeltas([afterValue.units[0], afterQuantity.units[0]])).toBe(-3n);
     });
 
     it('B-10 the Unit 11 GROSS quantity row returned one at a time: -1.73, -1.74, -1.73', () => {
