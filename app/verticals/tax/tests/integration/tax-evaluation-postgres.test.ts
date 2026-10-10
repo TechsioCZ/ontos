@@ -29,6 +29,7 @@ import {
 } from '../../src/database/schema.ts';
 import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 import { CustomerSafeSellerNotVatPayerSchema } from '../../src/domain/customer-safe-tax-projection.ts';
+import { TaxableTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 import {
   TaxCaseUnsupportedSchema,
   TaxDependencyUnavailableSchema,
@@ -688,6 +689,32 @@ it.live('#961 scenario 8: a NON_PAYER seller succeeds as non-payer and an undecl
       const undeclaredResponse = yield* undeclared.readPublic();
       expect(outcomeOf(undeclaredResponse)).toEqual(TaxStateIndeterminateSchema.make({}));
       expect(evaluatedOf(undeclaredResponse).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
+    }),
+  ),
+);
+
+it.live('#961 scenario 10: a supported 0.00 CZK line is a successful taxable 0.00 with its persisted rule', () =>
+  Effect.scoped(
+    Effect.gen(function* taxableZeroScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      const response = yield* subject.readPublic({
+        catalog: [catalogEntry('o1', STANDARD_CODE)],
+        pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '0.00')] },
+        purchase: purchaseBindingInput(['o1'], { sellingLegalEntityRef: subject.legalEntityId, tenantId }),
+      });
+
+      // Zero follows from a taxable Decision at 21 % under a persisted rule: not zero-rate, exempt or non-payer.
+      const outcome = successOf(response);
+      expect(publishedByUnit(response)).toEqual([['taxable-supply-unit:o1', '0.00']]);
+      expect(outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      const [unit] = outcome.decision.units;
+      expect(Schema.is(TaxableTreatmentSchema)(unit.treatment)).toBe(true);
+      expect('governingTaxRuleRevisionRef' in unit && unit.governingTaxRuleRevisionRef.revision).toBe(1);
+      expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(evaluatedOf(response).customerSafe)).toBe(false);
     }),
   ),
 );
