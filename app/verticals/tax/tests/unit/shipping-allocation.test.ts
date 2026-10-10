@@ -3,11 +3,14 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import {
+  SHIPPING_ALLOCATION_KEY,
   ShippingAllocationBasisSchema,
   ShippingAllocationInputSchema,
   ShippingAllocationSchema,
   allocateShippingTaxableBasis,
+  grossLineValueWeight,
 } from '../../src/domain/shipping-allocation.ts';
+import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 import { exactTaxContribution, finalizeTaxableSupplyUnitTax } from '../../src/domain/tax-rounding.ts';
 import {
   decisionUnitInput,
@@ -21,21 +24,22 @@ const decodeInput = Schema.decodeUnknownSync(ShippingAllocationInputSchema);
 
 type AllocationInput = typeof ShippingAllocationInputSchema.Encoded;
 type ShippingBasisComponentInput = typeof ShippingAllocationBasisSchema.Encoded;
-type WeightsInput = NonNullable<AllocationInput['allocationWeights']>;
 type WeightEntry = readonly [string, string];
 
-const current = (amount: string, currency = 'CZK'): AllocationInput['shippingSource'] => ({
-  _tag: 'CURRENT',
-  amount: { amount: exactDecimal(amount), currency },
+const current = (amount: string, options: Readonly<{ amountBasis?: 'GROSS' | 'NET'; currency?: string }> = {}) => ({
+  _tag: 'CURRENT' as const,
+  amount: {
+    amount: exactDecimal(amount),
+    amountBasis: options.amountBasis ?? 'GROSS',
+    currency: options.currency ?? 'CZK',
+  },
   shippingSourceRef: shippingSourceRefInput,
 });
-const weights = (entries: readonly [WeightEntry, ...WeightEntry[]]): WeightsInput => ({
-  approvalEvidenceRef: 'owner-approved-allocation-key-1',
-  weights: pipe(
+const affected = (entries: readonly [WeightEntry, ...WeightEntry[]]): AllocationInput['affectedTaxableSupplyUnits'] =>
+  pipe(
     entries,
-    Arr.map(([taxableSupplyUnitId, weight]) => ({ taxableSupplyUnitId, weight: exactDecimal(weight) })),
-  ),
-});
+    Arr.map(([taxableSupplyUnitId, weight]) => ({ grossLineValueWeight: exactDecimal(weight), taxableSupplyUnitId })),
+  );
 const allocate = (input: AllocationInput) => allocateShippingTaxableBasis(decodeInput(input));
 const amounts = (input: AllocationInput) =>
   Result.getOrThrow(allocate(input)).unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
@@ -53,8 +57,9 @@ const unitWith = (occurrenceId: string, ratePercent: string, shipping: ShippingB
 const conservedPart = (taxableSupplyUnitId: string, revision = 1) => ({
   basisComponent: {
     _tag: 'SHIPPING_ALLOCATION',
-    allocationWeightsEvidenceRef: 'owner-approved-allocation-key-1',
+    allocationKey: SHIPPING_ALLOCATION_KEY,
     amount: exactDecimal('0.33'),
+    amountBasis: 'GROSS' as const,
     shippingSourceRef: { ...shippingSourceRefInput, revision },
   },
   taxableSupplyUnitId,
@@ -63,7 +68,7 @@ const conservedPart = (taxableSupplyUnitId: string, revision = 1) => ({
 describe('Shipping Taxable Basis allocation', () => {
   it('#933 F4 F14 BDD one affected unit receives the whole unchanged 120.00 CZK owner-issued amount', () => {
     const allocation = Result.getOrThrow(
-      allocate({ affectedTaxableSupplyUnitIds: ['u-1'], shippingSource: current('120.00') }),
+      allocate({ affectedTaxableSupplyUnits: affected([['u-1', '0']]), shippingSource: current('120.00') }),
     );
 
     expect(allocation.ownerIssuedShippingAmount).toEqual(exactDecimal('120.00'));
@@ -72,6 +77,7 @@ describe('Shipping Taxable Basis allocation', () => {
         basisComponent: {
           _tag: 'SHIPPING_ALLOCATION',
           amount: exactDecimal('120.00'),
+          amountBasis: 'GROSS',
           shippingSourceRef: shippingSourceRefInput,
         },
         taxableSupplyUnitId: 'u-1',
@@ -82,8 +88,7 @@ describe('Shipping Taxable Basis allocation', () => {
   it('#962 PO #933 F21 #935 F13-F14 allocates 1 CZK at 1:6 exactly as 1/7 + 6/7 with no intermediate rounding', () => {
     const allocation = Result.getOrThrow(
       allocate({
-        affectedTaxableSupplyUnitIds: ['u-1', 'u-2'],
-        allocationWeights: weights([
+        affectedTaxableSupplyUnits: affected([
           ['u-1', '1'],
           ['u-2', '6'],
         ]),
@@ -103,7 +108,7 @@ describe('Shipping Taxable Basis allocation', () => {
       ),
     ).toEqual(exactDecimal('1'));
     for (const { basisComponent } of allocation.unitAllocations) {
-      expect(basisComponent.allocationWeightsEvidenceRef).toBe('owner-approved-allocation-key-1');
+      expect(basisComponent.allocationKey).toEqual(SHIPPING_ALLOCATION_KEY);
       expect(basisComponent.shippingSourceRef).toEqual(shippingSourceRefInput);
     }
   });
@@ -111,8 +116,7 @@ describe('Shipping Taxable Basis allocation', () => {
   it('#933 F17-F20 #935 F16 BDD mixed-rate allocations keep each unit treatment and round only per unit', () => {
     const { unitAllocations } = Result.getOrThrow(
       allocate({
-        affectedTaxableSupplyUnitIds: ['taxable-supply-unit:o-1', 'taxable-supply-unit:o-2'],
-        allocationWeights: weights([
+        affectedTaxableSupplyUnits: affected([
           ['taxable-supply-unit:o-1', '1'],
           ['taxable-supply-unit:o-2', '6'],
         ]),
@@ -125,21 +129,20 @@ describe('Shipping Taxable Basis allocation', () => {
     const reduced = unitWith('o-2', '12', encode(allocationAt(1)));
 
     expect(exactTaxContribution(standard.taxableBasisInterpretation, standard.treatment)).toEqual({
-      denominator: '100',
+      denominator: '121',
       numerator: '3',
     });
     expect(exactTaxContribution(reduced.taxableBasisInterpretation, reduced.treatment)).toEqual({
-      denominator: '175',
-      numerator: '18',
+      denominator: '98',
+      numerator: '9',
     });
-    expect(finalizeTaxableSupplyUnitTax(reduced, roundingPolicy).publishedTaxAmount.amount).toBe('0.10');
+    expect(finalizeTaxableSupplyUnitTax(reduced, roundingPolicy).publishedTaxAmount.amount).toBe('0.09');
   });
 
-  it('#933 F18 BDD unequal owner-approved weights are applied instead of an equal split', () => {
+  it('#933 F18 BDD unequal gross-weighted shares are applied instead of an equal split', () => {
     expect(
       amounts({
-        affectedTaxableSupplyUnitIds: ['u-1', 'u-2'],
-        allocationWeights: weights([
+        affectedTaxableSupplyUnits: affected([
           ['u-1', '100.00'],
           ['u-2', '300.00'],
         ]),
@@ -151,21 +154,10 @@ describe('Shipping Taxable Basis allocation', () => {
     ]);
   });
 
-  it('#933 F24 #907 F91 F93 PO D3 without usable owner-approved weights there is no guessed allocation', () => {
-    const affectedTaxableSupplyUnitIds = ['u-1', 'u-2'] as const;
-
-    expect(allocate({ affectedTaxableSupplyUnitIds, shippingSource: current('120.00') })).toEqual(indeterminate);
+  it('#933 F24 #907 F91 F93 PO D3 a zero total weight is indeterminate; zero weights are unusable', () => {
     expect(
       allocate({
-        affectedTaxableSupplyUnitIds,
-        allocationWeights: weights([['u-1', '1']]),
-        shippingSource: current('1.00'),
-      }),
-    ).toEqual(indeterminate);
-    expect(
-      allocate({
-        affectedTaxableSupplyUnitIds,
-        allocationWeights: weights([
+        affectedTaxableSupplyUnits: affected([
           ['u-1', '0'],
           ['u-2', '0'],
         ]),
@@ -174,55 +166,83 @@ describe('Shipping Taxable Basis allocation', () => {
     ).toEqual(indeterminate);
   });
 
-  it('#938 F27-F28 weights provided for one affected unit must still cover it exactly', () => {
-    expect(
-      allocate({
-        affectedTaxableSupplyUnitIds: ['u-1'],
-        allocationWeights: weights([['u-2', '1']]),
-        shippingSource: current('120.00'),
-      }),
-    ).toEqual(indeterminate);
-    expect(
-      allocate({
-        affectedTaxableSupplyUnitIds: ['u-1'],
-        allocationWeights: weights([
-          ['u-1', '1'],
-          ['u-2', '1'],
-        ]),
-        shippingSource: current('120.00'),
-      }),
-    ).toEqual(indeterminate);
+  it('D3-4b one zero weight among positive ones gets an exact 0 share, never indeterminate', () => {
     expect(
       amounts({
-        affectedTaxableSupplyUnitIds: ['u-1'],
-        allocationWeights: weights([['u-1', '1']]),
-        shippingSource: current('120.00'),
+        affectedTaxableSupplyUnits: affected([
+          ['u-1', '0'],
+          ['u-2', '10'],
+        ]),
+        shippingSource: current('99.00'),
       }),
-    ).toEqual([['u-1', exactDecimal('120.00')]]);
+    ).toEqual([
+      ['u-1', exactDecimal('0')],
+      ['u-2', exactDecimal('99.00')],
+    ]);
   });
 
   it('#933 F8-F10 #962 F33 stale or unavailable Shipping is never zero Shipping', () => {
-    const affectedTaxableSupplyUnitIds = ['u-1'] as const;
-
     expect(
-      allocate({ affectedTaxableSupplyUnitIds, shippingSource: { _tag: 'NOT_ESTABLISHED', state: 'STALE' } }),
+      allocate({
+        affectedTaxableSupplyUnits: affected([['u-1', '0']]),
+        shippingSource: { _tag: 'NOT_ESTABLISHED', state: 'STALE' },
+      }),
     ).toEqual(Result.fail({ _tag: 'TAX_INPUT_STALE' }));
     expect(
-      allocate({ affectedTaxableSupplyUnitIds, shippingSource: { _tag: 'NOT_ESTABLISHED', state: 'UNAVAILABLE' } }),
+      allocate({
+        affectedTaxableSupplyUnits: affected([['u-1', '0']]),
+        shippingSource: { _tag: 'NOT_ESTABLISHED', state: 'UNAVAILABLE' },
+      }),
     ).toEqual(Result.fail({ _tag: 'TAX_DEPENDENCY_UNAVAILABLE' }));
   });
 
   it('#962 F32 #933 G authoritative zero Shipping stays zero for every affected unit', () => {
-    expect(amounts({ affectedTaxableSupplyUnitIds: ['u-1', 'u-2'], shippingSource: current('0.00') })).toEqual([
+    expect(
+      amounts({
+        affectedTaxableSupplyUnits: affected([
+          ['u-1', '10'],
+          ['u-2', '20'],
+        ]),
+        shippingSource: current('0.00'),
+      }),
+    ).toEqual([
       ['u-1', exactDecimal('0')],
       ['u-2', exactDecimal('0')],
     ]);
   });
 
-  it('#933 F11 #931 F16 a non-CZK Shipping amount is never relabelled', () => {
-    expect(allocate({ affectedTaxableSupplyUnitIds: ['u-1'], shippingSource: current('5.00', 'EUR') })).toEqual(
-      Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'NON_CZK_CURRENCY' }),
+  it('D3-4d a zero charge with zero weights gives zero shares, no key', () => {
+    const { unitAllocations } = Result.getOrThrow(
+      allocate({
+        affectedTaxableSupplyUnits: affected([
+          ['u-1', '0'],
+          ['u-2', '0'],
+        ]),
+        shippingSource: current('0.00'),
+      }),
     );
+    for (const { basisComponent } of unitAllocations) {
+      expect(basisComponent.allocationKey).toBeUndefined();
+      expect(basisComponent.amount).toEqual(exactDecimal('0'));
+    }
+  });
+
+  it('#933 F11 #931 F16 a non-CZK Shipping amount is never relabelled', () => {
+    expect(
+      allocate({
+        affectedTaxableSupplyUnits: affected([['u-1', '0']]),
+        shippingSource: current('5.00', { currency: 'EUR' }),
+      }),
+    ).toEqual(Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'NON_CZK_CURRENCY' }));
+  });
+
+  it('D3-6 a NET-priced Shipping charge cannot supply the gross control total', () => {
+    expect(
+      allocate({
+        affectedTaxableSupplyUnits: affected([['u-1', '0']]),
+        shippingSource: current('5.00', { amountBasis: 'NET' }),
+      }),
+    ).toEqual(Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'NET_SHIPPING_AMOUNT_BASIS' }));
   });
 
   it('#933 F21-F22 #931 F20-F21 rejects an allocation that does not conserve the owner-issued amount', () => {
@@ -252,9 +272,12 @@ describe('Shipping Taxable Basis allocation', () => {
 
   it('#932 F18-F20 BDD a Pricing Fee stays inside the line and Shipping is a separate component, each counted once', () => {
     const shipping = Result.getOrThrow(
-      allocate({ affectedTaxableSupplyUnitIds: ['taxable-supply-unit:o-1'], shippingSource: current('50.00') }),
+      allocate({
+        affectedTaxableSupplyUnits: affected([['taxable-supply-unit:o-1', '0']]),
+        shippingSource: current('50.00'),
+      }),
     );
-    const input = decisionUnitInput('o-1', '104.00', '21');
+    const input = decisionUnitInput('o-1', '104.00', '21', 'GROSS');
     const unit = decodeTaxDecisionUnit({
       ...input,
       taxableBasisInterpretation: {
@@ -269,6 +292,38 @@ describe('Shipping Taxable Basis allocation', () => {
     expect(unit.taxableBasisInterpretation.components).toHaveLength(2);
     expect(line.amount).toEqual(exactDecimal('104.00'));
     expect(Schema.is(ShippingAllocationBasisSchema)(shippingComponent)).toBe(true);
-    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual(exactDecimal('32.34'));
+    // The GROSS line's and GROSS shipping's VAT are each carved out under § 37 písm. b): (104 + 50) * 21 / 121.
+    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual({
+      denominator: '11',
+      numerator: '294',
+    });
+  });
+
+  it('grossLineValueWeight: GROSS is the whole value, NET is grossed up by (1 + r)', () => {
+    const decodeLine = Schema.decodeUnknownSync(LineCommercialValueBasisSchema);
+    expect(
+      grossLineValueWeight(
+        decodeLine({
+          _tag: 'LINE_COMMERCIAL_VALUE',
+          amount: exactDecimal('100'),
+          amountBasis: 'GROSS',
+          occurrenceId: 'o1',
+          pricingLineRef: 'p1',
+        }),
+        '21',
+      ),
+    ).toEqual(exactDecimal('100'));
+    expect(
+      grossLineValueWeight(
+        decodeLine({
+          _tag: 'LINE_COMMERCIAL_VALUE',
+          amount: exactDecimal('100'),
+          amountBasis: 'NET',
+          occurrenceId: 'o1',
+          pricingLineRef: 'p1',
+        }),
+        '21',
+      ),
+    ).toEqual(exactDecimal('121'));
   });
 });

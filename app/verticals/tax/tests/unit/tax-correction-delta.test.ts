@@ -179,8 +179,10 @@ describe('Tax Correction Delta', () => {
   });
 
   it('#948 F8 F25 a quantity return leaves the allocated Shipping share; only an explicit value change reverses it', () => {
+    // PO decision D3 on #907: the Shipping share is always GROSS, so its VAT is carved out under § 37 písm. b):
+    // 100 NET @ 21 % gives 21 exactly; 10 GROSS @ 21 % gives 210/121 = 1.7355... -> total 22.7355... -> 22.74.
     const terms = acceptedTaxTerms([{ lineValue: '100.00', occurrenceId: 'o-1', quantity: '2', shipping: '10.00' }]);
-    expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('23.10');
+    expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('22.74');
 
     const goods = deltaOf(correct(terms, [unitRequest('o-1', quantity('-2'))]));
     expect(goods.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('0'));
@@ -192,7 +194,21 @@ describe('Tax Correction Delta', () => {
       correct(terms, [unitRequest('o-1', value('-10', 'SHIPPING_ALLOCATION'), acceptedAs(goods, 'v1'))]),
     );
     expect(shipping.units[0].proposedNext.remainingPublishedTax.amount).toBe('0.00');
-    expect(shipping.units[0].taxCorrectionDelta.amount).toBe('-2.10');
+    expect(shipping.units[0].taxCorrectionDelta.amount).toBe('-1.74');
+  });
+
+  it('PO decision D3 on #907: a GROSS original quantity row corrects consistently with its own basis', () => {
+    // 3 x 9.99 GROSS @ 21 % publishes 5.20 (D3-3); returning 2 leaves 1 x 9.99 GROSS -> 1.73; a full return -> 0.00.
+    const terms = acceptedTaxTerms([{ amountBasis: 'GROSS', lineValue: '29.97', occurrenceId: 'o-1', quantity: '3' }]);
+    expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('5.20');
+
+    const partial = deltaOf(correct(terms, [unitRequest('o-1', quantity('-2'))]));
+    expect(partial.units[0].proposedNext.remainingPublishedTax.amount).toBe('1.73');
+    expect(partial.units[0].taxCorrectionDelta.amount).toBe('-3.47');
+
+    const full = deltaOf(correct(terms, [unitRequest('o-1', quantity('-3'))]));
+    expect(full.units[0].proposedNext.remainingPublishedTax.amount).toBe('0.00');
+    expect(full.units[0].taxCorrectionDelta.amount).toBe('-5.20');
   });
 
   it('#948 F10 a value correction without a quantity change keeps the accepted quantity', () => {

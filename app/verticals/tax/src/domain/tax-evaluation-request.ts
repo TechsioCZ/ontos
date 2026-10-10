@@ -51,7 +51,9 @@ const pricingBound = (request: TaxEvaluationRequest, occurrenceIds: ReadonlySet<
 
 /**
  * Shipping evidence is present exactly when the binding names a Shipping source, a Current amount is that exact
- * source revision, and affected occurrences and weights name only bound occurrences (#937 F29-F30, #933 F12-F17).
+ * source revision, and the affected occurrences name only bound occurrences (#937 F29-F30, #933 F12-F17). TAX
+ * derives the gross line-value weights itself; there is no caller weights set to bound here (PO decision D3 on
+ * #907).
  */
 const shippingBound = (request: TaxEvaluationRequest, occurrenceIds: ReadonlySet<string>): boolean => {
   const { shipping } = request;
@@ -69,21 +71,13 @@ const shippingBound = (request: TaxEvaluationRequest, occurrenceIds: ReadonlySet
     Match.tag('NOT_ESTABLISHED', () => true),
     Match.exhaustive,
   );
-  return (
-    sourceBound &&
-    subsetOf(shipping.affectedOccurrenceIds, occurrenceIds) &&
-    subsetOf(
-      (shipping.allocationWeights?.weights ?? []).map(({ occurrenceId }) => occurrenceId),
-      occurrenceIds,
-    )
-  );
+  return sourceBound && subsetOf(shipping.affectedOccurrenceIds, occurrenceIds);
 };
 
 /**
- * Structural binding of the request to one exact purchase (#937 F11-F30). Missing or ambiguous published amounts and
- * weights that do not cover the affected units are not rejected here: the kernel gives them their typed non-success
- * meaning (#931 F14, #938 F27-F28). A Set occurrence without a declared supply meaning is rejected, never guessed as
- * ordinary (#934, #920 F25-F30).
+ * Structural binding of the request to one exact purchase (#937 F11-F30). Missing or ambiguous published amounts
+ * are not rejected here: the kernel gives them their typed non-success meaning (#931 F14, #938 F27-F28). A Set
+ * occurrence without a declared supply meaning is rejected, never guessed as ordinary (#934, #920 F25-F30).
  */
 export const taxEvaluationRequestRejections = (
   request: TaxEvaluationRequest,

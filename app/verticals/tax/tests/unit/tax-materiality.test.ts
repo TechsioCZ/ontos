@@ -29,9 +29,11 @@ import {
   catalogEntry,
   evaluate,
   evaluationRequest,
+  grossLine,
   ownState,
   pricingLine,
   selected,
+  shippingCharge,
 } from './tax-evaluation-fixtures.ts';
 import type { TaxEvaluationRequestInput } from './tax-evaluation-fixtures.ts';
 
@@ -70,27 +72,43 @@ const singleLine = (value: string) =>
     'o1',
   ]);
 
-const withWeights = (o1Weight: string) =>
+/** D3 derives the Shipping weight from the GROSS line value, so a different o1 value is a different share. */
+const withWeights = (o1LineValue: string) =>
   evaluate(
     evaluationRequest({
+      pricing: {
+        pricingResultRef: PRICING_RESULT_REF,
+        publishedLines: [
+          { ...pricingLine('o1', o1LineValue, { amountBasis: 'GROSS' }) },
+          { ...pricingLine('o2', '112.00', { amountBasis: 'GROSS' }) },
+        ],
+      },
       purchase: purchaseBindingInput(['o1', 'o2'], {
         shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
       }),
       shipping: {
         affectedOccurrenceIds: ['o1', 'o2'],
-        allocationWeights: {
-          approvalEvidenceRef: 'weights-approval-1',
-          weights: [
-            { occurrenceId: 'o1', weight: exactDecimal(o1Weight) },
-            { occurrenceId: 'o2', weight: exactDecimal('1') },
-          ],
-        },
         source: {
           _tag: 'CURRENT',
-          amount: { amount: exactDecimal('100.00'), currency: 'CZK' },
+          amount: { amount: exactDecimal('100.00'), amountBasis: 'GROSS', currency: 'CZK' },
           shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
         },
       },
+    }),
+  );
+
+/** Only `affectedOccurrenceIds` differs; o1 and o2 keep the exact same GROSS line values. */
+const withAffected = (affectedOccurrenceIds: readonly [string, ...string[]]) =>
+  evaluate(
+    evaluationRequest({
+      pricing: {
+        pricingResultRef: PRICING_RESULT_REF,
+        publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '112.00')],
+      },
+      purchase: purchaseBindingInput(['o1', 'o2'], {
+        shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+      }),
+      shipping: { affectedOccurrenceIds, source: shippingCharge('99.00') },
     }),
   );
 
@@ -324,8 +342,37 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
   });
 
   it('#943 F3 a changed Shipping allocation is material', () => {
-    expect(materialReasons(compare(withWeights('3'), withWeights('1')))).toEqual(
+    expect(materialReasons(compare(withWeights('121.00'), withWeights('233.00')))).toEqual(
+      Option.some(['TAXABLE_BASIS', 'SHIPPING_ALLOCATION', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
+    );
+  });
+
+  it('#943 F3 a changed Shipping allocation is material with the line values themselves unchanged', () => {
+    // Only `affectedOccurrenceIds` differs; o1 and o2 keep the exact same GROSS line values, so this isolates
+    // SHIPPING_ALLOCATION materiality from any LINE_COMMERCIAL_VALUE change.
+    expect(materialReasons(compare(withAffected(['o1', 'o2']), withAffected(['o2'])))).toEqual(
       Option.some(['SHIPPING_ALLOCATION', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
+    );
+  });
+
+  it('PO decision D3 on #907: GROSS to NET on an unchanged amount is a material basis change', () => {
+    const gross = evaluationRequest(
+      {
+        pricing: {
+          pricingResultRef: PRICING_RESULT_REF,
+          publishedLines: [pricingLine('o1', '121.00', { amountBasis: 'GROSS' })],
+        },
+      },
+      ['o1'],
+    );
+    const net = evaluationRequest(
+      {
+        pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '121.00')] },
+      },
+      ['o1'],
+    );
+    expect(materialReasons(compare(evaluate(gross), evaluate(net)))).toEqual(
+      Option.some(['TAXABLE_BASIS', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
     );
   });
 

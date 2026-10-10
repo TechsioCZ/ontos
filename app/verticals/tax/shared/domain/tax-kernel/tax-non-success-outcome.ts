@@ -20,6 +20,8 @@ const TaxUnsupportedRequirementSchema = Schema.Literals([
   'EXEMPTION_TREATMENT',
   'NOT_APPLICABLE_TREATMENT',
   'SET_MULTI_SUPPLY_DECOMPOSITION',
+  /** A NET-priced Shipping charge cannot supply the gross control total (PO decision D3 on #907). */
+  'NET_SHIPPING_AMOUNT_BASIS',
 ]);
 
 export type TaxUnsupportedRequirement = typeof TaxUnsupportedRequirementSchema.Type;

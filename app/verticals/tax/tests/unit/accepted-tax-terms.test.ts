@@ -70,9 +70,11 @@ describe('Accepted Tax Terms', () => {
   it('#948 F2-F5 F8 read the unit baseline only from the record: quantity, basis split, rate and published Tax', () => {
     const terms = decodeAcceptedTaxTerms(input());
 
+    // PO decision D3 on #907: the Shipping share is always GROSS, so its VAT is carved out under § 37 písm. b).
     expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-1')))).toEqual({
+      lineAmountBasis: 'NET',
       originalLineBasis: exactDecimal('999.9'),
-      originalPublishedTax: { amount: '212.08', currency: 'CZK' },
+      originalPublishedTax: { amount: '211.71', currency: 'CZK' },
       originalQuantity: exactDecimal('10'),
       originalShippingBasis: exactDecimal('10'),
       rate: exactDecimal('0.21'),

@@ -125,6 +125,23 @@ export type TaxDecisionUnit = typeof TaxDecisionUnitSchema.Type;
 const isTaxableDecisionUnit = Schema.is(TaxableDecisionUnitSchema);
 const isSellerNotVatPayerDecisionUnit = Schema.is(SellerNotVatPayerDecisionUnitSchema);
 
+/**
+ * Every Line Commercial Value component across all units states the same amount basis: one Pricing Result cannot
+ * be both GROSS and NET (#938 F27-F28, PO decision D3 on #907). This applies to both the VAT_PAYER and NON_PAYER
+ * regimes: it is evidence integrity, not a VAT computation.
+ */
+const lineAmountBasisConsistent = (units: readonly TaxDecisionUnit[]): boolean => {
+  const bases = new Set<string>();
+  for (const { taxableBasisInterpretation } of units) {
+    for (const component of taxableBasisInterpretation.components) {
+      if (isLineCommercialValue(component)) {
+        bases.add(component.amountBasis);
+      }
+    }
+  }
+  return bases.size <= 1;
+};
+
 /** Every bound occurrence maps to exactly one distinct unit carrying the same exact Catalog Selection (#937 F13-F15). */
 const unitsPartitionOccurrences = (purchaseBinding: TaxPurchaseBinding, units: readonly TaxDecisionUnit[]): boolean => {
   const unitIds = new Set(units.map(({ taxableSupplyUnit }) => taxableSupplyUnit.unitId));
@@ -146,13 +163,17 @@ const unitsPartitionOccurrences = (purchaseBinding: TaxPurchaseBinding, units: r
 const isSameShippingAllocationBasis = (left: ShippingAllocationBasis, right: ShippingAllocationBasis): boolean =>
   taxExactRationalsEqual(left.amount, right.amount) &&
   isSameShippingSourceRef(left.shippingSourceRef, right.shippingSourceRef) &&
-  left.allocationWeightsEvidenceRef === right.allocationWeightsEvidenceRef;
+  left.allocationKey?.revision === right.allocationKey?.revision;
 
 /**
  * Bound Shipping is complete and conserved: the purchase-level allocation is present exactly when the purchase binds
  * a Shipping source, is attributed to that exact source, covers only Decision units, and each unit carries exactly
  * its allocated component while every other unit carries none (#907 F85, #933 F8, F12, F19-F21, #935 F14,
  * #920 F32-F34, #937 F29-F30). Conservation of the owner-issued amount is the allocation's own invariant.
+ *
+ * #933 F21 / #935 F14: the conserved owner-issued amount is the customer-charged GROSS Shipping price; the exact
+ * gross shares sum to it. The net Shipping bases are derived per unit at its rate and do not sum to the charge
+ * (LEGAL-FINAL §2 D3).
  */
 const shippingAllocatedCompletely = (
   purchaseBinding: TaxPurchaseBinding,
@@ -217,6 +238,10 @@ export const TaxDecisionSchema = Schema.Struct({
     ({ purchaseBinding, sellerVatRegime, shippingAllocation, units }) =>
       shippingAllocatedCompletely(purchaseBinding, shippingAllocation, units, sellerVatRegime) ||
       'Bound Shipping must be allocated completely, exactly and only into Decision units',
+  ),
+  Schema.makeFilter(
+    ({ units }) =>
+      lineAmountBasisConsistent(units) || 'Every Line Commercial Value component must state the same amount basis',
   ),
   Schema.makeFilter(
     ({ declarationRevisionRef, sellerVatRegime, units }) =>

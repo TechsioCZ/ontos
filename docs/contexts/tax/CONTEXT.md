@@ -72,14 +72,19 @@ not declared seller VAT regime as a silent default, partial observation as `TAX_
 **Taxable Basis** — Basis to which an applicable tax calculation relates, determined by Tax per
 Taxable Supply Unit from authoritative owner-issued commercial amounts: published Line Commercial
 Values with Discounts/Fees/Promotion contributions included exactly once, and the separately
-owner-issued Shipping amount. Ancillary Shipping is allocated exactly across the affected Taxable
-Supply Units by the approved legally relevant allocation values/evidence; exact allocations conserve
-the owner-issued Shipping amount before rounding and may be exact rational values rather than
-published Monetary Amounts. It is not a second Pricing total or authority to change already
+owner-issued Shipping amount. Each owner-issued amount carries an explicit amount basis, GROSS
+(VAT-inclusive, the price actually charged) or NET (pre-Tax); Launch B2C owners publish GROSS.
+The Shipping allocation is Tax-owned; the owner-issued Shipping charge is GROSS-only. The owner-
+issued Shipping charge is split in proportion to the gross line values of the affected Taxable
+Supply Units (for a pre-Tax line, the line value × (1 + rate)). The exact
+gross shares conserve the owner-issued, customer-charged Shipping amount before rounding and may be
+exact rational values rather than published Monetary Amounts; net Shipping bases are derived per
+unit and never conserved or stored. It is not a second Pricing total or authority to change already
 published Line Commercial Values.
 _Avoid_: Pricing total automatically treated as a universal taxable basis, duplicate Fee addition,
 Shipping as Pricing Fee, missing Shipping as zero Shipping, equal/count-based split as default
-allocation, rounding an allocation merely to force a decimal Monetary Amount.
+allocation, rounding an allocation merely to force a decimal Monetary Amount, using a GROSS amount
+unchanged as a net base, rounded display shares as Tax input.
 
 **Tax Evidence** — Owner-qualified evidence supporting a stated tax determination for exact inputs
 and an explicit use. Evidence about an Invoice Recipient is not by itself the Tax Result for a

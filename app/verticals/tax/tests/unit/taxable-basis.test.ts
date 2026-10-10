@@ -8,6 +8,7 @@ import {
   PublishedPricingLineSchema,
   composeLineTaxableBasis,
   lineTaxableBasisForOccurrence,
+  requireConsistentLineAmountBasis,
 } from '../../src/domain/taxable-basis.ts';
 import {
   catalogSelectionInput,
@@ -23,10 +24,16 @@ const contribution = (contributionFamily: string, amount: string) => ({
   contributionFamily,
   contributionRef: `contribution-${contributionFamily}`,
 });
-const pricingLine = (occurrenceId: string, value: string, breakdown: readonly object[] = [], currency = 'CZK') =>
+const pricingLine = (
+  occurrenceId: string,
+  value: string,
+  breakdown: readonly object[] = [],
+  currency = 'CZK',
+  amountBasis: 'GROSS' | 'NET' = 'NET',
+) =>
   decodeLine({
     breakdown,
-    lineCommercialValue: { amount: exactDecimal(value), currency },
+    lineCommercialValue: { amount: exactDecimal(value), amountBasis, currency },
     occurrenceId,
     pricingLineRef: `pricing-line-${occurrenceId}`,
   });
@@ -117,5 +124,25 @@ describe('Taxable Basis composition', () => {
 
     expect(unit.taxableBasisInterpretation.components).toHaveLength(1);
     expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual(exactDecimal('210'));
+  });
+
+  it('PO decision D3 on #907: the published amount basis is copied unchanged into the component', () => {
+    const grossLine = pricingLine('o-1', '121.00', [], 'CZK', 'GROSS');
+    const composed = Result.getOrThrow(composeLineTaxableBasis(grossLine));
+
+    expect(composed.basisComponent.amountBasis).toBe('GROSS');
+  });
+
+  it('requireConsistentLineAmountBasis: one Pricing Result cannot be both GROSS and NET', () => {
+    expect(Result.isSuccess(requireConsistentLineAmountBasis([]))).toBe(true);
+    expect(
+      Result.isSuccess(requireConsistentLineAmountBasis([pricingLine('o-1', '100.00'), pricingLine('o-2', '100.00')])),
+    ).toBe(true);
+    expect(
+      requireConsistentLineAmountBasis([
+        pricingLine('o-1', '121.00', [], 'CZK', 'GROSS'),
+        pricingLine('o-2', '100.00'),
+      ]),
+    ).toEqual(Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' }));
   });
 });
