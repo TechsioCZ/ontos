@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -428,6 +428,33 @@ it.live('Unit 10 B the regime selected at an instant follows the timeline rule, 
       // History order is independent of insertion order: re-reading gives the identical completeness fingerprint.
       const rereadHistory = Option.getOrThrow(yield* subject.history());
       expect(rereadHistory.completeness.setFingerprint).toBe(completeHistory.completeness.setFingerprint);
+    }),
+  ),
+);
+
+it.live('#950 F24 forced RLS hides declaration rows from another seller scope and from an unscoped runtime', () =>
+  Effect.scoped(
+    Effect.gen(function* declarationRowLevelSecurity() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      declaredOf(yield* subject.declare({ expectedCurrentRevision: 0, regime: 'VAT_PAYER' }));
+
+      // A raw runtime-role read naming the seller's exact rows: RLS itself, not a service filter, decides visibility.
+      const sellerRows = (transaction: Pick<ScopedTransactionExecutor, 'select'>) =>
+        transaction
+          .select({ revision: taxSellerVatRegimeDeclarations.revision })
+          .from(taxSellerVatRegimeDeclarations)
+          .where(
+            and(
+              eq(taxSellerVatRegimeDeclarations.tenantId, tenantId),
+              eq(taxSellerVatRegimeDeclarations.legalEntityId, subject.legalEntityId),
+            ),
+          );
+      expect(yield* runScoped(runtime, subject.scope, sellerRows)).toEqual([{ revision: 1 }]);
+      expect(yield* runScoped(runtime, seller(runtime).scope, sellerRows)).toEqual([]);
+      expect(yield* runScoped(runtime, scopeFor(subject.legalEntityId, randomUUID()), sellerRows)).toEqual([]);
+      // No Operational Scope installed at all: the runtime role sees no declaration row.
+      expect(yield* runtime.transaction(sellerRows)).toEqual([]);
     }),
   ),
 );
