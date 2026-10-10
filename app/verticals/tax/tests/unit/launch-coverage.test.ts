@@ -36,7 +36,7 @@ const unsupported = (unsupportedRequirement: TaxUnsupportedRequirement) =>
   Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement });
 
 describe('Launch Tax Coverage', () => {
-  it('#918 F2 F13 ordinary domestic B2C CZK purchase with Current CZ VAT-registered seller is supported', () => {
+  it('#918 F2 F13 ordinary domestic B2C CZK purchase with a declared VAT_PAYER seller is supported', () => {
     const coverage = evaluateLaunchTaxCoverage(coverageInput());
 
     expect(Result.isSuccess(coverage)).toBe(true);

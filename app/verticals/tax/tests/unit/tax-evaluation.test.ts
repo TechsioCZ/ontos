@@ -6,7 +6,7 @@ import { readTaxEvaluation } from '../../src/api/tax-evaluation.read.ts';
 import { taxEvaluationRequestRejections } from '../../src/domain/tax-evaluation-request.ts';
 import { requiredTaxClassificationCodes, taxDecisionIdFor } from '../../src/domain/tax-evaluation.ts';
 import { exactTaxContribution } from '../../src/domain/tax-rounding.ts';
-import { SellerNotVatPayerTreatmentSchema } from '../../src/domain/tax-treatment.ts';
+import { SellerNotVatPayerTreatmentSchema, TaxableTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 import { subtractTaxExactRationals, sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import {
@@ -162,6 +162,28 @@ describe('Prospective Launch Tax evaluation', () => {
       expect('taxClassification' in unit).toBe(false);
       expect(Schema.is(SellerNotVatPayerTreatmentSchema)(unit.treatment)).toBe(true);
     }
+  });
+
+  it('#962 BDD zero a supported VAT_PAYER line of 0.00 CZK is a successful taxable 0.00, not zero-rate, exempt or non-payer', () => {
+    const request = evaluationRequest(
+      { pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '0.00')] } },
+      ['o1'],
+    );
+    const outcome = success(evaluate(request, ownState()));
+
+    expect(publishedByUnit(outcome)).toEqual(new Map([['taxable-supply-unit:o1', '0.00']]));
+    expect(outcome.result.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
+    expect(outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+    const [unit] = outcome.decision.units;
+    expect(Schema.is(TaxableTreatmentSchema)(unit.treatment)).toBe(true);
+    if (Schema.is(TaxableTreatmentSchema)(unit.treatment)) {
+      expect(unit.treatment.ratePercent).toBe('21');
+    }
+    expect(Schema.is(SellerNotVatPayerTreatmentSchema)(unit.treatment)).toBe(false);
+    expect('governingTaxRuleRevisionRef' in unit && unit.governingTaxRuleRevisionRef).toEqual({
+      revision: 1,
+      taxRuleId: 'rule-standard',
+    });
   });
 
   it('#941 F1 #937 F33-F35 Tax-Relevant Time and Tax Evaluation Time are kept as distinct meanings', () => {
