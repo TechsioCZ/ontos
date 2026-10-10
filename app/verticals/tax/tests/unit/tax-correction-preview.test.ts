@@ -16,6 +16,7 @@ import {
   NewEventDeterminationUnsupportedSchema,
   NoNewTaxEventSchema,
 } from '../../src/domain/tax-declared-purpose.ts';
+import { TaxDependencyUnavailableSchema } from '../../src/domain/tax-non-success-outcome.ts';
 import { acceptedTaxTermsInput } from './tax-correction-fixtures.ts';
 import { exactDecimal } from './tax-domain-fixtures.ts';
 
@@ -264,5 +265,29 @@ describe('Tax correction preview read', () => {
         },
       }),
     ).toThrow();
+  });
+
+  describe('Stage D: D4 outcome at the public boundary (#938 F22-F26)', () => {
+    const unavailableHandover = { _tag: 'HISTORY_OWNER_UNAVAILABLE' } as const;
+
+    it.effect('D-1 HISTORY_OWNER_UNAVAILABLE answers TAX_DEPENDENCY_UNAVAILABLE for every declared purpose', () =>
+      Effect.gen(function* answersDependencyUnavailable() {
+        for (const declaredPurpose of [
+          { _tag: 'HISTORICAL_READ' } as const,
+          stageCCorrection(unavailableHandover).declaredPurpose,
+          { _tag: 'NEW_EVENT', eventKind: 'PARTIAL_FULFILLMENT', eventRef: 'shipment-4-of-10' } as const,
+        ]) {
+          for (const at of [scope, { ...scope, tenantId: 'tenant-2' }]) {
+            const result = yield* preview({ acceptedTaxTerms: unavailableHandover, declaredPurpose }, at);
+            expect(Schema.is(TaxDependencyUnavailableSchema)(result)).toBe(true);
+            expect(Object.keys(encodeResponse(result))).toEqual(['_tag']);
+          }
+        }
+      }),
+    );
+
+    it('D-1 the decode accepts HISTORY_OWNER_UNAVAILABLE as a declared CORRECTION handover', () => {
+      expect(() => decodeRequest(stageCCorrection(unavailableHandover))).not.toThrow();
+    });
   });
 });

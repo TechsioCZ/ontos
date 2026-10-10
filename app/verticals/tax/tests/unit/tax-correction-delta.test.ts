@@ -20,6 +20,7 @@ import type {
 } from '../../src/domain/tax-correction-delta.ts';
 import { TaxCorrectionChangeSchema } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/tax-historical-input-outcome.ts';
+import { DeclaredTaxPurposeOutcomeSchema } from '../../shared/domain/tax-kernel/tax-declared-purpose.ts';
 import { TaxNonSuccessOutcomeSchema } from '../../src/domain/tax-non-success-outcome.ts';
 import { SellerNotVatPayerTreatmentSchema, TaxableTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 import { acceptedTaxTerms, acceptedTaxTermsInput, unitIdOf } from './tax-correction-fixtures.ts';
@@ -640,5 +641,15 @@ describe('Tax Correction Delta', () => {
 
   it('D4 keeps the unresolved historical-input outcome outside the purchase-evaluation TAX_* family', () => {
     expect(Schema.is(TaxNonSuccessOutcomeSchema)({ _tag: TAX_HISTORICAL_INPUT_UNRESOLVED })).toBe(false);
+  });
+
+  it('D-2 the declared-purpose outcome union decodes TAX_DEPENDENCY_UNAVAILABLE but rejects other TAX_* non-success', () => {
+    const isOutcome = Schema.is(DeclaredTaxPurposeOutcomeSchema);
+    expect(isOutcome({ _tag: 'TAX_DEPENDENCY_UNAVAILABLE' })).toBe(true);
+    expect(isOutcome({ _tag: 'TAX_STATE_INDETERMINATE' })).toBe(false);
+    expect(isOutcome({ _tag: 'TAX_RULE_MISSING' })).toBe(false);
+    expect(
+      isOutcome({ _tag: TAX_HISTORICAL_INPUT_UNRESOLVED, unresolved: { _tag: 'HISTORY_OWNER_UNAVAILABLE' } }),
+    ).toBe(false);
   });
 });

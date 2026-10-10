@@ -11,6 +11,11 @@ export const TAX_HISTORICAL_INPUT_UNRESOLVED = 'TAX_HISTORICAL_INPUT_UNRESOLVED'
  * Why the Authoritative Original Accepted Record cannot establish the correction baseline: the requested unit is
  * not in the record's exact unit partition, or the supplied Accepted Cumulative Correction State cannot have
  * followed from that record. The owner of the record must recover it; TAX never reconstructs it (#946 F12).
+ *
+ * D4 distinction: this is missing, ambiguous or inconsistent history that the owner must recover before a
+ * correction can be evaluated at all. A record owner that is only **temporarily** unavailable is a different,
+ * typed outcome — `HISTORY_OWNER_UNAVAILABLE` in the handover, answered as `TAX_DEPENDENCY_UNAVAILABLE` — and is
+ * never placed here (#938 F22-F26, PO D4 = B on #907).
  */
 export const TaxHistoricalInputUnresolvedReasonSchema = Schema.Literals([
   'UNIT_NOT_IN_ORIGINAL_RECORD',
