@@ -29,7 +29,7 @@ export const TaxableTreatmentSchema = Schema.TaggedStruct('TAXABLE', {
 export const SellerNotVatPayerTreatmentSchema = Schema.TaggedStruct('SELLER_NOT_VAT_PAYER', {});
 
 /** Every Tax Decision unit treatment: taxable with a rate, or seller-is-non-payer (Unit 10 A2). */
-const TaxDecisionTreatmentSchema = Schema.Union([TaxableTreatmentSchema, SellerNotVatPayerTreatmentSchema]);
+export const TaxDecisionTreatmentSchema = Schema.Union([TaxableTreatmentSchema, SellerNotVatPayerTreatmentSchema]);
 
 export type TaxDecisionTreatment = typeof TaxDecisionTreatmentSchema.Type;
 

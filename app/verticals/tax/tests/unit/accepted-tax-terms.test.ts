@@ -19,6 +19,7 @@ import {
   nonPayerTaxDecisionInput,
 } from './tax-domain-fixtures.ts';
 import { TaxResultSchema } from '../../src/domain/tax-result.ts';
+import { SellerNotVatPayerTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 
 const encodeTaxResult = Schema.encodeSync(TaxResultSchema);
 
@@ -77,14 +78,14 @@ describe('Accepted Tax Terms', () => {
       originalPublishedTax: { amount: '211.71', currency: 'CZK' },
       originalQuantity: exactDecimal('10'),
       originalShippingBasis: exactDecimal('10'),
-      rate: exactDecimal('0.21'),
       taxRoundingPolicy: terms.finalTax.result.taxRoundingPolicy,
+      treatment: { _tag: 'TAXABLE', ratePercent: '21' },
     });
     expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-2'))).originalPublishedTax.amount).toBe('6.00');
     expect(Option.isNone(originalUnitBaseline(terms, unitIdOf('o-3')))).toBe(true);
   });
 
-  it('Unit 10 A5 F17 a seller-is-non-payer unit has no baseline, pinning the non-taxable exclusion', () => {
+  it('#945-#948 H10: a seller-is-non-payer unit has a treatment-aware baseline with no rate field (Unit 12 B3)', () => {
     const decision = decodeTaxDecision(nonPayerTaxDecisionInput(['o-1']));
     const encodedDecision = encodeTaxDecision(decision);
     const terms = decodeAcceptedTaxTerms({
@@ -98,6 +99,9 @@ describe('Accepted Tax Terms', () => {
       orderLineage: { bundleRef: 'bundle-1', orderRef: 'order-1' },
     });
 
-    expect(Option.isNone(originalUnitBaseline(terms, unitIdOf('o-1')))).toBe(true);
+    const baseline = Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-1')));
+    expect(Schema.is(SellerNotVatPayerTreatmentSchema)(baseline.treatment)).toBe(true);
+    expect('rate' in baseline).toBe(false);
+    expect(baseline.lineAmountBasis).toBe('NET');
   });
 });

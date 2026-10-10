@@ -1,12 +1,17 @@
 import { Array as Arr, Schema, pipe } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import {
+  NonNegativeTaxExactRationalSchema,
+  sumTaxExactRationals,
+} from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { sumTaxMonetaryAmounts } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import {
   TaxRoundingPolicySchema,
   TaxUnitRoundingEvidenceSchema,
+  amountInBasis,
   exactTaxContribution,
+  exactTaxOfAmounts,
   finalizeTaxDecisionUnits,
   finalizeTaxableSupplyUnitTax,
 } from '../../src/domain/tax-rounding.ts';
@@ -176,5 +181,50 @@ describe('Tax Rounding', () => {
     expect(units.map(({ publishedTaxAmount }) => publishedTaxAmount.amount)).toEqual(['0.00', '0.01', '0.01']);
     expect(publishedTotal(units)).toEqual({ amount: '0.02', currency: 'CZK' });
     expect(exactSum).toEqual(exactDecimal('0.015'));
+  });
+
+  it('Unit 12 B1 GUARD: exactTaxOfAmounts agrees with exactTaxContribution for a payer unit and a non-payer unit', () => {
+    const unit = decodeTaxDecisionUnit({
+      ...decisionUnitInput('o-1', '100.00', '12'),
+      taxableBasisInterpretation: {
+        components: [
+          {
+            _tag: 'LINE_COMMERCIAL_VALUE',
+            amount: exactDecimal('100.00'),
+            amountBasis: 'NET',
+            occurrenceId: 'o-1',
+            pricingLineRef: 'pricing-line-o-1',
+          },
+          {
+            _tag: 'SHIPPING_ALLOCATION',
+            amount: { denominator: '7', numerator: '1' },
+            amountBasis: 'GROSS',
+            shippingSourceRef: shippingSourceRefInput,
+          },
+        ],
+      },
+    });
+
+    expect(exactTaxOfAmounts(unit.taxableBasisInterpretation.components, unit.treatment)).toEqual(
+      exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment),
+    );
+    expect(
+      exactTaxOfAmounts([{ amount: NonNegativeTaxExactRationalSchema.make(exactDecimal('100')), amountBasis: 'NET' }], {
+        _tag: 'SELLER_NOT_VAT_PAYER',
+      }),
+    ).toEqual(exactDecimal('0'));
+  });
+
+  it('Unit 12 B1 amountInBasis converts GROSS <-> NET at 21 %, with identity for equal bases and a non-payer', () => {
+    const taxable = { _tag: 'TAXABLE' as const, ratePercent: '21' };
+    expect(amountInBasis(exactDecimal('50'), 'GROSS', 'NET', taxable)).toEqual({
+      denominator: '121',
+      numerator: '5000',
+    });
+    expect(amountInBasis(exactDecimal('50'), 'NET', 'GROSS', taxable)).toEqual(exactDecimal('60.5'));
+    expect(amountInBasis(exactDecimal('50'), 'GROSS', 'GROSS', taxable)).toEqual(exactDecimal('50'));
+    expect(amountInBasis(exactDecimal('50'), 'GROSS', 'NET', { _tag: 'SELLER_NOT_VAT_PAYER' })).toEqual(
+      exactDecimal('50'),
+    );
   });
 });

@@ -20,6 +20,7 @@ import type {
 import { TaxCorrectionChangeSchema } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/tax-historical-input-outcome.ts';
 import { TaxNonSuccessOutcomeSchema } from '../../src/domain/tax-non-success-outcome.ts';
+import { SellerNotVatPayerTreatmentSchema, TaxableTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 import { acceptedTaxTerms, acceptedTaxTermsInput, unitIdOf } from './tax-correction-fixtures.ts';
 import type { OriginalUnitInput } from './tax-correction-fixtures.ts';
 import { exactDecimal } from './tax-domain-fixtures.ts';
@@ -36,11 +37,17 @@ const sumOfDeltas = (steps: readonly { readonly taxCorrectionDelta: { readonly a
   steps.reduce((total, { taxCorrectionDelta }) => total + minorUnits(taxCorrectionDelta.amount), 0n);
 
 const quantity = (amount: string): TaxCorrectionChange => ({ _tag: 'QUANTITY', quantityDelta: exactDecimal(amount) });
+/**
+ * B-stage default: a Line Commercial Value change defaults to NET, a Shipping Allocation change to GROSS — each
+ * matching its fixture's recorded basis, so every existing payer test proves the identity conversion case.
+ */
 const value = (
   amount: string,
   basisComponent: 'LINE_COMMERCIAL_VALUE' | 'SHIPPING_ALLOCATION' = 'LINE_COMMERCIAL_VALUE',
+  amountBasis: 'GROSS' | 'NET' = basisComponent === 'SHIPPING_ALLOCATION' ? 'GROSS' : 'NET',
 ): TaxCorrectionChange => ({
   _tag: 'VALUE',
+  amountBasis,
   basisComponent,
   valueDelta: exactDecimal(amount),
 });
@@ -513,6 +520,101 @@ describe('Tax Correction Delta', () => {
       expect(outcome.units[0].taxCorrectionDelta.amount).toBe('-10.50');
       // The 1/quantity variant (shipping halved to 5) would give tax 11.37 and delta -11.37; that must not happen.
       expect(outcome.units[0].proposedNext.remainingPublishedTax.amount).not.toBe('11.37');
+    });
+  });
+
+  describe('Stage B: treatment-aware baseline, full reversal, value-change amount basis', () => {
+    it('B-1 a SELLER_NOT_VAT_PAYER unit corrects to zero Tax at every step, echoing its treatment', () => {
+      const terms = acceptedTaxTerms([{ lineValue: '200.00', nonPayer: true, occurrenceId: 'o-1', quantity: '2' }]);
+      expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('0.00');
+
+      const outcome = deltaOf(correct(terms, [unitRequest('o-1', quantity('-2'))]));
+
+      expect(Schema.is(SellerNotVatPayerTreatmentSchema)(outcome.units[0].treatment)).toBe(true);
+      expect(outcome.units[0].taxCorrectionDelta.amount).toBe('0.00');
+      expect(outcome.units[0].exactTaxContribution).toEqual(exactDecimal('0'));
+      expect(outcome.units[0].taxRoundingAdjustment).toEqual(exactDecimal('0'));
+      expect(outcome.units[0].proposedNext).toEqual({
+        remainingLineBasis: exactDecimal('0'),
+        remainingPublishedTax: { amount: '0.00', currency: 'CZK' },
+        remainingQuantity: exactDecimal('0'),
+        remainingShippingBasis: exactDecimal('0'),
+      });
+    });
+
+    it('B-2 a SELLER_NOT_VAT_PAYER unit: a GROSS value change is the identity, since no VAT is carved out', () => {
+      const terms = acceptedTaxTerms([{ lineValue: '100.00', nonPayer: true, occurrenceId: 'o-1', quantity: '1' }]);
+
+      const afterQuantity = deltaOf(correct(terms, [unitRequest('o-1', quantity('-1'))]));
+      expect(afterQuantity.units[0].taxCorrectionDelta.amount).toBe('0.00');
+
+      // A later value change against the accepted state still converts via amountInBasis, which is the identity
+      // for a non-payer treatment regardless of the change's own amountBasis.
+      const terms2 = acceptedTaxTerms([{ lineValue: '100.00', nonPayer: true, occurrenceId: 'o-1', quantity: '1' }]);
+      const afterValue = deltaOf(correct(terms2, [unitRequest('o-1', value('-30', 'LINE_COMMERCIAL_VALUE', 'GROSS'))]));
+      expect(afterValue.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('70'));
+      expect(afterValue.units[0].taxCorrectionDelta.amount).toBe('0.00');
+    });
+
+    it('B-7 a GROSS value change against a NET line converts via the exact rate, both amount bases asserted', () => {
+      const terms = acceptedTaxTerms([{ lineValue: '100.00', occurrenceId: 'o-1', quantity: '1' }]);
+      expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('21.00');
+
+      const gross = deltaOf(correct(terms, [unitRequest('o-1', value('-50.00', 'LINE_COMMERCIAL_VALUE', 'GROSS'))]));
+      expect(gross.units[0].proposedNext.remainingLineBasis).toEqual({ denominator: '121', numerator: '7100' });
+      expect(gross.units[0].proposedNext.remainingPublishedTax.amount).toBe('12.32');
+      expect(gross.units[0].taxCorrectionDelta.amount).toBe('-8.68');
+
+      const net = deltaOf(correct(terms, [unitRequest('o-1', value('-50.00', 'LINE_COMMERCIAL_VALUE', 'NET'))]));
+      expect(net.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('50'));
+      expect(net.units[0].taxCorrectionDelta.amount).toBe('-10.50');
+    });
+
+    it('B-7g the GROSS sibling of B-7: a GROSS change is the identity, a NET change converts up', () => {
+      const terms = acceptedTaxTerms([
+        { amountBasis: 'GROSS', lineValue: '121.00', occurrenceId: 'o-1', quantity: '1' },
+      ]);
+      expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('21.00');
+
+      const gross = deltaOf(correct(terms, [unitRequest('o-1', value('-50.00', 'LINE_COMMERCIAL_VALUE', 'GROSS'))]));
+      expect(gross.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('71'));
+      expect(gross.units[0].proposedNext.remainingPublishedTax.amount).toBe('12.32');
+      expect(gross.units[0].taxCorrectionDelta.amount).toBe('-8.68');
+
+      const net = deltaOf(correct(terms, [unitRequest('o-1', value('-50.00', 'LINE_COMMERCIAL_VALUE', 'NET'))]));
+      expect(net.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('60.5'));
+      expect(net.units[0].proposedNext.remainingPublishedTax.amount).toBe('10.50');
+      expect(net.units[0].taxCorrectionDelta.amount).toBe('-10.50');
+    });
+
+    it('B-8 B-7 followed by a full reversal sums to minus the original published Tax', () => {
+      const terms = acceptedTaxTerms([{ lineValue: '100.00', occurrenceId: 'o-1', quantity: '1' }]);
+      const partial = deltaOf(correct(terms, [unitRequest('o-1', value('-50.00', 'LINE_COMMERCIAL_VALUE', 'GROSS'))]));
+      expect(partial.units[0].taxCorrectionDelta.amount).toBe('-8.68');
+
+      const reversed = deltaOf(correct(terms, [unitRequest('o-1', quantity('-1'), acceptedAs(partial, 'v1'))]));
+      expect(reversed.units[0].taxCorrectionDelta.amount).toBe('-12.32');
+      expect(reversed.units[0].proposedNext.remainingPublishedTax.amount).toBe('0.00');
+      expect(sumOfDeltas([...partial.units, ...reversed.units])).toBe(-2100n);
+    });
+
+    it('B-13 every payer correction delta echoes the original unit treatment', () => {
+      const terms = acceptedTaxTerms([{ lineValue: '100.00', occurrenceId: 'o-1', quantity: '1' }]);
+      const outcome = deltaOf(correct(terms, [unitRequest('o-1', quantity('-1'))]));
+      expect(Schema.is(TaxableTreatmentSchema)(outcome.units[0].treatment)).toBe(true);
+      if (Schema.is(TaxableTreatmentSchema)(outcome.units[0].treatment)) {
+        expect(outcome.units[0].treatment.ratePercent).toBe('21');
+      }
+    });
+
+    it('B-14 decode rejects a Shipping value change with amountBasis NET', () => {
+      const forged: TaxCorrectionChange = {
+        _tag: 'VALUE',
+        amountBasis: 'NET',
+        basisComponent: 'SHIPPING_ALLOCATION',
+        valueDelta: exactDecimal('-1'),
+      };
+      expect(isSingleChange(forged)).toBe(false);
     });
   });
 
