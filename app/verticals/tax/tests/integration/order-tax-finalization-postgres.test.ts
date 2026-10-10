@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { eq, sql } from 'drizzle-orm';
-import { DateTime, Deferred, Effect, Exit, Fiber, Match, Option, Schema } from 'effect';
+import { Data, DateTime, Deferred, Effect, Exit, Fiber, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -398,6 +398,60 @@ it.live('#944 F12 a non-success stores nothing; the same submission finalizes on
       expect(finalizedOf(yield* subject.finalize(subject.payload(submission))).created).toBe(true);
     }),
   ),
+);
+
+/** A controlled crash after the final is inserted and before its owner transaction commits (#963 §3.3). */
+class CrashBeforeCommit extends Data.TaggedError('CrashBeforeCommit')<{ readonly reason: string }> {}
+
+it.live(
+  '#963 §3.3 a crash after the final insert and before commit leaves no final; the exact retry finalizes once at T',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* crashBeforeDurableFinal() {
+        const { adminClient, runtime } = yield* acquireDatabases;
+        const subject = seller(runtime);
+        yield* subject.setUp;
+        yield* subject.launchRules;
+        const submission = `submission-${randomUUID()}`;
+        const invocationId = randomUUID();
+        const payload = subject.payload(submission);
+        // A raw read past RLS and the owner service: every stored final of the submission, and whether it is at T.
+        const storedFinals = adminClient.unsafe<{ at_t: boolean }>(
+          `select order_commitment_time = $3::timestamptz as at_t
+         from tax.tax_order_tax_finalizations
+         where tenant_id = $1 and submission_ref = $2`,
+          [tenantId, submission, T],
+        );
+
+        // The real finalization service succeeds inside the owner transaction, which then crashes before commit.
+        const crash = yield* runScoped(runtime, subject.scope, (transaction) =>
+          Effect.gen(function* finalizeThenCrash() {
+            const finals = orderTaxFinalizationsForScope(transaction, subject.scope);
+            const inserted = finalizedOf(
+              yield* finals.finalize({ ...payload, ...invocation(subject.scope, invocationId) }),
+            );
+            expect(inserted.created).toBe(true);
+            const visible = yield* finals.finalOrderTax({ submissionRef: OrderSubmissionRefSchema.make(submission) });
+            expect(Option.isSome(visible)).toBe(true);
+            return yield* new CrashBeforeCommit({ reason: 'controlled crash before commit' });
+          }),
+        ).pipe(Effect.flip);
+        expect(crash).toBeInstanceOf(CrashBeforeCommit);
+
+        // Nothing became durable: neither recovery nor a raw read finds a final.
+        expect(Option.isNone(yield* subject.finalOrderTax(submission))).toBe(true);
+        expect(yield* storedFinals).toEqual([]);
+
+        // The exact retry (same submission, frozen payload, T and invocation identity) finalizes exactly once at T.
+        const retried = finalizedOf(yield* subject.finalize(payload, invocationId));
+        expect(retried.created).toBe(true);
+        expect(yield* storedFinals).toEqual([{ at_t: true }]);
+        const recovered = Option.getOrThrow(yield* subject.finalOrderTax(submission));
+        expect(recovered.handoff.outcome.decision.decisionId).toBe(retried.handoff.outcome.decision.decisionId);
+        expect(DateTime.formatIso(recovered.handoff.orderCommitmentTime)).toBe(T);
+        expect(DateTime.formatIso(recovered.handoff.outcome.decision.taxRelevantTime)).toBe(T);
+      }),
+    ),
 );
 
 it.live('#930 F11 F13 the final read names a later correction of a governing revision without refreshing it', () =>

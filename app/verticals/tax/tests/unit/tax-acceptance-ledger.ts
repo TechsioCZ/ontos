@@ -280,6 +280,9 @@ const INCOMPLETE_RULE_STATE = taxRuleSelectionTest(
 );
 const FINAL_AT_T = finPg('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and recovered unchanged');
 const FINAL_CONCURRENT = finPg('#950 F24 #944 F11 finals are scoped, immutable and converge under concurrent requests');
+const FINAL_CRASH_BEFORE_COMMIT = finPg(
+  '#963 §3.3 a crash after the final insert and before commit leaves no final; the exact retry finalizes once at T',
+);
 const FINAL_NON_SUCCESS = finPg(
   '#944 F12 a non-success stores nothing; the same submission finalizes once rules exist',
 );
@@ -749,7 +752,7 @@ const ledger963: readonly TaxAcceptanceRow[] = [
   // §3 Durable finalization.
   persisted('durable-final', 963, ['§3.1', '§3.4', 'BDD-lost-response'], [FINAL_AT_T, SCENARIO_9]),
   persisted('concurrent-finals', 963, ['§3.2'], [FINAL_CONCURRENT]),
-  persisted('crash-before-final', 963, ['§3.3'], [FINAL_NON_SUCCESS]),
+  persisted('crash-before-final', 963, ['§3.3'], [FINAL_CRASH_BEFORE_COMMIT]),
   gated(
     'unknown-finalization-and-bundle-association',
     963,
