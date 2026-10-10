@@ -6,7 +6,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { TaxRuleHistoryRequestSchema, TaxRuleHistoryResponseSchema } from '../../shared/apis/tax-rule-history.ts';
 import type { TaxRuleHistoryRequest, TaxRuleHistoryResponse } from '../../shared/apis/tax-rule-history.ts';
 import { taxGovernedReadsForScope } from '../services/tax-governed-read.service.ts';
@@ -58,7 +58,8 @@ export const taxRuleHistoryRead = defineRead(
       captureMode: 'metadata_only',
       policyKey: 'commerce.tax.api.tax-rule-history.evidence.v1',
     },
-    inputSchema: TaxRuleHistoryRequestSchema,
+    // The HTTP payload is already decoded once by `HttpApiBuilder`; Read Runtime only validates its type side.
+    inputSchema: Schema.toType(TaxRuleHistoryRequestSchema),
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
     permissionTarget: 'module',

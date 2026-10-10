@@ -12,17 +12,9 @@
  * `TaxCorrectionPreviewUnavailableProblem` reserved for TAX's own runtime unavailability (D4, #938 F22-F26) —
  * without reconstructing the full application composition/authentication pipeline a real deployment provides.
  *
- * Case (c) calls the real, harness-built `ReadRuntime.runRead` directly rather than through the published HTTP
- * client: `TaxCorrectionPreviewRequestSchema` is used both as the `HttpApiEndpoint` payload schema (decoded once by
- * `HttpApiBuilder` before the handler runs) and as `taxCorrectionPreviewRead`'s own `inputSchema` (decoded a second
- * time inside `ReadRuntime.runRead`); `AcceptedTaxTermsSchema`'s `TaxRelevantTime`/`TaxEvaluationTime`/
- * `OrderCommitmentTime` fields are `Schema.DateTimeUtcFromString`, whose decode only accepts a wire string, not the
- * `DateTime.Utc` value the first decode already produced, so re-decoding an already-decoded Billing Document fails
- * `ReadInputValidationError` on this exact double-decode path — reproducible identically against the real
- * `taxCorrectionPreviewReadApiLive` server wiring, not an artifact of this test's own plumbing. (a)/(b)'s simpler
- * `HISTORY_OWNER_UNAVAILABLE`/`ORIGINAL_RECORD_UNAVAILABLE` payloads carry no such field and are unaffected, so they
- * stay on the full HTTP path. This is a pre-existing defect outside #907's scope (no Core edit here); see the
- * handoff's `problems` list.
+ * Every case, including (c) over the real Billing Document Terms, goes through the published HTTP client:
+ * `HttpApiBuilder` decodes the payload exactly once and Read Runtime only validates its type side, so the
+ * `DateTimeUtcFromString` times of the Accepted Tax Terms are never re-decoded from a value.
  */
 import { ContextAccess, ReadHandlerUnavailable, ReadRuntime, toContextPermissionAccessKey } from '@app/core-runtime';
 import type { ContextAccessService, OperationalScope, ReadRuntimeService } from '@app/core-runtime';
@@ -200,24 +192,6 @@ const run = (requestInput: PreviewRequestInput, runtime: ReadRuntimeService) =>
     return { result, statuses };
   });
 
-/**
- * Invokes the real, harness-built `ReadRuntime.runRead` directly (see the file header): the governed-read
- * permission decision, result-schema validation and evidence write all execute for real, but the request never
- * crosses the HTTP wire a second time, so `TaxRelevantTime`/`TaxEvaluationTime`/`OrderCommitmentTime` are decoded
- * exactly once instead of twice.
- */
-const runDirect = (requestInput: PreviewRequestInput, runtime: ReadRuntimeService) =>
-  runtime
-    .runRead({
-      // `ReadRuntime.runRead` decodes `input` itself via `taxCorrectionPreviewRead`'s own `inputSchema` (the wire
-      // Encoded shape); it must not already be `decodeRequest`'d into the decoded Type (see the file header).
-      input: requestInput,
-      principal: scope,
-      registration: taxCorrectionPreviewRead,
-      transport: { correlationId: scope.correlationId },
-    })
-    .pipe(Effect.result);
-
 describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () => {
   it.effect('a. HISTORY_OWNER_UNAVAILABLE + CORRECTION is a typed 200, never the unavailable problem', () =>
     Effect.gen(function* dependencyUnavailableCorrection() {
@@ -256,10 +230,11 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
   it.effect('c. a retry after recovery over the real Billing Document previews a Tax Correction Delta', () =>
     Effect.gen(function* retryAfterRecovery() {
       const harness = yield* makeGrantedHarness();
-      const result = yield* runDirect(
+      const { result, statuses } = yield* run(
         { acceptedTaxTerms: billingTerms, declaredPurpose: correctionDeclaredPurpose },
         harness.runtime,
       );
+      expect(statuses).toEqual([200]);
       expect(Result.isSuccess(result)).toBe(true);
       Result.match(result, {
         onFailure: () => {},
@@ -289,14 +264,12 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
       for (const request of [
         { acceptedTaxTerms: historyOwnerUnavailable, declaredPurpose: correctionDeclaredPurpose },
         { acceptedTaxTerms: recordUnavailable, declaredPurpose: { _tag: 'HISTORICAL_READ' } },
+        { acceptedTaxTerms: billingTerms, declaredPurpose: correctionDeclaredPurpose },
       ] as const) {
         const harness = yield* makeGrantedHarness();
         yield* run(request, harness.runtime);
         expect(harness.snapshot().evidenceWrites).toBe(1);
       }
-      const harness = yield* makeGrantedHarness();
-      yield* runDirect({ acceptedTaxTerms: billingTerms, declaredPurpose: correctionDeclaredPurpose }, harness.runtime);
-      expect(harness.snapshot().evidenceWrites).toBe(1);
     }),
   );
 });
