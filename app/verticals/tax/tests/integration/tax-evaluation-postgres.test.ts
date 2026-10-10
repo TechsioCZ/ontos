@@ -36,7 +36,14 @@ import type { TaxOutcome } from '../../src/domain/tax-outcome.ts';
 import { taxEvaluationForScope } from '../../src/services/tax-evaluation.service.ts';
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
-import { catalogEntry, evaluationRequestInput, decodeEvaluationRequest } from '../unit/tax-evaluation-fixtures.ts';
+import {
+  PRICING_RESULT_REF,
+  catalogEntry,
+  decodeEvaluationRequest,
+  evaluationRequestInput,
+  grossLine,
+  shippingCharge,
+} from '../unit/tax-evaluation-fixtures.ts';
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 
 const tenantId = randomUUID();
@@ -348,4 +355,71 @@ it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time boun
       expect(isRejected(unbound) && unbound.reasons).toEqual(['STRUCTURAL_BINDING_INVALID']);
     }),
   ),
+);
+
+it.live(
+  'PO decision D3 on #907: a GROSS Shipping allocation round-trips through the stored Decision and jsonb Result',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* shippingAllocationAcceptance() {
+        const { runtime } = yield* acquireDatabases;
+        const subject = seller(runtime);
+        yield* subject.declareVatPayer();
+        yield* subject.launchRules;
+
+        const shippingRequest = {
+          pricing: {
+            pricingResultRef: PRICING_RESULT_REF,
+            publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '112.00')],
+          },
+          purchase: purchaseBindingInput(['o1', 'o2'], {
+            sellingLegalEntityRef: subject.legalEntityId,
+            shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+            tenantId,
+          }),
+          shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00') },
+        } as const;
+
+        const response = yield* subject.evaluate(shippingRequest);
+        const outcome = outcomeOf(response);
+        if (!isSuccess(outcome)) {
+          throw new Error('Expected a successful Tax Outcome');
+        }
+        expect(outcome.result.purchaseTaxTotal.amount).toBe('47.02');
+        // The exact gross-weighted shares (99 * 121/233, 99 * 112/233) and the code-versioned allocation key
+        // round-trip through the jsonb Decision store, not just the rounded published amounts (#907 plan §5.4).
+        expect(
+          outcome.decision.shippingAllocation?.unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
+            taxableSupplyUnitId,
+            basisComponent.amount,
+            basisComponent.amountBasis,
+            basisComponent.allocationKey,
+          ]),
+        ).toEqual([
+          [
+            'taxable-supply-unit:o1',
+            { denominator: '233', numerator: '11979' },
+            'GROSS',
+            { key: 'GROSS_LINE_VALUE', revision: 1 },
+          ],
+          [
+            'taxable-supply-unit:o2',
+            { denominator: '233', numerator: '11088' },
+            'GROSS',
+            { key: 'GROSS_LINE_VALUE', revision: 1 },
+          ],
+        ]);
+
+        // Same-submission recovery (#942 F23): the identical input and state give back the same Decision identity
+        // and the identical Shipping allocation and Result, read back through the jsonb store.
+        const replay = yield* subject.evaluate(shippingRequest);
+        const replayOutcome = outcomeOf(replay);
+        if (!isSuccess(replayOutcome)) {
+          throw new Error('Expected a successful Tax Outcome');
+        }
+        expect(replayOutcome.decision.decisionId).toBe(outcome.decision.decisionId);
+        expect(replayOutcome.decision.shippingAllocation).toEqual(outcome.decision.shippingAllocation);
+        expect(replayOutcome.result.purchaseTaxTotal).toEqual(outcome.result.purchaseTaxTotal);
+      }),
+    ),
 );

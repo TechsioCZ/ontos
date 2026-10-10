@@ -5,7 +5,10 @@ import { describe, expect, it } from 'effect-rstest';
 import { readTaxEvaluation } from '../../src/api/tax-evaluation.read.ts';
 import { taxEvaluationRequestRejections } from '../../src/domain/tax-evaluation-request.ts';
 import { requiredTaxClassificationCodes, taxDecisionIdFor } from '../../src/domain/tax-evaluation.ts';
+import { exactTaxContribution } from '../../src/domain/tax-rounding.ts';
 import { SellerNotVatPayerTreatmentSchema } from '../../src/domain/tax-treatment.ts';
+import { subtractTaxExactRationals, sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import {
   TaxCaseUnsupportedSchema,
   TaxDependencyUnavailableSchema,
@@ -418,6 +421,94 @@ describe('Prospective Launch Tax evaluation', () => {
         allocationKey: { key: 'GROSS_LINE_VALUE', revision: 1 },
         amountBasis: 'GROSS',
       });
+      // Weights 121/112, total 233: exact shares are 99 * 121/233 = 11979/233 and 99 * 112/233 = 11088/233.
+      expect(
+        outcome.decision.shippingAllocation?.unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
+          taxableSupplyUnitId,
+          basisComponent.amount,
+        ]),
+      ).toEqual([
+        ['taxable-supply-unit:o1', { denominator: '233', numerator: '11979' }],
+        ['taxable-supply-unit:o2', { denominator: '233', numerator: '11088' }],
+      ]);
+      // The exact per-unit Tax contribution minus the exact goods-only VAT (21 and 12) isolates the exact
+      // Shipping VAT; the two shipping VAT contributions must sum to exactly 3267/233 (14.02 rounded).
+      const [unit1, unit2] = outcome.decision.units;
+      if (unit1 === undefined || unit2 === undefined) {
+        throw new Error('Expected two Decision units');
+      }
+      const shippingVat1: TaxExactRational = subtractTaxExactRationals(
+        exactTaxContribution(unit1.taxableBasisInterpretation, unit1.treatment),
+        exactDecimal('21'),
+      );
+      const shippingVat2: TaxExactRational = subtractTaxExactRationals(
+        exactTaxContribution(unit2.taxableBasisInterpretation, unit2.treatment),
+        exactDecimal('12'),
+      );
+      expect(sumTaxExactRationals([shippingVat1, shippingVat2])).toEqual({
+        denominator: '233',
+        numerator: '3267',
+      });
+    });
+
+    it('D3-1s allocation-level: the exact unitAllocations amounts are the exact fractions, not display shares', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '112.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00') }),
+          }),
+        ),
+      );
+      const [allocation1, allocation2] = outcome.decision.shippingAllocation?.unitAllocations ?? [];
+      expect(allocation1?.basisComponent.amount).toEqual({ denominator: '233', numerator: '11979' });
+      expect(allocation2?.basisComponent.amount).toEqual({ denominator: '233', numerator: '11088' });
+      expect(
+        sumTaxExactRationals([
+          allocation1?.basisComponent.amount ?? exactDecimal('0'),
+          allocation2?.basisComponent.amount ?? exactDecimal('0'),
+        ]),
+      ).toEqual(exactDecimal('99.00'));
+    });
+
+    it('D3-10 an affected subset of 2 out of 3 units at the same rate gets the exact gross-weighted shares; the unaffected unit has none', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest(
+            {
+              catalog: [
+                catalogEntry('o1', STANDARD_CODE),
+                catalogEntry('o2', STANDARD_CODE),
+                catalogEntry('o3', REDUCED_CODE),
+              ],
+              pricing: {
+                pricingResultRef: PRICING_RESULT_REF,
+                publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '242.00'), grossLine('o3', '500.00')],
+              },
+              purchase: purchaseBindingInput(['o1', 'o2', 'o3'], { shippingSourceRef }),
+              shipping: shippingInput({ affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00') }),
+            },
+            ['o1', 'o2', 'o3'],
+          ),
+        ),
+      );
+      const allocations = outcome.decision.shippingAllocation?.unitAllocations ?? [];
+      expect(
+        allocations.map(({ basisComponent, taxableSupplyUnitId }) => [taxableSupplyUnitId, basisComponent.amount]),
+      ).toEqual([
+        ['taxable-supply-unit:o1', exactDecimal('33')],
+        ['taxable-supply-unit:o2', exactDecimal('66')],
+      ]);
+      expect(allocations.some(({ taxableSupplyUnitId }) => taxableSupplyUnitId === 'taxable-supply-unit:o3')).toBe(
+        false,
+      );
+      const published = [...publishedByUnit(outcome)];
+      expect(published.find(([unitId]) => unitId === 'taxable-supply-unit:o1')?.[1]).toBe('26.73');
+      expect(published.find(([unitId]) => unitId === 'taxable-supply-unit:o2')?.[1]).toBe('53.45');
     });
 
     it('D3-1n the same basket priced NET gives the identical shares and units', () => {
@@ -449,7 +540,10 @@ describe('Prospective Launch Tax evaluation', () => {
               pricingResultRef: PRICING_RESULT_REF,
               publishedLines: [grossLine('o1', '29.97'), grossLine('o2', '112.00')],
             },
-            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            purchase: purchaseBindingInput(['o1', 'o2'], {
+              purchaseDemandOccurrences: [occurrenceInput('o1', '3'), occurrenceInput('o2')],
+              shippingSourceRef,
+            }),
             shipping: shippingInput({ source: shippingCharge('99.00') }),
           }),
         ),
@@ -534,6 +628,20 @@ describe('Prospective Launch Tax evaluation', () => {
       expect(evaluate(withShipping({ source: shippingCharge('100.00', 'NET') }))).toEqual(
         TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NET_SHIPPING_AMOUNT_BASIS' }),
       );
+    });
+
+    it('D3-6b a NET-priced Shipping charge beats a missing rule on another unit (#938 F3)', () => {
+      expect(
+        evaluate(
+          withShipping({ source: shippingCharge('100.00', 'NET') }),
+          ownState({
+            ruleSets: new Map([
+              [STANDARD_CODE, selected('21', 'rule-standard')],
+              [REDUCED_CODE, { applicable: [], outcome: 'TAX_RULE_MISSING' }],
+            ]),
+          }),
+        ),
+      ).toEqual(TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NET_SHIPPING_AMOUNT_BASIS' }));
     });
 
     it('D3-7 display (largest-remainder) shares never feed back into the exact tax', () => {

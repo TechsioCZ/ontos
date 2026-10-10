@@ -17,14 +17,14 @@ import type { TaxableSupplyUnitId } from './taxable-supply-unit.ts';
  * The code-versioned key TAX uses to derive Shipping allocation weights itself (PO decision D3 on #907). The
  * adviser has not approved this key yet (LEGAL-FINAL §7 Q3); a different approved key is a new revision.
  */
-export const SHIPPING_ALLOCATION_KEY = { key: 'GROSS_LINE_VALUE', revision: 1 } as const;
-
 export const ShippingAllocationKeySchema = Schema.Struct({
   key: Schema.Literal('GROSS_LINE_VALUE'),
   revision: Schema.Literal(1),
 });
 
 export type ShippingAllocationKey = typeof ShippingAllocationKeySchema.Type;
+
+export const SHIPPING_ALLOCATION_KEY: ShippingAllocationKey = { key: 'GROSS_LINE_VALUE', revision: 1 } as const;
 
 /**
  * Exact allocation of the separately owned Shipping amount into one unit, attributed to the exact source Shipping

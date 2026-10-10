@@ -31,13 +31,11 @@ export {
   SHIPPING_ALLOCATION_KEY,
   ShippingAllocationBasisSchema,
   ShippingAllocationInputSchema,
-  ShippingAllocationKeySchema,
   ShippingAllocationSchema,
 } from '../../shared/domain/tax-kernel/shipping-allocation.ts';
 export type {
   ShippingAllocation,
   ShippingAllocationInput,
-  ShippingAllocationKey,
 } from '../../shared/domain/tax-kernel/shipping-allocation.ts';
 
 export type ShippingAllocationFailure = TaxCaseUnsupported | TaxNotEstablishedOutcome;

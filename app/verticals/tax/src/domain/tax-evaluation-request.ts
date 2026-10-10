@@ -75,10 +75,9 @@ const shippingBound = (request: TaxEvaluationRequest, occurrenceIds: ReadonlySet
 };
 
 /**
- * Structural binding of the request to one exact purchase (#937 F11-F30). Missing or ambiguous published amounts and
- * weights that do not cover the affected units are not rejected here: the kernel gives them their typed non-success
- * meaning (#931 F14, #938 F27-F28). A Set occurrence without a declared supply meaning is rejected, never guessed as
- * ordinary (#934, #920 F25-F30).
+ * Structural binding of the request to one exact purchase (#937 F11-F30). Missing or ambiguous published amounts
+ * are not rejected here: the kernel gives them their typed non-success meaning (#931 F14, #938 F27-F28). A Set
+ * occurrence without a declared supply meaning is rejected, never guessed as ordinary (#934, #920 F25-F30).
  */
 export const taxEvaluationRequestRejections = (
   request: TaxEvaluationRequest,
