@@ -318,15 +318,18 @@ const byText = Order.String;
  * identity is the output, so neither is part of it (#936 F58, #937 F7, F33-F38, #942 F23).
  */
 export const taxDecisionMeaningFingerprint = (decision: TaxDecision, fingerprint: TaxMeaningFingerprint): string => {
-  const { purchaseBinding, shippingAllocation, taxRelevantTime, units } = Result.getOrThrow(encodeDecision(decision));
+  const { declarationRevisionRef, purchaseBinding, sellerVatRegime, shippingAllocation, taxRelevantTime, units } =
+    Result.getOrThrow(encodeDecision(decision));
   const { traceabilityContext: _traceability, ...binding } = purchaseBinding;
   return fingerprint({
+    declarationRevisionRef,
     purchaseBinding: {
       ...binding,
       purchaseDemandOccurrences: binding.purchaseDemandOccurrences.toSorted((left, right) =>
         byText(left.occurrenceId, right.occurrenceId),
       ),
     },
+    sellerVatRegime,
     shippingAllocation:
       shippingAllocation === undefined
         ? null

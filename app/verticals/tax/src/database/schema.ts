@@ -230,6 +230,12 @@ export const taxSellerVatRegimeDeclarations = taxSchema.table.withRLS(
     reason: text('reason'),
     recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
     regime: text('regime').notNull(),
+    // Each replaced row's own identity, resolved at insert time so a Core-invocation replay reproduces the same
+    // refs without re-deriving which revisions were replaced (#943/#955 replay fidelity).
+    replacedScheduledDeclarations: jsonb('replaced_scheduled_declarations')
+      .$type<readonly Readonly<{ revision: number; taxSellerVatRegimeDeclarationId: string }>[]>()
+      .notNull()
+      .default([]),
     replacesScheduled: boolean('replaces_scheduled').notNull(),
     revision: integer('revision').notNull(),
   },

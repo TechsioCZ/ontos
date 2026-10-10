@@ -1,0 +1,2145 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "1f08cd0e-8ae3-476b-9856-ddff026e3eb3",
+  "prevIds": [
+    "25593c4c-faf7-42ce-8cb3-f3d9495a43c3"
+  ],
+  "ddl": [
+    {
+      "name": "tax",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "tax_order_tax_finalizations",
+      "entityType": "tables",
+      "schema": "tax"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "tax_rule_corrections",
+      "entityType": "tables",
+      "schema": "tax"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "tax_rule_revision_end_facts",
+      "entityType": "tables",
+      "schema": "tax"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "tax_rule_revisions",
+      "entityType": "tables",
+      "schema": "tax"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "tax_rules",
+      "entityType": "tables",
+      "schema": "tax"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "tax_seller_vat_regime_declarations",
+      "entityType": "tables",
+      "schema": "tax"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "tax_order_tax_finalization_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decomposition_need",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "governing_rule_revisions",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_fingerprint",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "order_commitment_time",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "submission_ref",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tax_evaluation_time",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "tax_rule_correction_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "confirmed_at",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "correcting_revision_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "wrong_revision_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "tax_rule_revision_end_fact_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_effective_to",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tax_rule_revision_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "tax_rule_revision_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "composition_kind",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jurisdiction",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rate_percent",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "semantic_fingerprint",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "supersedes_revision_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tax_classification_code",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tax_rule_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "treatment_category",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "tax_rule_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "meaning_kind",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stable_code",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_ref",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "tax_seller_vat_regime_declaration_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_fingerprint",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "regime",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'[]'",
+      "generated": null,
+      "identity": null,
+      "name": "replaced_scheduled_declarations",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "replaces_scheduled",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "tax_classification_code",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "jurisdiction",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "tax_rule_revisions_predicate_idx",
+      "entityType": "indexes",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "wrong_revision_id"
+      ],
+      "schemaTo": "tax",
+      "tableTo": "tax_rule_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "tax_rule_corrections_wrong_fk",
+      "entityType": "fks",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "correcting_revision_id"
+      ],
+      "schemaTo": "tax",
+      "tableTo": "tax_rule_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "tax_rule_corrections_correcting_fk",
+      "entityType": "fks",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_revision_id"
+      ],
+      "schemaTo": "tax",
+      "tableTo": "tax_rule_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "tax_rule_revision_end_facts_revision_fk",
+      "entityType": "fks",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_id"
+      ],
+      "schemaTo": "tax",
+      "tableTo": "tax_rules",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "tax_rule_revisions_rule_fk",
+      "entityType": "fks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "supersedes_revision_id"
+      ],
+      "schemaTo": "tax",
+      "tableTo": "tax_rule_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "tax_rule_revisions_supersedes_fk",
+      "entityType": "fks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "columns": [
+        "tax_order_tax_finalization_id"
+      ],
+      "nameExplicit": false,
+      "name": "tax_order_tax_finalizations_pkey",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "tax_rule_correction_id"
+      ],
+      "nameExplicit": false,
+      "name": "tax_rule_corrections_pkey",
+      "schema": "tax",
+      "table": "tax_rule_corrections",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "tax_rule_revision_end_fact_id"
+      ],
+      "nameExplicit": false,
+      "name": "tax_rule_revision_end_facts_pkey",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "tax_rule_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "tax_rule_revisions_pkey",
+      "schema": "tax",
+      "table": "tax_rule_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "tax_rule_id"
+      ],
+      "nameExplicit": false,
+      "name": "tax_rules_pkey",
+      "schema": "tax",
+      "table": "tax_rules",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "tax_seller_vat_regime_declaration_id"
+      ],
+      "nameExplicit": false,
+      "name": "tax_seller_vat_regime_declarations_pkey",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_order_tax_finalization_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_order_tax_finalizations_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "submission_ref"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_order_tax_finalizations_submission_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_order_tax_finalizations_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_correction_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_corrections_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "wrong_revision_id",
+        "correcting_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_corrections_pair_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_corrections_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_revision_end_fact_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_revision_end_facts_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "tax_rule_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_revision_end_facts_revision_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_revision_end_facts_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_revisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "tax_rule_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_revisions_rule_number_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rule_revisions_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_rule_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rules_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "stable_code"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rules_code_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_rules_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "tax_seller_vat_regime_declaration_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_seller_vat_regime_declarations_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_seller_vat_regime_declarations_revision_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "tax_seller_vat_regime_declarations_idempotency_uk",
+      "entityType": "uniques",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "value": "\"submission_ref\" = btrim(\"submission_ref\") and length(\"submission_ref\") between 1 and 300",
+      "name": "tax_order_tax_finalizations_submission_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "\"decision_id\" = btrim(\"decision_id\") and length(\"decision_id\") between 1 and 300",
+      "name": "tax_order_tax_finalizations_decision_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "\"intent_fingerprint\" ~ '^[0-9a-f]{64}$'",
+      "name": "tax_order_tax_finalizations_intent_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "\"decomposition_need\" in ('NOT_NEEDED', 'PER_TAXABLE_SUPPLY_UNIT')",
+      "name": "tax_order_tax_finalizations_decomposition_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "jsonb_typeof(\"outcome\") = 'object'",
+      "name": "tax_order_tax_finalizations_outcome_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "jsonb_typeof(\"evidence\") = 'object'",
+      "name": "tax_order_tax_finalizations_evidence_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "jsonb_typeof(\"governing_rule_revisions\") = 'array'",
+      "name": "tax_order_tax_finalizations_governing_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "\"order_commitment_time\" <= \"tax_evaluation_time\"",
+      "name": "tax_order_tax_finalizations_times_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "\"provenance_ref\" = btrim(\"provenance_ref\") and length(\"provenance_ref\") between 1 and 1000",
+      "name": "tax_order_tax_finalizations_provenance_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "value": "\"wrong_revision_id\" <> \"correcting_revision_id\"",
+      "name": "tax_rule_corrections_distinct_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "value": "\"provenance_ref\" = btrim(\"provenance_ref\") and length(\"provenance_ref\") between 1 and 1000",
+      "name": "tax_rule_corrections_provenance_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "value": "\"provenance_ref\" = btrim(\"provenance_ref\") and length(\"provenance_ref\") between 1 and 1000",
+      "name": "tax_rule_revision_end_facts_provenance_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "value": "\"revision_number\" >= 1",
+      "name": "tax_rule_revisions_number_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"jurisdiction\" = 'CZ_DOMESTIC'",
+      "name": "tax_rule_revisions_jurisdiction_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"treatment_category\" = 'TAXABLE'",
+      "name": "tax_rule_revisions_treatment_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"composition_kind\" = 'EXCLUSIVE'",
+      "name": "tax_rule_revisions_composition_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"rate_percent\" ~ '^(0\\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\\.[0-9]+)?)$'",
+      "name": "tax_rule_revisions_rate_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"effective_to\" is null or \"effective_to\" > \"effective_from\"",
+      "name": "tax_rule_revisions_period_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"supersedes_revision_id\" is null or \"supersedes_revision_id\" <> \"tax_rule_revision_id\"",
+      "name": "tax_rule_revisions_supersedes_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"tax_classification_code\" = btrim(\"tax_classification_code\") and length(\"tax_classification_code\") between 1 and 1000",
+      "name": "tax_rule_revisions_classification_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"semantic_fingerprint\" ~ '^[0-9a-f]{64}$'",
+      "name": "tax_rule_revisions_fingerprint_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"provenance_ref\" = btrim(\"provenance_ref\") and length(\"provenance_ref\") between 1 and 1000",
+      "name": "tax_rule_revisions_provenance_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "value": "\"stable_code\" ~ '^[a-z][a-z0-9._-]{0,127}$'",
+      "name": "tax_rules_code_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "value": "\"meaning_kind\" = 'VAT_RATE'",
+      "name": "tax_rules_meaning_kind_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "value": "\"provenance_ref\" = btrim(\"provenance_ref\") and length(\"provenance_ref\") between 1 and 1000",
+      "name": "tax_rules_provenance_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "value": "\"revision\" >= 1",
+      "name": "tax_seller_vat_regime_declarations_revision_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "value": "\"regime\" in ('VAT_PAYER', 'NON_PAYER')",
+      "name": "tax_seller_vat_regime_declarations_regime_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "value": "\"provenance\" in ('MERCHANT_DECLARED', 'MIGRATED')",
+      "name": "tax_seller_vat_regime_declarations_provenance_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "value": "\"reason\" is null or (\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000)",
+      "name": "tax_seller_vat_regime_declarations_reason_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "value": "\"reason\" is not null or \"effective_from\" >= \"recorded_at\"",
+      "name": "tax_seller_vat_regime_declarations_backdating_reason_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "value": "\"intent_fingerprint\" ~ '^[0-9a-f]{64}$'",
+      "name": "tax_seller_vat_regime_declarations_fingerprint_ck",
+      "entityType": "checks",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_order_tax_finalizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_order_tax_finalizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_order_tax_finalizations_scope_select",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"tax\".\"tax_order_tax_finalizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_order_tax_finalizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_order_tax_finalizations_scope_insert",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_order_tax_finalizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_order_tax_finalizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"tax\".\"tax_order_tax_finalizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_order_tax_finalizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_order_tax_finalizations_scope_update",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_order_tax_finalizations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_order_tax_finalizations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_order_tax_finalizations_scope_delete",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_order_tax_finalizations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_corrections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_corrections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_rule_corrections_scope_select",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"tax\".\"tax_rule_corrections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_corrections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_rule_corrections_scope_insert",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_corrections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_corrections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"tax\".\"tax_rule_corrections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_corrections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_rule_corrections_scope_update",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_corrections\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_corrections\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_rule_corrections_scope_delete",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_corrections"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_revision_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revision_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_rule_revision_end_facts_scope_select",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"tax\".\"tax_rule_revision_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revision_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_rule_revision_end_facts_scope_insert",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_revision_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revision_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"tax\".\"tax_rule_revision_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revision_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_rule_revision_end_facts_scope_update",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_revision_end_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revision_end_facts\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_rule_revision_end_facts_scope_delete",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_revision_end_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_rule_revisions_scope_select",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"tax\".\"tax_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_rule_revisions_scope_insert",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"tax\".\"tax_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_rule_revisions_scope_update",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rule_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rule_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_rule_revisions_scope_delete",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rule_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rules\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_rules_scope_select",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"tax\".\"tax_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rules\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_rules_scope_insert",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rules\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"tax\".\"tax_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rules\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_rules_scope_update",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_rules\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_rules\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_rules_scope_delete",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_rules"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_seller_vat_regime_declarations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_seller_vat_regime_declarations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_seller_vat_regime_declarations_scope_select",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"tax\".\"tax_seller_vat_regime_declarations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_seller_vat_regime_declarations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_seller_vat_regime_declarations_scope_insert",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_seller_vat_regime_declarations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_seller_vat_regime_declarations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"tax\".\"tax_seller_vat_regime_declarations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_seller_vat_regime_declarations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "tax_seller_vat_regime_declarations_scope_update",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"tax\".\"tax_seller_vat_regime_declarations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"tax\".\"tax_seller_vat_regime_declarations\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "tax_seller_vat_regime_declarations_scope_delete",
+      "entityType": "policies",
+      "schema": "tax",
+      "table": "tax_seller_vat_regime_declarations"
+    }
+  ],
+  "renames": []
+}

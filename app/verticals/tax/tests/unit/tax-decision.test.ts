@@ -14,6 +14,8 @@ import {
   decodeTaxDecisionUnit,
   decodeTaxableDecisionUnit,
   exactDecimal,
+  nonPayerDecisionUnitInput,
+  nonPayerTaxDecisionInput,
   purchaseBindingInput,
   shippingSourceRefInput,
   taxDecisionInput,
@@ -308,5 +310,67 @@ describe('Tax Decision', () => {
     // @ts-expect-error Tax Evaluation Time cannot stand in for Tax-Relevant Time.
     const swapped: TaxDecision = { ...decision, taxRelevantTime: decision.taxEvaluationTime };
     expect(DateTime.isGreaterThan(swapped.taxRelevantTime, decision.taxRelevantTime)).toBe(true);
+  });
+
+  it('Unit 10 A2 A4 a non-payer unit decodes without rate, classification or governing rule', () => {
+    const decision = decodeTaxDecision(nonPayerTaxDecisionInput(['o-1']));
+
+    expect(decision.sellerVatRegime).toBe('NON_PAYER');
+    expect(decision.units[0]).toMatchObject({
+      governingReference: { legalBasis: { revision: 1 } },
+      treatment: { _tag: 'SELLER_NOT_VAT_PAYER' },
+    });
+    expect(decision.units[0]).not.toHaveProperty('taxClassification');
+    expect(decision.units[0]).not.toHaveProperty('governingTaxRuleRevisionRef');
+  });
+
+  it('Unit 10 A2 mixed treatments across one Decision are rejected', () => {
+    expect(() =>
+      decodeTaxDecision(
+        taxDecisionInput(['o-1', 'o-2'], { units: [decisionUnitInput('o-1'), nonPayerDecisionUnitInput('o-2')] }),
+      ),
+    ).toThrow();
+  });
+
+  it('Unit 10 A2 a unit must match the Decision Seller VAT Regime', () => {
+    // A taxable unit under a NON_PAYER Decision.
+    expect(() => decodeTaxDecision(nonPayerTaxDecisionInput(['o-1'], { units: [decisionUnitInput('o-1')] }))).toThrow();
+    // A non-payer unit under a VAT_PAYER Decision.
+    expect(() => decodeTaxDecision(taxDecisionInput(['o-1'], { units: [nonPayerDecisionUnitInput('o-1')] }))).toThrow();
+  });
+
+  it('Unit 10 A4 F16 a non-payer unit carrying a different declaration revision than the Decision is rejected', () => {
+    const base = nonPayerDecisionUnitInput('o-1');
+    const otherRevision: typeof base = {
+      ...base,
+      governingReference: { ...base.governingReference, declarationRevisionRef: { revision: 2 } },
+    };
+
+    expect(() => decodeTaxDecision(nonPayerTaxDecisionInput(['o-1'], { units: [otherRevision] }))).toThrow();
+  });
+
+  it('Unit 10 A2 F14 a non-payer unit carrying a shipping component or allocation is rejected', () => {
+    const base = nonPayerDecisionUnitInput('o-1');
+    const withShippingComponent: typeof base = {
+      ...base,
+      taxableBasisInterpretation: {
+        components: [
+          ...base.taxableBasisInterpretation.components,
+          { _tag: 'SHIPPING_ALLOCATION', amount: exactDecimal('10'), shippingSourceRef: shippingSourceRefInput },
+        ],
+      },
+    };
+    expect(() => decodeTaxDecision(nonPayerTaxDecisionInput(['o-1'], { units: [withShippingComponent] }))).toThrow();
+
+    // A bound Shipping source with no allocation is accepted for NON_PAYER (shipping evidence is ignored, not an
+    // error, Unit 10 A4, F14) but a VAT_PAYER Decision still requires the allocation to exist (#920 F32-F34).
+    const nonPayerBoundShipping = nonPayerTaxDecisionInput(['o-1'], {
+      purchaseBinding: purchaseBindingInput(['o-1'], { shippingSourceRef: shippingSourceRefInput }),
+    });
+    expect(() => decodeTaxDecision(nonPayerBoundShipping)).not.toThrow();
+    const vatPayerBoundShipping = taxDecisionInput(['o-1'], {
+      purchaseBinding: purchaseBindingInput(['o-1'], { shippingSourceRef: shippingSourceRefInput }),
+    });
+    expect(() => decodeTaxDecision(vatPayerBoundShipping)).toThrow();
   });
 });

@@ -309,6 +309,34 @@ describe('Prospective Launch Tax evaluation', () => {
         TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'SET_MULTI_SUPPLY_DECOMPOSITION' }),
       );
     });
+
+    it('Unit 10 A4 a NON_PAYER seller still leaves the non-Czech place, currency and multi-supply Set scope checks in place', () => {
+      const nonPayer = ownState({ sellerVatRegime: DECLARED_NON_PAYER });
+      const nonCzechPlace = evaluationRequest({
+        places: {
+          ...evaluationRequestInput().places,
+          deliveryDestination: { _tag: 'OWNER_RESOLVED', countryCode: 'DE', ownerEvidenceRef: 'delivery-de' },
+        },
+      });
+      expect(evaluate(nonCzechPlace, nonPayer)).toEqual(
+        TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NON_CZECH_DOMESTIC_TAX_PLACE' }),
+      );
+
+      const nonCzkCurrency = evaluationRequest(
+        { pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '10', 'EUR')] } },
+        ['o1'],
+      );
+      expect(evaluate(nonCzkCurrency, nonPayer)).toEqual(
+        TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NON_CZK_CURRENCY' }),
+      );
+
+      const multiSupplySet = evaluationRequest(setRequestInput([{ meaning: 'MULTI_SUPPLY_SET', occurrenceId: 'o1' }]), [
+        'o1',
+      ]);
+      expect(evaluate(multiSupplySet, nonPayer)).toEqual(
+        TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'SET_MULTI_SUPPLY_DECOMPOSITION' }),
+      );
+    });
   });
 
   describe('#938 F3 F7 F16 unsupported scope is reported before prerequisites and configuration', () => {

@@ -156,8 +156,10 @@ const materialChanges = (previous: MaterialMeaning, current: MaterialMeaning): r
 
 /**
  * Evidence identities of one unit; fact and line sets are ordered, so array position is never a difference
- * (#937 F7). `governing` is the governing Tax Rule Revision for a taxable unit, or the declaration revision plus
- * legal-basis revision for a non-payer unit; catalog evidence is empty for a non-payer unit (Unit 10 A5).
+ * (#937 F7). `governing` is the governing Tax Rule Revision for a taxable unit; a non-payer unit carries no Tax
+ * Rule, so it reports no governing-rule evidence here. Its declaration revision is reported separately under
+ * SELLER_VAT_REGIME_DECLARATION_REVISION (#943 F28 patch), never folded into GOVERNING_TAX_RULE_REVISION. Catalog
+ * evidence is empty for a non-payer unit (Unit 10 A5).
  */
 const unitEvidence = (unit: TaxDecisionUnit) => ({
   catalog: isTaxableDecisionUnit(unit)
@@ -172,7 +174,7 @@ const unitEvidence = (unit: TaxDecisionUnit) => ({
     : joinParts([]),
   governing: isTaxableDecisionUnit(unit)
     ? joinParts([unit.governingTaxRuleRevisionRef.taxRuleId, unit.governingTaxRuleRevisionRef.revision])
-    : joinParts([unit.governingReference.declarationRevisionRef.revision, unit.governingReference.legalBasis.revision]),
+    : joinParts([]),
   place: joinParts([
     unit.jurisdiction.placeEvidenceRefs.sellingLegalEntity,
     unit.jurisdiction.placeEvidenceRefs.deliveryDestination,
