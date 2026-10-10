@@ -99,10 +99,10 @@ const evaluated = (outcome: TaxOutcome, request: TaxEvaluationRequest, evidence:
 });
 
 /** Tenant and Selling Legal Entity come from the trusted Operational Scope; the payload must name the same (#950 F24). */
-const visibleInScope = (scope: OperationalScope, request: TaxEvaluationRequest) =>
+export const visibleInScope = (scope: OperationalScope, { purchase }: Pick<TaxEvaluationRequest, 'purchase'>) =>
   scope.legalEntityId !== undefined &&
-  request.purchase.tenantId === scope.tenantId &&
-  request.purchase.sellingLegalEntityRef === scope.legalEntityId;
+  purchase.tenantId === scope.tenantId &&
+  purchase.sellingLegalEntityRef === scope.legalEntityId;
 
 export const taxEvaluationForScope = (transaction: ScopedTransaction, scope: OperationalScope): TaxEvaluations => {
   const governed = taxGovernedReadsForScope(transaction, scope);
