@@ -3,10 +3,15 @@ import { Schema } from 'effect';
 import { CatalogSelectionSchema } from './purchase-binding.ts';
 import { BoundedIdentifierSchema, distinctBy } from './tax-domain-primitives.ts';
 
-/** Current owner-qualified Catalog evidence for one material Catalog fact revision (#926 F2, F6, H). */
+/**
+ * Current owner-qualified Catalog evidence for one material Catalog fact revision with the owner-issued fact kind and
+ * value a Tax-owned interpretation reads (#926 F2, F6, H; PO decision D9 default, pending on #907).
+ */
 const CurrentCatalogTaxEvidenceSchema = Schema.TaggedStruct('CURRENT', {
   catalogFactRef: BoundedIdentifierSchema,
   catalogFactRevisionRef: BoundedIdentifierSchema,
+  factKind: BoundedIdentifierSchema,
+  factValue: BoundedIdentifierSchema,
   ownerEvidenceRef: BoundedIdentifierSchema,
 });
 

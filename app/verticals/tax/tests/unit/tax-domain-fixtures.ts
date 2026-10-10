@@ -7,6 +7,7 @@ import { taxExactRationalFromDecimal } from '../../shared/domain/tax-kernel/tax-
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { composeTaxResult } from '../../src/domain/tax-result.ts';
 import type { TaxResult } from '../../src/domain/tax-result.ts';
+import { LAUNCH_CZK_TAX_ROUNDING_POLICY } from '../../src/domain/tax-rounding.ts';
 import type { TaxRoundingPolicy } from '../../src/domain/tax-rounding.ts';
 
 export const decodePurchaseBinding = Schema.decodeUnknownSync(TaxPurchaseBindingSchema);
@@ -14,12 +15,7 @@ export const decodeTaxDecisionUnit = Schema.decodeUnknownSync(TaxDecisionUnitSch
 export const decodeTaxDecision = Schema.decodeUnknownSync(TaxDecisionSchema);
 export const encodeTaxDecision = Schema.encodeSync(TaxDecisionSchema);
 
-export const roundingPolicy: TaxRoundingPolicy = {
-  currency: 'CZK',
-  mode: 'ROUND_HALF_UP',
-  precision: '0.01',
-  revision: 1,
-};
+export const roundingPolicy: TaxRoundingPolicy = LAUNCH_CZK_TAX_ROUNDING_POLICY;
 
 /** Tax Result of a Decision under the Launch rounding policy. */
 export const composeResult = (decision: TaxDecision): TaxResult => composeTaxResult(decision, roundingPolicy);
@@ -97,6 +93,8 @@ export const decisionUnitInput = (
         _tag: 'CURRENT',
         catalogFactRef: 'variant-1:tax-category',
         catalogFactRevisionRef: 'r1',
+        factKind: 'TAX_CATEGORY',
+        factValue: 'cz-standard-goods',
         ownerEvidenceRef: 'owner-evidence-1',
       },
     ],
