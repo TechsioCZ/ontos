@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Exit, Fiber, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -626,38 +626,72 @@ it.live('Unit 10 C a seller with nothing declared cannot finalize', () =>
 it.live('Unit 10 C a declare concurrent with finalize serializes on the seller lock', () =>
   Effect.scoped(
     Effect.gen(function* concurrentDeclareAcceptance() {
-      const { runtime } = yield* acquireDatabases;
+      const { adminClient, runtime } = yield* acquireDatabases;
       const subject = seller(runtime);
       yield* subject.setUp;
       yield* subject.launchRules;
 
-      const submission = `submission-${randomUUID()}`;
-      const [finalizeOutcome, declareOutcome] = yield* Effect.all(
-        [
-          subject.finalize(subject.payload(submission)),
-          subject.declare(
-            {
-              confirmReplacesScheduled: true,
-              effectiveFrom: '2026-01-01T00:00:00.000Z',
-              expectedCurrentRevision: 1,
-              reason: 'Concurrent declaration racing a finalize',
-              regime: 'NON_PAYER',
-            },
-            randomUUID(),
+      // Forced interleaving: the declare takes the seller lock exclusively and holds its transaction open on
+      // `release` so the finalize is provably still blocked behind it (not merely racing and happening to win).
+      const lockHeld = yield* Deferred.make<null>();
+      const release = yield* Deferred.make<null>();
+      const declareFiber = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+        confirmReplacesScheduled: true,
+        effectiveFrom: '2026-01-01T00:00:00.000Z',
+        expectedCurrentRevision: 1,
+        reason: 'Declaration holding the seller lock during a finalize',
+        regime: 'NON_PAYER',
+      }).pipe(
+        Effect.flatMap((decoded) =>
+          runScoped(runtime, subject.scope, (transaction) =>
+            sellerVatRegimeDeclarationsForScope(transaction, subject.scope)
+              .declare({ ...decoded, ...invocation(subject.scope) })
+              .pipe(
+                Effect.tap(() => Deferred.succeed(lockHeld, null)),
+                Effect.tap(() => Deferred.await(release)),
+              ),
           ),
-        ],
-        { concurrency: 2 },
+        ),
+        Effect.forkChild,
       );
-      // Whichever order the seller lock serializes them in, the final's regime is exactly the head at its commit:
-      // either the seller's original VAT_PAYER declaration (revision 1, finalize won the lock), or the concurrent
-      // NON_PAYER revision (revision 2, declare won it), never a mix (#950 F24, Unit 10 C).
-      const final = finalizedOf(finalizeOutcome);
+
+      yield* Deferred.await(lockHeld);
+      const submission = `submission-${randomUUID()}`;
+      const finalizeFiber = yield* subject.finalize(subject.payload(submission)).pipe(Effect.forkChild);
+
+      // The exclusive advisory xact lock `tax-scope:<tenantId>:<legalEntityId>:SELLER_VAT_REGIME_DECLARATION`
+      // (tax-governance-persistence.ts `lockTaxScopeKey`) is held until the declare's transaction commits; finalize
+      // takes it `'shared'` only on the evaluating path (order-tax-finalization.service.ts L281), so it must wait.
+      const lockKey = `tax-scope:${tenantId}:${subject.legalEntityId}:SELLER_VAT_REGIME_DECLARATION`;
+      let waiterSeen = false;
+      for (let observation = 0; observation < 50 && !waiterSeen; observation += 1) {
+        const [row] = yield* adminClient.unsafe<{ waiting: number }>(
+          `select count(*)::int as waiting from pg_locks
+           where locktype = 'advisory' and not granted
+             and ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+          [lockKey],
+        );
+        waiterSeen = (row?.waiting ?? 0) >= 1;
+        if (!waiterSeen) {
+          yield* Effect.sleep('100 millis');
+        }
+      }
+      // A non-granted waiter on that key means the finalize has not completed before the declare's commit: it is
+      // genuinely blocked on the seller lock, not merely slower.
+      expect(waiterSeen).toBe(true);
+
+      yield* Deferred.succeed(release, null);
+      const declareOutcome = yield* Fiber.join(declareFiber);
+      const finalizeOutcome = yield* Fiber.join(finalizeFiber);
+
+      // Forced order (Fable MINOR 1): the finalize waits for the declare's commit and then reads its revision,
+      // never a mix and never the pre-declare state (#950 F24, Unit 10 C).
       const declared = declaredOf(declareOutcome);
       expect(declared.created).toBe(true);
       expect(declared.revision).toBe(2);
-      const finalizeWonTheLock = final.handoff.outcome.decision.sellerVatRegime === 'VAT_PAYER';
-      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(finalizeWonTheLock ? 1 : 2);
-      expect(['VAT_PAYER', 'NON_PAYER']).toContain(final.handoff.outcome.decision.sellerVatRegime);
+      const final = finalizedOf(finalizeOutcome);
+      expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
+      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(2);
     }),
   ),
 );
