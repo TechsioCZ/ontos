@@ -29,7 +29,7 @@ const readRuntimeAccepts = <Value>(inputSchema: Schema.Decoder<Value>, httpDecod
 
 describe('TAX governed reads decode their HTTP payload exactly once', () => {
   it('applicable Tax Rule Set: the decoded Tax-Relevant Time passes Read Runtime unchanged', () => {
-    const httpDecoded = Schema.decodeUnknownSync(ApplicableTaxRuleSetRequestSchema)({
+    const httpDecoded = Schema.decodeSync(ApplicableTaxRuleSetRequestSchema)({
       jurisdiction: 'CZ_DOMESTIC',
       taxClassificationCode: 'cz-standard-goods',
       taxRelevantTime: '2026-06-01T00:00:00.000Z',
@@ -39,7 +39,7 @@ describe('TAX governed reads decode their HTTP payload exactly once', () => {
   });
 
   it('Seller VAT Regime at an instant: the decoded instant passes Read Runtime unchanged', () => {
-    const httpDecoded = Schema.decodeUnknownSync(SellerVatRegimeAtInstantRequestSchema)({
+    const httpDecoded = Schema.decodeSync(SellerVatRegimeAtInstantRequestSchema)({
       instant: '2026-06-01T00:00:00.000Z',
     });
     const accepted = readRuntimeAccepts(sellerVatRegimeAtInstantRead.descriptor.inputSchema, httpDecoded);
@@ -47,7 +47,7 @@ describe('TAX governed reads decode their HTTP payload exactly once', () => {
   });
 
   it('Tax Rule history: the decoded Tax Rule reference passes Read Runtime unchanged', () => {
-    const httpDecoded = Schema.decodeUnknownSync(TaxRuleHistoryRequestSchema)({
+    const httpDecoded = Schema.decodeSync(TaxRuleHistoryRequestSchema)({
       taxRuleRef: {
         moduleId: 'commerce.tax',
         resourceId: randomUUID(),
@@ -60,7 +60,7 @@ describe('TAX governed reads decode their HTTP payload exactly once', () => {
   });
 
   it('prospective Tax Evaluation: the decoded request passes Read Runtime unchanged', () => {
-    const httpDecoded = Schema.decodeUnknownSync(TaxEvaluationRequestSchema)(evaluationRequestInput());
+    const httpDecoded = Schema.decodeSync(TaxEvaluationRequestSchema)(evaluationRequestInput());
     const accepted = readRuntimeAccepts(taxEvaluationRead.descriptor.inputSchema, httpDecoded);
     expect(Result.getOrThrow(accepted)).toEqual(httpDecoded);
   });
@@ -71,13 +71,13 @@ describe('TAX governed reads decode their HTTP payload exactly once', () => {
       declaredUse: 'LAUNCH_PURCHASE',
       previous: evaluate(),
     });
-    const httpDecoded = Schema.decodeUnknownSync(TaxMaterialityComparisonRequestSchema)(wire);
+    const httpDecoded = Schema.decodeSync(TaxMaterialityComparisonRequestSchema)(wire);
     const accepted = readRuntimeAccepts(taxMaterialityComparisonRead.descriptor.inputSchema, httpDecoded);
     expect(Result.getOrThrow(accepted)).toEqual(httpDecoded);
   });
 
   it('Tax correction preview: decoded Accepted Tax Terms pass Read Runtime unchanged', () => {
-    const httpDecoded = Schema.decodeUnknownSync(TaxCorrectionPreviewRequestSchema)({
+    const httpDecoded = Schema.decodeSync(TaxCorrectionPreviewRequestSchema)({
       acceptedTaxTerms: acceptedTaxTermsInput([{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }]),
       declaredPurpose: { _tag: 'HISTORICAL_READ' },
     });
