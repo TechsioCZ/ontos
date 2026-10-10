@@ -63,14 +63,10 @@ const isExactRational = Schema.is(TaxExactRationalSchema);
 const shippingExact = (shipping: string | TaxExactRational): TaxExactRational =>
   isExactRational(shipping) ? shipping : exactDecimal(shipping);
 
-const unitInput = ({
-  amountBasis = 'NET',
-  lineValue,
-  nonPayer,
-  occurrenceId,
-  ratePercent = '21',
-  shipping,
-}: OriginalUnitInput): TaxDecisionUnitInput => {
+const unitInput = (
+  { amountBasis = 'NET', lineValue, nonPayer, occurrenceId, ratePercent = '21', shipping }: OriginalUnitInput,
+  allocationKey?: { readonly key: 'GROSS_LINE_VALUE'; readonly revision: 1 },
+): TaxDecisionUnitInput => {
   if (nonPayer === true) {
     if (shipping !== undefined) {
       throw new Error('A SELLER_NOT_VAT_PAYER unit fixture carries no Shipping component');
@@ -78,22 +74,30 @@ const unitInput = ({
     return nonPayerDecisionUnitInput(occurrenceId, lineValue, amountBasis);
   }
   const unit = decisionUnitInput(occurrenceId, lineValue, ratePercent, amountBasis);
-  return shipping === undefined
-    ? unit
-    : {
-        ...unit,
-        taxableBasisInterpretation: {
-          components: [
-            ...unit.taxableBasisInterpretation.components,
-            {
-              _tag: 'SHIPPING_ALLOCATION',
-              amount: shippingExact(shipping),
-              amountBasis: 'GROSS' as const,
-              shippingSourceRef: shippingSourceRefInput,
-            },
-          ],
-        },
-      };
+  if (shipping === undefined) {
+    return unit;
+  }
+  const shippingComponent =
+    allocationKey === undefined
+      ? {
+          _tag: 'SHIPPING_ALLOCATION' as const,
+          amount: shippingExact(shipping),
+          amountBasis: 'GROSS' as const,
+          shippingSourceRef: shippingSourceRefInput,
+        }
+      : {
+          _tag: 'SHIPPING_ALLOCATION' as const,
+          allocationKey,
+          amount: shippingExact(shipping),
+          amountBasis: 'GROSS' as const,
+          shippingSourceRef: shippingSourceRefInput,
+        };
+  return {
+    ...unit,
+    taxableBasisInterpretation: {
+      components: [...unit.taxableBasisInterpretation.components, shippingComponent],
+    },
+  };
 };
 
 /** Encoded final Tax Decision of the given original units, as retained by an Accepted record. */
@@ -109,6 +113,10 @@ export const originalDecisionInput = (
     shipped.length > 0 ? { shippingSourceRef: shippingSourceRefInput } : {},
   );
   const [firstShipped, ...restShipped] = shipped;
+  // Two or more shipped units carry the derived `GROSS_LINE_VALUE` allocation key at both the Decision-level
+  // `shippingAllocation` and on each shipped unit's own recorded component: `shippingAllocatedCompletely` requires
+  // an exact match between the two, including the key (#920 F33, #933 F17-F18).
+  const sharedAllocationKey = restShipped.length > 0 ? ({ key: 'GROSS_LINE_VALUE', revision: 1 } as const) : undefined;
   const overrides = {
     purchaseBinding: {
       ...binding,
@@ -125,7 +133,10 @@ export const originalDecisionInput = (
         })),
       ],
     },
-    units: [unitInput(units[0]), ...units.slice(1).map(unitInput)],
+    units: [
+      unitInput(units[0], sharedAllocationKey),
+      ...units.slice(1).map((unit) => unitInput(unit, sharedAllocationKey)),
+    ],
   } as const;
   const input = nonPayer
     ? nonPayerTaxDecisionInput([first, ...rest], overrides)
@@ -133,10 +144,7 @@ export const originalDecisionInput = (
   if (firstShipped === undefined) {
     return input;
   }
-  const allocationKey =
-    restShipped.length > 0
-      ? ({ allocationKey: { key: 'GROSS_LINE_VALUE' as const, revision: 1 as const } } as const)
-      : {};
+  const allocationKey = sharedAllocationKey === undefined ? {} : { allocationKey: sharedAllocationKey };
   return {
     ...input,
     shippingAllocation: {

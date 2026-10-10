@@ -248,9 +248,9 @@ supply: once one exists, it is the baseline and the Order Snapshot is not. The O
 authoritative only within the confirmed pre-document boundary, and is never a correction baseline. A
 missing or ambiguous record or unit mapping is an explicit unresolved historical-input outcome,
 never Current reconstruction, equal-total matching or guessed zero.
-_Avoid_: "original invoice" read as requiring an invoice for every B2C return, consumer choosing a
-baseline by matching total, live Catalog/Inventory/Pricing/Tax Rule/registration lookup as baseline,
-an Order Snapshot used as the baseline of an invoiced sale's return.
+_Avoid_: consumer choosing a baseline by matching total, live Catalog/Inventory/Pricing/Tax
+Rule/registration lookup as baseline, an Order Snapshot used as the baseline of an invoiced sale's
+return.
 
 **Accepted Cumulative Correction State** — Billing-owned, versioned cumulative corrected published
 Tax state of one original Taxable Supply Unit after all Accepted corrections, starting from the

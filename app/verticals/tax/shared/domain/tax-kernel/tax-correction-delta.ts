@@ -273,8 +273,6 @@ const OutOfBoundsUnitSchema = Schema.Struct({
 
 export type OutOfBoundsUnit = typeof OutOfBoundsUnitSchema.Type;
 
-export const isOutOfBoundsUnit = Schema.is(OutOfBoundsUnitSchema);
-
 /**
  * Explicit unresolved historical input (#947 F13, #948 F7, PO default D4): the owner cannot establish its Authoritative
  * Original Accepted Record (missing or ambiguous), the record it handed over is internally inconsistent (its Tax

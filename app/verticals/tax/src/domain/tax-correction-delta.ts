@@ -22,11 +22,7 @@ import {
   taxMonetaryAmountMinorUnits,
 } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import type { TaxMonetaryAmount } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
-import {
-  correctionComponentOf,
-  isOutOfBoundsUnit,
-  isUnresolvedUnit,
-} from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
+import { correctionComponentOf, isUnresolvedUnit } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 import type {
   AcceptedCumulativeCorrectionState,
   CumulativeUnitTaxState,
@@ -221,18 +217,22 @@ const calculateUnit = (
   if (Arr.isReadonlyArrayNonEmpty(outOfBounds)) {
     return Result.fail(
       Arr.sort(
-        outOfBounds.filter(isOutOfBoundsUnit),
+        outOfBounds,
         Order.mapInput(Order.String, (unit: OutOfBoundsUnit) => unit.reason),
       ),
     );
   }
 
-  const line = Result.isSuccess(goods) ? goods.success.line : previous.remainingLineBasis;
-  const quantity = Result.isSuccess(goods) ? goods.success.quantity : previous.remainingQuantity;
-  if (!isNonNegative(line) || !isNonNegative(quantity) || !isNonNegative(shipping)) {
-    return Result.fail([{ reason: 'EXCEEDS_REMAINING_BASIS_COMPONENT', taxableSupplyUnitId }]);
-  }
-  const tax = publishedTaxOf(baseline, line, shipping);
+  // The three components just passed the out-of-bounds check above, so each is already proven non-negative;
+  // `.make` brands them for `proposedNext` without re-running that check.
+  const line = NonNegativeTaxExactRationalSchema.make(
+    Result.isSuccess(goods) ? goods.success.line : previous.remainingLineBasis,
+  );
+  const quantity = NonNegativeTaxExactRationalSchema.make(
+    Result.isSuccess(goods) ? goods.success.quantity : previous.remainingQuantity,
+  );
+  const remainingShipping = NonNegativeTaxExactRationalSchema.make(shipping);
+  const tax = publishedTaxOf(baseline, line, remainingShipping);
   return Result.succeed({
     exactTaxContribution: tax.exact,
     expectedPreviousState: request.expectedPreviousState,
@@ -241,7 +241,7 @@ const calculateUnit = (
       remainingLineBasis: line,
       remainingPublishedTax: tax.published,
       remainingQuantity: quantity,
-      remainingShippingBasis: shipping,
+      remainingShippingBasis: remainingShipping,
     },
     taxableSupplyUnitId,
     taxCorrectionDelta: signedTaxMonetaryAmountFromMinorUnits(
@@ -278,7 +278,7 @@ export const calculateTaxCorrectionDelta = (request: TaxCorrectionRequest): TaxC
   );
   const issues = Arr.getFailures(calculations);
   const unresolved = issues.filter(isUnresolvedUnit);
-  const outOfBounds = issues.flatMap((issue) => (isUnresolvedUnit(issue) ? [] : issue.filter(isOutOfBoundsUnit)));
+  const outOfBounds = issues.flatMap((issue) => (isUnresolvedUnit(issue) ? [] : issue));
   const { decision, result } = request.acceptedTaxTerms.finalTax;
   return Result.match(Result.all(calculations), {
     onFailure: (): TaxCorrectionOutcome =>

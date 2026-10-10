@@ -90,7 +90,7 @@ describe('Accepted Tax Terms', () => {
     expect(Option.isNone(originalUnitBaseline(terms, unitIdOf('o-3')))).toBe(true);
   });
 
-  it('#945-#948 H10: a seller-is-non-payer unit has a treatment-aware baseline with no rate field (Unit 12 B3)', () => {
+  it('B-3 a seller-is-non-payer unit has a treatment-aware baseline with no rate field (Unit 12 B3)', () => {
     const decision = decodeTaxDecision(nonPayerTaxDecisionInput(['o-1']));
     const encodedDecision = encodeTaxDecision(decision);
     const terms = decodeAcceptedTaxTerms({
