@@ -168,8 +168,6 @@ export type TaxCorrectionRequest = typeof TaxCorrectionRequestSchema.Type;
  */
 export const HistoryOwnerUnavailableSchema = Schema.TaggedStruct('HISTORY_OWNER_UNAVAILABLE', {});
 
-export type HistoryOwnerUnavailable = typeof HistoryOwnerUnavailableSchema.Type;
-
 const isSellerNotVatPayerTreatment = Schema.is(SellerNotVatPayerTreatmentSchema);
 const isZeroExact = (value: TaxExactRational): boolean => value.numerator === '0';
 const isZeroTaxMonetaryAmount = (value: TaxMonetaryAmount): boolean => taxMonetaryAmountMinorUnits(value) === 0n;
