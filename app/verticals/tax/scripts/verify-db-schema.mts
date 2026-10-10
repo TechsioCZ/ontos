@@ -1,7 +1,6 @@
-// @effect-diagnostics globalConsole:off strictEffectProvide:off -- Operator verifier boundary; expires: 2027-03-31.
 import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
-import { Array as EffectArray, Effect, Layer, Order, Schema } from 'effect';
+import { Console, Array as EffectArray, Effect, Layer, Order, Schema } from 'effect';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { TaxDatabase, TaxDatabaseLive, TaxPgClientLive } from '../src/database/client.ts';
@@ -96,7 +95,7 @@ const verification = Effect.gen(function* verifyTaxDatabase() {
   return { adminUser: connections.admin.user, typedTableCount: TAX_TABLES.length };
 });
 
-const runtime = TaxDatabaseLive.pipe(
+const TaxVerifierLive = TaxDatabaseLive.pipe(
   Layer.provide(TaxPgClientLive),
   Layer.provide(
     Layer.mergeAll(
@@ -105,5 +104,14 @@ const runtime = TaxDatabaseLive.pipe(
     ),
   ),
 );
-const result = await Effect.runPromise(Effect.provide(verification, runtime));
-console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${TAX_SCHEMA_NAME}`);
+
+// The operator entry point: the composed layers are built once for the verification and released after it.
+const program = Effect.scoped(
+  Effect.gen(function* runTaxVerifier() {
+    const services = yield* Layer.build(TaxVerifierLive);
+    const { typedTableCount } = yield* verification.pipe(Effect.provideContext(services));
+    yield* Console.log(`Verified ${typedTableCount} typed tables in PostgreSQL schema ${TAX_SCHEMA_NAME}`);
+  }),
+);
+
+await Effect.runPromise(program);
