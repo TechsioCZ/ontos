@@ -12,7 +12,7 @@ import {
   taxExactRationalFromMinorUnits,
 } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
-import { exactVatOfAmount } from './tax-rounding.ts';
+import { amountInBasis, exactTaxOfAmounts } from './tax-rounding.ts';
 import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/tax-historical-input-outcome.ts';
 import {
   CZK_MINOR_UNITS_PER_MAJOR_UNIT,
@@ -65,17 +65,19 @@ const isAtMost = (value: TaxExactRational, limit: TaxExactRational) =>
   isNonNegativeTaxExactRational(subtractTaxExactRationals(limit, value));
 
 /**
- * Published Tax of a remaining basis at the original rate and the original single per-unit boundary: the sum,
- * never rounded before this boundary, of the exact § 37 písm. b) VAT of the remaining Line Commercial Value at
- * its own recorded amount basis and of the remaining Shipping share, always GROSS (#948 F18, F21; #935 F12-F22;
- * PO decision D3 on #907).
+ * Published Tax of a remaining basis at the original unit's own treatment and the original single per-unit
+ * boundary: the sum, never rounded before this boundary, of the exact § 37 písm. b) VAT of the remaining Line
+ * Commercial Value at its own recorded amount basis and of the remaining Shipping share, always GROSS
+ * (#948 F18, F21; #935 F12-F22; PO decision D3 on #907). Corrections use the same `exactTaxOfAmounts` as the
+ * original sale, so any later change to exact VAT arithmetic reaches corrections automatically (Unit 12 B1).
  */
 const publishedTaxOf = (baseline: OriginalUnitBaseline, line: TaxExactRational, shipping: TaxExactRational) => {
-  const exact = NonNegativeTaxExactRationalSchema.make(
-    addTaxExactRationals(
-      exactVatOfAmount(NonNegativeTaxExactRationalSchema.make(line), baseline.lineAmountBasis, baseline.rate),
-      exactVatOfAmount(NonNegativeTaxExactRationalSchema.make(shipping), 'GROSS', baseline.rate),
-    ),
+  const exact = exactTaxOfAmounts(
+    [
+      { amount: NonNegativeTaxExactRationalSchema.make(line), amountBasis: baseline.lineAmountBasis },
+      { amount: NonNegativeTaxExactRationalSchema.make(shipping), amountBasis: 'GROSS' },
+    ],
+    baseline.treatment,
   );
   const published = publishedTaxAmountRoundedHalfUp(exact);
   return { adjustment: subtractTaxExactRationals(exactValueOf(published), exact), exact, published };
@@ -118,9 +120,11 @@ const followsFromOriginalRecord = (baseline: OriginalUnitBaseline, state: Cumula
  * Next remaining goods component (quantity and Line Commercial Value) from at most one goods change. A quantity
  * reduction removes the same share of the remaining Line Commercial Value as of the remaining quantity, so earlier
  * value corrections are respected and returning the last quantity leaves no goods value. A Line Commercial Value
- * reduction moves exactly that component and never the quantity (#948 F8, F10-F11, F22, F25).
+ * reduction converts its delta into the baseline's recorded line basis at the unit's own treatment before moving
+ * that component, and never touches the quantity (F5; #948 F8, F10-F11, F22, F25).
  */
 const nextGoods = (
+  baseline: OriginalUnitBaseline,
   previous: CumulativeUnitTaxState,
   change: TaxCorrectionChange | undefined,
 ): Result.Result<{ line: TaxExactRational; quantity: TaxExactRational }, 'QUANTITY'> => {
@@ -143,26 +147,37 @@ const nextGoods = (
             )
           : Result.fail('QUANTITY' as const);
       },
-      VALUE: ({ valueDelta }) =>
-        Result.succeed({
-          line: addTaxExactRationals(previous.remainingLineBasis, valueDelta),
+      VALUE: ({ amountBasis, valueDelta }) => {
+        const delta = amountInBasis(valueDelta, amountBasis, baseline.lineAmountBasis, baseline.treatment);
+        return Result.succeed({
+          line: addTaxExactRationals(previous.remainingLineBasis, delta),
           quantity: previous.remainingQuantity,
-        }),
+        });
+      },
     }),
   );
 };
 
 /**
- * Next remaining Shipping share from at most one explicit Shipping-value change; a quantity change never moves it,
- * so arithmetic never invents a Shipping refund ("never 1/quantity", H5).
+ * Next remaining Shipping share from at most one explicit Shipping-value change, converted into the always-GROSS
+ * recorded Shipping basis at the unit's own treatment (identity, since a Shipping change is always GROSS); a
+ * quantity change never moves it, so arithmetic never invents a Shipping refund ("never 1/quantity", H5).
  */
-const nextShipping = (previous: CumulativeUnitTaxState, change: TaxCorrectionChange | undefined): TaxExactRational =>
+const nextShipping = (
+  baseline: OriginalUnitBaseline,
+  previous: CumulativeUnitTaxState,
+  change: TaxCorrectionChange | undefined,
+): TaxExactRational =>
   change === undefined
     ? previous.remainingShippingBasis
     : Match.value(change).pipe(
         Match.tagsExhaustive({
           QUANTITY: () => previous.remainingShippingBasis,
-          VALUE: ({ valueDelta }) => addTaxExactRationals(previous.remainingShippingBasis, valueDelta),
+          VALUE: ({ amountBasis, valueDelta }) =>
+            addTaxExactRationals(
+              previous.remainingShippingBasis,
+              amountInBasis(valueDelta, amountBasis, 'GROSS', baseline.treatment),
+            ),
         }),
       );
 
@@ -189,8 +204,8 @@ const calculateUnit = (
   const goodsChange = Arr.findFirst(request.changes, (change) => correctionComponentOf(change) === 'GOODS');
   const shippingChange = Arr.findFirst(request.changes, (change) => correctionComponentOf(change) === 'SHIPPING');
 
-  const goods = nextGoods(previous, Option.getOrUndefined(goodsChange));
-  const shipping = nextShipping(previous, Option.getOrUndefined(shippingChange));
+  const goods = nextGoods(baseline, previous, Option.getOrUndefined(goodsChange));
+  const shipping = nextShipping(baseline, previous, Option.getOrUndefined(shippingChange));
 
   const quantityOutOfBounds = Result.isFailure(goods);
   const lineOutOfBounds = Result.isSuccess(goods) && !isNonNegative(goods.success.line);
@@ -232,6 +247,7 @@ const calculateUnit = (
       taxMonetaryAmountMinorUnits(tax.published) - taxMonetaryAmountMinorUnits(previous.remainingPublishedTax),
     ),
     taxRoundingAdjustment: tax.adjustment,
+    treatment: baseline.treatment,
   });
 };
 

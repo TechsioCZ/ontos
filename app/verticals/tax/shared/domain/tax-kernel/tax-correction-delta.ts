@@ -13,8 +13,17 @@ import {
   TAX_HISTORICAL_INPUT_UNRESOLVED,
   TaxHistoricalInputUnresolvedReasonSchema,
 } from './tax-historical-input-outcome.ts';
-import { SignedTaxMonetaryAmountSchema, TaxCurrencySchema, TaxMonetaryAmountSchema } from './tax-monetary-amount.ts';
+import {
+  SignedTaxMonetaryAmountSchema,
+  TaxCurrencySchema,
+  TaxMonetaryAmountSchema,
+  signedTaxMonetaryAmountMinorUnits,
+  taxMonetaryAmountMinorUnits,
+} from './tax-monetary-amount.ts';
+import type { SignedTaxMonetaryAmount, TaxMonetaryAmount } from './tax-monetary-amount.ts';
 import { TaxRoundingPolicySchema } from './tax-rounding.ts';
+import { TaxAmountBasisSchema } from './taxable-basis.ts';
+import { SellerNotVatPayerTreatmentSchema, TaxDecisionTreatmentSchema } from './tax-treatment.ts';
 import { TaxableSupplyUnitIdSchema } from './taxable-supply-unit.ts';
 
 /**
@@ -61,15 +70,27 @@ const NegativeDeltaSchema = TaxExactRationalSchema.check(
 
 /**
  * Explicit authorized reduction of one original unit: a negative quantity delta in the unit's accepted quantity unit,
- * or a negative commercial-value delta of one named basis component in CZK. Never inferred from a refund, a
- * customer-facing total or a Fulfillment status (#948 F10-F11, F25, #907 F187, F193-F194).
+ * or a negative commercial-value delta of one named basis component in CZK with its own explicit amount basis
+ * (PO decision D3 on #907). Billing and Order never compute the net or gross amount themselves (#948 F14); TAX
+ * converts the delta into the component's recorded basis at the original unit's treatment. A Shipping Allocation
+ * value change is always GROSS, mirroring `ShippingAllocationBasisSchema.amountBasis` and Unit 11's shipping rule
+ * (F16). Never inferred from a refund, a customer-facing total or a Fulfillment status
+ * (#948 F10-F11, F25, #907 F187, F193-F194).
  */
 export const TaxCorrectionChangeSchema = Schema.Union([
   Schema.TaggedStruct('QUANTITY', { quantityDelta: NegativeDeltaSchema }),
   Schema.TaggedStruct('VALUE', {
+    amountBasis: TaxAmountBasisSchema,
     basisComponent: Schema.Literals(['LINE_COMMERCIAL_VALUE', 'SHIPPING_ALLOCATION']),
     valueDelta: NegativeDeltaSchema,
-  }),
+  }).check(
+    Schema.makeFilter(
+      ({ amountBasis, basisComponent }) =>
+        basisComponent !== 'SHIPPING_ALLOCATION' ||
+        amountBasis === 'GROSS' ||
+        'A Shipping Allocation value change must be GROSS',
+    ),
+  ),
 ]);
 
 export type TaxCorrectionChange = typeof TaxCorrectionChangeSchema.Type;
@@ -128,10 +149,32 @@ export const TaxCorrectionRequestSchema = Schema.Struct({
 
 export type TaxCorrectionRequest = typeof TaxCorrectionRequestSchema.Type;
 
+const isSellerNotVatPayerTreatment = Schema.is(SellerNotVatPayerTreatmentSchema);
+const isZeroExact = (value: TaxExactRational): boolean => value.numerator === '0';
+const isZeroTaxMonetaryAmount = (value: TaxMonetaryAmount): boolean => taxMonetaryAmountMinorUnits(value) === 0n;
+const isZeroSignedTaxMonetaryAmount = (value: SignedTaxMonetaryAmount): boolean =>
+  signedTaxMonetaryAmountMinorUnits(value) === 0n;
+
+const isFullyReversedState = (state: CumulativeUnitTaxState): boolean =>
+  isZeroExact(state.remainingQuantity) &&
+  isZeroExact(state.remainingLineBasis) &&
+  isZeroExact(state.remainingShippingBasis);
+
 /**
  * Proposed next cumulative state of one unit and its signed Tax Correction Delta against the expected previous
  * Accepted state, echoed unchanged so Billing can accept it only against that exact version (#946 F16-F17, #948 F15,
  * F19, F27). The exact contribution and rounding adjustment are Tax rounding evidence of the proposed state.
+ * `treatment` echoes the original unit's own Tax Decision treatment: every correction uses the same treatment as the
+ * original sale, under the same rate (Unit 12 B1, B4).
+ *
+ * Two invariants:
+ * - **Treatment consequence** (OWNERSHIP §5 "Non-payer corrections"): for `SELLER_NOT_VAT_PAYER`, the exact
+ *   contribution, the Tax rounding adjustment and the signed delta are all zero, and both the previous and proposed
+ *   remaining published Tax are 0.00.
+ * - **Full reversal** (LEGAL §2 Credits): once the proposed next state has no remaining quantity, line or Shipping
+ *   basis, its remaining published Tax is 0.00 and the signed delta is the exact negation of the previous remaining
+ *   published Tax — "a full reversal is the exact negation of the stored tax" is a contract invariant here, not
+ *   just an arithmetic outcome.
  */
 export const TaxCorrectionUnitDeltaSchema = Schema.Struct({
   exactTaxContribution: NonNegativeTaxExactRationalSchema,
@@ -141,7 +184,27 @@ export const TaxCorrectionUnitDeltaSchema = Schema.Struct({
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
   taxCorrectionDelta: SignedTaxMonetaryAmountSchema,
   taxRoundingAdjustment: TaxExactRationalSchema,
-});
+  treatment: TaxDecisionTreatmentSchema,
+}).check(
+  Schema.makeFilter(
+    ({ exactTaxContribution, previous, proposedNext, taxCorrectionDelta, taxRoundingAdjustment, treatment }) =>
+      !isSellerNotVatPayerTreatment(treatment) ||
+      (isZeroExact(exactTaxContribution) &&
+        isZeroExact(taxRoundingAdjustment) &&
+        isZeroSignedTaxMonetaryAmount(taxCorrectionDelta) &&
+        isZeroTaxMonetaryAmount(previous.remainingPublishedTax) &&
+        isZeroTaxMonetaryAmount(proposedNext.remainingPublishedTax)) ||
+      'SELLER_NOT_VAT_PAYER corrections carry no Tax contribution, adjustment or delta',
+  ),
+  Schema.makeFilter(
+    ({ previous, proposedNext, taxCorrectionDelta }) =>
+      !isFullyReversedState(proposedNext) ||
+      (isZeroTaxMonetaryAmount(proposedNext.remainingPublishedTax) &&
+        signedTaxMonetaryAmountMinorUnits(taxCorrectionDelta) ===
+          -taxMonetaryAmountMinorUnits(previous.remainingPublishedTax)) ||
+      'A full reversal is the exact negation of the previous remaining published Tax',
+  ),
+);
 
 export type TaxCorrectionUnitDelta = typeof TaxCorrectionUnitDeltaSchema.Type;
 

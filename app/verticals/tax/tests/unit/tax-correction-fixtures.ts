@@ -3,7 +3,8 @@ import { Schema } from 'effect';
 import { AcceptedTaxTermsSchema } from '../../src/domain/accepted-tax-terms.ts';
 import type { AcceptedTaxTerms } from '../../src/domain/accepted-tax-terms.ts';
 import type { TaxDecisionSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
-import { sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import { TaxExactRationalSchema, sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { TaxResultSchema } from '../../src/domain/tax-result.ts';
 import { TaxableSupplyUnitIdSchema } from '../../shared/domain/tax-kernel/taxable-supply-unit.ts';
 import type { TaxableSupplyUnitId } from '../../src/domain/taxable-supply-unit.ts';
@@ -14,6 +15,8 @@ import {
   decodeTaxDecision,
   encodeTaxDecision,
   exactDecimal,
+  nonPayerDecisionUnitInput,
+  nonPayerTaxDecisionInput,
   purchaseBindingInput,
   shippingSourceRefInput,
   taxDecisionInput,
@@ -26,26 +29,45 @@ const encodeResult = Schema.encodeSync(TaxResultSchema);
 export const decodeAcceptedTaxTerms = Schema.decodeUnknownSync(AcceptedTaxTermsSchema);
 export const encodeAcceptedTaxTerms = Schema.encodeSync(AcceptedTaxTermsSchema);
 
-/** One original accepted unit: its occurrence quantity, Line Commercial Value, rate and optional allocated Shipping. */
+/**
+ * One original accepted unit: its occurrence quantity, Line Commercial Value, rate and optional allocated Shipping.
+ * `shipping` accepts either a decimal string or an already-exact fraction (needed for the exact shipping shares an
+ * allocator produces). `nonPayer: true` on the first unit switches the whole Decision to `SELLER_NOT_VAT_PAYER`; a
+ * non-payer Decision carries no Shipping component (Unit 10), so `shipping` together with `nonPayer` throws rather
+ * than silently building an undecodable Decision.
+ */
 export interface OriginalUnitInput {
   readonly amountBasis?: 'GROSS' | 'NET';
   readonly lineValue: string;
+  readonly nonPayer?: true;
   readonly occurrenceId: string;
   readonly quantity: string;
   readonly ratePercent?: string;
-  readonly shipping?: string;
+  readonly shipping?: string | TaxExactRational;
 }
 
 export const unitIdOf = (occurrenceId: string): TaxableSupplyUnitId =>
   TaxableSupplyUnitIdSchema.make(`taxable-supply-unit:${occurrenceId}`);
 
+const isExactRational = Schema.is(TaxExactRationalSchema);
+
+const shippingExact = (shipping: string | TaxExactRational): TaxExactRational =>
+  isExactRational(shipping) ? shipping : exactDecimal(shipping);
+
 const unitInput = ({
   amountBasis = 'NET',
   lineValue,
+  nonPayer,
   occurrenceId,
   ratePercent = '21',
   shipping,
 }: OriginalUnitInput): TaxDecisionUnitInput => {
+  if (nonPayer === true) {
+    if (shipping !== undefined) {
+      throw new Error('A SELLER_NOT_VAT_PAYER unit fixture carries no Shipping component');
+    }
+    return nonPayerDecisionUnitInput(occurrenceId, lineValue, amountBasis);
+  }
   const unit = decisionUnitInput(occurrenceId, lineValue, ratePercent, amountBasis);
   return shipping === undefined
     ? unit
@@ -56,7 +78,7 @@ const unitInput = ({
             ...unit.taxableBasisInterpretation.components,
             {
               _tag: 'SHIPPING_ALLOCATION',
-              amount: exactDecimal(shipping),
+              amount: shippingExact(shipping),
               amountBasis: 'GROSS' as const,
               shippingSourceRef: shippingSourceRefInput,
             },
@@ -71,13 +93,14 @@ export const originalDecisionInput = (
 ): TaxDecisionInput => {
   const occurrenceIds = units.map(({ occurrenceId }) => occurrenceId);
   const [first = 'o-1', ...rest] = occurrenceIds;
+  const nonPayer = units[0].nonPayer === true;
   const shipped = units.filter(({ shipping }) => shipping !== undefined);
   const binding = purchaseBindingInput(
     [first, ...rest],
     shipped.length > 0 ? { shippingSourceRef: shippingSourceRefInput } : {},
   );
   const [firstShipped, ...restShipped] = shipped;
-  const input = taxDecisionInput([first, ...rest], {
+  const overrides = {
     purchaseBinding: {
       ...binding,
       purchaseDemandOccurrences: [
@@ -94,7 +117,10 @@ export const originalDecisionInput = (
       ],
     },
     units: [unitInput(units[0]), ...units.slice(1).map(unitInput)],
-  });
+  } as const;
+  const input = nonPayer
+    ? nonPayerTaxDecisionInput([first, ...rest], overrides)
+    : taxDecisionInput([first, ...rest], overrides);
   if (firstShipped === undefined) {
     return input;
   }
@@ -106,15 +132,15 @@ export const originalDecisionInput = (
     ...input,
     shippingAllocation: {
       ownerIssuedShippingAmount: sumTaxExactRationals([
-        exactDecimal(firstShipped.shipping ?? '0'),
-        ...restShipped.map(({ shipping = '0' }) => exactDecimal(shipping)),
+        shippingExact(firstShipped.shipping ?? '0'),
+        ...restShipped.map(({ shipping = '0' }) => shippingExact(shipping)),
       ]),
       unitAllocations: [
         {
           basisComponent: {
             _tag: 'SHIPPING_ALLOCATION',
             ...allocationKey,
-            amount: exactDecimal(firstShipped.shipping ?? '0'),
+            amount: shippingExact(firstShipped.shipping ?? '0'),
             amountBasis: 'GROSS' as const,
             shippingSourceRef: shippingSourceRefInput,
           },
@@ -124,7 +150,7 @@ export const originalDecisionInput = (
           basisComponent: {
             _tag: 'SHIPPING_ALLOCATION' as const,
             ...allocationKey,
-            amount: exactDecimal(shipping),
+            amount: shippingExact(shipping),
             amountBasis: 'GROSS' as const,
             shippingSourceRef: shippingSourceRefInput,
           },

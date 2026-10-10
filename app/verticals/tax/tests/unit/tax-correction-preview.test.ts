@@ -89,7 +89,12 @@ describe('Tax correction preview read', () => {
             {
               changes: [
                 { _tag: 'QUANTITY', quantityDelta: exactDecimal('-2') },
-                { _tag: 'VALUE', basisComponent: 'SHIPPING_ALLOCATION', valueDelta: exactDecimal('-10') },
+                {
+                  _tag: 'VALUE',
+                  amountBasis: 'GROSS',
+                  basisComponent: 'SHIPPING_ALLOCATION',
+                  valueDelta: exactDecimal('-10'),
+                },
               ],
               expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
               taxableSupplyUnitId: 'taxable-supply-unit:o-1',
