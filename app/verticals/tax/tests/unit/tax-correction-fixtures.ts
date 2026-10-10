@@ -28,6 +28,7 @@ export const encodeAcceptedTaxTerms = Schema.encodeSync(AcceptedTaxTermsSchema);
 
 /** One original accepted unit: its occurrence quantity, Line Commercial Value, rate and optional allocated Shipping. */
 export interface OriginalUnitInput {
+  readonly amountBasis?: 'GROSS' | 'NET';
   readonly lineValue: string;
   readonly occurrenceId: string;
   readonly quantity: string;
@@ -39,12 +40,13 @@ export const unitIdOf = (occurrenceId: string): TaxableSupplyUnitId =>
   TaxableSupplyUnitIdSchema.make(`taxable-supply-unit:${occurrenceId}`);
 
 const unitInput = ({
+  amountBasis = 'NET',
   lineValue,
   occurrenceId,
   ratePercent = '21',
   shipping,
 }: OriginalUnitInput): TaxDecisionUnitInput => {
-  const unit = decisionUnitInput(occurrenceId, lineValue, ratePercent);
+  const unit = decisionUnitInput(occurrenceId, lineValue, ratePercent, amountBasis);
   return shipping === undefined
     ? unit
     : {
@@ -52,7 +54,12 @@ const unitInput = ({
         taxableBasisInterpretation: {
           components: [
             ...unit.taxableBasisInterpretation.components,
-            { _tag: 'SHIPPING_ALLOCATION', amount: exactDecimal(shipping), shippingSourceRef: shippingSourceRefInput },
+            {
+              _tag: 'SHIPPING_ALLOCATION',
+              amount: exactDecimal(shipping),
+              amountBasis: 'GROSS' as const,
+              shippingSourceRef: shippingSourceRefInput,
+            },
           ],
         },
       };
@@ -91,6 +98,10 @@ export const originalDecisionInput = (
   if (firstShipped === undefined) {
     return input;
   }
+  const allocationKey =
+    restShipped.length > 0
+      ? ({ allocationKey: { key: 'GROSS_LINE_VALUE' as const, revision: 1 as const } } as const)
+      : {};
   return {
     ...input,
     shippingAllocation: {
@@ -102,7 +113,9 @@ export const originalDecisionInput = (
         {
           basisComponent: {
             _tag: 'SHIPPING_ALLOCATION',
+            ...allocationKey,
             amount: exactDecimal(firstShipped.shipping ?? '0'),
+            amountBasis: 'GROSS' as const,
             shippingSourceRef: shippingSourceRefInput,
           },
           taxableSupplyUnitId: unitIdOf(firstShipped.occurrenceId),
@@ -110,7 +123,9 @@ export const originalDecisionInput = (
         ...restShipped.map(({ occurrenceId, shipping = '0' }) => ({
           basisComponent: {
             _tag: 'SHIPPING_ALLOCATION' as const,
+            ...allocationKey,
             amount: exactDecimal(shipping),
+            amountBasis: 'GROSS' as const,
             shippingSourceRef: shippingSourceRefInput,
           },
           taxableSupplyUnitId: unitIdOf(occurrenceId),

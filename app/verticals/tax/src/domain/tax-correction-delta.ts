@@ -12,6 +12,7 @@ import {
   taxExactRationalFromMinorUnits,
 } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import { exactVatOfAmount } from './tax-rounding.ts';
 import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/tax-historical-input-outcome.ts';
 import {
   CZK_MINOR_UNITS_PER_MAJOR_UNIT,
@@ -60,12 +61,17 @@ const isAtMost = (value: TaxExactRational, limit: TaxExactRational) =>
   isNonNegativeTaxExactRational(subtractTaxExactRationals(limit, value));
 
 /**
- * Published Tax of a remaining basis at the original rate and the original single per-unit boundary; the basis is the
- * exact sum of its components, never rounded before this boundary (#948 F18, F21; #935 F12-F22).
+ * Published Tax of a remaining basis at the original rate and the original single per-unit boundary: the sum,
+ * never rounded before this boundary, of the exact § 37 písm. b) VAT of the remaining Line Commercial Value at
+ * its own recorded amount basis and of the remaining Shipping share, always GROSS (#948 F18, F21; #935 F12-F22;
+ * PO decision D3 on #907).
  */
 const publishedTaxOf = (baseline: OriginalUnitBaseline, line: TaxExactRational, shipping: TaxExactRational) => {
   const exact = NonNegativeTaxExactRationalSchema.make(
-    multiplyTaxExactRationals(addTaxExactRationals(line, shipping), baseline.rate),
+    addTaxExactRationals(
+      exactVatOfAmount(NonNegativeTaxExactRationalSchema.make(line), baseline.lineAmountBasis, baseline.rate),
+      exactVatOfAmount(NonNegativeTaxExactRationalSchema.make(shipping), 'GROSS', baseline.rate),
+    ),
   );
   const published = publishedTaxAmountRoundedHalfUp(exact);
   return { adjustment: subtractTaxExactRationals(exactValueOf(published), exact), exact, published };
