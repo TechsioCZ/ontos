@@ -29,9 +29,11 @@ import {
   catalogEntry,
   evaluate,
   evaluationRequest,
+  grossLine,
   ownState,
   pricingLine,
   selected,
+  shippingCharge,
 } from './tax-evaluation-fixtures.ts';
 import type { TaxEvaluationRequestInput } from './tax-evaluation-fixtures.ts';
 
@@ -92,6 +94,21 @@ const withWeights = (o1LineValue: string) =>
           shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
         },
       },
+    }),
+  );
+
+/** Only `affectedOccurrenceIds` differs; o1 and o2 keep the exact same GROSS line values. */
+const withAffected = (affectedOccurrenceIds: readonly [string, ...string[]]) =>
+  evaluate(
+    evaluationRequest({
+      pricing: {
+        pricingResultRef: PRICING_RESULT_REF,
+        publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '112.00')],
+      },
+      purchase: purchaseBindingInput(['o1', 'o2'], {
+        shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+      }),
+      shipping: { affectedOccurrenceIds, source: shippingCharge('99.00') },
     }),
   );
 
@@ -327,6 +344,14 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
   it('#943 F3 a changed Shipping allocation is material', () => {
     expect(materialReasons(compare(withWeights('121.00'), withWeights('233.00')))).toEqual(
       Option.some(['TAXABLE_BASIS', 'SHIPPING_ALLOCATION', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
+    );
+  });
+
+  it('#943 F3 a changed Shipping allocation is material with the line values themselves unchanged', () => {
+    // Only `affectedOccurrenceIds` differs; o1 and o2 keep the exact same GROSS line values, so this isolates
+    // SHIPPING_ALLOCATION materiality from any LINE_COMMERCIAL_VALUE change.
+    expect(materialReasons(compare(withAffected(['o1', 'o2']), withAffected(['o2'])))).toEqual(
+      Option.some(['SHIPPING_ALLOCATION', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
     );
   });
 

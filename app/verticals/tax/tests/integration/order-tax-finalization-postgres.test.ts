@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -40,7 +40,12 @@ import { orderTaxFinalizationsForScope } from '../../src/services/order-tax-fina
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 import { occurrenceInput, purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
-import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
+import {
+  PRICING_RESULT_REF,
+  evaluationRequestInput,
+  grossLine,
+  shippingCharge,
+} from '../unit/tax-evaluation-fixtures.ts';
 
 const tenantId = randomUUID();
 const principalId = randomUUID();
@@ -300,6 +305,71 @@ it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and
       expect(read.governingRevisionCorrections).toEqual([]);
       expect(resultOf(yield* subject.finalize(subject.payload(submission)))).toMatchObject({ created: false });
       expect(created).toMatchObject({ created: false });
+    }),
+  ),
+);
+
+it.live('PO decision D3 on #907: a final Order Tax with a GROSS Shipping allocation round-trips through recovery', () =>
+  Effect.scoped(
+    Effect.gen(function* shippingFinalizationAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.setUp;
+      yield* subject.launchRules;
+
+      const submission = `submission-${randomUUID()}`;
+      const shippingPayload = subject.payload(submission, {
+        pricing: {
+          pricingResultRef: PRICING_RESULT_REF,
+          publishedLines: [grossLine('o1', '121.00'), grossLine('o2', '112.00')],
+        },
+        purchase: purchaseBindingInput(['o1', 'o2'], {
+          sellingLegalEntityRef: subject.legalEntityId,
+          shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+          tenantId,
+        }),
+        shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00') },
+      });
+
+      const result = Match.value(resultOf(yield* subject.finalize(shippingPayload))).pipe(
+        Match.tag('FINALIZED', (finalized) => finalized),
+        Match.orElse((unexpected) => {
+          throw new Error(`Expected a FINALIZED result, got ${unexpected._tag}`);
+        }),
+      );
+      expect(result.handoff.outcome.result.purchaseTaxTotal.amount).toBe('47.02');
+      // The exact gross-weighted shares and the code-versioned allocation key, not just the rounded published
+      // amounts, round-trip through the jsonb Decision store (#907 plan §5.4).
+      expect(
+        result.handoff.outcome.decision.shippingAllocation?.unitAllocations.map(
+          ({ basisComponent, taxableSupplyUnitId }) => [
+            taxableSupplyUnitId,
+            basisComponent.amount,
+            basisComponent.amountBasis,
+            basisComponent.allocationKey,
+          ],
+        ),
+      ).toEqual([
+        [
+          'taxable-supply-unit:o1',
+          { denominator: '233', numerator: '11979' },
+          'GROSS',
+          { key: 'GROSS_LINE_VALUE', revision: 1 },
+        ],
+        [
+          'taxable-supply-unit:o2',
+          { denominator: '233', numerator: '11088' },
+          'GROSS',
+          { key: 'GROSS_LINE_VALUE', revision: 1 },
+        ],
+      ]);
+
+      // Lost response: same-submission recovery returns the Shipping allocation unchanged (#944 F10).
+      const recovered = Option.getOrThrow(yield* subject.finalOrderTax(submission));
+      expect(recovered.handoff.outcome.decision.decisionId).toBe(result.handoff.outcome.decision.decisionId);
+      expect(recovered.handoff.outcome.decision.shippingAllocation).toEqual(
+        result.handoff.outcome.decision.shippingAllocation,
+      );
     }),
   ),
 );

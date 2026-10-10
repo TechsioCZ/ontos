@@ -7,13 +7,8 @@ import type { LineTaxableBasis, PublishedPricingLine } from '../../shared/domain
 export {
   LineCommercialValueBasisSchema,
   PublishedPricingLineSchema,
-  TaxAmountBasisSchema,
 } from '../../shared/domain/tax-kernel/taxable-basis.ts';
-export type {
-  LineTaxableBasis,
-  PublishedPricingLine,
-  TaxAmountBasis,
-} from '../../shared/domain/tax-kernel/taxable-basis.ts';
+export type { LineTaxableBasis, PublishedPricingLine } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 
 /**
  * Composes the Taxable Basis input of one published Pricing Line. Discounts, Promotion allocations and Pricing

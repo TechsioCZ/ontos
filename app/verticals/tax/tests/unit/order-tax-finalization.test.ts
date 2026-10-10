@@ -128,4 +128,15 @@ describe('Final Order Tax intent (#944 F10-F12, #941 F2-F4)', () => {
     expect(changedQuantity).not.toBe(intent());
     expect(intent({}, commitmentTime('2026-06-01T10:00:01.000Z'))).not.toBe(intent());
   });
+
+  it('PO decision D3 on #907: flipping one line between GROSS and NET, amount unchanged, is a different intent', () => {
+    const grossLine = intent({
+      pricing: {
+        pricingResultRef: PRICING_RESULT_REF,
+        publishedLines: [pricingLine('o1', '1000.00', { amountBasis: 'GROSS' }), pricingLine('o2', '500.00')],
+      },
+    });
+
+    expect(grossLine).not.toBe(intent());
+  });
 });

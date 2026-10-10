@@ -74,8 +74,9 @@ Taxable Supply Unit from authoritative owner-issued commercial amounts: publishe
 Values with Discounts/Fees/Promotion contributions included exactly once, and the separately
 owner-issued Shipping amount. Each owner-issued amount carries an explicit amount basis, GROSS
 (VAT-inclusive, the price actually charged) or NET (pre-Tax); Launch B2C owners publish GROSS.
-Ancillary Shipping is Tax-owned and GROSS-only: it is split in proportion to the gross line values
-of the affected Taxable Supply Units (for a pre-Tax line, the line value × (1 + rate)). The exact
+The Shipping allocation is Tax-owned; the owner-issued Shipping charge is GROSS-only. The owner-
+issued Shipping charge is split in proportion to the gross line values of the affected Taxable
+Supply Units (for a pre-Tax line, the line value × (1 + rate)). The exact
 gross shares conserve the owner-issued, customer-charged Shipping amount before rounding and may be
 exact rational values rather than published Monetary Amounts; net Shipping bases are derived per
 unit and never conserved or stored. It is not a second Pricing total or authority to change already
