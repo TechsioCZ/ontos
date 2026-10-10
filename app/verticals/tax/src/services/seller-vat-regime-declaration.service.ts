@@ -7,6 +7,7 @@ import type {
   DeclareSellerVatRegimeResult,
 } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import {
+  ReplacedScheduledSellerVatRegimeDeclarationSchema,
   SellerVatRegimeDeclarationProvenanceSchema,
   SellerVatRegimeSchema,
 } from '../../shared/domain/tax-kernel/seller-vat-regime.ts';
@@ -71,6 +72,9 @@ export interface SellerVatRegimeDeclarations {
 
 const decodeRegime = Schema.decodeUnknownEffect(SellerVatRegimeSchema);
 const decodeProvenance = Schema.decodeUnknownEffect(SellerVatRegimeDeclarationProvenanceSchema);
+const decodeReplacedScheduled = Schema.decodeUnknownEffect(
+  Schema.Array(ReplacedScheduledSellerVatRegimeDeclarationSchema),
+);
 
 /** The row's `regime`/`provenance` are DB-check-constrained to this vocabulary; decoded, never cast. A row outside
  * it is an unavailable read, never a guessed value. */
@@ -102,28 +106,41 @@ const intentFingerprint = (input: DeclareSellerVatRegimePayload): string =>
 const declarationRef = (row: DeclarationRow) =>
   sellerVatRegimeDeclarationRef(row.tenantId, row.taxSellerVatRegimeDeclarationId);
 
-/** The replaced revisions' own refs, resolved once at insert time and replayed verbatim (#943/#955 F-replay). */
+/** The replaced revisions' own refs, resolved once at insert time and replayed verbatim (#943/#955 F-replay). The
+ * jsonb column is decoded through its Effect Schema, never trusted as the drizzle `$type<>` cast alone; a row
+ * outside the vocabulary is an unavailable read, never a guessed value. */
 const replacedScheduledRevisionsOf = (row: DeclarationRow) =>
-  row.replacedScheduledDeclarations.map(({ revision, taxSellerVatRegimeDeclarationId }) => ({
-    declarationRef: sellerVatRegimeDeclarationRef(row.tenantId, taxSellerVatRegimeDeclarationId),
-    revision,
-  }));
+  decodeReplacedScheduled(row.replacedScheduledDeclarations).pipe(
+    Effect.map((replaced) =>
+      replaced.map(({ revision, taxSellerVatRegimeDeclarationId }) => ({
+        declarationRef: sellerVatRegimeDeclarationRef(row.tenantId, taxSellerVatRegimeDeclarationId),
+        revision,
+      })),
+    ),
+    Effect.mapError(unavailable),
+  );
 
-const declared = (row: DeclarationRow, created: boolean): SellerVatRegimeDeclarationOutcome => ({
-  audit: {
-    changed: created,
-    meaningFingerprint: row.intentFingerprint,
-    resourceId: row.taxSellerVatRegimeDeclarationId,
-    resourceType: DECLARATION_RESOURCE_TYPE,
-  },
-  result: {
-    _tag: 'DECLARED',
-    created,
-    declarationRef: declarationRef(row),
-    replacedScheduledRevisions: replacedScheduledRevisionsOf(row),
-    revision: row.revision,
-  },
-});
+const declared = (
+  row: DeclarationRow,
+  created: boolean,
+): Effect.Effect<SellerVatRegimeDeclarationOutcome, PersistenceUnavailable> =>
+  replacedScheduledRevisionsOf(row).pipe(
+    Effect.map((replacedScheduledRevisions) => ({
+      audit: {
+        changed: created,
+        meaningFingerprint: row.intentFingerprint,
+        resourceId: row.taxSellerVatRegimeDeclarationId,
+        resourceType: DECLARATION_RESOURCE_TYPE,
+      },
+      result: {
+        _tag: 'DECLARED' as const,
+        created,
+        declarationRef: declarationRef(row),
+        replacedScheduledRevisions,
+        revision: row.revision,
+      },
+    })),
+  );
 
 const setCompleteness = (rows: readonly DeclarationRow[]) => ({
   rowCount: rows.length,
@@ -197,21 +214,7 @@ const insertDeclaration = Effect.fn('sellerVatRegimeDeclaration.insert')(functio
   if (row === undefined) {
     return yield* unavailable();
   }
-  return {
-    audit: {
-      changed: true,
-      meaningFingerprint: row.intentFingerprint,
-      resourceId: row.taxSellerVatRegimeDeclarationId,
-      resourceType: DECLARATION_RESOURCE_TYPE,
-    },
-    result: {
-      _tag: 'DECLARED',
-      created: true,
-      declarationRef: declarationRef(row),
-      replacedScheduledRevisions: replacedScheduledRevisionsOf(row),
-      revision: row.revision,
-    },
-  } satisfies SellerVatRegimeDeclarationOutcome;
+  return yield* declared(row, true);
 });
 
 export const sellerVatRegimeDeclarationsForScope = (
@@ -250,41 +253,55 @@ export const sellerVatRegimeDeclarationsForScope = (
             ),
         );
 
-  const rejected = (reason: 'REASON_REQUIRED_FOR_BACKDATED_EFFECT', fingerprint: string, actionInvocationId: string) =>
+  // The audit resourceId names the seller the rejection is about, never the action invocation (the established
+  // rejection-audit pattern: compare `order-tax-finalization.service.ts`'s `unstored`, which audits its stable
+  // domain reference, not the invocation id). No declaration row exists on rejection, so the Selling Legal Entity
+  // scope reference is the resource this audit is about.
+  const rejected = (reason: 'REASON_REQUIRED_FOR_BACKDATED_EFFECT', fingerprint: string, sellerLegalEntityId: string) =>
     Effect.succeed<SellerVatRegimeDeclarationOutcome>({
       audit: {
         changed: false,
         meaningFingerprint: fingerprint,
-        resourceId: actionInvocationId,
+        resourceId: sellerLegalEntityId,
         resourceType: DECLARATION_RESOURCE_TYPE,
       },
       result: { _tag: 'DECLARATION_REJECTED', reason, scheduledRevisions: [] },
     });
 
-  const scheduledConfirmationRequired = (
-    scheduled: readonly { readonly revision: number }[],
-    fingerprint: string,
-    input: GovernedInvocation,
-    rows: readonly DeclarationRow[],
-  ) =>
-    Effect.succeed<SellerVatRegimeDeclarationOutcome>({
-      audit: {
-        changed: false,
-        meaningFingerprint: fingerprint,
-        resourceId: input.actionInvocationId,
-        resourceType: DECLARATION_RESOURCE_TYPE,
-      },
-      result: {
-        _tag: 'DECLARATION_REJECTED',
-        reason: 'SCHEDULED_REVISION_CONFIRMATION_REQUIRED',
-        // Each scheduled revision keeps its own row's ref; the action invocation id is not a declaration row
-        // (#943/#955 F-replay).
-        scheduledRevisions: scheduled.flatMap(({ revision }) => {
-          const scheduledRow = rows.find((row) => row.revision === revision);
-          return scheduledRow === undefined ? [] : [{ declarationRef: declarationRef(scheduledRow), revision }];
-        }),
-      },
-    });
+  const scheduledConfirmationRequired = Effect.fn('sellerVatRegimeDeclaration.scheduledConfirmationRequired')(
+    function* scheduledConfirmationRequiredEffect(
+      scheduled: readonly { readonly revision: number }[],
+      fingerprint: string,
+      input: GovernedInvocation,
+      rows: readonly DeclarationRow[],
+    ) {
+      // Each scheduled revision keeps its own row's ref (#943/#955 F-replay); the evaluation that produced
+      // `scheduled` derived it from this same `rows` set, so a missing match means the two have drifted and this
+      // must fail closed, never silently drop the revision from the audited result.
+      const rowByRevision = new Map(rows.map((row) => [row.revision, row]));
+      const scheduledRevisions: { declarationRef: ReturnType<typeof declarationRef>; revision: number }[] = [];
+      for (const { revision } of scheduled) {
+        const scheduledRow = rowByRevision.get(revision);
+        if (scheduledRow === undefined) {
+          return yield* unavailable();
+        }
+        scheduledRevisions.push({ declarationRef: declarationRef(scheduledRow), revision });
+      }
+      return {
+        audit: {
+          changed: false,
+          meaningFingerprint: fingerprint,
+          resourceId: input.legalEntityId,
+          resourceType: DECLARATION_RESOURCE_TYPE,
+        },
+        result: {
+          _tag: 'DECLARATION_REJECTED',
+          reason: 'SCHEDULED_REVISION_CONFIRMATION_REQUIRED',
+          scheduledRevisions,
+        },
+      } satisfies SellerVatRegimeDeclarationOutcome;
+    },
+  );
 
   const declare: SellerVatRegimeDeclarations['declare'] = Effect.fn('sellerVatRegimeDeclaration.declare')(
     function* declareEffect(input) {
@@ -301,7 +318,7 @@ export const sellerVatRegimeDeclarationsForScope = (
           byInvocationRow.legalEntityId === input.legalEntityId &&
           byInvocationRow.idempotencyKey === input.actionInvocationId &&
           byInvocationRow.intentFingerprint === fingerprint;
-        return matches ? declared(byInvocationRow, false) : conflict('IDEMPOTENCY_REUSED');
+        return matches ? yield* declared(byInvocationRow, false) : conflict('IDEMPOTENCY_REUSED');
       }
       // Serializes every declare for this seller so the CAS basis and the timeline rule can't race (F6).
       yield* lockTaxScopeKey(transaction, input, 'SELLER_VAT_REGIME_DECLARATION', 'exclusive');
@@ -315,7 +332,7 @@ export const sellerVatRegimeDeclarationsForScope = (
       return yield* Match.value(evaluation).pipe(
         Match.tag('STALE_BASIS', () => Effect.succeed(staleBasis)),
         Match.tag('REASON_REQUIRED_FOR_BACKDATED_EFFECT', () =>
-          rejected('REASON_REQUIRED_FOR_BACKDATED_EFFECT', fingerprint, input.actionInvocationId),
+          rejected('REASON_REQUIRED_FOR_BACKDATED_EFFECT', fingerprint, input.legalEntityId),
         ),
         Match.tag('SCHEDULED_REVISION_CONFIRMATION_REQUIRED', ({ scheduled }) =>
           scheduledConfirmationRequired(scheduled, fingerprint, input, rows),
@@ -369,8 +386,11 @@ export const sellerVatRegimeDeclarationsForScope = (
       const atInstantSelection = yield* Match.value(selection).pipe(
         Match.tag('DECLARED', (declaredSelection) => {
           const selectionRow = rows.find((row) => row.revision === declaredSelection.declarationRevisionRef.revision);
+          // The evaluation that selected this revision derived it from this same `rows` set, so a missing match
+          // means the two have drifted; this must fail closed (never silently report NOT_DECLARED for a seller
+          // that does, in truth, have a declared regime).
           return selectionRow === undefined
-            ? Effect.succeed({ _tag: 'NOT_DECLARED' as const })
+            ? Effect.fail(unavailable())
             : decodeProvenance(selectionRow.provenance).pipe(
                 Effect.map((provenance) => ({
                   _tag: 'DECLARED' as const,

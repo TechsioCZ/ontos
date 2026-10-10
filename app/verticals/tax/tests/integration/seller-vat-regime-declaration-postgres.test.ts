@@ -18,6 +18,7 @@ import {
 } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import type { SellerVatRegimeAtInstantSelection } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import { taxRelations, taxSellerVatRegimeDeclarations } from '../../src/database/schema.ts';
+import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 
 const tenantId = randomUUID();
@@ -257,6 +258,96 @@ it.live(
         const originalInvocationConfirm = declaredOf(yield* subject.declare(confirmOverrides, invocationId));
         const replay = declaredOf(yield* subject.declare(confirmOverrides, invocationId));
         expect(replay.replacedScheduledRevisions).toEqual(originalInvocationConfirm.replacedScheduledRevisions);
+      }),
+    ),
+);
+
+it.live('Unit 10 B a rejected declare audits the seller scope reference, never the action invocation id', () =>
+  Effect.scoped(
+    Effect.gen(function* rejectionAuditResourceIdAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      const backdatedInvocationId = randomUUID();
+
+      const backdatedOutcome = yield* subject.declare(
+        {
+          effectiveFrom: '2025-01-01T00:00:00.000Z',
+          expectedCurrentRevision: 0,
+          regime: 'VAT_PAYER',
+        },
+        backdatedInvocationId,
+      );
+      if ('kind' in backdatedOutcome) {
+        throw new Error(`Expected a declaration outcome, got ${backdatedOutcome.kind}`);
+      }
+      // No declaration row exists for a rejection: the audited resource is the seller (Selling Legal Entity)
+      // scope reference, never the action invocation id (#950 F45-F47 resourceId must name a real resource).
+      expect(backdatedOutcome.audit.resourceId).toBe(subject.legalEntityId);
+      expect(backdatedOutcome.audit.resourceId).not.toBe(backdatedInvocationId);
+
+      const scheduled = declaredOf(
+        yield* subject.declare({ effectiveFrom: '2026-08-01T00:00:00.000Z', regime: 'NON_PAYER' }),
+      );
+      expect(scheduled.revision).toBe(1);
+      const unconfirmedInvocationId = randomUUID();
+      const unconfirmedOutcome = yield* subject.declare(
+        { expectedCurrentRevision: 1, regime: 'VAT_PAYER' },
+        unconfirmedInvocationId,
+      );
+      if ('kind' in unconfirmedOutcome) {
+        throw new Error(`Expected a declaration outcome, got ${unconfirmedOutcome.kind}`);
+      }
+      expect(unconfirmedOutcome.audit.resourceId).toBe(subject.legalEntityId);
+      expect(unconfirmedOutcome.audit.resourceId).not.toBe(unconfirmedInvocationId);
+    }),
+  ),
+);
+
+it.live(
+  '#943 a DECLARED replay with a corrupted replaced-scheduled-declarations jsonb row fails closed, not guessed',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* corruptedReplacedScheduledAcceptance() {
+        const { adminClient, runtime } = yield* acquireDatabases;
+        const subject = seller(runtime);
+        const actionInvocationId = randomUUID();
+        const decoded = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+          effectiveFrom: '2026-02-01T00:00:00.000Z',
+          expectedCurrentRevision: 0,
+          regime: 'VAT_PAYER',
+        });
+        // Mirrors the service's own `intentFingerprint` so the idempotent-replay match succeeds and the replay
+        // path actually decodes this row's `replaced_scheduled_declarations`.
+        const fingerprint = taxMeaningFingerprint({
+          confirmReplacesScheduled: false,
+          effectiveFrom: DateTime.formatIso(decoded.effectiveFrom),
+          expectedCurrentRevision: decoded.expectedCurrentRevision,
+          reason: null,
+          regime: decoded.regime,
+        });
+        yield* adminClient.unsafe(
+          `insert into tax.tax_seller_vat_regime_declarations
+             (legal_entity_id, tenant_id, action_invocation_id, actor_principal_id, effective_from,
+              idempotency_key, intent_fingerprint, provenance, recorded_at, regime,
+              replaced_scheduled_declarations, replaces_scheduled, revision)
+           values
+             ($1, $2, $3, $4, $5, $6, $7, 'MERCHANT_DECLARED', $5, 'VAT_PAYER',
+              '[{"revision": "not-a-number"}]'::jsonb, false, 1)`,
+          [
+            subject.legalEntityId,
+            tenantId,
+            actionInvocationId,
+            principalId,
+            '2026-02-01T00:00:00.000Z',
+            actionInvocationId,
+            fingerprint,
+          ],
+        );
+
+        const replay = yield* Effect.exit(subject.declare({ regime: 'VAT_PAYER' }, actionInvocationId));
+        // A row outside the vocabulary is an unavailable read, never a guessed `replacedScheduledRevisions` value
+        // decoded straight from the drizzle `$type<>` cast.
+        expect(Exit.isFailure(replay)).toBe(true);
       }),
     ),
 );

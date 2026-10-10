@@ -34,9 +34,28 @@ export const SellerVatRegimeSelectionSchema = Schema.Union([
 ]);
 export type SellerVatRegimeSelection = typeof SellerVatRegimeSelectionSchema.Type;
 
-/** How a declaration revision came to exist: merchant-declared through the Action, or imported during migration. */
+/**
+ * How a declaration revision came to exist: merchant-declared through the Action, or imported during migration.
+ * `MIGRATED` is declared here as part of the domain vocabulary (#907 Unit 10 step 9), but nothing in this vertical
+ * writes it yet: step 9 only establishes the domain shape, and the step-9 migration cutover that would actually
+ * import `MIGRATED` rows is a later P6 concern tracked outside this unit.
+ */
 export const SellerVatRegimeDeclarationProvenanceSchema = Schema.Literals(['MERCHANT_DECLARED', 'MIGRATED']);
 export type SellerVatRegimeDeclarationProvenance = typeof SellerVatRegimeDeclarationProvenanceSchema.Type;
+
+/** The declaration row's own primary key; branded so it is never interchangeable with another identifier (audit
+ * A2). */
+export const TaxSellerVatRegimeDeclarationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('TaxSellerVatRegimeDeclarationId'),
+  Schema.decodeTo(Schema.String),
+);
+
+/** One replaced revision's own row identity, persisted verbatim at insert time (#943/#955 F-replay). Decoded from
+ * the DB jsonb column at read time; never trusted as the drizzle `$type<>` cast alone. */
+export const ReplacedScheduledSellerVatRegimeDeclarationSchema = Schema.Struct({
+  revision: RevisionSchema,
+  taxSellerVatRegimeDeclarationId: TaxSellerVatRegimeDeclarationIdSchema,
+});
 
 /** Code-versioned legal basis for the non-payer treatment; never inferred from a date alone (LEGAL §1). */
 export const SELLER_NOT_VAT_PAYER_LEGAL_BASIS = {
