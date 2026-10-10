@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Exit, Fiber, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -11,11 +11,17 @@ import {
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
-import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { DomainEventReference, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import {
+  FinalOrderTaxHandoffSchema,
   FinalizeOrderTaxPayloadSchema,
+  FinalizeOrderTaxResultSchema,
   OrderSubmissionRefSchema,
 } from '../../shared/actions/order-tax-finalization.ts';
+import { FinalOrderTaxRequestSchema, FinalOrderTaxResponseSchema } from '../../shared/apis/final-order-tax.ts';
+import { TaxGovernanceAuditEvidenceSchema } from '../../shared/domain/tax-governance-errors.ts';
+import { handleFinalizeOrderTax } from '../../src/actions/finalize-order-tax.action.ts';
+import { readFinalOrderTax } from '../../src/api/final-order-tax.read.ts';
 import type { FinalizeOrderTaxResult } from '../../shared/actions/order-tax-finalization.ts';
 import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import {
@@ -626,38 +632,161 @@ it.live('Unit 10 C a seller with nothing declared cannot finalize', () =>
 it.live('Unit 10 C a declare concurrent with finalize serializes on the seller lock', () =>
   Effect.scoped(
     Effect.gen(function* concurrentDeclareAcceptance() {
+      const { adminClient, runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.setUp;
+      yield* subject.launchRules;
+
+      // Forced interleaving: the declare takes the seller lock exclusively and holds its transaction open on
+      // `release` so the finalize is provably still blocked behind it (not merely racing and happening to win).
+      const lockHeld = yield* Deferred.make<null>();
+      const release = yield* Deferred.make<null>();
+      const declareFiber = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+        confirmReplacesScheduled: true,
+        effectiveFrom: '2026-01-01T00:00:00.000Z',
+        expectedCurrentRevision: 1,
+        reason: 'Declaration holding the seller lock during a finalize',
+        regime: 'NON_PAYER',
+      }).pipe(
+        Effect.flatMap((decoded) =>
+          runScoped(runtime, subject.scope, (transaction) =>
+            sellerVatRegimeDeclarationsForScope(transaction, subject.scope)
+              .declare({ ...decoded, ...invocation(subject.scope) })
+              .pipe(
+                Effect.tap(() => Deferred.succeed(lockHeld, null)),
+                Effect.tap(() => Deferred.await(release)),
+              ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+
+      yield* Deferred.await(lockHeld);
+      const submission = `submission-${randomUUID()}`;
+      const finalizeFiber = yield* subject.finalize(subject.payload(submission)).pipe(Effect.forkChild);
+
+      // The exclusive advisory xact lock `tax-scope:<tenantId>:<legalEntityId>:SELLER_VAT_REGIME_DECLARATION`
+      // (tax-governance-persistence.ts `lockTaxScopeKey`) is held until the declare's transaction commits; finalize
+      // takes it `'shared'` only on the evaluating path (order-tax-finalization.service.ts L281), so it must wait.
+      const lockKey = `tax-scope:${tenantId}:${subject.legalEntityId}:SELLER_VAT_REGIME_DECLARATION`;
+      let waiterSeen = false;
+      for (let observation = 0; observation < 50 && !waiterSeen; observation += 1) {
+        const [row] = yield* adminClient.unsafe<{ waiting: number }>(
+          `select count(*)::int as waiting from pg_locks
+           where locktype = 'advisory' and not granted
+             and ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+          [lockKey],
+        );
+        waiterSeen = (row?.waiting ?? 0) >= 1;
+        if (!waiterSeen) {
+          yield* Effect.sleep('100 millis');
+        }
+      }
+      // A non-granted waiter on that key means the finalize has not completed before the declare's commit: it is
+      // genuinely blocked on the seller lock, not merely slower.
+      expect(waiterSeen).toBe(true);
+
+      yield* Deferred.succeed(release, null);
+      const declareOutcome = yield* Fiber.join(declareFiber);
+      const finalizeOutcome = yield* Fiber.join(finalizeFiber);
+
+      // Forced order (Fable MINOR 1): the finalize waits for the declare's commit and then reads its revision,
+      // never a mix and never the pre-declare state (#950 F24, Unit 10 C).
+      const declared = declaredOf(declareOutcome);
+      expect(declared.created).toBe(true);
+      expect(declared.revision).toBe(2);
+      const final = finalizedOf(finalizeOutcome);
+      expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
+      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(2);
+    }),
+  ),
+);
+
+/** A Core-shaped Action handler context over real Postgres services; audit evidence is captured, no event is added. */
+const actionContext = <Services>(
+  scope: OperationalScope,
+  services: Services,
+  audit: unknown[],
+  actionInvocationId: string,
+) => {
+  // The production collector owns this opaque reference; TAX adds no domain event, so it is never dereferenced.
+  const eventReference: DomainEventReference = Schema.decodeSync(Schema.Any)({});
+  return {
+    actionInvocationId,
+    addDomainEvent: () => Effect.succeed(eventReference),
+    addOutboxMessage: () => Effect.void,
+    compositionRevision: 'c'.repeat(64),
+    recordAuditEvidence: (evidence: Readonly<Record<string, Schema.Json>>) => {
+      audit.push(evidence);
+      return Effect.void;
+    },
+    recordDataAccess: () => Effect.void,
+    scope,
+    services,
+  };
+};
+
+it.live('#961 scenario 9: the finalize Action and final read handlers persist, recover and hand off the final', () =>
+  Effect.scoped(
+    Effect.gen(function* publicFinalizeScenario() {
       const { runtime } = yield* acquireDatabases;
       const subject = seller(runtime);
       yield* subject.setUp;
       yield* subject.launchRules;
 
       const submission = `submission-${randomUUID()}`;
-      const [finalizeOutcome, declareOutcome] = yield* Effect.all(
-        [
-          subject.finalize(subject.payload(submission)),
-          subject.declare(
-            {
-              confirmReplacesScheduled: true,
-              effectiveFrom: '2026-01-01T00:00:00.000Z',
-              expectedCurrentRevision: 1,
-              reason: 'Concurrent declaration racing a finalize',
-              regime: 'NON_PAYER',
-            },
-            randomUUID(),
+      // The wire payload decodes through the public `FinalizeOrderTaxPayloadSchema` (inside `subject.payload`).
+      const payload = subject.payload(submission);
+      const audit: unknown[] = [];
+      const invocationId = randomUUID();
+      const finalizeThroughHandler = (actionInvocationId: string) =>
+        runScoped(runtime, subject.scope, (transaction) =>
+          handleFinalizeOrderTax(
+            payload,
+            actionContext(
+              subject.scope,
+              orderTaxFinalizationsForScope(transaction, subject.scope),
+              audit,
+              actionInvocationId,
+            ),
           ),
-        ],
-        { concurrency: 2 },
+        ).pipe(
+          Effect.flatMap((result) => Schema.encodeEffect(FinalizeOrderTaxResultSchema)(result)),
+          Effect.flatMap(Schema.decodeUnknownEffect(FinalizedSchema)),
+        );
+
+      const first = yield* finalizeThroughHandler(invocationId);
+      expect(first.created).toBe(true);
+      // One audit record is captured for the created final (#950 F45-F47).
+      expect(yield* Schema.decodeUnknownEffect(Schema.Array(TaxGovernanceAuditEvidenceSchema))(audit)).toHaveLength(1);
+
+      // A retry of the same submission under a new Core invocation recovers the stored final (#944 F10).
+      const retry = yield* finalizeThroughHandler(randomUUID());
+      expect(retry.created).toBe(false);
+      expect(retry.handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
+
+      // Lost-response recovery through the public read handler and its wire schemas.
+      const request = yield* Schema.decodeEffect(FinalOrderTaxRequestSchema)({ submissionRef: submission });
+      const recovered = yield* runScoped(runtime, subject.scope, (transaction) =>
+        readFinalOrderTax(request, {
+          readKey: 'commerce.tax.api.final-order-tax',
+          scope: subject.scope,
+          services: { finalizations: orderTaxFinalizationsForScope(transaction, subject.scope) },
+        }),
+      ).pipe(
+        Effect.flatMap(({ result }) => Schema.encodeEffect(FinalOrderTaxResponseSchema)(result)),
+        Effect.flatMap(Schema.decodeUnknownEffect(FinalOrderTaxResponseSchema)),
       );
-      // Whichever order the seller lock serializes them in, the final's regime is exactly the head at its commit:
-      // either the seller's original VAT_PAYER declaration (revision 1, finalize won the lock), or the concurrent
-      // NON_PAYER revision (revision 2, declare won it), never a mix (#950 F24, Unit 10 C).
-      const final = finalizedOf(finalizeOutcome);
-      const declared = declaredOf(declareOutcome);
-      expect(declared.created).toBe(true);
-      expect(declared.revision).toBe(2);
-      const finalizeWonTheLock = final.handoff.outcome.decision.sellerVatRegime === 'VAT_PAYER';
-      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(finalizeWonTheLock ? 1 : 2);
-      expect(['VAT_PAYER', 'NON_PAYER']).toContain(final.handoff.outcome.decision.sellerVatRegime);
+
+      // The #330 Bundle content is exactly the public handoff: final at T, submission, unverified foreign evidence.
+      const handoff = yield* Schema.encodeEffect(FinalOrderTaxHandoffSchema)(recovered.handoff).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(FinalOrderTaxHandoffSchema)),
+      );
+      expect(handoff.submissionRef).toBe(submission);
+      expect(DateTime.formatIso(handoff.orderCommitmentTime)).toBe(T);
+      expect(handoff.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
+      expect(handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
+      expect(handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
     }),
   ),
 );

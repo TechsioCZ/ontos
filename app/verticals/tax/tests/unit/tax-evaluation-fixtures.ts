@@ -9,6 +9,35 @@ import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { exactDecimal, purchaseBindingInput } from './tax-domain-fixtures.ts';
 
+/**
+ * Contract-conforming foreign-owner test doubles (#961 F17-F23). They decode through TAX's
+ * public request schemas, carry no TAX logic, and every result built from them is labelled
+ * `CALLER_SUPPLIED_UNVERIFIED`. They are not production cross-owner integration. Foreign doubles
+ * here: `catalogEntry` (Catalog, #926 Tax-purpose evidence as TAX consumes it), `pricingLine`/
+ * `grossLine` (Pricing, #931; #892 not active), `shippingCharge` (Delivery, #933, GROSS), and the
+ * `places` of `evaluationRequestInput` (Delivery destination and the Selling Legal Entity place,
+ * #927). `purchaseBindingInput` (Order, #937/#330) lives in tax-domain-fixtures.ts. TAX-owned
+ * state (`ownState`, `selected`, `DECLARED_*`, `NOT_DECLARED`) is NOT a foreign double: unit
+ * tests inject it; integration tests persist it.
+ */
+
+/**
+ * The labelled foreign-owner doubles (#961 F22) and the owner contract each one conforms to. Seller VAT Regime, Tax
+ * Rules, finals and Accepted Tax Terms derivation are TAX and never appear here.
+ */
+export const TAX_FOREIGN_OWNER_DOUBLES = {
+  acceptedTaxTermsInput: { contract: '#945/#946 accepted Billing Document (H10)', owner: 'BILLING' },
+  catalogEntry: {
+    contract: '#926 Tax-purpose evidence as TAX consumes it (OccurrenceCatalogEvidenceSchema)',
+    owner: 'CATALOG',
+  },
+  places: { contract: '#927 delivery destination', owner: 'DELIVERY' },
+  pricingLine: { contract: '#931 published Line Commercial Value (#892 not active)', owner: 'PRICING' },
+  purchaseBindingInput: { contract: '#937/#330 frozen purchase binding', owner: 'ORDER' },
+  sellerPlace: { contract: '#927 seller place (Selling Legal Entity identity owner, Q2)', owner: 'LEGAL_ENTITY' },
+  shippingCharge: { contract: '#933 owner-issued Shipping charge, GROSS', owner: 'DELIVERY' },
+} as const;
+
 export type TaxEvaluationRequestInput = typeof TaxEvaluationRequestSchema.Encoded;
 
 export const decodeEvaluationRequest = Schema.decodeUnknownSync(TaxEvaluationRequestSchema);

@@ -15,7 +15,9 @@ import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runt
 import { CreateTaxRulePayloadSchema } from '../../shared/actions/tax-governance.ts';
 import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import type { DeclareSellerVatRegimePayload } from '../../shared/actions/seller-vat-regime-declaration.ts';
+import { TaxEvaluationRequestSchema, TaxEvaluationResponseSchema } from '../../shared/apis/tax-evaluation.ts';
 import type { TaxEvaluationResponse } from '../../shared/apis/tax-evaluation.ts';
+import { readTaxEvaluation } from '../../src/api/tax-evaluation.read.ts';
 import type { SellerVatRegimeAtInstantSelection } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import {
   taxRelations,
@@ -25,8 +27,12 @@ import {
   taxRules,
   taxSellerVatRegimeDeclarations,
 } from '../../src/database/schema.ts';
+import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 import { CustomerSafeSellerNotVatPayerSchema } from '../../src/domain/customer-safe-tax-projection.ts';
+import { TaxableTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 import {
+  TaxCaseUnsupportedSchema,
+  TaxDependencyUnavailableSchema,
   TaxRuleMissingSchema,
   TaxRuleOverlapSchema,
   TaxStateIndeterminateSchema,
@@ -38,13 +44,15 @@ import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rul
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 import {
   PRICING_RESULT_REF,
+  STANDARD_CODE,
   catalogEntry,
   decodeEvaluationRequest,
   evaluationRequestInput,
   grossLine,
+  pricingLine,
   shippingCharge,
 } from '../unit/tax-evaluation-fixtures.ts';
-import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
+import { occurrenceInput, purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 
 const tenantId = randomUUID();
 const principalId = randomUUID();
@@ -163,11 +171,46 @@ const seller = (runtime: CoreTestDatabase) => {
         ),
       ),
     );
+  /**
+   * #961 F1 H1: the public read handler over persisted TAX state. The wire request decodes through the public
+   * `TaxEvaluationRequestSchema`, and the response round-trips through the public `TaxEvaluationResponseSchema`.
+   */
+  const readPublic = (overrides: Parameters<typeof evaluationRequestInput>[0] = {}) =>
+    Schema.decodeEffect(TaxEvaluationRequestSchema)(
+      evaluationRequestInput({
+        purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: legalEntityId, tenantId }),
+        taxRelevantTime: '2026-06-01T00:00:00.000Z',
+        ...overrides,
+      }),
+    ).pipe(
+      Effect.flatMap((request) =>
+        runScoped(runtime, scope, (transaction) =>
+          readTaxEvaluation(request, {
+            readKey: 'commerce.tax.api.tax-evaluation',
+            scope,
+            services: { evaluations: taxEvaluationForScope(transaction, scope) },
+          }),
+        ),
+      ),
+      Effect.flatMap(({ result }) => Schema.encodeEffect(TaxEvaluationResponseSchema)(result)),
+      Effect.flatMap(Schema.decodeUnknownEffect(TaxEvaluationResponseSchema)),
+      Effect.asSome,
+    );
   const launchRules = Effect.all([
     createRule('cz.standard', 'cz-standard-goods', '21'),
     createRule('cz.reduced', 'cz-reduced-food', '12'),
   ]);
-  return { createRule, declare, declareNonPayer, declareVatPayer, evaluate, launchRules, legalEntityId, scope };
+  return {
+    createRule,
+    declare,
+    declareNonPayer,
+    declareVatPayer,
+    evaluate,
+    launchRules,
+    legalEntityId,
+    readPublic,
+    scope,
+  };
 };
 
 const EvaluatedSchema = Schema.TaggedStruct('EVALUATED', {});
@@ -422,4 +465,256 @@ it.live(
         expect(replayOutcome.result.purchaseTaxTotal).toEqual(outcome.result.purchaseTaxTotal);
       }),
     ),
+);
+
+const CreatedRuleIdSchema = Schema.Struct({ taxRuleId: Schema.String.pipe(Schema.brand('TaxTestRuleId')) });
+const successOf = (response: Option.Option<TaxEvaluationResponse>) => {
+  const outcome = outcomeOf(response);
+  if (!isSuccess(outcome)) {
+    throw new Error('Expected a successful Tax Outcome');
+  }
+  return outcome;
+};
+const publishedByUnit = (response: Option.Option<TaxEvaluationResponse>) =>
+  successOf(response).result.units.map(({ publishedTaxAmount, taxableSupplyUnitId }) => [
+    taxableSupplyUnitId,
+    publishedTaxAmount.amount,
+  ]);
+const centsOf = (amount: string) => BigInt(amount.replace('.', ''));
+
+it.live('#961 scenario 1: ordinary B2C for a declared VAT_PAYER seller through the public read handler', () =>
+  Effect.scoped(
+    Effect.gen(function* ordinaryB2cScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      const ruleIds = (yield* Schema.decodeUnknownEffect(Schema.Array(CreatedRuleIdSchema))(yield* subject.launchRules))
+        .map(({ taxRuleId }) => taxRuleId)
+        .toSorted();
+
+      const response = yield* subject.readPublic();
+      const evaluated = evaluatedOf(response);
+      const outcome = successOf(response);
+
+      // One Taxable Supply Unit per purchase occurrence, each rounded separately.
+      expect(publishedByUnit(response)).toEqual([
+        ['taxable-supply-unit:o1', '210.00'],
+        ['taxable-supply-unit:o2', '60.00'],
+      ]);
+      // The total is the exact sum of the published unit amounts.
+      const unitSum = outcome.result.units.reduce(
+        (sum, { publishedTaxAmount }) => sum + centsOf(publishedTaxAmount.amount),
+        0n,
+      );
+      expect(centsOf(outcome.result.purchaseTaxTotal.amount)).toBe(unitSum);
+      // The evidence names the governing persisted Tax Rule revisions and the declared Seller VAT Regime revision.
+      expect(
+        outcome.decision.units
+          .map((unit) => ('governingTaxRuleRevisionRef' in unit ? unit.governingTaxRuleRevisionRef : undefined))
+          .map((ref) => `${ref?.taxRuleId}@${ref?.revision}`)
+          .toSorted(),
+      ).toEqual(ruleIds.map((taxRuleId) => `${taxRuleId}@1`).toSorted());
+      expect(outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      expect(outcome.decision.declarationRevisionRef.revision).toBe(1);
+      expect(declaredRegimeOf(evaluated.evidence.sellerVatRegime.selection)).toBe('VAT_PAYER');
+      expect(evaluated.evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
+    }),
+  ),
+);
+
+it.live('#961 scenario 2: ordinary B2B with no buyer VAT status has the same success meaning as B2C', () =>
+  Effect.scoped(
+    Effect.gen(function* ordinaryB2bScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      const b2c = yield* subject.readPublic();
+      const b2b = yield* subject.readPublic({
+        purchase: purchaseBindingInput(['o1', 'o2'], {
+          purchasingSubject: { _tag: 'COUNTERPARTY', counterpartyRef: 'counterparty-1' },
+          sellingLegalEntityRef: subject.legalEntityId,
+          tenantId,
+          traceabilityContext: { channel: 'B2B', storefrontRef: 'storefront-1' },
+        }),
+      });
+
+      expect(publishedByUnit(b2b)).toEqual(publishedByUnit(b2c));
+      expect(successOf(b2b).result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
+      expect(evaluatedOf(b2b).evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
+    }),
+  ),
+);
+
+it.live('#961 scenario 3: two equal-valued distinct occurrences at 21 % stay two units, each rounded separately', () =>
+  Effect.scoped(
+    Effect.gen(function* equalOccurrencesScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      const response = yield* subject.readPublic({
+        catalog: [catalogEntry('o1', STANDARD_CODE), catalogEntry('o2', STANDARD_CODE)],
+        pricing: {
+          pricingResultRef: PRICING_RESULT_REF,
+          publishedLines: [pricingLine('o1', '0.03'), pricingLine('o2', '0.03')],
+        },
+      });
+
+      // 0.03 * 21 % = 0.0063 per unit rounds to 0.01 each; a merged 0.06 base would publish 0.01 in total.
+      expect(publishedByUnit(response)).toEqual([
+        ['taxable-supply-unit:o1', '0.01'],
+        ['taxable-supply-unit:o2', '0.01'],
+      ]);
+      expect(successOf(response).result.purchaseTaxTotal).toEqual({ amount: '0.02', currency: 'CZK' });
+    }),
+  ),
+);
+
+it.live('#961 scenario 4: a supported whole-treatment Set is one Taxable Supply Unit with no component prices', () =>
+  Effect.scoped(
+    Effect.gen(function* wholeTreatmentSetScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      const setSelection = {
+        productRef: 'product-1',
+        setCompositionRevisionRef: { revision: 1, setCompositionId: 'set-1' },
+        variantRef: 'variant-1',
+      };
+      const response = yield* subject.readPublic({
+        catalog: [catalogEntry('o1', STANDARD_CODE, { catalogSelection: setSelection })],
+        pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '1000.00')] },
+        purchase: purchaseBindingInput(['o1'], {
+          purchaseDemandOccurrences: [{ ...occurrenceInput('o1'), catalogSelection: setSelection }],
+          sellingLegalEntityRef: subject.legalEntityId,
+          tenantId,
+        }),
+        setSupplyMeanings: [{ meaning: 'WHOLE_TREATMENT_SET', occurrenceId: 'o1' }],
+      });
+
+      const outcome = successOf(response);
+      expect(publishedByUnit(response)).toEqual([['taxable-supply-unit:o1', '210.00']]);
+      const [unit] = outcome.decision.units;
+      expect(
+        Match.value(unit.taxableSupplyUnit.mapping).pipe(
+          Match.tag('WHOLE_TREATMENT_SET', () => true),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      // The Set's own published line is the only basis component: no component prices enter the unit.
+      expect(unit.taxableBasisInterpretation.components).toHaveLength(1);
+      expect(Schema.is(LineCommercialValueBasisSchema)(unit.taxableBasisInterpretation.components[0])).toBe(true);
+    }),
+  ),
+);
+
+it.live('#961 scenario 5: a complete empty rule state for a supported case is TAX_RULE_MISSING, never 0 CZK', () =>
+  Effect.scoped(
+    Effect.gen(function* completeEmptyScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+
+      const response = yield* subject.readPublic();
+      expect(outcomeOf(response)).toEqual(TaxRuleMissingSchema.make({}));
+      expect(evaluatedOf(response).evidence.ruleSets.map(({ outcome, rowCount }) => [outcome, rowCount])).toEqual([
+        ['TAX_RULE_MISSING', 0],
+        ['TAX_RULE_MISSING', 0],
+      ]);
+    }),
+  ),
+);
+
+it.live('#961 scenario 6: an unavailable delivery destination is TAX_DEPENDENCY_UNAVAILABLE, never a CZ fallback', () =>
+  Effect.scoped(
+    Effect.gen(function* unavailableSourceScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      const response = yield* subject.readPublic({
+        places: {
+          ...evaluationRequestInput().places,
+          deliveryDestination: { _tag: 'NOT_ESTABLISHED', state: 'UNAVAILABLE' },
+        },
+      });
+      expect(outcomeOf(response)).toEqual(TaxDependencyUnavailableSchema.make({}));
+    }),
+  ),
+);
+
+it.live(
+  '#961 scenario 7: a known non-CZ destination with rules present is TAX_CASE_UNSUPPORTED, no domestic fallback',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* nonCzechDestinationScenario() {
+        const { runtime } = yield* acquireDatabases;
+        const subject = seller(runtime);
+        yield* subject.declareVatPayer();
+        yield* subject.launchRules;
+
+        const response = yield* subject.readPublic({
+          places: {
+            ...evaluationRequestInput().places,
+            deliveryDestination: { _tag: 'OWNER_RESOLVED', countryCode: 'DE', ownerEvidenceRef: 'delivery-de' },
+          },
+        });
+        expect(outcomeOf(response)).toEqual(
+          TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NON_CZECH_DOMESTIC_TAX_PLACE' }),
+        );
+      }),
+    ),
+);
+
+it.live('#961 scenario 8: a NON_PAYER seller succeeds as non-payer and an undeclared seller is indeterminate', () =>
+  Effect.scoped(
+    Effect.gen(function* sellerRegimeScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const nonPayer = seller(runtime);
+      yield* nonPayer.declareNonPayer();
+      const undeclared = seller(runtime);
+      yield* undeclared.launchRules;
+
+      const nonPayerResponse = yield* nonPayer.readPublic();
+      expect(successOf(nonPayerResponse).decision.sellerVatRegime).toBe('NON_PAYER');
+      expect(successOf(nonPayerResponse).result.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
+      expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(evaluatedOf(nonPayerResponse).customerSafe)).toBe(true);
+
+      const undeclaredResponse = yield* undeclared.readPublic();
+      expect(outcomeOf(undeclaredResponse)).toEqual(TaxStateIndeterminateSchema.make({}));
+      expect(evaluatedOf(undeclaredResponse).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
+    }),
+  ),
+);
+
+it.live('#961 scenario 10: a supported 0.00 CZK line is a successful taxable 0.00 with its persisted rule', () =>
+  Effect.scoped(
+    Effect.gen(function* taxableZeroScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      const response = yield* subject.readPublic({
+        catalog: [catalogEntry('o1', STANDARD_CODE)],
+        pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '0.00')] },
+        purchase: purchaseBindingInput(['o1'], { sellingLegalEntityRef: subject.legalEntityId, tenantId }),
+      });
+
+      // Zero follows from a taxable Decision at 21 % under a persisted rule: not zero-rate, exempt or non-payer.
+      const outcome = successOf(response);
+      expect(publishedByUnit(response)).toEqual([['taxable-supply-unit:o1', '0.00']]);
+      expect(outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      const [unit] = outcome.decision.units;
+      expect(Schema.is(TaxableTreatmentSchema)(unit.treatment)).toBe(true);
+      expect('governingTaxRuleRevisionRef' in unit && unit.governingTaxRuleRevisionRef.revision).toBe(1);
+      expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(evaluatedOf(response).customerSafe)).toBe(false);
+    }),
+  ),
 );
