@@ -1,7 +1,8 @@
-import { Array as Arr, Match, Option, pipe } from 'effect';
+import { Array as Arr, Match, Option, Schema, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
 import type { TaxOutcome, TaxOutcomeSuccess } from './tax-outcome.ts';
+import { TaxableDecisionUnitSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import { taxableSupplyUnitSourceOccurrenceIds } from './taxable-supply-unit.ts';
 import { CUSTOMER_SAFE_TAX_PROJECTION_VERSION } from '../../shared/domain/tax-kernel/customer-safe-tax-projection.ts';
 import type {
@@ -12,6 +13,7 @@ import type {
 
 export {
   CUSTOMER_SAFE_TAX_PROJECTION_VERSION,
+  CustomerSafeSellerNotVatPayerSchema,
   CustomerSafeTaxNotDeterminedSchema,
   CustomerSafeTaxProjectionSchema,
 } from '../../shared/domain/tax-kernel/customer-safe-tax-projection.ts';
@@ -33,18 +35,21 @@ const componentsOf = (success: TaxOutcomeSuccess): Option.Option<NonEmptyReadonl
       publishedTaxAmount,
     ]),
   );
+  const isTaxableDecisionUnit = Schema.is(TaxableDecisionUnitSchema);
   return Option.all(
     pipe(
       success.decision.units,
-      Arr.map(({ taxableSupplyUnit, treatment }) =>
-        pipe(
-          Option.fromUndefinedOr(publishedByUnitId.get(taxableSupplyUnit.unitId)),
-          Option.map((taxAmount): CustomerSafeTaxComponent => ({
-            purchaseDemandOccurrenceIds: taxableSupplyUnitSourceOccurrenceIds(taxableSupplyUnit),
-            taxAmount,
-            treatment: { category: treatment._tag, ratePercent: treatment.ratePercent },
-          })),
-        ),
+      Arr.map((unit) =>
+        isTaxableDecisionUnit(unit)
+          ? pipe(
+              Option.fromUndefinedOr(publishedByUnitId.get(unit.taxableSupplyUnit.unitId)),
+              Option.map((taxAmount): CustomerSafeTaxComponent => ({
+                purchaseDemandOccurrenceIds: taxableSupplyUnitSourceOccurrenceIds(unit.taxableSupplyUnit),
+                taxAmount,
+                treatment: { category: unit.treatment._tag, ratePercent: unit.treatment.ratePercent },
+              })),
+            )
+          : Option.none(),
       ),
     ),
   );
@@ -55,9 +60,15 @@ const notDetermined: CustomerSafeTaxProjection = {
   contractVersion: CUSTOMER_SAFE_TAX_PROJECTION_VERSION,
 };
 
+const sellerNotVatPayer: CustomerSafeTaxProjection = {
+  _tag: 'SELLER_NOT_VAT_PAYER',
+  contractVersion: CUSTOMER_SAFE_TAX_PROJECTION_VERSION,
+};
+
 /**
  * Projects one authoritative Tax Outcome into its customer-safe view by copying published values only; it never
- * recomputes Tax, rounds or balances (#940 F19, F32-F36, F44).
+ * recomputes Tax, rounds or balances (#940 F19, F32-F36, F44). A NON_PAYER seller always projects to
+ * SELLER_NOT_VAT_PAYER, whatever the decomposition need (Unit 10 A5).
  */
 export const projectCustomerSafeTax = (
   outcome: TaxOutcome,
@@ -65,6 +76,9 @@ export const projectCustomerSafeTax = (
 ): CustomerSafeTaxProjection =>
   Match.value(outcome).pipe(
     Match.tag('TAX_DETERMINED', (success): CustomerSafeTaxProjection => {
+      if (success.decision.sellerVatRegime === 'NON_PAYER') {
+        return sellerNotVatPayer;
+      }
       const projection = {
         _tag: 'TAX_AMOUNT',
         contractVersion: CUSTOMER_SAFE_TAX_PROJECTION_VERSION,

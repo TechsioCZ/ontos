@@ -8,28 +8,11 @@ import type {
   ApplicableTaxRuleSetRequest,
   ApplicableTaxRuleSetResponse,
 } from '../../shared/apis/applicable-tax-rule-set.ts';
-import type {
-  TaxFactAuthorityCurrentRequest,
-  TaxFactAuthorityCurrentResponse,
-} from '../../shared/apis/tax-fact-authority-current.ts';
 import type { TaxRuleHistoryRequest, TaxRuleHistoryResponse } from '../../shared/apis/tax-rule-history.ts';
-import {
-  taxFactAuthorityContractRevisions,
-  taxFactAuthorityContracts,
-  taxRuleCorrections,
-  taxRuleRevisionEndFacts,
-  taxRuleRevisions,
-  taxRules,
-} from '../database/schema.ts';
+import { taxRuleCorrections, taxRuleRevisionEndFacts, taxRuleRevisions, taxRules } from '../database/schema.ts';
 import { selectApplicableTaxRuleRevision } from '../domain/tax-rule-selection.ts';
 import type { TaxRuleRevisionState } from '../domain/tax-rule-selection.ts';
 import { TaxRelevantTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
-import {
-  authorityCoversInstant,
-  currentContractRevisions,
-  taxFactAuthorityContractBasisFingerprint,
-  taxFactAuthorityContractRef,
-} from './tax-authority-governance.service.ts';
 import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
 import { isOwnerId, query, unavailable } from './tax-governance-persistence.ts';
 import type { PersistenceUnavailable, ScopedTransaction } from './tax-governance-persistence.ts';
@@ -54,9 +37,6 @@ export interface TaxGovernedReads {
   readonly applicableTaxRuleSet: (
     request: ApplicableTaxRuleSetRequest,
   ) => Effect.Effect<ApplicableTaxRuleSetResponse, PersistenceUnavailable>;
-  readonly taxFactAuthorityCurrent: (
-    request: TaxFactAuthorityCurrentRequest,
-  ) => Effect.Effect<TaxFactAuthorityCurrentResponse, PersistenceUnavailable>;
   /** None when the Tax Rule is not visible in the trusted Tenant and Selling Legal Entity scope. */
   readonly taxRuleHistory: (
     request: TaxRuleHistoryRequest,
@@ -146,14 +126,6 @@ const historyRevision = ({
     taxClassificationCode: revision.taxClassificationCode,
     taxRuleRevisionRef: taxRuleRevisionRef(tenantId, revision.taxRuleRevisionId),
   };
-};
-
-/** Zero or one covering System of Record is decisive; several are a configuration conflict (#949 F28-F32). */
-const authorityOutcome = (covering: number): TaxFactAuthorityCurrentResponse['outcome'] => {
-  if (covering === 0) {
-    return 'AUTHORITY_MISSING';
-  }
-  return covering === 1 ? 'AUTHORITY_ESTABLISHED' : 'AUTHORITY_CONFLICT';
 };
 
 export const taxGovernedReadsForScope = (transaction: ScopedTransaction, scope: OperationalScope): TaxGovernedReads => {
@@ -329,69 +301,5 @@ export const taxGovernedReadsForScope = (transaction: ScopedTransaction, scope: 
     },
   );
 
-  const taxFactAuthorityCurrent: TaxGovernedReads['taxFactAuthorityCurrent'] = Effect.fn(
-    'taxGovernedReads.taxFactAuthorityCurrent',
-  )(function* taxFactAuthorityCurrentEffect(request) {
-    if (scope.legalEntityId === undefined) {
-      return yield* unavailable();
-    }
-    // Contracts and their revisions in one statement, hence one snapshot of the complete authority set.
-    const rows = yield* query(
-      transaction
-        .select({ contract: taxFactAuthorityContracts, revision: taxFactAuthorityContractRevisions })
-        .from(taxFactAuthorityContractRevisions)
-        .innerJoin(
-          taxFactAuthorityContracts,
-          and(
-            eq(taxFactAuthorityContracts.tenantId, taxFactAuthorityContractRevisions.tenantId),
-            eq(taxFactAuthorityContracts.legalEntityId, taxFactAuthorityContractRevisions.legalEntityId),
-            eq(
-              taxFactAuthorityContracts.taxFactAuthorityContractId,
-              taxFactAuthorityContractRevisions.taxFactAuthorityContractId,
-            ),
-          ),
-        )
-        .where(
-          and(
-            eq(taxFactAuthorityContractRevisions.tenantId, tenantId),
-            eq(taxFactAuthorityContractRevisions.legalEntityId, legalEntityId),
-            eq(taxFactAuthorityContracts.factFamily, request.factFamily),
-          ),
-        ),
-    );
-    const revisions = rows.map((row) => row.revision);
-    const contracts = rows.map((row) => row.contract);
-    const current = [...currentContractRevisions(revisions).values()];
-    const covering = current
-      .filter((revision) => authorityCoversInstant(revision, request.instant))
-      .toSorted((left, right) => byText(left.taxFactAuthorityContractId, right.taxFactAuthorityContractId));
-    const stableCodes = new Map(
-      contracts.map((contract) => [contract.taxFactAuthorityContractId, contract.stableCode]),
-    );
-    return {
-      authorities: covering.map((revision) => ({
-        authorityFrom: instant(revision.authorityFrom),
-        authorityTo: optionalInstant(revision.authorityTo),
-        basisFingerprint: taxFactAuthorityContractBasisFingerprint(revision),
-        contractRef: taxFactAuthorityContractRef(tenantId, revision.taxFactAuthorityContractId),
-        evidenceSourceRefs: revision.evidenceSourceRefs,
-        revisionNumber: revision.revisionNumber,
-        stableCode: stableCodes.get(revision.taxFactAuthorityContractId) ?? '',
-        systemOfRecordRef: revision.systemOfRecordRef,
-      })),
-      completeness: {
-        rowCount: current.length,
-        setFingerprint: taxMeaningFingerprint({
-          contracts: current.map(taxFactAuthorityContractBasisFingerprint).toSorted(byText),
-          factFamily: request.factFamily,
-          legalEntityId,
-        }),
-      },
-      factFamily: request.factFamily,
-      instant: request.instant,
-      outcome: authorityOutcome(covering.length),
-    };
-  });
-
-  return Object.freeze({ applicableTaxRuleSet, taxFactAuthorityCurrent, taxRuleHistory });
+  return Object.freeze({ applicableTaxRuleSet, taxRuleHistory });
 };

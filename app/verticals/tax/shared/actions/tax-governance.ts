@@ -1,5 +1,4 @@
 import { DateTime, Schema } from 'effect';
-import { TaxFactAuthorityContractRefSchema } from '../resources/tax-fact-authority-contract.ts';
 import { TaxRuleRevisionRefSchema } from '../resources/tax-rule-revision.ts';
 import { TaxRuleRefSchema } from '../resources/tax-rule.ts';
 
@@ -96,74 +95,4 @@ export const CorrectTaxRuleRevisionResultSchema = Schema.Struct({
   correctingRevisionRef: TaxRuleRevisionRefSchema,
   created: Schema.Boolean,
   wrongRevisionRef: TaxRuleRevisionRefSchema,
-});
-
-/** Launch fact family governed per Selling Legal Entity (#949 F22-F24, #925). */
-export const TaxFactFamilySchema = Schema.Literal('SELLING_LEGAL_ENTITY_VAT_REGISTRATION');
-
-/**
- * Authority content: exactly one System of Record may decide the fact; evidence-only sources are a distinct role
- * and never confer authority (#949 F24-F28).
- */
-export const TaxFactAuthorityContentSchema = Schema.Struct({
-  authorityFrom: InstantSchema,
-  authorityTo: Schema.optionalKey(InstantSchema),
-  evidenceSourceRefs: Schema.Array(OwnerReferenceSchema).check(Schema.isMaxLength(20)),
-  systemOfRecordRef: OwnerReferenceSchema,
-}).check(
-  Schema.makeFilter(
-    ({ authorityFrom, authorityTo }) =>
-      authorityTo === undefined ||
-      DateTime.isLessThan(authorityFrom, authorityTo) ||
-      'A Tax Fact Authority period must end after it starts',
-  ),
-  Schema.makeFilter(
-    ({ evidenceSourceRefs, systemOfRecordRef }) =>
-      (new Set(evidenceSourceRefs).size === evidenceSourceRefs.length &&
-        !evidenceSourceRefs.includes(systemOfRecordRef)) ||
-      'Evidence source roles must be distinct and separate from the System of Record',
-  ),
-);
-export type TaxFactAuthorityContent = typeof TaxFactAuthorityContentSchema.Type;
-
-export const EstablishTaxFactAuthorityContractPayloadSchema = Schema.Struct({
-  authority: TaxFactAuthorityContentSchema,
-  factFamily: TaxFactFamilySchema,
-  provenanceRef: ProvenanceRefSchema,
-  reason: ReasonSchema,
-  stableCode: StableCodeSchema,
-});
-export type EstablishTaxFactAuthorityContractPayload = typeof EstablishTaxFactAuthorityContractPayloadSchema.Type;
-export const EstablishTaxFactAuthorityContractResultSchema = Schema.Struct({
-  contractRef: TaxFactAuthorityContractRefSchema,
-  created: Schema.Boolean,
-  revisionNumber: RevisionNumberSchema,
-});
-
-export const ReviseTaxFactAuthorityContractPayloadSchema = Schema.Struct({
-  authority: TaxFactAuthorityContentSchema,
-  contractRef: TaxFactAuthorityContractRefSchema,
-  expectedBasisFingerprint: FingerprintSchema,
-  provenanceRef: ProvenanceRefSchema,
-  reason: ReasonSchema,
-});
-export type ReviseTaxFactAuthorityContractPayload = typeof ReviseTaxFactAuthorityContractPayloadSchema.Type;
-export const ReviseTaxFactAuthorityContractResultSchema = Schema.Struct({
-  contractRef: TaxFactAuthorityContractRefSchema,
-  created: Schema.Boolean,
-  revisionNumber: RevisionNumberSchema,
-});
-
-export const EndTaxFactAuthorityContractPayloadSchema = Schema.Struct({
-  authorityTo: InstantSchema,
-  contractRef: TaxFactAuthorityContractRefSchema,
-  expectedBasisFingerprint: FingerprintSchema,
-  provenanceRef: ProvenanceRefSchema,
-  reason: ReasonSchema,
-});
-export type EndTaxFactAuthorityContractPayload = typeof EndTaxFactAuthorityContractPayloadSchema.Type;
-export const EndTaxFactAuthorityContractResultSchema = Schema.Struct({
-  contractRef: TaxFactAuthorityContractRefSchema,
-  ended: Schema.Boolean,
-  revisionNumber: RevisionNumberSchema,
 });

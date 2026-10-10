@@ -614,13 +614,6 @@ it.effect('checks TAX management on one exact Selling Legal Entity and keeps oth
     expect(toBusinessPermissionAccessObjectId(permission, otherSeller)).not.toBe(
       toBusinessPermissionAccessObjectId(permission, target.target),
     );
-    const contractPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
-      'tax.authority_contract.manage',
-    );
-    expect(toBusinessPermissionAccessObjectId(contractPermission, target.target)).not.toBe(
-      toBusinessPermissionAccessObjectId(permission, target.target),
-    );
-
     const readPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.governed.read');
     for (const invalid of [
       { permission: readPermission, target: target.target },

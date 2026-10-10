@@ -8,9 +8,9 @@ import {
 } from '../../src/domain/tax-evaluation-attempt.ts';
 import type { TaxEvaluationStateTokens } from '../../src/domain/tax-evaluation-attempt.ts';
 
-const tokens = (ruleSet: string, seller: string): TaxEvaluationStateTokens => ({
+const tokens = (ruleSet: string, seller: string, headRevision = 1): TaxEvaluationStateTokens => ({
   ruleSets: new Map([['cz-standard-goods', { outcome: 'SELECTED', setFingerprint: ruleSet }]]),
-  seller: { reason: 'AUTHORITATIVE_POSITIVE', setFingerprint: seller, state: 'CURRENT_POSITIVE' },
+  seller: { headRevision, setFingerprint: seller },
 });
 
 /** Each observation returns the next scripted state; the evaluation echoes the state it was given. */
@@ -59,14 +59,14 @@ describe('Evaluation-local currentness check with bounded retry (#942 F17-F19)',
       expect(result.lastObserved).toEqual(tokens('r1', 's6'));
       expect(result.attempts).toBe(TAX_EVALUATION_MAX_ATTEMPTS);
       expect(result.discarded.map(({ discardedBecause }) => discardedBecause)).toEqual([
-        'SELLER_STATE_CHANGED',
-        'SELLER_STATE_CHANGED',
-        'SELLER_STATE_CHANGED',
+        'SELLER_VAT_REGIME_CHANGED',
+        'SELLER_VAT_REGIME_CHANGED',
+        'SELLER_VAT_REGIME_CHANGED',
       ]);
     }),
   );
 
-  it('a changed rule-set outcome or seller state with an equal fingerprint is still a change', () => {
+  it('a changed rule-set outcome or seller declaration head with an equal fingerprint is still a change', () => {
     const before = tokens('r1', 's1');
 
     expect(
@@ -75,8 +75,8 @@ describe('Evaluation-local currentness check with bounded retry (#942 F17-F19)',
         ruleSets: new Map([['cz-standard-goods', { outcome: 'TAX_RULE_OVERLAP', setFingerprint: 'r1' }]]),
       }),
     ).toEqual(Option.some('RULE_SET_CHANGED'));
-    expect(taxEvaluationStateChange(before, { ...before, seller: { ...before.seller, state: 'STALE' } })).toEqual(
-      Option.some('SELLER_STATE_CHANGED'),
+    expect(taxEvaluationStateChange(before, { ...before, seller: { ...before.seller, headRevision: 2 } })).toEqual(
+      Option.some('SELLER_VAT_REGIME_CHANGED'),
     );
     expect(taxEvaluationStateChange(before, tokens('r1', 's1'))).toEqual(Option.none());
   });

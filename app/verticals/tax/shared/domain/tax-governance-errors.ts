@@ -18,7 +18,6 @@ export const TaxGovernanceConflictKindSchema = Schema.Literals([
   'STALE_BASIS',
   'LIFECYCLE',
   'MEANING_CHANGED',
-  'AUTHORITY_CONFLICT',
   'SUBMISSION_INTENT_CHANGED',
 ]);
 export type TaxGovernanceConflictKind = typeof TaxGovernanceConflictKindSchema.Type;
@@ -81,8 +80,6 @@ export const TaxGovernanceAuditEvidenceSchema = Schema.Struct({
   reason,
   resourceId: AuditResourceIdSchema,
   resourceType: Schema.String.check(Schema.isMinLength(1)),
-  /** Source conflict recorded by the same invocation, if any (#958 F11, #959 F6, F10, F28). */
-  resultingConflictId: Schema.optionalKey(AuditResourceIdSchema),
   resultingEndFactId: Schema.optionalKey(AuditResourceIdSchema),
   resultingRevisionId: Schema.optionalKey(AuditResourceIdSchema),
 });

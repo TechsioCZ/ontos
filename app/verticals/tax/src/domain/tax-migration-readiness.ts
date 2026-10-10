@@ -9,15 +9,15 @@ import {
   TaxShadowSameSchema,
 } from '../../shared/domain/tax-migration-contracts.ts';
 import type {
-  TaxAuthorityHandoffEvaluation,
+  TaxMigrationCutover,
   TaxMigrationFamilyEvidence,
   TaxMigrationReadinessBlocker,
   TaxMigrationReadinessEvidence,
   TaxMigrationScope,
   TaxShadowDifference,
 } from '../../shared/domain/tax-migration-contracts.ts';
-import { resolveSellingLegalEntityVatRegistration } from './selling-legal-entity-vat-registration-resolution.ts';
-import type { CompleteSellingLegalEntityVatRegistrationState } from './selling-legal-entity-vat-registration-resolution.ts';
+import { sellerVatRegimeAt } from './seller-vat-regime-timeline.ts';
+import type { SellerVatRegimeDeclarationRevision } from './seller-vat-regime-timeline.ts';
 import { isOpenTaxMigrationOutcome, taxMigrationFamilies } from './tax-fact-migration.ts';
 import { selectApplicableTaxRuleRevision } from './tax-rule-selection.ts';
 import type { CompleteTaxRuleState } from './tax-rule-selection.ts';
@@ -25,7 +25,7 @@ import {
   taxExactRationalFromDecimal,
   taxExactRationalsEqual,
 } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
-import type { SellingLegalEntityVatRegistrationState } from '../../shared/domain/tax-kernel/selling-legal-entity-vat-registration.ts';
+import type { SellerVatRegime } from '../../shared/domain/tax-kernel/seller-vat-regime.ts';
 import type { TaxRelevantTime } from '../../shared/domain/tax-kernel/tax-time.ts';
 
 /**
@@ -61,44 +61,44 @@ export const compareShadowTaxRule = (input: {
       });
 };
 
-const unresolvedStates: ReadonlySet<SellingLegalEntityVatRegistrationState> = new Set([
-  'STALE',
-  'UNAVAILABLE',
-  'UNKNOWN',
-  'UNRESOLVED',
-]);
+/** Legacy shadow regime, including the unresolved value when legacy has no comparable VAT regime of its own. */
+export type LegacySellerVatRegime = SellerVatRegime | 'UNKNOWN';
 
-/** Shadow comparison of the Selling Legal Entity VAT Registration state at an evaluation time (#925, #959, #960 F19). */
-export const compareShadowVatRegistration = (input: {
-  readonly candidateState: CompleteSellingLegalEntityVatRegistrationState;
-  readonly evaluationTime: DateTime.Utc;
-  readonly legacyState: SellingLegalEntityVatRegistrationState;
+/**
+ * Shadow comparison of the Seller VAT Regime at an instant, against the live declaration timeline (#907 Unit 10
+ * D2, #960 F19). NOT_DECLARED on the OntOS side or UNKNOWN on the legacy side is not a business value, so equality
+ * would prove nothing; both are NOT_COMPARABLE.
+ */
+export const compareShadowSellerVatRegime = (input: {
+  readonly candidateRevisions: readonly SellerVatRegimeDeclarationRevision[];
+  readonly instant: DateTime.Utc;
+  readonly legacyRegime: LegacySellerVatRegime;
   readonly probeRef: string;
 }): TaxShadowDifference => {
-  const { reason, state } = resolveSellingLegalEntityVatRegistration({
-    completeState: input.candidateState,
-    evaluationTime: input.evaluationTime,
-  });
-  // An unresolved state on either side is not a business value, so equality would prove nothing (#960 F28-F29, F34).
-  if (unresolvedStates.has(input.legacyState)) {
-    return TaxShadowNotComparableSchema.make({ probeRef: input.probeRef, reason: `LEGACY_${input.legacyState}` });
+  const { instant, legacyRegime, probeRef } = input;
+  if (legacyRegime === 'UNKNOWN') {
+    return TaxShadowNotComparableSchema.make({ probeRef, reason: 'LEGACY_UNKNOWN' });
   }
-  if (unresolvedStates.has(state)) {
-    return TaxShadowNotComparableSchema.make({ probeRef: input.probeRef, reason });
-  }
-  return state === input.legacyState
-    ? TaxShadowSameSchema.make({ probeRef: input.probeRef })
-    : TaxShadowDifferentSchema.make({ legacyValue: input.legacyState, ontosValue: state, probeRef: input.probeRef });
+  const selection = sellerVatRegimeAt(input.candidateRevisions, instant);
+  return Match.value(selection).pipe(
+    Match.tag('NOT_DECLARED', () =>
+      TaxShadowNotComparableSchema.make({ probeRef, reason: 'SELLER_VAT_REGIME_NOT_DECLARED' }),
+    ),
+    Match.tag('DECLARED', ({ regime }) =>
+      regime === legacyRegime
+        ? TaxShadowSameSchema.make({ probeRef })
+        : TaxShadowDifferentSchema.make({ legacyValue: legacyRegime, ontosValue: regime, probeRef }),
+    ),
+    Match.exhaustive,
+  );
 };
 
 type Blocker = TaxMigrationReadinessBlocker['blocker'];
 
-const handoffBlockers = (handoff: TaxAuthorityHandoffEvaluation): readonly Blocker[] =>
-  Match.value(handoff).pipe(
-    Match.tag('HANDOFF_VALID', () => []),
-    Match.tag('AUTHORITY_CONFLICT', () => ['AUTHORITY_CONFLICT' as const]),
-    Match.tag('AUTHORITY_GAP', () => ['AUTHORITY_GAP' as const]),
-    Match.tag('INDETERMINATE', () => ['AUTHORITY_INDETERMINATE' as const]),
+const cutoverBlockers = (cutover: TaxMigrationCutover): readonly Blocker[] =>
+  Match.value(cutover).pipe(
+    Match.tag('CUTOVER_DECLARED', () => []),
+    Match.tag('CUTOVER_NOT_DECLARED', () => ['CUTOVER_NOT_DECLARED' as const]),
     Match.exhaustive,
   );
 
@@ -121,7 +121,7 @@ const familyBlockers = (evidence: TaxMigrationFamilyEvidence): readonly TaxMigra
     ...(evidence.outcomes.some(isOpenTaxMigrationOutcome) ? ['OPEN_OUTCOME' as const] : []),
     ...(evidence.targetDifferences.length === 0 ? [] : ['TARGET_MEANING_DIFFERENCE' as const]),
     ...(evidence.shadowDifferences.every(isSame) ? [] : ['SHADOW_DIFFERENCE' as const]),
-    ...handoffBlockers(evidence.handoff),
+    ...cutoverBlockers(evidence.cutover),
   ];
   return blockers.map((blocker) => ({ blocker, family: evidence.family }));
 };
@@ -129,7 +129,7 @@ const familyBlockers = (evidence: TaxMigrationFamilyEvidence): readonly TaxMigra
 /**
  * Shadow evidence is optional (#960 F19 "may"), but any difference it does report blocks. READY only when every
  * Launch-critical family is owner-verifiably complete with no open outcome, its target meaning
- * reconciles, its shadow evaluation agrees and its authority handoff is valid (#960 H). A missing family is never ready. The evidence
+ * reconciles, its shadow evaluation agrees and its cutover is declared (#960 H). A missing family is never ready. The evidence
  * is Tax-specific, NON_PRODUCTION, and never claims the global cutover complete (#960 F32).
  */
 export const assessTaxMigrationReadiness = (

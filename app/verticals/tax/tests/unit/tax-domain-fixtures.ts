@@ -1,7 +1,11 @@
 import { Option, Schema } from 'effect';
 
 import { TaxPurchaseBindingSchema } from '../../shared/domain/tax-kernel/purchase-binding.ts';
-import { TaxDecisionSchema, TaxDecisionUnitSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
+import {
+  TaxDecisionSchema,
+  TaxDecisionUnitSchema,
+  TaxableDecisionUnitSchema,
+} from '../../shared/domain/tax-kernel/tax-decision.ts';
 import type { TaxDecision } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import { taxExactRationalFromDecimal } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
@@ -12,6 +16,7 @@ import type { TaxRoundingPolicy } from '../../src/domain/tax-rounding.ts';
 
 export const decodePurchaseBinding = Schema.decodeUnknownSync(TaxPurchaseBindingSchema);
 export const decodeTaxDecisionUnit = Schema.decodeUnknownSync(TaxDecisionUnitSchema);
+export const decodeTaxableDecisionUnit = Schema.decodeUnknownSync(TaxableDecisionUnitSchema);
 export const decodeTaxDecision = Schema.decodeUnknownSync(TaxDecisionSchema);
 export const encodeTaxDecision = Schema.encodeSync(TaxDecisionSchema);
 
@@ -25,7 +30,7 @@ export const shippingSourceRefInput = { revision: 1, shippingAmountId: 'shipping
 export const exactDecimal = (value: string): TaxExactRational => Option.getOrThrow(taxExactRationalFromDecimal(value));
 
 type PurchaseBindingInput = typeof TaxPurchaseBindingSchema.Encoded;
-type TaxDecisionUnitInput = typeof TaxDecisionUnitSchema.Encoded;
+type TaxDecisionUnitInput = typeof TaxableDecisionUnitSchema.Encoded;
 type TaxDecisionInput = typeof TaxDecisionSchema.Encoded;
 
 type CatalogSelectionInput = PurchaseBindingInput['purchaseDemandOccurrences'][number]['catalogSelection'];
@@ -102,17 +107,71 @@ export const decisionUnitInput = (
   treatment: { _tag: 'TAXABLE', ratePercent },
 });
 
+type SellerNotVatPayerDecisionUnitInput = Exclude<typeof TaxDecisionUnitSchema.Encoded, TaxDecisionUnitInput>;
+
+export const nonPayerDecisionUnitInput = (
+  occurrenceId: string,
+  lineValue = '100.00',
+): SellerNotVatPayerDecisionUnitInput => ({
+  applicability: 'APPLICABLE',
+  governingReference: {
+    declarationRevisionRef: { revision: 1 },
+    legalBasis: { reference: 'ZDPH § 50 odst. 1 (461/2024 Sb., účinnost 1. 1. 2025)', revision: 1 },
+  },
+  jurisdiction: {
+    jurisdiction: 'CZ_DOMESTIC',
+    placeEvidenceRefs: {
+      deliveryDestination: 'delivery-destination-evidence-1',
+      sellingLegalEntity: 'selling-legal-entity-evidence-1',
+    },
+  },
+  taxableBasisInterpretation: {
+    components: [
+      {
+        _tag: 'LINE_COMMERCIAL_VALUE',
+        amount: exactDecimal(lineValue),
+        occurrenceId,
+        pricingLineRef: `pricing-line-${occurrenceId}`,
+      },
+    ],
+  },
+  taxableSupplyUnit: {
+    mapping: { _tag: 'ORDINARY_OCCURRENCE', catalogSelection: catalogSelectionInput(), occurrenceId },
+    unitId: `taxable-supply-unit:${occurrenceId}`,
+  },
+  treatment: { _tag: 'SELLER_NOT_VAT_PAYER' },
+});
+
 export const taxDecisionInput = (
   occurrenceIds: readonly [string, ...string[]],
   overrides: Partial<TaxDecisionInput> = {},
 ): TaxDecisionInput => ({
   decisionId: 'tax-decision-1',
+  declarationRevisionRef: { revision: 1 },
   purchaseBinding: purchaseBindingInput(occurrenceIds),
+  sellerVatRegime: 'VAT_PAYER',
   taxEvaluationTime: '2026-10-08T10:00:02.000Z',
   taxRelevantTime: '2026-10-08T10:00:00.000Z',
   units: [
     decisionUnitInput(occurrenceIds[0]),
     ...occurrenceIds.slice(1).map((occurrenceId) => decisionUnitInput(occurrenceId)),
+  ],
+  ...overrides,
+});
+
+export const nonPayerTaxDecisionInput = (
+  occurrenceIds: readonly [string, ...string[]],
+  overrides: Partial<TaxDecisionInput> = {},
+): TaxDecisionInput => ({
+  decisionId: 'tax-decision-1',
+  declarationRevisionRef: { revision: 1 },
+  purchaseBinding: purchaseBindingInput(occurrenceIds),
+  sellerVatRegime: 'NON_PAYER',
+  taxEvaluationTime: '2026-10-08T10:00:02.000Z',
+  taxRelevantTime: '2026-10-08T10:00:00.000Z',
+  units: [
+    nonPayerDecisionUnitInput(occurrenceIds[0]),
+    ...occurrenceIds.slice(1).map((occurrenceId) => nonPayerDecisionUnitInput(occurrenceId)),
   ],
   ...overrides,
 });

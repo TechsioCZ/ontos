@@ -7,11 +7,25 @@ import { catalogSelectionInput, occurrenceInput } from './tax-domain-fixtures.ts
 
 const decodeInput = Schema.decodeUnknownSync(LaunchTaxCoverageInputSchema);
 
+const DECLARED_VAT_PAYER = {
+  _tag: 'DECLARED' as const,
+  declarationRevisionRef: { revision: 1 },
+  regime: 'VAT_PAYER' as const,
+};
+
+const DECLARED_NON_PAYER = {
+  _tag: 'DECLARED' as const,
+  declarationRevisionRef: { revision: 1 },
+  regime: 'NON_PAYER' as const,
+};
+
+const NOT_DECLARED = { _tag: 'NOT_DECLARED' as const };
+
 const baseInput: typeof LaunchTaxCoverageInputSchema.Encoded = {
   currency: 'CZK',
   requiredTaxRegimes: ['ORDINARY_DOMESTIC'],
   requiredTaxTreatments: ['TAXABLE'],
-  sellingLegalEntityVatRegistration: 'CURRENT_POSITIVE',
+  sellerVatRegime: DECLARED_VAT_PAYER,
   supplyMeanings: [{ _tag: 'ORDINARY', occurrence: occurrenceInput('o-1') }],
 };
 
@@ -26,7 +40,15 @@ describe('Launch Tax Coverage', () => {
     const coverage = evaluateLaunchTaxCoverage(coverageInput());
 
     expect(Result.isSuccess(coverage)).toBe(true);
-    expect(Result.getOrThrow(coverage).map(({ unitId }) => unitId)).toEqual(['taxable-supply-unit:o-1']);
+    expect(Result.getOrThrow(coverage).units.map(({ unitId }) => unitId)).toEqual(['taxable-supply-unit:o-1']);
+    expect(Result.getOrThrow(coverage).regime).toBe('VAT_PAYER');
+  });
+
+  it('Unit 10 A3 a NON_PAYER seller is supported with its units', () => {
+    const coverage = evaluateLaunchTaxCoverage(coverageInput({ sellerVatRegime: DECLARED_NON_PAYER }));
+
+    expect(Result.isSuccess(coverage)).toBe(true);
+    expect(Result.getOrThrow(coverage).regime).toBe('NON_PAYER');
   });
 
   it('#918 F3 F6-F9 #923 F6-F8 F14-F15 ordinary B2B is supported whatever the buyer VAT status', () => {
@@ -103,37 +125,18 @@ describe('Launch Tax Coverage', () => {
     expect(coverage).toEqual(unsupported('SET_MULTI_SUPPLY_DECOMPOSITION'));
   });
 
-  it('#918 F14 F16 #938 F8-F10 known ended or non-registered seller is TAX_PREREQUISITE_NOT_MET', () => {
-    expect(
-      evaluateLaunchTaxCoverage(coverageInput({ sellingLegalEntityVatRegistration: 'KNOWN_ENDED_OR_NON_REGISTERED' })),
-    ).toEqual(
-      Result.fail({
-        _tag: 'TAX_PREREQUISITE_NOT_MET',
-        unmetPrerequisite: 'SELLING_LEGAL_ENTITY_CURRENT_CZ_VAT_REGISTRATION',
-      }),
+  it('Unit 10 A3 F10 a seller with no declared VAT Regime is an internal TAX_STATE_INDETERMINATE', () => {
+    expect(evaluateLaunchTaxCoverage(coverageInput({ sellerVatRegime: NOT_DECLARED }))).toEqual(
+      Result.fail({ _tag: 'TAX_STATE_INDETERMINATE', reason: 'SELLER_VAT_REGIME_NOT_DECLARED' }),
     );
   });
 
-  it('#938 F7 an unsupported scope is reported before a known-negative seller', () => {
+  it('Unit 10 A3 an unsupported scope is reported before a not-declared seller', () => {
     expect(
       evaluateLaunchTaxCoverage(
-        coverageInput({
-          requiredTaxRegimes: ['REVERSE_CHARGE'],
-          sellingLegalEntityVatRegistration: 'KNOWN_ENDED_OR_NON_REGISTERED',
-        }),
+        coverageInput({ requiredTaxRegimes: ['REVERSE_CHARGE'], sellerVatRegime: NOT_DECLARED }),
       ),
     ).toEqual(unsupported('REVERSE_CHARGE'));
-  });
-
-  it('#918 F15 #938 F13-F15 F20-F28 stale, unavailable, unknown and unresolved seller state are never negative', () => {
-    const outcomeFor = (sellingLegalEntityVatRegistration: (typeof baseInput)['sellingLegalEntityVatRegistration']) =>
-      evaluateLaunchTaxCoverage(coverageInput({ sellingLegalEntityVatRegistration }));
-
-    expect(outcomeFor('STALE')).toEqual(Result.fail({ _tag: 'TAX_INPUT_STALE' }));
-    expect(outcomeFor('UNAVAILABLE')).toEqual(Result.fail({ _tag: 'TAX_DEPENDENCY_UNAVAILABLE' }));
-    expect(outcomeFor('UNKNOWN')).toEqual(Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' }));
-    expect(outcomeFor('UNRESOLVED')).toEqual(Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' }));
-    expect(() => decodeInput({ ...baseInput, sellingLegalEntityVatRegistration: null })).toThrow();
   });
 
   it('#938 F34 F41 the same unchanged unsupported case stays unsupported on repeated evaluation', () => {

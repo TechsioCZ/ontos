@@ -9,6 +9,7 @@ import { taxOrderTaxFinalizations, taxRuleCorrections, taxRuleRevisions } from '
 import type { GoverningTaxRuleRevision } from '../database/schema.ts';
 import { CustomerSafeTaxDecompositionNeedSchema } from '../../shared/domain/tax-kernel/customer-safe-tax-projection.ts';
 import { TaxRuleIdSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
+import type { TaxableDecisionUnit } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import { OrderCommitmentTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 import { projectCustomerSafeTax } from '../domain/customer-safe-tax-projection.ts';
 import {
@@ -22,7 +23,7 @@ import { taxEvaluationForScope, visibleInScope } from './tax-evaluation.service.
 import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
 import {
   conflict,
-  lockTaxFactFamily,
+  lockTaxScopeKey,
   mutation,
   notFound,
   query,
@@ -75,14 +76,19 @@ const encodeOutcome = Schema.encodeEffect(TaxOutcomeSuccessSchema);
 const encodeEvidence = Schema.encodeEffect(TaxEvaluationEvidenceSchema);
 const byText = Order.String;
 
-/** Distinct governing revisions of the Decision in identity order, kept for read-time correction evidence. */
+/**
+ * Distinct governing revisions of the Decision in identity order, kept for read-time correction evidence. Only
+ * TAXABLE units carry a governing Tax Rule Revision; a non-payer final stores none (Unit 10 C).
+ */
 const governingRuleRevisions = ({ decision }: TaxOutcomeSuccess): readonly GoverningTaxRuleRevision[] =>
   [
     ...new Map(
-      decision.units.map(({ governingTaxRuleRevisionRef: { revision, taxRuleId } }) => [
-        `${taxRuleId}@${revision}`,
-        { revision, taxRuleId },
-      ]),
+      decision.units
+        .filter((unit): unit is TaxableDecisionUnit => 'governingTaxRuleRevisionRef' in unit)
+        .map(({ governingTaxRuleRevisionRef: { revision, taxRuleId } }) => [
+          `${taxRuleId}@${revision}`,
+          { revision, taxRuleId },
+        ]),
     ).values(),
   ].toSorted((left, right) => byText(left.taxRuleId, right.taxRuleId) || left.revision - right.revision);
 
@@ -265,12 +271,16 @@ export const orderTaxFinalizationsForScope = (
         return matches ? yield* finalized(byInvocation, false) : conflict('IDEMPOTENCY_REUSED');
       }
       // Concurrent requests for one submission converge on one canonical final (#944 F11).
-      yield* lockTaxFactFamily(transaction, input, `ORDER_TAX_FINALIZATION:${input.submissionRef}`);
+      yield* lockTaxScopeKey(transaction, input, `ORDER_TAX_FINALIZATION:${input.submissionRef}`, 'exclusive');
       const [existing] = yield* finalBySubmission(input.submissionRef);
       // The same frozen intent recovers the original without any rule or source read; a different intent conflicts;
-      // only a submission without a final is evaluated (#944 F10-F12, #942 H).
+      // only a submission without a final is evaluated (#944 F10-F12, #942 H). The seller lock is taken only on the
+      // evaluating path, so same-submission recovery stays free of reads (Unit 10 C).
       return yield* Option.match(Option.fromUndefinedOr(existing), {
-        onNone: () => finalizeNew(input, intentFingerprint),
+        onNone: () =>
+          lockTaxScopeKey(transaction, input, 'SELLER_VAT_REGIME_DECLARATION', 'shared').pipe(
+            Effect.flatMap(() => finalizeNew(input, intentFingerprint)),
+          ),
         onSome: (row) =>
           row.intentFingerprint === intentFingerprint
             ? finalized(row, false)

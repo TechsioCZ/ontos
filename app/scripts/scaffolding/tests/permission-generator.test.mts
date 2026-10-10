@@ -279,14 +279,6 @@ it.live('generates TAX management permissions only for the exact Selling Legal E
       }
       const result = yield* scaffoldPermission(root, taxRuleManagePermission, 'tax_selling_legal_entity', taxVertical);
       expect(result.kind).toBe('generated');
-      const recordPermission = 'tax.source_assertion.record';
-      const rejectedRecord = yield* scaffoldPermission(root, recordPermission, 'module', taxVertical).pipe(
-        Effect.sandbox,
-        Effect.flip,
-      );
-      expect(String(Cause.squash(rejectedRecord))).toMatch(/scope/u);
-      const recordResult = yield* scaffoldPermission(root, recordPermission, 'tax_selling_legal_entity', taxVertical);
-      expect(recordResult.kind).toBe('generated');
       const permissionSource = yield* Effect.promise(() =>
         readFile(path.join(root, `verticals/${taxVertical}/shared/permissions/tax-rule-manage.ts`), 'utf-8'),
       );

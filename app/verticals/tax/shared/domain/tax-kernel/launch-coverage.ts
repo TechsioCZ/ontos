@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { SellingLegalEntityVatRegistrationStateSchema } from './selling-legal-entity-vat-registration.ts';
+import { SellerVatRegimeSelectionSchema } from './seller-vat-regime.ts';
 import { CurrencyCodeSchema } from './tax-domain-primitives.ts';
 import { UnsupportedTaxRegimeSchema } from './tax-non-success-outcome.ts';
 import { TaxTreatmentCategorySchema } from './tax-treatment.ts';
@@ -20,7 +20,7 @@ export const LaunchTaxCoverageInputSchema = Schema.Struct({
   currency: CurrencyCodeSchema,
   requiredTaxRegimes: Schema.NonEmptyArray(RequiredTaxRegimeSchema),
   requiredTaxTreatments: Schema.NonEmptyArray(TaxTreatmentCategorySchema),
-  sellingLegalEntityVatRegistration: SellingLegalEntityVatRegistrationStateSchema,
+  sellerVatRegime: SellerVatRegimeSelectionSchema,
   supplyMeanings: OccurrenceSupplyMeaningsSchema,
 });
 

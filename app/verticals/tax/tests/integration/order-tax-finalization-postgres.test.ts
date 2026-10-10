@@ -17,36 +17,33 @@ import {
   OrderSubmissionRefSchema,
 } from '../../shared/actions/order-tax-finalization.ts';
 import type { FinalizeOrderTaxResult } from '../../shared/actions/order-tax-finalization.ts';
+import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import {
   CorrectTaxRuleRevisionPayloadSchema,
   CreateTaxRulePayloadSchema,
-  EstablishTaxFactAuthorityContractPayloadSchema,
 } from '../../shared/actions/tax-governance.ts';
-import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
-import { TaxRuleMissingSchema } from '../../shared/domain/tax-kernel/tax-non-success-outcome.ts';
 import {
-  taxFactAuthorityContractRevisions,
-  taxFactAuthorityContracts,
+  TaxRuleMissingSchema,
+  TaxStateIndeterminateSchema,
+} from '../../shared/domain/tax-kernel/tax-non-success-outcome.ts';
+import {
   taxOrderTaxFinalizations,
   taxRelations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
   taxRules,
-  taxSourceAssertions,
-  taxSourceConflicts,
+  taxSellerVatRegimeDeclarations,
 } from '../../src/database/schema.ts';
-import { taxAuthorityGovernancePersistenceForScope } from '../../src/services/tax-authority-governance.service.ts';
 import { taxGovernedReadsForScope } from '../../src/services/tax-governed-read.service.ts';
 import { orderTaxFinalizationsForScope } from '../../src/services/order-tax-finalization.service.ts';
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
-import { taxSourceAssertionPersistenceForScope } from '../../src/services/tax-source-assertion.service.ts';
+import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 import { occurrenceInput, purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
 const tenantId = randomUUID();
 const principalId = randomUUID();
-const FACT_FAMILY = 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION';
 const T = '2026-06-01T10:00:00.000Z';
 
 const scopeFor = (legalEntityId: string, tenant = tenantId): OperationalScope => ({
@@ -87,16 +84,13 @@ const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
       // Append-only triggers reject deletes; replica mode is the test-only escape for owned fixture rows.
       yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
       yield* transaction.delete(taxOrderTaxFinalizations).where(eq(taxOrderTaxFinalizations.tenantId, tenantId));
-      yield* transaction.delete(taxSourceConflicts).where(eq(taxSourceConflicts.tenantId, tenantId));
-      yield* transaction.delete(taxSourceAssertions).where(eq(taxSourceAssertions.tenantId, tenantId));
       yield* transaction.delete(taxRuleCorrections).where(eq(taxRuleCorrections.tenantId, tenantId));
       yield* transaction.delete(taxRuleRevisionEndFacts).where(eq(taxRuleRevisionEndFacts.tenantId, tenantId));
       yield* transaction.delete(taxRuleRevisions).where(eq(taxRuleRevisions.tenantId, tenantId));
       yield* transaction.delete(taxRules).where(eq(taxRules.tenantId, tenantId));
       yield* transaction
-        .delete(taxFactAuthorityContractRevisions)
-        .where(eq(taxFactAuthorityContractRevisions.tenantId, tenantId));
-      yield* transaction.delete(taxFactAuthorityContracts).where(eq(taxFactAuthorityContracts.tenantId, tenantId));
+        .delete(taxSellerVatRegimeDeclarations)
+        .where(eq(taxSellerVatRegimeDeclarations.tenantId, tenantId));
     }),
   );
 
@@ -123,37 +117,15 @@ const seller = (runtime: CoreTestDatabase) => {
   const legalEntityId = randomUUID();
   const scope = scopeFor(legalEntityId);
   const setUp = Effect.gen(function* setUpSeller() {
-    const authority = yield* Schema.decodeEffect(EstablishTaxFactAuthorityContractPayloadSchema)({
-      authority: {
-        authorityFrom: '2026-01-01T00:00:00.000Z',
-        evidenceSourceRefs: [],
-        systemOfRecordRef: 'erp.finance',
-      },
-      factFamily: FACT_FAMILY,
-      provenanceRef: 'acceptance:authority',
-      reason: 'Govern VAT registration authority',
-      stableCode: 'cz.vat-registration',
+    const declaration = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+      effectiveFrom: '2026-01-01T00:00:00.000Z',
+      expectedCurrentRevision: 0,
+      reason: 'Merchant-declared Czech VAT payer',
+      regime: 'VAT_PAYER',
     });
     yield* runScoped(runtime, scope, (transaction) =>
-      taxAuthorityGovernancePersistenceForScope(transaction, scope).establishContract({
-        ...authority,
-        ...invocation(scope),
-      }),
-    );
-    const registration = yield* Schema.decodeEffect(RecordTaxSourceAssertionPayloadSchema)({
-      factFamily: FACT_FAMILY,
-      jurisdiction: 'CZ_DOMESTIC',
-      provenanceRef: 'acceptance:registration',
-      reason: 'Record seller VAT registration evidence',
-      registrationMeaning: 'REGISTERED',
-      sourceAssertionKey: 'erp-assertion-1',
-      sourceRecordRef: 'erp-record-1',
-      sourceRef: 'erp.finance',
-      validFrom: '2026-01-01T00:00:00.000Z',
-    });
-    yield* runScoped(runtime, scope, (transaction) =>
-      taxSourceAssertionPersistenceForScope(transaction, scope).recordAssertion({
-        ...registration,
+      sellerVatRegimeDeclarationsForScope(transaction, scope).declare({
+        ...declaration,
         ...invocation(scope),
       }),
     );
@@ -219,7 +191,26 @@ const seller = (runtime: CoreTestDatabase) => {
         submissionRef: OrderSubmissionRefSchema.make(submissionRef),
       }),
     );
-  return { createRule, finalize, finalOrderTax, launchRules, legalEntityId, payload, scope, setUp };
+  const declare = (
+    overrides: Partial<typeof DeclareSellerVatRegimePayloadSchema.Encoded> = {},
+    actionInvocationId: string = randomUUID(),
+  ) =>
+    Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+      effectiveFrom: '2026-01-01T00:00:00.000Z',
+      expectedCurrentRevision: 0,
+      regime: 'VAT_PAYER',
+      ...overrides,
+    }).pipe(
+      Effect.flatMap((decoded) =>
+        runScoped(runtime, scope, (transaction) =>
+          sellerVatRegimeDeclarationsForScope(transaction, scope).declare({
+            ...decoded,
+            ...invocation(scope, actionInvocationId),
+          }),
+        ),
+      ),
+    );
+  return { createRule, declare, finalize, finalOrderTax, launchRules, legalEntityId, payload, scope, setUp };
 };
 
 type FinalizeOutcome = Effect.Success<ReturnType<ReturnType<typeof seller>['finalize']>>;
@@ -234,11 +225,26 @@ const resultOf = (outcome: FinalizeOutcome): FinalizeOrderTaxResult => {
 
 const FinalizedSchema = Schema.TaggedStruct('FINALIZED', {
   created: Schema.Boolean,
-  handoff: Schema.Struct({ outcome: Schema.Struct({ decision: Schema.Struct({ decisionId: DecisionIdSchema }) }) }),
+  handoff: Schema.Struct({
+    outcome: Schema.Struct({
+      decision: Schema.Struct({
+        decisionId: DecisionIdSchema,
+        declarationRevisionRef: Schema.Struct({ revision: Schema.Finite }),
+        sellerVatRegime: Schema.Literals(['VAT_PAYER', 'NON_PAYER']),
+      }),
+    }),
+  }),
 });
 const finalizedOf = (outcome: FinalizeOutcome) => Schema.decodeUnknownSync(FinalizedSchema)(resultOf(outcome));
 const RejectedSchema = Schema.TaggedStruct('FINALIZATION_REJECTED', { reasons: Schema.Array(Schema.String) });
 const NotFinalizedSchema = Schema.TaggedStruct('NOT_FINALIZED', { outcome: Schema.Struct({ _tag: Schema.String }) });
+const DeclaredSchema = Schema.TaggedStruct('DECLARED', { created: Schema.Boolean, revision: Schema.Finite });
+const declaredOf = (outcome: Effect.Success<ReturnType<ReturnType<typeof seller>['declare']>>) => {
+  if ('kind' in outcome) {
+    throw new Error(`Expected a declaration result, got ${outcome.kind}`);
+  }
+  return Schema.decodeUnknownSync(DeclaredSchema)(outcome.result);
+};
 
 it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and recovered unchanged', () =>
   Effect.scoped(
@@ -252,6 +258,9 @@ it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and
       const invocationId = randomUUID();
       const first = finalizedOf(yield* subject.finalize(subject.payload(submission), invocationId));
       expect(first.created).toBe(true);
+      // The stored final's Decision carries its own sellerVatRegime and declarationRevisionRef (#943/#950).
+      expect(first.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      expect(first.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
       const created = resultOf(yield* subject.finalize(subject.payload(submission), invocationId));
       // Core-invocation replay of the same request echoes the original (#955 G).
       expect(finalizedOf(yield* subject.finalize(subject.payload(submission), invocationId)).created).toBe(false);
@@ -447,9 +456,12 @@ it.live('#941 F5 F10 the final selects rules at T, not at the later Tax Evaluati
         finalizedOf(yield* subject.finalize(subject.payload(submission, {}, at)));
         const { handoff } = Option.getOrThrow(yield* subject.finalOrderTax(submission));
         expect(DateTime.formatIso(handoff.outcome.decision.taxRelevantTime)).toBe(at);
-        return handoff.outcome.decision.units.map(
-          ({ governingTaxRuleRevisionRef }) => governingTaxRuleRevisionRef.taxRuleId,
-        );
+        return handoff.outcome.decision.units
+          .filter(
+            (unit): unit is Extract<typeof unit, { governingTaxRuleRevisionRef: unknown }> =>
+              'governingTaxRuleRevisionRef' in unit,
+          )
+          .map(({ governingTaxRuleRevisionRef }) => governingTaxRuleRevisionRef.taxRuleId);
       });
 
       expect(yield* governingRulesAt(T)).toContain(beforeBoundary.taxRuleId);
@@ -457,6 +469,125 @@ it.live('#941 F5 F10 the final selects rules at T, not at the later Tax Evaluati
       // Half-open period: T exactly at the boundary belongs to the later rule only.
       expect(yield* governingRulesAt(BOUNDARY)).toContain(fromBoundary.taxRuleId);
       expect(yield* governingRulesAt(BOUNDARY)).not.toContain(beforeBoundary.taxRuleId);
+    }),
+  ),
+);
+
+it.live('Unit 10 C a backdated regime revision recorded after a final leaves the recovered final unchanged', () =>
+  Effect.scoped(
+    Effect.gen(function* backdatedRecoveryAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.setUp;
+      yield* subject.launchRules;
+
+      const submission = `submission-${randomUUID()}`;
+      const first = finalizedOf(yield* subject.finalize(subject.payload(submission)));
+      expect(first.created).toBe(true);
+
+      // A later NON_PAYER revision, backdated before T, is recorded after the final; the same-submission recovery
+      // reads no seller state and the already-stored Decision is unchanged (Unit 10 C; #942 H, #944 F20).
+      const declared = declaredOf(
+        yield* subject.declare(
+          {
+            confirmReplacesScheduled: true,
+            effectiveFrom: '2026-01-01T00:00:00.000Z',
+            expectedCurrentRevision: 1,
+            reason: 'Backdated non-payer declaration after finalization',
+            regime: 'NON_PAYER',
+          },
+          randomUUID(),
+        ),
+      );
+      expect(declared.created).toBe(true);
+
+      const recovered = finalizedOf(yield* subject.finalize(subject.payload(submission)));
+      expect(recovered.created).toBe(false);
+      expect(recovered.handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
+      expect(recovered.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      expect(recovered.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
+    }),
+  ),
+);
+
+it.live('Unit 10 C a NON_PAYER final stores zero tax with no governing rule revisions', () =>
+  Effect.scoped(
+    Effect.gen(function* nonPayerFinalizationAcceptance() {
+      const { adminClient, runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      // Non-payer from the start: no setUp() VAT_PAYER declaration, so no rules need to exist.
+      yield* subject.declare({ reason: 'Non-payer seller from launch', regime: 'NON_PAYER' });
+
+      const submission = `submission-${randomUUID()}`;
+      const final = finalizedOf(yield* subject.finalize(subject.payload(submission)));
+      expect(final.created).toBe(true);
+      expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
+      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
+
+      const rows = yield* adminClient.unsafe(
+        `select outcome -> 'result' -> 'purchaseTaxTotal' ->> 'amount' as purchase_tax_total_amount,
+                governing_rule_revisions
+         from tax.tax_order_tax_finalizations
+         where tenant_id = $1 and submission_ref = $2`,
+        [tenantId, submission],
+      );
+      expect(rows).toEqual([{ governing_rule_revisions: [], purchase_tax_total_amount: '0.00' }]);
+    }),
+  ),
+);
+
+it.live('Unit 10 C a seller with nothing declared cannot finalize', () =>
+  Effect.scoped(
+    Effect.gen(function* notDeclaredFinalizationAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      // Deliberately skip setUp(): no VAT regime has ever been declared for this seller.
+      const submission = `submission-${randomUUID()}`;
+
+      const notFinalized = yield* Schema.decodeUnknownEffect(NotFinalizedSchema)(
+        resultOf(yield* subject.finalize(subject.payload(submission))),
+      );
+      expect(notFinalized.outcome).toEqual(TaxStateIndeterminateSchema.make({}));
+      expect(Option.isNone(yield* subject.finalOrderTax(submission))).toBe(true);
+    }),
+  ),
+);
+
+it.live('Unit 10 C a declare concurrent with finalize serializes on the seller lock', () =>
+  Effect.scoped(
+    Effect.gen(function* concurrentDeclareAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.setUp;
+      yield* subject.launchRules;
+
+      const submission = `submission-${randomUUID()}`;
+      const [finalizeOutcome, declareOutcome] = yield* Effect.all(
+        [
+          subject.finalize(subject.payload(submission)),
+          subject.declare(
+            {
+              confirmReplacesScheduled: true,
+              effectiveFrom: '2026-01-01T00:00:00.000Z',
+              expectedCurrentRevision: 1,
+              reason: 'Concurrent declaration racing a finalize',
+              regime: 'NON_PAYER',
+            },
+            randomUUID(),
+          ),
+        ],
+        { concurrency: 2 },
+      );
+      // Whichever order the seller lock serializes them in, the final's regime is exactly the head at its commit:
+      // either the seller's original VAT_PAYER declaration (revision 1, finalize won the lock), or the concurrent
+      // NON_PAYER revision (revision 2, declare won it), never a mix (#950 F24, Unit 10 C).
+      const final = finalizedOf(finalizeOutcome);
+      const declared = declaredOf(declareOutcome);
+      expect(declared.created).toBe(true);
+      expect(declared.revision).toBe(2);
+      const finalizeWonTheLock = final.handoff.outcome.decision.sellerVatRegime === 'VAT_PAYER';
+      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(finalizeWonTheLock ? 1 : 2);
+      expect(['VAT_PAYER', 'NON_PAYER']).toContain(final.handoff.outcome.decision.sellerVatRegime);
     }),
   ),
 );

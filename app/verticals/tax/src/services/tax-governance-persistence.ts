@@ -59,10 +59,6 @@ export const query = <Value, Failure>(
 const uniqueViolationSqlState = ['23', '505'].join('');
 
 const WriteConstraintNameSchema = Schema.Literals([
-  'tax_fact_authority_contracts_code_uk',
-  'tax_fact_authority_contracts_idempotency_uk',
-  'tax_fact_authority_revisions_idempotency_uk',
-  'tax_fact_authority_revisions_number_uk',
   'tax_order_tax_finalizations_idempotency_uk',
   'tax_order_tax_finalizations_submission_uk',
   'tax_rule_corrections_idempotency_uk',
@@ -73,17 +69,13 @@ const WriteConstraintNameSchema = Schema.Literals([
   'tax_rule_revisions_rule_number_uk',
   'tax_rules_code_uk',
   'tax_rules_idempotency_uk',
-  'tax_source_assertions_idempotency_uk',
-  'tax_source_conflicts_idempotency_uk',
+  'tax_seller_vat_regime_declarations_idempotency_uk',
+  'tax_seller_vat_regime_declarations_revision_uk',
 ]);
 const isWriteConstraint = Schema.is(WriteConstraintNameSchema);
 
 /** Durable unique constraints decide races; each maps to one typed governance conflict. */
 const writeConflictConstraints = {
-  tax_fact_authority_contracts_code_uk: 'STABLE_CODE',
-  tax_fact_authority_contracts_idempotency_uk: 'IDEMPOTENCY_REUSED',
-  tax_fact_authority_revisions_idempotency_uk: 'IDEMPOTENCY_REUSED',
-  tax_fact_authority_revisions_number_uk: 'STALE_BASIS',
   tax_order_tax_finalizations_idempotency_uk: 'IDEMPOTENCY_REUSED',
   // Backstop only: the submission advisory lock routes every second request to recovery or the intent conflict first.
   tax_order_tax_finalizations_submission_uk: 'SUBMISSION_INTENT_CHANGED',
@@ -95,8 +87,9 @@ const writeConflictConstraints = {
   tax_rule_revisions_rule_number_uk: 'STALE_BASIS',
   tax_rules_code_uk: 'STABLE_CODE',
   tax_rules_idempotency_uk: 'IDEMPOTENCY_REUSED',
-  tax_source_assertions_idempotency_uk: 'IDEMPOTENCY_REUSED',
-  tax_source_conflicts_idempotency_uk: 'IDEMPOTENCY_REUSED',
+  // Race backstop; the exclusive seller lock routes most races to the declaration evaluation's StaleBasis first.
+  tax_seller_vat_regime_declarations_idempotency_uk: 'IDEMPOTENCY_REUSED',
+  tax_seller_vat_regime_declarations_revision_uk: 'STALE_BASIS',
 } satisfies Readonly<Record<typeof WriteConstraintNameSchema.Type, TaxGovernanceConflictKind>>;
 
 export const mutation = <Value>(
@@ -169,14 +162,21 @@ export const sameAttribution = (
   ].every(Boolean);
 
 /**
- * Serializes every governed change of one fact family and seller (authority contracts and source assertions), so
- * complete-set checks cannot race. Drizzle has no advisory-lock builder (party-registry precedent).
+ * Serializes every governed change of one scoped key (a fact family, a submission, or a seller's VAT regime
+ * timeline), so complete-set and timeline checks cannot race. `'shared'` lets concurrent readers co-hold the key
+ * while an `'exclusive'` writer is excluded; Drizzle has no advisory-lock builder (party-registry precedent).
  */
-export const lockTaxFactFamily = (transaction: ScopedTransaction, input: GovernedInvocation, factFamily: string) => {
-  const lockKey = ['tax-authority', input.tenantId, input.legalEntityId, factFamily].join(':');
+export const lockTaxScopeKey = (
+  transaction: ScopedTransaction,
+  input: GovernedInvocation,
+  key: string,
+  mode: 'exclusive' | 'shared' = 'exclusive',
+) => {
+  const lockKey = ['tax-scope', input.tenantId, input.legalEntityId, key].join(':');
+  const lockFn = mode === 'exclusive' ? 'pg_advisory_xact_lock' : 'pg_advisory_xact_lock_shared';
   return query(
     transaction
-      .select({ lock: sql`pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))` })
-      .from(sql`(values (1)) as tax_authority_lock_anchor(value)`),
+      .select({ lock: sql`${sql.raw(lockFn)}(hashtextextended(${lockKey}, 0))` })
+      .from(sql`(values (1)) as tax_scope_lock_anchor(value)`),
   );
 };

@@ -8,47 +8,38 @@ const governanceActionKeys = [
   'commerce.tax.correct-tax-rule-revision',
   'commerce.tax.create-tax-rule',
   'commerce.tax.create-tax-rule-revision',
-  'commerce.tax.end-tax-fact-authority-contract',
+  'commerce.tax.declare-seller-vat-regime',
   'commerce.tax.end-tax-rule-revision',
-  'commerce.tax.establish-tax-fact-authority-contract',
   'commerce.tax.finalize-order-tax',
-  'commerce.tax.record-tax-source-assertion',
-  'commerce.tax.revise-tax-fact-authority-contract',
 ];
 
 describe('Tax module contract', () => {
-  it('publishes the headless Tax Rule and Tax Fact Authority governance surface', () => {
+  it('publishes the headless Tax Rule and Seller VAT Regime Declaration governance surface', () => {
     expect(taxManifest.module.id).toBe('commerce.tax');
     expect(Object.keys(taxManifest.publicSurface.api).toSorted()).toEqual([
       'applicable-tax-rule-set',
       'final-order-tax',
-      'selling-legal-entity-vat-registration-state',
+      'seller-vat-regime-at-instant',
+      'seller-vat-regime-history',
       'tax-correction-preview',
       'tax-evaluation',
-      'tax-fact-authority-current',
       'tax-materiality-comparison',
       'tax-privacy-owner-coverage',
       'tax-rule-history',
-      'tax-source-assertion-history',
-      'tax-source-conflict-detail',
     ]);
     expect(taxManifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey).toSorted()).toEqual(
       governanceActionKeys,
     );
     expect(taxManifest.publicSurface.resourceTypes.map(({ key }) => key).toSorted()).toEqual([
       'commerce.tax.order-tax-finalization',
-      'commerce.tax.tax-fact-authority-contract',
+      'commerce.tax.seller-vat-regime-declaration',
       'commerce.tax.tax-rule',
       'commerce.tax.tax-rule-revision',
-      'commerce.tax.tax-source-assertion',
-      'commerce.tax.tax-source-conflict',
     ]);
     expect((taxManifest.publicSurface.businessPermissions ?? []).map(({ key }) => key).toSorted()).toEqual([
-      'tax.authority_contract.manage',
       'tax.evidence.read',
       'tax.governed.read',
       'tax.rule.manage',
-      'tax.source_assertion.record',
     ]);
     expect(taxManifest.publicSurface.shellContributions.navigation).toEqual([]);
     expect(taxManifest.publicSurface.shellContributions.pages).toEqual([]);
@@ -73,11 +64,12 @@ describe('Tax module contract', () => {
     expect(surface.filter((key) => /buyer|customer|counterparty|b2b|b2c/u.test(key))).toEqual([]);
   });
 
-  it('#958 F21-F22 #893 evidence enters only through the governed record Action, never an Integration Route', () => {
-    const ingress = taxManifest.publicSurface.actions
-      .map(({ descriptor }) => descriptor.actionKey)
-      .filter((actionKey) => /source|assertion|vies|ares|import|sync|route/u.test(actionKey));
-    expect(ingress).toEqual(['commerce.tax.record-tax-source-assertion']);
+  it('#958 F21-F22 #893 evidence enters only through the governed declare Action, never an Integration Route', () => {
+    const actionKeys = taxManifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
+    expect(actionKeys.filter((actionKey) => /vies|ares|import|sync|route|assertion/u.test(actionKey))).toEqual([]);
+    expect(actionKeys.filter((actionKey) => /seller-vat-regime/u.test(actionKey))).toEqual([
+      'commerce.tax.declare-seller-vat-regime',
+    ]);
   });
 
   it('offers no generic edit Action for derived or historical Tax meaning (#949 F33-F42)', () => {
@@ -99,5 +91,17 @@ describe('Tax module contract', () => {
       provisioning: 'explicit',
     });
     expect(finalize?.descriptor.legalEntityScope).toBe('required');
+  });
+
+  it('#949/#950 declares the Seller VAT Regime through explicit Action provisioning, without a Core business Permission scope', () => {
+    const declare = taxManifest.publicSurface.actions.find(
+      ({ descriptor }) => descriptor.actionKey === 'commerce.tax.declare-seller-vat-regime',
+    );
+    expect(Object.keys(declare?.descriptor ?? {})).not.toContain('businessPermission');
+    expect(declare?.descriptor.entrypoint.authorization).toEqual({
+      kind: 'action_execution',
+      provisioning: 'explicit',
+    });
+    expect(declare?.descriptor.legalEntityScope).toBe('required');
   });
 });

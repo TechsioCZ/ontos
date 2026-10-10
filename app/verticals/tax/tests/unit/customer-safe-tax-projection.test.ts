@@ -3,6 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import {
   CUSTOMER_SAFE_TAX_PROJECTION_VERSION,
+  CustomerSafeSellerNotVatPayerSchema,
   CustomerSafeTaxNotDeterminedSchema,
   CustomerSafeTaxProjectionSchema,
   projectCustomerSafeTax,
@@ -10,7 +11,14 @@ import {
 import type { CustomerSafeTaxProjection } from '../../src/domain/customer-safe-tax-projection.ts';
 import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
-import { composeResult, decisionUnitInput, decodeTaxDecision, taxDecisionInput } from './tax-domain-fixtures.ts';
+import {
+  composeResult,
+  decisionUnitInput,
+  decodeTaxDecision,
+  nonPayerDecisionUnitInput,
+  taxDecisionInput,
+  nonPayerTaxDecisionInput,
+} from './tax-domain-fixtures.ts';
 
 /** 50.00 CZK at 21 % and 87.50 CZK at 12 % both publish 10.50 CZK; zero values publish 0.00 CZK. */
 const successfulOutcome = (taxed: boolean): TaxOutcomeSuccess => {
@@ -32,8 +40,19 @@ const projectedAmount = (projection: CustomerSafeTaxProjection) =>
       Option.some({ components, contractVersion, purchaseTaxTotal }),
     ),
     Match.tag('TAX_NOT_DETERMINED', () => Option.none()),
+    Match.tag('SELLER_NOT_VAT_PAYER', () => Option.none()),
     Match.exhaustive,
   );
+
+/** A successful NON_PAYER outcome: units with a published line but no rate. */
+const nonPayerOutcome = (): TaxOutcomeSuccess => {
+  const decision = decodeTaxDecision(
+    nonPayerTaxDecisionInput(['o-1', 'o-2'], {
+      units: [nonPayerDecisionUnitInput('o-1', '50.00'), nonPayerDecisionUnitInput('o-2', '87.50')],
+    }),
+  );
+  return { _tag: 'TAX_DETERMINED', decision, result: composeResult(decision) };
+};
 
 describe('Customer-Safe Tax Projection', () => {
   it('#940 F18-F21 F25-F30 projects only the allowlisted amount and currency', () => {
@@ -115,6 +134,18 @@ describe('Customer-Safe Tax Projection', () => {
       [['o-1'], '10.50'],
       [['o-2'], '12.00'],
     ]);
+  });
+
+  it('Unit 10 A5 a NON_PAYER seller always projects to SELLER_NOT_VAT_PAYER, whatever the decomposition need', () => {
+    for (const decompositionNeed of ['NOT_NEEDED', 'PER_TAXABLE_SUPPLY_UNIT'] as const) {
+      const projection = projectCustomerSafeTax(nonPayerOutcome(), decompositionNeed);
+
+      expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(projection)).toBe(true);
+      const serialized = Schema.encodeSync(Schema.fromJsonString(CustomerSafeTaxProjectionSchema))(projection);
+      expect(serialized).not.toContain('TAX_AMOUNT');
+      expect(serialized).not.toContain('ratePercent');
+      expect(serialized).not.toContain('"0"');
+    }
   });
 
   it('#940 F44 the same outcome and contract version produce the same projection', () => {

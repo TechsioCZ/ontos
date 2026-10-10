@@ -10,7 +10,7 @@ export const TAX_EVALUATION_MAX_ATTEMPTS = 3;
 /** Completeness tokens of the TAX own state one attempt used; append-only owner tables make them monotonic. */
 export interface TaxEvaluationStateTokens {
   readonly ruleSets: ReadonlyMap<string, Readonly<{ outcome: string; setFingerprint: string }>>;
-  readonly seller: Readonly<{ reason: string; setFingerprint: string; state: string }>;
+  readonly seller: Readonly<{ headRevision: number; setFingerprint: string }>;
 }
 
 const sameRuleSets = (before: TaxEvaluationStateTokens['ruleSets'], after: TaxEvaluationStateTokens['ruleSets']) =>
@@ -21,7 +21,7 @@ const sameRuleSets = (before: TaxEvaluationStateTokens['ruleSets'], after: TaxEv
   });
 
 const sameSeller = (before: TaxEvaluationStateTokens['seller'], after: TaxEvaluationStateTokens['seller']) =>
-  before.setFingerprint === after.setFingerprint && before.state === after.state && before.reason === after.reason;
+  before.headRevision === after.headRevision && before.setFingerprint === after.setFingerprint;
 
 /**
  * Evaluation-local conditional check: the state re-read after evaluation must carry the same completeness tokens as
@@ -34,7 +34,7 @@ export const taxEvaluationStateChange = (
   if (!sameRuleSets(before.ruleSets, after.ruleSets)) {
     return Option.some('RULE_SET_CHANGED');
   }
-  return sameSeller(before.seller, after.seller) ? Option.none() : Option.some('SELLER_STATE_CHANGED');
+  return sameSeller(before.seller, after.seller) ? Option.none() : Option.some('SELLER_VAT_REGIME_CHANGED');
 };
 
 export type TaxEvaluationAttemptLog = readonly Readonly<{

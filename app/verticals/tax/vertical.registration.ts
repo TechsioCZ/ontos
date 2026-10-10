@@ -7,12 +7,9 @@ import { taxManifest } from './vertical.manifest.ts';
 import { correctTaxRuleRevisionAction } from './src/actions/correct-tax-rule-revision.action.ts';
 import { createTaxRuleAction } from './src/actions/create-tax-rule.action.ts';
 import { createTaxRuleRevisionAction } from './src/actions/create-tax-rule-revision.action.ts';
-import { endTaxFactAuthorityContractAction } from './src/actions/end-tax-fact-authority-contract.action.ts';
+import { declareSellerVatRegimeAction } from './src/actions/declare-seller-vat-regime.action.ts';
 import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
-import { establishTaxFactAuthorityContractAction } from './src/actions/establish-tax-fact-authority-contract.action.ts';
 import { finalizeOrderTaxAction } from './src/actions/finalize-order-tax.action.ts';
-import { recordTaxSourceAssertionAction } from './src/actions/record-tax-source-assertion.action.ts';
-import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
 // </generated-module-registration-imports>
 export const taxRegistration = defineVerticalRuntimeRegistration({
   actions: [
@@ -20,12 +17,9 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
     correctTaxRuleRevisionAction,
     createTaxRuleAction,
     createTaxRuleRevisionAction,
-    endTaxFactAuthorityContractAction,
+    declareSellerVatRegimeAction,
     endTaxRuleRevisionAction,
-    establishTaxFactAuthorityContractAction,
     finalizeOrderTaxAction,
-    recordTaxSourceAssertionAction,
-    reviseTaxFactAuthorityContractAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -33,16 +27,13 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
       // <generated-module-registration-apis>
       'applicable-tax-rule-set': () => import('./src/api/applicable-tax-rule-set-client.ts'),
       'final-order-tax': () => import('./src/api/final-order-tax-client.ts'),
-      'selling-legal-entity-vat-registration-state': () =>
-        import('./src/api/selling-legal-entity-vat-registration-state-client.ts'),
+      'seller-vat-regime-at-instant': () => import('./src/api/seller-vat-regime-at-instant-client.ts'),
+      'seller-vat-regime-history': () => import('./src/api/seller-vat-regime-history-client.ts'),
       'tax-correction-preview': () => import('./src/api/tax-correction-preview-client.ts'),
       'tax-evaluation': () => import('./src/api/tax-evaluation-client.ts'),
-      'tax-fact-authority-current': () => import('./src/api/tax-fact-authority-current-client.ts'),
       'tax-materiality-comparison': () => import('./src/api/tax-materiality-comparison-client.ts'),
       'tax-privacy-owner-coverage': () => import('./src/api/tax-privacy-owner-coverage-client.ts'),
       'tax-rule-history': () => import('./src/api/tax-rule-history-client.ts'),
-      'tax-source-assertion-history': () => import('./src/api/tax-source-assertion-history-client.ts'),
-      'tax-source-conflict-detail': () => import('./src/api/tax-source-conflict-detail-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

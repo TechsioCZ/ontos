@@ -11,7 +11,16 @@ import {
   encodeAcceptedTaxTerms,
   unitIdOf,
 } from './tax-correction-fixtures.ts';
-import { exactDecimal } from './tax-domain-fixtures.ts';
+import {
+  composeResult,
+  decodeTaxDecision,
+  encodeTaxDecision,
+  exactDecimal,
+  nonPayerTaxDecisionInput,
+} from './tax-domain-fixtures.ts';
+import { TaxResultSchema } from '../../src/domain/tax-result.ts';
+
+const encodeTaxResult = Schema.encodeSync(TaxResultSchema);
 
 const input = () =>
   acceptedTaxTermsInput([
@@ -71,5 +80,22 @@ describe('Accepted Tax Terms', () => {
     });
     expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-2'))).originalPublishedTax.amount).toBe('6.00');
     expect(Option.isNone(originalUnitBaseline(terms, unitIdOf('o-3')))).toBe(true);
+  });
+
+  it('Unit 10 A5 F17 a seller-is-non-payer unit has no baseline, pinning the non-taxable exclusion', () => {
+    const decision = decodeTaxDecision(nonPayerTaxDecisionInput(['o-1']));
+    const encodedDecision = encodeTaxDecision(decision);
+    const terms = decodeAcceptedTaxTerms({
+      authoritativeRecord: { _tag: 'ORDER_SNAPSHOT' },
+      finalTax: {
+        _tag: 'TAX_DETERMINED',
+        decision: encodedDecision,
+        result: encodeTaxResult(composeResult(decision)),
+      },
+      orderCommitmentTime: encodedDecision.taxRelevantTime,
+      orderLineage: { bundleRef: 'bundle-1', orderRef: 'order-1' },
+    });
+
+    expect(Option.isNone(originalUnitBaseline(terms, unitIdOf('o-1')))).toBe(true);
   });
 });

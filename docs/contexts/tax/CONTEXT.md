@@ -13,7 +13,8 @@ Order, or Billing Document lifecycle.
 _Avoid_: Pricing-owned tax calculation, Core tax policy, Tax as invoice owner.
 
 **Launch Tax Coverage** — Closed-world activated Tax capability for ordinary domestic Czech taxable
-B2C/B2B purchases in CZK with a Current Czech VAT-registered Selling Legal Entity and explicit
+B2C/B2B purchases in CZK with a Selling Legal Entity whose Seller VAT Regime Declaration at the
+Tax-Relevant Time is VAT payer or non-payer, and explicit
 supported domestic Tax Classifications/Tax Rules, including mixed-rate purchases with one shared
 ancillary Shipping amount. OSS, reverse charge, export, foreign VAT regimes, generic
 exemption/special-treatment flows, additional selling currencies, and generic multi-supply Set
@@ -55,20 +56,18 @@ projection as a second Tax truth.
 
 **Tax Outcome** — Business result of one Tax evaluation: either a successful Tax Decision with its
 Tax Result, or exactly one typed non-success meaning. Launch codes: `TAX_CASE_UNSUPPORTED` (scope
-failure; never missing configuration), `TAX_PREREQUISITE_NOT_MET` (known-negative required Launch
-prerequisite such as authoritatively ended/non-registered seller VAT registration),
-`TAX_RULE_MISSING` (supported case with a complete authoritative empty applicable rule set),
-`TAX_RULE_OVERLAP` (complete rule state with simultaneously applicable revisions where mutual
-exclusion is required), `TAX_RULE_CONFLICT` (complete rule state with incompatible applicable
-meanings and no governing composition; explicit permitted composition is not conflict),
-`TAX_INPUT_STALE` (required material evidence known outside its usable Current validity),
-`TAX_DEPENDENCY_UNAVAILABLE` (required authority/dependency cannot safely be used),
-`TAX_STATE_INDETERMINATE` (complete authoritative truth cannot safely be concluded; an incomplete
-material set or unresolved authority conflict may yield it under its owning contract). Unknown,
-unavailable and stale are never negative; none is represented as successful zero.
+failure; never missing configuration), `TAX_RULE_MISSING` (supported case with a complete
+authoritative empty applicable rule set), `TAX_RULE_OVERLAP` (complete rule state with
+simultaneously applicable revisions where mutual exclusion is required), `TAX_RULE_CONFLICT`
+(complete rule state with incompatible applicable meanings and no governing composition; explicit
+permitted composition is not conflict), `TAX_INPUT_STALE` (required material evidence known
+outside its usable Current validity), `TAX_DEPENDENCY_UNAVAILABLE` (required authority/dependency
+cannot safely be used), `TAX_STATE_INDETERMINATE` (complete authoritative truth cannot safely be
+concluded; an incomplete material set or unresolved authority conflict may yield it under its
+owning contract; not declared is `TAX_STATE_INDETERMINATE`). Unknown, unavailable and stale are
+never negative; none is represented as successful zero.
 _Avoid_: generic ERROR, provider-specific timeout as public Tax meaning, null/zero as failure,
-unknown or unavailable seller state as `TAX_PREREQUISITE_NOT_MET`, partial observation as
-`TAX_RULE_MISSING`.
+not declared seller VAT regime as a silent default, partial observation as `TAX_RULE_MISSING`.
 
 **Taxable Basis** — Basis to which an applicable tax calculation relates, determined by Tax per
 Taxable Supply Unit from authoritative owner-issued commercial amounts: published Line Commercial
@@ -128,45 +127,27 @@ result is `TAX_CASE_UNSUPPORTED`.
 _Avoid_: Commerce Market, Channel, Storefront, hostname, locale, IP or currency as jurisdiction;
 jurisdiction as Permission authority.
 
-**Tax Fact Authority Contract** — Tax-owned governance fact declaring, for one exact Tax fact family
-and explicit scope/use, which System of Record may decide the fact and which sources may provide
-supporting evidence. It governs authority/evidence roles; it does not itself set the source fact's
-business value and is distinct from an Integration Route or provider credential. A Tax fact family
-is the unit of authority assignment: Tax-owned families may have OntOS TAX as System of Record,
-while Tax-relevant facts such as Selling Legal Entity VAT Registration keep their external declared
-System of Record. Contract revisions carry an explicit authority period, stay historically
-explainable and change only through governed Actions; standard public sources such as VIES/ARES may
-have system-preconfigured evidence-source defaults, which never preconfigure authority. One fact has
-one System of Record per business instant: competing System-of-Record authorities for one
-fact/instant are an authority configuration conflict and a fact without any declared authority is an
-authority gap; both block affected determination and readiness and are distinct from Tax Rule
-overlap/conflict and from evidence-provider disagreement. An authority handoff is an explicit
-fact-level boundary; shadow results before it are never Current.
-_Avoid_: ERP/VIES/ARES as global Tax authority, authority inferred from transport route, manual
-override of a source-owned fact through the authority contract.
+**Seller VAT Regime Declaration** — Tax-owned, append-only, merchant-declared statement of one
+Selling Legal Entity's VAT regime (VAT payer or non-payer) effective from a stated instant. Each
+declaration is a new numbered revision; the revision live at an instant is the highest-numbered one
+whose effective instant is at or before it, otherwise the regime is not declared. It is never
+verified against VIES/ARES or any external registry; declaring it is an explicit merchant business
+act, not a derived or inferred VAT-registration lookup. It is distinct from the Selling Legal Entity
+identity and from Official Identifiers such as DIČ.
+_Avoid_: DIČ as regime proof, Legal Entity existence as regime, inferring a regime from silence,
+treating a declaration as System-of-Record-verified fact.
 
-**Tax Source Assertion** — One immutable source statement about one exact Tax fact subject, scope
-and business-validity meaning, retained with provenance independently from the external source
-record and from the canonical Tax business fact it may support. Evaluating one assertion against the
-Tax Fact Authority Contract covering its claimed business validity yields exactly one source
-acceptance outcome: `ACCEPTED` (eligible for owner-governed Tax fact resolution, not payload
-promotion), `REJECTED` (a known reason prevents its use for the declared Tax use), `NEEDS_REVIEW`
-(understandable but owner-governed undecided) or `UNVERIFIABLE` (subject, authority, scope or
-validity cannot be safely confirmed). Authority is judged per business instant: the source's role
-(System of Record, evidence or none) comes from the contract covering that instant, never from the
-contract at recording time. This family is distinct from Tax Outcome codes.
-_Avoid_: provider payload as canonical Tax profile, arrival order as Currentness, source record ID
-as Tax fact identity.
+**merchant-declared** — Evidence provenance meaning that a Seller VAT Regime Declaration revision
+was entered directly by the merchant through the governed declare Action, as opposed to `MIGRATED`
+provenance carried by a legacy-import cutover. Neither provenance implies external verification.
+_Avoid_: merchant-declared as a lesser-trust value, treating provenance as a correctness signal.
 
-**Selling Legal Entity VAT Registration** — Tax-relevant business fact that one exact Selling Legal
-Entity is VAT-registered for one jurisdiction and business-valid period under its declared System of
-Record. It is distinct from the Selling Legal Entity identity and from Official Identifiers such as
-DIČ. For one evaluation its state is exactly one of Current positive, known ended/non-registered,
-unknown, unavailable, stale, or unresolved (incompatible authoritative assertions without valid
-correction/temporal semantics); Currentness is judged at Tax Evaluation Time under the owner
-contract. Only known ended/non-registered is `TAX_PREREQUISITE_NOT_MET`.
-_Avoid_: DIČ as registration proof, Legal Entity existence as VAT-registration state, nullable
-boolean as registration state, OntOS Unresolved Party as this unresolved state.
+**non-payer treatment** — Tax Decision Treatment `SELLER_NOT_VAT_PAYER` applied to every unit of a
+Decision whose seller is a declared VAT non-payer at the Tax-Relevant Time, under the Czech § 50(1)
+legal basis. It carries no rate, no classification, no governing Tax Rule and no VAT line; it is not
+`ZERO_RATE`, `EXEMPTION` or `NOT_APPLICABLE`, and shipping allocation is not required for it.
+_Avoid_: non-payer treatment as a zero-rate Tax Rule outcome, requiring shipping allocation evidence
+for a non-payer unit, treating a non-payer Decision as exempt or not-applicable.
 
 **Tax-Relevant Time** — Tax-owned business time used to select the legally/business-relevant Tax Rule
 meaning for an exact Tax Decision. For the supported Launch Order use, it is the Commerce-owned
@@ -181,8 +162,9 @@ applicable Tax Rule.
 _Avoid_: Tax Evaluation Time as Tax-Relevant Time, client/request timestamp as authority.
 
 **Tax Fact Currentness Evidence** — Owner-qualified Tax Evidence proving that one exact material Tax
-fact is usable as Current at a stated Tax Evaluation Time under its owner contract. A retained
-assertion, latest timestamp, cache freshness, or event silence is not this evidence by itself.
+fact is usable as Current at a stated Tax Evaluation Time under its owner contract: a revision that
+does not cover T is not the regime at T. A retained assertion, latest timestamp, cache freshness, or
+event silence is not this evidence by itself.
 _Avoid_: latest row as Currentness proof, retained positive assertion as perpetual Current fact.
 
 **Tax Materiality** — Tax-owned determination of whether a change can alter the exact Tax business

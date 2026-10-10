@@ -18,13 +18,8 @@ import { TaxJurisdictionInputSchema } from './tax-kernel/tax-jurisdiction.ts';
 import { TaxOutcomeSchema } from './tax-kernel/tax-outcome.ts';
 import { TaxEvaluationTimeSchema, TaxRelevantTimeSchema } from './tax-kernel/tax-time.ts';
 import { PublishedPricingLineSchema } from './tax-kernel/taxable-basis.ts';
-import { TaxSourceAssertionRefSchema } from '../resources/tax-source-assertion.ts';
 import { ApplicableTaxRuleSetResponseContractSchema } from './tax-governed-read-contracts.ts';
-import {
-  SellingLegalEntityVatRegistrationStateContractSchema,
-  TaxFactAuthorityOutcomeSchema,
-  TaxSourceRegistrationResolutionReasonSchema,
-} from './tax-source-read-contracts.ts';
+import { SellerVatRegimeAtInstantSelectionSchema } from './seller-vat-regime-contracts.ts';
 
 const FingerprintSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 
@@ -96,8 +91,8 @@ export const TaxEvaluationRequestRejectionReasonSchema = Schema.Literals([
 ]);
 export type TaxEvaluationRequestRejectionReason = typeof TaxEvaluationRequestRejectionReasonSchema.Type;
 
-/** Why an evaluation candidate was discarded before publication (#942 F17-F18). */
-export const TaxEvaluationDiscardReasonSchema = Schema.Literals(['RULE_SET_CHANGED', 'SELLER_STATE_CHANGED']);
+/** Why an evaluation candidate was discarded before publication (#942 F17-F18; Unit 10 C). */
+export const TaxEvaluationDiscardReasonSchema = Schema.Literals(['RULE_SET_CHANGED', 'SELLER_VAT_REGIME_CHANGED']);
 export type TaxEvaluationDiscardReason = typeof TaxEvaluationDiscardReasonSchema.Type;
 
 /** Declared use of the compared meanings; the same states and use give the same conclusion (#943 F10). */
@@ -128,6 +123,7 @@ export const TaxEvidenceDifferenceSchema = Schema.Literals([
   'PURCHASE_CANDIDATE',
   'TAX_RELEVANT_TIME',
   'TAX_EVALUATION_TIME',
+  'SELLER_VAT_REGIME_DECLARATION_REVISION',
 ]);
 export type TaxEvidenceDifference = typeof TaxEvidenceDifferenceSchema.Type;
 
@@ -180,13 +176,14 @@ const RuleSetEvidenceSchema = Schema.Struct({
   taxClassificationCode: Schema.String,
 });
 
-/** Selling Legal Entity VAT Registration evidence actually used at Tax Evaluation Time (#942 F5, F16). */
-const SellerRegistrationEvidenceSchema = Schema.Struct({
-  authorityOutcome: TaxFactAuthorityOutcomeSchema,
-  basisAssertionRefs: Schema.Array(TaxSourceAssertionRefSchema),
-  reason: TaxSourceRegistrationResolutionReasonSchema,
+const HeadRevisionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/** Seller VAT Regime evidence actually used, selected for the Tax-Relevant Time (Unit 10 C; #942 F5, F16). */
+const SellerVatRegimeEvidenceSchema = Schema.Struct({
+  headRevision: HeadRevisionSchema,
+  selectedFor: TaxRelevantTimeSchema,
+  selection: SellerVatRegimeAtInstantSelectionSchema,
   setFingerprint: FingerprintSchema,
-  state: SellingLegalEntityVatRegistrationStateContractSchema,
 });
 
 /** Explainable evidence of one evaluation: times, attempts and the TAX own state tokens it rests on (#942 F16). */
@@ -197,8 +194,9 @@ export const TaxEvaluationEvidenceSchema = Schema.Struct({
   ),
   exhausted: Schema.optionalKey(Schema.Literal('EVALUATION_RACE_UNRESOLVED')),
   foreignEvidenceOrigin: TaxForeignEvidenceOriginSchema,
+  notDeterminedBecause: Schema.optionalKey(Schema.Literal('SELLER_VAT_REGIME_NOT_DECLARED')),
   ruleSets: Schema.Array(RuleSetEvidenceSchema),
-  sellerRegistration: SellerRegistrationEvidenceSchema,
+  sellerVatRegime: SellerVatRegimeEvidenceSchema,
   taxEvaluationTime: TaxEvaluationTimeSchema,
   taxRelevantTime: TaxRelevantTimeSchema,
 });
