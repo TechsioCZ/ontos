@@ -2,6 +2,7 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { Effect, FileSystem, Match } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { TaxActivationItemIdSchema } from '../../shared/domain/tax-activation-contracts.ts';
 import { TAX_ACCEPTANCE_CLAIM, TAX_ACCEPTANCE_KEYS, taxAcceptanceLedger } from './tax-acceptance-ledger.ts';
 import type { TaxAcceptanceRow, TestRef } from './tax-acceptance-ledger.ts';
 import { TAX_FOREIGN_OWNER_DOUBLES } from './tax-evaluation-fixtures.ts';
@@ -128,6 +129,21 @@ it.layer(NodeFileSystem.layer)('TAX acceptance ledger checked-in tests', (suite)
       );
       const missing = references.filter(({ file, title }) => sources.get(file)?.includes(`'${title}'`) !== true);
       expect(missing.map(({ file, row, title }) => `${row}: ${file} :: ${title}`)).toEqual([]);
+    }),
+  );
+
+  suite.effect('#964 the acceptance doc lists exactly the activation item catalogue', () =>
+    Effect.gen(function* activationDocMatchesCatalogue() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const doc = yield* fileSystem.readFileString(
+        new URL('app/verticals/tax/tests/tax-acceptance.md', worktreeRoot).pathname,
+      );
+      const [, activationSection = ''] = doc.split('## #964 activation items');
+      const documented = [...activationSection.matchAll(/^\| `(?<itemId>[A-Z0-9_]+)` +\|/gmu)].map(
+        ({ groups }) => groups?.['itemId'],
+      );
+      expect(new Set(documented)).toEqual(new Set(TaxActivationItemIdSchema.literals));
+      expect(documented).toHaveLength(TaxActivationItemIdSchema.literals.length);
     }),
   );
 });
