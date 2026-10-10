@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Match, Schema } from 'effect';
 
 import {
   AcceptedTaxTermsSchema,
@@ -74,8 +74,30 @@ export const TaxCorrectionChangeSchema = Schema.Union([
 
 export type TaxCorrectionChange = typeof TaxCorrectionChangeSchema.Type;
 
+/**
+ * Which basis component a change moves: a quantity change and a Line Commercial Value change both move the unit's
+ * goods component; a Shipping Allocation value change moves its Shipping component. The two components are disjoint,
+ * so a correction may carry at most one goods change and one Shipping change for the same unit (D2/H5: the scope,
+ * reason and Shipping delta are Order-issued, never derived from quantity).
+ */
+export const correctionComponentOf = (change: TaxCorrectionChange): 'GOODS' | 'SHIPPING' =>
+  Match.value(change).pipe(
+    Match.tagsExhaustive({
+      QUANTITY: () => 'GOODS' as const,
+      VALUE: ({ basisComponent }) =>
+        basisComponent === 'LINE_COMMERCIAL_VALUE' ? ('GOODS' as const) : ('SHIPPING' as const),
+    }),
+  );
+
+/**
+ * One correction may carry a goods change (quantity or Line Commercial Value) and a Shipping-value change for the
+ * same unit, each at most once; the Order-authorized Shipping delta is never derived from a quantity change
+ * ("never 1/quantity"). The scope, reason and Shipping delta of a return are Order-issued (D2/H5), not Fulfillment.
+ */
 export const TaxCorrectionUnitRequestSchema = Schema.Struct({
-  change: TaxCorrectionChangeSchema,
+  changes: Schema.NonEmptyArray(TaxCorrectionChangeSchema).check(
+    distinctBy(correctionComponentOf, 'A correction changes each basis component of a unit at most once'),
+  ),
   expectedPreviousState: AcceptedCumulativeCorrectionStateSchema,
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
 });
@@ -85,6 +107,7 @@ export type TaxCorrectionUnitRequest = typeof TaxCorrectionUnitRequestSchema.Typ
 /**
  * Explicit identity, reason and authorized changes of one supported return/correction. Each original unit appears
  * once, so the same quantity or value is never consumed twice inside one correction (#948 F2, F10-F16).
+ * `correctionEventRef` and `correctionReason` are the Order return authorization (D2/H5), not Fulfillment.
  */
 export const TaxCorrectionFactsSchema = Schema.Struct({
   correctionEventRef: BoundedIdentifierSchema,
@@ -159,6 +182,7 @@ export type UnresolvedUnit = typeof UnresolvedUnitSchema.Type;
 
 export const isUnresolvedUnit = Schema.is(UnresolvedUnitSchema);
 
+/** A unit may appear twice in `TaxCorrectionOutOfBoundsSchema.units`, once per failing component (F4). */
 const OutOfBoundsUnitSchema = Schema.Struct({
   reason: Schema.Literals(['EXCEEDS_REMAINING_QUANTITY', 'EXCEEDS_REMAINING_BASIS_COMPONENT']),
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,

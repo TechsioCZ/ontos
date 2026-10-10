@@ -22,7 +22,11 @@ import {
   taxMonetaryAmountMinorUnits,
 } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import type { TaxMonetaryAmount } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
-import { isOutOfBoundsUnit, isUnresolvedUnit } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
+import {
+  correctionComponentOf,
+  isOutOfBoundsUnit,
+  isUnresolvedUnit,
+} from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 import type {
   AcceptedCumulativeCorrectionState,
   CumulativeUnitTaxState,
@@ -111,17 +115,19 @@ const followsFromOriginalRecord = (baseline: OriginalUnitBaseline, state: Cumula
     state.remainingPublishedTax.amount;
 
 /**
- * Next remaining quantity and basis components. A quantity reduction removes the same share of the remaining Line
- * Commercial Value as of the remaining quantity, so earlier value corrections are respected and returning the last
- * quantity leaves no goods value; an allocated Shipping share changes only through an explicit value reduction of
- * that component, so arithmetic never invents a Shipping refund. A value reduction moves exactly the named component
- * (#948 F8, F10-F11, F22, F25).
+ * Next remaining goods component (quantity and Line Commercial Value) from at most one goods change. A quantity
+ * reduction removes the same share of the remaining Line Commercial Value as of the remaining quantity, so earlier
+ * value corrections are respected and returning the last quantity leaves no goods value. A Line Commercial Value
+ * reduction moves exactly that component and never the quantity (#948 F8, F10-F11, F22, F25).
  */
-const nextRemaining = (
+const nextGoods = (
   previous: CumulativeUnitTaxState,
-  change: TaxCorrectionChange,
-): Result.Result<{ line: TaxExactRational; quantity: TaxExactRational; shipping: TaxExactRational }, 'QUANTITY'> =>
-  Match.value(change).pipe(
+  change: TaxCorrectionChange | undefined,
+): Result.Result<{ line: TaxExactRational; quantity: TaxExactRational }, 'QUANTITY'> => {
+  if (change === undefined) {
+    return Result.succeed({ line: previous.remainingLineBasis, quantity: previous.remainingQuantity });
+  }
+  return Match.value(change).pipe(
     Match.tagsExhaustive({
       QUANTITY: ({ quantityDelta }) => {
         const quantity = addTaxExactRationals(previous.remainingQuantity, quantityDelta);
@@ -133,30 +139,42 @@ const nextRemaining = (
               Result.map((share) => ({
                 line: multiplyTaxExactRationals(previous.remainingLineBasis, share),
                 quantity,
-                shipping: previous.remainingShippingBasis,
               })),
             )
           : Result.fail('QUANTITY' as const);
       },
-      VALUE: ({ basisComponent, valueDelta }) =>
+      VALUE: ({ valueDelta }) =>
         Result.succeed({
-          line:
-            basisComponent === 'LINE_COMMERCIAL_VALUE'
-              ? addTaxExactRationals(previous.remainingLineBasis, valueDelta)
-              : previous.remainingLineBasis,
+          line: addTaxExactRationals(previous.remainingLineBasis, valueDelta),
           quantity: previous.remainingQuantity,
-          shipping:
-            basisComponent === 'SHIPPING_ALLOCATION'
-              ? addTaxExactRationals(previous.remainingShippingBasis, valueDelta)
-              : previous.remainingShippingBasis,
         }),
     }),
   );
+};
 
+/**
+ * Next remaining Shipping share from at most one explicit Shipping-value change; a quantity change never moves it,
+ * so arithmetic never invents a Shipping refund ("never 1/quantity", H5).
+ */
+const nextShipping = (previous: CumulativeUnitTaxState, change: TaxCorrectionChange | undefined): TaxExactRational =>
+  change === undefined
+    ? previous.remainingShippingBasis
+    : Match.value(change).pipe(
+        Match.tagsExhaustive({
+          QUANTITY: () => previous.remainingShippingBasis,
+          VALUE: ({ valueDelta }) => addTaxExactRationals(previous.remainingShippingBasis, valueDelta),
+        }),
+      );
+
+/**
+ * Combines every failing basis component of a correction, so a unit may be reported with both an
+ * `EXCEEDS_REMAINING_QUANTITY` and an `EXCEEDS_REMAINING_BASIS_COMPONENT` reason when a goods change and a Shipping
+ * change each go out of bounds in the same correction (#948 F16, F24).
+ */
 const calculateUnit = (
   terms: AcceptedTaxTerms,
   request: TaxCorrectionUnitRequest,
-): Result.Result<TaxCorrectionUnitDelta, UnresolvedUnit | OutOfBoundsUnit> => {
+): Result.Result<TaxCorrectionUnitDelta, UnresolvedUnit | readonly OutOfBoundsUnit[]> => {
   const { taxableSupplyUnitId } = request;
   const baselineOption = originalUnitBaseline(terms, taxableSupplyUnitId);
   if (Option.isNone(baselineOption)) {
@@ -167,13 +185,36 @@ const calculateUnit = (
   if (!followsFromOriginalRecord(baseline, previous)) {
     return Result.fail({ reason: 'STATE_INCONSISTENT_WITH_ORIGINAL_RECORD', taxableSupplyUnitId });
   }
-  const next = nextRemaining(previous, request.change);
-  if (Result.isFailure(next) || !isNonNegative(next.success.quantity)) {
-    return Result.fail({ reason: 'EXCEEDS_REMAINING_QUANTITY', taxableSupplyUnitId });
+
+  const goodsChange = Arr.findFirst(request.changes, (change) => correctionComponentOf(change) === 'GOODS');
+  const shippingChange = Arr.findFirst(request.changes, (change) => correctionComponentOf(change) === 'SHIPPING');
+
+  const goods = nextGoods(previous, Option.getOrUndefined(goodsChange));
+  const shipping = nextShipping(previous, Option.getOrUndefined(shippingChange));
+
+  const quantityOutOfBounds = Result.isFailure(goods);
+  const lineOutOfBounds = Result.isSuccess(goods) && !isNonNegative(goods.success.line);
+  const shippingOutOfBounds = !isNonNegative(shipping);
+
+  const outOfBounds: OutOfBoundsUnit[] = [
+    ...(quantityOutOfBounds ? [{ reason: 'EXCEEDS_REMAINING_QUANTITY' as const, taxableSupplyUnitId }] : []),
+    ...(lineOutOfBounds || shippingOutOfBounds
+      ? [{ reason: 'EXCEEDS_REMAINING_BASIS_COMPONENT' as const, taxableSupplyUnitId }]
+      : []),
+  ];
+  if (Arr.isReadonlyArrayNonEmpty(outOfBounds)) {
+    return Result.fail(
+      Arr.sort(
+        outOfBounds.filter(isOutOfBoundsUnit),
+        Order.mapInput(Order.String, (unit: OutOfBoundsUnit) => unit.reason),
+      ),
+    );
   }
-  const { line, quantity, shipping } = next.success;
-  if (!isNonNegative(quantity) || !isNonNegative(line) || !isNonNegative(shipping)) {
-    return Result.fail({ reason: 'EXCEEDS_REMAINING_BASIS_COMPONENT', taxableSupplyUnitId });
+
+  const line = Result.isSuccess(goods) ? goods.success.line : previous.remainingLineBasis;
+  const quantity = Result.isSuccess(goods) ? goods.success.quantity : previous.remainingQuantity;
+  if (!isNonNegative(line) || !isNonNegative(quantity) || !isNonNegative(shipping)) {
+    return Result.fail([{ reason: 'EXCEEDS_REMAINING_BASIS_COMPONENT', taxableSupplyUnitId }]);
   }
   const tax = publishedTaxOf(baseline, line, shipping);
   return Result.succeed({
@@ -214,7 +255,7 @@ export const calculateTaxCorrectionDelta = (request: TaxCorrectionRequest): TaxC
   );
   const issues = Arr.getFailures(calculations);
   const unresolved = issues.filter(isUnresolvedUnit);
-  const outOfBounds = issues.filter(isOutOfBoundsUnit);
+  const outOfBounds = issues.flatMap((issue) => (isUnresolvedUnit(issue) ? [] : issue.filter(isOutOfBoundsUnit)));
   const { decision, result } = request.acceptedTaxTerms.finalTax;
   return Result.match(Result.all(calculations), {
     onFailure: (): TaxCorrectionOutcome =>
