@@ -1,9 +1,10 @@
-import { Schema } from 'effect';
+import { Match, Schema } from 'effect';
 
 import {
   AcceptedTaxTermsSchema,
   AuthoritativeOriginalAcceptedRecordSchema,
   OrderLineageSchema,
+  isBillingDocumentRecord,
 } from './accepted-tax-terms.ts';
 import { TaxDecisionIdSchema } from './tax-decision.ts';
 import { BoundedIdentifierSchema, distinctBy } from './tax-domain-primitives.ts';
@@ -13,8 +14,17 @@ import {
   TAX_HISTORICAL_INPUT_UNRESOLVED,
   TaxHistoricalInputUnresolvedReasonSchema,
 } from './tax-historical-input-outcome.ts';
-import { SignedTaxMonetaryAmountSchema, TaxCurrencySchema, TaxMonetaryAmountSchema } from './tax-monetary-amount.ts';
+import {
+  SignedTaxMonetaryAmountSchema,
+  TaxCurrencySchema,
+  TaxMonetaryAmountSchema,
+  signedTaxMonetaryAmountMinorUnits,
+  taxMonetaryAmountMinorUnits,
+} from './tax-monetary-amount.ts';
+import type { SignedTaxMonetaryAmount, TaxMonetaryAmount } from './tax-monetary-amount.ts';
 import { TaxRoundingPolicySchema } from './tax-rounding.ts';
+import { TaxAmountBasisSchema } from './taxable-basis.ts';
+import { SellerNotVatPayerTreatmentSchema, TaxDecisionTreatmentSchema } from './tax-treatment.ts';
 import { TaxableSupplyUnitIdSchema } from './taxable-supply-unit.ts';
 
 /**
@@ -61,21 +71,55 @@ const NegativeDeltaSchema = TaxExactRationalSchema.check(
 
 /**
  * Explicit authorized reduction of one original unit: a negative quantity delta in the unit's accepted quantity unit,
- * or a negative commercial-value delta of one named basis component in CZK. Never inferred from a refund, a
- * customer-facing total or a Fulfillment status (#948 F10-F11, F25, #907 F187, F193-F194).
+ * or a negative commercial-value delta of one named basis component in CZK with its own explicit amount basis
+ * (PO decision D3 on #907). Billing and Order never compute the net or gross amount themselves (#948 F14); TAX
+ * converts the delta into the component's recorded basis at the original unit's treatment. A Shipping Allocation
+ * value change is always GROSS, mirroring `ShippingAllocationBasisSchema.amountBasis` and Unit 11's shipping rule
+ * (F16). Never inferred from a refund, a customer-facing total or a Fulfillment status
+ * (#948 F10-F11, F25, #907 F187, F193-F194).
  */
 export const TaxCorrectionChangeSchema = Schema.Union([
   Schema.TaggedStruct('QUANTITY', { quantityDelta: NegativeDeltaSchema }),
   Schema.TaggedStruct('VALUE', {
+    amountBasis: TaxAmountBasisSchema,
     basisComponent: Schema.Literals(['LINE_COMMERCIAL_VALUE', 'SHIPPING_ALLOCATION']),
     valueDelta: NegativeDeltaSchema,
-  }),
+  }).check(
+    Schema.makeFilter(
+      ({ amountBasis, basisComponent }) =>
+        basisComponent !== 'SHIPPING_ALLOCATION' ||
+        amountBasis === 'GROSS' ||
+        'A Shipping Allocation value change must be GROSS',
+    ),
+  ),
 ]);
 
 export type TaxCorrectionChange = typeof TaxCorrectionChangeSchema.Type;
 
+/**
+ * Which basis component a change moves: a quantity change and a Line Commercial Value change both move the unit's
+ * goods component; a Shipping Allocation value change moves its Shipping component. The two components are disjoint,
+ * so a correction may carry at most one goods change and one Shipping change for the same unit (D2/H5: the scope,
+ * reason and Shipping delta are Order-issued, never derived from quantity).
+ */
+export const correctionComponentOf = (change: TaxCorrectionChange): 'GOODS' | 'SHIPPING' =>
+  Match.value(change).pipe(
+    Match.tagsExhaustive({
+      QUANTITY: () => 'GOODS' as const,
+      VALUE: ({ basisComponent }) =>
+        basisComponent === 'LINE_COMMERCIAL_VALUE' ? ('GOODS' as const) : ('SHIPPING' as const),
+    }),
+  );
+
+/**
+ * One correction may carry a goods change (quantity or Line Commercial Value) and a Shipping-value change for the
+ * same unit, each at most once; the Order-authorized Shipping delta is never derived from a quantity change
+ * ("never 1/quantity"). The scope, reason and Shipping delta of a return are Order-issued (D2/H5), not Fulfillment.
+ */
 export const TaxCorrectionUnitRequestSchema = Schema.Struct({
-  change: TaxCorrectionChangeSchema,
+  changes: Schema.NonEmptyArray(TaxCorrectionChangeSchema).check(
+    distinctBy(correctionComponentOf, 'A correction changes each basis component of a unit at most once'),
+  ),
   expectedPreviousState: AcceptedCumulativeCorrectionStateSchema,
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
 });
@@ -85,6 +129,7 @@ export type TaxCorrectionUnitRequest = typeof TaxCorrectionUnitRequestSchema.Typ
 /**
  * Explicit identity, reason and authorized changes of one supported return/correction. Each original unit appears
  * once, so the same quantity or value is never consumed twice inside one correction (#948 F2, F10-F16).
+ * `correctionEventRef` and `correctionReason` are the Order return authorization (D2/H5), not Fulfillment.
  */
 export const TaxCorrectionFactsSchema = Schema.Struct({
   correctionEventRef: BoundedIdentifierSchema,
@@ -97,18 +142,58 @@ export const TaxCorrectionFactsSchema = Schema.Struct({
   ),
 });
 
-/** One supported return/correction of an Authoritative Original Accepted Record (#946 F15, #948 A). */
+/**
+ * One supported return/correction of an Authoritative Original Accepted Record (#946 F15, #948 A). A correction of
+ * an invoiced sale uses the accepted Billing Document as its original record; the Order Snapshot is only ever the
+ * confirmed pre-document boundary and is never a correction baseline (H10).
+ */
 export const TaxCorrectionRequestSchema = Schema.Struct({
   acceptedTaxTerms: AcceptedTaxTermsSchema,
   ...TaxCorrectionFactsSchema.fields,
-});
+}).check(
+  Schema.makeFilter(
+    ({ acceptedTaxTerms }) =>
+      isBillingDocumentRecord(acceptedTaxTerms.authoritativeRecord) ||
+      'A correction of an invoiced sale uses the accepted Billing Document as its original record',
+  ),
+);
 
 export type TaxCorrectionRequest = typeof TaxCorrectionRequestSchema.Type;
+
+/**
+ * The Order or Billing owner of the record, or of its Accepted correction state, is **temporarily** unavailable
+ * (PO decision D4 = B on #907). It is not missing, ambiguous or inconsistent history — that stays
+ * `ORIGINAL_RECORD_UNAVAILABLE`/`TAX_HISTORICAL_INPUT_UNRESOLVED`. It carries no transport detail (#938 F26) and is
+ * never placed inside `TaxCorrectionHistoricalInputUnresolvedSchema`.
+ */
+export const HistoryOwnerUnavailableSchema = Schema.TaggedStruct('HISTORY_OWNER_UNAVAILABLE', {});
+
+const isSellerNotVatPayerTreatment = Schema.is(SellerNotVatPayerTreatmentSchema);
+const isZeroExact = (value: TaxExactRational): boolean => value.numerator === '0';
+const isZeroTaxMonetaryAmount = (value: TaxMonetaryAmount): boolean => taxMonetaryAmountMinorUnits(value) === 0n;
+const isZeroSignedTaxMonetaryAmount = (value: SignedTaxMonetaryAmount): boolean =>
+  signedTaxMonetaryAmountMinorUnits(value) === 0n;
+
+const isFullyReversedState = (state: CumulativeUnitTaxState): boolean =>
+  isZeroExact(state.remainingQuantity) &&
+  isZeroExact(state.remainingLineBasis) &&
+  isZeroExact(state.remainingShippingBasis);
 
 /**
  * Proposed next cumulative state of one unit and its signed Tax Correction Delta against the expected previous
  * Accepted state, echoed unchanged so Billing can accept it only against that exact version (#946 F16-F17, #948 F15,
  * F19, F27). The exact contribution and rounding adjustment are Tax rounding evidence of the proposed state.
+ * `treatment` echoes the original unit's own Tax Decision treatment: every correction uses the same treatment as the
+ * original sale, under the same rate (Unit 12 B1, B4).
+ *
+ * Two invariants:
+ * - **Treatment consequence** (OWNERSHIP §5 "Non-payer corrections"): for `SELLER_NOT_VAT_PAYER`, the exact
+ *   contribution, the Tax rounding adjustment and the signed delta are all zero, and both the previous and proposed
+ *   remaining published Tax are 0.00.
+ * - **Full reversal** (LEGAL §2 Credits): once the proposed next state has no remaining quantity, line or Shipping
+ *   basis, its remaining published Tax is 0.00 and the signed delta is the exact negation of the previous remaining
+ *   published Tax — "a full reversal is the exact negation of the stored tax" is a contract invariant here, not
+ *   just an arithmetic outcome.
  */
 export const TaxCorrectionUnitDeltaSchema = Schema.Struct({
   exactTaxContribution: NonNegativeTaxExactRationalSchema,
@@ -118,14 +203,35 @@ export const TaxCorrectionUnitDeltaSchema = Schema.Struct({
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
   taxCorrectionDelta: SignedTaxMonetaryAmountSchema,
   taxRoundingAdjustment: TaxExactRationalSchema,
-});
+  treatment: TaxDecisionTreatmentSchema,
+}).check(
+  Schema.makeFilter(
+    ({ exactTaxContribution, previous, proposedNext, taxCorrectionDelta, taxRoundingAdjustment, treatment }) =>
+      !isSellerNotVatPayerTreatment(treatment) ||
+      (isZeroExact(exactTaxContribution) &&
+        isZeroExact(taxRoundingAdjustment) &&
+        isZeroSignedTaxMonetaryAmount(taxCorrectionDelta) &&
+        isZeroTaxMonetaryAmount(previous.remainingPublishedTax) &&
+        isZeroTaxMonetaryAmount(proposedNext.remainingPublishedTax)) ||
+      'SELLER_NOT_VAT_PAYER corrections carry no Tax contribution, adjustment or delta',
+  ),
+  Schema.makeFilter(
+    ({ previous, proposedNext, taxCorrectionDelta }) =>
+      !isFullyReversedState(proposedNext) ||
+      (isZeroTaxMonetaryAmount(proposedNext.remainingPublishedTax) &&
+        signedTaxMonetaryAmountMinorUnits(taxCorrectionDelta) ===
+          -taxMonetaryAmountMinorUnits(previous.remainingPublishedTax)) ||
+      'A full reversal is the exact negation of the previous remaining published Tax',
+  ),
+);
 
 export type TaxCorrectionUnitDelta = typeof TaxCorrectionUnitDeltaSchema.Type;
 
 /**
  * Tax Correction Delta of one correction: a purpose-specific result bound to its original record with its exact
  * Order/Bundle lineage, Decision and rounding policy; not a replacement original Tax Result, a Pricing Result, a
- * refund or a payable amount (#948 F13-F15, #921 F20, #907 F183, F186, F192).
+ * refund or a payable amount (#948 F13-F15, #921 F20, #907 F183, F186, F192). `originalRecord` narrows to the
+ * accepted Billing Document member: the original record of a correction is the accepted Billing Document (H10).
  */
 export const TaxCorrectionDeltaSchema = Schema.TaggedStruct('TAX_CORRECTION_DELTA', {
   correctionEventRef: BoundedIdentifierSchema,
@@ -133,7 +239,7 @@ export const TaxCorrectionDeltaSchema = Schema.TaggedStruct('TAX_CORRECTION_DELT
   correctionTaxDelta: SignedTaxMonetaryAmountSchema,
   currency: TaxCurrencySchema,
   originalOrderLineage: OrderLineageSchema,
-  originalRecord: AuthoritativeOriginalAcceptedRecordSchema,
+  originalRecord: AuthoritativeOriginalAcceptedRecordSchema.members[1],
   originalTaxDecisionId: TaxDecisionIdSchema,
   taxRoundingPolicy: TaxRoundingPolicySchema,
   units: Schema.NonEmptyArray(TaxCorrectionUnitDeltaSchema),
@@ -159,14 +265,13 @@ export type UnresolvedUnit = typeof UnresolvedUnitSchema.Type;
 
 export const isUnresolvedUnit = Schema.is(UnresolvedUnitSchema);
 
+/** A unit may appear twice in `TaxCorrectionOutOfBoundsSchema.units`, once per failing reason — quantity vs basis component (F4). */
 const OutOfBoundsUnitSchema = Schema.Struct({
   reason: Schema.Literals(['EXCEEDS_REMAINING_QUANTITY', 'EXCEEDS_REMAINING_BASIS_COMPONENT']),
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
 });
 
 export type OutOfBoundsUnit = typeof OutOfBoundsUnitSchema.Type;
-
-export const isOutOfBoundsUnit = Schema.is(OutOfBoundsUnitSchema);
 
 /**
  * Explicit unresolved historical input (#947 F13, #948 F7, PO default D4): the owner cannot establish its Authoritative

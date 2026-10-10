@@ -65,7 +65,10 @@ outside its usable Current validity), `TAX_DEPENDENCY_UNAVAILABLE` (required aut
 cannot safely be used), `TAX_STATE_INDETERMINATE` (complete authoritative truth cannot safely be
 concluded; an incomplete material set or unresolved authority conflict may yield it under its
 owning contract; not declared is `TAX_STATE_INDETERMINATE`). Unknown, unavailable and stale are
-never negative; none is represented as successful zero.
+never negative; none is represented as successful zero. For a correction/return (Accepted history),
+a history owner that is temporarily unavailable yields `TAX_DEPENDENCY_UNAVAILABLE`; missing,
+ambiguous or inconsistent history yields `TAX_HISTORICAL_INPUT_UNRESOLVED` — the two are distinct
+Tax Outcomes with different Billing-side handling.
 _Avoid_: generic ERROR, provider-specific timeout as public Tax meaning, null/zero as failure,
 not declared seller VAT regime as a silent default, partial observation as `TAX_RULE_MISSING`.
 
@@ -240,28 +243,38 @@ sale Tax inside a return, erroneous-document remediation performed inside an ord
 
 **Authoritative Original Accepted Record** — The accepted purchase document/record whose recorded
 Tax, final prices, basis, treatment, allocations and Taxable Supply Unit mapping are authoritative
-for a supported return/correction: the final accepted Order Snapshot for B2C where it is the final
-authoritative record, or the relevant accepted Billing Document wherever one exists for the invoiced
-supply. A missing or ambiguous record or unit mapping is an explicit unresolved historical-input
-outcome, never Current reconstruction, equal-total matching or guessed zero.
-_Avoid_: "original invoice" read as requiring an invoice for every B2C return, consumer choosing a
-baseline by matching total, live Catalog/Inventory/Pricing/Tax Rule/registration lookup as baseline.
+for a supported return/correction. The accepted Billing Document is the only record for an invoiced
+supply: once one exists, it is the baseline and the Order Snapshot is not. The Order Snapshot is
+authoritative only within the confirmed pre-document boundary, and is never a correction baseline. A
+missing or ambiguous record or unit mapping is an explicit unresolved historical-input outcome,
+never Current reconstruction, equal-total matching or guessed zero.
+_Avoid_: consumer choosing a baseline by matching total, live Catalog/Inventory/Pricing/Tax
+Rule/registration lookup as baseline, an Order Snapshot used as the baseline of an invoiced sale's
+return.
 
 **Accepted Cumulative Correction State** — Billing-owned, versioned cumulative corrected published
 Tax state of one original Taxable Supply Unit after all Accepted corrections, starting from the
 Authoritative Original Accepted Record. TAX reads it as a baseline and proposes a next state; only
-Billing accepts and advances it.
+Billing accepts and advances it. The return scope, reason and authorized shipping delta it carries
+are Order-issued, not a Fulfillment fact; remaining bases stay in each component's own recorded
+amount basis.
 _Avoid_: TAX-owned correction ledger, preview as an accepted state, state without an expected
-version.
+version, return scope/reason sourced from Fulfillment.
 
 **Tax Correction Delta** — Tax-owned purpose-specific result for one supported return/correction,
 computed per original Taxable Supply Unit as the proposed new cumulative corrected published Tax
-state minus the Accepted Cumulative Correction State, bound to that state's expected version.
-Rounding remainder stays within that unit's lineage; full exhaustion of the original basis leaves
-exactly `0.00 CZK` remaining published Tax for that unit. It is neither a replacement Tax Result nor
-a new sale Tax determination; a TAX preview advances no Accepted sequence.
+state minus the Accepted Cumulative Correction State, bound to that state's expected version. One
+correction may combine a goods change (quantity or line value) and a shipping-share change for the
+same unit; shipping is never derived from quantity. A full reversal is the exact negation of the
+stored Tax. A non-payer original corrects to `0.00 CZK` under `SELLER_NOT_VAT_PAYER` with no rate.
+A value reduction states its own amount basis; TAX converts it into the component's recorded basis
+at the original unit's treatment. Shipping reductions are GROSS only. Rounding remainder stays
+within that unit's lineage; full exhaustion of the original basis leaves exactly `0.00 CZK`
+remaining published Tax for that unit. It is neither a replacement Tax Result nor a new sale Tax
+determination; a TAX preview advances no Accepted sequence.
 _Avoid_: independently rounded negative sale, cross-unit balancing, Payment refund or Fulfillment
-state alone as correction, TAX as a competing Billing ledger.
+state alone as correction, TAX as a competing Billing ledger, 1/quantity shipping refund, a
+VAT-inclusive refund used unchanged as a net reduction.
 
 ## Czech legal reference index — Launch
 

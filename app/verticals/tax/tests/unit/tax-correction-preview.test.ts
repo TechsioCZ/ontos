@@ -16,6 +16,7 @@ import {
   NewEventDeterminationUnsupportedSchema,
   NoNewTaxEventSchema,
 } from '../../src/domain/tax-declared-purpose.ts';
+import { TaxDependencyUnavailableSchema } from '../../src/domain/tax-non-success-outcome.ts';
 import { acceptedTaxTermsInput } from './tax-correction-fixtures.ts';
 import { exactDecimal } from './tax-domain-fixtures.ts';
 
@@ -40,6 +41,23 @@ const inconsistentTerms = acceptedTaxTermsInput(
   [{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }],
 );
 
+/** Stage C: a declared CORRECTION of one unit, over the given handed-over Accepted Tax Terms. */
+const stageCCorrection = (acceptedTaxTerms: PreviewRequestInput['acceptedTaxTerms']): PreviewRequestInput => ({
+  acceptedTaxTerms,
+  declaredPurpose: {
+    _tag: 'CORRECTION',
+    correctionEventRef: 'return-1',
+    correctionReason: 'CUSTOMER_RETURN',
+    units: [
+      {
+        changes: [{ _tag: 'QUANTITY', quantityDelta: exactDecimal('-3') }],
+        expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
+        taxableSupplyUnitId: 'taxable-supply-unit:o-1',
+      },
+    ],
+  },
+});
+
 const preview = (input: PreviewRequestInput, at: OperationalScope = scope) =>
   readTaxCorrectionPreview(decodeRequest(input), {
     readKey: 'commerce.tax.api.tax-correction-preview',
@@ -58,7 +76,7 @@ describe('Tax correction preview read', () => {
           correctionReason: 'CUSTOMER_RETURN',
           units: [
             {
-              change: { _tag: 'QUANTITY', quantityDelta: exactDecimal('-3') },
+              changes: [{ _tag: 'QUANTITY', quantityDelta: exactDecimal('-3') }],
               expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
               taxableSupplyUnitId: 'taxable-supply-unit:o-1',
             },
@@ -70,6 +88,43 @@ describe('Tax correction preview read', () => {
       expect(encodeResponse(result)).toMatchObject({
         correctionTaxDelta: { amount: '-62.99', currency: 'CZK' },
         units: [{ proposedNext: { remainingPublishedTax: { amount: '146.99', currency: 'CZK' } } }],
+      });
+    }),
+  );
+
+  it.effect('A-1 previews a combined goods and Shipping change for one unit in a single correction', () =>
+    Effect.gen(function* previewsCombinedChange() {
+      const combinedTerms = acceptedTaxTermsInput([
+        { lineValue: '100.00', occurrenceId: 'o-1', quantity: '2', shipping: '10.00' },
+      ]);
+      const result = yield* preview({
+        acceptedTaxTerms: combinedTerms,
+        declaredPurpose: {
+          _tag: 'CORRECTION',
+          correctionEventRef: 'return-1',
+          correctionReason: 'CUSTOMER_RETURN',
+          units: [
+            {
+              changes: [
+                { _tag: 'QUANTITY', quantityDelta: exactDecimal('-2') },
+                {
+                  _tag: 'VALUE',
+                  amountBasis: 'GROSS',
+                  basisComponent: 'SHIPPING_ALLOCATION',
+                  valueDelta: exactDecimal('-10'),
+                },
+              ],
+              expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
+              taxableSupplyUnitId: 'taxable-supply-unit:o-1',
+            },
+          ],
+        },
+      });
+
+      expect(Schema.is(TaxCorrectionDeltaSchema)(result)).toBe(true);
+      expect(encodeResponse(result)).toMatchObject({
+        correctionTaxDelta: { amount: '-22.74', currency: 'CZK' },
+        units: [{ proposedNext: { remainingPublishedTax: { amount: '0.00', currency: 'CZK' } } }],
       });
     }),
   );
@@ -167,6 +222,31 @@ describe('Tax correction preview read', () => {
     }
   });
 
+  describe('Stage C: H10 baseline (#945-#948)', () => {
+    const orderSnapshotTerms = acceptedTaxTermsInput(
+      [{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }],
+      undefined,
+      { _tag: 'ORDER_SNAPSHOT' },
+    );
+
+    it('C-2 a declared CORRECTION over the Order Snapshot fails to decode; over the Billing Document it previews', () => {
+      expect(() => decodeRequest(stageCCorrection(orderSnapshotTerms))).toThrow(/accepted Billing Document/u);
+      expect(() => decodeRequest(stageCCorrection(terms))).not.toThrow();
+    });
+
+    it('C-3 HISTORICAL_READ and NEW_EVENT over the Order Snapshot are still answered (pre-document boundary)', () => {
+      expect(() =>
+        decodeRequest({ acceptedTaxTerms: orderSnapshotTerms, declaredPurpose: { _tag: 'HISTORICAL_READ' } }),
+      ).not.toThrow();
+      expect(() =>
+        decodeRequest({
+          acceptedTaxTerms: orderSnapshotTerms,
+          declaredPurpose: { _tag: 'NEW_EVENT', eventKind: 'PARTIAL_FULFILLMENT', eventRef: 'shipment-4-of-10' },
+        }),
+      ).not.toThrow();
+    });
+  });
+
   it('#948 F11 #907 F193-F194 accepts no Payment refund or Fulfillment status as correction facts', () => {
     expect(() =>
       decodeRequest({
@@ -177,7 +257,7 @@ describe('Tax correction preview read', () => {
           correctionReason: 'PAYMENT_REFUND',
           units: [
             {
-              change: { _tag: 'REFUND', refundAmount: exactDecimal('-100') },
+              changes: [{ _tag: 'REFUND', refundAmount: exactDecimal('-100') }],
               expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
               taxableSupplyUnitId: 'taxable-supply-unit:o-1',
             },
@@ -185,5 +265,29 @@ describe('Tax correction preview read', () => {
         },
       }),
     ).toThrow();
+  });
+
+  describe('Stage D: D4 outcome at the public boundary (#938 F22-F26)', () => {
+    const unavailableHandover = { _tag: 'HISTORY_OWNER_UNAVAILABLE' } as const;
+
+    it.effect('D-1 HISTORY_OWNER_UNAVAILABLE answers TAX_DEPENDENCY_UNAVAILABLE for every declared purpose', () =>
+      Effect.gen(function* answersDependencyUnavailable() {
+        for (const declaredPurpose of [
+          { _tag: 'HISTORICAL_READ' } as const,
+          stageCCorrection(unavailableHandover).declaredPurpose,
+          { _tag: 'NEW_EVENT', eventKind: 'PARTIAL_FULFILLMENT', eventRef: 'shipment-4-of-10' } as const,
+        ]) {
+          for (const at of [scope, { ...scope, tenantId: 'tenant-2' }]) {
+            const result = yield* preview({ acceptedTaxTerms: unavailableHandover, declaredPurpose }, at);
+            expect(Schema.is(TaxDependencyUnavailableSchema)(result)).toBe(true);
+            expect(Object.keys(encodeResponse(result))).toEqual(['_tag']);
+          }
+        }
+      }),
+    );
+
+    it('D-1 the decode accepts HISTORY_OWNER_UNAVAILABLE as a declared CORRECTION handover', () => {
+      expect(() => decodeRequest(stageCCorrection(unavailableHandover))).not.toThrow();
+    });
   });
 });

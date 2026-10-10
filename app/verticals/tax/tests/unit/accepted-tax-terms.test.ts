@@ -19,6 +19,7 @@ import {
   nonPayerTaxDecisionInput,
 } from './tax-domain-fixtures.ts';
 import { TaxResultSchema } from '../../src/domain/tax-result.ts';
+import { SellerNotVatPayerTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 
 const encodeTaxResult = Schema.encodeSync(TaxResultSchema);
 
@@ -57,13 +58,18 @@ describe('Accepted Tax Terms', () => {
     ).toThrow();
   });
 
-  it('#946 F8-F9 #947 F5 the record is either the final B2C Order Snapshot or the accepted Billing Document', () => {
+  it('#945-#948 H10: the record is the accepted Billing Document, the Order Snapshot only before any document', () => {
     const billing = decodeAcceptedTaxTerms({
       ...input(),
       authoritativeRecord: { _tag: 'BILLING_DOCUMENT', billingDocumentRef: 'invoice-1' },
     });
+    const orderSnapshot = decodeAcceptedTaxTerms({ ...input(), authoritativeRecord: { _tag: 'ORDER_SNAPSHOT' } });
 
+    // Both AcceptedTaxTerms tags still decode as Terms; H10 narrows which one a correction may use, not the type.
     expect(Schema.is(AuthoritativeOriginalAcceptedRecordSchema.members[1])(billing.authoritativeRecord)).toBe(true);
+    expect(Schema.is(AuthoritativeOriginalAcceptedRecordSchema.members[0])(orderSnapshot.authoritativeRecord)).toBe(
+      true,
+    );
     expect(() => decodeAcceptedTaxTerms({ ...input(), authoritativeRecord: { _tag: 'CURRENT_CATALOG' } })).toThrow();
   });
 
@@ -77,14 +83,14 @@ describe('Accepted Tax Terms', () => {
       originalPublishedTax: { amount: '211.71', currency: 'CZK' },
       originalQuantity: exactDecimal('10'),
       originalShippingBasis: exactDecimal('10'),
-      rate: exactDecimal('0.21'),
       taxRoundingPolicy: terms.finalTax.result.taxRoundingPolicy,
+      treatment: { _tag: 'TAXABLE', ratePercent: '21' },
     });
     expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-2'))).originalPublishedTax.amount).toBe('6.00');
     expect(Option.isNone(originalUnitBaseline(terms, unitIdOf('o-3')))).toBe(true);
   });
 
-  it('Unit 10 A5 F17 a seller-is-non-payer unit has no baseline, pinning the non-taxable exclusion', () => {
+  it('B-3 a seller-is-non-payer unit has a treatment-aware baseline with no rate field (Unit 12 B3)', () => {
     const decision = decodeTaxDecision(nonPayerTaxDecisionInput(['o-1']));
     const encodedDecision = encodeTaxDecision(decision);
     const terms = decodeAcceptedTaxTerms({
@@ -98,6 +104,9 @@ describe('Accepted Tax Terms', () => {
       orderLineage: { bundleRef: 'bundle-1', orderRef: 'order-1' },
     });
 
-    expect(Option.isNone(originalUnitBaseline(terms, unitIdOf('o-1')))).toBe(true);
+    const baseline = Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-1')));
+    expect(Schema.is(SellerNotVatPayerTreatmentSchema)(baseline.treatment)).toBe(true);
+    expect('rate' in baseline).toBe(false);
+    expect(baseline.lineAmountBasis).toBe('NET');
   });
 });

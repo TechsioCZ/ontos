@@ -1,6 +1,6 @@
 import { Array as Arr, Match, Option, Order, Result, Schema, pipe } from 'effect';
 
-import { originalUnitBaseline } from './accepted-tax-terms.ts';
+import { isBillingDocumentRecord, originalUnitBaseline } from './accepted-tax-terms.ts';
 import type { AcceptedTaxTerms, OriginalUnitBaseline } from './accepted-tax-terms.ts';
 import {
   NonNegativeTaxExactRationalSchema,
@@ -12,7 +12,7 @@ import {
   taxExactRationalFromMinorUnits,
 } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
-import { exactVatOfAmount } from './tax-rounding.ts';
+import { amountInBasis, exactTaxOfAmounts } from './tax-rounding.ts';
 import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/tax-historical-input-outcome.ts';
 import {
   CZK_MINOR_UNITS_PER_MAJOR_UNIT,
@@ -22,7 +22,7 @@ import {
   taxMonetaryAmountMinorUnits,
 } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import type { TaxMonetaryAmount } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
-import { isOutOfBoundsUnit, isUnresolvedUnit } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
+import { correctionComponentOf, isUnresolvedUnit } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 import type {
   AcceptedCumulativeCorrectionState,
   CumulativeUnitTaxState,
@@ -37,6 +37,7 @@ import type {
 
 export {
   CumulativeUnitTaxStateSchema,
+  HistoryOwnerUnavailableSchema,
   OriginalRecordUnavailableSchema,
   TaxCorrectionDeltaSchema,
   TaxCorrectionHistoricalInputUnresolvedSchema,
@@ -61,17 +62,19 @@ const isAtMost = (value: TaxExactRational, limit: TaxExactRational) =>
   isNonNegativeTaxExactRational(subtractTaxExactRationals(limit, value));
 
 /**
- * Published Tax of a remaining basis at the original rate and the original single per-unit boundary: the sum,
- * never rounded before this boundary, of the exact § 37 písm. b) VAT of the remaining Line Commercial Value at
- * its own recorded amount basis and of the remaining Shipping share, always GROSS (#948 F18, F21; #935 F12-F22;
- * PO decision D3 on #907).
+ * Published Tax of a remaining basis at the original unit's own treatment and the original single per-unit
+ * boundary: the sum, never rounded before this boundary, of the exact § 37 písm. b) VAT of the remaining Line
+ * Commercial Value at its own recorded amount basis and of the remaining Shipping share, always GROSS
+ * (#948 F18, F21; #935 F12-F22; PO decision D3 on #907). Corrections use the same `exactTaxOfAmounts` as the
+ * original sale, so any later change to exact VAT arithmetic reaches corrections automatically (Unit 12 B1).
  */
 const publishedTaxOf = (baseline: OriginalUnitBaseline, line: TaxExactRational, shipping: TaxExactRational) => {
-  const exact = NonNegativeTaxExactRationalSchema.make(
-    addTaxExactRationals(
-      exactVatOfAmount(NonNegativeTaxExactRationalSchema.make(line), baseline.lineAmountBasis, baseline.rate),
-      exactVatOfAmount(NonNegativeTaxExactRationalSchema.make(shipping), 'GROSS', baseline.rate),
-    ),
+  const exact = exactTaxOfAmounts(
+    [
+      { amount: NonNegativeTaxExactRationalSchema.make(line), amountBasis: baseline.lineAmountBasis },
+      { amount: NonNegativeTaxExactRationalSchema.make(shipping), amountBasis: 'GROSS' },
+    ],
+    baseline.treatment,
   );
   const published = publishedTaxAmountRoundedHalfUp(exact);
   return { adjustment: subtractTaxExactRationals(exactValueOf(published), exact), exact, published };
@@ -97,7 +100,7 @@ const previousStateOf = (baseline: OriginalUnitBaseline, expected: AcceptedCumul
  * An Accepted state can only have followed from the original record by this arithmetic: remaining quantity and
  * Shipping share within the original, the remaining Line Commercial Value at most the original value per remaining
  * quantity (quantity reductions keep it pro rata, value reductions only lower it, so no goods value is left once no
- * quantity is left), and published at the original rate and boundary. Anything else is an unresolved historical input for Billing to recover, not a state TAX repairs
+ * quantity is left), and published at the original treatment and boundary. Anything else is an unresolved historical input for Billing to recover, not a state TAX repairs
  * (#947 F13-F14, #948 F7).
  */
 const followsFromOriginalRecord = (baseline: OriginalUnitBaseline, state: CumulativeUnitTaxState) =>
@@ -111,17 +114,21 @@ const followsFromOriginalRecord = (baseline: OriginalUnitBaseline, state: Cumula
     state.remainingPublishedTax.amount;
 
 /**
- * Next remaining quantity and basis components. A quantity reduction removes the same share of the remaining Line
- * Commercial Value as of the remaining quantity, so earlier value corrections are respected and returning the last
- * quantity leaves no goods value; an allocated Shipping share changes only through an explicit value reduction of
- * that component, so arithmetic never invents a Shipping refund. A value reduction moves exactly the named component
- * (#948 F8, F10-F11, F22, F25).
+ * Next remaining goods component (quantity and Line Commercial Value) from at most one goods change. A quantity
+ * reduction removes the same share of the remaining Line Commercial Value as of the remaining quantity, so earlier
+ * value corrections are respected and returning the last quantity leaves no goods value. A Line Commercial Value
+ * reduction converts its delta into the baseline's recorded line basis at the unit's own treatment before moving
+ * that component, and never touches the quantity (F5; #948 F8, F10-F11, F22, F25).
  */
-const nextRemaining = (
+const nextGoods = (
+  baseline: OriginalUnitBaseline,
   previous: CumulativeUnitTaxState,
-  change: TaxCorrectionChange,
-): Result.Result<{ line: TaxExactRational; quantity: TaxExactRational; shipping: TaxExactRational }, 'QUANTITY'> =>
-  Match.value(change).pipe(
+  change: TaxCorrectionChange | undefined,
+): Result.Result<{ line: TaxExactRational; quantity: TaxExactRational }, 'QUANTITY'> => {
+  if (change === undefined) {
+    return Result.succeed({ line: previous.remainingLineBasis, quantity: previous.remainingQuantity });
+  }
+  return Match.value(change).pipe(
     Match.tagsExhaustive({
       QUANTITY: ({ quantityDelta }) => {
         const quantity = addTaxExactRationals(previous.remainingQuantity, quantityDelta);
@@ -133,30 +140,53 @@ const nextRemaining = (
               Result.map((share) => ({
                 line: multiplyTaxExactRationals(previous.remainingLineBasis, share),
                 quantity,
-                shipping: previous.remainingShippingBasis,
               })),
             )
           : Result.fail('QUANTITY' as const);
       },
-      VALUE: ({ basisComponent, valueDelta }) =>
-        Result.succeed({
-          line:
-            basisComponent === 'LINE_COMMERCIAL_VALUE'
-              ? addTaxExactRationals(previous.remainingLineBasis, valueDelta)
-              : previous.remainingLineBasis,
+      VALUE: ({ amountBasis, valueDelta }) => {
+        const delta = amountInBasis(valueDelta, amountBasis, baseline.lineAmountBasis, baseline.treatment);
+        return Result.succeed({
+          line: addTaxExactRationals(previous.remainingLineBasis, delta),
           quantity: previous.remainingQuantity,
-          shipping:
-            basisComponent === 'SHIPPING_ALLOCATION'
-              ? addTaxExactRationals(previous.remainingShippingBasis, valueDelta)
-              : previous.remainingShippingBasis,
-        }),
+        });
+      },
     }),
   );
+};
 
+/**
+ * Next remaining Shipping share from at most one explicit Shipping-value change, converted into the always-GROSS
+ * recorded Shipping basis at the unit's own treatment (identity, since a Shipping change is always GROSS); a
+ * quantity change never moves it, so arithmetic never invents a Shipping refund ("never 1/quantity", H5).
+ */
+const nextShipping = (
+  baseline: OriginalUnitBaseline,
+  previous: CumulativeUnitTaxState,
+  change: TaxCorrectionChange | undefined,
+): TaxExactRational =>
+  change === undefined
+    ? previous.remainingShippingBasis
+    : Match.value(change).pipe(
+        Match.tagsExhaustive({
+          QUANTITY: () => previous.remainingShippingBasis,
+          VALUE: ({ amountBasis, valueDelta }) =>
+            addTaxExactRationals(
+              previous.remainingShippingBasis,
+              amountInBasis(valueDelta, amountBasis, 'GROSS', baseline.treatment),
+            ),
+        }),
+      );
+
+/**
+ * Combines every failing basis component of a correction, so a unit may be reported with both an
+ * `EXCEEDS_REMAINING_QUANTITY` and an `EXCEEDS_REMAINING_BASIS_COMPONENT` reason when a goods change and a Shipping
+ * change each go out of bounds in the same correction (#948 F16, F24).
+ */
 const calculateUnit = (
   terms: AcceptedTaxTerms,
   request: TaxCorrectionUnitRequest,
-): Result.Result<TaxCorrectionUnitDelta, UnresolvedUnit | OutOfBoundsUnit> => {
+): Result.Result<TaxCorrectionUnitDelta, UnresolvedUnit | readonly OutOfBoundsUnit[]> => {
   const { taxableSupplyUnitId } = request;
   const baselineOption = originalUnitBaseline(terms, taxableSupplyUnitId);
   if (Option.isNone(baselineOption)) {
@@ -167,15 +197,42 @@ const calculateUnit = (
   if (!followsFromOriginalRecord(baseline, previous)) {
     return Result.fail({ reason: 'STATE_INCONSISTENT_WITH_ORIGINAL_RECORD', taxableSupplyUnitId });
   }
-  const next = nextRemaining(previous, request.change);
-  if (Result.isFailure(next) || !isNonNegative(next.success.quantity)) {
-    return Result.fail({ reason: 'EXCEEDS_REMAINING_QUANTITY', taxableSupplyUnitId });
+
+  const goodsChange = Arr.findFirst(request.changes, (change) => correctionComponentOf(change) === 'GOODS');
+  const shippingChange = Arr.findFirst(request.changes, (change) => correctionComponentOf(change) === 'SHIPPING');
+
+  const goods = nextGoods(baseline, previous, Option.getOrUndefined(goodsChange));
+  const shipping = nextShipping(baseline, previous, Option.getOrUndefined(shippingChange));
+
+  const quantityOutOfBounds = Result.isFailure(goods);
+  const lineOutOfBounds = Result.isSuccess(goods) && !isNonNegative(goods.success.line);
+  const shippingOutOfBounds = !isNonNegative(shipping);
+
+  const outOfBounds: OutOfBoundsUnit[] = [
+    ...(quantityOutOfBounds ? [{ reason: 'EXCEEDS_REMAINING_QUANTITY' as const, taxableSupplyUnitId }] : []),
+    ...(lineOutOfBounds || shippingOutOfBounds
+      ? [{ reason: 'EXCEEDS_REMAINING_BASIS_COMPONENT' as const, taxableSupplyUnitId }]
+      : []),
+  ];
+  if (Arr.isReadonlyArrayNonEmpty(outOfBounds)) {
+    return Result.fail(
+      Arr.sort(
+        outOfBounds,
+        Order.mapInput(Order.String, (unit: OutOfBoundsUnit) => unit.reason),
+      ),
+    );
   }
-  const { line, quantity, shipping } = next.success;
-  if (!isNonNegative(quantity) || !isNonNegative(line) || !isNonNegative(shipping)) {
-    return Result.fail({ reason: 'EXCEEDS_REMAINING_BASIS_COMPONENT', taxableSupplyUnitId });
-  }
-  const tax = publishedTaxOf(baseline, line, shipping);
+
+  // The three components just passed the out-of-bounds check above, so each is already proven non-negative;
+  // `.make` brands them for `proposedNext` without re-running that check.
+  const line = NonNegativeTaxExactRationalSchema.make(
+    Result.isSuccess(goods) ? goods.success.line : previous.remainingLineBasis,
+  );
+  const quantity = NonNegativeTaxExactRationalSchema.make(
+    Result.isSuccess(goods) ? goods.success.quantity : previous.remainingQuantity,
+  );
+  const remainingShipping = NonNegativeTaxExactRationalSchema.make(shipping);
+  const tax = publishedTaxOf(baseline, line, remainingShipping);
   return Result.succeed({
     exactTaxContribution: tax.exact,
     expectedPreviousState: request.expectedPreviousState,
@@ -184,13 +241,14 @@ const calculateUnit = (
       remainingLineBasis: line,
       remainingPublishedTax: tax.published,
       remainingQuantity: quantity,
-      remainingShippingBasis: shipping,
+      remainingShippingBasis: remainingShipping,
     },
     taxableSupplyUnitId,
     taxCorrectionDelta: signedTaxMonetaryAmountFromMinorUnits(
       taxMonetaryAmountMinorUnits(tax.published) - taxMonetaryAmountMinorUnits(previous.remainingPublishedTax),
     ),
     taxRoundingAdjustment: tax.adjustment,
+    treatment: baseline.treatment,
   });
 };
 
@@ -208,13 +266,19 @@ const byUnitId = Order.mapInput(
  * order-independent; it consumes no Accepted state (#948 F17-F24, #946 F16, F19, #907 F186-F192).
  */
 export const calculateTaxCorrectionDelta = (request: TaxCorrectionRequest): TaxCorrectionOutcome => {
+  // H10: the original record of a correction is the accepted Billing Document. `TaxCorrectionRequestSchema`'s
+  // decode-time filter guarantees this at every public boundary, so `Option.getOrThrow` here cannot fail
+  // (the same "cannot fail" idiom `tax-rounding.ts` uses for its own decode-guaranteed invariants).
+  const authoritativeRecord = Option.getOrThrow(
+    Option.liftPredicate(request.acceptedTaxTerms.authoritativeRecord, isBillingDocumentRecord),
+  );
   const calculations = pipe(
     Arr.sort(request.units, byUnitId),
     Arr.map((unit) => calculateUnit(request.acceptedTaxTerms, unit)),
   );
   const issues = Arr.getFailures(calculations);
   const unresolved = issues.filter(isUnresolvedUnit);
-  const outOfBounds = issues.filter(isOutOfBoundsUnit);
+  const outOfBounds = issues.flatMap((issue) => (isUnresolvedUnit(issue) ? [] : issue));
   const { decision, result } = request.acceptedTaxTerms.finalTax;
   return Result.match(Result.all(calculations), {
     onFailure: (): TaxCorrectionOutcome =>
@@ -230,7 +294,7 @@ export const calculateTaxCorrectionDelta = (request: TaxCorrectionRequest): TaxC
       ),
       currency: result.currency,
       originalOrderLineage: request.acceptedTaxTerms.orderLineage,
-      originalRecord: request.acceptedTaxTerms.authoritativeRecord,
+      originalRecord: authoritativeRecord,
       originalTaxDecisionId: decision.decisionId,
       taxRoundingPolicy: result.taxRoundingPolicy,
       units,
