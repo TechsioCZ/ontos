@@ -21,6 +21,7 @@ import { TaxableSupplyUnitIdSchema } from './taxable-supply-unit.ts';
  * Cumulative corrected state of one original Taxable Supply Unit: remaining accepted quantity, the remaining exact
  * Line Commercial Value and allocated Shipping share of its Taxable Basis, and the remaining published Tax. The two
  * basis components stay separate so the original source allocation remains explainable (#948 F8, F17-F19, F25).
+ * Value deltas and remaining bases stay in the component's own recorded amount basis (PO decision D3 on #907).
  */
 export const CumulativeUnitTaxStateSchema = Schema.Struct({
   remainingLineBasis: NonNegativeTaxExactRationalSchema,

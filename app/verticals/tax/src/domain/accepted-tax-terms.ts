@@ -16,6 +16,7 @@ import type { TaxableSupplyUnitId } from './taxable-supply-unit.ts';
 import { ShippingAllocationBasisSchema } from '../../shared/domain/tax-kernel/shipping-allocation.ts';
 import { TaxableDecisionUnitSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
 import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/taxable-basis.ts';
+import type { TaxAmountBasis } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 import type { AcceptedTaxTerms } from '../../shared/domain/tax-kernel/accepted-tax-terms.ts';
 
 export {
@@ -30,6 +31,7 @@ const isTaxableDecisionUnit = Schema.is(TaxableDecisionUnitSchema);
 
 /** Exact original meaning of one Taxable Supply Unit as recorded on the Authoritative Original Accepted Record. */
 export interface OriginalUnitBaseline {
+  readonly lineAmountBasis: TaxAmountBasis;
   readonly originalLineBasis: NonNegativeTaxExactRational;
   readonly originalPublishedTax: TaxMonetaryAmount;
   readonly originalQuantity: TaxExactRational;
@@ -67,6 +69,7 @@ export const originalUnitBaseline = (
     return Option.none();
   }
   return Option.map(taxExactRationalFromDecimal(occurrence.quantity.amount), (originalQuantity) => ({
+    lineAmountBasis: line.amountBasis,
     originalLineBasis: line.amount,
     originalPublishedTax: published.publishedTaxAmount,
     originalQuantity,
