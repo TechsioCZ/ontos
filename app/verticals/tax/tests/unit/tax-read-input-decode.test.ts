@@ -6,7 +6,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { ApplicableTaxRuleSetRequestSchema } from '../../shared/apis/applicable-tax-rule-set.ts';
 import { SellerVatRegimeAtInstantRequestSchema } from '../../shared/apis/seller-vat-regime-at-instant.ts';
 import { TaxCorrectionPreviewRequestSchema } from '../../shared/apis/tax-correction-preview.ts';
-import { TaxEvaluationRequestSchema } from '../../shared/apis/tax-evaluation.ts';
+import { TaxEvaluationRequestSchema, TaxEvaluationResponseSchema } from '../../shared/apis/tax-evaluation.ts';
 import { TaxMaterialityComparisonRequestSchema } from '../../shared/apis/tax-materiality-comparison.ts';
 import { TaxRuleHistoryRequestSchema } from '../../shared/apis/tax-rule-history.ts';
 import { applicableTaxRuleSetRead } from '../../src/api/applicable-tax-rule-set.read.ts';
@@ -15,14 +15,15 @@ import { taxCorrectionPreviewRead } from '../../src/api/tax-correction-preview.r
 import { taxEvaluationRead } from '../../src/api/tax-evaluation.read.ts';
 import { taxMaterialityComparisonRead } from '../../src/api/tax-materiality-comparison.read.ts';
 import { taxRuleHistoryRead } from '../../src/api/tax-rule-history.read.ts';
+import { projectCustomerSafeTax } from '../../src/domain/customer-safe-tax-projection.ts';
 import { acceptedTaxTermsInput } from './tax-correction-fixtures.ts';
-import { evaluate, evaluationRequestInput } from './tax-evaluation-fixtures.ts';
+import { evaluate, evaluationRequest, evaluationRequestInput, evaluationTime } from './tax-evaluation-fixtures.ts';
 
 /**
- * `HttpApiBuilder` decodes each read's HTTP payload with the endpoint schema before the governed-read handler hands it
- * to Read Runtime, which decodes it again with the read's own `inputSchema`. A request schema with an encoding (the
- * `DateTimeUtcFromString` times) must therefore be transformed exactly once: the second step only validates the
- * already-decoded value, never re-decodes it from a wire string.
+ * `HttpApiBuilder` decodes each read's HTTP payload with the endpoint schema (`<Stem>RequestSchema`) before the
+ * governed-read handler hands it to Read Runtime, which decodes it again with the read's own `inputSchema`, the same
+ * schema. Every request instant is therefore idempotent (`UtcInstantSchema`): an ISO string on the wire, or the
+ * already-decoded `DateTime.Utc` on the second pass. The wire contract stays as strict as the plain contract.
  */
 const readRuntimeAccepts = <Value>(inputSchema: Schema.Decoder<Value>, httpDecoded: Value) =>
   Schema.decodeUnknownResult(inputSchema, { onExcessProperty: 'error' })(httpDecoded);
@@ -83,5 +84,76 @@ describe('TAX governed reads decode their HTTP payload exactly once', () => {
     });
     const accepted = readRuntimeAccepts(taxCorrectionPreviewRead.descriptor.inputSchema, httpDecoded);
     expect(Result.getOrThrow(accepted)).toEqual(httpDecoded);
+  });
+});
+
+const strictDecode = <Value>(schema: Schema.Decoder<Value>) =>
+  Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' });
+
+const validTaxRuleRef = {
+  moduleId: 'commerce.tax',
+  resourceId: randomUUID(),
+  resourceType: 'commerce.tax.tax-rule',
+  tenantId: randomUUID(),
+} as const;
+
+describe('TAX read request schemas keep the strict wire contract', () => {
+  it('Tax Rule history: the endpoint payload schema rejects a malformed Tax Rule reference', () => {
+    for (const schema of [TaxRuleHistoryRequestSchema, taxRuleHistoryRead.descriptor.inputSchema]) {
+      const decode = strictDecode(schema);
+      expect(Result.isFailure(decode({ taxRuleRef: { ...validTaxRuleRef, tenantId: 'not-a-uuid' } }))).toBe(true);
+      expect(Result.isFailure(decode({ taxRuleRef: { ...validTaxRuleRef, resourceId: '' } }))).toBe(true);
+      expect(Result.isSuccess(decode({ taxRuleRef: validTaxRuleRef }))).toBe(true);
+    }
+  });
+
+  it('an instant that is not an ISO string is rejected on the wire', () => {
+    const atInstant = strictDecode(SellerVatRegimeAtInstantRequestSchema);
+    const ruleSet = strictDecode(ApplicableTaxRuleSetRequestSchema);
+    const evaluation = strictDecode(TaxEvaluationRequestSchema);
+    for (const instant of [Date.parse('2026-06-01T00:00:00.000Z'), {}, 'not-an-instant']) {
+      expect(Result.isFailure(atInstant({ instant }))).toBe(true);
+      expect(
+        Result.isFailure(
+          ruleSet({
+            jurisdiction: 'CZ_DOMESTIC',
+            taxClassificationCode: 'cz-standard-goods',
+            taxRelevantTime: instant,
+          }),
+        ),
+      ).toBe(true);
+      expect(Result.isFailure(evaluation({ ...evaluationRequestInput(), taxRelevantTime: instant }))).toBe(true);
+    }
+  });
+
+  it('a response still encodes its instants as the same ISO strings', () => {
+    const request = evaluationRequest();
+    const outcome = evaluate(request);
+    const wire = Schema.encodeSync(TaxEvaluationResponseSchema)({
+      _tag: 'EVALUATED',
+      customerSafe: projectCustomerSafeTax(outcome, request.decompositionNeed),
+      evidence: {
+        attempts: 1,
+        discarded: [],
+        foreignEvidenceOrigin: 'CALLER_SUPPLIED_UNVERIFIED',
+        ruleSets: [],
+        sellerVatRegime: {
+          headRevision: 0,
+          selectedFor: request.taxRelevantTime,
+          selection: { _tag: 'NOT_DECLARED' },
+          setFingerprint: '0'.repeat(64),
+        },
+        taxEvaluationTime: evaluationTime,
+        taxRelevantTime: request.taxRelevantTime,
+      },
+      outcome,
+    });
+    expect(wire).toMatchObject({
+      evidence: {
+        sellerVatRegime: { selectedFor: '2026-10-08T10:00:00.000Z' },
+        taxEvaluationTime: '2026-10-08T10:00:02.000Z',
+        taxRelevantTime: '2026-10-08T10:00:00.000Z',
+      },
+    });
   });
 });

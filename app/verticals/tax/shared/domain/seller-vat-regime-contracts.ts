@@ -7,6 +7,7 @@ import {
   SellerVatRegimeSchema,
 } from './tax-kernel/seller-vat-regime.ts';
 import { RevisionSchema } from './tax-kernel/tax-domain-primitives.ts';
+import { UtcInstantSchema } from './tax-kernel/tax-time.ts';
 
 const InstantSchema = Schema.DateTimeUtcFromString;
 const FingerprintSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
@@ -39,7 +40,7 @@ export const SellerVatRegimeHistoryResponseContractSchema = Schema.Struct({
 });
 export type SellerVatRegimeHistoryResponseContract = typeof SellerVatRegimeHistoryResponseContractSchema.Type;
 
-export const SellerVatRegimeAtInstantRequestContractSchema = Schema.Struct({ instant: InstantSchema });
+export const SellerVatRegimeAtInstantRequestContractSchema = Schema.Struct({ instant: UtcInstantSchema });
 export type SellerVatRegimeAtInstantRequestContract = typeof SellerVatRegimeAtInstantRequestContractSchema.Type;
 
 /** The read-side selection: `DECLARED` carries the revision's `effectiveFrom` and `provenance` alongside the regime. */
