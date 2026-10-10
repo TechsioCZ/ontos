@@ -47,6 +47,7 @@ import {
   TaxCorrectionHistoricalInputUnresolvedSchema,
 } from '../../src/domain/tax-correction-delta.ts';
 import { exactDecimal } from '../unit/tax-domain-fixtures.ts';
+import type { TaxCorrectionPreviewRequestContractSchema } from '../../shared/domain/tax-correction-preview-contracts.ts';
 import { acceptedTaxTermsInput } from '../unit/tax-correction-fixtures.ts';
 
 // The trusted principal's `legalEntityId`/`tenantId` decode as UUIDs (`decodeTrustedPrincipalContext`), distinct
@@ -170,7 +171,8 @@ const makeTaxCorrectionPreviewServer = (runtime: ReadRuntimeService) =>
     ({ server }) => Effect.promise(() => server.dispose()).pipe(Effect.orDie),
   );
 
-type PreviewRequestInput = typeof TaxCorrectionPreviewRequestSchema.Encoded;
+/** The wire form a caller sends; the request schema also admits its already-decoded type side. */
+type PreviewRequestInput = typeof TaxCorrectionPreviewRequestContractSchema.Encoded;
 
 const decodeRequest = Schema.decodeUnknownSync(TaxCorrectionPreviewRequestSchema);
 

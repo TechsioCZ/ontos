@@ -84,8 +84,7 @@ export const taxCorrectionPreviewRead = defineRead(
       captureMode: 'metadata_only',
       policyKey: 'commerce.tax.api.tax-correction-preview.evidence.v1',
     },
-    // The HTTP payload is already decoded once by `HttpApiBuilder`; Read Runtime only validates its type side.
-    inputSchema: Schema.toType(TaxCorrectionPreviewRequestSchema),
+    inputSchema: TaxCorrectionPreviewRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
     permissionTarget: 'module',
