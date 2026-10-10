@@ -102,6 +102,13 @@ const intentFingerprint = (input: DeclareSellerVatRegimePayload): string =>
 const declarationRef = (row: DeclarationRow) =>
   sellerVatRegimeDeclarationRef(row.tenantId, row.taxSellerVatRegimeDeclarationId);
 
+/** The replaced revisions' own refs, resolved once at insert time and replayed verbatim (#943/#955 F-replay). */
+const replacedScheduledRevisionsOf = (row: DeclarationRow) =>
+  row.replacedScheduledDeclarations.map(({ revision, taxSellerVatRegimeDeclarationId }) => ({
+    declarationRef: sellerVatRegimeDeclarationRef(row.tenantId, taxSellerVatRegimeDeclarationId),
+    revision,
+  }));
+
 const declared = (row: DeclarationRow, created: boolean): SellerVatRegimeDeclarationOutcome => ({
   audit: {
     changed: created,
@@ -113,7 +120,7 @@ const declared = (row: DeclarationRow, created: boolean): SellerVatRegimeDeclara
     _tag: 'DECLARED',
     created,
     declarationRef: declarationRef(row),
-    replacedScheduledRevisions: [],
+    replacedScheduledRevisions: replacedScheduledRevisionsOf(row),
     revision: row.revision,
   },
 });
@@ -143,7 +150,25 @@ const insertDeclaration = Effect.fn('sellerVatRegimeDeclaration.insert')(functio
   fingerprint: string,
   replacesScheduled: readonly { readonly revision: number }[],
   revision: number,
+  priorRows: readonly DeclarationRow[],
 ) {
+  // Each replaced revision keeps its own row's identity, never the row this call is about to insert (#943/#955
+  // F-replay): a replaced revision's declarationRef must resolve to the row that revision actually is. The
+  // evaluation that produced `replacesScheduled` derived it from this same `priorRows` set, so a missing match
+  // means the two have drifted; nothing is guessed in that case.
+  const priorRowByRevision = new Map(priorRows.map((row) => [row.revision, row]));
+  const resolvedPriorRows: DeclarationRow[] = [];
+  for (const { revision: scheduledRevision } of replacesScheduled) {
+    const priorRow = priorRowByRevision.get(scheduledRevision);
+    if (priorRow === undefined) {
+      return yield* unavailable();
+    }
+    resolvedPriorRows.push(priorRow);
+  }
+  const replacedScheduledDeclarations = resolvedPriorRows.map((priorRow) => ({
+    revision: priorRow.revision,
+    taxSellerVatRegimeDeclarationId: priorRow.taxSellerVatRegimeDeclarationId,
+  }));
   const inserted = yield* mutation(
     transaction
       .insert(taxSellerVatRegimeDeclarations)
@@ -158,6 +183,7 @@ const insertDeclaration = Effect.fn('sellerVatRegimeDeclaration.insert')(functio
         reason: input.reason ?? null,
         recordedAt: input.operationTime,
         regime: input.regime,
+        replacedScheduledDeclarations,
         replacesScheduled: replacesScheduled.length > 0,
         revision,
         tenantId: input.tenantId,
@@ -182,10 +208,7 @@ const insertDeclaration = Effect.fn('sellerVatRegimeDeclaration.insert')(functio
       _tag: 'DECLARED',
       created: true,
       declarationRef: declarationRef(row),
-      replacedScheduledRevisions: replacesScheduled.map(({ revision: scheduledRevision }) => ({
-        declarationRef: declarationRef(row),
-        revision: scheduledRevision,
-      })),
+      replacedScheduledRevisions: replacedScheduledRevisionsOf(row),
       revision: row.revision,
     },
   } satisfies SellerVatRegimeDeclarationOutcome;
@@ -242,6 +265,7 @@ export const sellerVatRegimeDeclarationsForScope = (
     scheduled: readonly { readonly revision: number }[],
     fingerprint: string,
     input: GovernedInvocation,
+    rows: readonly DeclarationRow[],
   ) =>
     Effect.succeed<SellerVatRegimeDeclarationOutcome>({
       audit: {
@@ -253,10 +277,12 @@ export const sellerVatRegimeDeclarationsForScope = (
       result: {
         _tag: 'DECLARATION_REJECTED',
         reason: 'SCHEDULED_REVISION_CONFIRMATION_REQUIRED',
-        scheduledRevisions: scheduled.map(({ revision }) => ({
-          declarationRef: sellerVatRegimeDeclarationRef(input.tenantId, input.actionInvocationId),
-          revision,
-        })),
+        // Each scheduled revision keeps its own row's ref; the action invocation id is not a declaration row
+        // (#943/#955 F-replay).
+        scheduledRevisions: scheduled.flatMap(({ revision }) => {
+          const scheduledRow = rows.find((row) => row.revision === revision);
+          return scheduledRow === undefined ? [] : [{ declarationRef: declarationRef(scheduledRow), revision }];
+        }),
       },
     });
 
@@ -292,10 +318,10 @@ export const sellerVatRegimeDeclarationsForScope = (
           rejected('REASON_REQUIRED_FOR_BACKDATED_EFFECT', fingerprint, input.actionInvocationId),
         ),
         Match.tag('SCHEDULED_REVISION_CONFIRMATION_REQUIRED', ({ scheduled }) =>
-          scheduledConfirmationRequired(scheduled, fingerprint, input),
+          scheduledConfirmationRequired(scheduled, fingerprint, input, rows),
         ),
         Match.tag('ACCEPTED', ({ replacesScheduled, revision }) =>
-          insertDeclaration(transaction, input, fingerprint, replacesScheduled, revision),
+          insertDeclaration(transaction, input, fingerprint, replacesScheduled, revision, rows),
         ),
         Match.exhaustive,
       );

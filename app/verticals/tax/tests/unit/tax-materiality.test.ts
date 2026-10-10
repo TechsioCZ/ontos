@@ -22,6 +22,7 @@ import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { decodePurchaseBinding, exactDecimal, occurrenceInput, purchaseBindingInput } from './tax-domain-fixtures.ts';
 import {
+  DECLARED_NON_PAYER,
   PRICING_RESULT_REF,
   REDUCED_CODE,
   STANDARD_CODE,
@@ -327,6 +328,33 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
       Option.some(['SHIPPING_ALLOCATION', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
     );
   });
+
+  it('Unit 10 A5 a seller going from VAT_PAYER to NON_PAYER is a material TREATMENT change', () => {
+    const asPayer = evaluate(evaluationRequest(), ownState());
+    const asNonPayer = evaluate(evaluationRequest(), ownState({ sellerVatRegime: DECLARED_NON_PAYER }));
+
+    expect(materialReasons(compare(asPayer, asNonPayer))).toEqual(
+      Option.some(['TREATMENT', 'CLASSIFICATION', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
+    );
+  });
+
+  it(
+    'Unit 10 A5 a NON_PAYER declaration revision change alone reports only the declaration-revision evidence, ' +
+      'never a Tax Rule revision (#943 F28 patch)',
+    () => {
+      const firstRevision = evaluate(evaluationRequest(), ownState({ sellerVatRegime: DECLARED_NON_PAYER }));
+      const laterRevision = evaluate(
+        evaluationRequest(),
+        ownState({
+          sellerVatRegime: { ...DECLARED_NON_PAYER, declarationRevisionRef: { revision: 2 } },
+        }),
+      );
+
+      expect(attestedDifferences(compare(firstRevision, laterRevision))).toEqual(
+        Option.some(['SELLER_VAT_REGIME_DECLARATION_REVISION']),
+      );
+    },
+  );
 
   it('#950 F21-F25 a compared outcome is visible only to its own Tenant and Selling Legal Entity', () => {
     const binding = success(approved).decision.purchaseBinding;

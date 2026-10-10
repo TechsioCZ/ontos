@@ -22,7 +22,10 @@ import {
   CorrectTaxRuleRevisionPayloadSchema,
   CreateTaxRulePayloadSchema,
 } from '../../shared/actions/tax-governance.ts';
-import { TaxRuleMissingSchema } from '../../shared/domain/tax-kernel/tax-non-success-outcome.ts';
+import {
+  TaxRuleMissingSchema,
+  TaxStateIndeterminateSchema,
+} from '../../shared/domain/tax-kernel/tax-non-success-outcome.ts';
 import {
   taxOrderTaxFinalizations,
   taxRelations,
@@ -226,6 +229,7 @@ const FinalizedSchema = Schema.TaggedStruct('FINALIZED', {
     outcome: Schema.Struct({
       decision: Schema.Struct({
         decisionId: DecisionIdSchema,
+        declarationRevisionRef: Schema.Struct({ revision: Schema.Finite }),
         sellerVatRegime: Schema.Literals(['VAT_PAYER', 'NON_PAYER']),
       }),
     }),
@@ -234,6 +238,13 @@ const FinalizedSchema = Schema.TaggedStruct('FINALIZED', {
 const finalizedOf = (outcome: FinalizeOutcome) => Schema.decodeUnknownSync(FinalizedSchema)(resultOf(outcome));
 const RejectedSchema = Schema.TaggedStruct('FINALIZATION_REJECTED', { reasons: Schema.Array(Schema.String) });
 const NotFinalizedSchema = Schema.TaggedStruct('NOT_FINALIZED', { outcome: Schema.Struct({ _tag: Schema.String }) });
+const DeclaredSchema = Schema.TaggedStruct('DECLARED', { created: Schema.Boolean, revision: Schema.Finite });
+const declaredOf = (outcome: Effect.Success<ReturnType<ReturnType<typeof seller>['declare']>>) => {
+  if ('kind' in outcome) {
+    throw new Error(`Expected a declaration result, got ${outcome.kind}`);
+  }
+  return Schema.decodeUnknownSync(DeclaredSchema)(outcome.result);
+};
 
 it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and recovered unchanged', () =>
   Effect.scoped(
@@ -247,6 +258,9 @@ it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and
       const invocationId = randomUUID();
       const first = finalizedOf(yield* subject.finalize(subject.payload(submission), invocationId));
       expect(first.created).toBe(true);
+      // The stored final's Decision carries its own sellerVatRegime and declarationRevisionRef (#943/#950).
+      expect(first.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      expect(first.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
       const created = resultOf(yield* subject.finalize(subject.payload(submission), invocationId));
       // Core-invocation replay of the same request echoes the original (#955 G).
       expect(finalizedOf(yield* subject.finalize(subject.payload(submission), invocationId)).created).toBe(false);
@@ -473,20 +487,68 @@ it.live('Unit 10 C a backdated regime revision recorded after a final leaves the
 
       // A later NON_PAYER revision, backdated before T, is recorded after the final; the same-submission recovery
       // reads no seller state and the already-stored Decision is unchanged (Unit 10 C; #942 H, #944 F20).
-      yield* subject.declare(
-        {
-          confirmReplacesScheduled: true,
-          effectiveFrom: '2026-01-01T00:00:00.000Z',
-          expectedCurrentRevision: 1,
-          reason: 'Backdated non-payer declaration after finalization',
-          regime: 'NON_PAYER',
-        },
-        randomUUID(),
+      const declared = declaredOf(
+        yield* subject.declare(
+          {
+            confirmReplacesScheduled: true,
+            effectiveFrom: '2026-01-01T00:00:00.000Z',
+            expectedCurrentRevision: 1,
+            reason: 'Backdated non-payer declaration after finalization',
+            regime: 'NON_PAYER',
+          },
+          randomUUID(),
+        ),
       );
+      expect(declared.created).toBe(true);
 
       const recovered = finalizedOf(yield* subject.finalize(subject.payload(submission)));
       expect(recovered.created).toBe(false);
       expect(recovered.handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
+      expect(recovered.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      expect(recovered.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
+    }),
+  ),
+);
+
+it.live('Unit 10 C a NON_PAYER final stores zero tax with no governing rule revisions', () =>
+  Effect.scoped(
+    Effect.gen(function* nonPayerFinalizationAcceptance() {
+      const { adminClient, runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      // Non-payer from the start: no setUp() VAT_PAYER declaration, so no rules need to exist.
+      yield* subject.declare({ reason: 'Non-payer seller from launch', regime: 'NON_PAYER' });
+
+      const submission = `submission-${randomUUID()}`;
+      const final = finalizedOf(yield* subject.finalize(subject.payload(submission)));
+      expect(final.created).toBe(true);
+      expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
+      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
+
+      const rows = yield* adminClient.unsafe(
+        `select outcome -> 'result' -> 'purchaseTaxTotal' ->> 'amount' as purchase_tax_total_amount,
+                governing_rule_revisions
+         from tax.tax_order_tax_finalizations
+         where tenant_id = $1 and submission_ref = $2`,
+        [tenantId, submission],
+      );
+      expect(rows).toEqual([{ governing_rule_revisions: [], purchase_tax_total_amount: '0.00' }]);
+    }),
+  ),
+);
+
+it.live('Unit 10 C a seller with nothing declared cannot finalize', () =>
+  Effect.scoped(
+    Effect.gen(function* notDeclaredFinalizationAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      // Deliberately skip setUp(): no VAT regime has ever been declared for this seller.
+      const submission = `submission-${randomUUID()}`;
+
+      const notFinalized = yield* Schema.decodeUnknownEffect(NotFinalizedSchema)(
+        resultOf(yield* subject.finalize(subject.payload(submission))),
+      );
+      expect(notFinalized.outcome).toEqual(TaxStateIndeterminateSchema.make({}));
+      expect(Option.isNone(yield* subject.finalOrderTax(submission))).toBe(true);
     }),
   ),
 );
@@ -500,7 +562,7 @@ it.live('Unit 10 C a declare concurrent with finalize serializes on the seller l
       yield* subject.launchRules;
 
       const submission = `submission-${randomUUID()}`;
-      const [finalizeOutcome] = yield* Effect.all(
+      const [finalizeOutcome, declareOutcome] = yield* Effect.all(
         [
           subject.finalize(subject.payload(submission)),
           subject.declare(
@@ -517,8 +579,14 @@ it.live('Unit 10 C a declare concurrent with finalize serializes on the seller l
         { concurrency: 2 },
       );
       // Whichever order the seller lock serializes them in, the final's regime is exactly the head at its commit:
-      // either the seller's original VAT_PAYER declaration, or the concurrent NON_PAYER revision, never a mix.
+      // either the seller's original VAT_PAYER declaration (revision 1, finalize won the lock), or the concurrent
+      // NON_PAYER revision (revision 2, declare won it), never a mix (#950 F24, Unit 10 C).
       const final = finalizedOf(finalizeOutcome);
+      const declared = declaredOf(declareOutcome);
+      expect(declared.created).toBe(true);
+      expect(declared.revision).toBe(2);
+      const finalizeWonTheLock = final.handoff.outcome.decision.sellerVatRegime === 'VAT_PAYER';
+      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(finalizeWonTheLock ? 1 : 2);
       expect(['VAT_PAYER', 'NON_PAYER']).toContain(final.handoff.outcome.decision.sellerVatRegime);
     }),
   ),
