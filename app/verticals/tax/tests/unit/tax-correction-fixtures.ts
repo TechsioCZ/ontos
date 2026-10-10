@@ -23,6 +23,13 @@ import {
   taxDecisionInput,
 } from './tax-domain-fixtures.ts';
 
+/**
+ * Contract-conforming foreign-owner test double (#961 F17-F23): `acceptedTaxTermsInput` is the
+ * Billing-owned accepted Billing Document (#945/#946, H10) as TAX consumes it. It carries no TAX
+ * logic; the Decision/Result it embeds are composed by real TAX code. Not production cross-owner
+ * integration.
+ */
+
 type TaxDecisionInput = typeof TaxDecisionSchema.Encoded;
 type TaxDecisionUnitInput = TaxDecisionInput['units'][number];
 
