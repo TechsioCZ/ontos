@@ -21,6 +21,7 @@
     "dev:pricing": "pnpm --filter @app/pricing dev",
     "dev:storefront-registry": "pnpm --filter @app/storefront-registry dev",
     "dev:assortment": "pnpm --filter @app/assortment dev",
+    "dev:tax": "pnpm --filter @app/tax dev",
     "build": "ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json && ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json && pnpm -r --no-sort --filter \"./verticals/*\" run build && pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
     "cloudflare:build": "ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json && ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json && pnpm -r --no-sort --filter \"./verticals/*\" run cloudflare:build && pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types --target cloudflare && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof",
     "cloudflare:deploy": "node ./scripts/immutable-application-release.mts deploy",

@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "tax",
+    "build": "5c4b3253f7d46679",
+    "buildMarker": "5c4b3253f7d46679",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/tax",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/tax",
+    "version": "0.1.0"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "tax",
+      "build": "5c4b3253f7d46679",
+      "buildMarker": "5c4b3253f7d46679",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/tax",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "surface": "api",
+      "unitId": "app/tax",
+      "version": "0.1.0"
+    },
+    "ui": {
+      "appId": "tax",
+      "build": "5c4b3253f7d46679",
+      "buildMarker": "5c4b3253f7d46679",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/tax",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "surface": "ui",
+      "unitId": "app/tax",
+      "version": "0.1.0"
+    }
+  }
+}

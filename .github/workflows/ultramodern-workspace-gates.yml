@@ -618,7 +618,7 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5]
         include:
-          - { shard: 1, proof: none, units: verticals/catalog }
+          - { shard: 1, proof: none, units: verticals/catalog verticals/tax }
           - { shard: 2, proof: none, units: verticals/commerce-customer-context verticals/storefront-registry }
           - { shard: 3, proof: none, units: verticals/assortment apps/shell-super-app }
           - { shard: 4, proof: none, units: verticals/party-registry verticals/inventory verticals/availability }
@@ -744,7 +744,7 @@ jobs:
               units: verticals/party-registry verticals/price-group-catalog verticals/availability,
             }
           - { shard: 3, proof: outputs, units: verticals/catalog verticals/storefront-registry }
-          - { shard: 4, proof: none, units: verticals/commerce-customer-context apps/shell-super-app }
+          - { shard: 4, proof: none, units: verticals/commerce-customer-context apps/shell-super-app verticals/tax }
           - {
               shard: 5,
               proof: none,
@@ -790,6 +790,7 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
+          ULTRAMODERN_PUBLIC_URL_TAX: https://tax.invalid
         run: |
           read -ra units <<<"$SHARD_UNITS"
           filters=()
@@ -913,6 +914,7 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
+          ULTRAMODERN_PUBLIC_URL_TAX: https://tax.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json

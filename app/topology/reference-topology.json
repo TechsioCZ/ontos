@@ -3352,6 +3352,294 @@
           ]
         }
       }
+    },
+    {
+      "id": "tax",
+      "kind": "vertical",
+      "surfaceProfile": "api-only",
+      "domain": "tax",
+      "package": "@app/tax",
+      "path": "verticals/tax",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalTax",
+        "manifestUrl": "http://localhost:4112/mf-manifest.json",
+        "exposes": [],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalTaxBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/tax",
+          "packageName": "@app/tax",
+          "version": "0.1.0",
+          "buildMarker": "5c4b3253f7d46679",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/tax/shared/api.ts",
+            "runtime": "verticals/tax/api/index.ts",
+            "client": "verticals/tax/src/api/tax-client.ts",
+            "openapi": "/tax-api/openapi.json",
+            "readiness": "/tax-api/tax/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/tax",
+          "api": {
+            "readiness": "/tax-api/tax/readiness",
+            "buildMarker": "verticals/tax/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAX"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-tax",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAX",
+            "api": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+            },
+            "zephyr": {
+              "runtime": "api-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_TAX_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_TAX_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_TAX_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_TAX_WORKER",
+              "serviceBindingEnv": "VERTICAL_TAX_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_TAX_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_TAX_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v1",
+            "remoteName": "verticalTaxBackend",
+            "manifestEnv": "VERTICAL_TAX_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4112/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4112/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/tax",
+              "buildMarker": "5c4b3253f7d46679"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/tax",
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/tax",
+        "packageName": "@app/tax",
+        "version": "0.1.0",
+        "buildMarker": "5c4b3253f7d46679",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/tax-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/tax/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/tax/src/api/tax-client.ts"
+        },
+        "serverEntry": "verticals/tax/api/index.ts",
+        "basePath": "/tax-api/tax",
+        "consumedBy": ["shell-super-app", "tax"],
+        "readiness": {
+          "endpoint": "/tax/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listTax",
+            "method": "GET",
+            "path": "/tax",
+            "resource": "workspace-items",
+            "owner": "tax"
+          },
+          "workspaceDetail": {
+            "client": "getTax",
+            "method": "GET",
+            "path": "/tax/:id",
+            "resource": "workspace-item",
+            "owner": "tax"
+          },
+          "workspaceCreate": {
+            "client": "createTax",
+            "method": "POST",
+            "path": "/tax",
+            "resource": "tax",
+            "owner": "tax"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-tax",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAX",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "apiReadiness": "/tax-api/tax/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "evidence": {
+          "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "tax-readiness-smoke",
+            "route": "/tax-api/tax/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/tax.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#tax",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#tax"]
+        }
+      }
     }
   ],
   "sharedPackages": [

@@ -63,6 +63,9 @@
     },
     {
       "path": "verticals/availability"
+    },
+    {
+      "path": "verticals/tax"
     }
   ]
 }
