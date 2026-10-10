@@ -13,8 +13,9 @@
  * without reconstructing the full application composition/authentication pipeline a real deployment provides.
  *
  * Every case, including (c) over the real Billing Document Terms, goes through the published HTTP client:
- * `HttpApiBuilder` decodes the payload exactly once and Read Runtime only validates its type side, so the
- * `DateTimeUtcFromString` times of the Accepted Tax Terms are never re-decoded from a value.
+ * `HttpApiBuilder` decodes the wire payload, and Read Runtime's second decode with the same request schema accepts the
+ * already-decoded instants of the Accepted Tax Terms unchanged. The wire contract itself stays strict: an invalid body
+ * is the read's 400 problem and never reaches Read Runtime (f, g).
  */
 import { ContextAccess, ReadHandlerUnavailable, ReadRuntime, toContextPermissionAccessKey } from '@app/core-runtime';
 import type { ContextAccessService, OperationalScope, ReadRuntimeService } from '@app/core-runtime';
@@ -39,15 +40,26 @@ import {
   TaxCorrectionPreviewUnavailableProblemSchema,
 } from '../../shared/apis/tax-correction-preview.ts';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
+import {
+  TaxRuleHistoryApi,
+  TaxRuleHistoryAuthenticationProblemSchema,
+  TaxRuleHistoryForbiddenProblemSchema,
+  TaxRuleHistoryInternalProblemSchema,
+  TaxRuleHistoryInvalidProblemSchema,
+  TaxRuleHistoryNotFoundProblemSchema,
+  TaxRuleHistoryPolicyConflictProblemSchema,
+  TaxRuleHistoryPolicyProblemSchema,
+  TaxRuleHistoryUnavailableProblemSchema,
+} from '../../shared/apis/tax-rule-history.ts';
 import { executeTaxCorrectionPreviewWithAuthorization } from '../../src/api/tax-correction-preview-client.ts';
 import { taxCorrectionPreviewRead } from '../../src/api/tax-correction-preview.read.ts';
+import { taxRuleHistoryRead } from '../../src/api/tax-rule-history.read.ts';
 import { TaxDependencyUnavailableSchema } from '../../src/domain/tax-non-success-outcome.ts';
 import {
   TaxCorrectionDeltaSchema,
   TaxCorrectionHistoricalInputUnresolvedSchema,
 } from '../../src/domain/tax-correction-delta.ts';
 import { exactDecimal } from '../unit/tax-domain-fixtures.ts';
-import type { TaxCorrectionPreviewRequestContractSchema } from '../../shared/domain/tax-correction-preview-contracts.ts';
 import { acceptedTaxTermsInput } from '../unit/tax-correction-fixtures.ts';
 
 // The trusted principal's `legalEntityId`/`tenantId` decode as UUIDs (`decodeTrustedPrincipalContext`), distinct
@@ -171,8 +183,7 @@ const makeTaxCorrectionPreviewServer = (runtime: ReadRuntimeService) =>
     ({ server }) => Effect.promise(() => server.dispose()).pipe(Effect.orDie),
   );
 
-/** The wire form a caller sends; the request schema also admits its already-decoded type side. */
-type PreviewRequestInput = typeof TaxCorrectionPreviewRequestContractSchema.Encoded;
+type PreviewRequestInput = typeof TaxCorrectionPreviewRequestSchema.Encoded;
 
 const decodeRequest = Schema.decodeUnknownSync(TaxCorrectionPreviewRequestSchema);
 
@@ -273,5 +284,140 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
         expect(harness.snapshot().evidenceWrites).toBe(1);
       }
     }),
+  );
+});
+
+/** A `ReadRuntime` that only counts how often a request reaches it. */
+const countingRuntime = () => {
+  let reached = 0;
+  const runtime: ReadRuntimeService = {
+    runRead: () => {
+      reached += 1;
+      return Effect.fail(new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'not expected' }));
+    },
+  };
+  return { reached: () => reached, runtime };
+};
+
+const ruleHistoryProblems = makeGovernedReadProblems({
+  authentication: TaxRuleHistoryAuthenticationProblemSchema,
+  forbidden: TaxRuleHistoryForbiddenProblemSchema,
+  internal: TaxRuleHistoryInternalProblemSchema,
+  invalid: TaxRuleHistoryInvalidProblemSchema,
+  notFound: TaxRuleHistoryNotFoundProblemSchema,
+  policyConflict: TaxRuleHistoryPolicyConflictProblemSchema,
+  policyIneligible: TaxRuleHistoryPolicyProblemSchema,
+  unavailable: TaxRuleHistoryUnavailableProblemSchema,
+});
+
+const makeTaxRuleHistoryServer = (runtime: ReadRuntimeService) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(scope),
+        problems: ruleHistoryProblems,
+        registration: taxRuleHistoryRead,
+      });
+      const handlers = HttpApiBuilder.group(TaxRuleHistoryApi, 'taxRuleHistory', (routes) =>
+        routes.handle('execute', handler),
+      );
+      return {
+        requestContext: Context.make(ReadRuntime, runtime),
+        server: HttpRouter.toWebHandler(
+          HttpApiBuilder.layer(TaxRuleHistoryApi).pipe(
+            Layer.provide(handlers),
+            Layer.provideMerge(RequestSchemaProblemLive),
+            Layer.provide(Layer.succeed(ReadRuntime, runtime)),
+            Layer.provide(HttpServer.layerServices),
+          ),
+          { disableLogger: true },
+        ),
+      };
+    }),
+    ({ server }) => Effect.promise(() => server.dispose()).pipe(Effect.orDie),
+  );
+
+const encodeJsonBody = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+/** POSTs a raw JSON text, bypassing the published client, which only encodes valid requests. */
+const postRaw = (
+  { requestContext, server }: Effect.Success<ReturnType<typeof makeTaxCorrectionPreviewServer>>,
+  path: string,
+  jsonText: string,
+) =>
+  Effect.promise(() =>
+    server.handler(
+      new Request(`https://tax.example${path}`, {
+        body: jsonText,
+        headers: {
+          authorization: 'Bearer controlled',
+          'content-type': 'application/json',
+          'x-correlation-id': 'tax-read-http-contract-test',
+        },
+        method: 'POST',
+      }),
+      requestContext,
+    ),
+  );
+
+const validTaxRuleRef = {
+  moduleId: 'commerce.tax',
+  resourceId: 'tax-rule-1',
+  resourceType: 'commerce.tax.tax-rule',
+  tenantId: TENANT_ID,
+} as const;
+
+describe('TAX read HTTP payloads keep the strict wire contract', () => {
+  it.effect('f. a Tax correction preview body with a non-string instant is a 400 and never reaches Read Runtime', () =>
+    Effect.gen(function* invalidPreviewBody() {
+      const counting = countingRuntime();
+      const server = yield* makeTaxCorrectionPreviewServer(counting.runtime);
+      const response = yield* postRaw(
+        server,
+        '/reads/tax-correction-preview',
+        encodeJsonBody({
+          acceptedTaxTerms: { ...billingTerms, orderCommitmentTime: Date.parse('2026-06-01T00:00:00.000Z') },
+          declaredPurpose: correctionDeclaredPurpose,
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(counting.reached()).toBe(0);
+      // The same body with its ISO-string instant reaches Read Runtime (here a controlled outage).
+      const control = countingRuntime();
+      const controlResponse = yield* postRaw(
+        yield* makeTaxCorrectionPreviewServer(control.runtime),
+        '/reads/tax-correction-preview',
+        encodeJsonBody({ acceptedTaxTerms: billingTerms, declaredPurpose: correctionDeclaredPurpose }),
+      );
+      expect(controlResponse.status).toBe(503);
+      expect(control.reached()).toBe(1);
+    }),
+  );
+
+  it.effect(
+    'g. a Tax Rule history body with a malformed Tax Rule reference is a 400 and never reaches Read Runtime',
+    () =>
+      Effect.gen(function* invalidRuleHistoryBody() {
+        for (const taxRuleRef of [
+          { ...validTaxRuleRef, tenantId: 'not-a-uuid' },
+          { ...validTaxRuleRef, resourceId: '' },
+        ]) {
+          const counting = countingRuntime();
+          const server = yield* makeTaxRuleHistoryServer(counting.runtime);
+          const response = yield* postRaw(server, '/reads/tax-rule-history', encodeJsonBody({ taxRuleRef }));
+          expect(response.status).toBe(400);
+          expect(counting.reached()).toBe(0);
+        }
+        // The same server answers a well-formed reference by reaching Read Runtime (here a controlled outage).
+        const counting = countingRuntime();
+        const server = yield* makeTaxRuleHistoryServer(counting.runtime);
+        const response = yield* postRaw(
+          server,
+          '/reads/tax-rule-history',
+          encodeJsonBody({ taxRuleRef: validTaxRuleRef }),
+        );
+        expect(response.status).toBe(503);
+        expect(counting.reached()).toBe(1);
+      }),
   );
 });

@@ -17,12 +17,10 @@ import {
   NoNewTaxEventSchema,
 } from '../../src/domain/tax-declared-purpose.ts';
 import { TaxDependencyUnavailableSchema } from '../../src/domain/tax-non-success-outcome.ts';
-import type { TaxCorrectionPreviewRequestContractSchema } from '../../shared/domain/tax-correction-preview-contracts.ts';
 import { acceptedTaxTermsInput } from './tax-correction-fixtures.ts';
 import { exactDecimal } from './tax-domain-fixtures.ts';
 
-/** The wire form a caller sends; the request schema also admits its already-decoded type side. */
-type PreviewRequestInput = typeof TaxCorrectionPreviewRequestContractSchema.Encoded;
+type PreviewRequestInput = typeof TaxCorrectionPreviewRequestSchema.Encoded;
 
 const decodeRequest = Schema.decodeUnknownSync(TaxCorrectionPreviewRequestSchema);
 const encodeResponse = Schema.encodeSync(TaxCorrectionPreviewResponseSchema);

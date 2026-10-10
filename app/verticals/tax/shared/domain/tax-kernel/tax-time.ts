@@ -1,10 +1,18 @@
 import { DateTime, Schema } from 'effect';
 
 /**
+ * A UTC instant: an ISO string on the wire, or the already-decoded `DateTime.Utc`. `HttpApiBuilder` decodes a read's
+ * payload once and Read Runtime decodes the same value again with the same request schema, so a request instant must
+ * decode idempotently. JSON cannot carry a `DateTime.Utc`, so the wire contract stays exactly as strict, and encoding
+ * still emits the ISO string.
+ */
+export const UtcInstantSchema = Schema.Union([Schema.DateTimeUtcFromString, Schema.DateTimeUtc]);
+
+/**
  * Business instant selecting the applicable Tax Rule meaning; it is part of Tax Decision meaning
  * (#941 F1, #927 F7, #907 F142).
  */
-export const TaxRelevantTimeSchema = Schema.DateTimeUtcFromString.pipe(Schema.brand('TaxRelevantTime'));
+export const TaxRelevantTimeSchema = UtcInstantSchema.pipe(Schema.brand('TaxRelevantTime'));
 
 export type TaxRelevantTime = typeof TaxRelevantTimeSchema.Type;
 
@@ -13,12 +21,12 @@ export type TaxRelevantTime = typeof TaxRelevantTimeSchema.Type;
  * coincides with Tax-Relevant Time; it never selects Tax Rule effectivity (#941 F1, #927 F8-F9, #929 F12,
  * #907 F143).
  */
-export const TaxEvaluationTimeSchema = Schema.DateTimeUtcFromString.pipe(Schema.brand('TaxEvaluationTime'));
+export const TaxEvaluationTimeSchema = UtcInstantSchema.pipe(Schema.brand('TaxEvaluationTime'));
 
 export type TaxEvaluationTime = typeof TaxEvaluationTimeSchema.Type;
 
 /** Commerce-owned Order Commitment Time T captured once for the exact frozen submission (#941 F2, #907 F155). */
-export const OrderCommitmentTimeSchema = Schema.DateTimeUtcFromString.pipe(Schema.brand('OrderCommitmentTime'));
+export const OrderCommitmentTimeSchema = UtcInstantSchema.pipe(Schema.brand('OrderCommitmentTime'));
 
 export type OrderCommitmentTime = typeof OrderCommitmentTimeSchema.Type;
 
