@@ -9,6 +9,18 @@ import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { exactDecimal, purchaseBindingInput } from './tax-domain-fixtures.ts';
 
+/**
+ * Contract-conforming foreign-owner test doubles (#961 F17-F23). They decode through TAX's
+ * public request schemas, carry no TAX logic, and every result built from them is labelled
+ * `CALLER_SUPPLIED_UNVERIFIED`. They are not production cross-owner integration. Foreign doubles
+ * here: `catalogEntry` (Catalog, #926 Tax-purpose evidence as TAX consumes it), `pricingLine`/
+ * `grossLine` (Pricing, #931; #892 not active), `shippingCharge` (Delivery, #933, GROSS), and the
+ * `places` of `evaluationRequestInput` (Delivery destination and the Selling Legal Entity place,
+ * #927). `purchaseBindingInput` (Order, #937/#330) lives in tax-domain-fixtures.ts. TAX-owned
+ * state (`ownState`, `selected`, `DECLARED_*`, `NOT_DECLARED`) is NOT a foreign double: unit
+ * tests inject it; integration tests persist it.
+ */
+
 export type TaxEvaluationRequestInput = typeof TaxEvaluationRequestSchema.Encoded;
 
 export const decodeEvaluationRequest = Schema.decodeUnknownSync(TaxEvaluationRequestSchema);
