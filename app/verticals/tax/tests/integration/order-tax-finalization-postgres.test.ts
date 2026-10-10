@@ -11,11 +11,17 @@ import {
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
-import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { DomainEventReference, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import {
+  FinalOrderTaxHandoffSchema,
   FinalizeOrderTaxPayloadSchema,
+  FinalizeOrderTaxResultSchema,
   OrderSubmissionRefSchema,
 } from '../../shared/actions/order-tax-finalization.ts';
+import { FinalOrderTaxRequestSchema, FinalOrderTaxResponseSchema } from '../../shared/apis/final-order-tax.ts';
+import { TaxGovernanceAuditEvidenceSchema } from '../../shared/domain/tax-governance-errors.ts';
+import { handleFinalizeOrderTax } from '../../src/actions/finalize-order-tax.action.ts';
+import { readFinalOrderTax } from '../../src/api/final-order-tax.read.ts';
 import type { FinalizeOrderTaxResult } from '../../shared/actions/order-tax-finalization.ts';
 import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import {
@@ -692,6 +698,95 @@ it.live('Unit 10 C a declare concurrent with finalize serializes on the seller l
       const final = finalizedOf(finalizeOutcome);
       expect(final.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
       expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(2);
+    }),
+  ),
+);
+
+/** A Core-shaped Action handler context over real Postgres services; audit evidence is captured, no event is added. */
+const actionContext = <Services>(
+  scope: OperationalScope,
+  services: Services,
+  audit: unknown[],
+  actionInvocationId: string,
+) => {
+  // The production collector owns this opaque reference; TAX adds no domain event, so it is never dereferenced.
+  const eventReference: DomainEventReference = Schema.decodeSync(Schema.Any)({});
+  return {
+    actionInvocationId,
+    addDomainEvent: () => Effect.succeed(eventReference),
+    addOutboxMessage: () => Effect.void,
+    compositionRevision: 'c'.repeat(64),
+    recordAuditEvidence: (evidence: Readonly<Record<string, Schema.Json>>) => {
+      audit.push(evidence);
+      return Effect.void;
+    },
+    recordDataAccess: () => Effect.void,
+    scope,
+    services,
+  };
+};
+
+it.live('#961 scenario 9: the finalize Action and final read handlers persist, recover and hand off the final', () =>
+  Effect.scoped(
+    Effect.gen(function* publicFinalizeScenario() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.setUp;
+      yield* subject.launchRules;
+
+      const submission = `submission-${randomUUID()}`;
+      // The wire payload decodes through the public `FinalizeOrderTaxPayloadSchema` (inside `subject.payload`).
+      const payload = subject.payload(submission);
+      const audit: unknown[] = [];
+      const invocationId = randomUUID();
+      const finalizeThroughHandler = (actionInvocationId: string) =>
+        runScoped(runtime, subject.scope, (transaction) =>
+          handleFinalizeOrderTax(
+            payload,
+            actionContext(
+              subject.scope,
+              orderTaxFinalizationsForScope(transaction, subject.scope),
+              audit,
+              actionInvocationId,
+            ),
+          ),
+        ).pipe(
+          Effect.flatMap((result) => Schema.encodeEffect(FinalizeOrderTaxResultSchema)(result)),
+          Effect.flatMap(Schema.decodeUnknownEffect(FinalizedSchema)),
+        );
+
+      const first = yield* finalizeThroughHandler(invocationId);
+      expect(first.created).toBe(true);
+      // One audit record is captured for the created final (#950 F45-F47).
+      expect(yield* Schema.decodeUnknownEffect(Schema.Array(TaxGovernanceAuditEvidenceSchema))(audit)).toHaveLength(1);
+
+      // A retry of the same submission under a new Core invocation recovers the stored final (#944 F10).
+      const retry = yield* finalizeThroughHandler(randomUUID());
+      expect(retry.created).toBe(false);
+      expect(retry.handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
+
+      // Lost-response recovery through the public read handler and its wire schemas.
+      const request = yield* Schema.decodeEffect(FinalOrderTaxRequestSchema)({ submissionRef: submission });
+      const recovered = yield* runScoped(runtime, subject.scope, (transaction) =>
+        readFinalOrderTax(request, {
+          readKey: 'commerce.tax.api.final-order-tax',
+          scope: subject.scope,
+          services: { finalizations: orderTaxFinalizationsForScope(transaction, subject.scope) },
+        }),
+      ).pipe(
+        Effect.flatMap(({ result }) => Schema.encodeEffect(FinalOrderTaxResponseSchema)(result)),
+        Effect.flatMap(Schema.decodeUnknownEffect(FinalOrderTaxResponseSchema)),
+      );
+
+      // The #330 Bundle content is exactly the public handoff: final at T, submission, unverified foreign evidence.
+      const handoff = yield* Schema.encodeEffect(FinalOrderTaxHandoffSchema)(recovered.handoff).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(FinalOrderTaxHandoffSchema)),
+      );
+      expect(handoff.submissionRef).toBe(submission);
+      expect(DateTime.formatIso(handoff.orderCommitmentTime)).toBe(T);
+      expect(handoff.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
+      expect(handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
+      expect(handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
     }),
   ),
 );
