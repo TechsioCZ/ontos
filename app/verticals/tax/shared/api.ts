@@ -20,6 +20,7 @@ import { FinalOrderTaxApi } from './apis/final-order-tax.ts';
 import { RecordTaxSourceAssertionActionApi } from './apis/record-tax-source-assertion-action.ts';
 import { ReviseTaxFactAuthorityContractActionApi } from './apis/revise-tax-fact-authority-contract-action.ts';
 import { SellingLegalEntityVatRegistrationStateApi } from './apis/selling-legal-entity-vat-registration-state.ts';
+import { TaxCorrectionPreviewApi } from './apis/tax-correction-preview.ts';
 import { TaxEvaluationApi } from './apis/tax-evaluation.ts';
 import { TaxFactAuthorityCurrentApi } from './apis/tax-fact-authority-current.ts';
 import { TaxMaterialityComparisonApi } from './apis/tax-materiality-comparison.ts';
@@ -66,6 +67,7 @@ export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(RecordTaxSourceAssertionActionApi)
   .addHttpApi(ReviseTaxFactAuthorityContractActionApi)
   .addHttpApi(SellingLegalEntityVatRegistrationStateApi)
+  .addHttpApi(TaxCorrectionPreviewApi)
   .addHttpApi(TaxEvaluationApi)
   .addHttpApi(TaxFactAuthorityCurrentApi)
   .addHttpApi(TaxMaterialityComparisonApi)
