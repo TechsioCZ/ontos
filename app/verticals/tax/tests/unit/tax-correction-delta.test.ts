@@ -17,6 +17,7 @@ import type {
   TaxCorrectionOutcome,
   TaxCorrectionUnitRequest,
 } from '../../src/domain/tax-correction-delta.ts';
+import { TaxCorrectionChangeSchema } from '../../shared/domain/tax-kernel/tax-correction-delta.ts';
 import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/tax-historical-input-outcome.ts';
 import { TaxNonSuccessOutcomeSchema } from '../../src/domain/tax-non-success-outcome.ts';
 import { acceptedTaxTerms, acceptedTaxTermsInput, unitIdOf } from './tax-correction-fixtures.ts';
@@ -45,11 +46,21 @@ const value = (
 });
 const NO_ACCEPTED_CORRECTION: AcceptedCumulativeCorrectionState = { _tag: 'NO_ACCEPTED_CORRECTION' };
 
+const isSingleChange = Schema.is(TaxCorrectionChangeSchema);
+
+const toChanges = (
+  changes: TaxCorrectionChange | readonly [TaxCorrectionChange, ...TaxCorrectionChange[]],
+): readonly [TaxCorrectionChange, ...TaxCorrectionChange[]] => (isSingleChange(changes) ? [changes] : changes);
+
 const unitRequest = (
   occurrenceId: string,
-  change: TaxCorrectionChange,
+  changes: TaxCorrectionChange | readonly [TaxCorrectionChange, ...TaxCorrectionChange[]],
   expectedPreviousState: AcceptedCumulativeCorrectionState = NO_ACCEPTED_CORRECTION,
-): TaxCorrectionUnitRequest => ({ change, expectedPreviousState, taxableSupplyUnitId: unitIdOf(occurrenceId) });
+): TaxCorrectionUnitRequest => ({
+  changes: toChanges(changes),
+  expectedPreviousState,
+  taxableSupplyUnitId: unitIdOf(occurrenceId),
+});
 
 const correct = (
   terms: AcceptedTaxTerms,
@@ -97,6 +108,18 @@ const returnInSteps = (terms: AcceptedTaxTerms, occurrenceId: string, steps: rea
 const exceeds = (reason: string) => [{ reason, taxableSupplyUnitId: unitIdOf('o-1') }];
 
 const tenAt9999: OriginalUnitInput = { lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' };
+
+/** Stage A fixture (A-1...A-5): o-1 line 100.00 NET, quantity 2, shipping 10.00 GROSS, 21 %. Stored tax 22.74. */
+const stageALineAndShippingTerms = () =>
+  acceptedTaxTerms([{ lineValue: '100.00', occurrenceId: 'o-1', quantity: '2', shipping: '10.00' }]);
+
+/** Stage A-3 request builder: no Accepted Tax Terms shipping, so only the `units` shape under test is relevant. */
+const stageAEncodedRequest = (units: readonly unknown[]) => ({
+  acceptedTaxTerms: acceptedTaxTermsInput([{ lineValue: '100.00', occurrenceId: 'o-1', quantity: '2' }]),
+  correctionEventRef: 'return-1',
+  correctionReason: 'CUSTOMER_RETURN',
+  units,
+});
 
 const acceptedAfterSeven: AcceptedCumulativeCorrectionState = {
   _tag: 'ACCEPTED',
@@ -391,9 +414,106 @@ describe('Tax Correction Delta', () => {
     expect(() => decodeRequest(request([unitRequest('o-1', quantity('0'))]))).toThrow();
     expect(() => decodeRequest(request([unitRequest('o-1', quantity('1'))]))).toThrow();
     expect(() => decodeRequest(request([unitRequest('o-1', value('99.99'))]))).toThrow();
+    // Two unitRequest entries for the same unit are still rejected: each original unit appears once.
     expect(() =>
       decodeRequest(request([unitRequest('o-1', quantity('-1')), unitRequest('o-1', value('-1'))])),
     ).toThrow();
+    // A-6 (the flip): a quantity change and a shipping change for the same unit, in one correction, now decode.
+    expect(
+      decodeRequest(request([unitRequest('o-1', [quantity('-1'), value('-1', 'SHIPPING_ALLOCATION')])])).units,
+    ).toHaveLength(1);
+  });
+
+  describe('Stage A: combined goods + shipping change per unit (H5)', () => {
+    it('A-1 a combined full goods and shipping reversal in one correction exhausts the unit exactly', () => {
+      const terms = stageALineAndShippingTerms();
+      expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('22.74');
+
+      const outcome = deltaOf(
+        correct(terms, [unitRequest('o-1', [quantity('-2'), value('-10', 'SHIPPING_ALLOCATION')])]),
+      );
+
+      expect(outcome.units[0].proposedNext).toEqual({
+        remainingLineBasis: exactDecimal('0'),
+        remainingPublishedTax: { amount: '0.00', currency: 'CZK' },
+        remainingQuantity: exactDecimal('0'),
+        remainingShippingBasis: exactDecimal('0'),
+      });
+      expect(outcome.units[0].taxCorrectionDelta.amount).toBe('-22.74');
+    });
+
+    it('A-2 a combined partial goods and shipping reduction is order-independent', () => {
+      const terms = stageALineAndShippingTerms();
+      for (const changes of [
+        [quantity('-1'), value('-4.00', 'SHIPPING_ALLOCATION')],
+        [value('-4.00', 'SHIPPING_ALLOCATION'), quantity('-1')],
+      ] as const) {
+        const outcome = deltaOf(correct(terms, [unitRequest('o-1', changes)]));
+        expect(outcome.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('50'));
+        expect(outcome.units[0].proposedNext.remainingShippingBasis).toEqual(exactDecimal('6'));
+        expect(outcome.units[0].proposedNext.remainingPublishedTax.amount).toBe('11.54');
+        expect(outcome.units[0].taxCorrectionDelta.amount).toBe('-11.20');
+      }
+    });
+
+    it('A-3 two goods changes, two shipping changes, an empty array, and the same unit twice all fail to decode', () => {
+      expect(() =>
+        decodeRequest(
+          stageAEncodedRequest([
+            {
+              changes: [quantity('-1'), value('-1')],
+              expectedPreviousState: NO_ACCEPTED_CORRECTION,
+              taxableSupplyUnitId: unitIdOf('o-1'),
+            },
+          ]),
+        ),
+      ).toThrow();
+      expect(() =>
+        decodeRequest(
+          stageAEncodedRequest([
+            {
+              changes: [value('-1', 'SHIPPING_ALLOCATION'), value('-2', 'SHIPPING_ALLOCATION')],
+              expectedPreviousState: NO_ACCEPTED_CORRECTION,
+              taxableSupplyUnitId: unitIdOf('o-1'),
+            },
+          ]),
+        ),
+      ).toThrow();
+      expect(() =>
+        decodeRequest(
+          stageAEncodedRequest([
+            { changes: [], expectedPreviousState: NO_ACCEPTED_CORRECTION, taxableSupplyUnitId: unitIdOf('o-1') },
+          ]),
+        ),
+      ).toThrow();
+      expect(() =>
+        decodeRequest(stageAEncodedRequest([unitRequest('o-1', quantity('-1')), unitRequest('o-1', quantity('-1'))])),
+      ).toThrow();
+    });
+
+    it('A-4 a combined change reports every out-of-bounds component, sorted, and clamps nothing', () => {
+      const terms = stageALineAndShippingTerms();
+
+      const outcome = correct(terms, [unitRequest('o-1', [quantity('-3'), value('-11', 'SHIPPING_ALLOCATION')])]);
+
+      expect(isOutOfBounds(outcome)).toBe(true);
+      expect(issuesOf(outcome)).toEqual([
+        { reason: 'EXCEEDS_REMAINING_BASIS_COMPONENT', taxableSupplyUnitId: unitIdOf('o-1') },
+        { reason: 'EXCEEDS_REMAINING_QUANTITY', taxableSupplyUnitId: unitIdOf('o-1') },
+      ]);
+    });
+
+    it('A-5 a quantity-only change never derives a Shipping refund ("never 1/quantity")', () => {
+      const terms = stageALineAndShippingTerms();
+
+      const outcome = deltaOf(correct(terms, [unitRequest('o-1', quantity('-1'))]));
+
+      expect(outcome.units[0].proposedNext.remainingShippingBasis).toEqual(exactDecimal('10'));
+      expect(outcome.units[0].proposedNext.remainingPublishedTax.amount).toBe('12.24');
+      expect(outcome.units[0].taxCorrectionDelta.amount).toBe('-10.50');
+      // The 1/quantity variant (shipping halved to 5) would give tax 11.37 and delta -11.37; that must not happen.
+      expect(outcome.units[0].proposedNext.remainingPublishedTax.amount).not.toBe('11.37');
+    });
   });
 
   it('D4 keeps the unresolved historical-input outcome outside the purchase-evaluation TAX_* family', () => {

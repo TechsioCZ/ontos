@@ -58,7 +58,7 @@ describe('Tax correction preview read', () => {
           correctionReason: 'CUSTOMER_RETURN',
           units: [
             {
-              change: { _tag: 'QUANTITY', quantityDelta: exactDecimal('-3') },
+              changes: [{ _tag: 'QUANTITY', quantityDelta: exactDecimal('-3') }],
               expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
               taxableSupplyUnitId: 'taxable-supply-unit:o-1',
             },
@@ -70,6 +70,38 @@ describe('Tax correction preview read', () => {
       expect(encodeResponse(result)).toMatchObject({
         correctionTaxDelta: { amount: '-62.99', currency: 'CZK' },
         units: [{ proposedNext: { remainingPublishedTax: { amount: '146.99', currency: 'CZK' } } }],
+      });
+    }),
+  );
+
+  it.effect('A-1 previews a combined goods and Shipping change for one unit in a single correction', () =>
+    Effect.gen(function* previewsCombinedChange() {
+      const combinedTerms = acceptedTaxTermsInput([
+        { lineValue: '100.00', occurrenceId: 'o-1', quantity: '2', shipping: '10.00' },
+      ]);
+      const result = yield* preview({
+        acceptedTaxTerms: combinedTerms,
+        declaredPurpose: {
+          _tag: 'CORRECTION',
+          correctionEventRef: 'return-1',
+          correctionReason: 'CUSTOMER_RETURN',
+          units: [
+            {
+              changes: [
+                { _tag: 'QUANTITY', quantityDelta: exactDecimal('-2') },
+                { _tag: 'VALUE', basisComponent: 'SHIPPING_ALLOCATION', valueDelta: exactDecimal('-10') },
+              ],
+              expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
+              taxableSupplyUnitId: 'taxable-supply-unit:o-1',
+            },
+          ],
+        },
+      });
+
+      expect(Schema.is(TaxCorrectionDeltaSchema)(result)).toBe(true);
+      expect(encodeResponse(result)).toMatchObject({
+        correctionTaxDelta: { amount: '-22.74', currency: 'CZK' },
+        units: [{ proposedNext: { remainingPublishedTax: { amount: '0.00', currency: 'CZK' } } }],
       });
     }),
   );
@@ -177,7 +209,7 @@ describe('Tax correction preview read', () => {
           correctionReason: 'PAYMENT_REFUND',
           units: [
             {
-              change: { _tag: 'REFUND', refundAmount: exactDecimal('-100') },
+              changes: [{ _tag: 'REFUND', refundAmount: exactDecimal('-100') }],
               expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
               taxableSupplyUnitId: 'taxable-supply-unit:o-1',
             },
