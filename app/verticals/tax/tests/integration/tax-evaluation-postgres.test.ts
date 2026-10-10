@@ -531,7 +531,7 @@ it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time boun
 );
 
 it.live(
-  'PO decision D3 on #907: a GROSS Shipping allocation round-trips through the stored Decision and jsonb Result',
+  'PO decision D3 on #907: a GROSS Shipping allocation evaluates from real reads and repeats deterministically',
   () =>
     Effect.scoped(
       Effect.gen(function* shippingAllocationAcceptance() {
@@ -560,7 +560,8 @@ it.live(
         }
         expect(outcome.result.purchaseTaxTotal.amount).toBe('47.02');
         // The exact gross-weighted shares (99 * 121/233, 99 * 112/233) and the code-versioned allocation key
-        // round-trip through the jsonb Decision store, not just the rounded published amounts (#907 plan §5.4).
+        // are on the Decision, not just the rounded published amounts (#907 plan §5.4). Storage and same-submission
+        // recovery of the final are covered by `order-tax-finalization-postgres.test.ts`.
         expect(
           outcome.decision.shippingAllocation?.unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
             taxableSupplyUnitId,
@@ -583,8 +584,8 @@ it.live(
           ],
         ]);
 
-        // Same-submission recovery (#942 F23): the identical input and state give back the same Decision identity
-        // and the identical Shipping allocation and Result, read back through the jsonb store.
+        // Repeat-evaluation determinism (#942 F23): the identical input and state give back the same Decision
+        // identity and the identical Shipping allocation and Result.
         const replay = yield* subject.evaluate(shippingRequest);
         const replayOutcome = outcomeOf(replay);
         if (!isSuccess(replayOutcome)) {
