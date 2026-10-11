@@ -28,7 +28,7 @@ const OUTBOX_WORKERS = [
 ];
 const KEPT_ON_ZEROPS = new Set(['cloudflared', 'db18', 'migrator', 'outboxworkerhost', 'spicedb', ...OUTBOX_WORKERS]);
 
-// The original nine IDs come from the backup bundle; Inventory and Assortment are newer additions.
+// The original nine IDs come from the backup bundle; Inventory, Assortment and Tax are newer additions.
 const STAGE_SERVICE_IDS = new Map(
   Object.entries({
     assortment: 'assortment-id',
@@ -43,6 +43,7 @@ const STAGE_SERVICE_IDS = new Map(
     pricing: 'll1Dd1AiRiKSLlB1QKDhQw',
     shellsuperapp: 'E6Wy3B08Rn60XqS6T666fg',
     storefrontregistry: 't9lSg7HFRne0DJblYFwXbg',
+    tax: 'tax-service-id',
   }),
 );
 
@@ -165,6 +166,7 @@ it('retires exactly the application services zerops-import.yaml declares, each w
     'ZEROPS_PRICING_SERVICE_ID',
     'ZEROPS_SHELL_SERVICE_ID',
     'ZEROPS_STOREFRONT_REGISTRY_SERVICE_ID',
+    'ZEROPS_TAX_SERVICE_ID',
   ]);
 });
 

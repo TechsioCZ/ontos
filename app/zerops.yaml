@@ -40,6 +40,7 @@ zerops:
         - 'app/verticals/price-group-catalog'
         - 'app/verticals/pricing'
         - 'app/verticals/storefront-registry'
+        - 'app/verticals/tax'
     deploy:
       temporaryShutdown: false
       readinessCheck:
