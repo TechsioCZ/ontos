@@ -103,16 +103,19 @@ the line basis.
 
 **Tax exactly once** — The rule by which Commerce composes the customer payable from TAX outputs
 (907-Q07, #921): every VAT amount is paid exactly once. TAX does not own the payable; Checkout
-composes it (roadmap #253 step 33). Payable = the NET Line Commercial Values + the owner-issued
-Shipping charge, once, in its own basis + the VAT of the NET-basis components only. With NET
-Shipping every component is NET, so the published Purchase Tax Total is added in full (lines 100 @
-21 % and 100 @ 12 %, Shipping 99 NET: 200 + 99 + 49.51 = 348.51). With GROSS Shipping the charge
-already holds its VAT, which is part of the published Purchase Tax Total too; only the NET lines'
-VAT is added (same basket, Shipping 99 GROSS: 200 + 99 + 33.00 = 332.00, never 200 + 99 + 47.02 =
-346.02). For a `NON_PAYER` seller the Tax is `0.00` and the charge is still added once in either
-basis (1 000 + 99 = 1 099). Because each unit's line VAT and Shipping VAT are rounded together,
-TAX publishes no separate cent amount for the line VAT; it publishes the exact Taxable Basis
-components and the rate, and the cent rounding of the GROSS-Shipping payable belongs to Checkout.
+composes it (roadmap #253 step 33). Payable = every owner-issued amount once, in its own basis
+(Line Commercial Values and the Shipping charge), + the VAT of the NET-basis amounts only; a GROSS
+amount already holds its VAT. Launch Pricing is NET (#921), so the lines are the NET instance of
+this rule. Two exact regimes follow. When no owner-issued amount is GROSS, the VAT added is the
+published Purchase Tax Total (lines 100 @ 21 % and 100 @ 12 %, Shipping 99 NET: 200 + 99 + 49.51
+= 348.51; the exact unrounded VAT, 49.507…, is not the amount added). When a GROSS amount is
+present, Checkout adds the exact VAT of the NET-basis amounts and rounds it (same basket, Shipping
+99 GROSS: 200 + 99 + 33.00 = 332.00, never 200 + 99 + 47.02 = 346.02, which counts the 14.02
+inside the GROSS charge twice). TAX publishes no separate rounded line VAT: each unit's line VAT
+and Shipping VAT are rounded together, so TAX publishes the exact Taxable Basis components and the
+rate, and the cent rounding of a payable with a GROSS amount belongs to Checkout. For a
+`NON_PAYER` seller the Tax is `0.00` and the charge is still added once in either basis
+(1 000 + 99 = 1 099).
 _Avoid_: "Pricing + Shipping + Tax" composed regardless of basis, adding VAT on top of a GROSS
 charge, a TAX-owned payable, Pricing computing Tax.
 
@@ -174,7 +177,8 @@ treating a declaration as System-of-Record-verified fact.
 
 **merchant-declared** — Evidence provenance meaning that a Seller VAT Regime Declaration revision
 was entered directly by the merchant through the governed declare Action, as opposed to `MIGRATED`
-provenance carried by the governed import of the merchant's existing source declaration (907-Q08). Neither provenance implies external verification.
+provenance carried by the governed import of the merchant's existing source declaration (907-Q08).
+Neither provenance implies external verification.
 _Avoid_: merchant-declared as a lesser-trust value, treating provenance as a correctness signal.
 
 **Migrated declaration** — A Seller VAT Regime Declaration revision carrying `MIGRATED` provenance,

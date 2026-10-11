@@ -41,14 +41,15 @@ the per-issue detail.
   value change in the component's recorded Shipping amount basis, never double-taxing the payable;
   the reference for that basis is the customer-charged Shipping price, not carrier cost.
   *Tax exactly once* (#921): TAX does not own the payable — Checkout composes it (roadmap #253
-  step 33) as the NET Line Commercial Values + the owner-issued Shipping charge, once, in its own
-  basis + the VAT of the NET-basis components only. NET Shipping adds the whole published Purchase
-  Tax Total (100 @ 21 % + 100 @ 12 % + Shipping 99 NET → 200 + 99 + 49.51 = 348.51); GROSS
-  Shipping already holds its VAT, so only the lines' VAT is added (→ 200 + 99 + 33.00 = 332.00, not
-  the naive 346.02 that counts 14.02 twice); a `NON_PAYER` adds the charge once at `0.00` Tax
-  (1 000 + 99 = 1 099). Line and Shipping VAT of one unit are rounded together, so TAX publishes no
-  separate line-VAT cent amount; it publishes the exact components, and the cent rounding of a
-  GROSS-Shipping payable belongs to Checkout.
+  step 33) as every owner-issued amount once, in its own basis (Line Commercial Values and the
+  Shipping charge), + the VAT of the NET-basis amounts only; Launch NET lines are the canonical
+  instance. When no owner-issued amount is GROSS, the VAT added is the published Purchase Tax Total
+  (100 @ 21 % + 100 @ 12 % + Shipping 99 NET → 200 + 99 + 49.51 = 348.51, not the exact 49.507…).
+  When a GROSS amount is present, Checkout adds the exact VAT of the NET-basis amounts and rounds it
+  (GROSS Shipping 99 → 200 + 99 + 33.00 = 332.00, not the naive 346.02 that counts 14.02 twice).
+  A `NON_PAYER` adds the charge once at `0.00` Tax (1 000 + 99 = 1 099). Line and Shipping VAT of
+  one unit are rounded together, so TAX publishes no separate rounded line VAT; it publishes the
+  exact components, and the cent rounding of a payable with a GROSS amount belongs to Checkout.
 - **Q08–Q09 — import.** OntOS imports an existing seller-declared VAT regime from the source system
   through a new governed Action; no merchant re-confirmation and no external verification. Known
   effective dates, history and scheduled changes are preserved; a current-only source state with no
