@@ -41,9 +41,9 @@ export const encodeAcceptedTaxTerms = Schema.encodeSync(AcceptedTaxTermsSchema);
  * One original accepted unit: its occurrence quantity, Line Commercial Value, rate and optional allocated Shipping.
  * `shipping` accepts either a decimal string or an already-exact fraction (needed for the exact shipping shares an
  * allocator produces); `shippingAmountBasis` is its recorded basis, GROSS unless given (907-Q07). Every shipped
- * unit of one Decision must state the same Shipping basis. `nonPayer: true` on the first unit switches the whole Decision to `SELLER_NOT_VAT_PAYER`; a
- * non-payer Decision carries no Shipping component (Unit 10), so `shipping` together with `nonPayer` throws rather
- * than silently building an undecodable Decision.
+ * unit of one Decision must state the same Shipping basis. `nonPayer: true` on the first unit switches the whole
+ * Decision to `SELLER_NOT_VAT_PAYER`; a non-payer Decision carries no Shipping component (Unit 10), so `shipping`
+ * together with `nonPayer` throws rather than silently building an undecodable Decision.
  */
 export interface OriginalUnitInput {
   readonly amountBasis?: 'GROSS' | 'NET';

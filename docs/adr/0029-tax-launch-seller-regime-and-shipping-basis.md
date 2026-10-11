@@ -40,6 +40,15 @@ the per-issue detail.
   Unit, with totals computed as sums of those rounded amounts; a correction converts a shipping
   value change in the component's recorded Shipping amount basis, never double-taxing the payable;
   the reference for that basis is the customer-charged Shipping price, not carrier cost.
+  *Tax exactly once* (#921): TAX does not own the payable — Checkout composes it (roadmap #253
+  step 33) as the NET Line Commercial Values + the owner-issued Shipping charge, once, in its own
+  basis + the VAT of the NET-basis components only. NET Shipping adds the whole published Purchase
+  Tax Total (100 @ 21 % + 100 @ 12 % + Shipping 99 NET → 200 + 99 + 49.51 = 348.51); GROSS
+  Shipping already holds its VAT, so only the lines' VAT is added (→ 200 + 99 + 33.00 = 332.00, not
+  the naive 346.02 that counts 14.02 twice); a `NON_PAYER` adds the charge once at `0.00` Tax
+  (1 000 + 99 = 1 099). Line and Shipping VAT of one unit are rounded together, so TAX publishes no
+  separate line-VAT cent amount; it publishes the exact components, and the cent rounding of a
+  GROSS-Shipping payable belongs to Checkout.
 - **Q08–Q09 — import.** OntOS imports an existing seller-declared VAT regime from the source system
   through a new governed Action; no merchant re-confirmation and no external verification. Known
   effective dates, history and scheduled changes are preserved; a current-only source state with no
@@ -58,7 +67,11 @@ the per-issue detail.
   introduced. Once the tax adviser answers, whoever already holds the needed permission records the
   answer against the architecture and opens the specific patch issues it requires. The activation
   assessor keeps `evidenceLabel: 'NON_PRODUCTION'` and `activationClaim: 'NONE'`; owner-ready is
-  never presented as production-activated or as full Commerce E2E.
+  never presented as production-activated or as full Commerce E2E. Q11.2: the final Billing and
+  later-event matrix and the handling of blocked cases close only after the adviser answers (this is
+  Q5 of the older DEV v2, not 907-Q05); Order TAX stays immutable, with no universal reuse for an
+  arbitrary later event. The partial-credit rule likewise waits for the adviser, so
+  `PARTIAL_CREDIT_RULE_APPROVED` stays an open activation item.
 - **Q13 — approved, not created.** The follow-ups listed in the register (Core identity, Billing
   documents, Order return authorization, Catalog Tax-purpose, the legal branch, later standalone tax
   events) are approved directions; none is created as a new issue, and downstream Order/Billing/
@@ -69,6 +82,7 @@ the per-issue detail.
 - `shared/domain/tax-activation-contracts.ts` and `src/domain/tax-activation-readiness.ts` rename
   `B2C_GROSS_AMOUNT_BASIS_CONTRACT` to `PRICING_DELIVERY_AMOUNT_BASIS_CONTRACT` and drop
   `D3_CONTRACT_TEXTS_RECONCILED`, because the PO reconciled #931/#933/#935 directly in this decision.
+  `Q5_LAUNCH_FLOWS_DECIDED` now cites 907-Q11.2 as its source.
 - `docs/contexts/tax/CONTEXT.md` drops the "Launch B2C owners publish GROSS" and "Shipping charge is
   GROSS-only" language and gains `Migrated declaration`, `Migration start` and `Shipping amount
   basis` terms.

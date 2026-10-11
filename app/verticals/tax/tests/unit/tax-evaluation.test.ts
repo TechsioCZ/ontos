@@ -1,11 +1,11 @@
 import { ReadHandlerUnavailable } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { Array as Arr, DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { readTaxEvaluation } from '../../src/api/tax-evaluation.read.ts';
 import { taxEvaluationRequestRejections } from '../../src/domain/tax-evaluation-request.ts';
 import { requiredTaxClassificationCodes, taxDecisionIdFor } from '../../src/domain/tax-evaluation.ts';
-import { exactTaxContribution } from '../../src/domain/tax-rounding.ts';
+import { exactTaxContribution, exactTaxOfAmounts } from '../../src/domain/tax-rounding.ts';
 import { SellerNotVatPayerTreatmentSchema, TaxableTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 import { subtractTaxExactRationals, sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
@@ -20,6 +20,7 @@ import {
 } from '../../src/domain/tax-non-success-outcome.ts';
 import type { TaxNonSuccessOutcome } from '../../src/domain/tax-non-success-outcome.ts';
 import type { SellerVatRegimeSelection } from '../../shared/domain/tax-kernel/seller-vat-regime.ts';
+import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
 import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
@@ -46,6 +47,7 @@ import {
 import type { TaxEvaluationRequestInput } from './tax-evaluation-fixtures.ts';
 
 const isSuccess = Schema.is(TaxOutcomeSuccessSchema);
+const isLineCommercialValue = Schema.is(LineCommercialValueBasisSchema);
 
 const success = (outcome: TaxOutcome): TaxOutcomeSuccess => {
   if (!isSuccess(outcome)) {
@@ -69,6 +71,26 @@ const sharesOf = (outcome: TaxOutcomeSuccess) =>
     basisComponent.amountBasis,
     basisComponent.amount,
   ]);
+
+/** Exact sum of zero or more amounts (907-Q07 payable composition). */
+const sumOf = (values: readonly TaxExactRational[]) => sumTaxExactRationals([exactDecimal('0'), ...values]);
+/** The NET Line Commercial Values a Decision taxes. */
+const linesOf = (outcome: TaxOutcomeSuccess) =>
+  sumOf(
+    outcome.decision.units.flatMap(({ taxableBasisInterpretation }) =>
+      taxableBasisInterpretation.components.flatMap((component) =>
+        isLineCommercialValue(component) ? [component.amount] : [],
+      ),
+    ),
+  );
+/** Exact VAT of the NET-basis components: the Tax not already inside a GROSS charge (907-Q07 #921). */
+const vatOfNetComponents = (outcome: TaxOutcomeSuccess) =>
+  sumOf(
+    outcome.decision.units.flatMap(({ taxableBasisInterpretation, treatment }) => {
+      const netComponents = taxableBasisInterpretation.components.filter(({ amountBasis }) => amountBasis === 'NET');
+      return Arr.isReadonlyArrayNonEmpty(netComponents) ? [exactTaxOfAmounts(netComponents, treatment)] : [];
+    }),
+  );
 
 const indeterminate = TaxStateIndeterminateSchema.make({});
 const shippingSourceRef = { revision: 1, shippingAmountId: 'shipping-1' } as const;
@@ -825,6 +847,53 @@ describe('Prospective Launch Tax evaluation', () => {
       );
       expect(gross.result.purchaseTaxTotal.amount).toBe('47.02');
       expect(net.result.purchaseTaxTotal.amount).toBe('49.51');
+    });
+
+    it('907-Q07 #921 #962 the payable counts VAT exactly once: 348.51 with NET Shipping 99, 332.00 with GROSS', () => {
+      // TAX owns no payable; Checkout composes it (#253 step 33). This pins the contract on TAX's outputs:
+      // payable = NET Line Commercial Values + the owner-issued Shipping charge once, in its own basis + the VAT of
+      // the NET-basis components only. A GROSS charge already holds its VAT, so it is never added again.
+      const shippingCharge99 = exactDecimal('99');
+      const net = success(evaluate(netLinesWithShipping('NET')));
+      const gross = success(evaluate(netLinesWithShipping('GROSS')));
+
+      // NET Shipping: every component is NET, so all published Tax is outside the charges and is added once.
+      expect(linesOf(net)).toEqual(exactDecimal('200'));
+      expect(net.decision.shippingAllocation?.ownerIssuedShippingAmount).toEqual(shippingCharge99);
+      expect(sumOf([linesOf(net), shippingCharge99, exactDecimal(net.result.purchaseTaxTotal.amount)])).toEqual(
+        exactDecimal('348.51'),
+      );
+      // GROSS Shipping: only the NET lines' VAT (21 + 12) is outside a charge; the 99 already holds its own VAT.
+      expect(vatOfNetComponents(gross)).toEqual(exactDecimal('33'));
+      expect(sumOf([linesOf(gross), shippingCharge99, vatOfNetComponents(gross)])).toEqual(exactDecimal('332.00'));
+      // The naive "lines + Shipping + purchaseTaxTotal" counts the carved-out Shipping VAT (47.02 - 33 = 14.02) twice.
+      const naive = sumOf([linesOf(gross), shippingCharge99, exactDecimal(gross.result.purchaseTaxTotal.amount)]);
+      expect(naive).toEqual(exactDecimal('346.02'));
+      expect(subtractTaxExactRationals(naive, exactDecimal('332.00'))).toEqual(exactDecimal('14.02'));
+
+      // NON_PAYER (local-921): 1 000 NET + 99 Shipping + Tax 0 = 1 099 in either Shipping basis, the charge once.
+      for (const amountBasis of ['NET', 'GROSS'] as const) {
+        const nonPayer = success(
+          evaluate(
+            evaluationRequest(
+              {
+                pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '1000.00')] },
+                purchase: purchaseBindingInput(['o1'], { shippingSourceRef }),
+                shipping: shippingInput({
+                  affectedOccurrenceIds: ['o1'],
+                  source: shippingCharge('99.00', amountBasis),
+                }),
+              },
+              ['o1'],
+            ),
+            ownState({ ruleSets: new Map(), sellerVatRegime: DECLARED_NON_PAYER }),
+          ),
+        );
+        expect(
+          sumOf([linesOf(nonPayer), shippingCharge99, exactDecimal(nonPayer.result.purchaseTaxTotal.amount)]),
+          amountBasis,
+        ).toEqual(exactDecimal('1099'));
+      }
     });
 
     it('907-Q07 #962 NET Shipping 99 over NET lines at one same rate splits by gross weights 121:363', () => {
