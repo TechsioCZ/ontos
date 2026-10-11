@@ -54,15 +54,25 @@ const unitWith = (occurrenceId: string, ratePercent: string, shipping: ShippingB
     taxableBasisInterpretation: { components: [...input.taxableBasisInterpretation.components, shipping] },
   });
 };
-const conservedPart = (taxableSupplyUnitId: string, revision = 1) => ({
+const conservedPart = (taxableSupplyUnitId: string, revision = 1, amountBasis: 'GROSS' | 'NET' = 'GROSS') => ({
   basisComponent: {
     _tag: 'SHIPPING_ALLOCATION',
     allocationKey: SHIPPING_ALLOCATION_KEY,
     amount: exactDecimal('0.33'),
-    amountBasis: 'GROSS' as const,
+    amountBasis,
     shippingSourceRef: { ...shippingSourceRefInput, revision },
   },
   taxableSupplyUnitId,
+});
+/** A keyed NET Shipping share of `numerator/233`, as the 121:112 split of 99 gives it (907-Q07). */
+const netShareOf233 = (numerator: string) => ({
+  basisComponent: {
+    _tag: 'SHIPPING_ALLOCATION',
+    allocationKey: SHIPPING_ALLOCATION_KEY,
+    amount: { denominator: '233', numerator },
+    amountBasis: 'NET',
+    shippingSourceRef: shippingSourceRefInput,
+  },
 });
 
 describe('Shipping Taxable Basis allocation', () => {
@@ -236,13 +246,68 @@ describe('Shipping Taxable Basis allocation', () => {
     ).toEqual(Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'NON_CZK_CURRENCY' }));
   });
 
-  it('D3-6 a NET-priced Shipping charge cannot supply the gross control total', () => {
-    expect(
+  it('907-Q07 #933 #935 a NET Shipping charge 99 at gross weights 121:112 is split exactly in its own NET basis', () => {
+    const allocation = Result.getOrThrow(
       allocate({
-        affectedTaxableSupplyUnits: affected([['u-1', '0']]),
-        shippingSource: current('5.00', { amountBasis: 'NET' }),
+        affectedTaxableSupplyUnits: affected([
+          ['u-1', '121'],
+          ['u-2', '112'],
+        ]),
+        shippingSource: current('99.00', { amountBasis: 'NET' }),
       }),
-    ).toEqual(Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'NET_SHIPPING_AMOUNT_BASIS' }));
+    );
+    // S * w / SUM(w) in the source basis: 99 * 121/233 = 11979/233 and 99 * 112/233 = 11088/233, both NET.
+    expect(allocation.unitAllocations).toEqual([
+      { ...netShareOf233('11979'), taxableSupplyUnitId: 'u-1' },
+      { ...netShareOf233('11088'), taxableSupplyUnitId: 'u-2' },
+    ]);
+    // The NET shares sum exactly to the NET 99.00 control total; nothing is relabelled GROSS.
+    expect(allocation.ownerIssuedShippingAmount).toEqual(exactDecimal('99.00'));
+    expect(
+      sumTaxExactRationals(
+        pipe(
+          allocation.unitAllocations,
+          Arr.map(({ basisComponent }) => basisComponent.amount),
+        ),
+      ),
+    ).toEqual(exactDecimal('99.00'));
+  });
+
+  it('907-Q07 #933 F14 one affected unit takes the whole unchanged NET charge, still NET and with no key', () => {
+    expect(
+      Result.getOrThrow(
+        allocate({
+          affectedTaxableSupplyUnits: affected([['u-1', '0']]),
+          shippingSource: current('5.00', { amountBasis: 'NET' }),
+        }),
+      ).unitAllocations,
+    ).toEqual([
+      {
+        basisComponent: {
+          _tag: 'SHIPPING_ALLOCATION',
+          amount: exactDecimal('5.00'),
+          amountBasis: 'NET',
+          shippingSourceRef: shippingSourceRefInput,
+        },
+        taxableSupplyUnitId: 'u-1',
+      },
+    ]);
+  });
+
+  it('907-Q07 #933 F19 one Shipping allocation never mixes NET and GROSS shares', () => {
+    const decodeAllocation = Schema.decodeUnknownSync(ShippingAllocationSchema);
+    expect(() =>
+      decodeAllocation({
+        ownerIssuedShippingAmount: exactDecimal('0.66'),
+        unitAllocations: [conservedPart('u-1', 1, 'NET'), conservedPart('u-2', 1, 'GROSS')],
+      }),
+    ).toThrow();
+    expect(
+      decodeAllocation({
+        ownerIssuedShippingAmount: exactDecimal('0.66'),
+        unitAllocations: [conservedPart('u-1', 1, 'NET'), conservedPart('u-2', 1, 'NET')],
+      }),
+    ).toBeDefined();
   });
 
   it('#933 F21-F22 #931 F20-F21 rejects an allocation that does not conserve the owner-issued amount', () => {

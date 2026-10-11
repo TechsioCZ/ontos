@@ -93,7 +93,8 @@ const unitMeaning = (unit: TaxDecisionUnit) => ({
   classification: isTaxableDecisionUnit(unit) ? unit.taxClassification.classificationCode : 'NONE',
   jurisdiction: unit.jurisdiction.jurisdiction,
   mapping: unit.taxableSupplyUnit.mapping._tag,
-  shipping: shippingComponents(unit).map(({ amount }) => exactText(amount)),
+  // The Shipping share carries its owner-issued basis: equal amounts in NET and GROSS are different meanings (907-Q07).
+  shipping: shippingComponents(unit).map(({ amount, amountBasis }) => joinParts([amountBasis, exactText(amount)])),
   treatment: isTaxableDecisionUnit(unit)
     ? `${unit.treatment._tag}:${exactText(taxExactFractionOfPercent(unit.treatment.ratePercent))}`
     : unit.treatment._tag,

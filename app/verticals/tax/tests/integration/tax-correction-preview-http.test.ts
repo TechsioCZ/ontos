@@ -80,21 +80,24 @@ const scope = {
 
 const historyOwnerUnavailable = { _tag: 'HISTORY_OWNER_UNAVAILABLE' } as const;
 const recordUnavailable = { _tag: 'ORIGINAL_RECORD_UNAVAILABLE', reason: 'MISSING' } as const;
-const baseBillingTerms = acceptedTaxTermsInput([{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }]);
-const billingTerms = {
-  ...baseBillingTerms,
+/** Binds fixture Terms to the trusted principal's Selling Legal Entity and tenant. */
+const inPrincipalScope = (terms: ReturnType<typeof acceptedTaxTermsInput>) => ({
+  ...terms,
   finalTax: {
-    ...baseBillingTerms.finalTax,
+    ...terms.finalTax,
     decision: {
-      ...baseBillingTerms.finalTax.decision,
+      ...terms.finalTax.decision,
       purchaseBinding: {
-        ...baseBillingTerms.finalTax.decision.purchaseBinding,
+        ...terms.finalTax.decision.purchaseBinding,
         sellingLegalEntityRef: SELLING_LEGAL_ENTITY_ID,
         tenantId: TENANT_ID,
       },
     },
   },
-};
+});
+const billingTerms = inPrincipalScope(
+  acceptedTaxTermsInput([{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }]),
+);
 
 const correctionDeclaredPurpose = {
   _tag: 'CORRECTION',
@@ -254,6 +257,51 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
         onSuccess: (success) => expect(Schema.is(TaxCorrectionDeltaSchema)(success)).toBe(true),
       });
       expect(harness.snapshot().evidenceWrites).toBe(1);
+    }),
+  );
+
+  it.effect('907-Q07 #948 a goods + NET Shipping correction of a NET-Shipping original previews over HTTP', () =>
+    Effect.gen(function* netShippingCorrection() {
+      const harness = yield* makeGrantedHarness();
+      // Original o-1: line 100.00 NET, quantity 2, Shipping 10.00 NET @ 21 %: 100 * 21/100 + 10 * 21/100 = 23.10.
+      const netShippingTerms = inPrincipalScope(
+        acceptedTaxTermsInput([
+          { lineValue: '100.00', occurrenceId: 'o-1', quantity: '2', shipping: '10.00', shippingAmountBasis: 'NET' },
+        ]),
+      );
+      const { result, statuses } = yield* run(
+        {
+          acceptedTaxTerms: netShippingTerms,
+          declaredPurpose: {
+            ...correctionDeclaredPurpose,
+            units: [
+              {
+                changes: [
+                  { _tag: 'QUANTITY', quantityDelta: exactDecimal('-1') },
+                  {
+                    _tag: 'VALUE',
+                    amountBasis: 'NET',
+                    basisComponent: 'SHIPPING_ALLOCATION',
+                    valueDelta: exactDecimal('-4.00'),
+                  },
+                ],
+                expectedPreviousState: { _tag: 'NO_ACCEPTED_CORRECTION' },
+                taxableSupplyUnitId: 'taxable-supply-unit:o-1',
+              },
+            ],
+          },
+        },
+        harness.runtime,
+      );
+      expect(statuses).toEqual([200]);
+      // Remaining line 50 and Shipping 6 NET: 50 * 21/100 + 6 * 21/100 = 11.76; delta 11.76 - 23.10 = -11.34.
+      const delta = Result.getOrThrow(result);
+      if (!Schema.is(TaxCorrectionDeltaSchema)(delta)) {
+        throw new Error('Expected a Tax Correction Delta');
+      }
+      expect(delta.units[0].proposedNext.remainingShippingBasis).toEqual(exactDecimal('6'));
+      expect(delta.units[0].proposedNext.remainingPublishedTax.amount).toBe('11.76');
+      expect(delta.correctionTaxDelta.amount).toBe('-11.34');
     }),
   );
 

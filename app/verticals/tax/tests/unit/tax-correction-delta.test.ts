@@ -151,6 +151,30 @@ const stageAEncodedRequest = (units: readonly unknown[]) => ({
   units,
 });
 
+/** 907-Q07 fixture: o-1 line 100.00 NET, quantity 2, Shipping 10.00 NET, 21 %: 21 + 10 * 21/100 = 23.10 stored. */
+const netShippingTerms = () =>
+  acceptedTaxTerms([
+    { lineValue: '100.00', occurrenceId: 'o-1', quantity: '2', shipping: '10.00', shippingAmountBasis: 'NET' },
+  ]);
+
+/** A published NET Line Commercial Value of 100.00 for one occurrence. */
+const netLineOf100 = (occurrenceId: string) =>
+  Schema.decodeSync(LineCommercialValueBasisSchema)({
+    _tag: 'LINE_COMMERCIAL_VALUE',
+    amount: exactDecimal('100.00'),
+    amountBasis: 'NET',
+    occurrenceId,
+    pricingLineRef: `p-${occurrenceId}`,
+  });
+
+/** Full negation of an exact NET Shipping share, stated in NET (907-Q07). */
+const netShippingReversal = (share: TaxExactRational): TaxCorrectionChange => ({
+  _tag: 'VALUE',
+  amountBasis: 'NET',
+  basisComponent: 'SHIPPING_ALLOCATION',
+  valueDelta: subtractTaxExactRationals(ZERO_TAX_EXACT_RATIONAL, share),
+});
+
 const acceptedAfterSeven: AcceptedCumulativeCorrectionState = {
   _tag: 'ACCEPTED',
   state: decodeState({
@@ -232,7 +256,7 @@ describe('Tax Correction Delta', () => {
   });
 
   it('#948 F8 F25 a quantity return leaves the allocated Shipping share; only an explicit value change reverses it', () => {
-    // PO decision D3 on #907: the Shipping share is always GROSS, so its VAT is carved out under § 37 písm. b):
+    // PO decision D3 on #907: this fixture's Shipping share is GROSS, so its VAT is carved out under § 37 písm. b):
     // 100 NET @ 21 % gives 21 exactly; 10 GROSS @ 21 % gives 210/121 = 1.7355... -> total 22.7355... -> 22.74.
     const terms = acceptedTaxTerms([{ lineValue: '100.00', occurrenceId: 'o-1', quantity: '2', shipping: '10.00' }]);
     expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('22.74');
@@ -920,14 +944,16 @@ describe('Tax Correction Delta', () => {
       }
     });
 
-    it('B-14 decode rejects a Shipping value change with amountBasis NET', () => {
-      const forged: TaxCorrectionChange = {
-        _tag: 'VALUE',
-        amountBasis: 'NET',
-        basisComponent: 'SHIPPING_ALLOCATION',
-        valueDelta: exactDecimal('-1'),
-      };
-      expect(isSingleChange(forged)).toBe(false);
+    it('907-Q07 B-14 a Shipping value change states its own NET or GROSS basis, which stays required', () => {
+      for (const amountBasis of ['NET', 'GROSS'] as const) {
+        const change: TaxCorrectionChange = {
+          _tag: 'VALUE',
+          amountBasis,
+          basisComponent: 'SHIPPING_ALLOCATION',
+          valueDelta: exactDecimal('-1'),
+        };
+        expect(isSingleChange(change), amountBasis).toBe(true);
+      }
 
       // `amountBasis` is a required field of the VALUE member: decode rejects it when missing, not just when wrong.
       expect(() =>
@@ -937,6 +963,132 @@ describe('Tax Correction Delta', () => {
           valueDelta: exactDecimal('-1'),
         }),
       ).toThrow();
+    });
+  });
+
+  describe('907-Q07 corrections of a NET-Shipping original (#948, #962)', () => {
+    it('907-Q07 #948 the baseline records the NET Shipping basis and the original publishes share × r', () => {
+      const terms = netShippingTerms();
+      // A GROSS 10.00 share would publish 21 + 210/121 = 22.74 instead.
+      expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('23.10');
+    });
+
+    it('907-Q07 #948 a partial goods + NET Shipping correction, then full exhaustion, sums to minus the original', () => {
+      const terms = netShippingTerms();
+
+      // [QUANTITY -1, VALUE SHIPPING -4.00 NET]: line 100 * 1/2 = 50, Shipping 10 - 4 = 6 NET.
+      // Exact 50 * 21/100 + 6 * 21/100 = 11.76 -> 11.76; delta 11.76 - 23.10 = -11.34.
+      const partial = deltaOf(
+        correct(terms, [unitRequest('o-1', [quantity('-1'), value('-4.00', 'SHIPPING_ALLOCATION', 'NET')])]),
+      );
+      expect(partial.units[0].proposedNext).toEqual({
+        remainingLineBasis: exactDecimal('50'),
+        remainingPublishedTax: { amount: '11.76', currency: 'CZK' },
+        remainingQuantity: exactDecimal('1'),
+        remainingShippingBasis: exactDecimal('6'),
+      });
+      expect(partial.units[0].taxCorrectionDelta.amount).toBe('-11.34');
+
+      // Full exhaustion of the rest: [QUANTITY -1, VALUE SHIPPING -6 NET] -> 0.00, delta -11.76.
+      const rest = deltaOf(
+        correct(terms, [
+          unitRequest('o-1', [quantity('-1'), value('-6', 'SHIPPING_ALLOCATION', 'NET')], acceptedAs(partial, 'v1')),
+        ]),
+      );
+      expect(rest.units[0].proposedNext.remainingPublishedTax.amount).toBe('0.00');
+      expect(rest.units[0].proposedNext.remainingShippingBasis).toEqual(ZERO_TAX_EXACT_RATIONAL);
+      expect(rest.units[0].taxCorrectionDelta.amount).toBe('-11.76');
+      expect(sumOfDeltas([partial.units[0], rest.units[0]])).toBe(-2310n);
+
+      // One full reversal [QUANTITY -2, VALUE SHIPPING -10 NET] is the exact negation of the stored 23.10.
+      const full = deltaOf(
+        correct(terms, [unitRequest('o-1', [quantity('-2'), value('-10', 'SHIPPING_ALLOCATION', 'NET')])]),
+      );
+      expect(full.units[0].taxCorrectionDelta.amount).toBe('-23.10');
+    });
+
+    it('907-Q07 Unit 12 decision 5 a GROSS Shipping change converts into the recorded NET basis at the unit rate', () => {
+      const terms = netShippingTerms();
+
+      // -4.84 GROSS / (1 + 21/100) = -4 NET exactly: the same outcome as a -4.00 NET change.
+      const gross = deltaOf(correct(terms, [unitRequest('o-1', value('-4.84', 'SHIPPING_ALLOCATION', 'GROSS'))]));
+      const net = deltaOf(correct(terms, [unitRequest('o-1', value('-4.00', 'SHIPPING_ALLOCATION', 'NET'))]));
+      expect(gross.units[0].proposedNext.remainingShippingBasis).toEqual(exactDecimal('6'));
+      expect(gross.units[0].proposedNext).toEqual(net.units[0].proposedNext);
+      // Exact 100 * 21/100 + 6 * 21/100 = 22.26 -> 22.26; delta -0.84.
+      expect(gross.units[0].taxCorrectionDelta.amount).toBe('-0.84');
+
+      // -12.10 GROSS is exactly the whole 10 NET; -12.11 GROSS = -1211/121 NET goes below zero and is never clamped.
+      expect(
+        deltaOf(correct(terms, [unitRequest('o-1', value('-12.10', 'SHIPPING_ALLOCATION', 'GROSS'))])).units[0]
+          .proposedNext.remainingShippingBasis,
+      ).toEqual(ZERO_TAX_EXACT_RATIONAL);
+      const beyond = correct(terms, [unitRequest('o-1', value('-12.11', 'SHIPPING_ALLOCATION', 'GROSS'))]);
+      expect(isOutOfBounds(beyond)).toBe(true);
+      expect(issuesOf(beyond)).toEqual(exceeds('EXCEEDS_REMAINING_BASIS_COMPONENT'));
+    });
+
+    it('907-Q07 #948 the NET worked example: a NET-Shipping refund on A, then a full withdrawal of both units', () => {
+      // NET lines A 100 @ 21 %, B 100 @ 12 %, NET Shipping 99 split by the real allocator at weights 121:112.
+      const allocation = Result.getOrThrow(
+        allocateShippingTaxableBasis(
+          Schema.decodeSync(ShippingAllocationInputSchema)({
+            affectedTaxableSupplyUnits: [
+              {
+                grossLineValueWeight: grossLineValueWeight(netLineOf100('o-1'), '21'),
+                taxableSupplyUnitId: unitIdOf('o-1'),
+              },
+              {
+                grossLineValueWeight: grossLineValueWeight(netLineOf100('o-2'), '12'),
+                taxableSupplyUnitId: unitIdOf('o-2'),
+              },
+            ],
+            shippingSource: {
+              _tag: 'CURRENT',
+              amount: { amount: exactDecimal('99.00'), amountBasis: 'NET', currency: 'CZK' },
+              shippingSourceRef: shippingSourceRefInput,
+            },
+          }),
+        ),
+      );
+      const [shareA, shareB] = allocation.unitAllocations.map(({ basisComponent }) => basisComponent.amount);
+      if (shareA === undefined || shareB === undefined) {
+        throw new Error('Expected two Shipping shares');
+      }
+      expect(shareA).toEqual({ denominator: '233', numerator: '11979' });
+      expect(shareB).toEqual({ denominator: '233', numerator: '11088' });
+      const terms = acceptedTaxTerms([
+        { lineValue: '100.00', occurrenceId: 'o-1', quantity: '1', shipping: shareA, shippingAmountBasis: 'NET' },
+        {
+          lineValue: '100.00',
+          occurrenceId: 'o-2',
+          quantity: '1',
+          ratePercent: '12',
+          shipping: shareB,
+          shippingAmountBasis: 'NET',
+        },
+      ]);
+      // Stored: A 21 + 11979/233 * 21/100 = 31.7965... -> 31.80; B 12 + 11088/233 * 12/100 = 17.7105... -> 17.71.
+      expect(terms.finalTax.result.units.map(({ publishedTaxAmount }) => publishedTaxAmount.amount)).toEqual([
+        '31.80',
+        '17.71',
+      ]);
+
+      // A NET-Shipping refund of A's whole share leaves A's line VAT 21.00: delta -10.80 (exact Shipping VAT
+      // 251559/23300 = 10.7965...). B is untouched.
+      const refund = deltaOf(correct(terms, [unitRequest('o-1', netShippingReversal(shareA))]));
+      expect(refund.units.map(({ taxableSupplyUnitId }) => taxableSupplyUnitId)).toEqual([unitIdOf('o-1')]);
+      expect(refund.units[0].proposedNext.remainingPublishedTax.amount).toBe('21.00');
+      expect(refund.units[0].taxCorrectionDelta.amount).toBe('-10.80');
+
+      const withdrawal = deltaOf(
+        correct(terms, [
+          unitRequest('o-1', [quantity('-1'), netShippingReversal(shareA)]),
+          unitRequest('o-2', [quantity('-1'), netShippingReversal(shareB)]),
+        ]),
+      );
+      expect(withdrawal.units.map(({ taxCorrectionDelta }) => taxCorrectionDelta.amount)).toEqual(['-31.80', '-17.71']);
+      expect(withdrawal.correctionTaxDelta.amount).toBe('-49.51');
     });
   });
 

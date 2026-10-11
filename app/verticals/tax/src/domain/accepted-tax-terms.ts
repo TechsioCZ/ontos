@@ -31,7 +31,8 @@ const isShippingAllocation = Schema.is(ShippingAllocationBasisSchema);
 /**
  * Exact original meaning of one Taxable Supply Unit as recorded on the Authoritative Original Accepted Record. The
  * baseline is treatment-aware: a `SELLER_NOT_VAT_PAYER` unit carries no `rate` field at all, because no rate is
- * assumed for a non-payer (OWNERSHIP-FINAL §5).
+ * assumed for a non-payer (OWNERSHIP-FINAL §5). `shippingAmountBasis` is the recorded basis of the unit's Shipping
+ * component, NET or GROSS, and is absent exactly when the unit carries no Shipping component (907-Q07).
  */
 export interface OriginalUnitBaseline {
   readonly lineAmountBasis: TaxAmountBasis;
@@ -39,6 +40,7 @@ export interface OriginalUnitBaseline {
   readonly originalPublishedTax: TaxMonetaryAmount;
   readonly originalQuantity: TaxExactRational;
   readonly originalShippingBasis: NonNegativeTaxExactRational;
+  readonly shippingAmountBasis: TaxAmountBasis | undefined;
   readonly taxRoundingPolicy: TaxRoundingPolicy;
   readonly treatment: TaxDecisionTreatment;
 }
@@ -49,7 +51,8 @@ export interface OriginalUnitBaseline {
  * its source occurrence and the used rounding policy. No Catalog, Pricing, Tax Rule or registration source is
  * consulted. A unit outside the record's exact partition has no baseline. A `SELLER_NOT_VAT_PAYER` unit has no
  * Shipping component (Unit 10), so its `originalShippingBasis` is 0 by the existing default; its `lineAmountBasis`
- * is still the recorded Line Commercial Value basis, required under both regimes (Unit 11)
+ * is still the recorded Line Commercial Value basis, required under both regimes (Unit 11). The Shipping basis is
+ * copied from the recorded component, never assumed (907-Q07)
  * (#945 F12-F14, #946 F10-F11, #948 F2-F5, F8; Unit 10 A5, F17).
  */
 export const originalUnitBaseline = (
@@ -73,6 +76,7 @@ export const originalUnitBaseline = (
     originalPublishedTax: published.publishedTaxAmount,
     originalQuantity,
     originalShippingBasis: shipping?.amount ?? NonNegativeTaxExactRationalSchema.make(ZERO_TAX_EXACT_RATIONAL),
+    shippingAmountBasis: shipping?.amountBasis,
     taxRoundingPolicy: result.taxRoundingPolicy,
     treatment: unit.treatment,
   }));

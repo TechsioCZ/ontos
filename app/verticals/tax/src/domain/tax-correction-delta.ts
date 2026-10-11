@@ -64,16 +64,21 @@ const isAtMost = (value: TaxExactRational, limit: TaxExactRational) =>
 /**
  * Published Tax of a remaining basis at the original unit's own treatment and the original single per-unit
  * boundary: the sum, never rounded before this boundary, of the exact § 37 písm. b) VAT of the remaining Line
- * Commercial Value at its own recorded amount basis and of the remaining Shipping share, always GROSS
- * (#948 F18, F21; #935 F12-F22; PO decision D3 on #907). Corrections use the same `exactTaxOfAmounts` as the
- * original sale, so any later change to exact VAT arithmetic reaches corrections automatically (Unit 12 B1).
+ * Commercial Value and of the remaining Shipping share, each at its own recorded amount basis, NET or GROSS
+ * (#948 F18, F21; #935 F12-F22; 907-Q07). A unit without a recorded Shipping component has no Shipping share; its
+ * remaining Shipping is 0 by `followsFromOriginalRecord` and the out-of-bounds check. Corrections use the same
+ * `exactTaxOfAmounts` as the original sale, so any later change to exact VAT arithmetic reaches corrections
+ * automatically (Unit 12 B1).
  */
 const publishedTaxOf = (baseline: OriginalUnitBaseline, line: TaxExactRational, shipping: TaxExactRational) => {
+  const lineAmount = { amount: NonNegativeTaxExactRationalSchema.make(line), amountBasis: baseline.lineAmountBasis };
   const exact = exactTaxOfAmounts(
-    [
-      { amount: NonNegativeTaxExactRationalSchema.make(line), amountBasis: baseline.lineAmountBasis },
-      { amount: NonNegativeTaxExactRationalSchema.make(shipping), amountBasis: 'GROSS' },
-    ],
+    baseline.shippingAmountBasis === undefined
+      ? [lineAmount]
+      : [
+          lineAmount,
+          { amount: NonNegativeTaxExactRationalSchema.make(shipping), amountBasis: baseline.shippingAmountBasis },
+        ],
     baseline.treatment,
   );
   const published = publishedTaxAmountRoundedHalfUp(exact);
@@ -156,9 +161,11 @@ const nextGoods = (
 };
 
 /**
- * Next remaining Shipping share from at most one explicit Shipping-value change, converted into the always-GROSS
- * recorded Shipping basis at the unit's own treatment (identity, since a Shipping change is always GROSS); a
- * quantity change never moves it, so arithmetic never invents a Shipping refund ("never 1/quantity", H5).
+ * Next remaining Shipping share from at most one explicit Shipping-value change, converted into the recorded
+ * Shipping basis, NET or GROSS, at the original unit's own treatment (Unit 12 decision 5, 907-Q07). A unit without
+ * a recorded Shipping component has nothing to convert into: its remaining Shipping is 0, so any reduction stays
+ * negative and is out of bounds. A quantity change never moves it, so arithmetic never invents a Shipping refund
+ * ("never 1/quantity", H5).
  */
 const nextShipping = (
   baseline: OriginalUnitBaseline,
@@ -173,7 +180,9 @@ const nextShipping = (
           VALUE: ({ amountBasis, valueDelta }) =>
             addTaxExactRationals(
               previous.remainingShippingBasis,
-              amountInBasis(valueDelta, amountBasis, 'GROSS', baseline.treatment),
+              baseline.shippingAmountBasis === undefined
+                ? valueDelta
+                : amountInBasis(valueDelta, amountBasis, baseline.shippingAmountBasis, baseline.treatment),
             ),
         }),
       );

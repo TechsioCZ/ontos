@@ -62,6 +62,14 @@ const publishedByUnit = (outcome: TaxOutcome) =>
     ]),
   );
 
+/** Each unit's Shipping share with its basis, in unit order (907-Q07). */
+const sharesOf = (outcome: TaxOutcomeSuccess) =>
+  outcome.decision.shippingAllocation?.unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
+    taxableSupplyUnitId,
+    basisComponent.amountBasis,
+    basisComponent.amount,
+  ]);
+
 const indeterminate = TaxStateIndeterminateSchema.make({});
 const shippingSourceRef = { revision: 1, shippingAmountId: 'shipping-1' } as const;
 
@@ -646,26 +654,6 @@ describe('Prospective Launch Tax evaluation', () => {
       ).toEqual(indeterminate);
     });
 
-    it('D3-6 a NET-priced Shipping charge cannot supply the gross control total', () => {
-      expect(evaluate(withShipping({ source: shippingCharge('100.00', 'NET') }))).toEqual(
-        TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NET_SHIPPING_AMOUNT_BASIS' }),
-      );
-    });
-
-    it('D3-6b a NET-priced Shipping charge beats a missing rule on another unit (#938 F3)', () => {
-      expect(
-        evaluate(
-          withShipping({ source: shippingCharge('100.00', 'NET') }),
-          ownState({
-            ruleSets: new Map([
-              [STANDARD_CODE, selected('21', 'rule-standard')],
-              [REDUCED_CODE, { applicable: [], outcome: 'TAX_RULE_MISSING' }],
-            ]),
-          }),
-        ),
-      ).toEqual(TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NET_SHIPPING_AMOUNT_BASIS' }));
-    });
-
     it('D3-7 display (largest-remainder) shares never feed back into the exact tax', () => {
       const outcome = success(
         evaluate(
@@ -751,6 +739,245 @@ describe('Prospective Launch Tax evaluation', () => {
       expect(evaluate(withShipping({ source: { _tag: 'NOT_ESTABLISHED', state: 'STALE' } }))).toEqual(
         TaxInputStaleSchema.make({}),
       );
+    });
+  });
+
+  describe('907-Q07 NET or GROSS Shipping, also for a VAT payer (PO 2026-10-11)', () => {
+    /** NET lines o1 100 @ 21 % and o2 100 @ 12 %, Shipping 99 on both in the given basis. */
+    const netLinesWithShipping = (amountBasis: 'GROSS' | 'NET') =>
+      evaluationRequest({
+        pricing: {
+          pricingResultRef: PRICING_RESULT_REF,
+          publishedLines: [pricingLine('o1', '100.00'), pricingLine('o2', '100.00')],
+        },
+        purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+        shipping: shippingInput({ source: shippingCharge('99.00', amountBasis) }),
+      });
+
+    it('907-Q07 #933 #935 a payer NET Shipping charge 99 is split by gross weights 121:112 in its NET basis and taxed share × r', () => {
+      const outcome = success(evaluate(netLinesWithShipping('NET')));
+
+      // Weights are the gross line values: 100 * (1 + 21/100) = 121 and 100 * (1 + 12/100) = 112, total 233.
+      // Shares S * w / SUM(w) stay NET: 99 * 121/233 = 11979/233 and 99 * 112/233 = 11088/233.
+      expect(sharesOf(outcome)).toEqual([
+        ['taxable-supply-unit:o1', 'NET', { denominator: '233', numerator: '11979' }],
+        ['taxable-supply-unit:o2', 'NET', { denominator: '233', numerator: '11088' }],
+      ]);
+      expect(outcome.decision.shippingAllocation?.ownerIssuedShippingAmount).toEqual(exactDecimal('99.00'));
+      const [allocation1, allocation2] = outcome.decision.shippingAllocation?.unitAllocations ?? [];
+      expect(
+        sumTaxExactRationals([
+          allocation1?.basisComponent.amount ?? exactDecimal('0'),
+          allocation2?.basisComponent.amount ?? exactDecimal('0'),
+        ]),
+      ).toEqual(exactDecimal('99'));
+      // o1: 21 + 11979/233 * 21/100 = 740859/23300 = 31.7965... -> 31.80.
+      // o2: 12 + 11088/233 * 12/100 = 103164/5825 = 17.7105... -> 17.71. The total is the sum of the unit taxes.
+      const [unit1, unit2] = outcome.decision.units;
+      if (unit1 === undefined || unit2 === undefined) {
+        throw new Error('Expected two Decision units');
+      }
+      expect(exactTaxContribution(unit1.taxableBasisInterpretation, unit1.treatment)).toEqual({
+        denominator: '23300',
+        numerator: '740859',
+      });
+      expect(exactTaxContribution(unit2.taxableBasisInterpretation, unit2.treatment)).toEqual({
+        denominator: '5825',
+        numerator: '103164',
+      });
+      expect(publishedByUnit(outcome)).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '31.80'],
+          ['taxable-supply-unit:o2', '17.71'],
+        ]),
+      );
+      expect(outcome.result.purchaseTaxTotal.amount).toBe('49.51');
+      // Shipping VAT is share * r, added once: 11979/233 * 21/100 + 11088/233 * 12/100 = 76923/4660 (16.51).
+      expect(
+        sumTaxExactRationals([
+          subtractTaxExactRationals(
+            exactTaxContribution(unit1.taxableBasisInterpretation, unit1.treatment),
+            exactDecimal('21'),
+          ),
+          subtractTaxExactRationals(
+            exactTaxContribution(unit2.taxableBasisInterpretation, unit2.treatment),
+            exactDecimal('12'),
+          ),
+        ]),
+      ).toEqual({ denominator: '4660', numerator: '76923' });
+    });
+
+    it('907-Q05 907-Q07 #933 the same basket with GROSS Shipping 99 has the same shares in GROSS and carves VAT out', () => {
+      const net = success(evaluate(netLinesWithShipping('NET')));
+      const gross = success(evaluate(netLinesWithShipping('GROSS')));
+
+      // Same key, same exact shares; only the basis differs, and it is never relabelled.
+      expect(sharesOf(gross)).toEqual([
+        ['taxable-supply-unit:o1', 'GROSS', { denominator: '233', numerator: '11979' }],
+        ['taxable-supply-unit:o2', 'GROSS', { denominator: '233', numerator: '11088' }],
+      ]);
+      // GROSS: o1 21 + 11979/233 * 21/121 = 6972/233 -> 29.92; o2 12 + 11088/233 * 12/112 = 3984/233 -> 17.10.
+      expect(publishedByUnit(gross)).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '29.92'],
+          ['taxable-supply-unit:o2', '17.10'],
+        ]),
+      );
+      expect(gross.result.purchaseTaxTotal.amount).toBe('47.02');
+      expect(net.result.purchaseTaxTotal.amount).toBe('49.51');
+    });
+
+    it('907-Q07 #962 NET Shipping 99 over NET lines at one same rate splits by gross weights 121:363', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest({
+            catalog: [catalogEntry('o1', STANDARD_CODE), catalogEntry('o2', STANDARD_CODE)],
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [pricingLine('o1', '100.00'), pricingLine('o2', '300.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00', 'NET') }),
+          }),
+        ),
+      );
+
+      // Weights 121 and 363 (total 484): shares 99 * 121/484 = 99/4 and 99 * 363/484 = 297/4, NET.
+      expect(sharesOf(outcome)).toEqual([
+        ['taxable-supply-unit:o1', 'NET', { denominator: '4', numerator: '99' }],
+        ['taxable-supply-unit:o2', 'NET', { denominator: '4', numerator: '297' }],
+      ]);
+      // o1: 21 + 99/4 * 21/100 = 10479/400 = 26.1975 -> 26.20; o2: 63 + 297/4 * 21/100 = 31437/400 = 78.5925 -> 78.59.
+      expect(publishedByUnit(outcome)).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '26.20'],
+          ['taxable-supply-unit:o2', '78.59'],
+        ]),
+      );
+      expect(outcome.result.purchaseTaxTotal.amount).toBe('104.79');
+    });
+
+    it('907-Q07 #933 #962 NET Shipping on an affected subset leaves the unaffected unit without a Shipping share', () => {
+      const outcome = success(
+        evaluate(
+          evaluationRequest(
+            {
+              pricing: {
+                pricingResultRef: PRICING_RESULT_REF,
+                publishedLines: [pricingLine('o1', '100.00'), pricingLine('o2', '100.00'), pricingLine('o3', '500.00')],
+              },
+              purchase: purchaseBindingInput(['o1', 'o2', 'o3'], { shippingSourceRef }),
+              shipping: shippingInput({ affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00', 'NET') }),
+            },
+            ['o1', 'o2', 'o3'],
+          ),
+        ),
+      );
+
+      // o1 @ 21 % and o2 @ 12 % share 99 by 121:112 exactly as above; o3 (500 NET @ 12 % = 60.00) has no share.
+      expect(sharesOf(outcome)).toEqual([
+        ['taxable-supply-unit:o1', 'NET', { denominator: '233', numerator: '11979' }],
+        ['taxable-supply-unit:o2', 'NET', { denominator: '233', numerator: '11088' }],
+      ]);
+      expect(publishedByUnit(outcome)).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '31.80'],
+          ['taxable-supply-unit:o2', '17.71'],
+          ['taxable-supply-unit:o3', '60.00'],
+        ]),
+      );
+      expect(outcome.result.purchaseTaxTotal.amount).toBe('109.51');
+    });
+
+    it('907-Q07 #933 one affected unit takes the whole NET Shipping amount, taxed share × r', () => {
+      // o2: NET 500 @ 12 % = 60; NET 100 Shipping @ 12 % = 12 -> 72.00 (the GROSS sibling above gives 70.71).
+      expect(
+        publishedByUnit(
+          evaluate(withShipping({ affectedOccurrenceIds: ['o2'], source: shippingCharge('100.00', 'NET') })),
+        ),
+      ).toEqual(
+        new Map([
+          ['taxable-supply-unit:o1', '210.00'],
+          ['taxable-supply-unit:o2', '72.00'],
+        ]),
+      );
+    });
+
+    it('907-Q07 #962 zero weights with a non-zero NET Shipping charge are indeterminate, never a guessed split', () => {
+      expect(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [pricingLine('o1', '0.00'), pricingLine('o2', '0.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00', 'NET') }),
+          }),
+        ),
+      ).toEqual(indeterminate);
+    });
+
+    it('907-Q07 #938 an unusable weight (missing rule) with NET Shipping is TAX_RULE_MISSING; no weight is guessed', () => {
+      // The NET basis alone is never unsupported (it no longer beats the missing rule on o2, #938 F3).
+      expect(
+        evaluate(
+          withShipping({ source: shippingCharge('99.00', 'NET') }),
+          ownState({
+            ruleSets: new Map([
+              [STANDARD_CODE, selected('21', 'rule-standard')],
+              [REDUCED_CODE, { applicable: [], outcome: 'TAX_RULE_MISSING' }],
+            ]),
+          }),
+        ),
+      ).toEqual(TaxRuleMissingSchema.make({}));
+    });
+
+    it('907-Q06 #938 mixed GROSS and NET lines stay indeterminate with NET Shipping', () => {
+      expect(
+        evaluate(
+          evaluationRequest({
+            pricing: {
+              pricingResultRef: PRICING_RESULT_REF,
+              publishedLines: [grossLine('o1', '121.00'), pricingLine('o2', '100.00')],
+            },
+            purchase: purchaseBindingInput(['o1', 'o2'], { shippingSourceRef }),
+            shipping: shippingInput({ source: shippingCharge('99.00', 'NET') }),
+          }),
+        ),
+      ).toEqual(indeterminate);
+    });
+
+    it('907-Q02 907-Q07 #933 #962 a non-payer with 99 NET or 99 GROSS Shipping succeeds at 0.00 with no Shipping VAT allocation', () => {
+      for (const amountBasis of ['NET', 'GROSS'] as const) {
+        const outcome = success(
+          evaluate(
+            evaluationRequest(
+              {
+                pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '1000.00')] },
+                purchase: purchaseBindingInput(['o1'], { shippingSourceRef }),
+                shipping: shippingInput({
+                  affectedOccurrenceIds: ['o1'],
+                  source: shippingCharge('99.00', amountBasis),
+                }),
+              },
+              ['o1'],
+            ),
+            ownState({ ruleSets: new Map(), sellerVatRegime: DECLARED_NON_PAYER }),
+          ),
+        );
+        expect(outcome.decision.shippingAllocation, amountBasis).toBeUndefined();
+        // One SELLER_NOT_VAT_PAYER unit whose basis is the published line alone: no Shipping VAT allocation.
+        expect(
+          outcome.decision.units.map(({ taxableBasisInterpretation, treatment }) => [
+            Schema.is(SellerNotVatPayerTreatmentSchema)(treatment),
+            taxableBasisInterpretation.components.length,
+          ]),
+          amountBasis,
+        ).toEqual([[true, 1]]);
+        expect(publishedByUnit(outcome), amountBasis).toEqual(new Map([['taxable-supply-unit:o1', '0.00']]));
+        expect(outcome.result.purchaseTaxTotal.amount, amountBasis).toBe('0.00');
+      }
     });
   });
 

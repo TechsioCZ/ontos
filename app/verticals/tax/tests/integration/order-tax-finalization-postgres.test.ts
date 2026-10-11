@@ -50,6 +50,7 @@ import {
   PRICING_RESULT_REF,
   evaluationRequestInput,
   grossLine,
+  pricingLine,
   shippingCharge,
 } from '../unit/tax-evaluation-fixtures.ts';
 
@@ -376,6 +377,64 @@ it.live('PO decision D3 on #907: a final Order Tax with a GROSS Shipping allocat
       expect(recovered.handoff.outcome.decision.shippingAllocation).toEqual(
         result.handoff.outcome.decision.shippingAllocation,
       );
+    }),
+  ),
+);
+
+it.live('907-Q07 #933 #937 a final Order Tax with a NET Shipping allocation keeps its NET basis through recovery', () =>
+  Effect.scoped(
+    Effect.gen(function* netShippingFinalizationAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.setUp;
+      yield* subject.launchRules;
+
+      const submission = `submission-${randomUUID()}`;
+      const result = Match.value(
+        resultOf(
+          yield* subject.finalize(
+            subject.payload(submission, {
+              pricing: {
+                pricingResultRef: PRICING_RESULT_REF,
+                publishedLines: [pricingLine('o1', '100.00'), pricingLine('o2', '100.00')],
+              },
+              purchase: purchaseBindingInput(['o1', 'o2'], {
+                sellingLegalEntityRef: subject.legalEntityId,
+                shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+                tenantId,
+              }),
+              shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00', 'NET') },
+            }),
+          ),
+        ),
+      ).pipe(
+        Match.tag('FINALIZED', (finalized) => finalized),
+        Match.orElse((unexpected) => {
+          throw new Error(`Expected a FINALIZED result, got ${unexpected._tag}`);
+        }),
+      );
+      // NET shares 99 * 121/233 and 99 * 112/233, taxed share * r: 31.80 + 17.71 = 49.51 (GROSS would give 47.02).
+      expect(result.handoff.outcome.result.purchaseTaxTotal.amount).toBe('49.51');
+      expect(
+        result.handoff.outcome.decision.shippingAllocation?.unitAllocations.map(
+          ({ basisComponent, taxableSupplyUnitId }) => [
+            taxableSupplyUnitId,
+            basisComponent.amount,
+            basisComponent.amountBasis,
+          ],
+        ),
+      ).toEqual([
+        ['taxable-supply-unit:o1', { denominator: '233', numerator: '11979' }, 'NET'],
+        ['taxable-supply-unit:o2', { denominator: '233', numerator: '11088' }, 'NET'],
+      ]);
+
+      // The jsonb Decision store round-trips the NET basis; same-submission recovery returns it unchanged.
+      const recovered = Option.getOrThrow(yield* subject.finalOrderTax(submission));
+      expect(recovered.handoff.outcome.decision.decisionId).toBe(result.handoff.outcome.decision.decisionId);
+      expect(recovered.handoff.outcome.decision.shippingAllocation).toEqual(
+        result.handoff.outcome.decision.shippingAllocation,
+      );
+      expect(recovered.handoff.outcome.result.purchaseTaxTotal.amount).toBe('49.51');
     }),
   ),
 );

@@ -14,7 +14,7 @@ import { exactDecimal, purchaseBindingInput } from './tax-domain-fixtures.ts';
  * public request schemas, carry no TAX logic, and every result built from them is labelled
  * `CALLER_SUPPLIED_UNVERIFIED`. They are not production cross-owner integration. Foreign doubles
  * here: `catalogEntry` (Catalog, #926 Tax-purpose evidence as TAX consumes it), `pricingLine`/
- * `grossLine` (Pricing, #931; #892 not active), `shippingCharge` (Delivery, #933, GROSS), and the
+ * `grossLine` (Pricing, #931; #892 not active), `shippingCharge` (Delivery, #933, NET or GROSS), and the
  * `places` of `evaluationRequestInput` (Delivery destination and the Selling Legal Entity place,
  * #927). `purchaseBindingInput` (Order, #937/#330) lives in tax-domain-fixtures.ts. TAX-owned
  * state (`ownState`, `selected`, `DECLARED_*`, `NOT_DECLARED`) is NOT a foreign double: unit
@@ -35,7 +35,7 @@ export const TAX_FOREIGN_OWNER_DOUBLES = {
   pricingLine: { contract: '#931 published Line Commercial Value (#892 not active)', owner: 'PRICING' },
   purchaseBindingInput: { contract: '#937/#330 frozen purchase binding', owner: 'ORDER' },
   sellerPlace: { contract: '#927 seller place (Selling Legal Entity identity owner, Q2)', owner: 'LEGAL_ENTITY' },
-  shippingCharge: { contract: '#933 owner-issued Shipping charge, GROSS', owner: 'DELIVERY' },
+  shippingCharge: { contract: '#933 owner-issued Shipping charge, NET or GROSS (907-Q07)', owner: 'DELIVERY' },
 } as const;
 
 export type TaxEvaluationRequestInput = typeof TaxEvaluationRequestSchema.Encoded;
@@ -99,7 +99,7 @@ export const grossLine = (occurrenceId: string, value: string): PublishedLineInp
 
 type ShippingSourceInput = NonNullable<TaxEvaluationRequestInput['shipping']>['source'];
 
-/** A Current owner-issued Shipping charge; GROSS by default (Shipping is GROSS-only in Launch). */
+/** A Current owner-issued Shipping charge; GROSS by default, NET when given (907-Q07: both are Launch). */
 export const shippingCharge = (amount: string, amountBasis: AmountBasisInput = 'GROSS'): ShippingSourceInput => ({
   _tag: 'CURRENT',
   amount: { amount: exactDecimal(amount), amountBasis, currency: 'CZK' },
