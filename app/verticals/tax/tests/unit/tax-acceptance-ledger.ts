@@ -7,6 +7,10 @@ import type { TAX_FOREIGN_OWNER_DOUBLES } from './tax-evaluation-fixtures.ts';
  * says why nothing is executed. There is no "passed" field: passing is CI's job, and a gated row is never reported as
  * passed (#963 G). The ledger test checks that every key is covered, every named test exists verbatim, and the D6
  * rules hold.
+ *
+ * The `PO-907-Q…` keys are the PO answers of the 907-Q register (#907): NET or GROSS Shipping at Launch (Q05-Q07) under
+ * #962 and #963, and the import of existing seller declarations (Q08-Q09) under #961. No earlier row claimed NET
+ * Shipping unsupported or GROSS-only, so none is superseded by them.
  */
 
 type NonEmpty<Value> = readonly [Value, ...Value[]];
@@ -64,6 +68,12 @@ const G_TAXABLE_ZERO = 'G-taxable-zero';
 const G_PRICING_PARK = 'G-pricing-park';
 const G_PROMOTION = 'G-promotion';
 const BDD_COMPETING_CORRECTION = 'BDD-competing-correction';
+const BDD_RULE_MISSING = 'BDD-rule-missing';
+const PO_RATIONAL_1_6 = 'PO-rational-1-6';
+const G_SHIPPING_ONE_RATE = 'G-shipping-one-rate';
+const G_SHIPPING_MIXED = 'G-shipping-mixed';
+const G_SHIPPING_SUBSET = 'G-shipping-subset';
+const PO_907_Q07_NET_SHIPPING = 'PO-907-Q07-net-shipping';
 
 const range = (prefix: string, from: number, to: number) =>
   Array.from({ length: to - from + 1 }, (_, index) => `${prefix}${from + index}`);
@@ -98,6 +108,16 @@ export const TAX_ACCEPTANCE_KEYS = {
     'G-rule-change-after-accepted',
     G_PRICING_PARK,
     'G-external-route-park',
+    'PO-907-Q08-import-payer-non-payer',
+    'PO-907-Q08-import-isolated',
+    'PO-907-Q08-replay-stable-start',
+    'PO-907-Q08-current-only-start',
+    'PO-907-Q08-history-scheduled',
+    'PO-907-Q08-import-rejections',
+    'PO-907-Q08-later-declare-cas',
+    'PO-907-Q08-provenance-recorded',
+    'PO-907-Q09-migrated-like-direct',
+    'PO-907-Q09-activation-no-reconfirmation',
     'F5',
     'F25',
     'F41',
@@ -115,10 +135,10 @@ export const TAX_ACCEPTANCE_KEYS = {
     'BDD-whole-set',
     'BDD-unsupported-set',
     'BDD-zero',
-    'BDD-rule-missing',
+    BDD_RULE_MISSING,
     'BDD-half-open',
     'BDD-empty-observation',
-    'PO-rational-1-6',
+    PO_RATIONAL_1_6,
     'PO-unit-rounding',
     'PO-cumulative-partial',
     'PO-exhaustion-zero',
@@ -129,9 +149,9 @@ export const TAX_ACCEPTANCE_KEYS = {
     'G-discount',
     G_PROMOTION,
     'G-fees',
-    'G-shipping-one-rate',
-    'G-shipping-mixed',
-    'G-shipping-subset',
+    G_SHIPPING_ONE_RATE,
+    G_SHIPPING_MIXED,
+    G_SHIPPING_SUBSET,
     'G-shipping-zero',
     'G-shipping-unavailable',
     G_WHOLE_SET,
@@ -142,6 +162,13 @@ export const TAX_ACCEPTANCE_KEYS = {
     'G-rule-gap',
     G_INCOMPLETE,
     'G-overlap-conflict',
+    'PO-907-Q05-gross-weights',
+    'PO-907-Q06-mixed-line-basis',
+    PO_907_Q07_NET_SHIPPING,
+    'PO-907-Q07-control-total',
+    'PO-907-Q07-no-guessed-weight',
+    'PO-907-Q07-non-payer-shipping',
+    'PO-907-Q07-basis-material',
     'F47',
   ],
   963: [
@@ -159,6 +186,7 @@ export const TAX_ACCEPTANCE_KEYS = {
     BDD_COMPETING_CORRECTION,
     'G-evidence-record',
     '§7.3-b2c-order-snapshot',
+    'PO-907-Q07-net-shipping-correction',
   ],
 } satisfies Record<AcceptanceIssue, readonly string[]>;
 
@@ -197,6 +225,10 @@ const declPg = (title: string) => integration('seller-vat-regime-declaration-pos
 const govPg = (title: string) => integration('tax-governance-persistence-postgres', title);
 const privPg = (title: string) => integration('tax-privacy-coverage-postgres', title);
 const corrHttp = (title: string) => integration('tax-correction-preview-http', title);
+const importPg = (title: string) => integration('seller-vat-regime-import-postgres', title);
+const activationPg = (title: string) => integration('tax-activation-readiness-postgres', title);
+const sellerVatRegimeImportTest = (title: string) => unit('seller-vat-regime-import', title);
+const acceptedTaxTermsTest = (title: string) => unit('accepted-tax-terms', title);
 
 /** Guards of the NOT_APPLICABLE rows (Stage A and this ledger's own test). */
 const NO_TTL_GUARD = moduleContractTest(
@@ -300,6 +332,13 @@ const CORRECTION_HISTORICAL_READ = taxCorrectionPreviewTest(
 const CUMULATIVE_PARTIAL = taxCorrectionDeltaTest(
   '#948 F17-F23 cumulative partial returns 3, 3, 4 of 10 x 99.99 CZK at 21 % exhaust to exactly 0.00 CZK',
 );
+const IMPORT_PAYER_NON_PAYER = importPg(
+  '907-Q08 #960 payer and non-payer sellers import their source declarations without a new confirmation, isolated per Selling Legal Entity',
+);
+const NET_SHIPPING_SPLIT = taxEvaluationTest(
+  '907-Q07 #933 #935 a payer NET Shipping charge 99 is split by gross weights 121:112 in its NET basis and taxed share × r',
+);
+const SHIPPING_DOUBLES = [...SCENARIO_DOUBLES, 'shippingCharge'] as const;
 const EXPECTED_STATE_ECHO = taxCorrectionDeltaTest(
   '#946 F16-F17 #948 F27 echoes the expected previous state version opaquely and consumes nothing',
 );
@@ -416,6 +455,144 @@ const ledger961: readonly TaxAcceptanceRow[] = [
     LEDGER_GATED_GUARD,
     'The claim is TAX_OWNER_ACCEPTANCE_ONLY; every downstream part is a gated row that runs no test',
   ),
+  // 907-Q08 / Q09: existing seller declarations are imported, never re-confirmed or verified (#960, #964).
+  persisted(
+    'seller-regime-import',
+    961,
+    ['H2', 'PO-907-Q08-import-payer-non-payer', 'PO-907-Q08-import-isolated'],
+    [
+      IMPORT_PAYER_NON_PAYER,
+      moduleContractTest(
+        '907-Q08 #960 imports Seller VAT Regime declarations through explicit Action provisioning, one Selling Legal Entity per call',
+      ),
+      unit(
+        'tax-governance-permissions',
+        '907-Q08 #960 importing Seller VAT Regime declarations has no business Permission target (explicit Action provisioning instead)',
+      ),
+      sellerVatRegimeImportTest(
+        '907-Q08 #960 the payload needs a run, its stable migration instant and at least one source declaration',
+      ),
+      sellerVatRegimeImportTest(
+        '907-Q08 #922 an explicit regime is required: no DIČ, zero-tax or verification fallback decodes',
+      ),
+      sellerVatRegimeImportTest('907-Q08 #960 a seller with no revision is inserted'),
+    ],
+    [],
+  ),
+  persisted(
+    'seller-regime-import-replay',
+    961,
+    ['PO-907-Q08-replay-stable-start'],
+    [
+      importPg(
+        '907-Q08 #925 an exact replay with a new idempotency key stores nothing and keeps the same migration start',
+      ),
+      sellerVatRegimeImportTest('907-Q08 #925 the same run with identical content replays, keeping the same start'),
+    ],
+    [],
+  ),
+  persisted(
+    'seller-regime-import-current-only',
+    961,
+    ['PO-907-Q08-current-only-start'],
+    [
+      importPg(
+        '907-Q08 #925 a current-only source takes effect at the migration instant and fabricates no earlier history',
+      ),
+      sellerVatRegimeImportTest(
+        '907-Q08 #925 a current-only source state takes effect at the migration instant, never an invented earlier date',
+      ),
+      unit(
+        'tax-fact-migration',
+        '907-Q08 #960 a current-only source declaration with no date maps, sharing the import decode',
+      ),
+    ],
+    [],
+  ),
+  persisted(
+    'seller-regime-import-history',
+    961,
+    ['PO-907-Q08-history-scheduled'],
+    [
+      importPg('907-Q08 #925 dated source history and a scheduled future change are preserved in order'),
+      sellerVatRegimeImportTest(
+        '907-Q08 #925 dated source history and a scheduled change keep their own dates, in effect order',
+      ),
+    ],
+    [],
+  ),
+  persisted(
+    'seller-regime-import-rejections',
+    961,
+    ['PO-907-Q08-import-rejections'],
+    [
+      importPg('907-Q08 #922 a seller already declared directly or by another run is rejected and nothing is stored'),
+      importPg('907-Q08 #960 the same run with different content is a run conflict and stores nothing'),
+      importPg('907-Q08 #960 ambiguous source history is rejected and stores nothing'),
+      sellerVatRegimeImportTest(
+        '907-Q08 #960 ambiguous source history is rejected: duplicate dates, duplicate records, current-only beside dated',
+      ),
+      sellerVatRegimeImportTest(
+        '907-Q08 #960 the same run with other content is a run conflict, never a shifted start',
+      ),
+      sellerVatRegimeImportTest(
+        '907-Q08 #922 a seller already declared directly or by another run is not imported over',
+      ),
+      unit(
+        'tax-governance-actions',
+        '907-Q08 #960 a rejected import is a typed result audited as unchanged, never a thrown error',
+      ),
+    ],
+    [],
+  ),
+  persisted(
+    'seller-regime-import-later-declare',
+    961,
+    ['PO-907-Q08-later-declare-cas'],
+    [importPg('907-Q08 #925 a later change after the import goes through the declare Action with CAS')],
+    [],
+  ),
+  persisted(
+    'seller-regime-import-provenance',
+    961,
+    ['PO-907-Q08-provenance-recorded'],
+    [
+      importPg(
+        '907-Q08 #960 the database ties MIGRATED to its run, source record and origin, and DECLARED to merchant rows',
+      ),
+      unit(
+        'database-schema-contract',
+        '907-Q08 #960 imported declarations keep their run, source record and effect origin, never a verification',
+      ),
+      unit(
+        'tax-governance-actions',
+        '907-Q08 #960 an import audits the source-declaration import of the seller, never a verification or confirmation',
+      ),
+    ],
+    [],
+  ),
+  persisted(
+    'migrated-declaration-like-direct',
+    961,
+    ['H2', 'PO-907-Q09-migrated-like-direct'],
+    [
+      evPg(
+        '907-Q09 #960 an imported current-only declaration evaluates like a direct one from the migration start, never before it',
+      ),
+      finPg('907-Q09 #960 a final at T over imported MIGRATED source history succeeds and carries its revision ref'),
+    ],
+  ),
+  persisted(
+    'migrated-declaration-activation',
+    961,
+    ['PO-907-Q09-activation-no-reconfirmation'],
+    [
+      activationPg(
+        '907-Q09 #964 a seller covered only by an imported MIGRATED declaration is not blocked on the declaration item',
+      ),
+    ],
+    [],
+  ),
   gated(
     'pricing-to-tax-e2e',
     961,
@@ -510,7 +687,7 @@ const ledger962: readonly TaxAcceptanceRow[] = [
   kernel(
     'shipping-conservation',
     962,
-    ['H8', 'BDD-mixed-rate-shipping', 'G-shipping-mixed', 'PO-rational-1-6'],
+    ['H8', 'BDD-mixed-rate-shipping', G_SHIPPING_MIXED, PO_RATIONAL_1_6],
     [
       shippingAllocationTest(
         '#962 PO #933 F21 #935 F13-F14 allocates 1 CZK at 1:6 exactly as 1/7 + 6/7 with no intermediate rounding',
@@ -525,7 +702,7 @@ const ledger962: readonly TaxAcceptanceRow[] = [
   kernel(
     'shipping-one-rate',
     962,
-    ['G-shipping-one-rate'],
+    [G_SHIPPING_ONE_RATE],
     [
       shippingAllocationTest(
         '#933 F4 F14 BDD one affected unit receives the whole unchanged 120.00 CZK owner-issued amount',
@@ -536,7 +713,7 @@ const ledger962: readonly TaxAcceptanceRow[] = [
   kernel(
     'shipping-subset',
     962,
-    ['G-shipping-subset'],
+    [G_SHIPPING_SUBSET],
     [
       taxEvaluationTest(
         'D3-10 an affected subset of 2 out of 3 units at the same rate gets the exact gross-weighted shares; the unaffected unit has none',
@@ -608,7 +785,7 @@ const ledger962: readonly TaxAcceptanceRow[] = [
   kernel(
     'rule-missing',
     962,
-    ['BDD-rule-missing', 'G-rule-gap', 'H13'],
+    [BDD_RULE_MISSING, 'G-rule-gap', 'H13'],
     [
       taxRuleSelectionTest(
         '#929 F10 T == effective_to excludes the ended revision and a later gap is TAX_RULE_MISSING (#930 F1)',
@@ -670,6 +847,108 @@ const ledger962: readonly TaxAcceptanceRow[] = [
     962,
     ['H11'],
     [taxNonSuccessOutcomeTest('Unit 10 A3 TAX_PREREQUISITE_NOT_MET is not in TaxNonSuccessOutcomeSchema')],
+  ),
+  // 907-Q05-Q07: Shipping priced NET is Launch, also for a VAT payer; Pricing stays canonically NET.
+  persisted(
+    'net-shipping-persisted',
+    962,
+    ['H8', PO_907_Q07_NET_SHIPPING],
+    [
+      evPg('907-Q07 #933 a payer NET Shipping charge over NET lines evaluates from real reads in its own NET basis'),
+      finPg('907-Q07 #933 #937 a final Order Tax with a NET Shipping allocation keeps its NET basis through recovery'),
+    ],
+    SHIPPING_DOUBLES,
+  ),
+  kernel(
+    'net-shipping',
+    962,
+    ['H8', PO_907_Q07_NET_SHIPPING, G_SHIPPING_MIXED, G_SHIPPING_ONE_RATE, G_SHIPPING_SUBSET],
+    [
+      NET_SHIPPING_SPLIT,
+      taxEvaluationTest('907-Q07 #962 NET Shipping 99 over NET lines at one same rate splits by gross weights 121:363'),
+      taxEvaluationTest(
+        '907-Q07 #933 #962 NET Shipping on an affected subset leaves the unaffected unit without a Shipping share',
+      ),
+      taxEvaluationTest('907-Q07 #933 one affected unit takes the whole NET Shipping amount, taxed share × r'),
+      shippingAllocationTest(
+        '907-Q07 #933 F14 one affected unit takes the whole unchanged NET charge, still NET and with no key',
+      ),
+    ],
+    ['pricingLine', 'shippingCharge'],
+  ),
+  kernel(
+    'net-shipping-control-total',
+    962,
+    ['PO-907-Q07-control-total', PO_RATIONAL_1_6],
+    [
+      shippingAllocationTest(
+        '907-Q07 #933 #935 a NET Shipping charge 99 at gross weights 121:112 is split exactly in its own NET basis',
+      ),
+      shippingAllocationTest('907-Q07 #933 F19 one Shipping allocation never mixes NET and GROSS shares'),
+      taxDecisionTest(
+        '907-Q07 #933 #937 a payer Decision with NET Shipping components decodes and keeps their NET basis',
+      ),
+      taxDecisionTest('907-Q07 #933 F19 every Shipping component of one Decision has the same basis as its allocation'),
+    ],
+    ['shippingCharge'],
+  ),
+  kernel(
+    'gross-weights-either-basis',
+    962,
+    ['PO-907-Q05-gross-weights'],
+    [
+      taxEvaluationTest(
+        '907-Q05 907-Q07 #933 the same basket with GROSS Shipping 99 has the same shares in GROSS and carves VAT out',
+      ),
+      NET_SHIPPING_SPLIT,
+    ],
+    ['pricingLine', 'shippingCharge'],
+  ),
+  kernel(
+    'mixed-line-basis',
+    962,
+    ['PO-907-Q06-mixed-line-basis'],
+    [
+      taxEvaluationTest('907-Q06 #938 mixed GROSS and NET lines stay indeterminate with NET Shipping'),
+      taxDecisionTest('907-Q06 #938 NET lines next to a GROSS Shipping component are not a mixed basis'),
+    ],
+    ['pricingLine', 'shippingCharge'],
+  ),
+  kernel(
+    'net-shipping-no-guess',
+    962,
+    ['PO-907-Q07-no-guessed-weight', BDD_RULE_MISSING],
+    [
+      taxEvaluationTest(
+        '907-Q07 #962 zero weights with a non-zero NET Shipping charge are indeterminate, never a guessed split',
+      ),
+      taxEvaluationTest(
+        '907-Q07 #938 an unusable weight (missing rule) with NET Shipping is TAX_RULE_MISSING; no weight is guessed',
+      ),
+    ],
+    ['pricingLine', 'shippingCharge'],
+  ),
+  kernel(
+    'non-payer-shipping',
+    962,
+    ['PO-907-Q07-non-payer-shipping'],
+    [
+      taxEvaluationTest(
+        '907-Q02 907-Q07 #933 #962 a non-payer with 99 NET or 99 GROSS Shipping succeeds at 0.00 with no Shipping VAT allocation',
+      ),
+    ],
+    ['pricingLine', 'shippingCharge'],
+  ),
+  kernel(
+    'shipping-basis-material',
+    962,
+    ['PO-907-Q07-basis-material'],
+    [
+      taxMaterialityTest(
+        '907-Q07 #937 #943 GROSS to NET Shipping on an unchanged amount is a material Shipping allocation change',
+      ),
+    ],
+    ['pricingLine', 'shippingCharge'],
   ),
   gated(
     'promotion-e2e',
@@ -905,6 +1184,31 @@ const ledger963: readonly TaxAcceptanceRow[] = [
         '#948 F21 F24 #907 F189 correcting one unit never moves Tax or a rounding remainder to another unit',
       ),
       EXPECTED_STATE_ECHO,
+    ],
+    ['acceptedTaxTermsInput'],
+  ),
+  kernel(
+    'net-shipping-corrections',
+    963,
+    ['§7.5', '§7.6', 'PO-907-Q07-net-shipping-correction'],
+    [
+      acceptedTaxTermsTest('907-Q07 #948 the baseline copies a NET Shipping basis from the recorded component'),
+      taxCorrectionDeltaTest(
+        '907-Q07 #948 the baseline records the NET Shipping basis and the original publishes share × r',
+      ),
+      taxCorrectionDeltaTest(
+        '907-Q07 #948 a partial goods + NET Shipping correction, then full exhaustion, sums to minus the original',
+      ),
+      taxCorrectionDeltaTest(
+        '907-Q07 Unit 12 decision 5 a GROSS Shipping change converts into the recorded NET basis at the unit rate',
+      ),
+      taxCorrectionDeltaTest(
+        '907-Q07 #948 the NET worked example: a NET-Shipping refund on A, then a full withdrawal of both units',
+      ),
+      taxCorrectionDeltaTest(
+        '907-Q07 B-14 a Shipping value change states its own NET or GROSS basis, which stays required',
+      ),
+      corrHttp('907-Q07 #948 a goods + NET Shipping correction of a NET-Shipping original previews over HTTP'),
     ],
     ['acceptedTaxTermsInput'],
   ),
