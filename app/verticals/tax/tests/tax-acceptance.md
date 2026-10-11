@@ -24,39 +24,38 @@ A green suite is TAX owner acceptance only (`TAX_OWNER_ACCEPTANCE_ONLY`). It is 
 
 `assessTaxActivationReadiness` (`src/domain/tax-activation-readiness.ts`) is NON_PRODUCTION evidence. It never claims activation or Commerce readiness. Every item below blocks production activation until it is resolved. `SELLER_VAT_REGIME_DECLARED_AT_ACTIVATION` is computed from each seller's declaration timeline; every other item needs an evidence reference from its owner.
 
-| Item                                       | Owner            | Scope            | Source                       | Blocks production activation until                             |
-| ------------------------------------------ | ---------------- | ---------------- | ---------------------------- | -------------------------------------------------------------- |
-| `SELLER_VAT_REGIME_DECLARED_AT_ACTIVATION` | TAX              | per seller       | #964 F25-F27 (patched), R1   | every activated seller has a declaration covering activation   |
-| `BILLING_PAYER_DIC_GATE`                   | Billing          | per payer seller | OWNERSHIP §7, LEGAL §6.2     | Billing requires supplier and buyer DIČ on full § 29 documents |
-| `BILLING_ISSUANCE_GUARD`                   | Billing          | activation       | OWNERSHIP §4, R2; LEGAL §3   | Billing blocks wrong-regime issuance                           |
-| `CATALOG_TAX_PURPOSE_CONTRACT`             | Catalog          | activation       | #964 F24a-d, H12             | Catalog publishes the #926 Tax-purpose evidence contract       |
-| `B2C_GROSS_AMOUNT_BASIS_CONTRACT`          | Pricing/Delivery | activation       | Unit 11 decision 2, LEGAL §2 | B2C amounts are published as GROSS under a contract            |
-| `D3_CONTRACT_TEXTS_RECONCILED`             | PO               | activation       | LEGAL §2                     | #931 F3, #933 F21 and #935 F14 are reconciled                  |
-| `Q5_LAUNCH_FLOWS_DECIDED`                  | PO               | activation       | OWNERSHIP Q5, §4; LEGAL §6.3 | Launch flows and blocked-case handling are decided             |
-| `PARTIAL_CREDIT_RULE_APPROVED`             | Legal            | activation       | LEGAL §2, Unit 12 decision 5 | the partial-credit rule is approved                            |
-| `LEGAL_L1A`                                | Legal            | activation       | LEGAL §7 q1                  | non-payer sale is a § 50(1) exempt supply                      |
-| `LEGAL_L1B`                                | Legal            | activation       | LEGAL §7 q2                  | non-payer invoice statement and DIČ default                    |
-| `LEGAL_L2`                                 | Legal            | activation       | LEGAL §7 q3                  | Shipping allocation key                                        |
-| `LEGAL_D3A`                                | Legal            | activation       | LEGAL §7 q4                  | VAT per Taxable Supply Unit under § 37 písm. b)                |
-| `LEGAL_L3A`                                | Legal            | activation       | LEGAL §7 q5                  | delivery events (DUZP)                                         |
-| `LEGAL_L3B`                                | Legal            | activation       | LEGAL §7 q6                  | payment receipt event and evidence                             |
-| `LEGAL_Q5A`                                | Legal            | activation       | LEGAL §7 q7                  | advances around the start of payer status                      |
-| `LEGAL_Q5B`                                | Legal            | activation       | LEGAL §7 q8                  | payer at T, non-payer at DUZP                                  |
-| `LEGAL_Q5C`                                | Legal            | activation       | LEGAL §7 q9                  | taxed advance, then delivery after deregistration              |
-| `LEGAL_Q5D`                                | Legal            | activation       | LEGAL §7 q10                 | block, staff confirmation and 15-day issuance                  |
-| `LEGAL_L4`                                 | Legal            | activation       | LEGAL §7 q11                 | document field lists and the full § 29 document                |
-| `LEGAL_L5`                                 | Legal            | activation       | LEGAL §7 q12                 | identified person treated as a non-payer                       |
-| `OWNER_ACCEPTANCE_961`                     | TAX              | activation       | #964 F8-F14                  | a CI run of #961 for the deployed revision                     |
-| `OWNER_ACCEPTANCE_962`                     | TAX              | activation       | #964 F8-F14                  | a CI run of #962 for the deployed revision                     |
-| `OWNER_ACCEPTANCE_963`                     | TAX              | activation       | #964 F8-F14                  | a CI run of #963 for the deployed revision                     |
-| `PRODUCTION_SCOPE_INVENTORY`               | TAX operations   | activation       | #964 F15-F24                 | the reviewed production inventory, no fixture identities       |
-| `TAX_RULE_COVERAGE`                        | TAX operations   | activation       | #964 F33-F41                 | complete production rule coverage for payer sellers            |
-| `REQUIRED_SOURCE_ROUTES`                   | TAX operations   | activation       | #964 F42-F50                 | required routes are activated ("none required" stated)         |
-| `PERMISSIONS_AND_AUDIT`                    | TAX operations   | activation       | #964 F51-F58                 | production permissions and audit are in place                  |
-| `MUTATION_RECOVERY`                        | TAX operations   | activation       | #964 F59-F64                 | governed mutation recovery is proven                           |
-| `PRIVACY_OWNER_INVENTORY`                  | Privacy          | activation       | #964 F65-F71                 | the Privacy inventory covers TAX data                          |
-| `MIGRATION_RECONCILIATION`                 | TAX operations   | activation       | #964 F72-F82                 | migration is READY or stated not applicable                    |
-| `UNSUPPORTED_CASES_FAIL_CLOSED`            | TAX              | activation       | #964 F83-F90                 | unsupported cases fail closed                                  |
-| `OPERATIONAL_SIGNALS`                      | TAX operations   | activation       | #964 F91-F99                 | non-success and failed-mutation signals exist                  |
-| `OPERATIONAL_RUNBOOK`                      | TAX operations   | activation       | #964 F100-F109               | a reviewed runbook exists                                      |
-| `DEACTIVATION_PLAN`                        | TAX operations   | activation       | #964 F110-F117               | deactivation keeps one authority and history                   |
+| Item                                       | Owner            | Scope            | Source                       | Blocks production activation until                                                       |
+| ------------------------------------------ | ---------------- | ---------------- | ---------------------------- | ---------------------------------------------------------------------------------------- |
+| `SELLER_VAT_REGIME_DECLARED_AT_ACTIVATION` | TAX              | per seller       | #964 F25-F27 (patched), R1   | every activated seller has a declaration covering activation                             |
+| `BILLING_PAYER_DIC_GATE`                   | Billing          | per payer seller | OWNERSHIP §7, LEGAL §6.2     | Billing requires supplier and buyer DIČ on full § 29 documents                           |
+| `BILLING_ISSUANCE_GUARD`                   | Billing          | activation       | OWNERSHIP §4, R2; LEGAL §3   | Billing blocks wrong-regime issuance                                                     |
+| `CATALOG_TAX_PURPOSE_CONTRACT`             | Catalog          | activation       | #964 F24a-d, H12             | Catalog publishes the #926 Tax-purpose evidence contract                                 |
+| `PRICING_DELIVERY_AMOUNT_BASIS_CONTRACT`   | Pricing/Delivery | activation       | Unit 11 decision 2; ADR 0029 | Pricing publishes NET lines, Delivery publishes an explicit NET/GROSS Shipping basis     |
+| `Q5_LAUNCH_FLOWS_DECIDED`                  | PO               | activation       | OWNERSHIP Q5, §4; 907-Q11.2  | final Billing/later-event flows and blocked-case handling are decided after legal review |
+| `PARTIAL_CREDIT_RULE_APPROVED`             | Legal            | activation       | LEGAL §2, Unit 12 decision 5 | the partial-credit rule is approved                                                      |
+| `LEGAL_L1A`                                | Legal            | activation       | LEGAL §7 q1                  | non-payer sale is a § 50(1) exempt supply                                                |
+| `LEGAL_L1B`                                | Legal            | activation       | LEGAL §7 q2                  | non-payer invoice statement and DIČ default                                              |
+| `LEGAL_L2`                                 | Legal            | activation       | LEGAL §7 q3                  | Shipping allocation key                                                                  |
+| `LEGAL_D3A`                                | Legal            | activation       | LEGAL §7 q4                  | VAT per Taxable Supply Unit under § 37 písm. b)                                          |
+| `LEGAL_L3A`                                | Legal            | activation       | LEGAL §7 q5                  | delivery events (DUZP)                                                                   |
+| `LEGAL_L3B`                                | Legal            | activation       | LEGAL §7 q6                  | payment receipt event and evidence                                                       |
+| `LEGAL_Q5A`                                | Legal            | activation       | LEGAL §7 q7                  | advances around the start of payer status                                                |
+| `LEGAL_Q5B`                                | Legal            | activation       | LEGAL §7 q8                  | payer at T, non-payer at DUZP                                                            |
+| `LEGAL_Q5C`                                | Legal            | activation       | LEGAL §7 q9                  | taxed advance, then delivery after deregistration                                        |
+| `LEGAL_Q5D`                                | Legal            | activation       | LEGAL §7 q10                 | block, staff confirmation and 15-day issuance                                            |
+| `LEGAL_L4`                                 | Legal            | activation       | LEGAL §7 q11                 | document field lists and the full § 29 document                                          |
+| `LEGAL_L5`                                 | Legal            | activation       | LEGAL §7 q12                 | identified person treated as a non-payer                                                 |
+| `OWNER_ACCEPTANCE_961`                     | TAX              | activation       | #964 F8-F14                  | a CI run of #961 for the deployed revision                                               |
+| `OWNER_ACCEPTANCE_962`                     | TAX              | activation       | #964 F8-F14                  | a CI run of #962 for the deployed revision                                               |
+| `OWNER_ACCEPTANCE_963`                     | TAX              | activation       | #964 F8-F14                  | a CI run of #963 for the deployed revision                                               |
+| `PRODUCTION_SCOPE_INVENTORY`               | TAX operations   | activation       | #964 F15-F24                 | the reviewed production inventory, no fixture identities                                 |
+| `TAX_RULE_COVERAGE`                        | TAX operations   | activation       | #964 F33-F41                 | complete production rule coverage for payer sellers                                      |
+| `REQUIRED_SOURCE_ROUTES`                   | TAX operations   | activation       | #964 F42-F50                 | required routes are activated ("none required" stated)                                   |
+| `PERMISSIONS_AND_AUDIT`                    | TAX operations   | activation       | #964 F51-F58                 | production permissions and audit are in place                                            |
+| `MUTATION_RECOVERY`                        | TAX operations   | activation       | #964 F59-F64                 | governed mutation recovery is proven                                                     |
+| `PRIVACY_OWNER_INVENTORY`                  | Privacy          | activation       | #964 F65-F71                 | the Privacy inventory covers TAX data                                                    |
+| `MIGRATION_RECONCILIATION`                 | TAX operations   | activation       | #964 F72-F82                 | migration is READY or stated not applicable                                              |
+| `UNSUPPORTED_CASES_FAIL_CLOSED`            | TAX              | activation       | #964 F83-F90                 | unsupported cases fail closed                                                            |
+| `OPERATIONAL_SIGNALS`                      | TAX operations   | activation       | #964 F91-F99                 | non-success and failed-mutation signals exist                                            |
+| `OPERATIONAL_RUNBOOK`                      | TAX operations   | activation       | #964 F100-F109               | a reviewed runbook exists                                                                |
+| `DEACTIVATION_PLAN`                        | TAX operations   | activation       | #964 F110-F117               | deactivation keeps one authority and history                                             |

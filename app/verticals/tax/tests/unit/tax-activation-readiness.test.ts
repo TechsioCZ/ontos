@@ -160,7 +160,7 @@ describe('#964 TAX production activation gate', () => {
     expect(readiness.evidenceLabel).toBe('NON_PRODUCTION');
   });
 
-  it('#964 every open legal and adviser item blocks: 12 LEGAL questions plus Q5, D3 and partial credits', () => {
+  it('#964 every open legal and adviser item blocks: 12 LEGAL questions plus Q5 and partial credits', () => {
     const legalItems = TaxActivationItemIdSchema.literals.filter((itemId) => itemId.startsWith('LEGAL_'));
     expect(legalItems).toEqual([
       'LEGAL_L1A',
@@ -180,12 +180,7 @@ describe('#964 TAX production activation gate', () => {
     expect(questionSources).toEqual(
       new Set(Array.from({ length: 12 }, (_, index) => `LEGAL-FINAL §7 question ${index + 1}`)),
     );
-    for (const itemId of [
-      ...legalItems,
-      'Q5_LAUNCH_FLOWS_DECIDED',
-      'PARTIAL_CREDIT_RULE_APPROVED',
-      'D3_CONTRACT_TEXTS_RECONCILED',
-    ] as const) {
+    for (const itemId of [...legalItems, 'Q5_LAUNCH_FLOWS_DECIDED', 'PARTIAL_CREDIT_RULE_APPROVED'] as const) {
       const resolvedExceptOne = everyActivationItem.filter((resolution) => resolution.itemId !== itemId);
       const readiness = readinessOf(
         evidence({
