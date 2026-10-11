@@ -474,10 +474,10 @@ export interface TaxEvaluationVerdict {
  * #941 F6). Evaluated parts, in order: place jurisdiction (scope is decided before the seller prerequisite,
  * #938 F7), Launch coverage (currency, regime, supply mapping, seller declaration), consistency of the published
  * line amount basis, then per unit in canonical order the published line and, for a VAT_PAYER seller only, the
- * classification and the complete applicable rule set, and the owner-issued Shipping charge's own amount-basis
- * check (independent of the unit meanings; ignored, not an error, for a NON_PAYER seller). Shipping allocation
- * itself derives its weights from the units' rates, so it runs only after every unit meaning has already
- * succeeded (PO decision D3 on #907). Any failure is the typed non-success chosen by `reportedFailure`, which
+ * classification and the complete applicable rule set, and the owner-issued Shipping charge's own source check
+ * (Current and CZK; independent of the unit meanings; ignored, not an error, for a NON_PAYER seller). A NET or GROSS
+ * Shipping basis alone is never a failure (907-Q07). Shipping allocation itself derives its weights from the units'
+ * rates, so it runs only after every unit meaning has already succeeded (PO decision D3 on #907). Any failure is the typed non-success chosen by `reportedFailure`, which
  * reports a TAX_CASE_UNSUPPORTED part ahead of any other failing part; success is a Decision with its Result
  * under the Launch rounding policy (#936, #935; Unit 10 A4).
  */

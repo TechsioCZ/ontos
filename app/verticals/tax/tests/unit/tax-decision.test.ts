@@ -387,15 +387,67 @@ describe('Tax Decision', () => {
     ).toThrow();
   });
 
-  it('D3-6 a Decision with a NET Shipping component fails to decode: Shipping is GROSS-only by type', () => {
-    // SAFETY: decodeTaxDecisionUnit decodes `unknown`; the raw literal intentionally violates the typed Shipping
-    // shape (amountBasis 'NET' instead of the literal 'GROSS') to prove the decoder itself rejects it.
-    const netShipping = { ...shipping('10'), amountBasis: 'NET' };
+  it('907-Q07 #933 #937 a payer Decision with NET Shipping components decodes and keeps their NET basis', () => {
+    const key = { allocationKey: { key: 'GROSS_LINE_VALUE' as const, revision: 1 as const } };
+    const net = (amount: string) => shipping(amount, { ...key, amountBasis: 'NET' });
+    const decision = decodeTaxDecision(
+      withBoundShipping(
+        [unitWith('o-1', [lineValue('o-1', '100'), net('30')]), unitWith('o-2', [lineValue('o-2', '100'), net('90')])],
+        allocationOf('120', [
+          ['o-1', net('30')],
+          ['o-2', net('90')],
+        ]),
+      ),
+    );
+
+    expect(
+      decision.units.flatMap(({ taxableBasisInterpretation }) =>
+        taxableBasisInterpretation.components.map(({ _tag, amountBasis }) => [_tag, amountBasis]),
+      ),
+    ).toEqual([
+      ['LINE_COMMERCIAL_VALUE', 'NET'],
+      ['SHIPPING_ALLOCATION', 'NET'],
+      ['LINE_COMMERCIAL_VALUE', 'NET'],
+      ['SHIPPING_ALLOCATION', 'NET'],
+    ]);
+  });
+
+  it('907-Q06 #938 NET lines next to a GROSS Shipping component are not a mixed basis', () => {
+    expect(
+      decodeTaxDecision(
+        withBoundShipping(
+          [unitWith('o-1', [lineValue('o-1', '100', 'NET'), shipping('99')])],
+          allocationOf('99', [['o-1', shipping('99')]]),
+        ),
+      ).units,
+    ).toHaveLength(1);
+  });
+
+  it('907-Q07 #933 F19 every Shipping component of one Decision has the same basis as its allocation', () => {
+    const key = { allocationKey: { key: 'GROSS_LINE_VALUE' as const, revision: 1 as const } };
+    // The unit component says GROSS while the purchase-level allocation says NET: relabelling is rejected.
     expect(() =>
-      decodeTaxDecisionUnit({
-        ...decisionUnitInput('o-1'),
-        taxableBasisInterpretation: { components: [lineValue('o-1', '100'), netShipping] },
-      }),
+      decodeTaxDecision(
+        withBoundShipping(
+          [unitWith('o-1', [lineValue('o-1', '100'), shipping('99')])],
+          allocationOf('99', [['o-1', shipping('99', { amountBasis: 'NET' })]]),
+        ),
+      ),
+    ).toThrow();
+    // One allocation never splits a charge into NET and GROSS shares.
+    expect(() =>
+      decodeTaxDecision(
+        withBoundShipping(
+          [
+            unitWith('o-1', [lineValue('o-1', '100'), shipping('30', { ...key, amountBasis: 'NET' })]),
+            unitWith('o-2', [lineValue('o-2', '100'), shipping('90', key)]),
+          ],
+          allocationOf('120', [
+            ['o-1', shipping('30', { ...key, amountBasis: 'NET' })],
+            ['o-2', shipping('90', key)],
+          ]),
+        ),
+      ),
     ).toThrow();
   });
 });

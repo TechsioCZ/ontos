@@ -127,8 +127,9 @@ const isSellerNotVatPayerDecisionUnit = Schema.is(SellerNotVatPayerDecisionUnitS
 
 /**
  * Every Line Commercial Value component across all units states the same amount basis: one Pricing Result cannot
- * be both GROSS and NET (#938 F27-F28, PO decision D3 on #907). This applies to both the VAT_PAYER and NON_PAYER
- * regimes: it is evidence integrity, not a VAT computation.
+ * be both GROSS and NET (#938 F27-F28, 907-Q06). This applies to both the VAT_PAYER and NON_PAYER regimes: it is
+ * evidence integrity, not a VAT computation. It never compares lines with the separately owned Shipping, so NET
+ * lines next to GROSS or NET Shipping are not a mixed basis (907-Q06, 907-Q07).
  */
 const lineAmountBasisConsistent = (units: readonly TaxDecisionUnit[]): boolean => {
   const bases = new Set<string>();
@@ -162,6 +163,7 @@ const unitsPartitionOccurrences = (purchaseBinding: TaxPurchaseBinding, units: r
 
 const isSameShippingAllocationBasis = (left: ShippingAllocationBasis, right: ShippingAllocationBasis): boolean =>
   taxExactRationalsEqual(left.amount, right.amount) &&
+  left.amountBasis === right.amountBasis &&
   isSameShippingSourceRef(left.shippingSourceRef, right.shippingSourceRef) &&
   left.allocationKey?.revision === right.allocationKey?.revision;
 
@@ -171,9 +173,8 @@ const isSameShippingAllocationBasis = (left: ShippingAllocationBasis, right: Shi
  * its allocated component while every other unit carries none (#907 F85, #933 F8, F12, F19-F21, #935 F14,
  * #920 F32-F34, #937 F29-F30). Conservation of the owner-issued amount is the allocation's own invariant.
  *
- * #933 F21 / #935 F14: the conserved owner-issued amount is the customer-charged GROSS Shipping price; the exact
- * gross shares sum to it. The net Shipping bases are derived per unit at its rate and do not sum to the charge
- * (LEGAL-FINAL §2 D3).
+ * #933 F21 / #935 F14: the conserved amount is the Shipping charge in the basis its owner issued, NET or GROSS;
+ * each unit's component carries exactly that allocated amount and basis (907-Q05, 907-Q07).
  */
 const shippingAllocatedCompletely = (
   purchaseBinding: TaxPurchaseBinding,

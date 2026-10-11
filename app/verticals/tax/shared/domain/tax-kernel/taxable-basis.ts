@@ -6,9 +6,10 @@ import { NonNegativeTaxExactRationalSchema, TaxExactRationalSchema } from './tax
 
 /**
  * Explicit amount basis of an owner-issued monetary amount (PO decision D3 on #907). GROSS is the VAT-inclusive
- * amount actually charged to the customer; NET is the pre-Tax amount. Launch B2C owners publish GROSS
- * (LEGAL-FINAL §2). A GROSS amount is never used unchanged as a net base; TAX carves VAT out of it under
- * § 37 písm. b) instead of multiplying it by the rate.
+ * amount actually charged to the customer; NET is the pre-Tax amount. Pricing publishes canonically NET (pre-Tax)
+ * line values; Delivery publishes the customer Shipping price as NET or GROSS (907-Q05, 907-Q06, 907-Q07). A GROSS
+ * amount is never used unchanged as a net base; TAX carves VAT out of it under § 37 písm. b) instead of multiplying
+ * it by the rate.
  */
 export const TaxAmountBasisSchema = Schema.Literals(['GROSS', 'NET']);
 export type TaxAmountBasis = typeof TaxAmountBasisSchema.Type;
@@ -28,9 +29,9 @@ export type LineCommercialValueBasis = typeof LineCommercialValueBasisSchema.Typ
  * relabels or converts (#931 F14-F16, #933 F4-F5). TAX consumes it; ownership stays with its owner
  * (#931 F1-F2, #933 F1-F4).
  *
- * #931 F3 calls the Line Commercial Value pre-Tax. Under the D3 decision the owner states its basis explicitly,
- * and F3 holds only when `amountBasis` is NET. A GROSS value is the customer-charged price, and TAX carves VAT
- * out of it (§ 37 písm. b). The issue text is the PO's to patch.
+ * #931 F3: Pricing's Line Commercial Value is canonically NET (pre-Tax), and TAX never creates a second Pricing
+ * total (907-Q05). Every amount still states its basis explicitly; a GROSS amount is a customer-charged price, and
+ * TAX carves VAT out of it (§ 37 písm. b).
  */
 export const OwnerIssuedAmountSchema = Schema.Struct({
   amount: NonNegativeTaxExactRationalSchema,

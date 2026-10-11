@@ -598,6 +598,57 @@ it.live(
     ),
 );
 
+it.live('907-Q07 #933 a payer NET Shipping charge over NET lines evaluates from real reads in its own NET basis', () =>
+  Effect.scoped(
+    Effect.gen(function* netShippingAcceptance() {
+      const { runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+
+      const outcome = outcomeOf(
+        yield* subject.evaluate({
+          pricing: {
+            pricingResultRef: PRICING_RESULT_REF,
+            publishedLines: [pricingLine('o1', '100.00'), pricingLine('o2', '100.00')],
+          },
+          purchase: purchaseBindingInput(['o1', 'o2'], {
+            sellingLegalEntityRef: subject.legalEntityId,
+            shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+            tenantId,
+          }),
+          shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00', 'NET') },
+        }),
+      );
+      if (!isSuccess(outcome)) {
+        throw new Error('Expected a successful Tax Outcome');
+      }
+      // Gross weights 100 * 1.21 = 121 and 100 * 1.12 = 112; NET shares 99 * 121/233 and 99 * 112/233.
+      expect(
+        outcome.decision.shippingAllocation?.unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
+          taxableSupplyUnitId,
+          basisComponent.amount,
+          basisComponent.amountBasis,
+        ]),
+      ).toEqual([
+        ['taxable-supply-unit:o1', { denominator: '233', numerator: '11979' }, 'NET'],
+        ['taxable-supply-unit:o2', { denominator: '233', numerator: '11088' }, 'NET'],
+      ]);
+      // o1 21 + 11979/233 * 21/100 = 740859/23300 -> 31.80; o2 12 + 11088/233 * 12/100 = 103164/5825 -> 17.71.
+      expect(
+        outcome.result.units.map(({ publishedTaxAmount, taxableSupplyUnitId }) => [
+          taxableSupplyUnitId,
+          publishedTaxAmount.amount,
+        ]),
+      ).toEqual([
+        ['taxable-supply-unit:o1', '31.80'],
+        ['taxable-supply-unit:o2', '17.71'],
+      ]);
+      expect(outcome.result.purchaseTaxTotal.amount).toBe('49.51');
+    }),
+  ),
+);
+
 const CreatedRuleIdSchema = Schema.Struct({ taxRuleId: Schema.String.pipe(Schema.brand('TaxTestRuleId')) });
 const successOf = (response: Option.Option<TaxEvaluationResponse>) => {
   const outcome = outcomeOf(response);

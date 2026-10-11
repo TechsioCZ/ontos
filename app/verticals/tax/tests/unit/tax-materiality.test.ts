@@ -112,6 +112,17 @@ const withAffected = (affectedOccurrenceIds: readonly [string, ...string[]]) =>
     }),
   );
 
+/** The default NET lines with Shipping on o1 and o2 in the given amount and basis (907-Q07). */
+const withShippingBasis = (amount: string, amountBasis: 'GROSS' | 'NET') =>
+  evaluate(
+    evaluationRequest({
+      purchase: purchaseBindingInput(['o1', 'o2'], {
+        shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+      }),
+      shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge(amount, amountBasis) },
+    }),
+  );
+
 const catalogWith = (catalogFactRef: string, completeness: string): TaxEvaluationRequestInput['catalog'][number] => {
   const base = catalogEntry('o1', STANDARD_CODE);
   return {
@@ -373,6 +384,17 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     );
     expect(materialReasons(compare(evaluate(gross), evaluate(net)))).toEqual(
       Option.some(['TAXABLE_BASIS', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
+    );
+  });
+
+  it('907-Q07 #937 #943 GROSS to NET Shipping on an unchanged amount is a material Shipping allocation change', () => {
+    // Same 99.00 and the same exact shares: only the basis differs, which changes the VAT of each share.
+    expect(materialReasons(compare(withShippingBasis('99.00', 'GROSS'), withShippingBasis('99.00', 'NET')))).toEqual(
+      Option.some(['SHIPPING_ALLOCATION', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
+    );
+    // Even a zero charge, whose VAT is equal in both bases, keeps the basis as material meaning.
+    expect(materialReasons(compare(withShippingBasis('0.00', 'GROSS'), withShippingBasis('0.00', 'NET')))).toEqual(
+      Option.some(['SHIPPING_ALLOCATION']),
     );
   });
 

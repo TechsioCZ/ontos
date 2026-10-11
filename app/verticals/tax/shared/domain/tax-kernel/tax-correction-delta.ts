@@ -73,10 +73,9 @@ const NegativeDeltaSchema = TaxExactRationalSchema.check(
  * Explicit authorized reduction of one original unit: a negative quantity delta in the unit's accepted quantity unit,
  * or a negative commercial-value delta of one named basis component in CZK with its own explicit amount basis
  * (PO decision D3 on #907). Billing and Order never compute the net or gross amount themselves (#948 F14); TAX
- * converts the delta into the component's recorded basis at the original unit's treatment. A Shipping Allocation
- * value change is always GROSS, mirroring `ShippingAllocationBasisSchema.amountBasis` and Unit 11's shipping rule
- * (F16). Never inferred from a refund, a customer-facing total or a Fulfillment status
- * (#948 F10-F11, F25, #907 F187, F193-F194).
+ * converts the delta into the component's recorded basis at the original unit's treatment. This holds for the Line
+ * Commercial Value and for the Shipping Allocation, whose recorded basis is NET or GROSS (907-Q07). Never inferred
+ * from a refund, a customer-facing total or a Fulfillment status (#948 F10-F11, F25, #907 F187, F193-F194).
  */
 export const TaxCorrectionChangeSchema = Schema.Union([
   Schema.TaggedStruct('QUANTITY', { quantityDelta: NegativeDeltaSchema }),
@@ -84,14 +83,7 @@ export const TaxCorrectionChangeSchema = Schema.Union([
     amountBasis: TaxAmountBasisSchema,
     basisComponent: Schema.Literals(['LINE_COMMERCIAL_VALUE', 'SHIPPING_ALLOCATION']),
     valueDelta: NegativeDeltaSchema,
-  }).check(
-    Schema.makeFilter(
-      ({ amountBasis, basisComponent }) =>
-        basisComponent !== 'SHIPPING_ALLOCATION' ||
-        amountBasis === 'GROSS' ||
-        'A Shipping Allocation value change must be GROSS',
-    ),
-  ),
+  }),
 ]);
 
 export type TaxCorrectionChange = typeof TaxCorrectionChangeSchema.Type;

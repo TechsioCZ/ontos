@@ -76,18 +76,35 @@ describe('Accepted Tax Terms', () => {
   it('#948 F2-F5 F8 read the unit baseline only from the record: quantity, basis split, rate and published Tax', () => {
     const terms = decodeAcceptedTaxTerms(input());
 
-    // PO decision D3 on #907: the Shipping share is always GROSS, so its VAT is carved out under § 37 písm. b).
+    // The fixture's Shipping share is GROSS, so its VAT is carved out under § 37 písm. b) (PO decision D3 on #907).
     expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-1')))).toEqual({
       lineAmountBasis: 'NET',
       originalLineBasis: exactDecimal('999.9'),
       originalPublishedTax: { amount: '211.71', currency: 'CZK' },
       originalQuantity: exactDecimal('10'),
       originalShippingBasis: exactDecimal('10'),
+      shippingAmountBasis: 'GROSS',
       taxRoundingPolicy: terms.finalTax.result.taxRoundingPolicy,
       treatment: { _tag: 'TAXABLE', ratePercent: '21' },
     });
     expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-2'))).originalPublishedTax.amount).toBe('6.00');
+    expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-2'))).shippingAmountBasis).toBeUndefined();
     expect(Option.isNone(originalUnitBaseline(terms, unitIdOf('o-3')))).toBe(true);
+  });
+
+  it('907-Q07 #948 the baseline copies a NET Shipping basis from the recorded component', () => {
+    const terms = decodeAcceptedTaxTerms(
+      acceptedTaxTermsInput([
+        { lineValue: '100.00', occurrenceId: 'o-1', quantity: '1', shipping: '10.00', shippingAmountBasis: 'NET' },
+      ]),
+    );
+
+    // 100 * 21/100 + 10 * 21/100 = 23.10: the NET share is taxed share * r, never relabelled GROSS.
+    expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-1')))).toMatchObject({
+      originalPublishedTax: { amount: '23.10', currency: 'CZK' },
+      originalShippingBasis: exactDecimal('10'),
+      shippingAmountBasis: 'NET',
+    });
   });
 
   it('B-3 a seller-is-non-payer unit has a treatment-aware baseline with no rate field (Unit 12 B3)', () => {
