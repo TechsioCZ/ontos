@@ -477,9 +477,9 @@ export interface TaxEvaluationVerdict {
  * classification and the complete applicable rule set, and the owner-issued Shipping charge's own source check
  * (Current and CZK; independent of the unit meanings; ignored, not an error, for a NON_PAYER seller). A NET or GROSS
  * Shipping basis alone is never a failure (907-Q07). Shipping allocation itself derives its weights from the units'
- * rates, so it runs only after every unit meaning has already succeeded (PO decision D3 on #907). Any failure is the typed non-success chosen by `reportedFailure`, which
- * reports a TAX_CASE_UNSUPPORTED part ahead of any other failing part; success is a Decision with its Result
- * under the Launch rounding policy (#936, #935; Unit 10 A4).
+ * rates, so it runs only after every unit meaning has already succeeded (PO decision D3 on #907). Any failure is
+ * the typed non-success chosen by `reportedFailure`, which reports a TAX_CASE_UNSUPPORTED part ahead of any other
+ * failing part; success is a Decision with its Result under the Launch rounding policy (#936, #935; Unit 10 A4).
  */
 export const evaluateProspectiveLaunchTax = (
   request: TaxEvaluationRequest,

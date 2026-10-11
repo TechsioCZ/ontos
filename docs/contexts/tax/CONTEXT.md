@@ -101,6 +101,21 @@ exact shares conserve. Tax never relabels the charge into the other basis (907-Q
 _Avoid_: NET Shipping as unsupported, a GROSS-only Shipping charge, inferring the Shipping basis from
 the line basis.
 
+**Tax exactly once** — The rule by which Commerce composes the customer payable from TAX outputs
+(907-Q07, #921): every VAT amount is paid exactly once. TAX does not own the payable; Checkout
+composes it (roadmap #253 step 33). Payable = the NET Line Commercial Values + the owner-issued
+Shipping charge, once, in its own basis + the VAT of the NET-basis components only. With NET
+Shipping every component is NET, so the published Purchase Tax Total is added in full (lines 100 @
+21 % and 100 @ 12 %, Shipping 99 NET: 200 + 99 + 49.51 = 348.51). With GROSS Shipping the charge
+already holds its VAT, which is part of the published Purchase Tax Total too; only the NET lines'
+VAT is added (same basket, Shipping 99 GROSS: 200 + 99 + 33.00 = 332.00, never 200 + 99 + 47.02 =
+346.02). For a `NON_PAYER` seller the Tax is `0.00` and the charge is still added once in either
+basis (1 000 + 99 = 1 099). Because each unit's line VAT and Shipping VAT are rounded together,
+TAX publishes no separate cent amount for the line VAT; it publishes the exact Taxable Basis
+components and the rate, and the cent rounding of the GROSS-Shipping payable belongs to Checkout.
+_Avoid_: "Pricing + Shipping + Tax" composed regardless of basis, adding VAT on top of a GROSS
+charge, a TAX-owned payable, Pricing computing Tax.
+
 **Tax Evidence** — Owner-qualified evidence supporting a stated tax determination for exact inputs
 and an explicit use. Evidence about an Invoice Recipient is not by itself the Tax Result for a
 purchase, and retaining evidence does not by itself prove Current validity.
@@ -159,7 +174,7 @@ treating a declaration as System-of-Record-verified fact.
 
 **merchant-declared** — Evidence provenance meaning that a Seller VAT Regime Declaration revision
 was entered directly by the merchant through the governed declare Action, as opposed to `MIGRATED`
-provenance carried by a legacy-import cutover. Neither provenance implies external verification.
+provenance carried by the governed import of the merchant's existing source declaration (907-Q08). Neither provenance implies external verification.
 _Avoid_: merchant-declared as a lesser-trust value, treating provenance as a correctness signal.
 
 **Migrated declaration** — A Seller VAT Regime Declaration revision carrying `MIGRATED` provenance,

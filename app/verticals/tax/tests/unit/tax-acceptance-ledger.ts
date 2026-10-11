@@ -74,6 +74,7 @@ const G_SHIPPING_ONE_RATE = 'G-shipping-one-rate';
 const G_SHIPPING_MIXED = 'G-shipping-mixed';
 const G_SHIPPING_SUBSET = 'G-shipping-subset';
 const PO_907_Q07_NET_SHIPPING = 'PO-907-Q07-net-shipping';
+const PO_907_Q07_NON_PAYER_SHIPPING = 'PO-907-Q07-non-payer-shipping';
 
 const range = (prefix: string, from: number, to: number) =>
   Array.from({ length: to - from + 1 }, (_, index) => `${prefix}${from + index}`);
@@ -167,7 +168,7 @@ export const TAX_ACCEPTANCE_KEYS = {
     PO_907_Q07_NET_SHIPPING,
     'PO-907-Q07-control-total',
     'PO-907-Q07-no-guessed-weight',
-    'PO-907-Q07-non-payer-shipping',
+    PO_907_Q07_NON_PAYER_SHIPPING,
     'PO-907-Q07-basis-material',
     'F47',
   ],
@@ -931,10 +932,22 @@ const ledger962: readonly TaxAcceptanceRow[] = [
   kernel(
     'non-payer-shipping',
     962,
-    ['PO-907-Q07-non-payer-shipping'],
+    [PO_907_Q07_NON_PAYER_SHIPPING],
     [
       taxEvaluationTest(
         '907-Q02 907-Q07 #933 #962 a non-payer with 99 NET or 99 GROSS Shipping succeeds at 0.00 with no Shipping VAT allocation',
+      ),
+    ],
+    ['pricingLine', 'shippingCharge'],
+  ),
+  // 907-Q07 #921 Tax exactly once: the payable contract on TAX outputs; the real payable is Checkout (#253 step 33).
+  kernel(
+    'payable-tax-exactly-once',
+    962,
+    [PO_907_Q07_NET_SHIPPING, PO_907_Q07_NON_PAYER_SHIPPING],
+    [
+      taxEvaluationTest(
+        '907-Q07 #921 #962 the payable counts VAT exactly once: 348.51 with NET Shipping 99, 332.00 with GROSS',
       ),
     ],
     ['pricingLine', 'shippingCharge'],
