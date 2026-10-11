@@ -33,6 +33,7 @@ relevant to the task. An accepted ADR remains current unless a later ADR explici
 | [0026](0026-single-inventory-backend-and-reservation.md)   | One configured Inventory Backend and one Reservation per Attempt | Accepted                       |
 | [0027](0027-launch-order-tax-fixed-at-commitment-time.md) | Launch Order Tax is fixed at one Order Commitment Time | Accepted |
 | [0028](0028-stage-accounts-from-operator-data.md) | Stage accounts and their rights come from operator data | Accepted |
+| [0029](0029-tax-launch-seller-regime-and-shipping-basis.md) | TAX Launch seller regime and shipping basis | Accepted |
 
 ## Status meanings
 

@@ -53,11 +53,6 @@ const OWNER_ACCEPTANCE_SOURCE = '#964 F8-F14';
  * `taxMigrationFamilies` precedent). Legal, Billing, Catalog and PO items stay open until their owner resolves them.
  */
 export const TAX_ACTIVATION_ITEMS = {
-  B2C_GROSS_AMOUNT_BASIS_CONTRACT: activationItem(
-    'PRICING_DELIVERY',
-    'Unit 11 decision 2; LEGAL-FINAL §2',
-    'Pricing and Delivery publish B2C line and Shipping amounts as GROSS (VAT-inclusive) under an agreed contract',
-  ),
   BILLING_ISSUANCE_GUARD: activationItem(
     'BILLING',
     'OWNERSHIP-FINAL §4, R2; LEGAL-FINAL §3',
@@ -76,16 +71,14 @@ export const TAX_ACTIVATION_ITEMS = {
     '#964 F24a-d, H; OWNERSHIP-FINAL H12',
     'Catalog publishes the #926 Tax-purpose evidence contract; until then TAX labels Catalog facts CALLER_SUPPLIED_UNVERIFIED',
   ),
-  D3_CONTRACT_TEXTS_RECONCILED: activationItem(
-    'PO',
-    'LEGAL-FINAL §2',
-    'The PO reconciles #931 F3, #933 F21 and #935 F14 with the approved D3 method',
-  ),
   DEACTIVATION_PLAN: operations('#964 F110-F117', 'Deactivation keeps one authority and Accepted history unchanged'),
   LEGAL_D3A: legal(4, 'VAT per Taxable Supply Unit under § 37 písm. b), rounded once HALF_UP, totals as sums'),
   LEGAL_L1A: legal(1, 'A non-payer’s taxable domestic sale is a § 50(1) exempt supply'),
   LEGAL_L1B: legal(2, 'The non-payer invoice statement and whether DIČ is omitted by default'),
-  LEGAL_L2: legal(3, 'The approved Shipping allocation key (default: published gross line values)'),
+  LEGAL_L2: legal(
+    3,
+    'The approved Shipping allocation key (default: gross-equivalent values of the affected whole lines, NET × (1 + rate), 907-Q05)',
+  ),
   LEGAL_L3A: legal(5, 'The delivery events that set DUZP per flow'),
   LEGAL_L3B: legal(6, 'The payment receipt event and its evidence under the card/PSP and bank-transfer contracts'),
   LEGAL_L4: legal(11, 'Document field lists A, C, D and always issuing the full § 29 document'),
@@ -128,6 +121,11 @@ export const TAX_ACTIVATION_ITEMS = {
     '#964 F51-F58',
     'Production permissions and audit, with the declaration permission separate from Tax Rule management',
   ),
+  PRICING_DELIVERY_AMOUNT_BASIS_CONTRACT: activationItem(
+    'PRICING_DELIVERY',
+    'Unit 11 decision 2; ADR 0029; 907-Q05–Q07',
+    'Pricing publishes NET (pre-Tax) line values; Delivery publishes the customer Shipping price with an explicit NET or GROSS basis (907-Q05–Q07)',
+  ),
   PRIVACY_OWNER_INVENTORY: activationItem('PRIVACY', '#964 F65-F71', 'The Privacy owner inventory covers TAX data'),
   PRODUCTION_SCOPE_INVENTORY: operations(
     '#964 F15-F24',
@@ -135,8 +133,8 @@ export const TAX_ACTIVATION_ITEMS = {
   ),
   Q5_LAUNCH_FLOWS_DECIDED: activationItem(
     'PO',
-    'OWNERSHIP-FINAL Q5, §4; LEGAL-FINAL §6.3',
-    'The supported Launch flows, and a staff procedure or an explicit restriction for blocked cases',
+    'OWNERSHIP-FINAL Q5, §4; 907-Q11.2',
+    'The final Billing/later-event flows and blocked-case handling, decided after legal review (907-Q11.2)',
   ),
   REQUIRED_SOURCE_ROUTES: operations(
     '#964 F42-F50',

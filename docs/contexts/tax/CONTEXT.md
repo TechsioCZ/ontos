@@ -78,18 +78,28 @@ not declared seller VAT regime as a silent default, partial observation as `TAX_
 Taxable Supply Unit from authoritative owner-issued commercial amounts: published Line Commercial
 Values with Discounts/Fees/Promotion contributions included exactly once, and the separately
 owner-issued Shipping amount. Each owner-issued amount carries an explicit amount basis, GROSS
-(VAT-inclusive, the price actually charged) or NET (pre-Tax); Launch B2C owners publish GROSS.
-The Shipping allocation is Tax-owned; the owner-issued Shipping charge is GROSS-only. The owner-
-issued Shipping charge is split in proportion to the gross line values of the affected Taxable
-Supply Units (for a pre-Tax line, the line value × (1 + rate)). The exact
-gross shares conserve the owner-issued, customer-charged Shipping amount before rounding and may be
-exact rational values rather than published Monetary Amounts; net Shipping bases are derived per
-unit and never conserved or stored. It is not a second Pricing total or authority to change already
-published Line Commercial Values.
+(VAT-inclusive, the price actually charged) or NET (pre-Tax); Pricing publishes Line Commercial
+Values canonically NET, and the owner-issued Shipping charge carries its own explicit basis — NET or
+GROSS, including for a VAT payer (907-Q05–Q07). The Shipping allocation is Tax-owned: the
+owner-issued Shipping charge is split in proportion to the gross-equivalent value of the affected
+Taxable Supply Units — a GROSS line weighs its amount, a NET line weighs its amount × (1 + rate) —
+and the exact shares conserve the owner-issued, customer-charged Shipping charge in its own source
+basis before rounding; they may be exact rational values rather than published Monetary Amounts. It
+is not a second Pricing total or authority to change already published Line Commercial Values.
 _Avoid_: Pricing total automatically treated as a universal taxable basis, duplicate Fee addition,
 Shipping as Pricing Fee, missing Shipping as zero Shipping, equal/count-based split as default
 allocation, rounding an allocation merely to force a decimal Monetary Amount, using a GROSS amount
-unchanged as a net base, rounded display shares as Tax input.
+unchanged as a net base, relabeling an explicit NET or GROSS Shipping charge into the other basis,
+rounded display shares as Tax input.
+
+**Shipping amount basis** — The explicit NET or GROSS amount basis Delivery/Pricing attaches to one
+owner-issued Shipping charge, distinct from and independently chosen from the Taxable Supply Units'
+own line basis. Both bases are a supported Launch Shipping charge, including for a VAT payer; the
+allocation weight comes from the affected lines, while the Shipping basis fixes how VAT is computed
+from each share (share × rate for NET, share × rate/(1 + rate) for GROSS) and the control total the
+exact shares conserve. Tax never relabels the charge into the other basis (907-Q05–Q07).
+_Avoid_: NET Shipping as unsupported, a GROSS-only Shipping charge, inferring the Shipping basis from
+the line basis.
 
 **Tax Evidence** — Owner-qualified evidence supporting a stated tax determination for exact inputs
 and an explicit use. Evidence about an Invoice Recipient is not by itself the Tax Result for a
@@ -151,6 +161,21 @@ treating a declaration as System-of-Record-verified fact.
 was entered directly by the merchant through the governed declare Action, as opposed to `MIGRATED`
 provenance carried by a legacy-import cutover. Neither provenance implies external verification.
 _Avoid_: merchant-declared as a lesser-trust value, treating provenance as a correctness signal.
+
+**Migrated declaration** — A Seller VAT Regime Declaration revision carrying `MIGRATED` provenance,
+created by the import Action from the regime the merchant already declared in the source system. It
+satisfies the declared-regime activation condition exactly like a direct declaration; `MIGRATED`
+names how the revision was obtained, not a lower trust level, and import performs no external
+verification of the merchant's declared regime (907-Q08/Q09).
+_Avoid_: `MIGRATED` as unverified or provisional, requiring a repeat merchant confirmation after
+import, deriving a regime from DIČ or from the absence of history.
+
+**Migration start** — The stable instant a current-only imported declaration (no source-supplied
+historical effective date) becomes effective: the import run's `migrationStartedAt`. It is the start
+of usability in OntOS, not an assertion of the true historical registration date, and it stays the
+same instant across a retried import of the same run (907-Q08).
+_Avoid_: Migration start presented as a historical registration date, re-deriving it per retry,
+blocking activation for a missing historical date.
 
 **non-payer treatment** — Tax Decision Treatment `SELLER_NOT_VAT_PAYER` applied to every unit of a
 Decision whose seller is a declared VAT non-payer at the Tax-Relevant Time, under the Czech § 50(1)
@@ -270,7 +295,8 @@ correction may combine a goods change (quantity or line value) and a shipping-sh
 same unit; shipping is never derived from quantity. A full reversal is the exact negation of the
 stored Tax. A non-payer original corrects to `0.00 CZK` under `SELLER_NOT_VAT_PAYER` with no rate.
 A value reduction states its own amount basis; TAX converts it into the component's recorded basis
-at the original unit's treatment. Shipping reductions are GROSS only. Rounding remainder stays
+at the original unit's treatment. A Shipping reduction is converted into the Shipping component's
+recorded amount basis (NET or GROSS) at the original unit's rate (907-Q07). Rounding remainder stays
 within that unit's lineage; full exhaustion of the original basis leaves exactly `0.00 CZK`
 remaining published Tax for that unit. It is neither a replacement Tax Result nor a new sale Tax
 determination; a TAX preview advances no Accepted sequence.
