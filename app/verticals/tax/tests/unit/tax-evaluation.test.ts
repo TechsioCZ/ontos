@@ -74,7 +74,7 @@ const sharesOf = (outcome: TaxOutcomeSuccess) =>
 
 /** Exact sum of zero or more amounts (907-Q07 payable composition). */
 const sumOf = (values: readonly TaxExactRational[]) => sumTaxExactRationals([exactDecimal('0'), ...values]);
-/** The NET Line Commercial Values a Decision taxes. */
+/** The Line Commercial Values a Decision taxes, each once in its own basis (NET at Launch, #921). */
 const linesOf = (outcome: TaxOutcomeSuccess) =>
   sumOf(
     outcome.decision.units.flatMap(({ taxableBasisInterpretation }) =>
@@ -851,8 +851,9 @@ describe('Prospective Launch Tax evaluation', () => {
 
     it('907-Q07 #921 #962 the payable counts VAT exactly once: 348.51 with NET Shipping 99, 332.00 with GROSS', () => {
       // TAX owns no payable; Checkout composes it (#253 step 33). This pins the contract on TAX's outputs:
-      // payable = NET Line Commercial Values + the owner-issued Shipping charge once, in its own basis + the VAT of
-      // the NET-basis components only. A GROSS charge already holds its VAT, so it is never added again.
+      // payable = every owner-issued amount once, in its own basis + the VAT of the NET-basis amounts only. With no
+      // GROSS amount that VAT is the published Purchase Tax Total; with a GROSS amount Checkout adds the exact VAT of
+      // the NET-basis amounts and rounds it. A GROSS charge already holds its VAT, so it is never added again.
       const shippingCharge99 = exactDecimal('99');
       const net = success(evaluate(netLinesWithShipping('NET')));
       const gross = success(evaluate(netLinesWithShipping('GROSS')));
@@ -863,7 +864,15 @@ describe('Prospective Launch Tax evaluation', () => {
       expect(sumOf([linesOf(net), shippingCharge99, exactDecimal(net.result.purchaseTaxTotal.amount)])).toEqual(
         exactDecimal('348.51'),
       );
+      // The exact VAT of the all-NET basket is 49.507..., not 49.51: the published total is what is added.
+      expect(vatOfNetComponents(net)).not.toEqual(exactDecimal('49.51'));
       // GROSS Shipping: only the NET lines' VAT (21 + 12) is outside a charge; the 99 already holds its own VAT.
+      const grossShares = gross.decision.shippingAllocation?.unitAllocations.map(
+        ({ basisComponent }) => basisComponent,
+      );
+      expect(gross.decision.shippingAllocation?.ownerIssuedShippingAmount).toEqual(shippingCharge99);
+      expect(grossShares?.map(({ amountBasis }) => amountBasis)).toEqual(['GROSS', 'GROSS']);
+      expect(sumOf(grossShares?.map(({ amount }) => amount) ?? [])).toEqual(shippingCharge99);
       expect(vatOfNetComponents(gross)).toEqual(exactDecimal('33'));
       expect(sumOf([linesOf(gross), shippingCharge99, vatOfNetComponents(gross)])).toEqual(exactDecimal('332.00'));
       // The naive "lines + Shipping + purchaseTaxTotal" counts the carved-out Shipping VAT (47.02 - 33 = 14.02) twice.
@@ -871,8 +880,10 @@ describe('Prospective Launch Tax evaluation', () => {
       expect(naive).toEqual(exactDecimal('346.02'));
       expect(subtractTaxExactRationals(naive, exactDecimal('332.00'))).toEqual(exactDecimal('14.02'));
 
-      // NON_PAYER (local-921): 1 000 NET + 99 Shipping + Tax 0 = 1 099 in either Shipping basis, the charge once.
+      // NON_PAYER (local-921): 1 000 NET + 99 Shipping + Tax 0 = 1 099 in either Shipping basis, the charge once. A
+      // non-payer Decision has no Shipping allocation, so the charge is the Delivery amount the evaluation was given.
       for (const amountBasis of ['NET', 'GROSS'] as const) {
+        const deliveryCharge = { amount: exactDecimal('99.00'), amountBasis, currency: 'CZK' } as const;
         const nonPayer = success(
           evaluate(
             evaluationRequest(
@@ -881,7 +892,7 @@ describe('Prospective Launch Tax evaluation', () => {
                 purchase: purchaseBindingInput(['o1'], { shippingSourceRef }),
                 shipping: shippingInput({
                   affectedOccurrenceIds: ['o1'],
-                  source: shippingCharge('99.00', amountBasis),
+                  source: { _tag: 'CURRENT', amount: deliveryCharge, shippingSourceRef },
                 }),
               },
               ['o1'],
@@ -889,8 +900,9 @@ describe('Prospective Launch Tax evaluation', () => {
             ownState({ ruleSets: new Map(), sellerVatRegime: DECLARED_NON_PAYER }),
           ),
         );
+        expect(nonPayer.decision.shippingAllocation, amountBasis).toBeUndefined();
         expect(
-          sumOf([linesOf(nonPayer), shippingCharge99, exactDecimal(nonPayer.result.purchaseTaxTotal.amount)]),
+          sumOf([linesOf(nonPayer), deliveryCharge.amount, exactDecimal(nonPayer.result.purchaseTaxTotal.amount)]),
           amountBasis,
         ).toEqual(exactDecimal('1099'));
       }
