@@ -50,7 +50,6 @@ export type SellerVatRegimeDeclarationProvenance = typeof SellerVatRegimeDeclara
  * usability in OntOS, not the historical registration date, and no earlier history is inferred.
  */
 export const SellerVatRegimeEffectiveFromOriginSchema = Schema.Literals(['DECLARED', 'SOURCE', 'MIGRATION_START']);
-export type SellerVatRegimeEffectiveFromOrigin = typeof SellerVatRegimeEffectiveFromOriginSchema.Type;
 
 /** The declaration row's own primary key; branded so it is never interchangeable with another identifier (audit
  * A2). */
