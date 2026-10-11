@@ -27,6 +27,7 @@ const revision = (number: number, regime: 'NON_PAYER' | 'VAT_PAYER', effectiveFr
   },
   declaredBy: '20000000-0000-4000-8000-000000000001',
   effectiveFrom,
+  effectiveFromOrigin: 'DECLARED',
   provenance: 'MERCHANT_DECLARED',
   reason: null,
   recordedAt: '2026-01-01T00:00:00.000Z',

@@ -16,6 +16,7 @@ import { DeclareSellerVatRegimeActionApi } from './apis/declare-seller-vat-regim
 import { EndTaxRuleRevisionActionApi } from './apis/end-tax-rule-revision-action.ts';
 import { FinalizeOrderTaxActionApi } from './apis/finalize-order-tax-action.ts';
 import { FinalOrderTaxApi } from './apis/final-order-tax.ts';
+import { ImportSellerVatRegimeDeclarationsActionApi } from './apis/import-seller-vat-regime-declarations-action.ts';
 import { SellerVatRegimeAtInstantApi } from './apis/seller-vat-regime-at-instant.ts';
 import { SellerVatRegimeHistoryApi } from './apis/seller-vat-regime-history.ts';
 import { TaxCorrectionPreviewApi } from './apis/tax-correction-preview.ts';
@@ -59,6 +60,7 @@ export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(EndTaxRuleRevisionActionApi)
   .addHttpApi(FinalizeOrderTaxActionApi)
   .addHttpApi(FinalOrderTaxApi)
+  .addHttpApi(ImportSellerVatRegimeDeclarationsActionApi)
   .addHttpApi(SellerVatRegimeAtInstantApi)
   .addHttpApi(SellerVatRegimeHistoryApi)
   .addHttpApi(TaxCorrectionPreviewApi)

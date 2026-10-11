@@ -17,6 +17,7 @@ import { createTaxRuleRevisionAction } from '../../src/actions/create-tax-rule-r
 import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts';
 import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-vat-regime.action.ts';
 import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revision.action.ts';
+import { importSellerVatRegimeDeclarationsAction } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -152,6 +153,14 @@ it.effect('#950 BDD Czech jurisdiction is not global administrator scope', () =>
 it('#907 Unit 10 declaring a Seller VAT Regime has no business Permission target (explicit Action provisioning instead)', () => {
   expect(getActionBusinessPermissionTargetResolver(declareSellerVatRegimeAction)).toBeUndefined();
   expect(declareSellerVatRegimeAction.descriptor.entrypoint.authorization).toEqual({
+    kind: 'action_execution',
+    provisioning: 'explicit',
+  });
+});
+
+it('907-Q08 #960 importing Seller VAT Regime declarations has no business Permission target (explicit Action provisioning instead)', () => {
+  expect(getActionBusinessPermissionTargetResolver(importSellerVatRegimeDeclarationsAction)).toBeUndefined();
+  expect(importSellerVatRegimeDeclarationsAction.descriptor.entrypoint.authorization).toEqual({
     kind: 'action_execution',
     provisioning: 'explicit',
   });

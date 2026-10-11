@@ -11,6 +11,7 @@ import { createTaxRuleRevisionAction } from '../../src/actions/create-tax-rule-r
 import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-vat-regime.action.ts';
 import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revision.action.ts';
 import { finalizeOrderTaxAction } from '../../src/actions/finalize-order-tax.action.ts';
+import { importSellerVatRegimeDeclarationsAction } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
 import { taxManifest } from '../../vertical.manifest.ts';
 import { taxRegistration } from '../../vertical.registration.ts';
 
@@ -21,6 +22,7 @@ const taxActionRegistrations = [
   declareSellerVatRegimeAction,
   endTaxRuleRevisionAction,
   finalizeOrderTaxAction,
+  importSellerVatRegimeDeclarationsAction,
 ];
 
 const governanceActionKeys = [
@@ -30,6 +32,7 @@ const governanceActionKeys = [
   'commerce.tax.declare-seller-vat-regime',
   'commerce.tax.end-tax-rule-revision',
   'commerce.tax.finalize-order-tax',
+  'commerce.tax.import-seller-vat-regime-declarations',
 ];
 
 describe('Tax module contract', () => {
@@ -83,11 +86,13 @@ describe('Tax module contract', () => {
     expect(surface.filter((key) => /buyer|customer|counterparty|b2b|b2c/u.test(key))).toEqual([]);
   });
 
-  it('#964 no external seller route: the Seller VAT Regime enters only through the governed declare Action', () => {
+  it('907-Q08 #964 no external seller route: the Seller VAT Regime enters only through the governed declare and import Actions', () => {
     const actionKeys = taxManifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
-    expect(actionKeys.filter((actionKey) => /vies|ares|import|sync|route|assertion/u.test(actionKey))).toEqual([]);
+    // The import carries the merchant's existing source declaration; it verifies nothing (907-Q08, Q04).
+    expect(actionKeys.filter((actionKey) => /vies|ares|sync|route|assertion|verif/u.test(actionKey))).toEqual([]);
     expect(actionKeys.filter((actionKey) => /seller-vat-regime/u.test(actionKey))).toEqual([
       'commerce.tax.declare-seller-vat-regime',
+      'commerce.tax.import-seller-vat-regime-declarations',
     ]);
   });
 
@@ -125,6 +130,19 @@ describe('Tax module contract', () => {
       provisioning: 'explicit',
     });
     expect(finalize?.descriptor.legalEntityScope).toBe('required');
+  });
+
+  it('907-Q08 #960 imports Seller VAT Regime declarations through explicit Action provisioning, one Selling Legal Entity per call', () => {
+    const importAction = taxManifest.publicSurface.actions.find(
+      ({ descriptor }) => descriptor.actionKey === 'commerce.tax.import-seller-vat-regime-declarations',
+    );
+    expect(Object.keys(importAction?.descriptor ?? {})).not.toContain('businessPermission');
+    expect(importAction?.descriptor.entrypoint.authorization).toEqual({
+      kind: 'action_execution',
+      provisioning: 'explicit',
+    });
+    expect(importAction?.descriptor.legalEntityScope).toBe('required');
+    expect(importAction?.descriptor.idempotency).toBe('required');
   });
 
   it('#949/#950 declares the Seller VAT Regime through explicit Action provisioning, without a Core business Permission scope', () => {

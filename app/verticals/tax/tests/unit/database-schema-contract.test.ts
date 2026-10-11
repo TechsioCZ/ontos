@@ -147,6 +147,34 @@ it.layer(NodeFileSystem.layer)('TAX migrations as checked in', (suite) => {
     }),
   );
 
+  suite.effect(
+    '907-Q08 #960 imported declarations keep their run, source record and effect origin, never a verification',
+    () =>
+      Effect.gen(function* importedSellerVatRegimeDeclarations() {
+        expect(columnNames(taxSellerVatRegimeDeclarations)).toEqual(
+          expect.arrayContaining(['migration_run_ref', 'source_record_ref', 'effective_from_origin']),
+        );
+        expect(columnNames(taxSellerVatRegimeDeclarations).filter((name) => /verif|confirm/u.test(name))).toEqual([]);
+        const origin = getTableConfig(taxSellerVatRegimeDeclarations).columns.find(
+          (column) => column.name === 'effective_from_origin',
+        );
+        expect(origin?.notNull).toBe(true);
+        expect(origin?.hasDefault).toBe(true);
+        const sql = yield* migrations;
+        expect(sql).toContain(
+          "\"tax_seller_vat_regime_declarations_effective_from_origin_ck\" CHECK (\"effective_from_origin\" in ('DECLARED', 'SOURCE', 'MIGRATION_START'))",
+        );
+        // MIGRATED <=> run + source record + a SOURCE/MIGRATION_START origin; MERCHANT_DECLARED <=> DECLARED.
+        expect(sql).toContain(
+          '"tax_seller_vat_regime_declarations_migration_ck" CHECK (("provenance" = \'MIGRATED\' and "migration_run_ref" is not null and "source_record_ref" is not null and "effective_from_origin" in (\'SOURCE\', \'MIGRATION_START\')) or ("provenance" = \'MERCHANT_DECLARED\' and "migration_run_ref" is null and "source_record_ref" is null and "effective_from_origin" = \'DECLARED\'))',
+        );
+        // An imported source declaration was already made, so it needs no backdating reason.
+        expect(sql).toContain(
+          '"tax_seller_vat_regime_declarations_backdating_reason_ck" CHECK ("provenance" = \'MIGRATED\' or "reason" is not null or "effective_from" >= "recorded_at")',
+        );
+      }),
+  );
+
   suite.effect('#944 F10-F13 stores one immutable final Order Tax per submission with its T and frozen intent', () =>
     Effect.gen(function* finalOrderTaxStorage() {
       expect(uniqueColumns(taxOrderTaxFinalizations)).toContain('tenant_id,legal_entity_id,submission_ref');

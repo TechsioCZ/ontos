@@ -12,6 +12,7 @@ import { declareSellerVatRegimeAction } from './src/actions/declare-seller-vat-r
 import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
 import { finalizeOrderTaxAction } from './src/actions/finalize-order-tax.action.ts';
 import { FinalOrderTaxApi } from './shared/apis/final-order-tax.ts';
+import { importSellerVatRegimeDeclarationsAction } from './src/actions/import-seller-vat-regime-declarations.action.ts';
 import { orderTaxFinalizationResourceDescriptor } from './shared/resources/order-tax-finalization.ts';
 import { SellerVatRegimeAtInstantApi } from './shared/apis/seller-vat-regime-at-instant.ts';
 import { sellerVatRegimeDeclarationResourceDescriptor } from './shared/resources/seller-vat-regime-declaration.ts';
@@ -50,6 +51,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       declareSellerVatRegimeAction,
       endTaxRuleRevisionAction,
       finalizeOrderTaxAction,
+      importSellerVatRegimeDeclarationsAction,
       // </generated-module-manifest-actions>
     ],
     api: {

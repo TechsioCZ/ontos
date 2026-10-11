@@ -38,6 +38,7 @@ import { declareSellerVatRegimeActionApiLive } from './declare-seller-vat-regime
 import { endTaxRuleRevisionActionApiLive } from './end-tax-rule-revision-action-server.ts';
 import { finalizeOrderTaxActionApiLive } from './finalize-order-tax-action-server.ts';
 import { finalOrderTaxReadApiLive } from './final-order-tax-read-server.ts';
+import { importSellerVatRegimeDeclarationsActionApiLive } from './import-seller-vat-regime-declarations-action-server.ts';
 import { sellerVatRegimeAtInstantReadApiLive } from './seller-vat-regime-at-instant-read-server.ts';
 import { sellerVatRegimeHistoryReadApiLive } from './seller-vat-regime-history-read-server.ts';
 import { taxCorrectionPreviewReadApiLive } from './tax-correction-preview-read-server.ts';
@@ -124,6 +125,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   endTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   finalizeOrderTaxActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   finalOrderTaxReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  importSellerVatRegimeDeclarationsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   sellerVatRegimeAtInstantReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   sellerVatRegimeHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxCorrectionPreviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
