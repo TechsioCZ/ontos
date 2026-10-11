@@ -206,7 +206,7 @@ const NO_OUTBOX_GUARD = moduleContractTest(
   '#963 §6 TAX publishes no Outbox message or domain event, so no delivery debt exists',
 );
 const NO_SELLER_ROUTE_GUARD = moduleContractTest(
-  '#964 no external seller route: the Seller VAT Regime enters only through the governed declare Action',
+  '907-Q08 #964 no external seller route: the Seller VAT Regime enters only through the governed declare and import Actions',
 );
 const LEDGER_D6_GUARD = taxAcceptanceLedgerTest(
   '#961 F22 D6 rows are never kernel-only and name only foreign-owner doubles',
@@ -390,7 +390,7 @@ const ledger961: readonly TaxAcceptanceRow[] = [
     961,
     ['H9'],
     NO_SELLER_ROUTE_GUARD,
-    'Launch has no external seller route and pulls no PARK/LATER integration forward; the Seller VAT Regime enters only through the governed declare Action',
+    'Launch has no external seller route and pulls no PARK/LATER integration forward; the Seller VAT Regime enters only through the governed declare and import Actions',
   ),
   superseded('external-route-park', 961, ['G-external-route-park', 'F25', 'F55'], 'OWNERSHIP-FINAL §7', [
     'no-external-seller-route',

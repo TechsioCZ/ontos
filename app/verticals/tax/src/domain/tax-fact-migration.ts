@@ -42,7 +42,8 @@ const launchScope = {
 } as const;
 
 const requiredKeys = {
-  SELLER_VAT_REGIME_DECLARATION: ['effectiveFrom', 'regime'],
+  // A current-only source state has no date; its effect starts at the migration instant (907-Q08).
+  SELLER_VAT_REGIME_DECLARATION: ['regime'],
   TAX_RULE: [
     'compositionKind',
     'effectiveFrom',
@@ -115,7 +116,10 @@ const canonicalTarget = (
         Result.flatMap((content) =>
           Schema.encodeResult(SellerVatRegimeDeclarationTargetTextSchema)(content).pipe(
             Result.map((text) => ({
-              factKey: tupleKey(['SELLER_VAT_REGIME_DECLARATION', DateTime.formatIso(content.effectiveFrom)]),
+              factKey: tupleKey([
+                'SELLER_VAT_REGIME_DECLARATION',
+                content.effectiveFrom === undefined ? 'MIGRATION_START' : DateTime.formatIso(content.effectiveFrom),
+              ]),
               targetMeaningKey: TaxMigrationTargetMeaningKeySchema.make(text),
             })),
           ),

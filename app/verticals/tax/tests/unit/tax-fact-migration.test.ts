@@ -700,6 +700,26 @@ describe('#960 review round 2 regressions (Opus)', () => {
       }),
     );
   });
+
+  it('907-Q08 #960 a current-only source declaration with no date maps, sharing the import decode', () => {
+    const currentOnly = { regime: 'NON_PAYER' };
+    const outcome = only(
+      evaluateTaxMigrationCandidates([
+        candidate('current-only', {
+          _tag: 'TAX_OWNED',
+          family: 'SELLER_VAT_REGIME_DECLARATION',
+          targetMeaning: currentOnly,
+        }),
+      ]),
+    );
+    expect(outcome).toEqual(
+      TaxMigrationMappedAcceptedSchema.make({
+        family: 'SELLER_VAT_REGIME_DECLARATION',
+        provenance: prov('current-only'),
+        targetMeaningKey: Result.getOrThrow(taxMigrationTargetMeaningKey('SELLER_VAT_REGIME_DECLARATION', currentOnly)),
+      }),
+    );
+  });
 });
 
 describe('#960 review round 2 regressions (Sol, Astra)', () => {

@@ -14,7 +14,8 @@ export const TAX_PRIVACY_OWNER_CAPABILITY = 'commerce.tax';
  *
  * `SELLER_VAT_REGIME_DECLARATION_HISTORY` (#907 Unit 10) replaces the retired Tax Fact Authority Contract,
  * Source Assertion and Source Conflict parts: it holds the merchant-declared Seller VAT Regime Declaration
- * revisions, which carry actor principal ids and free-text declaration reasons.
+ * revisions, which carry actor principal ids and free-text declaration reasons. Imported revisions (907-Q08) also
+ * carry the importer's migration run and source record references, so the part covers that source data too.
  */
 export const taxPrivacyOwnerScopeParts = [
   'ACTOR_PRINCIPAL_ATTRIBUTION',

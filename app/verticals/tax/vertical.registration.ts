@@ -10,6 +10,7 @@ import { createTaxRuleRevisionAction } from './src/actions/create-tax-rule-revis
 import { declareSellerVatRegimeAction } from './src/actions/declare-seller-vat-regime.action.ts';
 import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
 import { finalizeOrderTaxAction } from './src/actions/finalize-order-tax.action.ts';
+import { importSellerVatRegimeDeclarationsAction } from './src/actions/import-seller-vat-regime-declarations.action.ts';
 // </generated-module-registration-imports>
 export const taxRegistration = defineVerticalRuntimeRegistration({
   actions: [
@@ -20,6 +21,7 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
     declareSellerVatRegimeAction,
     endTaxRuleRevisionAction,
     finalizeOrderTaxAction,
+    importSellerVatRegimeDeclarationsAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {

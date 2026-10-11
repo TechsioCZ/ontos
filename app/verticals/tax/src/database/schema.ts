@@ -212,9 +212,12 @@ const ownerReference = (name: string, column: AnyPgColumn) =>
 
 /**
  * Merchant-declared, append-only Seller VAT Regime Declaration revisions (#907 Unit 10, LEGAL §1). The seller is
- * never verified: `provenance` only distinguishes a merchant-declared revision from one imported by the step-9
- * migration cutover. `recorded_at` is the trusted Action operation time, never the DB default, so the backdating
- * check and the row agree (F4); the DB check repeats the rule as a race backstop.
+ * never verified: `provenance` is how the revision was obtained, never a trust level (907-Q08/Q09). `MIGRATED` rows
+ * are imported source declarations and carry their run and source record; their `effective_from_origin` says
+ * whether the effect is the source's own (`SOURCE`) or the migration start (`MIGRATION_START`, the start of
+ * usability in OntOS, not the historical registration date). `recorded_at` is the trusted Action operation time,
+ * never the DB default, so the backdating check and the row agree (F4); the DB check repeats the rule as a race
+ * backstop. An imported source declaration was already made, so it needs no backdating reason (907-Q08).
  */
 export const taxSellerVatRegimeDeclarations = taxSchema.table.withRLS(
   'tax_seller_vat_regime_declarations',
@@ -224,8 +227,10 @@ export const taxSellerVatRegimeDeclarations = taxSchema.table.withRLS(
     actionInvocationId: uuid('action_invocation_id').notNull(),
     actorPrincipalId: uuid('actor_principal_id').notNull(),
     effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
+    effectiveFromOrigin: text('effective_from_origin').notNull().default('DECLARED'),
     idempotencyKey: text('idempotency_key').notNull(),
     intentFingerprint: text('intent_fingerprint').notNull(),
+    migrationRunRef: text('migration_run_ref'),
     provenance: text('provenance').notNull(),
     reason: text('reason'),
     recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
@@ -238,6 +243,7 @@ export const taxSellerVatRegimeDeclarations = taxSchema.table.withRLS(
       .default([]),
     replacesScheduled: boolean('replaces_scheduled').notNull(),
     revision: integer('revision').notNull(),
+    sourceRecordRef: text('source_record_ref'),
   },
   (table) => [
     scopeIdentity('tax_seller_vat_regime_declarations_scope_id_uk', table, table.taxSellerVatRegimeDeclarationId),
@@ -255,7 +261,15 @@ export const taxSellerVatRegimeDeclarations = taxSchema.table.withRLS(
     ),
     check(
       'tax_seller_vat_regime_declarations_backdating_reason_ck',
-      sql`${table.reason} is not null or ${table.effectiveFrom} >= ${table.recordedAt}`,
+      sql`${table.provenance} = 'MIGRATED' or ${table.reason} is not null or ${table.effectiveFrom} >= ${table.recordedAt}`,
+    ),
+    check(
+      'tax_seller_vat_regime_declarations_effective_from_origin_ck',
+      sql`${table.effectiveFromOrigin} in ('DECLARED', 'SOURCE', 'MIGRATION_START')`,
+    ),
+    check(
+      'tax_seller_vat_regime_declarations_migration_ck',
+      sql`(${table.provenance} = 'MIGRATED' and ${table.migrationRunRef} is not null and ${table.sourceRecordRef} is not null and ${table.effectiveFromOrigin} in ('SOURCE', 'MIGRATION_START')) or (${table.provenance} = 'MERCHANT_DECLARED' and ${table.migrationRunRef} is null and ${table.sourceRecordRef} is null and ${table.effectiveFromOrigin} = 'DECLARED')`,
     ),
     fingerprint('tax_seller_vat_regime_declarations_fingerprint_ck', table.intentFingerprint),
     ...scopedPolicies('tax_seller_vat_regime_declarations_scope', table),

@@ -23,7 +23,10 @@ import { TaxGovernanceAuditEvidenceSchema } from '../../shared/domain/tax-govern
 import { handleFinalizeOrderTax } from '../../src/actions/finalize-order-tax.action.ts';
 import { readFinalOrderTax } from '../../src/api/final-order-tax.read.ts';
 import type { FinalizeOrderTaxResult } from '../../shared/actions/order-tax-finalization.ts';
-import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
+import {
+  DeclareSellerVatRegimePayloadSchema,
+  ImportSellerVatRegimeDeclarationsPayloadSchema,
+} from '../../shared/actions/seller-vat-regime-declaration.ts';
 import {
   CorrectTaxRuleRevisionPayloadSchema,
   CreateTaxRulePayloadSchema,
@@ -222,7 +225,29 @@ const seller = (runtime: CoreTestDatabase) => {
         ),
       ),
     );
-  return { createRule, declare, finalize, finalOrderTax, launchRules, legalEntityId, payload, scope, setUp };
+  const importDeclarations = (input: typeof ImportSellerVatRegimeDeclarationsPayloadSchema.Encoded) =>
+    Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input).pipe(
+      Effect.flatMap((decoded) =>
+        runScoped(runtime, scope, (transaction) =>
+          sellerVatRegimeDeclarationsForScope(transaction, scope).importDeclarations({
+            ...decoded,
+            ...invocation(scope),
+          }),
+        ),
+      ),
+    );
+  return {
+    createRule,
+    declare,
+    finalize,
+    finalOrderTax,
+    importDeclarations,
+    launchRules,
+    legalEntityId,
+    payload,
+    scope,
+    setUp,
+  };
 };
 
 type FinalizeOutcome = Effect.Success<ReturnType<ReturnType<typeof seller>['finalize']>>;
@@ -721,6 +746,42 @@ it.live('Unit 10 C a NON_PAYER final stores zero tax with no governing rule revi
         [tenantId, submission],
       );
       expect(rows).toEqual([{ governing_rule_revisions: [], purchase_tax_total_amount: '0.00' }]);
+    }),
+  ),
+);
+
+it.live('907-Q09 #960 a final at T over imported MIGRATED source history succeeds and carries its revision ref', () =>
+  Effect.scoped(
+    Effect.gen(function* migratedFinalizationAcceptance() {
+      const { adminClient, runtime } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      // Imported, never declared again by the merchant: non-payer first, payer covering T, a scheduled change after.
+      yield* subject.importDeclarations({
+        declarations: [
+          { effectiveFrom: '2025-01-01T00:00:00.000Z', regime: 'NON_PAYER', sourceRecordRef: 'legacy:first' },
+          { effectiveFrom: '2026-01-01T00:00:00.000Z', regime: 'VAT_PAYER', sourceRecordRef: 'legacy:payer' },
+          { effectiveFrom: '2027-01-01T00:00:00.000Z', regime: 'NON_PAYER', sourceRecordRef: 'legacy:scheduled' },
+        ],
+        migrationRunRef: 'migration-run-1',
+        migrationStartedAt: '2026-01-15T00:00:00.000Z',
+      });
+      yield* subject.launchRules;
+
+      const submission = `submission-${randomUUID()}`;
+      const final = finalizedOf(yield* subject.finalize(subject.payload(submission)));
+      expect(final.created).toBe(true);
+      expect(final.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+      expect(final.handoff.outcome.decision.declarationRevisionRef.revision).toBe(2);
+
+      // The stored evidence names the selected imported revision; its provenance explains, it never gates.
+      const rows = yield* adminClient.unsafe(
+        `select evidence -> 'sellerVatRegime' -> 'selection' ->> 'provenance' as provenance,
+                evidence -> 'sellerVatRegime' -> 'selection' ->> 'effectiveFromOrigin' as origin
+         from tax.tax_order_tax_finalizations
+         where tenant_id = $1 and submission_ref = $2`,
+        [tenantId, submission],
+      );
+      expect(rows).toEqual([{ origin: 'SOURCE', provenance: 'MIGRATED' }]);
     }),
   ),
 );

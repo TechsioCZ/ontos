@@ -13,7 +13,10 @@ import { installOperationalScope } from '../../../../packages/core-runtime/src/d
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { CreateTaxRulePayloadSchema } from '../../shared/actions/tax-governance.ts';
-import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
+import {
+  DeclareSellerVatRegimePayloadSchema,
+  ImportSellerVatRegimeDeclarationsPayloadSchema,
+} from '../../shared/actions/seller-vat-regime-declaration.ts';
 import type { DeclareSellerVatRegimePayload } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import { TaxEvaluationRequestSchema, TaxEvaluationResponseSchema } from '../../shared/apis/tax-evaluation.ts';
 import type { TaxEvaluationResponse } from '../../shared/apis/tax-evaluation.ts';
@@ -182,6 +185,17 @@ const seller = (runtime: CoreTestDatabase) => {
         ),
       ),
     );
+  const importDeclarations = (input: typeof ImportSellerVatRegimeDeclarationsPayloadSchema.Encoded) =>
+    Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input).pipe(
+      Effect.flatMap((decoded) =>
+        runScoped(runtime, scope, (transaction) =>
+          sellerVatRegimeDeclarationsForScope(transaction, scope).importDeclarations({
+            ...decoded,
+            ...invocation(scope),
+          }),
+        ),
+      ),
+    );
   const declareVatPayer = () => declare({ regime: 'VAT_PAYER' });
   const declareNonPayer = () => declare({ reason: 'Merchant-declared non-payer', regime: 'NON_PAYER' });
   const createRule = (stableCode: string, taxClassificationCode: string, ratePercent: string) =>
@@ -279,6 +293,7 @@ const seller = (runtime: CoreTestDatabase) => {
     declareVatPayer,
     evaluate,
     evaluateRacing,
+    importDeclarations,
     launchRules,
     legalEntityId,
     readPublic,
@@ -390,6 +405,40 @@ it.live('Unit 10 C a seller with nothing declared is indeterminate, never a stor
       expect(evaluatedOf(response).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
     }),
   ),
+);
+
+it.live(
+  '907-Q09 #960 an imported current-only declaration evaluates like a direct one from the migration start, never before it',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* migratedEvaluationAcceptance() {
+        const { runtime } = yield* acquireDatabases;
+        const subject = seller(runtime);
+        yield* subject.importDeclarations({
+          declarations: [{ regime: 'VAT_PAYER', sourceRecordRef: 'legacy:current' }],
+          migrationRunRef: 'migration-run-1',
+          migrationStartedAt: '2026-01-15T00:00:00.000Z',
+        });
+        yield* subject.launchRules;
+
+        const response = yield* subject.evaluate();
+        const outcome = outcomeOf(response);
+        if (!isSuccess(outcome)) {
+          throw new Error('Expected a successful Tax Outcome');
+        }
+        expect(outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
+        expect(outcome.decision.declarationRevisionRef).toEqual({ revision: 1 });
+        expect(evaluatedOf(response).evidence.sellerVatRegime.selection).toMatchObject({
+          effectiveFromOrigin: 'MIGRATION_START',
+          provenance: 'MIGRATED',
+        });
+
+        // No fabricated history: before the migration start the seller is not declared, so nothing is guessed.
+        const before = yield* subject.evaluate({ taxRelevantTime: '2026-01-14T00:00:00.000Z' });
+        expect(outcomeOf(before)).toEqual(TaxStateIndeterminateSchema.make({}));
+        expect(evaluatedOf(before).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
+      }),
+    ),
 );
 
 it.live('#942 F12-F15 #938 a VAT_PAYER seller with incomplete or conflicting rule state keeps its typed meaning', () =>

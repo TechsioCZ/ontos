@@ -175,15 +175,23 @@ const selectionAt = (history: SellerHistory, activationAt: DateTime.Utc): Seller
     Match.tag('NOT_DECLARED', () => NOT_DECLARED),
     Match.tag('DECLARED', ({ declarationRevisionRef, regime }) => {
       const selected = history.revisions.find(({ revision }) => revision === declarationRevisionRef.revision);
-      return selected === undefined
-        ? NOT_DECLARED
-        : {
-            _tag: 'DECLARED' as const,
-            declarationRevisionRef,
-            effectiveFrom: selected.effectiveFrom,
-            provenance: selected.provenance,
-            regime,
-          };
+      // Provenance is carried for explanation only and never gates readiness: a MIGRATED revision covering the
+      // activation counts exactly like a direct one (907-Q09).
+      if (selected === undefined) {
+        return NOT_DECLARED;
+      }
+      const { effectiveFrom, effectiveFromOrigin, migrationRunRef, provenance, sourceRecordRef } = selected;
+      const declared = {
+        _tag: 'DECLARED' as const,
+        declarationRevisionRef,
+        effectiveFrom,
+        effectiveFromOrigin,
+        provenance,
+        regime,
+      };
+      return migrationRunRef === undefined || sourceRecordRef === undefined
+        ? declared
+        : { ...declared, migrationRunRef, sourceRecordRef };
     }),
     Match.exhaustive,
   );

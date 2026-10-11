@@ -12,7 +12,10 @@ import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/t
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { DeclareSellerVatRegimePayloadSchema } from '../../shared/actions/seller-vat-regime-declaration.ts';
+import {
+  DeclareSellerVatRegimePayloadSchema,
+  ImportSellerVatRegimeDeclarationsPayloadSchema,
+} from '../../shared/actions/seller-vat-regime-declaration.ts';
 import { TaxActivationItemIdSchema } from '../../shared/domain/tax-activation-contracts.ts';
 import { taxRelations, taxSellerVatRegimeDeclarations } from '../../src/database/schema.ts';
 import { TAX_ACTIVATION_ITEMS, assessTaxActivationReadiness } from '../../src/domain/tax-activation-readiness.ts';
@@ -92,13 +95,25 @@ const seller = (runtime: CoreTestDatabase) => {
         ),
       ),
     );
+  /** The seller's existing source declaration, imported once with no merchant confirmation (907-Q08). */
+  const importDeclarations = (input: typeof ImportSellerVatRegimeDeclarationsPayloadSchema.Encoded) =>
+    Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input).pipe(
+      Effect.flatMap((payload) =>
+        runScoped(runtime, scope, (transaction) =>
+          sellerVatRegimeDeclarationsForScope(transaction, scope).importDeclarations({
+            ...payload,
+            ...invocation(scope),
+          }),
+        ),
+      ),
+    );
   /** The public Seller VAT Regime history read, in this seller's own scope. */
   const history = runScoped(runtime, scope, (transaction) =>
     sellerVatRegimeDeclarationsForScope(transaction, scope).history.pipe(
       Effect.map(Option.map((declarations) => ({ history: declarations, sellingLegalEntityRef: legalEntityId }))),
     ),
   );
-  return { declare, history, legalEntityId };
+  return { declare, history, importDeclarations, legalEntityId };
 };
 
 it.live('#964 patched F25 the activation gate reads each seller’s persisted declaration timeline', () =>
@@ -153,4 +168,76 @@ it.live('#964 patched F25 the activation gate reads each seller’s persisted de
       expect(readiness.evidenceLabel).toBe('NON_PRODUCTION');
     }),
   ),
+);
+
+it.live(
+  '907-Q09 #964 a seller covered only by an imported MIGRATED declaration is not blocked on the declaration item',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* migratedActivationAcceptance() {
+        const { runtime } = yield* acquireDatabases;
+        const migratedNonPayer = seller(runtime);
+        const migratedPayer = seller(runtime);
+        // Current-only source state: covered from the migration start, which is before activation.
+        yield* migratedNonPayer.importDeclarations({
+          declarations: [{ regime: 'NON_PAYER', sourceRecordRef: 'legacy:non-payer' }],
+          migrationRunRef: 'migration-run-1',
+          migrationStartedAt: '2026-03-01T00:00:00.000Z',
+        });
+        yield* migratedPayer.importDeclarations({
+          declarations: [
+            { effectiveFrom: '2025-01-01T00:00:00.000Z', regime: 'VAT_PAYER', sourceRecordRef: 'legacy:payer' },
+          ],
+          migrationRunRef: 'migration-run-1',
+          migrationStartedAt: '2026-03-01T00:00:00.000Z',
+        });
+
+        const sellerDeclarations = (yield* Effect.all([migratedNonPayer.history, migratedPayer.history])).flatMap(
+          Option.toArray,
+        );
+        const resolvedItems = TaxActivationItemIdSchema.literals
+          .filter((itemId) => TAX_ACTIVATION_ITEMS[itemId].scope === 'ACTIVATION')
+          .map((itemId) => ({ evidenceRef: `evidence:${itemId}`, itemId }));
+        const readiness = Result.getOrThrow(
+          assessTaxActivationReadiness({
+            resolvedItems,
+            scope: {
+              activationAt: ACTIVATION_AT,
+              sellingLegalEntityRefs: [migratedNonPayer.legalEntityId, migratedPayer.legalEntityId],
+              tenantRef: tenantId,
+            },
+            sellerDeclarations,
+          }),
+        );
+        const blockers = Match.value(readiness.verdict).pipe(
+          Match.tag('NOT_READY', ({ blockers: open }) =>
+            open.map(({ itemId, sellingLegalEntityRef }) => [itemId, sellingLegalEntityRef]),
+          ),
+          Match.tag('READY', () => []),
+          Match.exhaustive,
+        );
+        // Only the payer's own Billing DIČ item stays open (907-Q10); provenance never blocks the declaration item.
+        expect(blockers).toEqual([['BILLING_PAYER_DIC_GATE', migratedPayer.legalEntityId]]);
+        expect(
+          readiness.sellers.map(({ atActivation, sellingLegalEntityRef }) => [sellingLegalEntityRef, atActivation]),
+        ).toEqual(
+          expect.arrayContaining([
+            [
+              migratedNonPayer.legalEntityId,
+              expect.objectContaining({
+                effectiveFromOrigin: 'MIGRATION_START',
+                provenance: 'MIGRATED',
+                regime: 'NON_PAYER',
+              }),
+            ],
+            [
+              migratedPayer.legalEntityId,
+              expect.objectContaining({ effectiveFromOrigin: 'SOURCE', provenance: 'MIGRATED', regime: 'VAT_PAYER' }),
+            ],
+          ]),
+        );
+        expect(readiness.activationClaim).toBe('NONE');
+        expect(readiness.evidenceLabel).toBe('NON_PRODUCTION');
+      }),
+    ),
 );

@@ -10,6 +10,7 @@ export * from './create-tax-rule-revision-action-client.ts';
 export * from './declare-seller-vat-regime-action-client.ts';
 export * from './end-tax-rule-revision-action-client.ts';
 export * from './finalize-order-tax-action-client.ts';
+export * from './import-seller-vat-regime-declarations-action-client.ts';
 // </generated-action-http-client-exports>
 export * from './tax-correction-preview-client.ts';
 

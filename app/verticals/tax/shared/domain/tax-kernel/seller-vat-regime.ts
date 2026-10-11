@@ -35,13 +35,22 @@ export const SellerVatRegimeSelectionSchema = Schema.Union([
 export type SellerVatRegimeSelection = typeof SellerVatRegimeSelectionSchema.Type;
 
 /**
- * How a declaration revision came to exist: merchant-declared through the Action, or imported during migration.
- * `MIGRATED` is declared here as part of the domain vocabulary (#907 Unit 10 step 9), but nothing in this vertical
- * writes it yet: step 9 only establishes the domain shape, and the step-9 migration cutover that would actually
- * import `MIGRATED` rows is a later P6 concern tracked outside this unit.
+ * How a declaration revision came to exist: merchant-declared through the declare Action, or imported from the
+ * source system's existing merchant declaration through the import Action (907-Q08). Provenance is how the
+ * revision was obtained, never a trust level: a `MIGRATED` revision covering the relevant time counts exactly like
+ * a direct one, and neither is ever verified (907-Q09).
  */
 export const SellerVatRegimeDeclarationProvenanceSchema = Schema.Literals(['MERCHANT_DECLARED', 'MIGRATED']);
 export type SellerVatRegimeDeclarationProvenance = typeof SellerVatRegimeDeclarationProvenanceSchema.Type;
+
+/**
+ * Where a revision's `effectiveFrom` comes from (907-Q08). `DECLARED`: the merchant's own declare Action.
+ * `SOURCE`: the effective time the source system recorded for its declaration. `MIGRATION_START`: the source held
+ * only a current state with no date, so the effect starts at the migration instant. That is the start of
+ * usability in OntOS, not the historical registration date, and no earlier history is inferred.
+ */
+export const SellerVatRegimeEffectiveFromOriginSchema = Schema.Literals(['DECLARED', 'SOURCE', 'MIGRATION_START']);
+export type SellerVatRegimeEffectiveFromOrigin = typeof SellerVatRegimeEffectiveFromOriginSchema.Type;
 
 /** The declaration row's own primary key; branded so it is never interchangeable with another identifier (audit
  * A2). */

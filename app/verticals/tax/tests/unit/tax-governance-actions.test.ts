@@ -11,6 +11,8 @@ import {
 import {
   DeclareSellerVatRegimePayloadSchema,
   DeclareSellerVatRegimeResultSchema,
+  ImportSellerVatRegimeDeclarationsPayloadSchema,
+  ImportSellerVatRegimeDeclarationsResultSchema,
 } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import { TaxGovernanceAuditEvidenceSchema, TaxGovernanceConflict } from '../../shared/domain/tax-governance-errors.ts';
 import { handleCorrectTaxRuleRevision } from '../../src/actions/correct-tax-rule-revision.action.ts';
@@ -18,10 +20,12 @@ import { handleCreateTaxRuleRevision } from '../../src/actions/create-tax-rule-r
 import { handleCreateTaxRule } from '../../src/actions/create-tax-rule.action.ts';
 import { handleDeclareSellerVatRegime } from '../../src/actions/declare-seller-vat-regime.action.ts';
 import { handleEndTaxRuleRevision } from '../../src/actions/end-tax-rule-revision.action.ts';
+import { handleImportSellerVatRegimeDeclarations } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
 import type { TaxRuleGovernancePersistence } from '../../src/services/tax-rule-governance.service.ts';
 import type {
   SellerVatRegimeDeclarationOutcome,
   SellerVatRegimeDeclarations,
+  SellerVatRegimeImportOutcome,
 } from '../../src/services/seller-vat-regime-declaration.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -67,6 +71,7 @@ const declarationServices = (overrides: Partial<SellerVatRegimeDeclarations>): S
   atInstant: unused,
   declare: unused,
   history: Effect.die('unused tax governance service method'),
+  importDeclarations: unused,
   ...overrides,
 });
 
@@ -294,5 +299,105 @@ it.effect('#955 G Core idempotency reuse of a declaration is the only conflict a
     expect(Schema.is(TaxGovernanceConflict)(failure)).toBe(true);
     expect(Schema.is(TaxGovernanceConflict)(failure) ? failure.conflict : undefined).toBe('IDEMPOTENCY_REUSED');
     expect(prepared.audit).toEqual([]);
+  }),
+);
+
+const importPayload = Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)({
+  declarations: [{ regime: 'NON_PAYER', sourceRecordRef: 'legacy:seller-1' }],
+  migrationRunRef: 'migration-run-1',
+  migrationStartedAt: '2026-03-01T00:00:00.000Z',
+});
+
+const importOutcome = (result: SellerVatRegimeImportOutcome['result'], changed: boolean) =>
+  Effect.succeed<SellerVatRegimeImportOutcome>({
+    audit: {
+      changed,
+      meaningFingerprint,
+      resourceId: legalEntityId,
+      resourceType: 'commerce.tax.seller-vat-regime-declaration',
+    },
+    result,
+  });
+
+it.effect(
+  '907-Q08 #960 an import audits the source-declaration import of the seller, never a verification or confirmation',
+  () =>
+    Effect.gen(function* importAudit() {
+      const received: unknown[] = [];
+      const prepared = context(
+        declarationServices({
+          importDeclarations: (input) => {
+            received.push(input);
+            return importOutcome(
+              {
+                _tag: 'IMPORTED',
+                created: true,
+                revisions: [
+                  {
+                    declarationRef: {
+                      moduleId: 'commerce.tax',
+                      resourceId: 'declaration-1',
+                      resourceType: 'commerce.tax.seller-vat-regime-declaration',
+                      tenantId,
+                    },
+                    effectiveFrom: input.migrationStartedAt,
+                    effectiveFromOrigin: 'MIGRATION_START',
+                    revision: 1,
+                    sourceRecordRef: 'legacy:seller-1',
+                  },
+                ],
+              },
+              true,
+            );
+          },
+        }),
+      );
+      const result = yield* handleImportSellerVatRegimeDeclarations(yield* importPayload, prepared.value);
+      // The seller and the operation time come from trusted Core context, never from the importer's payload.
+      expect(received).toEqual([
+        expect.objectContaining({
+          actionInvocationId: 'action-invocation-1',
+          actorPrincipalId: principalId,
+          legalEntityId,
+          migrationRunRef: 'migration-run-1',
+          tenantId,
+        }),
+      ]);
+      expect(yield* decodeAudit(prepared.audit)).toEqual([
+        {
+          action: 'IMPORT_SELLER_VAT_REGIME_DECLARATIONS',
+          changed: true,
+          meaningFingerprint,
+          operation: 'CREATE',
+          reason: 'SOURCE_DECLARATION_IMPORT',
+          resourceId: legalEntityId,
+          resourceType: 'commerce.tax.seller-vat-regime-declaration',
+        },
+      ]);
+      const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ImportSellerVatRegimeDeclarationsResultSchema))(
+        result,
+      );
+      expect(encoded).not.toMatch(/verif|confirm/iu);
+    }),
+);
+
+it.effect('907-Q08 #960 a rejected import is a typed result audited as unchanged, never a thrown error', () =>
+  Effect.gen(function* importRejectedAudit() {
+    const prepared = context(
+      declarationServices({
+        importDeclarations: () => importOutcome({ _tag: 'IMPORT_REJECTED', reason: 'SELLER_ALREADY_DECLARED' }, false),
+      }),
+    );
+    const result = yield* handleImportSellerVatRegimeDeclarations(yield* importPayload, prepared.value);
+    expect(
+      Match.value(result).pipe(
+        Match.tag('IMPORT_REJECTED', ({ reason }) => reason),
+        Match.tag('IMPORTED', () => 'IMPORTED'),
+        Match.exhaustive,
+      ),
+    ).toBe('SELLER_ALREADY_DECLARED');
+    expect(yield* decodeAudit(prepared.audit)).toEqual([
+      expect.objectContaining({ action: 'IMPORT_SELLER_VAT_REGIME_DECLARATIONS', changed: false }),
+    ]);
   }),
 );
