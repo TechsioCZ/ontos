@@ -9,6 +9,8 @@
     "./clients/records": "./src/api/records-client.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
+    "./outbox/sales-pipeline-opportunity-stage-changed-v1": "./shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts",
+    "./outbox/opportunity-stage-changed": "./shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts",
     "./permissions/demo.sales_pipeline.read_all": "./shared/permissions/sales-pipeline-read-all.ts",
     "./permissions/demo.sales_pipeline.write_all": "./shared/permissions/sales-pipeline-write-all.ts",
     "./resources/opportunity": "./shared/resources/opportunity.ts",
