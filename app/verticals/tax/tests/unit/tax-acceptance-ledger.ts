@@ -11,6 +11,9 @@ import type { TAX_FOREIGN_OWNER_DOUBLES } from './tax-evaluation-fixtures.ts';
  * The `PO-907-Q…` keys are the PO answers of the 907-Q register (#907): NET or GROSS Shipping at Launch (Q05-Q07) under
  * #962 and #963, and the import of existing seller declarations (Q08-Q09) under #961. No earlier row claimed NET
  * Shipping unsupported or GROSS-only, so none is superseded by them.
+ *
+ * `REMEDIATION-…` keys name the scoped F1/F2 follow-up to #907. They map receiving-contract and TAX persistence
+ * regressions, not activated foreign-owner integration. Named tests are evidence references, not execution results.
  */
 
 type NonEmpty<Value> = readonly [Value, ...Value[]];
@@ -119,6 +122,10 @@ export const TAX_ACCEPTANCE_KEYS = {
     'PO-907-Q08-provenance-recorded',
     'PO-907-Q09-migrated-like-direct',
     'PO-907-Q09-activation-no-reconfirmation',
+    'REMEDIATION-F1-supported-case-eligibility',
+    'REMEDIATION-F2-non-payer-without-classification',
+    'REMEDIATION-payer-classification-strictness',
+    'REMEDIATION-safe-projection',
     'F5',
     'F25',
     'F41',
@@ -188,6 +195,8 @@ export const TAX_ACCEPTANCE_KEYS = {
     'G-evidence-record',
     '§7.3-b2c-order-snapshot',
     'PO-907-Q07-net-shipping-correction',
+    'REMEDIATION-final-eligibility-intent',
+    'REMEDIATION-historical-eligibility-compatibility',
   ],
 } satisfies Record<AcceptanceIssue, readonly string[]>;
 
@@ -214,6 +223,7 @@ const taxMaterialityTest = (title: string) => unit('tax-materiality', title);
 const taxNonSuccessOutcomeTest = (title: string) => unit('tax-non-success-outcome', title);
 const taxOutcomeTest = (title: string) => unit('tax-outcome', title);
 const taxPrivacyOwnerContractTest = (title: string) => unit('tax-privacy-owner-contract', title);
+const publicRemediationTest = (title: string) => unit('tax-public-evaluation-remediation', title);
 const taxResultTest = (title: string) => unit('tax-result', title);
 const taxRoundingTest = (title: string) => unit('tax-rounding', title);
 const taxRuleSelectionTest = (title: string) => unit('tax-rule-selection', title);
@@ -249,7 +259,21 @@ const LEDGER_GATED_GUARD = taxAcceptanceLedgerTest(
 );
 const LEDGER_TITLES_GUARD = taxAcceptanceLedgerTest('every mapped test file exists and contains its title verbatim');
 
-const SCENARIO_DOUBLES = ['catalogEntry', 'pricingLine', 'places', 'sellerPlace', 'purchaseBindingInput'] as const;
+const SCENARIO_DOUBLES = [
+  'catalogEntry',
+  'eligibilityHandoff',
+  'pricingLine',
+  'places',
+  'sellerPlace',
+  'purchaseBindingInput',
+] as const;
+const NON_PAYER_REMEDIATION_DOUBLES = [
+  'eligibilityHandoff',
+  'pricingLine',
+  'places',
+  'sellerPlace',
+  'purchaseBindingInput',
+] as const;
 
 const persisted = (
   id: string,
@@ -327,6 +351,18 @@ const FINAL_BACKDATED = finPg(
   'Unit 10 C a backdated regime revision recorded after a final leaves the recovered final unchanged',
 );
 const FINAL_DECLARE_RACE = finPg('Unit 10 C a declare concurrent with finalize serializes on the seller lock');
+const REMEDIATION_NON_PAYER_FINAL = finPg(
+  'TAX907 F2 a public NON_PAYER final needs no classification and durably recovers zero tax at T',
+);
+const REMEDIATION_UNSUPPORTED_FINAL = finPg(
+  'TAX907 F1 × F2 unsupported or missing material eligibility never stores an ordinary or zero-tax final',
+);
+const REMEDIATION_ELIGIBILITY_INTENT = finPg(
+  'TAX907 F1 final eligibility is frozen, retry order is immaterial and changed material intent conflicts',
+);
+const REMEDIATION_LEGACY_FINAL = finPg(
+  'TAX907 F1 legacy persisted finals recover without invented eligibility or live recomputation',
+);
 const CORRECTION_HISTORICAL_READ = taxCorrectionPreviewTest(
   '#947 F1-F3 #946 F21 a historical read is answered by the retained terms without any Tax evaluation',
 );
@@ -345,6 +381,76 @@ const EXPECTED_STATE_ECHO = taxCorrectionDeltaTest(
 );
 
 const ledger961: readonly TaxAcceptanceRow[] = [
+  persisted(
+    'remediation-supported-case-eligibility',
+    961,
+    ['H1', 'H5', 'REMEDIATION-F1-supported-case-eligibility'],
+    [
+      REMEDIATION_UNSUPPORTED_FINAL,
+      publicRemediationTest('a domestic rate category without material eligibility never defaults to ordinary TAX'),
+      publicRemediationTest(
+        'ordinary supported purchase survives both decoders, the handler, service and response serialization',
+      ),
+      publicRemediationTest(
+        'eligibility binds tenant, seller, purchase, exact selection, quantity, unit, sources and relevant time',
+      ),
+      publicRemediationTest(
+        'incomplete eligibility is indeterminate even with ordinary requirements and a declared non-payer',
+      ),
+      publicRemediationTest(
+        'eligibility and evaluation are deterministic under reordered purchase, Catalog and Pricing inputs',
+      ),
+      publicRemediationTest(
+        'missing eligibility never masks independently established unsupported currency, place or Set scope',
+      ),
+    ],
+  ),
+  persisted(
+    'remediation-non-payer-without-classification',
+    961,
+    ['H5', 'REMEDIATION-F2-non-payer-without-classification'],
+    [
+      REMEDIATION_NON_PAYER_FINAL,
+      publicRemediationTest(
+        'a non-payer purchase needs no catalog key or fabricated classification and makes no Tax Rule reads',
+      ),
+      publicRemediationTest(
+        'omitting non-payer classification preserves Pricing source, occurrence and supplied Catalog binding checks',
+      ),
+      publicRemediationTest(
+        'non-payer zero still requires unambiguous published commercial values in purchase currency',
+      ),
+      publicRemediationTest(
+        'omitting classification preserves mandatory positive quantities, unit identity and exact selection',
+      ),
+      publicRemediationTest('a missing TAX-owned seller declaration never produces zero'),
+    ],
+    NON_PAYER_REMEDIATION_DOUBLES,
+  ),
+  persisted(
+    'remediation-payer-classification-strictness',
+    961,
+    ['H5', 'REMEDIATION-payer-classification-strictness'],
+    [
+      REMEDIATION_UNSUPPORTED_FINAL,
+      publicRemediationTest('a caller seller-regime flag cannot make a TAX-owned payer succeed without classification'),
+      publicRemediationTest('a payer still requires complete Current material classification'),
+      publicRemediationTest('a complete empty payer rule set remains TAX_RULE_MISSING without a zero fallback'),
+    ],
+  ),
+  persisted(
+    'remediation-safe-projection',
+    961,
+    ['H5', 'REMEDIATION-safe-projection'],
+    [
+      REMEDIATION_UNSUPPORTED_FINAL,
+      REMEDIATION_NON_PAYER_FINAL,
+      publicRemediationTest('a domestic rate category without material eligibility never defaults to ordinary TAX'),
+      publicRemediationTest(
+        'a non-payer purchase needs no catalog key or fabricated classification and makes no Tax Rule reads',
+      ),
+    ],
+  ),
   persisted(
     'owner-public-contract',
     961,
@@ -411,7 +517,7 @@ const ledger961: readonly TaxAcceptanceRow[] = [
     ['H5'],
     [
       evPg('Unit 10 C a NON_PAYER seller publishes a zero-tax Decision with no rule read and the non-payer projection'),
-      finPg('Unit 10 C a NON_PAYER final stores zero tax with no governing rule revisions'),
+      REMEDIATION_NON_PAYER_FINAL,
       SCENARIO_8,
     ],
   ),
@@ -974,6 +1080,18 @@ const ledger962: readonly TaxAcceptanceRow[] = [
 ];
 
 const ledger963: readonly TaxAcceptanceRow[] = [
+  persisted(
+    'remediation-final-eligibility-intent',
+    963,
+    ['§3.1', '§3.2', '§3.4', 'REMEDIATION-final-eligibility-intent'],
+    [REMEDIATION_ELIGIBILITY_INTENT],
+  ),
+  persisted(
+    'remediation-historical-eligibility-compatibility',
+    963,
+    ['§7.1', '§7.2', 'REMEDIATION-historical-eligibility-compatibility'],
+    [REMEDIATION_LEGACY_FINAL],
+  ),
   // §1 Dependency, stale and incomplete state.
   kernel(
     'unavailable-dependency',

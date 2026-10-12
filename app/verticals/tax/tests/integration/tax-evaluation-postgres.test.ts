@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
+import type { PgClient } from '@effect/sql-pg';
+import { ContextAccess, ReadRuntime, toContextPermissionAccessKey } from '@app/core-runtime';
+import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
+import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
+import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { FetchHttpClient } from 'effect/unstable/http';
 
 import {
   makeTestDatabaseFromClient,
@@ -11,16 +19,29 @@ import {
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
-import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { CreateTaxRulePayloadSchema } from '../../shared/actions/tax-governance.ts';
 import {
   DeclareSellerVatRegimePayloadSchema,
   ImportSellerVatRegimeDeclarationsPayloadSchema,
 } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import type { DeclareSellerVatRegimePayload } from '../../shared/actions/seller-vat-regime-declaration.ts';
-import { TaxEvaluationRequestSchema, TaxEvaluationResponseSchema } from '../../shared/apis/tax-evaluation.ts';
+import {
+  TaxEvaluationApi,
+  TaxEvaluationAuthenticationProblemSchema,
+  TaxEvaluationForbiddenProblemSchema,
+  TaxEvaluationInternalProblemSchema,
+  TaxEvaluationInvalidProblemSchema,
+  TaxEvaluationNotFoundProblemSchema,
+  TaxEvaluationPolicyConflictProblemSchema,
+  TaxEvaluationPolicyProblemSchema,
+  TaxEvaluationRequestSchema,
+  TaxEvaluationResponseSchema,
+  TaxEvaluationUnavailableProblemSchema,
+} from '../../shared/apis/tax-evaluation.ts';
 import type { TaxEvaluationResponse } from '../../shared/apis/tax-evaluation.ts';
-import { readTaxEvaluation } from '../../src/api/tax-evaluation.read.ts';
+import { executeTaxEvaluationWithAuthorization } from '../../src/api/tax-evaluation-client.ts';
+import { readTaxEvaluation, taxEvaluationRead } from '../../src/api/tax-evaluation.read.ts';
 import type { SellerVatRegimeAtInstantSelection } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import {
   taxRelations,
@@ -53,6 +74,7 @@ import {
   STANDARD_CODE,
   catalogEntry,
   decodeEvaluationRequest,
+  eligibilityHandoff,
   evaluationRequestInput,
   grossLine,
   pricingLine,
@@ -64,6 +86,7 @@ const tenantId = randomUUID();
 const principalId = randomUUID();
 
 const scopeFor = (legalEntityId: string): OperationalScope => ({
+  authBindingId: randomUUID(),
   authContextRef: `better-auth-session:${randomUUID()}`,
   authMethod: 'session',
   correlationId: randomUUID(),
@@ -118,7 +141,119 @@ const acquireDatabases = Effect.gen(function* acquireTaxEvaluationTestDatabases(
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
   yield* cleanup(admin);
   yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  return { admin, runtime };
+  return { admin, runtime, runtimeClient };
+});
+
+const evaluationProblems = makeGovernedReadProblems({
+  authentication: TaxEvaluationAuthenticationProblemSchema,
+  forbidden: TaxEvaluationForbiddenProblemSchema,
+  internal: TaxEvaluationInternalProblemSchema,
+  invalid: TaxEvaluationInvalidProblemSchema,
+  notFound: TaxEvaluationNotFoundProblemSchema,
+  policyConflict: TaxEvaluationPolicyConflictProblemSchema,
+  policyIneligible: TaxEvaluationPolicyProblemSchema,
+  unavailable: TaxEvaluationUnavailableProblemSchema,
+});
+
+const positionalRow = (row: readonly unknown[]) => Object.fromEntries(row.map((value, index) => [index, value]));
+
+/**
+ * Existing HTTP test seam: controlled authentication and Core admission/evidence SQL, actual Read Runtime and
+ * original TAX registration. Owner SQL reaches native PostgreSQL as the runtime role with forced RLS and the
+ * harness's validated scope. This proves serialization and persisted TAX state, not deployment authentication.
+ */
+const evaluationHttp = Effect.fn('TaxEvaluationTest.evaluationHttp')(function* evaluationHttp(
+  runtimeClient: PgClient.PgClient,
+  scope: OperationalScope,
+) {
+  const harness = yield* makeReadTestHarness({
+    executeOwnerQuery: (query) =>
+      runtimeClient.withTransaction(
+        runtimeClient
+          .unsafe("select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)", [
+            query.scope.tenantId,
+            query.scope.legalEntityId,
+          ])
+          .pipe(
+            Effect.andThen(runtimeClient.unsafe(query.sql, [...query.params]).values),
+            // Drizzle selects repeated column names in joins. Preserve every positional value for its mapper.
+            Effect.map((rows) => rows.map(positionalRow)),
+          ),
+      ),
+    operationTime,
+    ownerAuthorizationDecision: 'allowed',
+    permissionDecision: 'allowed',
+    scope,
+  });
+  const builtContext = yield* Layer.build(harness.layer);
+  Object.assign(Context.get(builtContext, ContextAccess), {
+    contextPermissions: ({ targets }: Parameters<NonNullable<ContextAccessService['contextPermissions']>>[0]) =>
+      Effect.succeed(
+        targets.map((target) => ({ decision: 'allowed' as const, key: toContextPermissionAccessKey(target) })),
+      ),
+  });
+  const handlers = HttpApiBuilder.group(TaxEvaluationApi, 'taxEvaluation', (routes) =>
+    routes.handle(
+      'execute',
+      makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(scope),
+        problems: evaluationProblems,
+        registration: taxEvaluationRead,
+      }),
+    ),
+  );
+  const server = yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(TaxEvaluationApi).pipe(
+          Layer.provide(handlers),
+          Layer.provideMerge(RequestSchemaProblemLive),
+          Layer.provide(Layer.succeed(ReadRuntime, harness.runtime)),
+          Layer.provide(HttpServer.layerServices),
+        ),
+        { disableLogger: true },
+      ),
+    ),
+    (ownedServer) => Effect.promise(() => ownedServer.dispose()).pipe(Effect.orDie),
+  );
+  const requestContext = Context.make(ReadRuntime, harness.runtime);
+  const wireRequests: unknown[] = [];
+  const statuses: number[] = [];
+  const routerFetch: typeof fetch = (url, init) => {
+    const request = new Request(url, init);
+    return request
+      .clone()
+      .json()
+      .then((payload) => {
+        wireRequests.push(payload);
+        return server.handler(request, requestContext);
+      })
+      .then((response) => {
+        statuses.push(response.status);
+        return response;
+      });
+  };
+  const run = (wire: typeof TaxEvaluationRequestSchema.Encoded) =>
+    Schema.decodeEffect(TaxEvaluationRequestSchema)(wire).pipe(
+      Effect.flatMap((payload) =>
+        executeTaxEvaluationWithAuthorization(payload, 'Bearer controlled', scope.correlationId, {
+          baseUrl: 'https://tax.example',
+        }),
+      ),
+      Effect.provideService(FetchHttpClient.Fetch, routerFetch),
+    );
+  const raw = (jsonText: string) =>
+    Effect.promise(() =>
+      server.handler(
+        new Request('https://tax.example/reads/tax-evaluation', {
+          body: jsonText,
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        }),
+        requestContext,
+      ),
+    );
+  return { raw, run, snapshot: harness.snapshot, statuses, wireRequests };
 });
 
 type AdminTestDatabase = TestDatabaseFromClient<typeof taxRelations>;
@@ -333,6 +468,119 @@ const decisionIdOf = (response: Option.Option<TaxEvaluationResponse>) => {
   }
   return outcome.decision.decisionId;
 };
+
+const evaluationWireFor = (scope: OperationalScope) =>
+  evaluationRequestInput({
+    purchase: purchaseBindingInput(['o1', 'o2'], {
+      sellingLegalEntityRef: scope.legalEntityId ?? '',
+      tenantId: scope.tenantId,
+    }),
+    taxRelevantTime: '2026-06-01T00:00:00.000Z',
+  });
+
+it.live('#907 F1 ordinary eligibility survives generated HTTP serialization and persisted TAX evaluation', () =>
+  Effect.scoped(
+    Effect.gen(function* ordinaryEligibilityHttp() {
+      const { runtime, runtimeClient } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareVatPayer();
+      yield* subject.launchRules;
+      const http = yield* evaluationHttp(runtimeClient, subject.scope);
+      const wire = evaluationWireFor(subject.scope);
+
+      const response = yield* http.run(wire);
+      expect(http.statuses).toEqual([200]);
+      expect(http.wireRequests).toEqual([wire]);
+      const evaluated = evaluatedOf(Option.some(response));
+      expect(evaluated.evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
+      expect(isSuccess(evaluated.outcome)).toBe(true);
+      expect(evaluated.outcome).toMatchObject({ result: { purchaseTaxTotal: { amount: '270.00', currency: 'CZK' } } });
+      expect(http.snapshot().evidenceWrites).toBe(1);
+      expect(http.snapshot().ownerQueries.length).toBeGreaterThan(0);
+    }),
+  ),
+);
+
+it.live('#907 F2 HTTP omits rate classification for a persisted NON_PAYER without reading TAX rules', () =>
+  Effect.scoped(
+    Effect.gen(function* nonPayerHttp() {
+      const { runtime, runtimeClient } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      yield* subject.declareNonPayer();
+      const http = yield* evaluationHttp(runtimeClient, subject.scope);
+      const wire = evaluationWireFor(subject.scope);
+      Reflect.deleteProperty(wire, 'catalog');
+
+      const response = yield* http.run(wire);
+      expect(http.statuses).toEqual([200]);
+      expect(http.wireRequests).toEqual([wire]);
+      const evaluated = evaluatedOf(Option.some(response));
+      expect(evaluated.evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
+      expect(evaluated.evidence.ruleSets).toEqual([]);
+      expect(declaredRegimeOf(evaluated.evidence.sellerVatRegime.selection)).toBe('NON_PAYER');
+      expect(isSuccess(evaluated.outcome)).toBe(true);
+      expect(evaluated.outcome).toMatchObject({ result: { purchaseTaxTotal: { amount: '0.00', currency: 'CZK' } } });
+      expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(evaluated.customerSafe)).toBe(true);
+      const { outcome } = evaluated;
+      if (isSuccess(outcome)) {
+        expect(outcome.decision.units.map(({ treatment }) => treatment)).toEqual([
+          { _tag: 'SELLER_NOT_VAT_PAYER' },
+          { _tag: 'SELLER_NOT_VAT_PAYER' },
+        ]);
+      }
+      expect(http.snapshot().evidenceWrites).toBe(1);
+      expect(http.snapshot().ownerQueries.every(({ sql: queryText }) => !queryText.includes('tax_rule'))).toBe(true);
+    }),
+  ),
+);
+
+it.live('#907 F1 HTTP preserves unsupported and missing eligibility for both persisted seller regimes', () =>
+  Effect.scoped(
+    Effect.gen(function* eligibilityFailuresHttp() {
+      const { runtime, runtimeClient } = yield* acquireDatabases;
+      for (const sellerRegime of ['VAT_PAYER', 'NON_PAYER'] as const) {
+        const subject = seller(runtime);
+        yield* subject.declare({ regime: sellerRegime });
+        const http = yield* evaluationHttp(runtimeClient, subject.scope);
+        const wire = evaluationWireFor(subject.scope);
+        Reflect.deleteProperty(wire, 'catalog');
+        const eligibility = eligibilityHandoff(wire.purchase, wire.taxRelevantTime);
+        const unsupported = yield* http.run({
+          ...wire,
+          eligibility: { ...eligibility, requiredTaxRegimes: ['REVERSE_CHARGE'] },
+        });
+        const unsupportedEvaluated = evaluatedOf(Option.some(unsupported));
+        expect(Schema.is(TaxCaseUnsupportedSchema)(unsupportedEvaluated.outcome)).toBe(true);
+        expect(unsupportedEvaluated.outcome).toMatchObject({ unsupportedRequirement: 'REVERSE_CHARGE' });
+        Reflect.deleteProperty(wire, 'eligibility');
+        const missing = yield* http.run(wire);
+        expect(Schema.is(TaxStateIndeterminateSchema)(evaluatedOf(Option.some(missing)).outcome)).toBe(true);
+        expect(http.statuses).toEqual([200, 200]);
+        expect(http.snapshot().evidenceWrites).toBe(2);
+      }
+    }),
+  ),
+);
+
+it.live('#907 F1 malformed eligibility is an HTTP 400 before Core or TAX reads execute', () =>
+  Effect.scoped(
+    Effect.gen(function* malformedEligibilityHttp() {
+      const { runtime, runtimeClient } = yield* acquireDatabases;
+      const subject = seller(runtime);
+      const http = yield* evaluationHttp(runtimeClient, subject.scope);
+      const wire = evaluationWireFor(subject.scope);
+      const jsonText = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))({
+        ...wire,
+        eligibility: { ...wire.eligibility, taxRelevantTime: Date.parse('2026-06-01T00:00:00.000Z') },
+      });
+      const response = yield* http.raw(jsonText);
+      expect(response.status).toBe(400);
+      expect(response.headers.get('content-type')).toContain('application/problem+json');
+      expect(http.snapshot().ownerQueries).toEqual([]);
+      expect(http.snapshot().evidenceWrites).toBe(0);
+    }),
+  ),
+);
 
 it.live('#942 #936 #941 a VAT_PAYER seller publishes one rated Decision and Result from complete rule state', () =>
   Effect.scoped(
@@ -571,8 +819,11 @@ it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time boun
       const future = Option.getOrThrow(yield* subject.evaluate({ taxRelevantTime: '2099-01-01T00:00:00.000Z' }));
       expect(isRejected(future) && future.reasons).toEqual(['FUTURE_TAX_RELEVANT_TIME']);
 
+      // Supplied classification must bind; absent payer classification is material state, not a purchase defect.
+      const incompleteClassification = yield* subject.evaluate({ catalog: [catalogEntry('o1', 'cz-standard-goods')] });
+      expect(Schema.is(TaxStateIndeterminateSchema)(outcomeOf(incompleteClassification))).toBe(true);
       const unbound = Option.getOrThrow(
-        yield* subject.evaluate({ catalog: [catalogEntry('o1', 'cz-standard-goods')] }),
+        yield* subject.evaluate({ catalog: [catalogEntry('foreign-occurrence', 'cz-standard-goods')] }),
       );
       expect(isRejected(unbound) && unbound.reasons).toEqual(['STRUCTURAL_BINDING_INVALID']);
     }),

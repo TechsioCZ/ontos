@@ -1,4 +1,4 @@
-import { Order, Result, Schema } from 'effect';
+import { Match, Order, Result, Schema } from 'effect';
 
 import type { FrozenOrderCandidate } from '../../shared/actions/order-tax-finalization.ts';
 import { TaxEvaluationRequestSchema } from '../../shared/domain/tax-evaluation-contracts.ts';
@@ -41,6 +41,11 @@ const byContribution = <Contribution extends EncodedContribution>(breakdown: rea
 const byCatalogFact = <Evidence extends Readonly<{ catalogFactRef: string }>>(evidence: readonly Evidence[]) =>
   evidence.toSorted((left, right) => byText(left.catalogFactRef, right.catalogFactRef));
 
+const canonicalPurchase = (binding: (typeof TaxEvaluationRequestSchema.Encoded)['purchase']) => {
+  const { traceabilityContext: _traceability, ...purchase } = binding;
+  return { ...purchase, purchaseDemandOccurrences: byOccurrence(purchase.purchaseDemandOccurrences) };
+};
+
 /**
  * Canonical frozen intent of one submission: the whole candidate at T in identity order, without traceability-only
  * context (#937 F38). Equal fingerprints mean the same submitted intent; a different one under the same submission
@@ -52,10 +57,10 @@ export const orderTaxIntentFingerprint = (
   fingerprint: TaxMeaningFingerprint,
 ): string => {
   const encoded = Result.getOrThrow(encodeRequest(finalEvaluationRequest(candidate, orderCommitmentTime)));
-  const { traceabilityContext: _traceability, ...purchase } = encoded.purchase;
-  return fingerprint({
+  const { eligibility } = encoded;
+  const canonical = {
     ...encoded,
-    catalog: byOccurrence(encoded.catalog).map((entry) => ({
+    catalog: byOccurrence(encoded.catalog ?? []).map((entry) => ({
       ...entry,
       classificationInput: {
         ...entry.classificationInput,
@@ -69,7 +74,7 @@ export const orderTaxIntentFingerprint = (
         breakdown: byContribution(line.breakdown),
       })),
     },
-    purchase: { ...purchase, purchaseDemandOccurrences: byOccurrence(purchase.purchaseDemandOccurrences) },
+    purchase: canonicalPurchase(encoded.purchase),
     setSupplyMeanings: byOccurrence(encoded.setSupplyMeanings ?? []),
     shipping:
       encoded.shipping === undefined
@@ -78,5 +83,22 @@ export const orderTaxIntentFingerprint = (
             ...encoded.shipping,
             affectedOccurrenceIds: encoded.shipping.affectedOccurrenceIds.toSorted(byText),
           },
+  };
+  // Omitted eligibility preserves the exact pre-contract intent representation for historical retries.
+  if (eligibility === undefined) {
+    return fingerprint(canonical);
+  }
+  return fingerprint({
+    ...canonical,
+    eligibility: Match.value(eligibility).pipe(
+      Match.tag('CURRENT', (current) => ({
+        ...current,
+        purchase: canonicalPurchase(current.purchase),
+        requiredTaxRegimes: current.requiredTaxRegimes.toSorted(byText),
+        requiredTaxTreatments: current.requiredTaxTreatments.toSorted(byText),
+      })),
+      Match.tag('NOT_USABLE', (unusable) => ({ ...unusable, purchase: canonicalPurchase(unusable.purchase) })),
+      Match.exhaustive,
+    ),
   });
 };
