@@ -23,6 +23,7 @@ const EvidenceRefsSchema = Schema.Array(Schema.String.check(Schema.isMinLength(1
   Schema.isMaxLength(32),
 );
 export const PartyCorrectionPolicyVersion = 'party-correction.v1' as const;
+export const PartyCorrectionConflictRelationshipLimit = 32 as const;
 const PolicyVersionSchema = Schema.Literal(PartyCorrectionPolicyVersion);
 const ReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
 const PositiveRevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
@@ -145,6 +146,13 @@ export const PartyCorrectionResultJsonSchema = Schema.toEncoded(PartyCorrectionR
 
 export class PartyCorrectionConflict extends Schema.TaggedError<PartyCorrectionConflict>()('PartyCorrectionConflict', {
   code: Schema.Literal('party_correction_conflict'),
+  /**
+   * Relationship prerequisites are deliberately bounded and tenant-local. The service only
+   * populates this field when a Party Type correction would invalidate active relationship facts.
+   */
+  conflictingRelationshipRefs: Schema.optionalKey(
+    Schema.Array(PartyRelationshipRefSchema).check(Schema.isMaxLength(PartyCorrectionConflictRelationshipLimit)),
+  ),
   reason: Schema.String,
 }) {}
 

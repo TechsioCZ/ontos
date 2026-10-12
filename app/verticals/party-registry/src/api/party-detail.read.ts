@@ -10,7 +10,6 @@ import { Effect, Match, Option } from 'effect';
 
 import { PartyDetailRequestSchema, PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
 import type { PartyDetailRequest, PartyDetailResponse } from '../../shared/apis/party-detail.ts';
-// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This pure helper constructs a ResourceRef, not an Effect service.
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
@@ -26,9 +25,9 @@ interface Services {
   readonly facts: (
     partyId: string,
     includeFactHistory: boolean,
-  ) => Effect.Effect<PartyDetailAssertions, PartyPersistenceUnavailableError>;
-  readonly find: (partyId: string) => Effect.Effect<PartyLookup, PartyPersistenceUnavailableError>;
-  readonly resolve: (partyId: string) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
+  ) => Effect.Effect<PartyDetailAssertions, PartyPersistenceUnavailableError, never>;
+  readonly find: (partyId: string) => Effect.Effect<PartyLookup, PartyPersistenceUnavailableError, never>;
+  readonly resolve: (partyId: string) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError, never>;
 }
 
 const notFound = () =>

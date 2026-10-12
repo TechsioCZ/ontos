@@ -57,6 +57,18 @@ export const CounterpartyAuditEvidenceSchema = Schema.Struct({
   provenanceSource: CounterpartyTextSchema,
 });
 
+/** Audit evidence for the composed onboarding Action keeps context and role proof distinct. */
+export const CounterpartyCustomerOnboardAuditEvidenceSchema = Schema.Struct({
+  counterpartyEvidenceReference: CounterpartyTextSchema,
+  counterpartyProvenanceMethod: CounterpartyTextSchema,
+  counterpartyProvenanceReason: CounterpartyTextSchema,
+  counterpartyProvenanceSource: CounterpartyTextSchema,
+  customerEvidenceReference: CounterpartyTextSchema,
+  customerProvenanceMethod: CounterpartyTextSchema,
+  customerProvenanceReason: CounterpartyTextSchema,
+  customerProvenanceSource: CounterpartyTextSchema,
+});
+
 export const CounterpartyRoleTypeSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 export type CounterpartyRoleType = typeof CounterpartyRoleTypeSchema.Type;
 

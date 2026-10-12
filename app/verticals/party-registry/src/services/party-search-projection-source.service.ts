@@ -10,7 +10,6 @@ import type { SQL } from 'drizzle-orm';
 import { and, eq, inArray } from 'drizzle-orm';
 import { Context, Effect, Layer, Option } from 'effect';
 
-// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure ResourceRef value constructor, not an Effect service constructor.
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';

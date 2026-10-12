@@ -416,6 +416,12 @@ it.live(
           provenanceSource: 'runtime-assembly-proof',
           validFrom: '2026-09-07T00:00:00.000Z',
         },
+        '/party-registry/actions/counterparty-customer-onboard': {
+          counterpartyProvenance: { ...provenance, reason: 'Runtime assembly proof' },
+          customerEvidence: provenance,
+          partyRef,
+          validFrom: '2026-09-07T00:00:00.000Z',
+        },
         '/party-registry/actions/counterparty-role-add': {
           counterpartyRef,
           provenance,

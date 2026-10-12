@@ -13,13 +13,18 @@ import {
 } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
 import type { ResolveDuplicateCandidateCreatePayload } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
 import { PartyEvidenceInsufficient, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
-import { DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
+import { ClaimOwnedByDifferentParty, DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { resolveDuplicateCandidateCreate } from '../services/party-matching-persistence.service.ts';
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
 
 export type { ResolveDuplicateCandidateCreatePayload } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
-const ErrorSchema = Schema.Union([DuplicateCandidateConflict, PartyEvidenceInsufficient, PartyPersistenceUnavailable]);
+const ErrorSchema = Schema.Union([
+  ClaimOwnedByDifferentParty,
+  DuplicateCandidateConflict,
+  PartyEvidenceInsufficient,
+  PartyPersistenceUnavailable,
+]);
 const domainEvents = {
   'party.registry.party-created.v1': Schema.Struct({
     partyRef: PartyRefSchema,

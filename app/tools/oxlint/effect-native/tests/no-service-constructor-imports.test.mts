@@ -484,3 +484,37 @@ it('allows service constructor calls only within proven native service factory c
     }
   }, testsDirectory);
 });
+
+it('accepts reference factories beside native domain contracts but rejects executable initializers', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const declarations = [
+      [
+        'import { Schema, Effect } from "effect"; const codec = Schema.OptionFromNullOr(Effect.runSync(Effect.succeed(Schema.Trim))); export const makeData = (id: string) => ({ id });',
+        false,
+      ],
+      [
+        'import { Schema } from "effect"; const revision = Schema.Finite.check(Schema.isGreaterThan(0)); export const makeData = (id: string) => ({ id });',
+        true,
+      ],
+      [
+        'import { Brand as B, Schema } from "effect"; const brand = B.nominal<string>(); const error = Schema.TaggedStruct("Error", { message: Schema.Trim }); const party = Schema.Struct({ name: Schema.OptionFromNullOr(Schema.Trim), revision: Schema.Finite.check(Schema.isGreaterThan(0)) }); export const makeData = (id: string) => ({ id });',
+        true,
+      ],
+      [
+        'const Brand = { nominal: () => fetch("initializer") }; const brand = Brand.nominal(); export const makeData = (id: string) => ({ id });',
+        false,
+      ],
+      [
+        'import { Brand, Effect } from "effect"; const brand = Brand.nominal(Effect.runSync(Effect.succeed("initializer"))); export const makeData = (id: string) => ({ id });',
+        false,
+      ],
+    ] as const;
+    for (const [declaration, expected] of declarations) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(expected);
+    }
+  }, testsDirectory);
+});

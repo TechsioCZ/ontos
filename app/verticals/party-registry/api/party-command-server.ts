@@ -141,6 +141,9 @@ export const partyRegistryCommandsLive = HttpApiBuilder.group(partyRegistryApi, 
     .handle('counterpartyCreate', ({ payload, request }) =>
       runPartyCommand(partyCommandRegistrations.counterpartyCreate, payload, request),
     )
+    .handle('counterpartyCustomerOnboard', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.counterpartyCustomerOnboard, payload, request),
+    )
     .handle('counterpartyRoleAdd', ({ payload, request }) =>
       runPartyCommand(partyCommandRegistrations.counterpartyRoleAdd, payload, request),
     )

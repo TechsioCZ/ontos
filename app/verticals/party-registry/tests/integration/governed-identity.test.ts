@@ -163,19 +163,48 @@ it.live(
         const snapshot = Effect.fn('GovernedIdentityTest.snapshot')(function* snapshotEffect() {
           const [partyRows, assertions, claims, decisions, cases, core] = yield* Effect.all(
             [
-              admin.select().from(parties).where(eq(parties.tenantId, fixture.tenantId)),
-              admin.select().from(partyFactAssertions).where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
-              admin.select().from(partyIdentifierClaims).where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
-              admin.select().from(partyMatchDecisions).where(eq(partyMatchDecisions.tenantId, fixture.tenantId)),
+              admin.select().from(parties).where(eq(parties.tenantId, fixture.tenantId)).orderBy(parties.partyId),
+              admin
+                .select()
+                .from(partyFactAssertions)
+                .where(eq(partyFactAssertions.tenantId, fixture.tenantId))
+                .orderBy(partyFactAssertions.assertionId),
+              admin
+                .select()
+                .from(partyIdentifierClaims)
+                .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId))
+                .orderBy(
+                  partyIdentifierClaims.identifierTypeKey,
+                  partyIdentifierClaims.namespace,
+                  partyIdentifierClaims.normalizedValue,
+                ),
+              admin
+                .select()
+                .from(partyMatchDecisions)
+                .where(eq(partyMatchDecisions.tenantId, fixture.tenantId))
+                .orderBy(partyMatchDecisions.matchDecisionId),
               admin
                 .select()
                 .from(duplicateCandidateCases)
-                .where(eq(duplicateCandidateCases.tenantId, fixture.tenantId)),
+                .where(eq(duplicateCandidateCases.tenantId, fixture.tenantId))
+                .orderBy(duplicateCandidateCases.candidateCaseId),
               fixture.evidence(),
             ],
             { concurrency: 6 },
           );
-          return { partyRows, assertions, claims, decisions, cases, core };
+          return {
+            partyRows,
+            assertions,
+            claims,
+            decisions,
+            cases,
+            core: {
+              ...core,
+              audits: core.audits.toSorted((left, right) => left.auditEventId.localeCompare(right.auditEventId)),
+              events: core.events.toSorted((left, right) => left.domainEventId.localeCompare(right.domainEventId)),
+              outbox: core.outbox.toSorted((left, right) => left.outboxMessageId.localeCompare(right.outboxMessageId)),
+            },
+          };
         });
         // Independent Action invocations, one canonical owner and one success event/outbox pair.
         const exact = candidate('27074358');
