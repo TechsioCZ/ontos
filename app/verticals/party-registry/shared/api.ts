@@ -13,6 +13,7 @@ import { AresLookupApi } from './apis/ares-lookup.ts';
 import { CounterpartiesSearchApi } from './apis/counterparties-search.ts';
 import { CounterpartyReadApi } from './apis/counterparty-read.ts';
 import { CounterpartyRoleHistoryApi } from './apis/counterparty-role-history.ts';
+import { CustomerListApi } from './apis/customer-list.ts';
 import { DuplicateCandidateDetailApi } from './apis/duplicate-candidate-detail.ts';
 import { ExecutePrivacyMeasureActionApi } from './apis/execute-privacy-measure-action.ts';
 import { GuestPartyResolutionApi } from './apis/guest-party-resolution.ts';
@@ -104,6 +105,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(CounterpartiesSearchApi)
   .addHttpApi(CounterpartyReadApi)
   .addHttpApi(CounterpartyRoleHistoryApi)
+  .addHttpApi(CustomerListApi)
   .addHttpApi(DuplicateCandidateDetailApi)
   .addHttpApi(ExecutePrivacyMeasureActionApi)
   .addHttpApi(GuestPartyResolutionApi)

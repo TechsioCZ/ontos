@@ -13,6 +13,7 @@ const apiNames = [
   'counterpartiesSearch',
   'counterpartyRead',
   'counterpartyRoleHistory',
+  'customerList',
   'duplicateCandidateDetail',
   'executePrivacyMeasureAction',
   'foundation',

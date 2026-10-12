@@ -21,6 +21,7 @@ import { aresLookupReadApiLive } from './ares-lookup-read-server.ts';
 import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
 import { counterpartyRoleHistoryReadApiLive } from './counterparty-role-history-read-server.ts';
+import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
 import { executePrivacyMeasureActionApiLive } from './execute-privacy-measure-action-server.ts';
 import { guestPartyResolutionReadApiLive } from './guest-party-resolution-read-server.ts';
@@ -127,6 +128,7 @@ export const makePartyRegistryApiRuntime = (
     ),
     counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyRoleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     executePrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     guestPartyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
