@@ -1,0 +1,32 @@
+{
+  "sales-pipeline": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "sales-pipeline",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Obchodní příležitosti",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Obchodní příležitosti",
+        "description": "Obchodní příležitosti a jejich fáze.",
+        "refresh": "Načíst",
+        "empty": "Zatím žádné příležitosti.",
+        "count": "Počet záznamů: {{total}}",
+        "unavailable": "Data se nepodařilo načíst.",
+        "forbidden": "K této operaci nemáte oprávnění."
+      }
+    }
+  }
+}

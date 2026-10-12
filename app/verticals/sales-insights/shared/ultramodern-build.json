@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "sales-insights",
+    "buildMarker": "89cf413717273314",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/sales-insights",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/sales-insights",
+    "version": "0.1.0",
+    "build": "89cf413717273314"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "sales-insights",
+      "buildMarker": "89cf413717273314",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/sales-insights",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/sales-insights",
+      "version": "0.1.0",
+      "build": "89cf413717273314",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "sales-insights",
+      "buildMarker": "89cf413717273314",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/sales-insights",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/sales-insights",
+      "version": "0.1.0",
+      "build": "89cf413717273314",
+      "surface": "ui"
+    }
+  }
+}

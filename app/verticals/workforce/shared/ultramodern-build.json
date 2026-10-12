@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "workforce",
+    "buildMarker": "4e37453a3d835d3e",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/workforce",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/workforce",
+    "version": "0.1.0",
+    "build": "4e37453a3d835d3e"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "workforce",
+      "buildMarker": "4e37453a3d835d3e",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/workforce",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/workforce",
+      "version": "0.1.0",
+      "build": "4e37453a3d835d3e",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "workforce",
+      "buildMarker": "4e37453a3d835d3e",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/workforce",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/workforce",
+      "version": "0.1.0",
+      "build": "4e37453a3d835d3e",
+      "surface": "ui"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "workforce": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "workforce",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Zaměstnanci",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Zaměstnanci",
+        "description": "Přehled zaměstnanců obchodního týmu.",
+        "refresh": "Načíst",
+        "empty": "Zatím žádní zaměstnanci.",
+        "count": "Počet záznamů: {{total}}",
+        "unavailable": "Data se nepodařilo načíst.",
+        "forbidden": "K této operaci nemáte oprávnění."
+      }
+    }
+  }
+}

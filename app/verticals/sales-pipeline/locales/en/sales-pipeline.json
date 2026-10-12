@@ -1,0 +1,32 @@
+{
+  "sales-pipeline": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "sales-pipeline",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Opportunities",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Opportunities",
+        "description": "Sales opportunities and their stages.",
+        "refresh": "Load",
+        "empty": "No opportunities yet.",
+        "count": "Records: {{total}}",
+        "unavailable": "Data could not be loaded.",
+        "forbidden": "You are not allowed to do this."
+      }
+    }
+  }
+}

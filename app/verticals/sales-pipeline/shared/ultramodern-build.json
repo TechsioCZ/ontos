@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "sales-pipeline",
+    "buildMarker": "2918cfdfeee5d72f",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/sales-pipeline",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/sales-pipeline",
+    "version": "0.1.0",
+    "build": "2918cfdfeee5d72f"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "sales-pipeline",
+      "buildMarker": "2918cfdfeee5d72f",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/sales-pipeline",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/sales-pipeline",
+      "version": "0.1.0",
+      "build": "2918cfdfeee5d72f",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "sales-pipeline",
+      "buildMarker": "2918cfdfeee5d72f",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/sales-pipeline",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/sales-pipeline",
+      "version": "0.1.0",
+      "build": "2918cfdfeee5d72f",
+      "surface": "ui"
+    }
+  }
+}

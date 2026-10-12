@@ -1,0 +1,32 @@
+{
+  "workforce": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "workforce",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Employees",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Employees",
+        "description": "Sales team employees.",
+        "refresh": "Load",
+        "empty": "No employees yet.",
+        "count": "Records: {{total}}",
+        "unavailable": "Data could not be loaded.",
+        "forbidden": "You are not allowed to do this."
+      }
+    }
+  }
+}

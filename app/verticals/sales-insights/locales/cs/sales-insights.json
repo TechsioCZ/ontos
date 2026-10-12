@@ -1,0 +1,32 @@
+{
+  "sales-insights": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "sales-insights",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Statistiky",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Statistiky",
+        "description": "Statistiky obchodu podle zvolených metrik a období.",
+        "refresh": "Načíst",
+        "empty": "Zatím žádná data.",
+        "count": "Počet záznamů: {{total}}",
+        "unavailable": "Data se nepodařilo načíst.",
+        "forbidden": "K této operaci nemáte oprávnění."
+      }
+    }
+  }
+}

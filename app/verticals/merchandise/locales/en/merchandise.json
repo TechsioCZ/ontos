@@ -1,0 +1,36 @@
+{
+  "merchandise": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "merchandise",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Products",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "orders": {
+        "description": "Customer orders with price snapshots.",
+        "title": "Orders"
+      },
+      "records": {
+        "title": "Products",
+        "description": "Products, prices and stock movements.",
+        "refresh": "Load",
+        "empty": "No products yet.",
+        "count": "Records: {{total}}",
+        "unavailable": "Data could not be loaded.",
+        "forbidden": "You are not allowed to do this."
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "tagging": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "tagging",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Tags",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Tags",
+        "description": "Tags and their assignments.",
+        "refresh": "Load",
+        "empty": "No tags yet.",
+        "count": "Records: {{total}}",
+        "unavailable": "Data could not be loaded.",
+        "forbidden": "You are not allowed to do this."
+      }
+    }
+  }
+}

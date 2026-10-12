@@ -1,0 +1,36 @@
+{
+  "merchandise": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "merchandise",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Produkty",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "orders": {
+        "description": "Objednávky zákazníků se snímkem cen.",
+        "title": "Objednávky"
+      },
+      "records": {
+        "title": "Produkty",
+        "description": "Produkty, ceny a skladové pohyby.",
+        "refresh": "Načíst",
+        "empty": "Zatím žádné produkty.",
+        "count": "Počet záznamů: {{total}}",
+        "unavailable": "Data se nepodařilo načíst.",
+        "forbidden": "K této operaci nemáte oprávnění."
+      }
+    }
+  }
+}
