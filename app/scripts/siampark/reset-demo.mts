@@ -33,6 +33,14 @@ const workModuleId = 'siampark.work';
 const relationshipsModuleId = 'siampark.relationships';
 const financeModuleId = 'siampark.billing-finance';
 const partyModuleId = 'party.registry';
+/** Sales-demo MicroVerticals activated for the shared demo tenant (demo/sales-crm). */
+const salesDemoModuleIds = [
+  'demo.workforce',
+  'demo.tagging',
+  'demo.sales-pipeline',
+  'demo.merchandise',
+  'demo.sales-insights',
+] as const;
 const moduleIds = [
   partyModuleId,
   'siampark.property',
@@ -41,6 +49,7 @@ const moduleIds = [
   workModuleId,
   financeModuleId,
   relationshipsModuleId,
+  ...salesDemoModuleIds,
 ] as const;
 type AddRelationship = (
   resourceType: string,
@@ -59,12 +68,13 @@ const actionModulesFor = (index: number): readonly string[] => {
   return [];
 };
 const addPermissionRelationships = (add: AddRelationship, index: number, principalId: string) => {
-  for (const moduleId of [workModuleId, relationshipsModuleId]) {
+  for (const moduleId of [workModuleId, relationshipsModuleId, ...salesDemoModuleIds]) {
     for (const permission of ['read_all', 'write_all']) {
       const objectId =
         toContextPermissionAccessObjectId(demoTenantId, demoLegalEntityId, {
           moduleId,
-          permission: `${moduleId}.${permission}`,
+          // Permission keys allow only [a-z0-9_] segments; hyphenated module ids use underscores.
+          permission: `${moduleId.replaceAll('-', '_')}.${permission}`,
         }) ?? '';
       add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
       if ((permission === 'read_all' && index < 3) || (permission === 'write_all' && index === 1)) {

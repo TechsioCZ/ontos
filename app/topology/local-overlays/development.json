@@ -17,6 +17,11 @@
     "siampark-occupancy": "http://localhost:4115/.well-known/ontos-module-manifest.json",
     "siampark-agreements": "http://localhost:4116/.well-known/ontos-module-manifest.json",
     "siampark-work": "http://localhost:4117/.well-known/ontos-module-manifest.json",
+    "workforce": "http://localhost:4120/.well-known/ontos-module-manifest.json",
+    "tagging": "http://localhost:4121/.well-known/ontos-module-manifest.json",
+    "sales-pipeline": "http://localhost:4122/.well-known/ontos-module-manifest.json",
+    "merchandise": "http://localhost:4123/.well-known/ontos-module-manifest.json",
+    "sales-insights": "http://localhost:4124/.well-known/ontos-module-manifest.json",
     "siampark-billing-finance": "http://localhost:4118/.well-known/ontos-module-manifest.json",
     "siampark-relationships": "http://localhost:4119/.well-known/ontos-module-manifest.json"
   },
@@ -42,6 +47,11 @@
     "siampark-occupancy": 4115,
     "siampark-agreements": 4116,
     "siampark-work": 4117,
+    "workforce": 4120,
+    "tagging": 4121,
+    "sales-pipeline": 4122,
+    "merchandise": 4123,
+    "sales-insights": 4124,
     "siampark-billing-finance": 4118,
     "siampark-relationships": 4119
   },
@@ -56,6 +66,11 @@
     "siampark-occupancy": "http://localhost:4115/mf-manifest.json",
     "siampark-agreements": "http://localhost:4116/mf-manifest.json",
     "siampark-work": "http://localhost:4117/mf-manifest.json",
+    "workforce": "http://localhost:4120/mf-manifest.json",
+    "tagging": "http://localhost:4121/mf-manifest.json",
+    "sales-pipeline": "http://localhost:4122/mf-manifest.json",
+    "merchandise": "http://localhost:4123/mf-manifest.json",
+    "sales-insights": "http://localhost:4124/mf-manifest.json",
     "siampark-billing-finance": "http://localhost:4118/mf-manifest.json",
     "siampark-relationships": "http://localhost:4119/mf-manifest.json"
   },
@@ -922,6 +937,261 @@
         }
       }
     },
+    "workforce": {
+      "apiBaseUrl": "http://localhost:4120/workforce-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/workforce",
+        "buildMarker": "4e37453a3d835d3e"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-workforce",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_WORKFORCE",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_WORKFORCE_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_WORKFORCE_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_WORKFORCE_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_WORKFORCE_WORKER",
+          "serviceBindingEnv": "VERTICAL_WORKFORCE_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_WORKFORCE_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_WORKFORCE_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalWorkforceBackend",
+        "manifestEnv": "VERTICAL_WORKFORCE_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4120/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4120/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/workforce",
+          "buildMarker": "4e37453a3d835d3e"
+        }
+      }
+    },
+    "tagging": {
+      "apiBaseUrl": "http://localhost:4121/tagging-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/tagging",
+        "buildMarker": "d8de0d2e6c127622"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-tagging",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAGGING",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_TAGGING_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_TAGGING_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_TAGGING_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_TAGGING_WORKER",
+          "serviceBindingEnv": "VERTICAL_TAGGING_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_TAGGING_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_TAGGING_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalTaggingBackend",
+        "manifestEnv": "VERTICAL_TAGGING_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4121/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4121/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/tagging",
+          "buildMarker": "d8de0d2e6c127622"
+        }
+      }
+    },
+    "sales-pipeline": {
+      "apiBaseUrl": "http://localhost:4122/sales-pipeline-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/sales-pipeline",
+        "buildMarker": "2918cfdfeee5d72f"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-sales-pipeline",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SALES_PIPELINE",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SALES_PIPELINE_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SALES_PIPELINE_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SALES_PIPELINE_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SALES_PIPELINE_WORKER",
+          "serviceBindingEnv": "VERTICAL_SALES_PIPELINE_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SALES_PIPELINE_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SALES_PIPELINE_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSalesPipelineBackend",
+        "manifestEnv": "VERTICAL_SALES_PIPELINE_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4122/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4122/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/sales-pipeline",
+          "buildMarker": "2918cfdfeee5d72f"
+        }
+      }
+    },
+    "merchandise": {
+      "apiBaseUrl": "http://localhost:4123/merchandise-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/merchandise",
+        "buildMarker": "5af5cbe964140fbe"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-merchandise",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_MERCHANDISE",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_MERCHANDISE_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_MERCHANDISE_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_MERCHANDISE_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_MERCHANDISE_WORKER",
+          "serviceBindingEnv": "VERTICAL_MERCHANDISE_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_MERCHANDISE_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_MERCHANDISE_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalMerchandiseBackend",
+        "manifestEnv": "VERTICAL_MERCHANDISE_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4123/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4123/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/merchandise",
+          "buildMarker": "5af5cbe964140fbe"
+        }
+      }
+    },
+    "sales-insights": {
+      "apiBaseUrl": "http://localhost:4124/sales-insights-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/sales-insights",
+        "buildMarker": "89cf413717273314"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-sales-insights",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SALES_INSIGHTS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SALES_INSIGHTS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SALES_INSIGHTS_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SALES_INSIGHTS_WORKER",
+          "serviceBindingEnv": "VERTICAL_SALES_INSIGHTS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SALES_INSIGHTS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SALES_INSIGHTS_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSalesInsightsBackend",
+        "manifestEnv": "VERTICAL_SALES_INSIGHTS_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4124/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4124/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/sales-insights",
+          "buildMarker": "89cf413717273314"
+        }
+      }
+    },
     "siampark-billing-finance": {
       "apiBaseUrl": "http://localhost:4118/siampark-billing-finance-api",
       "versionBoundary": "web-and-api-same-build",
@@ -1043,6 +1313,11 @@
     "siampark-occupancy": "http://localhost:4115/siampark-occupancy-api",
     "siampark-agreements": "http://localhost:4116/siampark-agreements-api",
     "siampark-work": "http://localhost:4117/siampark-work-api",
+    "workforce": "http://localhost:4120/workforce-api",
+    "tagging": "http://localhost:4121/tagging-api",
+    "sales-pipeline": "http://localhost:4122/sales-pipeline-api",
+    "merchandise": "http://localhost:4123/merchandise-api",
+    "sales-insights": "http://localhost:4124/sales-insights-api",
     "siampark-billing-finance": "http://localhost:4118/siampark-billing-finance-api",
     "siampark-relationships": "http://localhost:4119/siampark-relationships-api"
   }

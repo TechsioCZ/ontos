@@ -41,6 +41,11 @@
     "@app/siampark-property": "workspace:*",
     "@app/siampark-relationships": "workspace:*",
     "@app/siampark-work": "workspace:*",
+    "@app/workforce": "workspace:*",
+    "@app/tagging": "workspace:*",
+    "@app/sales-pipeline": "workspace:*",
+    "@app/merchandise": "workspace:*",
+    "@app/sales-insights": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@better-auth/api-key": "1.7.6",
     "@effect/opentelemetry": "4.0.0-rc.117",
@@ -110,6 +115,11 @@
     "siamparkOccupancy": "@app/siampark-occupancy@workspace:*",
     "siamparkAgreements": "@app/siampark-agreements@workspace:*",
     "siamparkWork": "@app/siampark-work@workspace:*",
+    "workforce": "@app/workforce@workspace:*",
+    "tagging": "@app/tagging@workspace:*",
+    "salesPipeline": "@app/sales-pipeline@workspace:*",
+    "merchandise": "@app/merchandise@workspace:*",
+    "salesInsights": "@app/sales-insights@workspace:*",
     "siamparkBillingFinance": "@app/siampark-billing-finance@workspace:*",
     "siamparkRelationships": "@app/siampark-relationships@workspace:*"
   }

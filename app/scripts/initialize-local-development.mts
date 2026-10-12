@@ -84,6 +84,12 @@ export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze([
   'party-registry',
   'commerce-market-catalog',
   'commerce-customer-context',
+  // Sales demo MicroVerticals (demo/sales-crm).
+  'workforce',
+  'tagging',
+  'sales-pipeline',
+  'merchandise',
+  'sales-insights',
 ] as const);
 
 export interface LocalDevelopmentConfiguration {

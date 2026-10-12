@@ -20,6 +20,11 @@
       "siampark-occupancy",
       "siampark-agreements",
       "siampark-work",
+      "workforce",
+      "tagging",
+      "sales-pipeline",
+      "merchandise",
+      "sales-insights",
       "siampark-billing-finance",
       "siampark-relationships"
     ],
@@ -87,6 +92,31 @@
           "id": "siampark-work",
           "name": "verticalSiamparkWork",
           "manifestUrl": "http://localhost:4117/mf-manifest.json"
+        },
+        {
+          "id": "workforce",
+          "name": "verticalWorkforce",
+          "manifestUrl": "http://localhost:4120/mf-manifest.json"
+        },
+        {
+          "id": "tagging",
+          "name": "verticalTagging",
+          "manifestUrl": "http://localhost:4121/mf-manifest.json"
+        },
+        {
+          "id": "sales-pipeline",
+          "name": "verticalSalesPipeline",
+          "manifestUrl": "http://localhost:4122/mf-manifest.json"
+        },
+        {
+          "id": "merchandise",
+          "name": "verticalMerchandise",
+          "manifestUrl": "http://localhost:4123/mf-manifest.json"
+        },
+        {
+          "id": "sales-insights",
+          "name": "verticalSalesInsights",
+          "manifestUrl": "http://localhost:4124/mf-manifest.json"
         },
         {
           "id": "siampark-billing-finance",
@@ -4993,6 +5023,1446 @@
         "blastRadius": {
           "tier": "tier-2-vertical",
           "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-work"]
+        }
+      }
+    },
+    {
+      "id": "workforce",
+      "kind": "vertical",
+      "domain": "workforce",
+      "package": "@app/workforce",
+      "path": "verticals/workforce",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalWorkforce",
+        "manifestUrl": "http://localhost:4120/mf-manifest.json",
+        "exposes": ["./Route", "./Widget"],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalWorkforceBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/workforce",
+          "packageName": "@app/workforce",
+          "version": "0.1.0",
+          "buildMarker": "4e37453a3d835d3e",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/workforce/shared/api.ts",
+            "runtime": "verticals/workforce/api/index.ts",
+            "client": "verticals/workforce/src/api/workforce-client.ts",
+            "openapi": "/workforce-api/openapi.json",
+            "readiness": "/workforce-api/workforce/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/workforce",
+          "ui": {
+            "manifestEnv": "VERTICAL_WORKFORCE_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4120/mf-manifest.json",
+            "buildMarker": "verticals/workforce/src/routes/ultramodern-route-metadata.ts"
+          },
+          "api": {
+            "readiness": "/workforce-api/workforce/readiness",
+            "buildMarker": "verticals/workforce/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_WORKFORCE"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-workforce",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_WORKFORCE",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_WORKFORCE_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_WORKFORCE_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_WORKFORCE_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_WORKFORCE_WORKER",
+              "serviceBindingEnv": "VERTICAL_WORKFORCE_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_WORKFORCE_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_WORKFORCE_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalWorkforceBackend",
+            "manifestEnv": "VERTICAL_WORKFORCE_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4120/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4120/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/workforce",
+              "buildMarker": "4e37453a3d835d3e"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/workforce",
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/workforce",
+        "packageName": "@app/workforce",
+        "version": "0.1.0",
+        "buildMarker": "4e37453a3d835d3e",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/workforce-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/workforce/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/workforce/src/api/workforce-client.ts"
+        },
+        "serverEntry": "verticals/workforce/api/index.ts",
+        "basePath": "/workforce-api/workforce",
+        "consumedBy": ["shell-super-app", "workforce"],
+        "readiness": {
+          "endpoint": "/workforce/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listWorkforce",
+            "method": "GET",
+            "path": "/workforce",
+            "resource": "workspace-items",
+            "owner": "workforce"
+          },
+          "workspaceDetail": {
+            "client": "getWorkforce",
+            "method": "GET",
+            "path": "/workforce/:id",
+            "resource": "workspace-item",
+            "owner": "workforce"
+          },
+          "workspaceCreate": {
+            "client": "createWorkforce",
+            "method": "POST",
+            "path": "/workforce",
+            "resource": "workforce",
+            "owner": "workforce"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-workforce",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_WORKFORCE",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/workforce.json",
+          "apiReadiness": "/workforce-api/workforce/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "workforce-readiness-smoke",
+            "route": "/workforce-api/workforce/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/workforce.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#workforce",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#workforce"]
+        }
+      }
+    },
+    {
+      "id": "tagging",
+      "kind": "vertical",
+      "domain": "tagging",
+      "package": "@app/tagging",
+      "path": "verticals/tagging",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalTagging",
+        "manifestUrl": "http://localhost:4121/mf-manifest.json",
+        "exposes": ["./Route", "./Widget"],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalTaggingBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/tagging",
+          "packageName": "@app/tagging",
+          "version": "0.1.0",
+          "buildMarker": "d8de0d2e6c127622",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/tagging/shared/api.ts",
+            "runtime": "verticals/tagging/api/index.ts",
+            "client": "verticals/tagging/src/api/tagging-client.ts",
+            "openapi": "/tagging-api/openapi.json",
+            "readiness": "/tagging-api/tagging/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/tagging",
+          "ui": {
+            "manifestEnv": "VERTICAL_TAGGING_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4121/mf-manifest.json",
+            "buildMarker": "verticals/tagging/src/routes/ultramodern-route-metadata.ts"
+          },
+          "api": {
+            "readiness": "/tagging-api/tagging/readiness",
+            "buildMarker": "verticals/tagging/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAGGING"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-tagging",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAGGING",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_TAGGING_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_TAGGING_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_TAGGING_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_TAGGING_WORKER",
+              "serviceBindingEnv": "VERTICAL_TAGGING_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_TAGGING_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_TAGGING_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalTaggingBackend",
+            "manifestEnv": "VERTICAL_TAGGING_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4121/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4121/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/tagging",
+              "buildMarker": "d8de0d2e6c127622"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/tagging",
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/tagging",
+        "packageName": "@app/tagging",
+        "version": "0.1.0",
+        "buildMarker": "d8de0d2e6c127622",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/tagging-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/tagging/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/tagging/src/api/tagging-client.ts"
+        },
+        "serverEntry": "verticals/tagging/api/index.ts",
+        "basePath": "/tagging-api/tagging",
+        "consumedBy": ["shell-super-app", "tagging"],
+        "readiness": {
+          "endpoint": "/tagging/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listTagging",
+            "method": "GET",
+            "path": "/tagging",
+            "resource": "workspace-items",
+            "owner": "tagging"
+          },
+          "workspaceDetail": {
+            "client": "getTagging",
+            "method": "GET",
+            "path": "/tagging/:id",
+            "resource": "workspace-item",
+            "owner": "tagging"
+          },
+          "workspaceCreate": {
+            "client": "createTagging",
+            "method": "POST",
+            "path": "/tagging",
+            "resource": "tagging",
+            "owner": "tagging"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-tagging",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAGGING",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/tagging.json",
+          "apiReadiness": "/tagging-api/tagging/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "tagging-readiness-smoke",
+            "route": "/tagging-api/tagging/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/tagging.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#tagging",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#tagging"]
+        }
+      }
+    },
+    {
+      "id": "sales-pipeline",
+      "kind": "vertical",
+      "domain": "sales-pipeline",
+      "package": "@app/sales-pipeline",
+      "path": "verticals/sales-pipeline",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalSalesPipeline",
+        "manifestUrl": "http://localhost:4122/mf-manifest.json",
+        "exposes": ["./Route", "./Widget"],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalSalesPipelineBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/sales-pipeline",
+          "packageName": "@app/sales-pipeline",
+          "version": "0.1.0",
+          "buildMarker": "2918cfdfeee5d72f",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/sales-pipeline/shared/api.ts",
+            "runtime": "verticals/sales-pipeline/api/index.ts",
+            "client": "verticals/sales-pipeline/src/api/sales-pipeline-client.ts",
+            "openapi": "/sales-pipeline-api/openapi.json",
+            "readiness": "/sales-pipeline-api/sales-pipeline/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/sales-pipeline",
+          "ui": {
+            "manifestEnv": "VERTICAL_SALES_PIPELINE_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4122/mf-manifest.json",
+            "buildMarker": "verticals/sales-pipeline/src/routes/ultramodern-route-metadata.ts"
+          },
+          "api": {
+            "readiness": "/sales-pipeline-api/sales-pipeline/readiness",
+            "buildMarker": "verticals/sales-pipeline/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SALES_PIPELINE"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-sales-pipeline",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SALES_PIPELINE",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_SALES_PIPELINE_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_SALES_PIPELINE_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_SALES_PIPELINE_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_SALES_PIPELINE_WORKER",
+              "serviceBindingEnv": "VERTICAL_SALES_PIPELINE_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_SALES_PIPELINE_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_SALES_PIPELINE_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalSalesPipelineBackend",
+            "manifestEnv": "VERTICAL_SALES_PIPELINE_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4122/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4122/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/sales-pipeline",
+              "buildMarker": "2918cfdfeee5d72f"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/sales-pipeline",
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/sales-pipeline",
+        "packageName": "@app/sales-pipeline",
+        "version": "0.1.0",
+        "buildMarker": "2918cfdfeee5d72f",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/sales-pipeline-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/sales-pipeline/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/sales-pipeline/src/api/sales-pipeline-client.ts"
+        },
+        "serverEntry": "verticals/sales-pipeline/api/index.ts",
+        "basePath": "/sales-pipeline-api/sales-pipeline",
+        "consumedBy": ["shell-super-app", "sales-pipeline"],
+        "readiness": {
+          "endpoint": "/sales-pipeline/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listSalesPipeline",
+            "method": "GET",
+            "path": "/sales-pipeline",
+            "resource": "workspace-items",
+            "owner": "sales-pipeline"
+          },
+          "workspaceDetail": {
+            "client": "getSalesPipeline",
+            "method": "GET",
+            "path": "/sales-pipeline/:id",
+            "resource": "workspace-item",
+            "owner": "sales-pipeline"
+          },
+          "workspaceCreate": {
+            "client": "createSalesPipeline",
+            "method": "POST",
+            "path": "/sales-pipeline",
+            "resource": "salesPipeline",
+            "owner": "sales-pipeline"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-sales-pipeline",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SALES_PIPELINE",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/sales-pipeline.json",
+          "apiReadiness": "/sales-pipeline-api/sales-pipeline/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "sales-pipeline-readiness-smoke",
+            "route": "/sales-pipeline-api/sales-pipeline/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/sales-pipeline.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#sales-pipeline",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#sales-pipeline"]
+        }
+      }
+    },
+    {
+      "id": "merchandise",
+      "kind": "vertical",
+      "domain": "merchandise",
+      "package": "@app/merchandise",
+      "path": "verticals/merchandise",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalMerchandise",
+        "manifestUrl": "http://localhost:4123/mf-manifest.json",
+        "exposes": ["./Route", "./Widget"],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalMerchandiseBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/merchandise",
+          "packageName": "@app/merchandise",
+          "version": "0.1.0",
+          "buildMarker": "5af5cbe964140fbe",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/merchandise/shared/api.ts",
+            "runtime": "verticals/merchandise/api/index.ts",
+            "client": "verticals/merchandise/src/api/merchandise-client.ts",
+            "openapi": "/merchandise-api/openapi.json",
+            "readiness": "/merchandise-api/merchandise/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/merchandise",
+          "ui": {
+            "manifestEnv": "VERTICAL_MERCHANDISE_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4123/mf-manifest.json",
+            "buildMarker": "verticals/merchandise/src/routes/ultramodern-route-metadata.ts"
+          },
+          "api": {
+            "readiness": "/merchandise-api/merchandise/readiness",
+            "buildMarker": "verticals/merchandise/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_MERCHANDISE"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-merchandise",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_MERCHANDISE",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_MERCHANDISE_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_MERCHANDISE_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_MERCHANDISE_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_MERCHANDISE_WORKER",
+              "serviceBindingEnv": "VERTICAL_MERCHANDISE_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_MERCHANDISE_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_MERCHANDISE_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalMerchandiseBackend",
+            "manifestEnv": "VERTICAL_MERCHANDISE_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4123/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4123/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/merchandise",
+              "buildMarker": "5af5cbe964140fbe"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/merchandise",
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/merchandise",
+        "packageName": "@app/merchandise",
+        "version": "0.1.0",
+        "buildMarker": "5af5cbe964140fbe",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/merchandise-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/merchandise/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/merchandise/src/api/merchandise-client.ts"
+        },
+        "serverEntry": "verticals/merchandise/api/index.ts",
+        "basePath": "/merchandise-api/merchandise",
+        "consumedBy": ["shell-super-app", "merchandise"],
+        "readiness": {
+          "endpoint": "/merchandise/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listMerchandise",
+            "method": "GET",
+            "path": "/merchandise",
+            "resource": "workspace-items",
+            "owner": "merchandise"
+          },
+          "workspaceDetail": {
+            "client": "getMerchandise",
+            "method": "GET",
+            "path": "/merchandise/:id",
+            "resource": "workspace-item",
+            "owner": "merchandise"
+          },
+          "workspaceCreate": {
+            "client": "createMerchandise",
+            "method": "POST",
+            "path": "/merchandise",
+            "resource": "merchandise",
+            "owner": "merchandise"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-merchandise",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_MERCHANDISE",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/merchandise.json",
+          "apiReadiness": "/merchandise-api/merchandise/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "merchandise-readiness-smoke",
+            "route": "/merchandise-api/merchandise/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/merchandise.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#merchandise",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#merchandise"]
+        }
+      }
+    },
+    {
+      "id": "sales-insights",
+      "kind": "vertical",
+      "domain": "sales-insights",
+      "package": "@app/sales-insights",
+      "path": "verticals/sales-insights",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalSalesInsights",
+        "manifestUrl": "http://localhost:4124/mf-manifest.json",
+        "exposes": ["./Route", "./Widget"],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalSalesInsightsBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/sales-insights",
+          "packageName": "@app/sales-insights",
+          "version": "0.1.0",
+          "buildMarker": "89cf413717273314",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/sales-insights/shared/api.ts",
+            "runtime": "verticals/sales-insights/api/index.ts",
+            "client": "verticals/sales-insights/src/api/sales-insights-client.ts",
+            "openapi": "/sales-insights-api/openapi.json",
+            "readiness": "/sales-insights-api/sales-insights/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/sales-insights",
+          "ui": {
+            "manifestEnv": "VERTICAL_SALES_INSIGHTS_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4124/mf-manifest.json",
+            "buildMarker": "verticals/sales-insights/src/routes/ultramodern-route-metadata.ts"
+          },
+          "api": {
+            "readiness": "/sales-insights-api/sales-insights/readiness",
+            "buildMarker": "verticals/sales-insights/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-sales-insights",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_SALES_INSIGHTS_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_SALES_INSIGHTS_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_SALES_INSIGHTS_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_SALES_INSIGHTS_WORKER",
+              "serviceBindingEnv": "VERTICAL_SALES_INSIGHTS_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_SALES_INSIGHTS_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_SALES_INSIGHTS_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalSalesInsightsBackend",
+            "manifestEnv": "VERTICAL_SALES_INSIGHTS_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4124/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4124/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/sales-insights",
+              "buildMarker": "89cf413717273314"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/sales-insights",
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/sales-insights",
+        "packageName": "@app/sales-insights",
+        "version": "0.1.0",
+        "buildMarker": "89cf413717273314",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/sales-insights-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/sales-insights/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/sales-insights/src/api/sales-insights-client.ts"
+        },
+        "serverEntry": "verticals/sales-insights/api/index.ts",
+        "basePath": "/sales-insights-api/sales-insights",
+        "consumedBy": ["shell-super-app", "sales-insights"],
+        "readiness": {
+          "endpoint": "/sales-insights/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listSalesInsights",
+            "method": "GET",
+            "path": "/sales-insights",
+            "resource": "workspace-items",
+            "owner": "sales-insights"
+          },
+          "workspaceDetail": {
+            "client": "getSalesInsights",
+            "method": "GET",
+            "path": "/sales-insights/:id",
+            "resource": "workspace-item",
+            "owner": "sales-insights"
+          },
+          "workspaceCreate": {
+            "client": "createSalesInsights",
+            "method": "POST",
+            "path": "/sales-insights",
+            "resource": "salesInsights",
+            "owner": "sales-insights"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-sales-insights",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/sales-insights.json",
+          "apiReadiness": "/sales-insights-api/sales-insights/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "sales-insights-readiness-smoke",
+            "route": "/sales-insights-api/sales-insights/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/sales-insights.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#sales-insights",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#sales-insights"]
         }
       }
     },

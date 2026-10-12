@@ -486,6 +486,86 @@
       }
     },
     {
+      "id": "workforce",
+      "package": "@app/workforce",
+      "path": "verticals/workforce",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/workforce.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#workforce",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#workforce"]
+        }
+      }
+    },
+    {
+      "id": "tagging",
+      "package": "@app/tagging",
+      "path": "verticals/tagging",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/tagging.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#tagging",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#tagging"]
+        }
+      }
+    },
+    {
+      "id": "sales-pipeline",
+      "package": "@app/sales-pipeline",
+      "path": "verticals/sales-pipeline",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/sales-pipeline.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#sales-pipeline",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#sales-pipeline"]
+        }
+      }
+    },
+    {
+      "id": "merchandise",
+      "package": "@app/merchandise",
+      "path": "verticals/merchandise",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/merchandise.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#merchandise",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#merchandise"]
+        }
+      }
+    },
+    {
+      "id": "sales-insights",
+      "package": "@app/sales-insights",
+      "path": "verticals/sales-insights",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/sales-insights.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#sales-insights",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#sales-insights"]
+        }
+      }
+    },
+    {
       "id": "siampark-billing-finance",
       "package": "@app/siampark-billing-finance",
       "path": "verticals/siampark-billing-finance",

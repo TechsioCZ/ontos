@@ -176,15 +176,22 @@ it.effect('derives the fixed local commerce launch modules through generated own
     yield* Effect.tryPromise(() => writeFile(path.join(root, TOPOLOGY_PATH), topology, 'utf-8'));
     const deriveContract = ({ vertical }: { readonly vertical: string }) =>
       Effect.succeed(moduleContract(`${vertical}.core`));
-    expect(yield* deriveActivatedModuleIds(root, deriveContract).pipe(Effect.provide(NodeServices.layer))).toEqual([
-      'commerce-customer-context.core',
-      'commerce-market-catalog.core',
-      'party-registry.core',
-    ]);
+    expect(
+      yield* deriveActivatedModuleIds(root, deriveContract, [
+        PARTY_REGISTRY_VERTICAL_ID,
+        MARKET_CATALOG_VERTICAL_ID,
+        CUSTOMER_CONTEXT_VERTICAL_ID,
+      ]).pipe(Effect.provide(NodeServices.layer)),
+    ).toEqual(['commerce-customer-context.core', 'commerce-market-catalog.core', 'party-registry.core']);
     expect(LOCAL_DEVELOPMENT_VERTICALS).toEqual([
       PARTY_REGISTRY_VERTICAL_ID,
       MARKET_CATALOG_VERTICAL_ID,
       CUSTOMER_CONTEXT_VERTICAL_ID,
+      'workforce',
+      'tagging',
+      'sales-pipeline',
+      'merchandise',
+      'sales-insights',
     ]);
   }),
 );
