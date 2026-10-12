@@ -9,10 +9,10 @@
     "./clients/records": "./src/api/records-client.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
+    "./domain/merchandise-model": "./shared/domain/merchandise-model.ts",
     "./permissions/demo.merchandise.read_all": "./shared/permissions/merchandise-read-all.ts",
     "./permissions/demo.merchandise.write_all": "./shared/permissions/merchandise-write-all.ts",
     "./resources/product": "./shared/resources/product.ts",
-    "./resources/product-collection": "./shared/resources/product-collection.ts",
     "./Route": "./src/federation-entry.tsx"
   },
   "scripts": {

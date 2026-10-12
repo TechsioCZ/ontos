@@ -64,6 +64,7 @@ export const ApplyCommandActionUnavailableProblemSchema = makeRetryableProblemDe
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'merchandise_not_implemented',
       'merchandise_persistence_unavailable',
       'merchandise_reference_unavailable',
     ]),

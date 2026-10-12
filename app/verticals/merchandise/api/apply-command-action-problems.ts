@@ -128,6 +128,7 @@ const mapDomainProblem = (error: DomainError): ApplyCommandActionProblem =>
     Match.tags({
       MerchandiseLifecycleConflict: () => applyCommandActionProblem.conflict('merchandise_lifecycle_conflict'),
       MerchandiseNotFound: () => applyCommandActionProblem.notFound('merchandise_not_found'),
+      MerchandiseNotImplemented: () => applyCommandActionProblem.unavailable('merchandise_not_implemented'),
       MerchandisePermissionDenied: () => applyCommandActionProblem.forbidden('merchandise_permission_denied'),
       MerchandisePersistenceUnavailable: () =>
         applyCommandActionProblem.unavailable('merchandise_persistence_unavailable'),
