@@ -35,7 +35,7 @@ type EditFields = Types.Mutable<
 type Units = Effect.Success<ReturnType<typeof executePropertyRecords>>['units'];
 const useWorkRecords = () => {
   const { language, t } = useModernI18n();
-  const search = Schema.decodeUnknownOption(searchSchema)(useRouterState().location.search);
+  const search = Schema.decodeOption(searchSchema)(useRouterState().location.search);
   const resourceId = Option.getOrUndefined(search)?.resourceId;
   const [records, setRecords] = useState<RecordsResponse>();
   const [selected, setSelected] = useState<Task>();

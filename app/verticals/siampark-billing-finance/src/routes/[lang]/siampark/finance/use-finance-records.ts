@@ -102,7 +102,7 @@ const currencyFormatters = {
 };
 export const useFinanceRecords = () => {
   const { language, t } = useModernI18n();
-  const search = Schema.decodeUnknownOption(searchSchema)(useRouterState().location.search);
+  const search = Schema.decodeOption(searchSchema)(useRouterState().location.search);
   const requestedId = Option.getOrUndefined(search)?.resourceId;
   const [snapshot, setSnapshot] = useState<RecordsResponse>();
   const [properties, setProperties] = useState<Properties>();
