@@ -17,13 +17,20 @@ export type ContextRef = typeof ContextRefSchema.Type;
 export const TaskStateSchema = Schema.Literals(['NEW', 'IN_PROGRESS', 'WAITING', 'DONE', 'CANCELLED']);
 export type TaskState = typeof TaskStateSchema.Type;
 export const TaskPrioritySchema = Schema.Literals(['LOW', 'NORMAL', 'HIGH']);
+// Opaque cross-module IDs: this vertical stores and filters them but never reads the owning module's rows.
+export const EmployeeIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('EmployeeId'));
+export const PartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PartyId'));
+export const OpportunityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('OpportunityId'));
 export const TaskSchema = Schema.Struct({
+  assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   collectionRef: TaskCollectionRefSchema,
   contextRefs: Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12)),
   createdAt: Schema.DateTimeUtcFromString,
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   dueDate: Schema.optionalKey(CalendarDateSchema),
+  opportunityId: Schema.optionalKey(OpportunityIdSchema),
   ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
+  partyId: Schema.optionalKey(PartyIdSchema),
   priority: TaskPrioritySchema,
   ref: TaskRefSchema,
   state: TaskStateSchema,
@@ -48,8 +55,11 @@ export const TaskCollectionSchema = Schema.Struct({
 export const WorkStateSchema = Schema.Struct({ collection: TaskCollectionSchema, tasks: Schema.Array(TaskSchema) });
 export type WorkState = typeof WorkStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
+  assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   contextResourceId: Schema.optionalKey(PropertyRefSchema.fields.resourceId),
+  opportunityId: Schema.optionalKey(OpportunityIdSchema),
   ownerPrincipalId: Schema.optionalKey(PrincipalRefSchema.fields.principalId),
+  partyId: Schema.optionalKey(PartyIdSchema),
   resourceId: Schema.optionalKey(TaskRefSchema.fields.resourceId),
   state: Schema.optionalKey(TaskStateSchema),
 });
@@ -61,6 +71,12 @@ export const RecordsResponseSchema = Schema.Struct({
   collection: TaskCollectionSchema,
   indicators: Schema.Struct({
     open: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    openByAssignee: Schema.Array(
+      Schema.Struct({
+        assigneeEmployeeId: EmployeeIdSchema,
+        open: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      }),
+    ),
     overdue: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   }),
   items: Schema.Array(TaskSchema),

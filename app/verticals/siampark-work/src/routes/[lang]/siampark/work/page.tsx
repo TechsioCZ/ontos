@@ -35,7 +35,7 @@ type EditFields = Types.Mutable<
 type Units = Effect.Success<ReturnType<typeof executePropertyRecords>>['units'];
 const useWorkRecords = () => {
   const { language, t } = useModernI18n();
-  const search = Schema.decodeOption(searchSchema)(useRouterState().location.search);
+  const search = Schema.decodeUnknownOption(searchSchema)(useRouterState().location.search);
   const resourceId = Option.getOrUndefined(search)?.resourceId;
   const [records, setRecords] = useState<RecordsResponse>();
   const [selected, setSelected] = useState<Task>();
@@ -98,7 +98,14 @@ const useWorkRecords = () => {
           referenceCredentials: makeReferenceGatewayCredentials(
             Match.value(command).pipe(
               Match.tag('CreateTask', ({ contextRefs = [] }) => contextRefs.map(() => 'siampark-property')),
-              Match.tag('UpdateTask', 'AssignTask', 'ChangeTaskState', () => []),
+              Match.tag(
+                'UpdateTask',
+                'AssignTask',
+                'ChangeTaskState',
+                'BulkChangeTaskState',
+                'BulkAssignTasks',
+                () => [],
+              ),
               Match.exhaustive,
             ),
           ),
@@ -114,7 +121,7 @@ const useWorkRecords = () => {
         Effect.flatMap((outcome) =>
           requestId.pipe(
             Effect.flatMap((id) => executeRecords(resourceId === undefined ? {} : { resourceId }, id)),
-            Effect.map((freshRecords) => ({ changedTaskRef: outcome.task.ref, freshRecords })),
+            Effect.map((freshRecords) => ({ changedTaskRef: outcome.task?.ref, freshRecords })),
           ),
         ),
         Effect.match({
@@ -135,7 +142,7 @@ const useWorkRecords = () => {
             );
           },
           onSuccess: ({ changedTaskRef, freshRecords }) => {
-            const task = freshRecords.items.find((item) => item.ref.resourceId === changedTaskRef.resourceId);
+            const task = freshRecords.items.find((item) => item.ref.resourceId === changedTaskRef?.resourceId);
             setRecords(freshRecords);
             setSelected(task);
             setTitle(task?.title ?? '');

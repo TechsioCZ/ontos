@@ -4,9 +4,10 @@ import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-ver
 import { executeRecordsWithAuthorization as executePropertyRecords } from '@app/siampark-property/clients/records';
 import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Context, DateTime, Effect, Match, Option, Predicate, Schema, Struct } from 'effect';
+import { Context, DateTime, Effect, Match, Option, Predicate, Result, Schema, Struct } from 'effect';
 
 import {
+  BulkWorkCommandSchema,
   WorkLifecycleConflict,
   WorkNotFound,
   WorkPermissionDenied,
@@ -16,11 +17,21 @@ import {
   WorkRevisionConflict,
   WorkScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
-import type { WorkCommand } from '../../shared/actions/apply-command.ts';
+import type {
+  BulkSkipReason,
+  BulkTaskResult,
+  BulkWorkCommand,
+  SingleWorkCommand,
+  WorkCommand,
+} from '../../shared/actions/apply-command.ts';
 import { WorkStateSchema } from '../../shared/apis/records.ts';
 import type { ContextRef, RecordsRequest, Task, TaskState, WorkState } from '../../shared/apis/records.ts';
 import { TaskRefSchema } from '../../shared/resources/task.ts';
+import type { TaskRef } from '../../shared/resources/task.ts';
 import { workStates } from '../database/schema.ts';
+
+const workModuleId = 'siampark.work' as const;
+const workChangedReason = 'Work changed; refresh before another operation' as const;
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -144,7 +155,7 @@ const legalTransitions = {
 
 export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWorkState(
   state: WorkState,
-  command: WorkCommand,
+  command: SingleWorkCommand,
   input: { readonly now: DateTime.Utc; readonly resourceId: string; readonly tenantId: string },
 ) {
   const { tenantId } = input;
@@ -173,9 +184,11 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
   const task = yield* Match.value(command).pipe(
     Match.tag(
       'CreateTask',
-      Effect.fn('Work.createTask')(function* createTask(value: Extract<WorkCommand, { readonly _tag: 'CreateTask' }>) {
+      Effect.fn('Work.createTask')(function* createTask(
+        value: Extract<SingleWorkCommand, { readonly _tag: 'CreateTask' }>,
+      ) {
         const ref = yield* Schema.decodeEffect(TaskRefSchema)({
-          moduleId: 'siampark.work',
+          moduleId: workModuleId,
           resourceId: input.resourceId,
           resourceType: 'siampark.work.task',
           tenantId,
@@ -192,7 +205,14 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
           collectionRef: state.collection.ref,
           contextRefs: value.contextRefs ?? [],
           createdAt: input.now,
-          ...Struct.pick(value, ['description', 'dueDate', 'ownerPrincipalRef']),
+          ...Struct.pick(value, [
+            'assigneeEmployeeId',
+            'description',
+            'dueDate',
+            'opportunityId',
+            'ownerPrincipalRef',
+            'partyId',
+          ]),
           priority: value.priority ?? 'NORMAL',
           ref,
           state: 'NEW' as const,
@@ -205,7 +225,9 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
       'UpdateTask',
       'AssignTask',
       'ChangeTaskState',
-      Effect.fn('Work.updateTask')(function* updateTask(value: Exclude<WorkCommand, { readonly _tag: 'CreateTask' }>) {
+      Effect.fn('Work.updateTask')(function* updateTask(
+        value: Exclude<SingleWorkCommand, { readonly _tag: 'CreateTask' }>,
+      ) {
         const existing = state.tasks.find(
           (entry) => entry.ref.resourceId === value.taskRef.resourceId && entry.ref.tenantId === tenantId,
         );
@@ -261,6 +283,82 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
   };
 });
 
+type EmployeeId = NonNullable<Task['assigneeEmployeeId']>;
+/** Open (not DONE) task counts per assignee; unassigned tasks are not grouped. */
+export const openByAssignee = (tasks: readonly Task[]) => {
+  const counts = new Map<EmployeeId, number>();
+  for (const task of tasks) {
+    if (task.assigneeEmployeeId !== undefined && taskStatusGroup(task.state) !== 'DONE') {
+      counts.set(task.assigneeEmployeeId, (counts.get(task.assigneeEmployeeId) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts, ([assigneeEmployeeId, open]) => ({ assigneeEmployeeId, open }));
+};
+
+const invalidTaskIdentity = (cause: unknown) =>
+  Object.defineProperty(
+    new WorkScopeMismatch({ code: 'work_scope_mismatch', reason: 'Task identity must be valid' }),
+    'cause',
+    { enumerable: false, value: cause },
+  );
+
+/** One id of a bulk command: the changed task, or the reason it was skipped. */
+const bulkStep = (task: Task, command: BulkWorkCommand, now: DateTime.Utc): Result.Result<Task, BulkSkipReason> =>
+  Match.value(command).pipe(
+    Match.tag('BulkChangeTaskState', ({ toState }) =>
+      legalTransitions[task.state].some((candidate) => candidate === toState)
+        ? Result.succeed({ ...task, state: toState, updatedAt: now })
+        : Result.fail('invalid_transition' as const),
+    ),
+    Match.tag('BulkAssignTasks', ({ assigneeEmployeeId }) => {
+      if (taskStatusGroup(task.state) === 'DONE') {
+        return Result.fail('closed' as const);
+      }
+      const withoutAssignee = { ...Struct.omit(task, ['assigneeEmployeeId']), updatedAt: now };
+      return Result.succeed(
+        Option.match(assigneeEmployeeId, {
+          onNone: () => withoutAssignee,
+          onSome: (employeeId) => ({ ...withoutAssignee, assigneeEmployeeId: employeeId }),
+        }),
+      );
+    }),
+    Match.exhaustive,
+  );
+
+/** Applies a bulk command per id. Missing or invalid ids are reported as skipped; nothing is thrown per id. */
+export const evolveBulkWorkState = Effect.fn('Work.evolveBulkState')(function* evolveBulkWorkState(
+  state: WorkState,
+  command: BulkWorkCommand,
+  input: { readonly now: DateTime.Utc; readonly tenantId: string },
+) {
+  if (state.collection.ref.tenantId !== input.tenantId) {
+    return yield* new WorkScopeMismatch({
+      code: 'work_scope_mismatch',
+      reason: 'References must belong to the trusted tenant',
+    });
+  }
+  const updated = new Map<string, Task>();
+  const results = command.ids.map((resourceId): BulkTaskResult => {
+    const existing = state.tasks.find(
+      (entry) => entry.ref.resourceId === resourceId && entry.ref.tenantId === input.tenantId,
+    );
+    if (existing === undefined) {
+      return { outcome: 'skipped', reason: 'not_found', resourceId };
+    }
+    const step = bulkStep(existing, command, input.now);
+    if (Result.isFailure(step)) {
+      return { outcome: 'skipped', reason: step.failure, resourceId };
+    }
+    updated.set(resourceId, step.success);
+    return { outcome: 'changed', resourceId };
+  });
+  return {
+    changed: updated.size > 0,
+    results,
+    state: { ...state, tasks: state.tasks.map((entry) => updated.get(entry.ref.resourceId) ?? entry) },
+  };
+});
+
 const contextGrant = Effect.fn('Work.contextGrant')(function* contextGrant(
   scope: OperationalScope,
   permission: 'read_all' | 'write_all',
@@ -272,7 +370,7 @@ const contextGrant = Effect.fn('Work.contextGrant')(function* contextGrant(
   const decisions = yield* access.contextPermissions({
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
-    targets: [{ moduleId: 'siampark.work', permission: `siampark.work.${permission}` }],
+    targets: [{ moduleId: workModuleId, permission: `siampark.work.${permission}` }],
     tenantId: scope.tenantId,
   });
   if (
@@ -369,16 +467,76 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       if (rows.length !== 1) {
         return yield* new WorkRevisionConflict({
           code: 'work_revision_conflict',
-          reason: 'Work changed; refresh before another operation',
+          reason: workChangedReason,
         });
       }
       return expectedRevision + 1;
+    });
+    const applyBulk = Effect.fn('Work.applyBulk')(function* applyBulk(
+      command: BulkWorkCommand,
+      expectedRevision: number,
+    ) {
+      const targets: readonly TaskRef[] = yield* Effect.forEach(
+        command.ids,
+        (resourceId) =>
+          Schema.decodeEffect(TaskRefSchema)({
+            moduleId: workModuleId,
+            resourceId,
+            resourceType: 'siampark.work.task',
+            tenantId: scope.tenantId,
+          }).pipe(Effect.mapError(invalidTaskIdentity)),
+        { concurrency: 1 },
+      );
+      if (!(yield* contextGrant(scope, 'write_all'))) {
+        const decisions = yield* access.resources({
+          legalEntityId,
+          permission: 'write',
+          principalId: scope.principalId,
+          resources: targets,
+          tenantId: scope.tenantId,
+        });
+        if (
+          decisions.length !== targets.length ||
+          decisions.some(
+            (decision, index) =>
+              decision.decision === 'unavailable' ||
+              decision.key !==
+                `${targets[index]?.moduleId}:${targets[index]?.resourceType}:${targets[index]?.resourceId}`,
+          )
+        ) {
+          return yield* referenceUnavailable();
+        }
+        // Fail closed: one forbidden id rejects the whole batch so nothing changes silently.
+        if (decisions.some((decision) => decision.decision !== 'allowed')) {
+          return yield* new WorkPermissionDenied({
+            code: 'work_permission_denied',
+            reason: 'Task mutation is forbidden',
+          });
+        }
+      }
+      const snapshot = yield* load();
+      if (snapshot.revision !== expectedRevision) {
+        return yield* new WorkRevisionConflict({
+          code: 'work_revision_conflict',
+          reason: workChangedReason,
+        });
+      }
+      const now = yield* DateTime.now;
+      const change = yield* evolveBulkWorkState(snapshot.state, command, { now, tenantId: scope.tenantId });
+      if (!change.changed) {
+        return { results: change.results, revision: expectedRevision };
+      }
+      const revision = yield* save(expectedRevision, change.state);
+      return { results: change.results, revision };
     });
     const apply = Effect.fn('Work.apply')(function* apply(
       command: WorkCommand,
       expectedRevision: number,
       resourceId: string,
     ) {
+      if (Schema.is(BulkWorkCommandSchema)(command)) {
+        return yield* applyBulk(command, expectedRevision);
+      }
       if (!(yield* contextGrant(scope, 'write_all'))) {
         if (Predicate.isTagged('CreateTask')(command)) {
           return yield* new WorkPermissionDenied({
@@ -407,7 +565,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       if (snapshot.revision !== expectedRevision) {
         return yield* new WorkRevisionConflict({
           code: 'work_revision_conflict',
-          reason: 'Work changed; refresh before another operation',
+          reason: workChangedReason,
         });
       }
       const owner = Predicate.isTagged('ChangeTaskState')(command) ? undefined : command.ownerPrincipalRef;
@@ -452,6 +610,9 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           (request.state === undefined || task.state === request.state) &&
           (request.ownerPrincipalId === undefined ||
             task.ownerPrincipalRef?.principalId === request.ownerPrincipalId) &&
+          (request.assigneeEmployeeId === undefined || task.assigneeEmployeeId === request.assigneeEmployeeId) &&
+          (request.partyId === undefined || task.partyId === request.partyId) &&
+          (request.opportunityId === undefined || task.opportunityId === request.opportunityId) &&
           (request.contextResourceId === undefined ||
             task.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
       );
@@ -461,6 +622,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         collection: snapshot.state.collection,
         indicators: {
           open: items.filter((task) => taskStatusGroup(task.state) !== 'DONE').length,
+          openByAssignee: openByAssignee(items),
           overdue: items.filter((task) => taskIsOverdue(task)).length,
         },
         items,
