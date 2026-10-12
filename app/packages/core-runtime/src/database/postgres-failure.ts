@@ -15,6 +15,7 @@ type PostgresFailurePredicate = (metadata: Readonly<PostgresFailureMetadata>) =>
 const decodePostgresFailureCode = Schema.decodeUnknownOption(PostgresFailureCodeSchema);
 const decodePostgresFailureConstraint = Schema.decodeUnknownOption(PostgresFailureConstraintSchema);
 const decodeCauseWrapper = Schema.decodeUnknownOption(CauseWrapperSchema);
+const uniqueViolationSqlState = '23505';
 
 const enqueueFailureReasons = (cause: Cause.Cause<unknown>, pending: unknown[]): void => {
   for (const reason of cause.reasons.toReversed()) {
@@ -69,3 +70,16 @@ export const findPostgresFailure = (
 
   return Option.none();
 };
+
+/** Decodes a PostgreSQL uniqueness violation without leaking raw driver inspection to owners. */
+export const isPostgresUniqueViolation = (
+  input: PostgresFailureInput,
+  ownerConstraints: ReadonlySet<string>,
+): boolean =>
+  Option.isSome(
+    findPostgresFailure(
+      input,
+      ({ code, constraint }) =>
+        code === uniqueViolationSqlState && constraint !== undefined && ownerConstraints.has(constraint),
+    ),
+  );

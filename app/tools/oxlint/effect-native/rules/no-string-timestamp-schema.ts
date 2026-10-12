@@ -877,6 +877,22 @@ export const rule = defineRule({
       const isIsoTime = ISO_TIME_SOURCE.test(source);
       if (!isCalendarDate && !isIsoTime) return;
       const target = enclosingCheck(call);
+      // An explicit encoded DateTime view is a wire string, not a string-domain timestamp.
+      // Its extra pattern checks retain transport spelling (e.g. UTC-only JSON).
+      if (target.type === 'CallExpression' && target.callee.type === 'MemberExpression') {
+        const base = target.callee.object;
+        if (base.type === 'CallExpression' && schemaRef(base.callee) === 'toEncoded') {
+          const temporal = base.arguments[0];
+          if (
+            temporal &&
+            temporal.type !== 'SpreadElement' &&
+            ['DateTimeUtc', 'DateTimeUtcFromString', 'DateTimeUtcFromDate', 'DateTimeUtcFromNumber'].includes(
+              schemaRef(temporal) ?? '',
+            )
+          )
+            return;
+        }
+      }
       const result = outerCodecResult(target);
       if (result !== target && !isStringRooted(result, new Set(), 0, { viaReportedCodec: false })) return;
       codecSpans.push({ end: target.end, start: target.start });

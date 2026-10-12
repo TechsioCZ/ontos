@@ -15,6 +15,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 
 import type { AresAppliedEvidence, AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import type { PartySubjectEvidence, PartyEvidenceEvaluation } from '../../shared/domain/identity-contracts.ts';
@@ -42,6 +43,7 @@ export const PARTY_TABLE_INVENTORY = [
   'party_merges',
   'party_official_identifiers',
   'party_relationships',
+  'privacy_measure_executions',
 ] as const;
 
 export const partySchema = pgSchema(PARTY_SCHEMA_NAME);
@@ -1102,6 +1104,54 @@ export const partyCorrections = enableGovernedRls(
   ),
 );
 
+/** Immutable owner receipt committed atomically with the exact Privacy Measure effect. */
+export const privacyMeasureExecutions = enableGovernedRls(
+  partySchema.table(
+    'privacy_measure_executions',
+    {
+      outcomeId: uuid('outcome_id').primaryKey(),
+      tenantId: uuid('tenant_id').notNull(),
+      legalEntityId: uuid('legal_entity_id').notNull(),
+      measureId: text('measure_id').notNull(),
+      taskId: text('task_id').notNull(),
+      owningCapability: text('owning_capability').notNull(),
+      idempotencyKey: text('idempotency_key').notNull(),
+      sourceDecisionRef: text('source_decision_ref').notNull(),
+      sourceDecisionRevision: integer('source_decision_revision').notNull(),
+      handoffFingerprint: text('handoff_fingerprint').notNull(),
+      handoff: jsonb('handoff').$type<PrivacyMeasureHandoff>().notNull(),
+      outcome: jsonb('outcome').$type<OwnerExecutionOutcome>().notNull(),
+      actionInvocationId: uuid('action_invocation_id').notNull(),
+      actorPrincipalId: uuid('actor_principal_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+      recordedAt: recordedAt(),
+    },
+    (table) => [
+      unique('party_privacy_measure_executions_scope_outcome_uk').on(
+        table.tenantId,
+        table.legalEntityId,
+        table.outcomeId,
+      ),
+      unique('party_privacy_measure_executions_idempotency_uk').on(
+        table.tenantId,
+        table.legalEntityId,
+        table.idempotencyKey,
+      ),
+      unique('party_privacy_measure_executions_measure_owner_uk').on(
+        table.tenantId,
+        table.legalEntityId,
+        table.measureId,
+        table.owningCapability,
+      ),
+      check('party_privacy_measure_executions_revision_ck', sql`${table.sourceDecisionRevision} > 0`),
+      check('party_privacy_measure_executions_handoff_ck', sql`jsonb_typeof(${table.handoff}) = 'object'`),
+      check('party_privacy_measure_executions_outcome_ck', sql`jsonb_typeof(${table.outcome}) = 'object'`),
+      check('party_privacy_measure_executions_fingerprint_ck', sql`${table.handoffFingerprint} ~ '^[a-f0-9]{64}$'`),
+      ...tenantLegalEntityRlsPolicies('party_privacy_measure_executions_scope', table.tenantId, table.legalEntityId),
+    ],
+  ),
+);
+
 export const partyDatabaseSchema = {
   counterparties,
   counterpartyAdminReadModels,
@@ -1120,6 +1170,7 @@ export const partyDatabaseSchema = {
   partyMerges,
   partyOfficialIdentifiers,
   partyRelationships,
+  privacyMeasureExecutions,
 } as const;
 
 export const PARTY_TABLES = [
@@ -1140,6 +1191,7 @@ export const PARTY_TABLES = [
   partyMerges,
   partyOfficialIdentifiers,
   partyRelationships,
+  privacyMeasureExecutions,
 ] as const;
 
 export type PartyRecord = typeof parties.$inferSelect;

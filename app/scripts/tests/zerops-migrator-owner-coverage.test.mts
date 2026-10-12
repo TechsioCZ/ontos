@@ -11,6 +11,7 @@ for (const owner of [
   'assortment',
   'commerce-market-catalog',
   'pricing',
+  'privacy',
   'storefront-registry',
 ]) {
   it(`D1 migrates and packages ${owner} before claiming database readiness`, () => {

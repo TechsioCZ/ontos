@@ -1,0 +1,1 @@
+ALTER TABLE "privacy"."anti_resurrection_protections" DROP CONSTRAINT "privacy_anti_resurrection_measure_ck", ADD CONSTRAINT "privacy_anti_resurrection_measure_ck" CHECK ("measure" in ('RESTRICT', 'DELETE', 'ANONYMIZE'));

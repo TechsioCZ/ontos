@@ -2610,6 +2610,19 @@ export const hasGeneratedActionKeyIdentity = (source: string, expectedKey: strin
   });
 };
 
+export const hasGeneratedActionClientPublication = (source: string, slug: string): boolean => {
+  const type = escapeRegExp(toPascalCase(slug));
+  return slotHasExactlyOneCodeMatch(
+    source,
+    '// <generated-action-http-client-exports>',
+    '// </generated-action-http-client-exports>',
+    new RegExp(
+      `export\\s+(?:\\*|\\{\\s*(?:execute${type}WithAuthorization,\\s*execute${type}|execute${type},\\s*execute${type}WithAuthorization),?\\s*\\})\\s+from './${escapeRegExp(slug)}-action-client\\.ts';`,
+      'gu',
+    ),
+  );
+};
+
 const hasCompleteGeneratedActionHttpSeam = (input: {
   readonly deploymentAppId: string;
   readonly handlerRoot: string;
@@ -2690,12 +2703,7 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
           'gu',
         ),
       ),
-      slotHasExactlyOneCodeMatch(
-        clientRoot,
-        '// <generated-action-http-client-exports>',
-        '// </generated-action-http-client-exports>',
-        new RegExp(`export \\* from './${escapedSlug}-action-client\\.ts';`, 'gu'),
-      ),
+      hasGeneratedActionClientPublication(clientRoot, slug),
       slotHasExactlyOneCodeMatch(
         input.manifest,
         '// <generated-module-manifest-actions>',

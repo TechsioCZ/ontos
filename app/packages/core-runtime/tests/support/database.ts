@@ -12,6 +12,13 @@ import { coreRelations } from '../../src/db/schema.ts';
 import { scriptedPgClientLayer } from '../../src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from './sql-connection.ts';
 
+export const privacyMeasureDeferredCases = [
+  { dispositionDecision: null, kind: 'RECTIFY', right: 'RECTIFICATION' },
+  { dispositionDecision: 'ANONYMIZE', kind: 'ANONYMIZE', right: 'ERASURE' },
+  { dispositionDecision: 'DELETE', kind: 'DELETE', right: 'ERASURE' },
+  { dispositionDecision: null, kind: 'EXPORT', right: 'ACCESS' },
+] as const;
+
 /** Scripted SQL connection fixture; Drizzle and Effect own query and transaction execution. */
 export const makeTestDatabase = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
