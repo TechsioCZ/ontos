@@ -69,7 +69,7 @@ const RecordsPageContent = () => {
         </output>
         {records !== undefined && (
           <p className="tagging:text-sm tagging:text-(--color-fg-secondary)">
-            {records.items.length === 0 ? t(`${key}.empty`) : t(`${key}.count`, { total: records.items.length })}
+            {records.tags.length === 0 ? t(`${key}.empty`) : t(`${key}.count`, { total: records.tags.length })}
           </p>
         )}
       </section>

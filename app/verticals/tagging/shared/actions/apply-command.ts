@@ -1,4 +1,3 @@
-import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 import { TaggingScopeMismatch } from '../errors/tagging-scope-mismatch.ts';
 import { TaggingNotFound } from '../errors/tagging-not-found.ts';
@@ -8,28 +7,33 @@ import { TaggingPersistenceUnavailable } from '../errors/tagging-persistence-una
 import { TaggingReferenceUnavailable } from '../errors/tagging-reference-unavailable.ts';
 import { TaggingReferenceIneligible } from '../errors/tagging-reference-ineligible.ts';
 import { TaggingPermissionDenied } from '../errors/tagging-permission-denied.ts';
-import { CalendarDateSchema, ContextRefSchema, TagPrioritySchema, TagSchema, TagStateSchema } from '../apis/records.ts';
-import { TagRefSchema } from '../resources/tag.ts';
+import { SubjectKindSchema, SubjectSchema, TagColorSchema, TagIdSchema } from '../apis/records.ts';
 
-const editableFields = {
-  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
-  dueDate: Schema.optionalKey(CalendarDateSchema),
-  ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
-  priority: Schema.optionalKey(TagPrioritySchema),
-};
+const NameSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(60));
+const DescriptionSchema = Schema.Trim.check(Schema.isMaxLength(2000));
+const SubjectKindsSchema = Schema.Array(SubjectKindSchema).check(Schema.isMinLength(1), Schema.isMaxLength(5));
+const SubjectsSchema = Schema.Array(SubjectSchema).check(Schema.isMinLength(1), Schema.isMaxLength(500));
+
 export const TaggingCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateTag', {
-    ...editableFields,
-    contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
-    title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    color: TagColorSchema,
+    description: Schema.optionalKey(DescriptionSchema),
+    name: NameSchema,
+    subjectKinds: SubjectKindsSchema,
   }),
   Schema.TaggedStruct('UpdateTag', {
-    ...editableFields,
-    tagRef: TagRefSchema,
-    title: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    id: TagIdSchema,
+    // An empty description clears the stored description.
+    patch: Schema.Struct({
+      color: Schema.optionalKey(TagColorSchema),
+      description: Schema.optionalKey(DescriptionSchema),
+      name: Schema.optionalKey(NameSchema),
+      subjectKinds: Schema.optionalKey(SubjectKindsSchema),
+    }),
   }),
-  Schema.TaggedStruct('AssignTag', { ownerPrincipalRef: PrincipalRefSchema, tagRef: TagRefSchema }),
-  Schema.TaggedStruct('ChangeTagState', { state: TagStateSchema, tagRef: TagRefSchema }),
+  Schema.TaggedStruct('DeleteTag', { id: TagIdSchema }),
+  Schema.TaggedStruct('AssignTag', { subjects: SubjectsSchema, tagId: TagIdSchema }),
+  Schema.TaggedStruct('UnassignTag', { subjects: SubjectsSchema, tagId: TagIdSchema }),
 ]);
 export type TaggingCommand = typeof TaggingCommandSchema.Type;
 export const ApplyCommandPayloadSchema = Schema.Struct({
@@ -37,7 +41,13 @@ export const ApplyCommandPayloadSchema = Schema.Struct({
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
-export const ApplyCommandResultSchema = Schema.Struct({ revision: Schema.Int, tag: TagSchema });
+/** `tagId` is the created tag for CreateTag and the affected tag otherwise. `affectedAssignments` counts rows added, removed or cascaded. */
+export const ApplyCommandResultSchema = Schema.Struct({
+  affectedAssignments: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  revision: Schema.Int,
+  tagId: TagIdSchema,
+});
+export type ApplyCommandResult = typeof ApplyCommandResultSchema.Type;
 export const TaggingErrorSchema = Schema.Union([
   TaggingScopeMismatch,
   TaggingNotFound,

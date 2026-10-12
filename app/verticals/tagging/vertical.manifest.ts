@@ -13,7 +13,6 @@ import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/nastaveni/stitky/page.tsx';
 import { taggingReadAllPermission } from './shared/permissions/tagging-read-all.ts';
 import { taggingWriteAllPermission } from './shared/permissions/tagging-write-all.ts';
-import { tagCollectionResourceDescriptor } from './shared/resources/tag-collection.ts';
 import { tagResourceDescriptor } from './shared/resources/tag.ts';
 // </generated-module-manifest-imports>
 
@@ -71,7 +70,6 @@ export const taggingManifest = defineOntosModuleManifest({
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
-      tagCollectionResourceDescriptor,
       tagResourceDescriptor,
       // </generated-module-manifest-resources>
     ],

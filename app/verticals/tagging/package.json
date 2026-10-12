@@ -12,7 +12,6 @@
     "./permissions/demo.tagging.read_all": "./shared/permissions/tagging-read-all.ts",
     "./permissions/demo.tagging.write_all": "./shared/permissions/tagging-write-all.ts",
     "./resources/tag": "./shared/resources/tag.ts",
-    "./resources/tag-collection": "./shared/resources/tag-collection.ts",
     "./Route": "./src/federation-entry.tsx"
   },
   "scripts": {

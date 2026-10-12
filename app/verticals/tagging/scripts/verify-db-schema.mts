@@ -32,17 +32,21 @@ const SnapshotSchema = Schema.Array(
 );
 const demoTenant = '70000000-0000-4000-8000-000000000020';
 const demoCompany = '71000000-0000-4000-8000-000000000020';
-const stateMatchesDemoScope = (state: typeof TaggingStateSchema.Type) =>
-  state.collection.ref.tenantId === demoTenant &&
-  new Set(state.tags.map((tag) => tag.ref.resourceId)).size === state.tags.length &&
-  state.tags.every(
-    (tag) =>
-      tag.ref.tenantId === demoTenant &&
-      tag.collectionRef.tenantId === demoTenant &&
-      tag.collectionRef.resourceId === state.collection.ref.resourceId &&
-      tag.contextRefs.every((ref) => ref.tenantId === demoTenant) &&
-      (tag.ownerPrincipalRef === undefined || tag.ownerPrincipalRef.tenantId === demoTenant),
+const stateMatchesDemoScope = (state: typeof TaggingStateSchema.Type) => {
+  const tagIds = new Set(state.tags.map((tag) => tag.id));
+  const assignmentKeys = new Set(
+    state.assignments.map((assignment) => `${assignment.tagId}|${assignment.subject.kind}|${assignment.subject.id}`),
   );
+  return (
+    tagIds.size === state.tags.length &&
+    assignmentKeys.size === state.assignments.length &&
+    state.assignments.every(
+      (assignment) =>
+        tagIds.has(assignment.tagId) &&
+        (assignment.assignedBy === undefined || assignment.assignedBy.tenantId === demoTenant),
+    )
+  );
+};
 const catalogMatches = (row: typeof CatalogSchema.Type) =>
   row.enabled &&
   row.forced &&
