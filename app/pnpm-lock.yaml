@@ -612,6 +612,37 @@ importers:
         specifier: 1.2.4
         version: 1.2.4(@rspack/core@2.2.8(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))
 
+  packages/admin-ui:
+    dependencies:
+      effect:
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117
+    devDependencies:
+      '@rstest/core':
+        specifier: 0.11.12
+        version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(happy-dom@20.8.3)
+      '@techsio/ui-kit':
+        specifier: 0.56.0
+        version: 0.56.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+      '@types/node':
+        specifier: ^26.4.1
+        version: 26.6.3
+      '@types/react':
+        specifier: ^19.2.18
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.2.7
+        version: 19.3.0(@types/react@19.3.0)
+      effect-rstest:
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(@rstest/core@0.11.12(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.0-rc.117)
+      react:
+        specifier: 19.2.8
+        version: 19.2.8
+      react-dom:
+        specifier: 19.2.8
+        version: 19.2.8(react@19.2.8)
+
   packages/better-auth-effect-drizzle:
     dependencies:
       better-auth:
