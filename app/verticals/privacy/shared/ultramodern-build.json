@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "privacy",
+    "buildMarker": "00f31ee28a035d1a",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/privacy",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/privacy",
+    "version": "0.1.0",
+    "build": "00f31ee28a035d1a"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "privacy",
+      "buildMarker": "00f31ee28a035d1a",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/privacy",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/privacy",
+      "version": "0.1.0",
+      "build": "00f31ee28a035d1a",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "privacy",
+      "buildMarker": "00f31ee28a035d1a",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/privacy",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/privacy",
+      "version": "0.1.0",
+      "build": "00f31ee28a035d1a",
+      "surface": "ui"
+    }
+  }
+}

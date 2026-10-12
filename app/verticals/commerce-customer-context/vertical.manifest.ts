@@ -86,6 +86,8 @@ import { DeliveryDestinationResolutionApi } from './shared/apis/delivery-destina
 import { EffectiveCustomerGroupMembershipsApi } from './shared/apis/effective-customer-group-memberships.ts';
 import { EffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/effective-customer-group-membership-set-v1.ts';
 import { ensureRetailCustomerProfileAction } from './src/actions/ensure-retail-customer-profile.action.ts';
+import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
+import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execution.ts';
 import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-counterparty-commerce-access.action.ts';
 import { GuestAttributionStatusApi } from './shared/apis/guest-attribution-status.ts';
 import { GuestPaymentTermsResolutionApi } from './shared/apis/guest-payment-terms-resolution.ts';
@@ -216,6 +218,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       createPurchaseProposalRevisionAction,
       decidePurchaseApprovalRequestAction,
       ensureRetailCustomerProfileAction,
+      executePrivacyMeasureAction,
       grantCounterpartyCommerceAccessAction,
       migrateCounterpartyPriceGroupAction,
       migrateCustomerPriceGroupAction,
@@ -288,6 +291,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'payment-term-policy-current': PaymentTermPolicyCurrentApi,
       'payment-terms-resolution': PaymentTermsResolutionApi,
       'pricing-purchase-context-verification': PricingPurchaseContextVerificationApi,
+      'privacy-measure-execution': PrivacyMeasureExecutionApi,
       'profile-reconciliation-read': ProfileReconciliationReadApi,
       'purchase-currency-policy-current': PurchaseCurrencyPolicyCurrentApi,
       'purchase-currency-resolution': PurchaseCurrencyResolutionApi,

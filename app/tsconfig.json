@@ -66,6 +66,9 @@
     },
     {
       "path": "verticals/tax"
+    },
+    {
+      "path": "verticals/privacy"
     }
   ]
 }

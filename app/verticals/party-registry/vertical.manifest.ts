@@ -8,6 +8,7 @@ import {
   ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
+import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
 
 import { AresLookupApi } from './shared/apis/ares-lookup.ts';
 import { CounterpartyReadApi } from './shared/apis/counterparty-read.ts';
@@ -51,15 +52,17 @@ import { correctPartyFactAction } from './src/actions/correct-party-fact.action.
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
 import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.action.ts';
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
-import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
 import { createPartyAction } from './src/actions/create-party.action.ts';
+import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
+import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
 import { GuestPartyResolutionApi } from './shared/apis/guest-party-resolution.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { matchPartyAction } from './src/actions/match-party.action.ts';
+import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execution.ts';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
@@ -67,10 +70,9 @@ import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-o
 import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
 import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
 import { updateContactPointAction } from './src/actions/update-contact-point.action.ts';
+import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
 import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
-import { updatePartyAction } from './src/actions/update-party.action.ts';
-import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
 // </generated-module-manifest-imports>
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
@@ -119,6 +121,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       endContactPointAction,
       endPartyOfficialIdentifierAction,
       endPartyRelationshipAction,
+      executePrivacyMeasureAction,
       markDuplicateCandidateNeedsEvidenceAction,
       matchPartyAction,
       requestSearchRebuildAction,
@@ -152,6 +155,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'party-official-identifier-history': PartyOfficialIdentifierHistoryApi,
       'party-relationship-detail': PartyRelationshipDetailApi,
       'person-engagement-profile': PersonEngagementProfileApi,
+      'privacy-measure-execution': PrivacyMeasureExecutionApi,
       // </generated-module-manifest-apis>
     },
     components: {

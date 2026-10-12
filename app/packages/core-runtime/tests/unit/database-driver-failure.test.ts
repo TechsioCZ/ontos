@@ -9,6 +9,7 @@ import {
   findPostgresFailure,
   isDatabaseCommitAcknowledgementAmbiguous,
   isDatabaseUnavailableFailure,
+  isPostgresUniqueViolation,
 } from '../../src/index.ts';
 
 interface MutableCause {
@@ -29,6 +30,15 @@ it('finds sanitized PostgreSQL metadata on the root failure', () => {
     constraint: 'principals_tenant_provider_subject_uk',
   });
   expect(Object.isFrozen(metadata)).toBe(true);
+});
+
+it('classifies uniqueness only for an exact owner constraint through the Core-owned decoder', () => {
+  const constraints = new Set(['owner_identity_uk']);
+  expect(isPostgresUniqueViolation({ code: '23505', constraint: 'owner_identity_uk' }, constraints)).toBe(true);
+  expect(isPostgresUniqueViolation({ code: '23505', constraint: 'other_owner_identity_uk' }, constraints)).toBe(false);
+  expect(isPostgresUniqueViolation({ code: '23505' }, constraints)).toBe(false);
+  expect(isPostgresUniqueViolation({ code: '23503', constraint: 'owner_identity_uk' }, constraints)).toBe(false);
+  expect(isPostgresUniqueViolation(new Error('private driver failure'), constraints)).toBe(false);
 });
 
 it('finds PostgreSQL metadata through Error and plain-object cause wrappers', () => {

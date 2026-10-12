@@ -130,6 +130,7 @@ import {
 } from './runtime-support.ts';
 
 // <generated-governed-http-handler-imports>
+import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
 import { addSavedAddressActionApiLive } from './add-saved-address-action-server.ts';
 import { archiveCustomerGroupActionApiLive } from './archive-customer-group-action-server.ts';
 import { archiveCustomerProfileActionApiLive } from './archive-customer-profile-action-server.ts';
@@ -179,6 +180,7 @@ import { deliveryDestinationResolutionReadApiLive } from './delivery-destination
 import { effectiveCustomerGroupMembershipSetV1ReadApiLive } from './effective-customer-group-membership-set-v1-read-server.ts';
 import { effectiveCustomerGroupMembershipsReadApiLive } from './effective-customer-group-memberships-read-server.ts';
 import { ensureRetailCustomerProfileActionApiLive } from './ensure-retail-customer-profile-action-server.ts';
+import { executePrivacyMeasureActionApiLive } from './execute-privacy-measure-action-server.ts';
 import { grantCounterpartyCommerceAccessActionApiLive } from './grant-counterparty-commerce-access-action-server.ts';
 import { guestAttributionStatusReadApiLive } from './guest-attribution-status-read-server.ts';
 import { guestPaymentTermsResolutionReadApiLive } from './guest-payment-terms-resolution-read-server.ts';
@@ -822,6 +824,7 @@ export const makeCommerceCustomerContextApiRuntime = (
       ),
     ),
     // <generated-governed-http-handler-layers>
+    privacyMeasureExecutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     addSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -871,6 +874,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     effectiveCustomerGroupMembershipSetV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     effectiveCustomerGroupMembershipsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     ensureRetailCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    executePrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     grantCounterpartyCommerceAccessActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     guestAttributionStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     guestPaymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

@@ -35,6 +35,8 @@ import { createCustomerGroupAction } from './src/actions/create-customer-group.a
 import { createPurchaseProposalRevisionAction } from './src/actions/create-purchase-proposal-revision.action.ts';
 import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purchase-approval-request.action.ts';
 import { ensureRetailCustomerProfileAction } from './src/actions/ensure-retail-customer-profile.action.ts';
+import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
+import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
 import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-counterparty-commerce-access.action.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
@@ -113,6 +115,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     createPurchaseProposalRevisionAction,
     decidePurchaseApprovalRequestAction,
     ensureRetailCustomerProfileAction,
+    executePrivacyMeasureAction,
     grantCounterpartyCommerceAccessAction,
     migrateCounterpartyPriceGroupAction,
     migrateCustomerPriceGroupAction,
@@ -191,6 +194,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
       'pricing-purchase-context-verification': () =>
         import('./src/api/pricing-purchase-context-verification-client.ts'),
+      'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),
       'profile-reconciliation-read': () => import('./src/api/profile-reconciliation-read-client.ts'),
       'purchase-currency-policy-current': () => import('./src/api/purchase-currency-policy-current-client.ts'),
       'purchase-currency-resolution': () => import('./src/api/purchase-currency-resolution-client.ts'),
@@ -231,6 +235,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
   },
   manifest: commerceCustomerContextManifest,
   outboxWorkers: [
+    executePrivacyMeasureWorker,
     // <generated-module-registration-workers>
     reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker,
     reconcileCounterpartyAccessGrantAuthorizationMutationWorker,

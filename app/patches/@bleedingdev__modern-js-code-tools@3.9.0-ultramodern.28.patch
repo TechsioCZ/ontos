@@ -1,5 +1,5 @@
 diff --git a/dist/cjs/microvertical-api-boundary.cjs b/dist/cjs/microvertical-api-boundary.cjs
-index 301a68e5510b254216ef413e5a371f344decb530..6138c56942c1e6bc4f86fccda0145f5a92d07d75 100644
+index 301a68e5510b254216ef413e5a371f344decb530..a75433284e81209a1278d0c5cf29dbf628f57254 100644
 --- a/dist/cjs/microvertical-api-boundary.cjs
 +++ b/dist/cjs/microvertical-api-boundary.cjs
 @@ -77,6 +77,7 @@ function configuredApps(root, supplied) {
@@ -128,10 +128,31 @@ index 301a68e5510b254216ef413e5a371f344decb530..6138c56942c1e6bc4f86fccda0145f5a
                      }
                  }
              }
-@@ -472,6 +528,154 @@ function check(options, topology) {
-                 ], [
-                     rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
-                 ], [], void 0, appPath);
+@@ -457,21 +513,172 @@ function check(options, topology) {
+             }
+             if (client) {
+                 const relativeContract = external_node_path_default().posix.relative(external_node_path_default().posix.dirname(client), contract);
++                const sharedFactorySpecifier = '@app/shared-contracts/client-runtime';
++                const usesSharedFactory = !rpc && composedModules(client, appPath).some((source)=>(parseFile(source)?.program.body ?? []).some((statement)=>types_namespaceObject.isImportDeclaration(statement) && 'type' !== statement.importKind && statement.source.value === sharedFactorySpecifier && statement.specifiers.some((binding)=>types_namespaceObject.isImportSpecifier(binding) && 'type' !== binding.importKind && types_namespaceObject.isIdentifier(binding.imported, { name: 'makeEffectBffClient' }) && types_namespaceObject.isIdentifier(binding.local, { name: 'makeEffectBffClient' }))));
++                const clientFactoryName = usesSharedFactory ? 'makeEffectBffClient' : rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient';
+                 moduleShape(client, [
+-                    [
+-                        effect,
+-                        [
+-                            'Effect',
+-                            rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+-                        ]
+-                    ],
++                    [effect, ['Effect']],
++                    [usesSharedFactory ? sharedFactorySpecifier : effect, [clientFactoryName]],
+                     [
+                         relativeContract.startsWith('.') ? relativeContract : `./${relativeContract}`,
+                         []
+                     ]
+-                ], [
+-                    rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+-                ], [], void 0, appPath);
++                ], [clientFactoryName], [], void 0, appPath);
 +                if (exists(contract)) {
 +                    const graph = (0, external_module_graph_cjs_namespaceObject.createModuleGraph)();
 +                    const contractModule = graph.module(absolute(contract));
@@ -268,13 +289,20 @@ index 301a68e5510b254216ef413e5a371f344decb530..6138c56942c1e6bc4f86fccda0145f5a
 +                        });
 +                        return valid;
 +                    };
++                    const sharedFactoryFile = 'packages/shared-contracts/src/client-runtime.ts';
++                    const sharedFactoryBinding = exists(sharedFactoryFile) ? graph.resolve(graph.module(absolute(sharedFactoryFile)), 'makeEffectBffClient', 'export') : void 0;
 +                    for (const source of composedModules(client, appPath)){
 +                        const module = graph.module(absolute(source));
 +                        types_namespaceObject.traverseFast(module.file, (node)=>{
 +                            if (!types_namespaceObject.isCallExpression(node) && !types_namespaceObject.isOptionalCallExpression(node)) return;
 +                            const factory = graph.evaluate(module, node.callee);
-+                            if (!factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'))) return;
-+                            const argument = node.arguments[0];
++                            const nativeFactory = factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'));
++                            const calleeBinding = !rpc ? graphBinding(graph, module, node.callee) : void 0;
++                            const sharedFactory = !rpc && (factory.some((value)=>'external' === value.kind && value.specifier === sharedFactorySpecifier && value.name === 'makeEffectBffClient') || sharedFactoryBinding?.kind === 'declaration' && calleeBinding?.kind === 'declaration' && calleeBinding.module.path === sharedFactoryBinding.module.path && calleeBinding.expression === sharedFactoryBinding.expression);
++                            if (!nativeFactory && !sharedFactory) return;
++                            const config = node.arguments[0];
++                            const apiProperties = sharedFactory && types_namespaceObject.isObjectExpression(config) ? config.properties.filter((property)=>types_namespaceObject.isObjectProperty(property) && !property.computed && types_namespaceObject.isIdentifier(property.key, { name: 'api' })) : [];
++                            const argument = sharedFactory ? apiProperties.length === 1 ? apiProperties[0].value : void 0 : config;
 +                            const binding = argument ? rpc ? graphBinding(graph, module, argument) : apiBinding(module, argument) : void 0;
 +                            assert(binding?.kind === 'declaration' && (rpc ? ownApi?.kind === 'declaration' && binding.module.path === ownApi.module.path && binding.expression === ownApi.expression : ownedApis.get(binding.module.path)?.has(binding.expression) && immutablePipeAliases(module, binding)), `${source}: must construct the client from its own API contract`);
 +                        });
@@ -283,7 +311,7 @@ index 301a68e5510b254216ef413e5a371f344decb530..6138c56942c1e6bc4f86fccda0145f5a
              }
              moduleShape(`${appPath}/api/effect-api.ts`, [], [], [
                  [
-@@ -515,8 +719,8 @@ function check(options, topology) {
+@@ -515,8 +722,8 @@ function check(options, topology) {
              ]);
          });
          const sourceRules = options.sourceRules ?? [];
@@ -293,7 +321,7 @@ index 301a68e5510b254216ef413e5a371f344decb530..6138c56942c1e6bc4f86fccda0145f5a
              let module;
              try {
                  module = graph.module(absolute(file));
-@@ -535,20 +739,173 @@ function check(options, topology) {
+@@ -535,20 +742,173 @@ function check(options, topology) {
                  for (const message of messages)diagnostics.push(`${file}: ${message}`);
              }
          });
@@ -670,7 +698,7 @@ index bab266098100decb3b25f0c36051ac0f81d3b9d6..343309e3d3e738a4099c651165fc59d7
          const directLayer = (node, api)=>guarded(node, (node)=>{
                  const init = initialized(node);
 diff --git a/dist/esm/microvertical-api-boundary.js b/dist/esm/microvertical-api-boundary.js
-index 980e7be914bcba8d7b418eec76acea2163bff7b3..68376ec09d3ad55ff05bdf07fbd9b1a21b2567b0 100644
+index 980e7be914bcba8d7b418eec76acea2163bff7b3..b0411dfdc67a7d850f86d3b26308f334be080b34 100644
 --- a/dist/esm/microvertical-api-boundary.js
 +++ b/dist/esm/microvertical-api-boundary.js
 @@ -4,7 +4,7 @@ import { parse } from "@babel/parser";
@@ -808,10 +836,31 @@ index 980e7be914bcba8d7b418eec76acea2163bff7b3..68376ec09d3ad55ff05bdf07fbd9b1a2
                      }
                  }
              }
-@@ -425,6 +481,154 @@ function check(options, topology) {
-                 ], [
-                     rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
-                 ], [], void 0, appPath);
+@@ -410,21 +466,172 @@ function check(options, topology) {
+             }
+             if (client) {
+                 const relativeContract = node_path.posix.relative(node_path.posix.dirname(client), contract);
++                const sharedFactorySpecifier = '@app/shared-contracts/client-runtime';
++                const usesSharedFactory = !rpc && composedModules(client, appPath).some((source)=>(parseFile(source)?.program.body ?? []).some((statement)=>__rspack_external__babel_types_6e8337dd.isImportDeclaration(statement) && 'type' !== statement.importKind && statement.source.value === sharedFactorySpecifier && statement.specifiers.some((binding)=>__rspack_external__babel_types_6e8337dd.isImportSpecifier(binding) && 'type' !== binding.importKind && __rspack_external__babel_types_6e8337dd.isIdentifier(binding.imported, { name: 'makeEffectBffClient' }) && __rspack_external__babel_types_6e8337dd.isIdentifier(binding.local, { name: 'makeEffectBffClient' }))));
++                const clientFactoryName = usesSharedFactory ? 'makeEffectBffClient' : rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient';
+                 moduleShape(client, [
+-                    [
+-                        effect,
+-                        [
+-                            'Effect',
+-                            rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+-                        ]
+-                    ],
++                    [effect, ['Effect']],
++                    [usesSharedFactory ? sharedFactorySpecifier : effect, [clientFactoryName]],
+                     [
+                         relativeContract.startsWith('.') ? relativeContract : `./${relativeContract}`,
+                         []
+                     ]
+-                ], [
+-                    rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+-                ], [], void 0, appPath);
++                ], [clientFactoryName], [], void 0, appPath);
 +                if (exists(contract)) {
 +                    const graph = createModuleGraph();
 +                    const contractModule = graph.module(absolute(contract));
@@ -948,13 +997,20 @@ index 980e7be914bcba8d7b418eec76acea2163bff7b3..68376ec09d3ad55ff05bdf07fbd9b1a2
 +                        });
 +                        return valid;
 +                    };
++                    const sharedFactoryFile = 'packages/shared-contracts/src/client-runtime.ts';
++                    const sharedFactoryBinding = exists(sharedFactoryFile) ? graph.resolve(graph.module(absolute(sharedFactoryFile)), 'makeEffectBffClient', 'export') : void 0;
 +                    for (const source of composedModules(client, appPath)){
 +                        const module = graph.module(absolute(source));
 +                        __rspack_external__babel_types_6e8337dd.traverseFast(module.file, (node)=>{
 +                            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) && !__rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) return;
 +                            const factory = graph.evaluate(module, node.callee);
-+                            if (!factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'))) return;
-+                            const argument = node.arguments[0];
++                            const nativeFactory = factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'));
++                            const calleeBinding = !rpc ? graphBinding(graph, module, node.callee) : void 0;
++                            const sharedFactory = !rpc && (factory.some((value)=>'external' === value.kind && value.specifier === sharedFactorySpecifier && value.name === 'makeEffectBffClient') || sharedFactoryBinding?.kind === 'declaration' && calleeBinding?.kind === 'declaration' && calleeBinding.module.path === sharedFactoryBinding.module.path && calleeBinding.expression === sharedFactoryBinding.expression);
++                            if (!nativeFactory && !sharedFactory) return;
++                            const config = node.arguments[0];
++                            const apiProperties = sharedFactory && __rspack_external__babel_types_6e8337dd.isObjectExpression(config) ? config.properties.filter((property)=>__rspack_external__babel_types_6e8337dd.isObjectProperty(property) && !property.computed && __rspack_external__babel_types_6e8337dd.isIdentifier(property.key, { name: 'api' })) : [];
++                            const argument = sharedFactory ? apiProperties.length === 1 ? apiProperties[0].value : void 0 : config;
 +                            const binding = argument ? rpc ? graphBinding(graph, module, argument) : apiBinding(module, argument) : void 0;
 +                            assert(binding?.kind === 'declaration' && (rpc ? ownApi?.kind === 'declaration' && binding.module.path === ownApi.module.path && binding.expression === ownApi.expression : ownedApis.get(binding.module.path)?.has(binding.expression) && immutablePipeAliases(module, binding)), `${source}: must construct the client from its own API contract`);
 +                        });
@@ -963,7 +1019,7 @@ index 980e7be914bcba8d7b418eec76acea2163bff7b3..68376ec09d3ad55ff05bdf07fbd9b1a2
              }
              moduleShape(`${appPath}/api/effect-api.ts`, [], [], [
                  [
-@@ -468,8 +672,8 @@ function check(options, topology) {
+@@ -468,8 +675,8 @@ function check(options, topology) {
              ]);
          });
          const sourceRules = options.sourceRules ?? [];
@@ -973,7 +1029,7 @@ index 980e7be914bcba8d7b418eec76acea2163bff7b3..68376ec09d3ad55ff05bdf07fbd9b1a2
              let module;
              try {
                  module = graph.module(absolute(file));
-@@ -488,20 +692,173 @@ function check(options, topology) {
+@@ -488,20 +695,173 @@ function check(options, topology) {
                  for (const message of messages)diagnostics.push(`${file}: ${message}`);
              }
          });
@@ -1350,7 +1406,7 @@ index 48fd6f43ebb2a7bee1c213486694096922533c7d..c71b53b7e3740c306cdc48bef81dd57f
          const directLayer = (node, api)=>guarded(node, (node)=>{
                  const init = initialized(node);
 diff --git a/dist/esm-node/microvertical-api-boundary.js b/dist/esm-node/microvertical-api-boundary.js
-index 5c443ce530c8bec5c6576b1d25e3cb2072a63f2c..bfdeaac78d3d6b5a8a8422fcb7587bb181d1204c 100644
+index 5c443ce530c8bec5c6576b1d25e3cb2072a63f2c..c18ac16a1d9d0c1e0c99c20b40e6676bf2b2a9b1 100644
 --- a/dist/esm-node/microvertical-api-boundary.js
 +++ b/dist/esm-node/microvertical-api-boundary.js
 @@ -5,7 +5,7 @@ import { parse } from "@babel/parser";
@@ -1488,10 +1544,31 @@ index 5c443ce530c8bec5c6576b1d25e3cb2072a63f2c..bfdeaac78d3d6b5a8a8422fcb7587bb1
                      }
                  }
              }
-@@ -426,6 +482,154 @@ function check(options, topology) {
-                 ], [
-                     rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
-                 ], [], void 0, appPath);
+@@ -411,21 +467,172 @@ function check(options, topology) {
+             }
+             if (client) {
+                 const relativeContract = node_path.posix.relative(node_path.posix.dirname(client), contract);
++                const sharedFactorySpecifier = '@app/shared-contracts/client-runtime';
++                const usesSharedFactory = !rpc && composedModules(client, appPath).some((source)=>(parseFile(source)?.program.body ?? []).some((statement)=>__rspack_external__babel_types_6e8337dd.isImportDeclaration(statement) && 'type' !== statement.importKind && statement.source.value === sharedFactorySpecifier && statement.specifiers.some((binding)=>__rspack_external__babel_types_6e8337dd.isImportSpecifier(binding) && 'type' !== binding.importKind && __rspack_external__babel_types_6e8337dd.isIdentifier(binding.imported, { name: 'makeEffectBffClient' }) && __rspack_external__babel_types_6e8337dd.isIdentifier(binding.local, { name: 'makeEffectBffClient' }))));
++                const clientFactoryName = usesSharedFactory ? 'makeEffectBffClient' : rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient';
+                 moduleShape(client, [
+-                    [
+-                        effect,
+-                        [
+-                            'Effect',
+-                            rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+-                        ]
+-                    ],
++                    [effect, ['Effect']],
++                    [usesSharedFactory ? sharedFactorySpecifier : effect, [clientFactoryName]],
+                     [
+                         relativeContract.startsWith('.') ? relativeContract : `./${relativeContract}`,
+                         []
+                     ]
+-                ], [
+-                    rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+-                ], [], void 0, appPath);
++                ], [clientFactoryName], [], void 0, appPath);
 +                if (exists(contract)) {
 +                    const graph = createModuleGraph();
 +                    const contractModule = graph.module(absolute(contract));
@@ -1628,13 +1705,20 @@ index 5c443ce530c8bec5c6576b1d25e3cb2072a63f2c..bfdeaac78d3d6b5a8a8422fcb7587bb1
 +                        });
 +                        return valid;
 +                    };
++                    const sharedFactoryFile = 'packages/shared-contracts/src/client-runtime.ts';
++                    const sharedFactoryBinding = exists(sharedFactoryFile) ? graph.resolve(graph.module(absolute(sharedFactoryFile)), 'makeEffectBffClient', 'export') : void 0;
 +                    for (const source of composedModules(client, appPath)){
 +                        const module = graph.module(absolute(source));
 +                        __rspack_external__babel_types_6e8337dd.traverseFast(module.file, (node)=>{
 +                            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) && !__rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) return;
 +                            const factory = graph.evaluate(module, node.callee);
-+                            if (!factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'))) return;
-+                            const argument = node.arguments[0];
++                            const nativeFactory = factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'));
++                            const calleeBinding = !rpc ? graphBinding(graph, module, node.callee) : void 0;
++                            const sharedFactory = !rpc && (factory.some((value)=>'external' === value.kind && value.specifier === sharedFactorySpecifier && value.name === 'makeEffectBffClient') || sharedFactoryBinding?.kind === 'declaration' && calleeBinding?.kind === 'declaration' && calleeBinding.module.path === sharedFactoryBinding.module.path && calleeBinding.expression === sharedFactoryBinding.expression);
++                            if (!nativeFactory && !sharedFactory) return;
++                            const config = node.arguments[0];
++                            const apiProperties = sharedFactory && __rspack_external__babel_types_6e8337dd.isObjectExpression(config) ? config.properties.filter((property)=>__rspack_external__babel_types_6e8337dd.isObjectProperty(property) && !property.computed && __rspack_external__babel_types_6e8337dd.isIdentifier(property.key, { name: 'api' })) : [];
++                            const argument = sharedFactory ? apiProperties.length === 1 ? apiProperties[0].value : void 0 : config;
 +                            const binding = argument ? rpc ? graphBinding(graph, module, argument) : apiBinding(module, argument) : void 0;
 +                            assert(binding?.kind === 'declaration' && (rpc ? ownApi?.kind === 'declaration' && binding.module.path === ownApi.module.path && binding.expression === ownApi.expression : ownedApis.get(binding.module.path)?.has(binding.expression) && immutablePipeAliases(module, binding)), `${source}: must construct the client from its own API contract`);
 +                        });
@@ -1643,7 +1727,7 @@ index 5c443ce530c8bec5c6576b1d25e3cb2072a63f2c..bfdeaac78d3d6b5a8a8422fcb7587bb1
              }
              moduleShape(`${appPath}/api/effect-api.ts`, [], [], [
                  [
-@@ -469,8 +673,8 @@ function check(options, topology) {
+@@ -469,8 +676,8 @@ function check(options, topology) {
              ]);
          });
          const sourceRules = options.sourceRules ?? [];
@@ -1653,7 +1737,7 @@ index 5c443ce530c8bec5c6576b1d25e3cb2072a63f2c..bfdeaac78d3d6b5a8a8422fcb7587bb1
              let module;
              try {
                  module = graph.module(absolute(file));
-@@ -489,20 +693,173 @@ function check(options, topology) {
+@@ -489,20 +696,173 @@ function check(options, topology) {
                  for (const message of messages)diagnostics.push(`${file}: ${message}`);
              }
          });

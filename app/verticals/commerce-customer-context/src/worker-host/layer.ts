@@ -16,6 +16,8 @@ import { AccessAuthorizationMutationReconciliationLive } from '../workers/access
 import type { AccessAuthorizationMutationReconciliation } from '../workers/access-authorization-mutation-reconciliation.ts';
 import { ReconcilePartyMergePersistence } from '../workers/reconcile-party-merge.worker.ts';
 import { RetailBindingAuthorizationMutationReconciliation } from '../workers/retail-binding-authorization-mutation-reconciliation.ts';
+import type { PrivacyMeasureOwnerGateway } from '../workers/privacy-measure-owner-gateway.ts';
+import { PrivacyMeasureOwnerGatewayLive } from '../workers/privacy-measure-owner-gateway.ts';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
@@ -38,6 +40,7 @@ type OutboxWorkerOwnerServices =
   | OutboxRuntime
   | OutboxWorkerLegalEntityScopeFanout
   | AccessAuthorizationMutationReconciliation
+  | PrivacyMeasureOwnerGateway
   | ReconcilePartyMergePersistence
   | RetailBindingAuthorizationMutationReconciliation;
 
@@ -51,6 +54,7 @@ export const outboxWorkerLayer: Layer.Layer<
 > = Layer.mergeAll(
   OutboxWorkerInfrastructureLive,
   AccessAuthorizationMutationReconciliationLive,
+  PrivacyMeasureOwnerGatewayLive,
   outboxWorkerHandlerLayer,
   OutboxWorkerLegalEntityScopeFanoutLive,
 );

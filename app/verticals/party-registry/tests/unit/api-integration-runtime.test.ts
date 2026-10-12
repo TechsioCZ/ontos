@@ -379,6 +379,31 @@ it.live(
       expect(actionCalls).toBe(0);
       expect(redemptionCalls).toBe(0);
       const manualPayloads = {
+        '/reads/privacy-measure-execution': { idempotencyKey: 'runtime-test:1' },
+        '/party-registry/actions/execute-privacy-measure': {
+          handoff: {
+            contentScopeRefs: ['party.registry.counterparty.lifecycle'],
+            controllerObligationRef: 'obligation:runtime-test',
+            dispositionDecision: 'RESTRICT',
+            expectedEvidenceRefs: ['party.registry.counterparty.restricted'],
+            idempotencyKey: 'runtime-test:1',
+            kind: 'RESTRICT',
+            measureId: 'measure:runtime-test',
+            owningCapability: 'party.registry',
+            preconditionRefs: ['decision:runtime-test'],
+            requestedAt: '2026-09-14T10:00:00.000Z',
+            requestedResult: 'RESTRICTED',
+            resourceRefs: [
+              'party.registry|party.registry.counterparty|a5000000-0000-4000-8000-000000000001|a6000000-0000-4000-8000-000000000001',
+            ],
+            right: null,
+            sourceDecisionRef: 'decision:runtime-test',
+            sourceDecisionRevision: 1,
+            subjectRef: 'subject:runtime-test',
+            taskId: 'task:runtime-test',
+            tenantId: principal.tenantId,
+          },
+        },
         '/party-registry/actions/add-contact-point': addContactPointPayload,
         '/party-registry/actions/add-party-official-identifier': {
           identifier: {
