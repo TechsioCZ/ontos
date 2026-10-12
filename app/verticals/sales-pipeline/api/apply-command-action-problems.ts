@@ -128,6 +128,7 @@ const mapDomainProblem = (error: DomainError): ApplyCommandActionProblem =>
     Match.tags({
       SalesPipelineLifecycleConflict: () => applyCommandActionProblem.conflict('sales_pipeline_lifecycle_conflict'),
       SalesPipelineNotFound: () => applyCommandActionProblem.notFound('sales_pipeline_not_found'),
+      SalesPipelineNotImplemented: () => applyCommandActionProblem.unavailable('sales_pipeline_not_implemented'),
       SalesPipelinePermissionDenied: () => applyCommandActionProblem.forbidden('sales_pipeline_permission_denied'),
       SalesPipelinePersistenceUnavailable: () =>
         applyCommandActionProblem.unavailable('sales_pipeline_persistence_unavailable'),

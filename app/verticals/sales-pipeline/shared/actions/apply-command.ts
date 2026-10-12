@@ -1,4 +1,3 @@
-import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 import { SalesPipelineScopeMismatch } from '../errors/sales-pipeline-scope-mismatch.ts';
 import { SalesPipelineNotFound } from '../errors/sales-pipeline-not-found.ts';
@@ -8,48 +7,81 @@ import { SalesPipelinePersistenceUnavailable } from '../errors/sales-pipeline-pe
 import { SalesPipelineReferenceUnavailable } from '../errors/sales-pipeline-reference-unavailable.ts';
 import { SalesPipelineReferenceIneligible } from '../errors/sales-pipeline-reference-ineligible.ts';
 import { SalesPipelinePermissionDenied } from '../errors/sales-pipeline-permission-denied.ts';
+import { SalesPipelineNotImplemented } from '../errors/sales-pipeline-not-implemented.ts';
+import { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts';
 import {
-  CalendarDateSchema,
-  ContextRefSchema,
-  OpportunityPrioritySchema,
+  EmployeeIdSchema,
+  OpportunityIdSchema,
+  OpportunityStageSchema,
+  PartyIdSchema,
+} from '../outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import {
+  OpportunityLinesSchema,
+  OpportunityNoteSchema,
   OpportunitySchema,
-  OpportunityStateSchema,
-} from '../apis/records.ts';
-import { OpportunityRefSchema } from '../resources/opportunity.ts';
+  OpportunityTitleSchema,
+  ProbabilitySchema,
+} from '../model/opportunity.ts';
 
-const editableFields = {
-  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
-  dueDate: Schema.optionalKey(CalendarDateSchema),
-  ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
-  priority: Schema.optionalKey(OpportunityPrioritySchema),
-};
+export const OpportunityPatchSchema = Schema.Struct({
+  expectedCloseDate: Schema.optionalKey(CalendarDateSchema),
+  lines: Schema.optionalKey(OpportunityLinesSchema),
+  note: Schema.optionalKey(OpportunityNoteSchema),
+  partyId: Schema.optionalKey(PartyIdSchema),
+  probability: Schema.optionalKey(ProbabilitySchema),
+  title: Schema.optionalKey(OpportunityTitleSchema),
+});
+export type OpportunityPatch = typeof OpportunityPatchSchema.Type;
+
+/** Owner clear is `null` on the wire and `None` in the decoded model. */
+export const BulkOpportunityPatchSchema = Schema.Struct({
+  ownerEmployeeId: Schema.optionalKey(Schema.OptionFromNullOr(EmployeeIdSchema)),
+  stage: Schema.optionalKey(OpportunityStageSchema),
+});
+export type BulkOpportunityPatch = typeof BulkOpportunityPatchSchema.Type;
+
 export const SalesPipelineCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateOpportunity', {
-    ...editableFields,
-    contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
-    title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    expectedCloseDate: CalendarDateSchema,
+    lines: OpportunityLinesSchema,
+    note: Schema.optionalKey(OpportunityNoteSchema),
+    ownerEmployeeId: Schema.optionalKey(EmployeeIdSchema),
+    partyId: PartyIdSchema,
+    probability: Schema.optionalKey(ProbabilitySchema),
+    stage: Schema.optionalKey(OpportunityStageSchema),
+    title: OpportunityTitleSchema,
   }),
   Schema.TaggedStruct('UpdateOpportunity', {
-    ...editableFields,
-    opportunityRef: OpportunityRefSchema,
-    title: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    id: OpportunityIdSchema,
+    patch: OpportunityPatchSchema,
   }),
   Schema.TaggedStruct('AssignOpportunity', {
-    opportunityRef: OpportunityRefSchema,
-    ownerPrincipalRef: PrincipalRefSchema,
+    id: OpportunityIdSchema,
+    ownerEmployeeId: Schema.OptionFromNullOr(EmployeeIdSchema),
   }),
-  Schema.TaggedStruct('ChangeOpportunityState', {
-    opportunityRef: OpportunityRefSchema,
-    state: OpportunityStateSchema,
+  Schema.TaggedStruct('ChangeOpportunityStage', {
+    id: OpportunityIdSchema,
+    note: Schema.optionalKey(OpportunityNoteSchema),
+    toStage: OpportunityStageSchema,
+  }),
+  Schema.TaggedStruct('BulkUpdateOpportunities', {
+    ids: Schema.Array(OpportunityIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    patch: BulkOpportunityPatchSchema,
   }),
 ]);
 export type SalesPipelineCommand = typeof SalesPipelineCommandSchema.Type;
+
 export const ApplyCommandPayloadSchema = Schema.Struct({
   command: SalesPipelineCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
-export const ApplyCommandResultSchema = Schema.Struct({ opportunity: OpportunitySchema, revision: Schema.Int });
+
+/** Affected opportunities: one item for single-record commands, every touched item for bulk updates. */
+export const ApplyCommandResultSchema = Schema.Struct({
+  opportunities: Schema.Array(OpportunitySchema),
+  revision: Schema.Int,
+});
 export const SalesPipelineErrorSchema = Schema.Union([
   SalesPipelineScopeMismatch,
   SalesPipelineNotFound,
@@ -59,6 +91,7 @@ export const SalesPipelineErrorSchema = Schema.Union([
   SalesPipelineReferenceUnavailable,
   SalesPipelineReferenceIneligible,
   SalesPipelinePermissionDenied,
+  SalesPipelineNotImplemented,
 ]);
 export type SalesPipelineError = typeof SalesPipelineErrorSchema.Type;
 export { SalesPipelineScopeMismatch } from '../errors/sales-pipeline-scope-mismatch.ts';
@@ -69,3 +102,4 @@ export { SalesPipelinePersistenceUnavailable } from '../errors/sales-pipeline-pe
 export { SalesPipelineReferenceUnavailable } from '../errors/sales-pipeline-reference-unavailable.ts';
 export { SalesPipelineReferenceIneligible } from '../errors/sales-pipeline-reference-ineligible.ts';
 export { SalesPipelinePermissionDenied } from '../errors/sales-pipeline-permission-denied.ts';
+export { SalesPipelineNotImplemented } from '../errors/sales-pipeline-not-implemented.ts';

@@ -33,16 +33,7 @@ const SnapshotSchema = Schema.Array(
 const demoTenant = '70000000-0000-4000-8000-000000000020';
 const demoCompany = '71000000-0000-4000-8000-000000000020';
 const stateMatchesDemoScope = (state: typeof SalesPipelineStateSchema.Type) =>
-  state.collection.ref.tenantId === demoTenant &&
-  new Set(state.opportunities.map((opportunity) => opportunity.ref.resourceId)).size === state.opportunities.length &&
-  state.opportunities.every(
-    (opportunity) =>
-      opportunity.ref.tenantId === demoTenant &&
-      opportunity.collectionRef.tenantId === demoTenant &&
-      opportunity.collectionRef.resourceId === state.collection.ref.resourceId &&
-      opportunity.contextRefs.every((ref) => ref.tenantId === demoTenant) &&
-      (opportunity.ownerPrincipalRef === undefined || opportunity.ownerPrincipalRef.tenantId === demoTenant),
-  );
+  new Set(state.opportunities.map((opportunity) => opportunity.id)).size === state.opportunities.length;
 const catalogMatches = (row: typeof CatalogSchema.Type) =>
   row.enabled &&
   row.forced &&

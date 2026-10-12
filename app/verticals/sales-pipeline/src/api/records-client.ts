@@ -2,7 +2,7 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import { RecordsApi, RecordsRequestSchema } from '../../shared/apis/records.ts';
-import type { RecordsRequestEncoded } from '../../shared/apis/records.ts';
+import type { RecordsRequest, RecordsRequestEncoded } from '../../shared/apis/records.ts';
 import { operationGateway } from './action-gateway.ts';
 
 export interface RecordsClientOptions {
@@ -52,3 +52,12 @@ export const executeRecords = (
       compositionRevision,
     }),
   );
+
+/** Typed opportunity filters; omitted filters match everything visible to the caller. */
+export type OpportunityListFilters = RecordsRequest;
+
+/** Opportunities plus server-computed indicators for the filtered set. */
+export const listOpportunities = (
+  filters: OpportunityListFilters = {},
+  ...[requestCorrelation, options = {}]: RecordsOperationInvocation
+): ReturnType<typeof executeRecords> => executeRecords(filters, requestCorrelation, options);
