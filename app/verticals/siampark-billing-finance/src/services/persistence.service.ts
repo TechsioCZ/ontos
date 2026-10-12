@@ -15,9 +15,11 @@ import type {
   AccountingObservation,
   FinanceState,
   Invoice,
+  InvoiceLine,
   RecordsRequest,
   RecordsResponse,
 } from '../../shared/apis/records.ts';
+import { computeInvoiceTotals, nextInvoiceNumber } from '../../shared/domain/invoice-totals.ts';
 import { financeStates } from '../database/schema.ts';
 
 type Transaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
@@ -100,6 +102,34 @@ interface FinanceTransitionContext {
   readonly validators: FinanceValidators;
 }
 const unchanged = (state: FinanceState, invoice: Invoice): FinanceTransition => ({ changed: false, invoice, state });
+/** Days between issue and due date for invoices drafted automatically from a won opportunity. */
+export const OPPORTUNITY_INVOICE_PAYMENT_TERM_DAYS = 14;
+type DraftTotals = Pick<Invoice, 'lines' | 'subtotalMinor' | 'totalMinor' | 'vatMinor' | 'vatRecap'>;
+/**
+ * Stored totals of a draft. Lines are a snapshot: totals are computed once here (create / update-draft) and
+ * never recomputed by later transitions. Legacy drafts without lines keep their explicit `totalMinor`.
+ */
+const draftTotals = Effect.fn('Finance.draftTotals')(function* draftTotals(draft: {
+  readonly lines?: readonly InvoiceLine[];
+  readonly totalMinor?: number;
+}): Effect.fn.Return<DraftTotals, FinanceRejected> {
+  if (draft.lines === undefined) {
+    return draft.totalMinor === undefined
+      ? yield* rejected('invoice_total_or_lines_required')
+      : { totalMinor: draft.totalMinor };
+  }
+  const totals = computeInvoiceTotals(draft.lines);
+  if (totals === undefined) {
+    return yield* rejected('invoice_amount_out_of_range');
+  }
+  if (totals.totalMinor === 0) {
+    return yield* rejected('invoice_total_must_be_positive');
+  }
+  return { lines: draft.lines, ...totals };
+});
+const calendarDateOf = (value: DateTime.Utc) => DateTime.formatIsoDateUtc(value);
+const addCalendarDays = (date: string, days: number) =>
+  calendarDateOf(DateTime.add(DateTime.makeUnsafe(`${date}T00:00:00.000Z`), { days }));
 const findInvoice = (state: FinanceState, ref: Invoice['ref'], scope: FinanceScope) => {
   if (ref.tenantId !== scope.tenantId) {
     return Effect.fail(rejected('scope_mismatch'));
@@ -124,13 +154,16 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
   ) {
     return yield* conflict('invoice_already_exists');
   }
-  const { _tag: _commandTag, ...fields } = command;
+  const { _tag: _commandTag, lines: _lines, totalMinor: _totalMinor, ...fields } = command;
+  const totals = yield* draftTotals(command);
   const invoice: Invoice = {
     ...fields,
+    ...totals,
     accountingCorrelation: `demo-accounting:${input.resourceId}`,
     accountingSyncState: 'NOT_SYNCED',
     businessState: 'DRAFT',
     createdAt: input.now,
+    number: nextInvoiceNumber(state.invoices),
     paidMinor: 0,
     paymentState: 'UNPAID',
     ref: {
@@ -144,6 +177,60 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
   yield* validate(invoice, scope, validators);
   return { changed: true, invoice, state: { ...state, invoices: [...state.invoices, invoice] } };
 });
+
+const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoiceFromOpportunity')(
+  function* handleCreateInvoiceFromOpportunity(
+    command: Extract<FinanceCommand, { readonly _tag: 'CreateInvoiceFromOpportunity' }>,
+    context: FinanceTransitionContext,
+  ): Effect.fn.Return<FinanceTransition, FinanceError> {
+    const { input, scope, state, validators } = context;
+    // Redelivered opportunity messages converge on the invoice already drafted for that opportunity.
+    const existing = state.invoices.find((record) => record.opportunityId === command.opportunityId);
+    if (existing !== undefined) {
+      return unchanged(state, existing);
+    }
+    const number = nextInvoiceNumber(state.invoices);
+    if (
+      state.invoices.some((record) => record.documentNumber === number || record.ref.resourceId === input.resourceId)
+    ) {
+      return yield* conflict('invoice_already_exists');
+    }
+    const totals = yield* draftTotals({ lines: command.lines });
+    const issueDate = command.issueDate ?? calendarDateOf(input.now);
+    const invoice: Invoice = {
+      ...totals,
+      accountingCorrelation: `demo-accounting:${input.resourceId}`,
+      accountingSyncState: 'NOT_SYNCED',
+      businessState: 'DRAFT',
+      counterpartyRef: {
+        moduleId: 'party.registry',
+        resourceId: command.partyId,
+        resourceType: 'party.registry.counterparty',
+        tenantId: scope.tenantId,
+      },
+      createdAt: input.now,
+      currency: 'CZK',
+      direction: 'OUTGOING',
+      documentNumber: number,
+      dueDate: addCalendarDays(issueDate, OPPORTUNITY_INVOICE_PAYMENT_TERM_DAYS),
+      issueDate,
+      number,
+      opportunityId: command.opportunityId,
+      paidMinor: 0,
+      partyId: command.partyId,
+      paymentState: 'UNPAID',
+      ref: {
+        moduleId: 'siampark.billing-finance',
+        resourceId: input.resourceId,
+        resourceType: 'siampark.billing-finance.invoice',
+        tenantId: scope.tenantId,
+      },
+      updatedAt: input.now,
+    };
+    yield* validate(invoice, scope, validators);
+    return { changed: true, invoice, state: { ...state, invoices: [...state.invoices, invoice] } };
+  },
+);
 
 const handleUpdateInvoiceDraft = Effect.fn('Finance.handleUpdateInvoiceDraft')(function* handleUpdateInvoiceDraft(
   command: Extract<FinanceCommand, { readonly _tag: 'UpdateInvoiceDraft' }>,
@@ -162,18 +249,26 @@ const handleUpdateInvoiceDraft = Effect.fn('Finance.handleUpdateInvoiceDraft')(f
   ) {
     return yield* conflict('document_number_already_exists');
   }
-  const { _tag: _commandTag, invoiceRef: _invoiceRef, ...fields } = command;
-  // Replace all optional draft anchors; omitted anchors are intentionally cleared.
+  const { _tag: _commandTag, invoiceRef: _invoiceRef, lines: _lines, totalMinor: _total, ...fields } = command;
+  const totals = yield* draftTotals(command);
+  // Replace all optional draft anchors and line snapshots; omitted ones are intentionally cleared.
+  // The assigned number and the source opportunity are identity, so they are preserved.
   const {
     contractRef: _contract,
+    lines: _previousLines,
     note: _note,
     occupancyRef: _occupancy,
+    partyId: _party,
     propertyRef: _property,
+    subtotalMinor: _subtotal,
     taskRef: _task,
+    totalMinor: _previousTotal,
     unitRef: _unit,
+    vatMinor: _vat,
+    vatRecap: _vatRecap,
     ...preserved
   } = previous;
-  const invoice = { ...preserved, ...fields, updatedAt: input.now };
+  const invoice: Invoice = { ...preserved, ...fields, ...totals, updatedAt: input.now };
   yield* validate(invoice, scope, validators);
   return replace(state, invoice);
 });
@@ -413,6 +508,7 @@ export const transitionFinance = (
   const context: FinanceTransitionContext = { input, scope, state, validators };
   return Match.value(request).pipe(
     Match.tag('CreateInvoiceDraft', (command) => handleCreateInvoiceDraft(command, context)),
+    Match.tag('CreateInvoiceFromOpportunity', (command) => handleCreateInvoiceFromOpportunity(command, context)),
     Match.tag('UpdateInvoiceDraft', (command) => handleUpdateInvoiceDraft(command, context)),
     Match.tag('ConfirmInvoice', (command) => handleConfirmInvoice(command, context)),
     Match.tag('VoidInvoice', (command) => handleVoidInvoice(command, context)),
@@ -431,7 +527,10 @@ export const projectFinanceRecords = (
   const invoices = state.invoices.filter(
     (record) =>
       (request.resourceId === undefined || record.ref.resourceId === request.resourceId) &&
-      (request.propertyId === undefined || record.propertyRef?.resourceId === request.propertyId),
+      (request.propertyId === undefined || record.propertyRef?.resourceId === request.propertyId) &&
+      // Legacy invoices carry the customer only as their party-registry counterparty reference.
+      (request.partyId === undefined || (record.partyId ?? record.counterpartyRef.resourceId) === request.partyId) &&
+      (request.opportunityId === undefined || record.opportunityId === request.opportunityId),
   );
   const selected = new Set(invoices.map((record) => record.ref.resourceId));
   const financialPlanEntries = state.financialPlanEntries.filter(
@@ -471,6 +570,7 @@ export const projectFinanceRecords = (
     indicators: {
       costMinor,
       costVarianceMinor: costMinor - plannedCostMinor,
+      draftCount: invoices.filter((record) => record.businessState === 'DRAFT').length,
       grossOutstandingMinor: payablesOutstandingMinor + receivablesOutstandingMinor,
       integrationWarnings: new Set(
         accountingObservations.flatMap((record) =>

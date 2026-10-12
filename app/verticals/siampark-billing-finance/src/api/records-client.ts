@@ -48,3 +48,13 @@ export const executeRecords = (
       compositionRevision,
     }),
   );
+
+/** Invoice list filters; every filter is optional and filters combine with AND. */
+export type InvoiceListFilters = Pick<RecordsRequest, 'opportunityId' | 'partyId' | 'propertyId' | 'resourceId'>;
+
+/** Lists invoices (with stored lines, totals and VAT recap) visible in the caller's legal-entity scope. */
+export const listInvoices = (
+  filters: InvoiceListFilters = {},
+  requestCorrelation = 'siampark-finance.invoices',
+  options: RecordsClientOptions = {},
+) => executeRecords(filters, requestCorrelation, options).pipe(Effect.map((response) => response.state.invoices));
