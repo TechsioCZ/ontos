@@ -23,7 +23,7 @@
       "account": {
         "label": "Nabídka účtu"
       },
-      "brand": "Siampark",
+      "brand": "OntOS",
       "header": {
         "label": "Záhlaví přehledu"
       },
@@ -52,6 +52,27 @@
           "relationships": "Aktivity",
           "contacts": "Kontakty",
           "integrations": "Integrace"
+        },
+        "inactive": "Neaktivní",
+        "close": "Zavřít navigaci",
+        "toggle": "Přepnout navigaci",
+        "groups": {
+          "sales": "Prodej",
+          "operations": "Provoz",
+          "insights": "Přehledy",
+          "settings": "Nastavení",
+          "other": "Další moduly"
+        },
+        "items": {
+          "opportunities": "Příležitosti",
+          "customers": "Zákazníci",
+          "orders": "Objednávky",
+          "invoices": "Faktury",
+          "tasks": "Úkoly",
+          "employees": "Zaměstnanci",
+          "products": "Produkty a sklad",
+          "statistics": "Statistiky",
+          "tags": "Štítky"
         }
       },
       "sidebar": {
@@ -64,7 +85,7 @@
         "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
       },
       "unavailable": "Přihlášené prostředí je dočasně nedostupné. Znovu načtěte stránku a zkuste to znovu.",
-      "workspace": "Správa nemovitostí",
+      "workspace": "Obchod a provoz",
       "breadcrumb": {
         "label": "Drobečková navigace",
         "home": "Hlavní přehled"
@@ -165,7 +186,8 @@
       "submit": "Hledat",
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
-      "clear": "Vymazat hledání"
+      "clear": "Vymazat hledání",
+      "placeholder": "Hledat zákazníky, faktury, úkoly…"
     },
     "resource": {
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
