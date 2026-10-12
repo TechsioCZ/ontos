@@ -14,6 +14,7 @@ import type { SpiceDbPermissionClient } from './client.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
+import { isTaxSellingLegalEntityPermission } from './business-permission.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 import type { PrincipalRef } from './principal-ref.ts';
 import type {
@@ -277,6 +278,11 @@ export type BusinessAccessTarget =
         resourceType: string;
       }>;
       tenantId: string;
+    }>
+  | Readonly<{
+      kind: 'tax_selling_legal_entity';
+      legalEntityId: string;
+      tenantId: string;
     }>;
 
 const canonicalPricingAuthorizationResourceId = Schema.String.check(Schema.isUUID());
@@ -333,6 +339,9 @@ export const isBusinessPermissionTargetCompatible = ({
   }
   if (permission.startsWith('inventory.')) {
     return target.kind === 'inventory_resource';
+  }
+  if (isTaxSellingLegalEntityPermission(permission)) {
+    return target.kind === 'tax_selling_legal_entity';
   }
   return (
     permission.startsWith('counterparty.') &&
@@ -472,6 +481,9 @@ const businessTargetParts = (target: BusinessAccessTarget): readonly string[] =>
   }
   if (target.kind === 'price_group') {
     return [target.tenantId, target.kind, target.pricingCatalogId, target.priceGroupId];
+  }
+  if (target.kind === 'tax_selling_legal_entity') {
+    return [target.tenantId, target.legalEntityId, target.kind];
   }
   return [
     target.tenantId,

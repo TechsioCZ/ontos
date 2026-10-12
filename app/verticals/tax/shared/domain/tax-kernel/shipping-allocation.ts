@@ -1,0 +1,144 @@
+import { Array as Arr, Schema, pipe } from 'effect';
+import type { NonEmptyReadonlyArray } from 'effect/Array';
+
+import { ShippingSourceRefSchema, isSameShippingSourceRef } from './purchase-binding.ts';
+import { distinctBy } from './tax-domain-primitives.ts';
+import {
+  NonNegativeTaxExactRationalSchema,
+  ZERO_TAX_EXACT_RATIONAL,
+  sumTaxExactRationals,
+  taxExactRationalsEqual,
+} from './tax-exact-rational.ts';
+import { OwnerIssuedAmountSchema, TaxAmountBasisSchema } from './taxable-basis.ts';
+import { TaxableSupplyUnitIdSchema } from './taxable-supply-unit.ts';
+import type { TaxableSupplyUnitId } from './taxable-supply-unit.ts';
+
+/**
+ * The code-versioned key TAX uses to derive Shipping allocation weights itself (PO decision D3 on #907). The
+ * adviser has not approved this key yet (LEGAL-FINAL §7 Q3); a different approved key is a new revision.
+ */
+export const ShippingAllocationKeySchema = Schema.Struct({
+  key: Schema.Literal('GROSS_LINE_VALUE'),
+  revision: Schema.Literal(1),
+});
+
+export type ShippingAllocationKey = typeof ShippingAllocationKeySchema.Type;
+
+export const SHIPPING_ALLOCATION_KEY: ShippingAllocationKey = { key: 'GROSS_LINE_VALUE', revision: 1 } as const;
+
+/**
+ * Exact allocation of the separately owned Shipping amount into one unit, attributed to the exact source Shipping
+ * amount revision and, when derived weights were applied, to the code-versioned allocation key (#920 F31-F34,
+ * #933 F17-F19, #936 F19, #937 F29-F30, PO decision D3 on #907). The share keeps the amount basis the Shipping
+ * owner issued, NET or GROSS, and is never relabelled (907-Q07): the exact shares sum to the owner-issued charge in
+ * that basis, which is its control total. VAT derived from a share is a separate result, never a rewritten source
+ * price (907-Q05, 907-Q07).
+ */
+export const ShippingAllocationBasisSchema = Schema.TaggedStruct('SHIPPING_ALLOCATION', {
+  allocationKey: Schema.optionalKey(ShippingAllocationKeySchema),
+  amount: NonNegativeTaxExactRationalSchema,
+  amountBasis: TaxAmountBasisSchema,
+  shippingSourceRef: ShippingSourceRefSchema,
+});
+
+export type ShippingAllocationBasis = typeof ShippingAllocationBasisSchema.Type;
+
+/**
+ * Allocations of one Shipping amount attribute the same exact source, the same amount basis and the same allocation
+ * key. The key may be absent only when one unit takes the whole amount or the authoritative amount is zero
+ * (#933 F14, F17-F18; #962 F32; #920 F33; 907-Q07).
+ */
+const isConsistentShippingAttribution = (allocations: NonEmptyReadonlyArray<ShippingAllocationBasis>): boolean => {
+  const [first] = allocations;
+  const weighted =
+    allocations.length > 1 &&
+    allocations.some(({ amount }) => !taxExactRationalsEqual(amount, ZERO_TAX_EXACT_RATIONAL));
+  return allocations.every(
+    ({ allocationKey, amountBasis, shippingSourceRef }) =>
+      isSameShippingSourceRef(shippingSourceRef, first.shippingSourceRef) &&
+      amountBasis === first.amountBasis &&
+      allocationKey?.revision === first.allocationKey?.revision &&
+      (!weighted || allocationKey !== undefined),
+  );
+};
+
+const distinctUnitIds = <Entry>(unitIdOf: (entry: Entry) => TaxableSupplyUnitId) =>
+  distinctBy(unitIdOf, 'Taxable Supply Units must not repeat');
+
+/**
+ * Owner-issued Shipping/Delivery source state for the exact purchase. A Current amount keeps its exact source
+ * revision; Shipping is a separate owner-issued component, not a Pricing Commercial Fee; stale is not Current and
+ * unavailable is not free Shipping (#933 F1-F10, #932 F18-F20, #937 F29-F30, #907 F84-F86).
+ */
+export const ShippingSourceObservationSchema = Schema.Union([
+  Schema.TaggedStruct('CURRENT', { amount: OwnerIssuedAmountSchema, shippingSourceRef: ShippingSourceRefSchema }),
+  Schema.TaggedStruct('NOT_ESTABLISHED', { state: Schema.Literals(['STALE', 'UNAVAILABLE']) }),
+]);
+
+export type ShippingSourceObservation = typeof ShippingSourceObservationSchema.Type;
+
+/**
+ * Ancillary Shipping of the exact purchase and the Taxable Supply Units it relates to, each with the exact gross
+ * line-value weight TAX derives for it (PO decision D3 on #907: the caller-supplied weights / approval evidence
+ * path is deleted; TAX derives weights itself from published line values) (#933 F12-F17).
+ */
+export const ShippingAllocationInputSchema = Schema.Struct({
+  affectedTaxableSupplyUnits: Schema.NonEmptyArray(
+    Schema.Struct({
+      grossLineValueWeight: NonNegativeTaxExactRationalSchema,
+      taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
+    }),
+  ).check(distinctUnitIds(({ taxableSupplyUnitId }) => taxableSupplyUnitId)),
+  shippingSource: ShippingSourceObservationSchema,
+});
+
+export type ShippingAllocationInput = typeof ShippingAllocationInputSchema.Type;
+
+const UnitShippingAllocationSchema = Schema.Struct({
+  basisComponent: ShippingAllocationBasisSchema,
+  taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
+});
+
+export type UnitShippingAllocation = typeof UnitShippingAllocationSchema.Type;
+
+const basisComponentsOf = (unitAllocations: NonEmptyReadonlyArray<UnitShippingAllocation>) =>
+  pipe(
+    unitAllocations,
+    Arr.map(({ basisComponent }) => basisComponent),
+  );
+
+/**
+ * Tax-owned exact decomposition of the owner-issued Shipping amount into affected Taxable Supply Units. Allocations
+ * stay exact rationals before Tax rounding, keep their source and allocation-key attribution and sum exactly to
+ * the unchanged owner-issued amount (#933 F19-F23, #935 F13-F16, #931 F19-F21, #920 F33-F34, #907 F92).
+ *
+ * #933 F21 / #935 F14: the conserved amount is the Shipping charge in the basis its owner issued, NET or GROSS;
+ * every share carries that one basis, so the conservation holds in the source basis (907-Q05, 907-Q07). The VAT of
+ * each share is derived per unit at its own rate and is not part of this control total.
+ */
+export const ShippingAllocationSchema = Schema.Struct({
+  ownerIssuedShippingAmount: NonNegativeTaxExactRationalSchema,
+  unitAllocations: Schema.NonEmptyArray(UnitShippingAllocationSchema).check(
+    distinctUnitIds(({ taxableSupplyUnitId }) => taxableSupplyUnitId),
+  ),
+}).check(
+  Schema.makeFilter(
+    ({ ownerIssuedShippingAmount, unitAllocations }) =>
+      taxExactRationalsEqual(
+        sumTaxExactRationals(
+          pipe(
+            basisComponentsOf(unitAllocations),
+            Arr.map(({ amount }) => amount),
+          ),
+        ),
+        ownerIssuedShippingAmount,
+      ) || 'Exact Shipping allocations must sum to the owner-issued Shipping amount',
+  ),
+  Schema.makeFilter(
+    ({ unitAllocations }) =>
+      isConsistentShippingAttribution(basisComponentsOf(unitAllocations)) ||
+      'Shipping allocations must keep one exact source, amount basis and allocation evidence attribution',
+  ),
+);
+
+export type ShippingAllocation = typeof ShippingAllocationSchema.Type;

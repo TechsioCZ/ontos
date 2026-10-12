@@ -1,0 +1,176 @@
+import { DateTime, Schema } from 'effect';
+
+import { TaxEvaluationRequestSchema } from '../../src/domain/tax-evaluation-request.ts';
+import type { TaxEvaluationRequest } from '../../src/domain/tax-evaluation-request.ts';
+import { evaluateProspectiveLaunchTax } from '../../src/domain/tax-evaluation.ts';
+import type { TaxEvaluationOwnState, TaxRuleSetObservation } from '../../src/domain/tax-evaluation.ts';
+import type { TaxOutcome } from '../../src/domain/tax-outcome.ts';
+import { TaxEvaluationTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
+import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
+import { exactDecimal, purchaseBindingInput } from './tax-domain-fixtures.ts';
+
+/**
+ * Contract-conforming foreign-owner test doubles (#961 F17-F23). They decode through TAX's
+ * public request schemas, carry no TAX logic, and every result built from them is labelled
+ * `CALLER_SUPPLIED_UNVERIFIED`. They are not production cross-owner integration. Foreign doubles
+ * here: `catalogEntry` (Catalog, #926 Tax-purpose evidence as TAX consumes it), `pricingLine`/
+ * `grossLine` (Pricing, #931; #892 not active), `shippingCharge` (Delivery, #933, NET or GROSS), and the
+ * `places` of `evaluationRequestInput` (Delivery destination and the Selling Legal Entity place,
+ * #927). `purchaseBindingInput` (Order, #937/#330) lives in tax-domain-fixtures.ts. TAX-owned
+ * state (`ownState`, `selected`, `DECLARED_*`, `NOT_DECLARED`) is NOT a foreign double: unit
+ * tests inject it; integration tests persist it.
+ */
+
+/**
+ * The labelled foreign-owner doubles (#961 F22) and the owner contract each one conforms to. Seller VAT Regime, Tax
+ * Rules, finals and Accepted Tax Terms derivation are TAX and never appear here.
+ */
+export const TAX_FOREIGN_OWNER_DOUBLES = {
+  acceptedTaxTermsInput: { contract: '#945/#946 accepted Billing Document (H10)', owner: 'BILLING' },
+  catalogEntry: {
+    contract: '#926 Tax-purpose evidence as TAX consumes it (OccurrenceCatalogEvidenceSchema)',
+    owner: 'CATALOG',
+  },
+  places: { contract: '#927 delivery destination', owner: 'DELIVERY' },
+  pricingLine: { contract: '#931 published Line Commercial Value (#892 not active)', owner: 'PRICING' },
+  purchaseBindingInput: { contract: '#937/#330 frozen purchase binding', owner: 'ORDER' },
+  sellerPlace: { contract: '#927 seller place (Selling Legal Entity identity owner, Q2)', owner: 'LEGAL_ENTITY' },
+  shippingCharge: { contract: '#933 owner-issued Shipping charge, NET or GROSS (907-Q07)', owner: 'DELIVERY' },
+} as const;
+
+export type TaxEvaluationRequestInput = typeof TaxEvaluationRequestSchema.Encoded;
+
+export const decodeEvaluationRequest = Schema.decodeUnknownSync(TaxEvaluationRequestSchema);
+
+export const PRICING_RESULT_REF = { pricingResultId: 'pricing-result-1', revision: 1 } as const;
+
+export const STANDARD_CODE = 'cz-standard-goods';
+export const REDUCED_CODE = 'cz-reduced-food';
+
+type CatalogEntryInput = TaxEvaluationRequestInput['catalog'][number];
+type CatalogSelectionInput = CatalogEntryInput['classificationInput']['catalogSelection'];
+
+/** Catalog evidence of one occurrence: a single Current TAX_CATEGORY fact unless overridden. */
+export const catalogEntry = (
+  occurrenceId: string,
+  code: string,
+  options: Readonly<{ catalogSelection?: CatalogSelectionInput; factKind?: string; revision?: string }> = {},
+): CatalogEntryInput => ({
+  classificationInput: {
+    catalogSelection: options.catalogSelection ?? { productRef: 'product-1', variantRef: 'variant-1' },
+    evidencePurpose: 'TAX',
+    materialCatalogEvidence: [
+      {
+        _tag: 'CURRENT',
+        catalogFactRef: `${occurrenceId}:tax-category`,
+        catalogFactRevisionRef: options.revision ?? 'r1',
+        factKind: options.factKind ?? 'TAX_CATEGORY',
+        factValue: code,
+        ownerEvidenceRef: `catalog-evidence:${occurrenceId}:${options.revision ?? 'r1'}`,
+      },
+    ],
+    materialEvidenceCompleteness: { _tag: 'OWNER_VERIFIED_COMPLETE', ownerEvidenceRef: 'catalog-completeness-1' },
+  },
+  occurrenceId,
+});
+
+type PublishedLineInput = TaxEvaluationRequestInput['pricing']['publishedLines'][number];
+type AmountBasisInput = PublishedLineInput['lineCommercialValue']['amountBasis'];
+
+/** NET by default, so the ~40 pre-D3 arithmetic assertions stay meaningful without rewriting them (PO decision D3 on #907). */
+export const pricingLine = (
+  occurrenceId: string,
+  value: string,
+  options: Readonly<{ amountBasis?: AmountBasisInput; currency?: string }> = {},
+): PublishedLineInput => ({
+  breakdown: [],
+  lineCommercialValue: {
+    amount: exactDecimal(value),
+    amountBasis: options.amountBasis ?? 'NET',
+    currency: options.currency ?? 'CZK',
+  },
+  occurrenceId,
+  pricingLineRef: `pricing-line-${occurrenceId}`,
+});
+
+/** A GROSS (VAT-inclusive, customer-charged) Pricing Line (PO decision D3 on #907). */
+export const grossLine = (occurrenceId: string, value: string): PublishedLineInput =>
+  pricingLine(occurrenceId, value, { amountBasis: 'GROSS' });
+
+type ShippingSourceInput = NonNullable<TaxEvaluationRequestInput['shipping']>['source'];
+
+/** A Current owner-issued Shipping charge; GROSS by default, NET when given (907-Q07: both are Launch). */
+export const shippingCharge = (amount: string, amountBasis: AmountBasisInput = 'GROSS'): ShippingSourceInput => ({
+  _tag: 'CURRENT',
+  amount: { amount: exactDecimal(amount), amountBasis, currency: 'CZK' },
+  shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+});
+
+/** One CZ domestic purchase; occurrence `o1` is standard-rated at 1000 CZK, `o2` (when present) reduced at 500 CZK. */
+export const evaluationRequestInput = (
+  overrides: Partial<TaxEvaluationRequestInput> = {},
+  occurrenceIds: readonly [string, ...string[]] = ['o1', 'o2'],
+): TaxEvaluationRequestInput => ({
+  catalog: [
+    catalogEntry(occurrenceIds[0], STANDARD_CODE),
+    ...occurrenceIds.slice(1).map((occurrenceId) => catalogEntry(occurrenceId, REDUCED_CODE)),
+  ],
+  decompositionNeed: 'PER_TAXABLE_SUPPLY_UNIT',
+  places: {
+    deliveryDestination: { _tag: 'OWNER_RESOLVED', countryCode: 'CZ', ownerEvidenceRef: 'delivery-evidence-1' },
+    invoiceRecipient: { _tag: 'NOT_MATERIAL' },
+    sellingLegalEntity: { _tag: 'OWNER_RESOLVED', countryCode: 'CZ', ownerEvidenceRef: 'seller-place-evidence-1' },
+  },
+  pricing: {
+    pricingResultRef: PRICING_RESULT_REF,
+    publishedLines: [
+      pricingLine(occurrenceIds[0], '1000.00'),
+      ...occurrenceIds.slice(1).map((occurrenceId) => pricingLine(occurrenceId, '500.00')),
+    ],
+  },
+  purchase: purchaseBindingInput(occurrenceIds),
+  taxRelevantTime: '2026-10-08T10:00:00.000Z',
+  ...overrides,
+});
+
+export const evaluationRequest = (
+  overrides: Partial<TaxEvaluationRequestInput> = {},
+  occurrenceIds: readonly [string, ...string[]] = ['o1', 'o2'],
+): TaxEvaluationRequest => decodeEvaluationRequest(evaluationRequestInput(overrides, occurrenceIds));
+
+export const selected = (ratePercent: string, taxRuleId: string, revisionNumber = 1): TaxRuleSetObservation => ({
+  applicable: [{ ratePercent, revisionNumber, taxRuleId, treatmentCategory: 'TAXABLE' }],
+  outcome: 'SELECTED',
+});
+
+export const DECLARED_VAT_PAYER = {
+  _tag: 'DECLARED' as const,
+  declarationRevisionRef: { revision: 1 },
+  regime: 'VAT_PAYER' as const,
+};
+
+export const DECLARED_NON_PAYER = {
+  _tag: 'DECLARED' as const,
+  declarationRevisionRef: { revision: 1 },
+  regime: 'NON_PAYER' as const,
+};
+
+export const NOT_DECLARED = { _tag: 'NOT_DECLARED' as const };
+
+export const ownState = (overrides: Partial<TaxEvaluationOwnState> = {}): TaxEvaluationOwnState => ({
+  ruleSets: new Map([
+    [STANDARD_CODE, selected('21', 'rule-standard')],
+    [REDUCED_CODE, selected('12', 'rule-reduced')],
+  ]),
+  sellerVatRegime: DECLARED_VAT_PAYER,
+  ...overrides,
+});
+
+export const evaluationTime = TaxEvaluationTimeSchema.make(DateTime.makeUnsafe('2026-10-08T10:00:02.000Z'));
+
+export const evaluate = (
+  request: TaxEvaluationRequest = evaluationRequest(),
+  state: TaxEvaluationOwnState = ownState(),
+  taxEvaluationTime = evaluationTime,
+): TaxOutcome =>
+  evaluateProspectiveLaunchTax(request, state, { fingerprint: taxMeaningFingerprint, taxEvaluationTime }).outcome;
