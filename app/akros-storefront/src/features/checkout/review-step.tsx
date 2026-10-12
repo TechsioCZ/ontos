@@ -25,13 +25,17 @@ export function ReviewStep() {
   const totals = getCheckoutTotals(cart, draft);
   return (
     <form
+      data-akros-checkout-review
       onSubmit={(event) => {
         event.preventDefault();
         if (completeOrder()) router.push("/potvrzeni-objednavky");
       }}
     >
       <section className="rounded-sm bg-(--color-base) p-4 md:p-6" aria-labelledby="review-title">
-        <h1 id="review-title" className="mb-4 text-md font-medium">
+        <h1
+          id="review-title"
+          className="mb-4 text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+        >
           Shrnutí objednávky
         </h1>
         <CartItemsTable showHeader />
@@ -58,20 +62,32 @@ export function ReviewStep() {
               {totals.net === null ? "Není dostupná pro starší položky" : formatPrice(totals.net)}
             </dd>
           </div>
+          {totals.extendedReturn > 0 && (
+            <div className="flex justify-between gap-4 py-4">
+              <dt>Prodloužená doba vrácení</dt>
+              <dd>{formatPrice(totals.extendedReturn)}</dd>
+            </div>
+          )}
           <div className="flex flex-wrap items-center justify-between gap-4 py-4">
             <dt>Celková cena s DPH</dt>
-            <dd className="text-lg font-extrabold" aria-live="polite">
+            <dd
+              className="text-(length:--akros-checkout-body-size) font-extrabold"
+              aria-live="polite"
+            >
               {formatPrice(totals.total)}
             </dd>
           </div>
         </dl>
         <div className="grid gap-6 py-6 sm:grid-cols-2">
           <section aria-labelledby="billing-review-title">
-            <h2 id="billing-review-title" className="mb-4 text-md font-medium">
+            <h2
+              id="billing-review-title"
+              className="mb-4 text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+            >
               Fakturační údaje
             </h2>
             <AddressText address={draft.billing} />
-            <div className="text-sm leading-relaxed">
+            <div className="text-sm leading-(--akros-checkout-body-leading)">
               <p>{draft.email}</p>
               <p>{draft.company}</p>
               {draft.companyId && <p>IČ: {draft.companyId}</p>}
@@ -79,7 +95,10 @@ export function ReviewStep() {
             </div>
           </section>
           <section aria-labelledby="delivery-review-title">
-            <h2 id="delivery-review-title" className="mb-4 text-md font-medium">
+            <h2
+              id="delivery-review-title"
+              className="mb-4 text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+            >
               Dodací údaje
             </h2>
             <AddressText address={getDeliveryAddress(draft)} />
@@ -97,6 +116,7 @@ export function ReviewStep() {
         <LinkButton
           as={NextLink}
           href="/kosik/dodaci-udaje"
+          className="leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
           variant="secondary"
           size="sm"
           uppercase
@@ -106,6 +126,7 @@ export function ReviewStep() {
         <div className="grid max-w-sm gap-3">
           <Button
             type="submit"
+            className="leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
             variant="primary"
             size="sm"
             uppercase
@@ -113,8 +134,8 @@ export function ReviewStep() {
           >
             Objednat s povinností platby
           </Button>
-          <p className="text-center text-xs leading-relaxed">
-            Kliknutím na tlačítko souhlasíte s{" "}
+          <p className="text-center text-xs leading-(--akros-checkout-body-leading)">
+            Kliknutím na tlačítko Objednat s povinností platby souhlasíte s{" "}
             <Link as={NextLink} href="/obchodni-podminky">
               obchodními podmínkami
             </Link>{" "}

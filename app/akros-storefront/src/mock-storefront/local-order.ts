@@ -43,6 +43,8 @@ export function parseLocalOrder(value: string | null): LocalOrder | null {
           line.priceMinor >= 0,
       ) ||
       !order.totals ||
+      (order.totals.extendedReturn !== undefined &&
+        (!Number.isSafeInteger(order.totals.extendedReturn) || order.totals.extendedReturn < 0)) ||
       ![order.totals.subtotal, order.totals.total, order.totals.payment].every(
         (price) => Number.isSafeInteger(price) && price >= 0,
       ) ||
@@ -51,7 +53,11 @@ export function parseLocalOrder(value: string | null): LocalOrder | null {
       )
     )
       return null;
-    return order as LocalOrder;
+    return {
+      ...order,
+      draft: { ...order.draft, extendedReturn: order.draft.extendedReturn ?? false },
+      totals: { ...order.totals, extendedReturn: order.totals.extendedReturn ?? 0 },
+    } as LocalOrder;
   } catch {
     return null;
   }

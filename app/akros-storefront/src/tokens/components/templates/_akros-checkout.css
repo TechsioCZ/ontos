@@ -1,14 +1,79 @@
 /* Scoped mappings for the checkout's existing UI-kit components. */
 [data-akros-checkout] {
-  --color-button-bg-secondary-base: var(--color-base-dark);
+  --font-sans: var(--font-akros-checkout);
+  --font-body: var(--font-akros-checkout);
+  --text-sm: var(--dimension-20);
+  --text-xs: var(--dimension-16);
+  --text-button-sm: var(--dimension-20);
+  --akros-checkout-ink: #1c1c1a;
+  --color-fg-primary: var(--akros-checkout-ink);
+  --color-fg-secondary: var(--akros-checkout-muted);
+  --color-steps-fg: var(--akros-checkout-ink);
+  --color-steps-content-fg: var(--akros-checkout-ink);
+  --akros-checkout-muted: #535353;
+  --akros-checkout-service-title-color: #000000;
+  --akros-checkout-divider: #a8a8a8;
+  --akros-checkout-body-size: var(--dimension-20);
+  --akros-checkout-small-size: var(--dimension-16);
+  --akros-checkout-body-leading: 1.5;
+  --text-sm--line-height: var(--akros-checkout-body-leading);
+  --text-xs--line-height: var(--akros-checkout-body-leading);
+  --akros-checkout-payment-heading-size: 30px;
+  --akros-checkout-shipping-icon-size: 54px;
+  --akros-checkout-return-icon-size: var(--dimension-48);
+  --akros-checkout-progress-width: 429px;
+  --akros-checkout-progress-height: var(--dimension-6);
+  --akros-checkout-progress-radius: var(--dimension-4);
+  --akros-checkout-progress-track: #ededed;
+  --font-weight-label: var(--font-weight-medium);
+  --akros-checkout-button-weight: var(--font-weight-bold);
+  --color-fill-surface: #f8f9fa;
+  --color-button-bg-primary-base: #fdc533;
+  --color-button-fg-primary: var(--akros-checkout-ink);
+  --akros-checkout-panel-padding: var(--dimension-32);
+  --akros-checkout-content-width: 1660px;
+  --akros-checkout-page-gutter: var(--dimension-16);
+  --akros-checkout-padding-top: var(--dimension-40);
+  --akros-checkout-padding-bottom: var(--dimension-80);
+  --akros-checkout-sidebar-width: 408px;
+  --akros-checkout-heading-size: 31px;
+  --akros-checkout-total-size: 38px;
+  --akros-checkout-heading-leading: 1.2;
+  --akros-checkout-choice-size: 25px;
+  --akros-checkout-choice-compact-size: var(--dimension-16);
+  --akros-checkout-recommendation-size: 39px;
+  --akros-checkout-recommendation-color: #121a41;
+  --akros-checkout-cart-glyph-size: 35.3307px;
+  --akros-checkout-back-width: 320px;
+  --akros-checkout-continue-width: 344px;
+  --color-form-control-border: var(--akros-checkout-ink);
+  --color-form-control-border-hover: var(--akros-checkout-ink);
+  --color-input-border-base: var(--akros-checkout-ink);
+  --color-input-border-hover: var(--akros-checkout-ink);
+  --color-select-trigger-border: var(--akros-checkout-ink);
+  --border-width-form-control: 2px;
+  --border-width-input: var(--border-width-form-control);
+  --radius-input-sm: var(--dimension-8);
+  --text-input-sm: var(--dimension-20);
+  --text-select-trigger-sm: var(--akros-checkout-body-size);
+  --text-select-value-sm: var(--akros-checkout-body-size);
+  --text-phone-input-sm: var(--akros-checkout-body-size);
+  --text-label-sm: var(--dimension-20);
+  --padding-input-sm: var(--dimension-24);
+  --size-steps-indicator-md: var(--dimension-40);
+  --spacing-steps-list: 0px;
+  --spacing-steps-trigger: var(--dimension-8);
+  --text-steps-title-md: var(--dimension-20);
+  --text-steps-number-md: var(--dimension-20);
+  --color-button-bg-secondary-base: var(--akros-checkout-ink);
   --color-button-bg-secondary-hover: var(--color-neutral-800);
-  --color-button-bg-secondary-active: var(--color-base-dark);
+  --color-button-bg-secondary-active: var(--akros-checkout-ink);
   --color-button-fg-secondary: var(--color-base-light);
   --color-button-border-secondary: var(--color-base-dark);
   --color-button-fg-outlined-secondary: var(--color-fg-primary);
   --color-button-bg-outlined-secondary-hover: var(--color-fill-hover);
   --color-button-bg-outlined-secondary-active: var(--color-fill-active);
-  --height-form-control-sm: var(--dimension-44);
+  --height-form-control-sm: var(--dimension-60);
   --height-numeric-input-sm: var(--height-form-control-sm);
   --width-phone-input-trigger: max-content;
   --size-icon-control-md: var(--dimension-44);
@@ -29,5 +94,58 @@
   --color-radio-group-item-border-base: var(--color-fg-primary);
   --size-radio-group-control-sm: var(--dimension-20);
   --text-radio-group-item-description-sm: var(--text-xs);
+  --text-radio-group-item-sm: var(--akros-checkout-body-size);
+  --spacing-radio-group-item-content-sm: var(--dimension-8);
   --text-numeric-input-sm: var(--text-sm);
+}
+
+[data-akros-cart-services] {
+  --size-checkbox: var(--dimension-24);
+  --radius-checkbox: 4.235px;
+  --border-width-checkbox: 2px;
+  --spacing-form-checkbox-gap: var(--dimension-32);
+  --color-label-fg: var(--akros-checkout-ink);
+  --color-checkbox-bg-base: var(--color-base);
+  --color-checkbox-border-base: var(--akros-checkout-ink);
+}
+
+[data-akros-checkout] .akros-product-card {
+  --color-fg-secondary: #6c757d;
+  --text-sm: var(--akros-checkout-small-size);
+  --text-product-card-name-size: var(--akros-checkout-body-size);
+  --text-product-card-price-size: var(--akros-checkout-body-size);
+  --text-product-card-stock-size: var(--akros-checkout-small-size);
+  --font-weight-product-card-name: var(--font-weight-medium);
+  --font-weight-product-card-price: var(--font-weight-extrabold);
+  --font-weight-product-card-stock: var(--font-weight-medium);
+  --text-badge-sm: var(--akros-checkout-small-size);
+  --text-button-sm: var(--akros-checkout-body-size);
+}
+
+[data-akros-checkout-address],
+[data-akros-checkout-review] {
+  --text-sm: var(--akros-checkout-small-size);
+}
+
+[data-akros-checkout-address] {
+  --font-weight-normal: var(--font-weight-medium);
+}
+
+[data-akros-checkout-review] {
+  --font-weight-table-header: var(--font-weight-medium);
+}
+
+[data-akros-cart-selector],
+[data-akros-cart-navigation] {
+  --text-button-sm: var(--dimension-20);
+  --font-weight-button: var(--font-weight-bold);
+  --padding-button-sm: var(--dimension-16);
+  --radius-button-sm: var(--dimension-8);
+  --size-radio-group-control-sm: var(--dimension-28);
+  --size-radio-group-indicator-sm: var(--dimension-16);
+  --spacing-radio-group-item-sm: var(--dimension-16);
+  --border-width-radio-group: 1.5px;
+  --color-radio-group-item-border-outline-checked: var(--akros-checkout-ink);
+  --color-radio-group-item-indicator-outline: var(--akros-checkout-ink);
+  --text-icon-control-md: 18.468px;
 }

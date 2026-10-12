@@ -1,0 +1,47 @@
+@theme static {
+  --container-akros-cart-wide: 50rem;
+  --container-akros-cart-narrow: 28rem;
+}
+
+[data-akros-cart-items] {
+  --color-fg-status-success: #28a745;
+  --akros-cart-stock-width: calc(var(--dimension-96) + var(--dimension-48));
+  --akros-cart-quantity-width: calc(
+    max(58px, var(--akros-cart-max-quantity-characters, 2) * 16px + var(--dimension-16)) +
+      var(--akros-cart-trigger-width) * 2 + var(--akros-cart-control-gap) * 2 + var(--dimension-24)
+  );
+  --akros-cart-price-width: calc(var(--dimension-96) + var(--dimension-64));
+  --akros-cart-remove-width: calc(var(--dimension-44) + var(--dimension-16));
+  --akros-cart-trigger-width: var(--dimension-44);
+  --akros-cart-control-gap: 4.64px;
+  --akros-cart-control-radius: 9.28px;
+  --akros-cart-value-border-width: 1.74px;
+  --akros-cart-value-border-color: #535353;
+  --akros-cart-trigger-bg: #eeeeee;
+  --akros-cart-secondary-size: var(--dimension-16);
+  --akros-cart-quantity-size: 25px;
+  --akros-cart-compact-quantity-size: var(--dimension-16);
+  --text-table-sm: var(--dimension-20);
+  --text-numeric-input-sm: var(--akros-cart-quantity-size);
+  --color-numeric-input-fg: var(--akros-cart-value-border-color);
+  --color-input-fg: var(--akros-cart-value-border-color);
+  --height-form-control-sm: 58px;
+  --text-icon-control-md: 18.468px;
+  --color-numeric-input-input-bg-hover: var(--color-base);
+  --color-numeric-input-input-bg-focus: var(--color-base);
+  --border-width-form-control: 0px;
+  --akros-cart-cell-padding: var(--dimension-8);
+  --akros-cart-detail-gap: var(--dimension-16);
+  --akros-cart-row-gap: var(--dimension-12);
+  --akros-cart-primary-weight: var(--font-weight-medium);
+  --akros-cart-price-weight: var(--font-weight-extrabold);
+  --padding-table-cell-sm: var(--padding-table-cell-sm-y) var(--akros-cart-cell-padding);
+  --font-weight-link: var(--akros-cart-primary-weight);
+}
+
+[data-akros-cart-quantity] {
+  --akros-cart-control-width: calc(
+    max(58px, var(--akros-cart-quantity-characters, 2) * 1ch + var(--dimension-16)) +
+      var(--akros-cart-trigger-width) * 2 + var(--akros-cart-control-gap) * 2
+  );
+}

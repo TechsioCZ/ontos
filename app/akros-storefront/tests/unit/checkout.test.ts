@@ -31,6 +31,50 @@ const cart: CartState = {
 };
 
 describe("four-step checkout", () => {
+  it("updates demo shipping at the threshold without counting the return service as goods", () => {
+    const draft = { ...createCheckoutDraft(), deliveryId: "dpd", extendedReturn: true };
+    const goods = (priceMinor: number): CartState => ({
+      version: 3,
+      lines: [
+        {
+          ...cart.lines[0],
+          quantity: 1,
+          priceMinor,
+          priceExcludingVatMinor: Math.round(priceMinor / 1.21),
+        },
+      ],
+    });
+    expect(getCheckoutTotals(goods(199999), draft).shipping).toBe(7900);
+    expect(getCheckoutTotals(goods(200000), draft).shipping).toBe(0);
+    expect(getCheckoutTotals(goods(200001), draft).shipping).toBe(0);
+    expect(getCheckoutTotals(goods(200000), { ...draft, deliveryId: "" }).shipping).toBeNull();
+    expect(getCheckoutTotals(goods(199999), { ...draft, deliveryId: "osobni" }).shipping).toBe(0);
+    const free = getCheckoutTotals(goods(200000), draft);
+    expect(free.net).toBe(Math.round(200000 / 1.21) + 13140);
+    expect(free.total).toBe(215900);
+    expect(free.vat).toBe(free.total - (free.net ?? 0));
+  });
+
+  it("adds extended returns once and preserves the service across draft storage", () => {
+    const draft = createCheckoutDraft();
+    const base = getCheckoutTotals(cart, draft);
+    const selected = getCheckoutTotals(cart, { ...draft, extendedReturn: true });
+    expect(selected.extendedReturn).toBe(15900);
+    expect(selected.total - base.total).toBe(15900);
+    expect((selected.net ?? 0) - (base.net ?? 0)).toBe(13140);
+    expect(
+      parseCheckoutDraft(JSON.stringify({ version: 1, draft: { ...draft, extendedReturn: true } }))
+        .extendedReturn,
+    ).toBe(true);
+    const { extendedReturn: _legacy, ...legacy } = draft;
+    expect(parseCheckoutDraft(JSON.stringify({ version: 1, draft: legacy }))).toEqual(draft);
+    expect(
+      parseCheckoutDraft(
+        JSON.stringify({ version: 1, draft: { ...draft, extendedReturn: "yes" } }),
+      ),
+    ).toEqual(draft);
+  });
+
   it("starts with no shipping or payment and an editable valid demo contact", () => {
     const draft = createCheckoutDraft();
     expect(draft.deliveryId).toBe("");

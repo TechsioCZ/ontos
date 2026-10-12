@@ -12,6 +12,7 @@
 @import "../tokens/components/molecules/_akros-toast.css";
 @import "../tokens/components/molecules/_akros-vertical-navigation.css";
 @import "../tokens/components/organisms/_akros-data-table.css";
+@import "../tokens/components/organisms/_akros-cart-items-table.css";
 @import "../tokens/components/organisms/_akros-header.css";
 @import "../tokens/components/organisms/_akros-footer.css";
 @import "../tokens/components/templates/_akros-product-detail.css";

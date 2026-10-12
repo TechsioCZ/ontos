@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { StorefrontWideShell } from "@/components/storefront-shell";
+import { SiteFooter } from "@/components/site-footer";
+import { SiteHeader } from "@/components/site-header";
 import { CheckoutLayout } from "@/features/checkout/checkout-layout";
 import { CheckoutProvider } from "@/features/checkout/checkout-provider";
 import { getHomepageFeaturedProducts, toProductSummary } from "@/mock-storefront/catalog";
@@ -7,10 +8,14 @@ import { getHomepageFeaturedProducts, toProductSummary } from "@/mock-storefront
 export default function CartLayout({ children }: { children: ReactNode }) {
   const recommendations = getHomepageFeaturedProducts().slice(0, 3).map(toProductSummary);
   return (
-    <StorefrontWideShell fullBleed>
-      <CheckoutProvider>
-        <CheckoutLayout recommendations={recommendations}>{children}</CheckoutLayout>
-      </CheckoutProvider>
-    </StorefrontWideShell>
+    <div className="min-h-screen bg-(--color-base)">
+      <SiteHeader />
+      <main>
+        <CheckoutProvider>
+          <CheckoutLayout recommendations={recommendations}>{children}</CheckoutLayout>
+        </CheckoutProvider>
+      </main>
+      <SiteFooter />
+    </div>
   );
 }

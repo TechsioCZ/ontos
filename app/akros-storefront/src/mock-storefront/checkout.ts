@@ -5,6 +5,8 @@ import {
   checkoutPaymentMethods,
   checkoutPickupPoints,
   demoStoreAddress,
+  demoFreeShippingThresholdMinor,
+  demoExtendedReturn,
 } from "./fixtures/checkout";
 
 export const checkoutSteps = [
@@ -36,6 +38,7 @@ export interface CheckoutDraft {
   delivery: CheckoutAddress;
   differentDeliveryAddress: boolean;
   newsletter: boolean;
+  extendedReturn?: boolean;
 }
 
 export type CheckoutErrors = Record<string, string>;
@@ -67,6 +70,7 @@ export const createCheckoutDraft = (): CheckoutDraft => ({
   },
   differentDeliveryAddress: false,
   newsletter: false,
+  extendedReturn: false,
 });
 
 export const getDelivery = (draft: CheckoutDraft) =>
@@ -146,23 +150,27 @@ export function getCheckoutTotals(cart: CartState, draft: CheckoutDraft) {
   const delivery = getDelivery(draft);
   const payment = getPayment(draft);
   const subtotal = getCartSubtotal(cart);
-  const shipping = delivery?.priceMinor ?? null;
+  const freeShipping = subtotal >= demoFreeShippingThresholdMinor;
+  const shipping = delivery ? (freeShipping ? 0 : delivery.priceMinor) : null;
+  const extendedReturn = draft.extendedReturn ? demoExtendedReturn.priceMinor : 0;
   const paymentPrice =
     payment && (!payment.pickupOnly || delivery?.id === "osobni") ? payment.priceMinor : 0;
-  const total = subtotal + (shipping ?? 0) + paymentPrice;
+  const total = subtotal + (shipping ?? 0) + paymentPrice + extendedReturn;
   const hasNet = cart.lines.every((line) => line.priceExcludingVatMinor !== undefined);
   const net = hasNet
     ? cart.lines.reduce(
         (sum, line) => sum + Math.round((line.priceExcludingVatMinor ?? 0) * line.quantity),
         0,
       ) +
-      (delivery?.priceExcludingVatMinor ?? 0) +
-      (paymentPrice > 0 ? (payment?.priceExcludingVatMinor ?? 0) : 0)
+      (shipping ? (delivery?.priceExcludingVatMinor ?? 0) : 0) +
+      (paymentPrice > 0 ? (payment?.priceExcludingVatMinor ?? 0) : 0) +
+      (extendedReturn ? demoExtendedReturn.priceExcludingVatMinor : 0)
     : null;
   return {
     subtotal,
     shipping,
     payment: paymentPrice,
+    extendedReturn,
     total,
     net,
     vat: net === null ? null : total - net,
@@ -197,6 +205,7 @@ export function isCheckoutDraft(value: unknown): value is CheckoutDraft {
     draftKeys.every((key) => typeof value[key] === "string") &&
     typeof value.differentDeliveryAddress === "boolean" &&
     typeof value.newsletter === "boolean" &&
+    (value.extendedReturn === undefined || typeof value.extendedReturn === "boolean") &&
     addresses.every(
       (address) =>
         isRecord(address) && addressKeys.every((key) => typeof address[key] === "string"),
@@ -208,7 +217,7 @@ export function parseCheckoutDraft(value: string | null): CheckoutDraft {
   try {
     const parsed: unknown = JSON.parse(value ?? "null");
     if (isRecord(parsed) && parsed.version === 1 && isCheckoutDraft(parsed.draft))
-      return parsed.draft;
+      return { ...parsed.draft, extendedReturn: parsed.draft.extendedReturn ?? false };
   } catch {
     /* An incomplete/corrupt local draft is safe to replace with defaults. */
   }

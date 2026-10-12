@@ -2,46 +2,65 @@
 import { useCart } from "@/features/cart/cart-provider";
 import { useCheckout } from "./checkout-provider";
 import { getCheckoutTotals } from "@/mock-storefront/checkout";
-import { formatPrice } from "@/lib/format";
+import { formatCheckoutPrice } from "./checkout-format";
 
 export function CheckoutSummary() {
   const { cart } = useCart();
   const { draft } = useCheckout();
   const totals = getCheckoutTotals(cart, draft);
   return (
-    <aside className="rounded-sm bg-(--color-base) p-6" aria-labelledby="checkout-summary-title">
-      <h2 id="checkout-summary-title" className="mb-6 text-md font-medium">
+    <aside
+      className="rounded-sm bg-(--color-base) px-(--dimension-32) py-(--dimension-24)"
+      aria-labelledby="checkout-summary-title"
+    >
+      <h2
+        id="checkout-summary-title"
+        className="mb-(--dimension-32) text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+      >
         Shrnutí
       </h2>
-      <dl className="grid gap-4 text-sm">
+      <dl className="grid gap-(--dimension-24) text-(length:--dimension-16) font-medium">
         <div className="grid gap-1 border-b border-(--color-border-primary) pb-4">
           <div className="flex justify-between gap-3">
-            <dt>Cena zboží</dt>
-            <dd>{formatPrice(totals.subtotal)}</dd>
+            <dt>Cena celkem</dt>
+            <dd className="text-right">{formatCheckoutPrice(totals.subtotal)}</dd>
           </div>
           <div className="flex justify-between gap-3">
             <dt>Doprava a platba</dt>
-            <dd>
+            <dd className="text-right">
               {totals.shipping === null
                 ? "Bude vybráno"
-                : formatPrice(totals.shipping + totals.payment)}
+                : formatCheckoutPrice(totals.shipping + totals.payment)}
             </dd>
           </div>
+          {totals.extendedReturn > 0 && (
+            <div className="flex justify-between gap-3">
+              <dt>Prodloužená doba vrácení</dt>
+              <dd className="text-right">{formatCheckoutPrice(totals.extendedReturn)}</dd>
+            </div>
+          )}
         </div>
         <div className="grid gap-1 border-b border-(--color-border-primary) pb-4">
           <div className="flex justify-between gap-3">
             <dt>DPH</dt>
-            <dd>{totals.vat === null ? "—" : formatPrice(totals.vat)}</dd>
+            <dd className="text-right">
+              {totals.vat === null ? "—" : formatCheckoutPrice(totals.vat)}
+            </dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt>Celkem bez DPH</dt>
-            <dd>{totals.net === null ? "—" : formatPrice(totals.net)}</dd>
+            <dt>Celkem bez daně</dt>
+            <dd className="text-right">
+              {totals.net === null ? "—" : formatCheckoutPrice(totals.net)}
+            </dd>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <dt>Celkem s DPH</dt>
-          <dd className="text-lg font-extrabold" aria-live="polite">
-            {formatPrice(totals.total)}
+          <dt className="text-(length:--dimension-20)">Celkem s DPH</dt>
+          <dd
+            className="text-(length:--akros-checkout-total-size) leading-(--akros-checkout-heading-leading) font-extrabold"
+            aria-live="polite"
+          >
+            {formatCheckoutPrice(totals.total)}
           </dd>
         </div>
       </dl>

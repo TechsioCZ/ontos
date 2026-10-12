@@ -33,19 +33,37 @@ const storedQuantity = () =>
   JSON.parse(window.localStorage.getItem("akros-demo-cart-v3") ?? "null").lines[0]?.quantity;
 
 describe("checkout cart quantity", () => {
-  it("shows the SKU and unit price separately from the changing line total", async () => {
+  it("renders capitalised catalogue names in sentence case without modifying stored data", async () => {
+    const stored = JSON.parse(window.localStorage.getItem("akros-demo-cart-v3")!);
+    stored.lines[0].name = "MATICE ŠESTIHRANNÉ DIN934/A2";
+    window.localStorage.setItem("akros-demo-cart-v3", JSON.stringify(stored));
+    render(
+      <CartProvider>
+        <CartItemsTable />
+      </CartProvider>,
+    );
+    expect(
+      await screen.findByRole("link", { name: "Matice šestihranné DIN934/A2" }),
+    ).not.toBeNull();
+    expect(JSON.parse(window.localStorage.getItem("akros-demo-cart-v3")!).lines[0].name).toBe(
+      "MATICE ŠESTIHRANNÉ DIN934/A2",
+    );
+  });
+
+  it("shows the product and changing line total without additional SKU or unit-price rows", async () => {
     const user = userEvent.setup();
     render(
       <CartProvider>
         <CartItemsTable />
       </CartProvider>,
     );
-    expect(await screen.findByText("Kód produktu: A2")).not.toBeNull();
-    expect(screen.getByText(/1,00\sKč \/ ks/)).not.toBeNull();
-    expect(screen.getByText(/30,00\sKč/)).not.toBeNull();
+    expect(await screen.findByRole("link", { name: "Vrut" })).not.toBeNull();
+    expect(screen.queryByText("Kód produktu: A2")).toBeNull();
+    expect(screen.queryByText(/1,00\sKč \/ ks/)).toBeNull();
+    expect(screen.getByText(/30\sKč/)).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Zvýšit množství: Vrut" }));
-    await waitFor(() => expect(screen.getByText(/40,00\sKč/)).not.toBeNull());
-    expect(screen.getByText(/1,00\sKč \/ ks/)).not.toBeNull();
+    await waitFor(() => expect(screen.getByText(/40\sKč/)).not.toBeNull());
+    expect(screen.queryByText(/1,00\sKč \/ ks/)).toBeNull();
   });
 
   it("preserves grouped four-digit quantities while incrementing and decrementing", async () => {

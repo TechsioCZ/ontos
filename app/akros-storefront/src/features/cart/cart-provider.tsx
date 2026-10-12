@@ -18,12 +18,25 @@ import {
   cartReducer,
   createEmptyCart,
   getCartItemCount,
-  normalizeOrderQuantity,
 } from "@/mock-storefront/cart";
+
+import { parseStoredCart } from "@/mock-storefront/cart-storage";
+import {
+  type CartCollection,
+  createCartCollection,
+  parseCartCollection,
+  snapshotCartCollection,
+  cartCollectionStorageKey,
+} from "@/mock-storefront/cart-collection";
 
 const storageKey = "akros-demo-cart-v3";
 
 interface CartContextValue {
+  carts: CartCollection["carts"];
+  activeCartId: string;
+  selectCart: (id: string) => void;
+  addCart: (name: string) => void;
+  removeCart: (id: string) => void;
   cart: CartState;
   dispatch: Dispatch<CartAction>;
   itemCount: number;
@@ -54,7 +67,7 @@ const CartContext = createContext<CartContextValue | null>(null);
 const getAddedQuantity = (line: CartLine, previous?: CartLine) =>
   Math.round((line.quantity - (previous?.quantity ?? 0)) * 1_000_000) / 1_000_000;
 
-interface CartProviderState {
+interface CartProviderState extends CartCollection {
   cart: CartState;
   ready: boolean;
   feedback: CartFeedback | null;
@@ -64,7 +77,10 @@ interface CartProviderState {
 
 type CartProviderAction =
   | CartAction
-  | { type: "hydrate"; cart: CartState }
+  | { type: "hydrate"; collection: CartCollection }
+  | { type: "select-cart"; id: string }
+  | { type: "add-cart"; id: string; name: string }
+  | { type: "remove-cart"; id: string }
   | { type: "undo-remove"; id: number }
   | { type: "dismiss-remove"; id: number };
 
@@ -72,7 +88,55 @@ const providerReducer = (
   state: CartProviderState,
   action: CartProviderAction,
 ): CartProviderState => {
-  if (action.type === "hydrate") return { ...state, cart: action.cart, ready: true };
+  if (action.type === "hydrate")
+    return {
+      ...state,
+      ...action.collection,
+      cart: action.collection.carts.find((entry) => entry.id === action.collection.activeCartId)!
+        .cart,
+      ready: true,
+    };
+  if (
+    action.type === "select-cart" ||
+    action.type === "add-cart" ||
+    action.type === "remove-cart"
+  ) {
+    if (!state.ready) return state;
+    let collection = snapshotCartCollection(state, state.cart);
+    if (action.type === "select-cart") {
+      if (
+        !collection.carts.some((entry) => entry.id === action.id) ||
+        action.id === state.activeCartId
+      )
+        return state;
+      collection.activeCartId = action.id;
+    } else if (action.type === "add-cart") {
+      const name = action.name.trim();
+      if (
+        !name ||
+        collection.carts.some(
+          (entry) =>
+            entry.id === action.id ||
+            entry.name.toLocaleLowerCase("cs-CZ") === name.toLocaleLowerCase("cs-CZ"),
+        )
+      )
+        return state;
+      collection.carts = [...collection.carts, { id: action.id, name, cart: createEmptyCart() }];
+      collection.activeCartId = action.id;
+    } else {
+      if (collection.carts.length < 2 || !collection.carts.some((entry) => entry.id === action.id))
+        return state;
+      collection.carts = collection.carts.filter((entry) => entry.id !== action.id);
+      if (collection.activeCartId === action.id) collection.activeCartId = collection.carts[0].id;
+    }
+    return {
+      ...state,
+      ...collection,
+      cart: collection.carts.find((entry) => entry.id === collection.activeCartId)!.cart,
+      feedback: null,
+      removedItem: null,
+    };
+  }
   if (action.type === "dismiss-remove") {
     return state.removedItem?.id === action.id ? { ...state, removedItem: null } : state;
   }
@@ -152,68 +216,6 @@ const providerReducer = (
   return { ...state, cart: cartReducer(state.cart, action) };
 };
 
-const parseStoredCart = (value: string | null): CartState => {
-  if (!value) return createEmptyCart();
-
-  try {
-    const parsed = JSON.parse(value) as Partial<CartState>;
-    if (parsed.version !== 3 || !Array.isArray(parsed.lines)) return createEmptyCart();
-
-    return {
-      version: 3,
-      lines: parsed.lines.flatMap((line) => {
-        if (
-          typeof line?.productId !== "string" ||
-          typeof line.slug !== "string" ||
-          typeof line.name !== "string" ||
-          typeof line.sku !== "string" ||
-          typeof line.imageSrc !== "string" ||
-          typeof line.imageAlt !== "string" ||
-          typeof line.unit !== "string" ||
-          typeof line.priceMinor !== "number" ||
-          typeof line.stockCount !== "number" ||
-          typeof line.minimumQuantity !== "number" ||
-          !Number.isSafeInteger(line.priceMinor) ||
-          line.priceMinor < 0 ||
-          !Number.isFinite(line.stockCount) ||
-          line.stockCount < 0 ||
-          !Number.isFinite(line.minimumQuantity) ||
-          line.minimumQuantity <= 0 ||
-          !Number.isFinite(line.quantity) ||
-          line.quantity <= 0
-        ) {
-          return [];
-        }
-
-        const item = {
-          productId: line.productId,
-          ...(typeof line.variantId === "string" ? { variantId: line.variantId } : {}),
-          slug: line.slug,
-          name: line.name,
-          sku: line.sku,
-          imageSrc: line.imageSrc,
-          imageAlt: line.imageAlt,
-          unit: line.unit,
-          minimumQuantity: line.minimumQuantity,
-          priceMinor: line.priceMinor,
-          ...(Number.isSafeInteger(line.priceExcludingVatMinor) &&
-          (line.priceExcludingVatMinor ?? -1) >= 0 &&
-          (line.priceExcludingVatMinor ?? Infinity) <= line.priceMinor
-            ? { priceExcludingVatMinor: line.priceExcludingVatMinor }
-            : {}),
-          stockCount: line.stockCount,
-          ...(typeof line.variantLabel === "string" ? { variantLabel: line.variantLabel } : {}),
-        };
-        const quantity = normalizeOrderQuantity(item, line.quantity);
-
-        return quantity > 0 ? [{ ...item, quantity }] : [];
-      }),
-    };
-  } catch {
-    return createEmptyCart();
-  }
-};
-
 export function CartProvider({
   children,
   storage,
@@ -221,13 +223,22 @@ export function CartProvider({
   children: ReactNode;
   storage?: Storage | null;
 }) {
-  const [{ cart, ready, feedback, removedItem }, providerDispatch] = useReducer(providerReducer, {
+  const [state, providerDispatch] = useReducer(providerReducer, {
+    ...createCartCollection(),
     cart: createEmptyCart(),
     ready: false,
     feedback: null,
     removedItem: null,
     sequence: 0,
   });
+  const { cart, ready, feedback, removedItem, activeCartId } = state;
+  const carts = useMemo(() => snapshotCartCollection(state, cart).carts, [state, cart]);
+  const selectCart = useCallback((id: string) => providerDispatch({ type: "select-cart", id }), []);
+  const addCart = useCallback(
+    (name: string) => providerDispatch({ type: "add-cart", id: crypto.randomUUID(), name }),
+    [],
+  );
+  const removeCart = useCallback((id: string) => providerDispatch({ type: "remove-cart", id }), []);
   const dispatch: Dispatch<CartAction> = providerDispatch;
   const undoRemove = useCallback((id: number) => providerDispatch({ type: "undo-remove", id }), []);
   const dismissRemove = useCallback(
@@ -240,21 +251,36 @@ export function CartProvider({
   useEffect(() => {
     if (resolvedStorage) {
       const restored = parseStoredCart(resolvedStorage.getItem(storageKey));
-      providerDispatch({ type: "hydrate", cart: restored });
+      providerDispatch({
+        type: "hydrate",
+        collection: parseCartCollection(
+          resolvedStorage.getItem(cartCollectionStorageKey),
+          restored,
+        ),
+      });
     } else {
-      providerDispatch({ type: "hydrate", cart: createEmptyCart() });
+      providerDispatch({ type: "hydrate", collection: createCartCollection() });
     }
   }, [resolvedStorage]);
 
   useEffect(() => {
     if (ready && resolvedStorage) {
       resolvedStorage.setItem(storageKey, JSON.stringify(cart));
+      resolvedStorage.setItem(
+        cartCollectionStorageKey,
+        JSON.stringify({ version: 1, carts, activeCartId }),
+      );
     }
-  }, [cart, ready, resolvedStorage]);
+  }, [cart, carts, activeCartId, ready, resolvedStorage]);
 
   const value = useMemo(
     () => ({
       cart,
+      carts,
+      activeCartId,
+      selectCart,
+      addCart,
+      removeCart,
       dispatch,
       itemCount: getCartItemCount(cart),
       ready,
@@ -263,7 +289,20 @@ export function CartProvider({
       undoRemove,
       dismissRemove,
     }),
-    [cart, dispatch, ready, feedback, removedItem, undoRemove, dismissRemove],
+    [
+      cart,
+      carts,
+      activeCartId,
+      selectCart,
+      addCart,
+      removeCart,
+      dispatch,
+      ready,
+      feedback,
+      removedItem,
+      undoRemove,
+      dismissRemove,
+    ],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

@@ -171,7 +171,9 @@ export function ProductGrid({
                 <p className="akros-product-card__search-match">{product.searchMatchLabel}</p>
               )}
 
-              <ProductCard.Price className="mt-auto mb-0 text-center">
+              <ProductCard.Price
+                className={`mt-auto mb-0 text-center ${columns === "checkout" ? "leading-(--akros-checkout-heading-leading)" : ""}`}
+              >
                 {hasDiscount ? (
                   <>
                     <span className="akros-product-card__discount">

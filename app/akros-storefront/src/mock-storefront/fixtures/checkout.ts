@@ -1,4 +1,12 @@
 // Local prototype configuration, not live carrier availability or a payment integration.
+// Reuses the threshold already shown on the prototype's shipping information page.
+export const demoFreeShippingThresholdMinor = 200000;
+export const demoExtendedReturn = {
+  priceMinor: 15900,
+  // Demo prices follow the same VAT assumptions as the other checkout fixtures.
+  priceExcludingVatMinor: 13140,
+} as const;
+
 export const checkoutDeliveryMethods = [
   {
     id: "zasilkovna",

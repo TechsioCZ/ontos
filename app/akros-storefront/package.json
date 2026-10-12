@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:component": "vitest run tests/component",
-    "test:responsive": "node tests/browser/variant-table-layout.mjs",
+    "test:responsive": "node tests/browser/variant-table-layout.mjs && node tests/browser/cart-items-layout.mjs && node tests/browser/checkout-section.mjs && node tests/browser/checkout-typography-services.mjs",
     "lint": "oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin src tests",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",

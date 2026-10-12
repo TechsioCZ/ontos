@@ -13,7 +13,7 @@ import {
 } from "@/mock-storefront/checkout";
 import { type LocalOrder, orderStorageKey } from "@/mock-storefront/local-order";
 
-const draftStorageKey = "akros-demo-checkout-v1";
+const legacyDraftStorageKey = "akros-demo-checkout-v1";
 type DraftUpdate = (draft: CheckoutDraft) => CheckoutDraft;
 type CheckoutStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -53,14 +53,16 @@ function checkoutReducer(state: CheckoutState, action: CheckoutAction): Checkout
   }
 }
 
-export function CheckoutProvider({
+function CheckoutCartProvider({
   children,
   storage,
 }: {
   children: ReactNode;
   storage?: CheckoutStorage;
 }) {
-  const { cart, dispatch, ready: cartReady } = useCart();
+  const { cart, dispatch, ready: cartReady, activeCartId } = useCart();
+  const draftStorageKey =
+    activeCartId === "default" ? legacyDraftStorageKey : `${legacyDraftStorageKey}:${activeCartId}`;
   const [{ draft, hydrated, storageError, submitted }, checkoutDispatch] = useReducer(
     checkoutReducer,
     undefined,
@@ -84,7 +86,7 @@ export function CheckoutProvider({
         error: "Rozpracované údaje nelze uložit v prohlížeči. Povolte úložiště pro tento web.",
       });
     }
-  }, [storage]);
+  }, [storage, draftStorageKey]);
 
   useEffect(() => {
     if (!hydrated || !storageRef.current) return;
@@ -97,7 +99,7 @@ export function CheckoutProvider({
         error: "Rozpracované údaje nelze uložit v prohlížeči. Povolte úložiště pro tento web.",
       });
     }
-  }, [draft, hydrated]);
+  }, [draft, hydrated, draftStorageKey]);
 
   function completeOrder(): LocalOrder | null {
     if (completed.current) return completed.current;
@@ -148,6 +150,11 @@ export function CheckoutProvider({
       {children}
     </CheckoutContext.Provider>
   );
+}
+
+export function CheckoutProvider(props: { children: ReactNode; storage?: CheckoutStorage }) {
+  const { activeCartId } = useCart();
+  return <CheckoutCartProvider key={activeCartId} {...props} />;
 }
 
 export function useCheckout() {

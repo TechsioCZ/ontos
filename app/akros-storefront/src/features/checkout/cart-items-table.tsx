@@ -1,7 +1,7 @@
 "use client";
 
 import NextLink from "next/link";
-import { useId, useMemo, useState } from "react";
+import { type CSSProperties, useId, useMemo, useState } from "react";
 import { ActionIcon } from "@techsio/ui-kit/atoms/action-icon";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
@@ -13,7 +13,8 @@ import {
   getMaximumOrderQuantity,
   normalizeOrderQuantity,
 } from "@/mock-storefront/cart";
-import { formatPrice } from "@/lib/format";
+import { formatCheckoutPrice } from "./checkout-format";
+import { formatCartProductName } from "./cart-product-name";
 
 function CartQuantity({ line }: { line: CartLine }) {
   const id = useId();
@@ -29,6 +30,7 @@ function CartQuantity({ line }: { line: CartLine }) {
   return (
     <div className="flex items-center justify-center gap-1">
       <NumericInput
+        className="@max-akros-cart-narrow/akros-cart:[--text-numeric-input-sm:var(--akros-cart-compact-quantity-size)]"
         id={id}
         locale="cs-CZ"
         formatOptions={{ maximumFractionDigits: 6 }}
@@ -49,15 +51,28 @@ function CartQuantity({ line }: { line: CartLine }) {
           setDraftQuantity(null);
         }}
       >
-        <NumericInput.Control className="w-44 shrink-0">
+        <NumericInput.Control
+          data-akros-cart-quantity
+          style={
+            {
+              "--akros-cart-quantity-characters": Math.max(
+                2,
+                new Intl.NumberFormat("cs-CZ", { maximumFractionDigits: 6 }).format(
+                  draftQuantity ?? line.quantity,
+                ).length,
+              ),
+            } as CSSProperties
+          }
+          className="w-(--akros-cart-control-width) shrink-0 gap-(--akros-cart-control-gap) border-0! bg-transparent! overflow-visible"
+        >
           <NumericInput.DecrementTrigger
             aria-label={`Snížit množství: ${line.variantLabel ?? line.name}`}
-            className="h-full! w-11 flex-none justify-center"
+            className="h-full! w-(--akros-cart-trigger-width) flex-none justify-center rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
             icon="token-icon-minus"
           />
           <NumericInput.Input
             aria-label={`Množství: ${line.variantLabel ?? line.name}`}
-            className="min-w-0 flex-1 px-0! text-center"
+            className="min-w-0 flex-1 rounded-(--akros-cart-control-radius)! border-solid! border-(length:--akros-cart-value-border-width)! border-(--akros-cart-value-border-color)! bg-base! px-(--dimension-4)! text-center leading-(--akros-checkout-heading-leading) font-bold"
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
@@ -67,12 +82,11 @@ function CartQuantity({ line }: { line: CartLine }) {
           />
           <NumericInput.IncrementTrigger
             aria-label={`Zvýšit množství: ${line.variantLabel ?? line.name}`}
-            className="h-full! w-11 flex-none justify-center"
+            className="h-full! w-(--akros-cart-trigger-width) flex-none justify-center rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
             icon="token-icon-plus"
           />
         </NumericInput.Control>
       </NumericInput>
-      <span className="text-xs text-(--color-fg-secondary)">{line.unit}</span>
     </div>
   );
 }
@@ -85,60 +99,58 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
         id: "product",
         header: "Položka",
         cell: ({ row: { original: line } }) => (
-          <div className="grid gap-1 whitespace-normal">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-(--akros-cart-detail-gap) gap-y-1 whitespace-normal">
             <Link
               as={NextLink}
               href={`/produkt/${line.slug}`}
-              className="wrap-anywhere text-inherit no-underline"
+              className="min-w-0 wrap-anywhere text-inherit no-underline"
             >
-              {line.name}
+              {formatCartProductName(line.name)}
             </Link>
             {line.variantLabel && (
-              <span className="wrap-anywhere text-xs text-(--color-fg-secondary)">
+              <span className="wrap-anywhere text-(length:--akros-cart-secondary-size) text-(--color-fg-secondary)">
                 {line.variantLabel}
               </span>
             )}
-            <span className="wrap-anywhere text-xs text-(--color-fg-secondary)">
-              Kód produktu: {line.sku}
-            </span>
           </div>
         ),
       },
       {
         id: "stock",
         header: "Dostupnost",
-        meta: { width: "var(--dimension-100)", align: "center" },
+        meta: { width: "var(--akros-cart-stock-width)", align: "start" },
         cell: () => (
-          <span className="text-xs text-(--color-fg-status-success) uppercase">Skladem</span>
+          <span className="text-(length:--akros-cart-secondary-size) font-(weight:--akros-cart-primary-weight) text-(--color-fg-status-success) uppercase">
+            Skladem
+          </span>
         ),
       },
       {
         id: "quantity",
         header: "Množství",
-        meta: { width: "12rem", align: "center" },
+        meta: { width: "var(--akros-cart-quantity-width)", align: "center" },
         cell: ({ row }) => <CartQuantity line={row.original} />,
       },
       {
         id: "price",
         header: "Cena",
-        meta: { width: "var(--dimension-100)", align: "end" },
+        meta: { width: "var(--akros-cart-price-width)", align: "end" },
         cell: ({ row: { original: line } }) => (
-          <div className="grid justify-items-start gap-1 text-left md:justify-items-end md:text-right">
-            <strong className="whitespace-nowrap">{formatPrice(getLineTotal(line))}</strong>
-            <span className="whitespace-nowrap text-xs text-(--color-fg-secondary)">
-              {formatPrice(line.priceMinor)} / {line.unit}
-            </span>
+          <div className="grid min-w-0 justify-items-end gap-1 text-right @max-akros-cart-wide/akros-cart:justify-items-start @max-akros-cart-wide/akros-cart:text-left">
+            <strong className="whitespace-normal font-(weight:--akros-cart-price-weight)">
+              {formatCheckoutPrice(getLineTotal(line))}
+            </strong>
           </div>
         ),
       },
       {
         id: "remove",
         header: () => <span className="sr-only">Odebrat</span>,
-        meta: { width: "var(--dimension-44)", align: "end" },
+        meta: { width: "var(--akros-cart-remove-width)", align: "end" },
         cell: ({ row: { original: line } }) => (
           <ActionIcon
             aria-label={`Odebrat ${line.name}`}
-            icon="icon-[mdi--close]"
+            icon="token-icon-akros-checkout-remove"
             size="md"
             onClick={() =>
               dispatch({ type: "remove", productId: line.productId, variantId: line.variantId })
@@ -151,24 +163,47 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
   );
 
   return (
-    <DataTable
-      data={cart.lines}
-      columns={columns}
-      getRowId={(line) => `${line.productId}:${line.variantId ?? "base"}`}
-      hideHeader={!showHeader}
-      size="sm"
-      variant="line"
-      tableLayout="auto"
-      enableSorting={false}
-      enablePagination={false}
-      slotProps={{
-        root: {
-          "aria-label": "Položky objednávky",
-          className:
-            "max-md:[&_thead]:sr-only max-md:[&_tbody]:grid max-md:[&_td]:w-auto! max-md:[&_td:first-child]:col-span-2 max-md:[&_td:last-child]:justify-self-end max-[360px]:[&_td:nth-child(2)]:col-span-2 max-[360px]:[&_td:nth-child(2)]:text-start max-[360px]:[&_td:nth-child(3)]:col-span-2 max-[360px]:[&_td:nth-child(3)]:justify-self-start",
-        },
-        row: { className: "max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:items-center" },
-      }}
-    />
+    <div
+      data-akros-cart-items
+      style={
+        {
+          "--akros-cart-max-quantity-characters": Math.max(
+            2,
+            ...cart.lines.map(
+              (line) =>
+                new Intl.NumberFormat("cs-CZ", { maximumFractionDigits: 6 }).format(line.quantity)
+                  .length,
+            ),
+          ),
+        } as CSSProperties
+      }
+      className="@container/akros-cart min-w-0 font-medium"
+    >
+      <DataTable
+        data={cart.lines}
+        columns={columns}
+        getRowId={(line) => `${line.productId}:${line.variantId ?? "base"}`}
+        hideHeader={!showHeader}
+        size="sm"
+        variant="line"
+        tableLayout="auto"
+        enableSorting={false}
+        enablePagination={false}
+        slotProps={{
+          root: {
+            "aria-label": "Položky objednávky",
+            className:
+              "@max-akros-cart-wide/akros-cart:block @max-akros-cart-wide/akros-cart:[&_thead]:sr-only @max-akros-cart-wide/akros-cart:[&_tbody]:grid @max-akros-cart-wide/akros-cart:[&_td]:block @max-akros-cart-wide/akros-cart:[&_td]:w-auto! @max-akros-cart-wide/akros-cart:[&_td]:min-w-0 @max-akros-cart-wide/akros-cart:[&_td]:p-0! @max-akros-cart-wide/akros-cart:[&_td:first-child]:col-span-2 @max-akros-cart-wide/akros-cart:[&_td:last-child]:justify-self-end @max-akros-cart-narrow/akros-cart:[&_td:nth-child(2)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:justify-self-start",
+          },
+          header: {
+            className: "[&_th]:text-(length:--akros-cart-secondary-size)",
+          },
+          row: {
+            className:
+              "@max-akros-cart-wide/akros-cart:grid @max-akros-cart-wide/akros-cart:grid-cols-[minmax(0,1fr)_auto] @max-akros-cart-wide/akros-cart:items-center @max-akros-cart-wide/akros-cart:gap-(--akros-cart-row-gap) @max-akros-cart-wide/akros-cart:py-(--dimension-16)",
+          },
+        }}
+      />
+    </div>
   );
 }

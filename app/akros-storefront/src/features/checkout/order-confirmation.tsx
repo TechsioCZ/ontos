@@ -110,6 +110,12 @@ export function OrderConfirmation() {
           <dt>Celkem bez DPH</dt>
           <dd>{order.totals.net === null ? "Není dostupné" : formatPrice(order.totals.net)}</dd>
         </div>
+        {order.totals.extendedReturn > 0 && (
+          <div className="flex justify-between gap-4">
+            <dt>Prodloužená doba vrácení</dt>
+            <dd>{formatPrice(order.totals.extendedReturn)}</dd>
+          </div>
+        )}
         <div className="flex justify-between gap-4 border-t border-(--color-border-primary) pt-4 text-lg font-bold">
           <dt>Celkem s DPH</dt>
           <dd>{formatPrice(order.totals.total)}</dd>

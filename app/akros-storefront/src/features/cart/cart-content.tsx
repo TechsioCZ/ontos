@@ -3,6 +3,7 @@ import NextLink from "next/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { useCart } from "./cart-provider";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
+import { CartServices } from "@/features/checkout/cart-services";
 
 export function CartContent() {
   const { cart, ready } = useCart();
@@ -23,22 +24,46 @@ export function CartContent() {
       </section>
     );
   return (
-    <section className="rounded-sm bg-(--color-base) p-4 md:p-6" aria-labelledby="cart-title">
-      <h1 id="cart-title" className="mb-4 text-md font-medium">
+    <section
+      className="rounded-sm bg-(--color-base) p-(--akros-checkout-panel-padding)"
+      aria-labelledby="cart-title"
+    >
+      <h1
+        id="cart-title"
+        className="mb-(--dimension-32) text-(length:--akros-checkout-heading-size) leading-(--akros-checkout-heading-leading) font-medium"
+      >
         Obsah košíku
       </h1>
       <CartItemsTable />
+      <CartServices />
     </section>
   );
 }
 
 export function CartNavigation() {
   return (
-    <div className="flex flex-wrap justify-between gap-4 xl:col-start-1">
-      <LinkButton as={NextLink} href="/" variant="secondary" size="sm" uppercase>
+    <div
+      data-akros-cart-navigation
+      className="order-3 mt-(--dimension-24) flex flex-wrap justify-between gap-(--dimension-24) pt-(--dimension-16) leading-(--akros-checkout-heading-leading) xl:col-start-1"
+    >
+      <LinkButton
+        as={NextLink}
+        href="/"
+        variant="secondary"
+        size="sm"
+        className="w-full font-bold sm:w-(--akros-checkout-back-width)"
+        uppercase
+      >
         Zpět do obchodu
       </LinkButton>
-      <LinkButton as={NextLink} href="/kosik/doprava-platba" variant="primary" size="sm" uppercase>
+      <LinkButton
+        as={NextLink}
+        href="/kosik/doprava-platba"
+        variant="primary"
+        size="sm"
+        className="w-full font-bold sm:w-(--akros-checkout-continue-width)"
+        uppercase
+      >
         Vybrat dopravu a platbu
       </LinkButton>
     </div>

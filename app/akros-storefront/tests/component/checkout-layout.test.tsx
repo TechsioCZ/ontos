@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({
     replace: vi.fn<(href: string) => void>(),
   }),
 }));
+vi.mock("next/font/local", () => ({ default: () => ({ variable: "checkout-font" }) }));
 
 afterEach(cleanup);
 beforeEach(() => {
@@ -32,7 +33,7 @@ function renderCart() {
 }
 
 describe("checkout cart composition", () => {
-  it("places a single summary between cart items and the continue action", async () => {
+  it("renders one summary and keeps the continue action in the main cart flow", async () => {
     window.localStorage.setItem(
       "akros-demo-cart-v3",
       JSON.stringify({
@@ -60,7 +61,8 @@ describe("checkout cart composition", () => {
     const next = screen.getByRole("link", { name: "Vybrat dopravu a platbu" });
     expect(screen.getAllByRole("complementary", { name: "Shrnutí" })).toHaveLength(1);
     expect(items.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-    expect(summary.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(items.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(screen.getByRole("region", { name: "Vaše košíky" })).not.toBeNull();
     expect(next.getAttribute("href")).toBe("/kosik/doprava-platba");
   });
 

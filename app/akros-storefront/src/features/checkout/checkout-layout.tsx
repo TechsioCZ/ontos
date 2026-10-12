@@ -1,13 +1,23 @@
 "use client";
 import { type ReactNode, useEffect } from "react";
+import localFont from "next/font/local";
 import { usePathname, useRouter } from "next/navigation";
 import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { useCart } from "@/features/cart/cart-provider";
 import { CartNavigation } from "@/features/cart/cart-content";
+import { CartSelector } from "@/features/cart/cart-selector";
 import { checkoutSteps, getReachableStep } from "@/mock-storefront/checkout";
 import { useCheckout } from "./checkout-provider";
 import { CheckoutSummary } from "./checkout-summary";
+
+const checkoutFont = localFont({
+  src: "../../fonts/InterVariable.woff2",
+  weight: "400 800",
+  style: "normal",
+  display: "swap",
+  variable: "--font-akros-checkout",
+});
 
 export function CheckoutLayout({
   children,
@@ -38,12 +48,18 @@ export function CheckoutLayout({
   return (
     <div
       data-akros-checkout
-      className="bg-(--color-fill-surface) px-4 py-8 md:px-8 lg:px-16 lg:py-10"
+      className={`${checkoutFont.variable} bg-(--color-fill-surface) px-(--akros-checkout-page-gutter) pt-(--akros-checkout-padding-top) pb-(--akros-checkout-padding-bottom) font-(family-name:--font-akros-checkout) font-medium leading-(--akros-checkout-body-leading) text-(--akros-checkout-ink)`}
     >
       <Steps.RootProvider value={steps} size="md" variant="subtle">
-        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_18rem]">
-          <div className="min-w-0">
-            <Steps.List aria-label="Kroky objednávky" className="mb-8 gap-0 md:mb-12">
+        <div
+          data-akros-checkout-body
+          className="mx-auto grid w-full max-w-(--akros-checkout-content-width) items-start gap-(--dimension-24) 2xl:grid-cols-[minmax(0,1fr)_var(--akros-checkout-sidebar-width)]"
+        >
+          <div className="contents min-w-0 2xl:block">
+            <Steps.List
+              aria-label="Kroky objednávky"
+              className="mb-(--dimension-60) order-0 min-w-0 gap-0 pt-(--dimension-24)"
+            >
               {checkoutSteps.map((item, index) => (
                 <Steps.Item key={item.href} index={index} className="block min-w-0">
                   <Steps.Trigger
@@ -51,9 +67,9 @@ export function CheckoutLayout({
                     className="relative z-1 w-full flex-col justify-center gap-2 text-center"
                   >
                     <Steps.Indicator>
-                      <Steps.Number />
+                      <Steps.Number className="leading-(--akros-checkout-body-leading)" />
                     </Steps.Indicator>
-                    <Steps.Title className="overflow-visible whitespace-normal text-center max-sm:text-xs">
+                    <Steps.Title className="w-full overflow-visible text-center wrap-break-word whitespace-normal max-sm:text-xs">
                       {item.title}
                     </Steps.Title>
                   </Steps.Trigger>
@@ -69,18 +85,31 @@ export function CheckoutLayout({
             {!ready || reachable !== step ? (
               <output className="block py-12 text-center">Načítám košík…</output>
             ) : (
-              <Steps.Content index={step}>{children}</Steps.Content>
+              <Steps.Content index={step} className="order-1 min-w-0">
+                {children}
+              </Steps.Content>
+            )}
+            {ready && cart.lines.length > 0 && step === 0 && <CartNavigation />}
+            {ready && cart.lines.length > 0 && step < 3 && (
+              <section
+                className="order-4 mt-(--dimension-60) min-w-0"
+                aria-labelledby="checkout-recommendations"
+              >
+                <h2
+                  id="checkout-recommendations"
+                  className="mt-4 mb-6 text-(length:--akros-checkout-recommendation-size) leading-(--akros-checkout-heading-leading) font-extrabold text-(--akros-checkout-recommendation-color)"
+                >
+                  Mohlo by se Vám líbit
+                </h2>
+                <ProductGrid products={recommendations} action="detail" columns="checkout" />
+              </section>
             )}
           </div>
-          {ready && cart.lines.length > 0 && step < 3 && <CheckoutSummary />}
-          {ready && cart.lines.length > 0 && step === 0 && <CartNavigation />}
-          {ready && cart.lines.length > 0 && step < 3 && (
-            <section className="min-w-0 xl:col-start-1" aria-labelledby="checkout-recommendations">
-              <h2 id="checkout-recommendations" className="mt-4 mb-6 text-lg font-bold">
-                Mohlo by se Vám líbit
-              </h2>
-              <ProductGrid products={recommendations} action="detail" columns="checkout" />
-            </section>
+          {ready && (
+            <div className="order-2 grid min-w-0 gap-(--dimension-16) 2xl:order-none">
+              <CartSelector />
+              {cart.lines.length > 0 && step < 3 && <CheckoutSummary />}
+            </div>
           )}
         </div>
       </Steps.RootProvider>

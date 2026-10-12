@@ -85,7 +85,7 @@ export function AddressFields({
 
 export function AddressText({ address }: { address: CheckoutAddress }) {
   return (
-    <address className="text-sm leading-relaxed not-italic">
+    <address className="text-sm leading-(--akros-checkout-body-leading) not-italic">
       <p>
         {address.firstName} {address.lastName}
       </p>
