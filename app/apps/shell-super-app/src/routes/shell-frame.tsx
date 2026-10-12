@@ -250,7 +250,7 @@ const DashboardSelector = ({
   >
     <Select.Label className="shell:text-xs shell:text-(--color-fg-secondary)">{label}</Select.Label>
     <Select.Control>
-      <Select.Trigger aria-describedby={statusText === null ? undefined : statusId} aria-label={ariaLabel}>
+      <Select.Trigger aria-label={ariaLabel}>
         <Select.ValueText placeholder={placeholder} />
       </Select.Trigger>
     </Select.Control>

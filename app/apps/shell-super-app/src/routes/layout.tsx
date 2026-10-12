@@ -8,7 +8,7 @@ import './index.css';
 
 const Layout = () => (
   <>
-    <Helmet htmlAttributes={{ className: 'shell:scheme-light!' }} />
+    <Helmet htmlAttributes={{ className: 'light', 'data-theme': 'akros' }} />
     <div data-app-id="shell-super-app" data-build-marker={ultramodernUiMarker.build}>
       <Outlet />
     </div>

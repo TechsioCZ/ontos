@@ -26,6 +26,7 @@ packages:
 enableGlobalVirtualStore: false
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
+  - '@techsio/ui-kit@0.56.0'
   - '@bleedingdev/mf-bridge-react@2.9.2'
   - '@bleedingdev/mf-cli@2.9.2'
   - '@bleedingdev/mf-dts-plugin@2.9.2'

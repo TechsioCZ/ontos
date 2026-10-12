@@ -54,7 +54,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "@techsio/ui-kit": "0.25.1",
+    "@techsio/ui-kit": "0.56.0",
     "@app/siampark-property": "workspace:*",
     "@effect/sql-pg": "4.0.0-rc.117",
     "@effect/platform-node": "4.0.0-rc.117"
