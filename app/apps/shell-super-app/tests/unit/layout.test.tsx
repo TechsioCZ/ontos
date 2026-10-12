@@ -70,7 +70,22 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.legalEntity.pending': 'Switching legal entity…',
         'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
         'shell.dashboard.legalEntity.unavailable': 'Legal entity choices are temporarily unavailable.',
+        'shell.dashboard.navigation.groups.insights': 'Insights',
+        'shell.dashboard.navigation.groups.operations': 'Operations',
+        'shell.dashboard.navigation.groups.other': 'Other modules',
+        'shell.dashboard.navigation.groups.sales': 'Sales',
+        'shell.dashboard.navigation.groups.settings': 'Settings',
         'shell.dashboard.navigation.home': 'Home',
+        'shell.dashboard.navigation.inactive': 'Inactive',
+        'shell.dashboard.navigation.items.customers': 'Customers',
+        'shell.dashboard.navigation.items.employees': 'Employees',
+        'shell.dashboard.navigation.items.invoices': 'Invoices',
+        'shell.dashboard.navigation.items.opportunities': 'Opportunities',
+        'shell.dashboard.navigation.items.orders': 'Orders',
+        'shell.dashboard.navigation.items.products': 'Products and stock',
+        'shell.dashboard.navigation.items.statistics': 'Statistics',
+        'shell.dashboard.navigation.items.tags': 'Tags',
+        'shell.dashboard.navigation.items.tasks': 'Tasks',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
         'shell.dashboard.navigation.siampark.integrations': 'Integrations',
         'shell.dashboard.navigation.siampark.overview': 'Overview',
@@ -260,7 +275,7 @@ test('supports module pages with their own heading and preserves their content',
     </AuthenticatedDashboardLayout>,
   );
 
-  expect(screen.queryByRole('heading')).toBeNull();
+  expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
   expect(screen.getByText('Module content')).toBeTruthy();
 });
 
@@ -605,84 +620,93 @@ test.each(legalEntitySelectorStateCases)(
   },
 );
 
-test('selects the resolved Siampark page separately from other pages of the same owner', () => {
-  const propertiesNavigation = [
-    {
-      enabled: true,
-      href: '/siampark/integrations',
-      label: 'Property owner',
-      moduleId: 'siampark.property',
-      state: 'active' as const,
-      unavailable: false,
-    },
-    ...navigation,
-    {
-      enabled: true,
-      href: '/siampark/properties',
-      label: 'Property owner',
-      moduleId: 'siampark.property',
-      state: 'active' as const,
-      unavailable: false,
-    },
-    {
-      enabled: true,
-      href: '/siampark/overview',
-      label: 'Property owner',
-      moduleId: 'siampark.property',
-      state: 'active' as const,
-      unavailable: false,
-    },
-  ];
+const demoEntry = (moduleId: string, href: string, enabled = true) => ({
+  enabled,
+  href,
+  label: `${moduleId} owner`,
+  moduleId,
+  state: 'active' as const,
+  unavailable: false,
+});
+
+test('groups module-contributed entries into the demo navigation and hides Siampark-only modules', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      currentEntrypointKey="siampark.property.page.records"
-      currentModuleId="siampark.property"
+      currentEntrypointKey="demo.merchandise.page.products"
+      currentModuleId="demo.merchandise"
       identity={identity}
       logoutPending={false}
-      navigation={propertiesNavigation}
+      navigation={[
+        demoEntry('siampark.property', '/siampark/integrations'),
+        demoEntry('siampark.property', '/siampark/overview'),
+        demoEntry('siampark.occupancy', '/siampark/occupancy'),
+        ...navigation,
+        demoEntry('demo.merchandise', '/provoz/produkty'),
+        demoEntry('siampark.work', '/siampark/work'),
+        demoEntry('demo.merchandise', '/prodej/objednavky'),
+        demoEntry('party.registry', '/contacts'),
+      ]}
       onLogout={noopLogout}
     >
-      <section>Property records</section>
+      <section>Products</section>
     </AuthenticatedDashboardLayout>,
   );
-  const links = screen.getByRole('navigation', { name: 'Dashboard navigation' }).querySelectorAll('a');
-  expect([...links].map((link) => link.textContent)).toEqual([
+  const navigationElement = screen.getByRole('navigation', { name: 'Dashboard navigation' });
+  const links = [...navigationElement.querySelectorAll('a')];
+  expect(links.map((link) => link.textContent)).toEqual([
     'Home',
-    'Overview',
-    'Properties',
-    'Integrations',
+    'Customers',
+    'Orders',
+    'Tasks',
+    'Products and stock',
     'Future generated',
     'Testing one',
   ]);
-  expect(
-    [...links].filter((link) => link.getAttribute('aria-current') === 'page').map((link) => link.textContent),
-  ).toEqual(['Properties']);
-  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('HomeProperties');
+  expect(links.map((link) => link.getAttribute('href'))).toEqual([
+    '/en/',
+    '/en/contacts',
+    '/en/prodej/objednavky',
+    '/en/siampark/work',
+    '/en/provoz/produkty',
+    '/en/modules/future-generated',
+    '/en/modules/testing.one',
+  ]);
+  expect(links.filter((link) => link.getAttribute('aria-current') === 'page').map((link) => link.textContent)).toEqual([
+    'Products and stock',
+  ]);
+  expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual([
+    'Sales',
+    'Operations',
+    'Insights',
+    'Settings',
+    'Other modules',
+  ]);
+  expect(navigationElement.textContent).not.toContain('siampark.property');
+  expect(navigationElement.textContent).not.toContain('siampark.occupancy');
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('OperationsProducts and stock');
 });
 
-test('does not add undiscovered Siampark routes or enable unavailable pages', () => {
+test('keeps inactive and unavailable demo destinations visible without links', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
       logoutPending={false}
       navigation={[
-        {
-          enabled: false,
-          href: '/siampark/overview',
-          label: 'Property owner',
-          moduleId: 'siampark.property',
-          state: 'active' as const,
-          unavailable: false,
-        },
+        demoEntry('siampark.billing-finance', '/siampark/finance', false),
+        demoEntry('siampark.property', '/siampark/overview', false),
       ]}
       onLogout={noopLogout}
     >
       <section>Current content</section>
     </AuthenticatedDashboardLayout>,
   );
-  expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
-  expect(screen.queryByRole('link', { name: 'Properties' })).toBeNull();
-  expect(screen.getByText('Overview')).toBeTruthy();
+  const navigationElement = screen.getByRole('navigation', { name: 'Dashboard navigation' });
+  expect([...navigationElement.querySelectorAll('a')].map((link) => link.textContent)).toEqual(['Home']);
+  expect(screen.getByText('Invoices')).toBeTruthy();
+  expect(screen.getByText('Opportunities')).toBeTruthy();
+  expect(screen.getAllByText('Inactive').length).toBe(8);
+  expect(navigationElement.textContent).not.toContain('Overview');
+  expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
 });

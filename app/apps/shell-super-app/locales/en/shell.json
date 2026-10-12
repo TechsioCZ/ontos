@@ -23,7 +23,7 @@
       "account": {
         "label": "Account menu"
       },
-      "brand": "Siampark",
+      "brand": "OntOS",
       "header": {
         "label": "Dashboard header"
       },
@@ -52,6 +52,27 @@
           "relationships": "Activities",
           "contacts": "Contacts",
           "integrations": "Integrations"
+        },
+        "inactive": "Inactive",
+        "close": "Close navigation",
+        "toggle": "Toggle navigation",
+        "groups": {
+          "sales": "Sales",
+          "operations": "Operations",
+          "insights": "Insights",
+          "settings": "Settings",
+          "other": "Other modules"
+        },
+        "items": {
+          "opportunities": "Opportunities",
+          "customers": "Customers",
+          "orders": "Orders",
+          "invoices": "Invoices",
+          "tasks": "Tasks",
+          "employees": "Employees",
+          "products": "Products and stock",
+          "statistics": "Statistics",
+          "tags": "Tags"
         }
       },
       "sidebar": {
@@ -64,7 +85,7 @@
         "unavailable": "Tenant choices are temporarily unavailable. Reload the page to try again."
       },
       "unavailable": "The authenticated Shell is temporarily unavailable. Reload the page to try again.",
-      "workspace": "Property management",
+      "workspace": "Sales and operations",
       "breadcrumb": {
         "label": "Breadcrumb",
         "home": "Workspace home"
@@ -165,7 +186,8 @@
       "submit": "Search",
       "title": "Search results",
       "unavailable": "Search is temporarily unavailable. Try again.",
-      "clear": "Clear search"
+      "clear": "Clear search",
+      "placeholder": "Search customers, invoices, tasks…"
     },
     "resource": {
       "forbidden": "You do not have permission to view this resource.",

@@ -1,17 +1,20 @@
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Icon } from '@techsio/ui-kit/atoms/icon';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { Link } from '@techsio/ui-kit/atoms/link';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { Icon } from '@techsio/ui-kit/atoms/icon';
+import type { IconType } from '@techsio/ui-kit/atoms/icon';
+import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
+import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import { useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
 
@@ -65,24 +68,6 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
 }
 
-interface DashboardTenantSelectorProps {
-  readonly currentTenantId: string;
-  readonly onTenantChange: (tenantId: string) => void;
-  readonly tenantChoices: readonly DashboardTenantItem[];
-  readonly tenantState: AuthenticatedDashboardLayoutProps['tenantState'];
-  readonly tenantSwitchFailed: boolean;
-  readonly tenantSwitchPending: boolean;
-}
-
-interface DashboardLegalEntitySelectorProps {
-  readonly currentLegalEntityId: string | undefined;
-  readonly legalEntityChoices: readonly DashboardLegalEntityItem[];
-  readonly legalEntityState: AuthenticatedDashboardLayoutProps['legalEntityState'];
-  readonly legalEntitySwitchFailed: boolean;
-  readonly legalEntitySwitchPending: boolean;
-  readonly onLegalEntityChange: (legalEntityId: string) => void;
-}
-
 interface DashboardSelectorProps {
   readonly ariaLabel?: string;
   readonly currentValue: string | undefined;
@@ -101,31 +86,6 @@ interface DashboardSearchProps {
   readonly onSearch: (query: string) => void;
   readonly onValueChange: (value: string) => void;
   readonly value: string;
-}
-
-interface DashboardModuleNavigationItemProps {
-  readonly currentEntrypointKey: string | undefined;
-  readonly currentModuleId: string | undefined;
-  readonly module: DashboardNavigationItem;
-}
-
-interface DashboardDeploymentNavigationItemProps {
-  readonly deployment: ShellUnavailableDeployment;
-}
-
-interface DashboardNavigationProps {
-  readonly currentEntrypointKey: string | undefined;
-  readonly currentModuleId: string | undefined;
-  readonly homeCurrent: boolean | undefined;
-  readonly navigation: readonly DashboardNavigationItem[];
-  readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
-}
-
-interface DashboardHeaderProps extends DashboardSearchProps {
-  readonly identity: DashboardAccount;
-  readonly logoutPending: boolean;
-  readonly onLogout: () => void;
-  readonly title: string | undefined;
 }
 
 const propertyModuleId = 'siampark.property';
@@ -195,6 +155,295 @@ const siamparkNavigationPresentation = [
   },
 ] as const;
 
+/** Siampark-only verticals stay installed but never appear in the sales demo navigation. */
+const hiddenNavigationModuleIds: ReadonlySet<string> = new Set([
+  propertyModuleId,
+  'siampark.occupancy',
+  'siampark.agreements',
+  'siampark.relationships',
+]);
+
+interface DemoNavigationItemPresentation {
+  /** Page entrypoint keys that mark this destination as current. */
+  readonly entrypoints: readonly string[];
+  /** Module-contributed hrefs this destination accepts, most specific first. */
+  readonly hrefs: readonly string[];
+  readonly icon: IconType;
+  readonly key: string;
+  readonly moduleId: string;
+}
+
+interface DemoNavigationGroupPresentation {
+  readonly icon: IconType;
+  readonly items: readonly DemoNavigationItemPresentation[];
+  readonly key: string;
+}
+
+/**
+ * Sales demo navigation. Destinations still come from module-contributed entries: an item links only when its
+ * module publishes an enabled entry with one of the accepted hrefs (or, for single-page modules, any entry).
+ */
+const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
+  {
+    icon: 'icon-[mdi--handshake-outline]',
+    items: [
+      {
+        entrypoints: ['demo.sales-pipeline.page.records', 'demo.sales-pipeline.page.opportunities'],
+        hrefs: ['/prodej/prilezitosti'],
+        icon: 'icon-[mdi--target-account]',
+        key: 'opportunities',
+        moduleId: 'demo.sales-pipeline',
+      },
+      {
+        entrypoints: ['party.registry.page.customers', 'party.registry.page.contacts'],
+        hrefs: ['/prodej/zakaznici', '/zakaznici', '/customers', '/contacts'],
+        icon: 'icon-[mdi--domain]',
+        key: 'customers',
+        moduleId: 'party.registry',
+      },
+      {
+        entrypoints: ['demo.merchandise.page.orders'],
+        hrefs: ['/prodej/objednavky'],
+        icon: 'icon-[mdi--cart-outline]',
+        key: 'orders',
+        moduleId: 'demo.merchandise',
+      },
+      {
+        entrypoints: ['siampark.billing-finance.page.records'],
+        hrefs: ['/siampark/finance', '/prodej/faktury'],
+        icon: 'icon-[mdi--receipt-text-outline]',
+        key: 'invoices',
+        moduleId: 'siampark.billing-finance',
+      },
+    ],
+    key: 'sales',
+  },
+  {
+    icon: 'icon-[mdi--cog-transfer-outline]',
+    items: [
+      {
+        entrypoints: ['siampark.work.page.records'],
+        hrefs: ['/siampark/work', '/provoz/ukoly'],
+        icon: 'icon-[mdi--clipboard-check-outline]',
+        key: 'tasks',
+        moduleId: 'siampark.work',
+      },
+      {
+        entrypoints: ['demo.workforce.page.records', 'demo.workforce.page.employees'],
+        hrefs: ['/prodej/zamestnanci', '/provoz/zamestnanci'],
+        icon: 'icon-[mdi--badge-account-horizontal-outline]',
+        key: 'employees',
+        moduleId: 'demo.workforce',
+      },
+      {
+        entrypoints: ['demo.merchandise.page.products', 'demo.merchandise.page.records'],
+        hrefs: ['/provoz/produkty'],
+        icon: 'icon-[mdi--package-variant-closed]',
+        key: 'products',
+        moduleId: 'demo.merchandise',
+      },
+    ],
+    key: 'operations',
+  },
+  {
+    icon: 'icon-[mdi--chart-box-outline]',
+    items: [
+      {
+        entrypoints: ['demo.sales-insights.page.records', 'demo.sales-insights.page.statistics'],
+        hrefs: ['/prehledy/statistiky', '/statistiky'],
+        icon: 'icon-[mdi--chart-line]',
+        key: 'statistics',
+        moduleId: 'demo.sales-insights',
+      },
+    ],
+    key: 'insights',
+  },
+  {
+    icon: 'icon-[mdi--tune-variant]',
+    items: [
+      {
+        entrypoints: ['demo.tagging.page.records', 'demo.tagging.page.tags'],
+        hrefs: ['/nastaveni/stitky'],
+        icon: 'icon-[mdi--tag-multiple-outline]',
+        key: 'tags',
+        moduleId: 'demo.tagging',
+      },
+    ],
+    key: 'settings',
+  },
+];
+
+interface ShellNavigationLink {
+  readonly current: boolean;
+  readonly enabled: boolean;
+  readonly href: string | null;
+  readonly icon: IconType;
+  /** No module publishes this destination yet (not installed, inactive or not permitted). */
+  readonly inactive: boolean;
+  readonly key: string;
+  readonly label: string;
+  /** Typed reason text when the destination cannot be opened. */
+  readonly notice: string | null;
+  readonly state: DashboardNavigationItem['state'];
+}
+
+interface ShellNavigationGroup {
+  readonly icon: IconType;
+  readonly key: string;
+  readonly label: string;
+  readonly links: readonly ShellNavigationLink[];
+}
+
+interface ShellNavigationModel {
+  readonly current: { readonly group: ShellNavigationGroup; readonly link: ShellNavigationLink } | undefined;
+  readonly groups: readonly ShellNavigationGroup[];
+  readonly home: ShellNavigationLink;
+}
+
+type Translate = (key: string) => string;
+
+/** LinkButton always forwards `href`; the localized router link derives it from `to`, so drop the empty one. */
+const ShellRouteLink = ({
+  href: _unusedHref,
+  ...props
+}: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => <LocalizedLink {...props} />;
+
+const presentationOrder = (entry: DashboardNavigationItem) => {
+  const index = siamparkNavigationPresentation.findIndex(
+    (item) => item.moduleId === entry.moduleId && item.href === entry.href,
+  );
+  return index === -1 ? siamparkNavigationPresentation.length : index;
+};
+
+const entryNotice = (entry: DashboardNavigationItem | undefined, t: Translate): string | null => {
+  if (entry === undefined) {
+    return t('shell.dashboard.navigation.inactive');
+  }
+  return entry.unavailable ? t('shell.modules.unavailable') : null;
+};
+
+const buildShellNavigation = (
+  props: Pick<
+    AuthenticatedDashboardLayoutProps,
+    'currentEntrypointKey' | 'currentModuleId' | 'homeCurrent' | 'navigation' | 'unavailableDeployments'
+  >,
+  t: Translate,
+): ShellNavigationModel => {
+  const { currentEntrypointKey, currentModuleId, homeCurrent = true } = props;
+  const visible = props.navigation.filter((entry) => !hiddenNavigationModuleIds.has(entry.moduleId));
+  const demoItems = demoNavigationPresentation.flatMap((group) => group.items);
+  const claimed = new Map<DemoNavigationItemPresentation, DashboardNavigationItem>();
+  const isClaimed = (entry: DashboardNavigationItem) => [...claimed.values()].includes(entry);
+  const soleModuleItem = (item: DemoNavigationItemPresentation) =>
+    demoItems.filter((candidate) => candidate.moduleId === item.moduleId).length === 1;
+
+  for (const item of demoItems) {
+    const byHref = item.hrefs
+      .map((href) => visible.find((entry) => entry.href === href && !isClaimed(entry)))
+      .find((entry) => entry !== undefined);
+    if (byHref !== undefined) {
+      claimed.set(item, byHref);
+    }
+  }
+  for (const item of demoItems) {
+    if (!claimed.has(item) && soleModuleItem(item)) {
+      const moduleEntries = visible.filter((entry) => entry.moduleId === item.moduleId && !isClaimed(entry));
+      const byModule = moduleEntries.find((entry) => entry.enabled) ?? moduleEntries[0];
+      if (byModule !== undefined) {
+        claimed.set(item, byModule);
+      }
+    }
+  }
+
+  const demoGroups = demoNavigationPresentation.map((group) => ({
+    icon: group.icon,
+    key: group.key,
+    label: t(`shell.dashboard.navigation.groups.${group.key}`),
+    links: group.items.map((item): ShellNavigationLink => {
+      const entry = claimed.get(item);
+      const entrypointCurrent = currentEntrypointKey !== undefined && item.entrypoints.includes(currentEntrypointKey);
+      const moduleCurrent =
+        entry !== undefined &&
+        soleModuleItem(item) &&
+        currentModuleId !== undefined &&
+        currentModuleId === entry.moduleId;
+      return {
+        current: entrypointCurrent || moduleCurrent,
+        enabled: entry !== undefined && entry.enabled && entry.href !== undefined,
+        href: entry?.href ?? null,
+        icon: item.icon,
+        inactive: entry === undefined,
+        key: item.key,
+        label: t(`shell.dashboard.navigation.items.${item.key}`),
+        notice: entryNotice(entry, t),
+        state: entry?.state ?? 'active',
+      };
+    }),
+  }));
+
+  const otherLinks = visible
+    .filter((entry) => !isClaimed(entry))
+    .toSorted((left, right) => presentationOrder(left) - presentationOrder(right))
+    .map((entry): ShellNavigationLink => {
+      const presentation = siamparkNavigationPresentation.find(
+        (item) => item.moduleId === entry.moduleId && item.href === entry.href,
+      );
+      const current =
+        currentEntrypointKey !== undefined && presentation !== undefined
+          ? presentation.entrypoint === currentEntrypointKey
+          : currentModuleId === entry.moduleId;
+      return {
+        current,
+        enabled: entry.enabled && entry.href !== undefined,
+        href: entry.href ?? null,
+        icon: presentation?.icon ?? 'icon-[mdi--view-grid-outline]',
+        inactive: false,
+        key: entry.href ?? entry.moduleId,
+        label:
+          presentation === undefined ? entry.label : t(`shell.dashboard.navigation.siampark.${presentation.label}`),
+        notice: entryNotice(entry, t),
+        state: entry.state,
+      };
+    });
+  const deploymentLinks = props.unavailableDeployments.map((deployment): ShellNavigationLink => ({
+    current: false,
+    enabled: false,
+    href: null,
+    icon: 'icon-[mdi--cloud-off-outline]',
+    inactive: false,
+    key: `deployment:${deployment.appId}`,
+    label: deployment.appId,
+    notice: t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`),
+    state: 'active',
+  }));
+  const otherGroup: ShellNavigationGroup = {
+    icon: 'icon-[mdi--view-grid-outline]',
+    key: 'other',
+    label: t('shell.dashboard.navigation.groups.other'),
+    links: [...otherLinks, ...deploymentLinks],
+  };
+  const groups = otherGroup.links.length === 0 ? demoGroups : [...demoGroups, otherGroup];
+  const currentGroup = groups.find((group) => group.links.some((link) => link.current));
+  const currentLink = currentGroup?.links.find((link) => link.current);
+
+  return {
+    current:
+      currentGroup === undefined || currentLink === undefined ? undefined : { group: currentGroup, link: currentLink },
+    groups,
+    home: {
+      current: homeCurrent && currentModuleId === undefined,
+      enabled: true,
+      href: '/',
+      icon: 'icon-[mdi--home-outline]',
+      inactive: false,
+      key: 'home',
+      label: t('shell.dashboard.navigation.home'),
+      notice: null,
+      state: 'active',
+    },
+  };
+};
+
 const selectorStatus = (failed: boolean, unavailable: boolean): 'default' | 'error' | 'warning' => {
   if (failed) {
     return 'error';
@@ -248,7 +497,7 @@ const DashboardSelector = ({
     validateStatus={status}
     value={currentValue === undefined ? [] : [currentValue]}
   >
-    <Select.Label className="shell:text-xs shell:text-(--color-fg-secondary)">{label}</Select.Label>
+    <Select.Label className="text-fg-secondary text-xs">{label}</Select.Label>
     <Select.Control>
       <Select.Trigger aria-label={ariaLabel}>
         <Select.ValueText placeholder={placeholder} />
@@ -272,78 +521,85 @@ const DashboardSelector = ({
   </Select>
 );
 
-const DashboardTenantSelector = ({
-  currentTenantId,
-  onTenantChange,
-  tenantChoices,
-  tenantState,
-  tenantSwitchFailed,
-  tenantSwitchPending,
-}: DashboardTenantSelectorProps) => {
+type DashboardContextSelectorsProps = Pick<
+  AuthenticatedDashboardLayoutProps,
+  | 'currentLegalEntityId'
+  | 'currentTenantId'
+  | 'legalEntityChoices'
+  | 'legalEntityState'
+  | 'legalEntitySwitchFailed'
+  | 'legalEntitySwitchPending'
+  | 'onLegalEntityChange'
+  | 'onTenantChange'
+  | 'tenantChoices'
+  | 'tenantState'
+  | 'tenantSwitchFailed'
+  | 'tenantSwitchPending'
+>;
+
+/** Tenant and legal-entity switchers; the shell keeps them at the foot of the navigation. */
+const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => {
   const { t } = useModernI18n();
-  const tenantItems = tenantChoices.map(({ name, tenantId }) => ({
+  const tenantItems = props.tenantChoices.map(({ name, tenantId }) => ({
     displayValue: name,
     label: name,
     value: tenantId,
   }));
-  const tenantUnavailable = tenantState === 'unavailable';
-  const accessibleLabel = t('shell.dashboard.tenant.accessibleLabel');
-  const unavailableText = t('shell.dashboard.tenant.unavailable');
-
-  return (
-    <DashboardSelector
-      ariaLabel={accessibleLabel}
-      currentValue={currentTenantId}
-      disabled={tenantUnavailable || tenantSwitchPending || !tenantItems.some((item) => item.value !== currentTenantId)}
-      items={tenantItems}
-      label={accessibleLabel}
-      name="tenant"
-      onChange={onTenantChange}
-      placeholder={unavailableText}
-      status={selectorStatus(tenantSwitchFailed, tenantUnavailable)}
-      statusId="tenant-switch-status"
-      statusText={selectorStatusText(tenantSwitchPending, tenantSwitchFailed, tenantUnavailable, {
-        failed: t('shell.dashboard.tenant.failed'),
-        pending: t('shell.dashboard.tenant.pending'),
-        unavailable: unavailableText,
-      })}
-    />
-  );
-};
-
-const DashboardLegalEntitySelector = ({
-  currentLegalEntityId,
-  legalEntityChoices,
-  legalEntityState,
-  legalEntitySwitchFailed,
-  legalEntitySwitchPending,
-  onLegalEntityChange,
-}: DashboardLegalEntitySelectorProps) => {
-  const { t } = useModernI18n();
-  const legalEntityItems = legalEntityChoices.map(({ legalEntityId, legalName }) => ({
+  const tenantUnavailable = props.tenantState === 'unavailable';
+  const tenantLabel = t('shell.dashboard.tenant.accessibleLabel');
+  const tenantUnavailableText = t('shell.dashboard.tenant.unavailable');
+  const legalEntityItems = props.legalEntityChoices.map(({ legalEntityId, legalName }) => ({
     displayValue: legalName,
     label: legalName,
     value: legalEntityId,
   }));
-  const legalEntityUnavailable = legalEntityState === 'unavailable';
+  const legalEntityUnavailable = props.legalEntityState === 'unavailable';
 
   return (
-    <DashboardSelector
-      currentValue={currentLegalEntityId}
-      disabled={legalEntityUnavailable || legalEntitySwitchPending}
-      items={legalEntityItems}
-      label={t('shell.dashboard.legalEntity.accessibleLabel')}
-      name="legalEntity"
-      onChange={onLegalEntityChange}
-      placeholder={t('shell.dashboard.legalEntity.placeholder')}
-      status={selectorStatus(legalEntitySwitchFailed, legalEntityUnavailable)}
-      statusId="legal-entity-switch-status"
-      statusText={selectorStatusText(legalEntitySwitchPending, legalEntitySwitchFailed, legalEntityUnavailable, {
-        failed: t('shell.dashboard.legalEntity.failed'),
-        pending: t('shell.dashboard.legalEntity.pending'),
-        unavailable: t('shell.dashboard.legalEntity.unavailable'),
-      })}
-    />
+    <div className="grid gap-150">
+      <DashboardSelector
+        ariaLabel={tenantLabel}
+        currentValue={props.currentTenantId}
+        disabled={
+          tenantUnavailable ||
+          props.tenantSwitchPending ||
+          !tenantItems.some((item) => item.value !== props.currentTenantId)
+        }
+        items={tenantItems}
+        label={tenantLabel}
+        name="tenant"
+        onChange={props.onTenantChange}
+        placeholder={tenantUnavailableText}
+        status={selectorStatus(props.tenantSwitchFailed, tenantUnavailable)}
+        statusId="tenant-switch-status"
+        statusText={selectorStatusText(props.tenantSwitchPending, props.tenantSwitchFailed, tenantUnavailable, {
+          failed: t('shell.dashboard.tenant.failed'),
+          pending: t('shell.dashboard.tenant.pending'),
+          unavailable: tenantUnavailableText,
+        })}
+      />
+      <DashboardSelector
+        currentValue={props.currentLegalEntityId}
+        disabled={legalEntityUnavailable || props.legalEntitySwitchPending}
+        items={legalEntityItems}
+        label={t('shell.dashboard.legalEntity.accessibleLabel')}
+        name="legalEntity"
+        onChange={props.onLegalEntityChange}
+        placeholder={t('shell.dashboard.legalEntity.placeholder')}
+        status={selectorStatus(props.legalEntitySwitchFailed, legalEntityUnavailable)}
+        statusId="legal-entity-switch-status"
+        statusText={selectorStatusText(
+          props.legalEntitySwitchPending,
+          props.legalEntitySwitchFailed,
+          legalEntityUnavailable,
+          {
+            failed: t('shell.dashboard.legalEntity.failed'),
+            pending: t('shell.dashboard.legalEntity.pending'),
+            unavailable: t('shell.dashboard.legalEntity.unavailable'),
+          },
+        )}
+      />
+    </div>
   );
 };
 
@@ -353,7 +609,7 @@ const DashboardSearch = ({ onSearch, onValueChange, value }: DashboardSearchProp
 
   return (
     <SearchForm
-      className="shell:w-full shell:max-w-xl"
+      className="w-full"
       onSubmit={(event) => {
         event.preventDefault();
         const query = value.trim();
@@ -365,207 +621,236 @@ const DashboardSearch = ({ onSearch, onValueChange, value }: DashboardSearchProp
       size="sm"
       value={value}
     >
-      <SearchForm.Label className="shell:sr-only">{searchLabel}</SearchForm.Label>
+      <SearchForm.Label className="sr-only">{searchLabel}</SearchForm.Label>
       <SearchForm.Control>
-        <SearchForm.Input aria-label={searchLabel} placeholder={searchLabel} />
+        <SearchForm.Input aria-label={searchLabel} placeholder={t('shell.search.placeholder')} />
         <SearchForm.ClearButton aria-label={t('shell.search.clear')} />
-        <SearchForm.Button showSearchIcon variant="warning">
-          {t('shell.search.submit')}
+        <SearchForm.Button aria-label={t('shell.search.submit')} showSearchIcon theme="borderless" variant="primary">
+          <span className="hidden sm:inline">{t('shell.search.submit')}</span>
         </SearchForm.Button>
       </SearchForm.Control>
     </SearchForm>
   );
 };
 
-const DashboardModuleNavigationItem = ({
-  currentEntrypointKey,
-  currentModuleId,
-  module,
-}: DashboardModuleNavigationItemProps) => {
-  const { t } = useModernI18n();
-
-  const presentation = siamparkNavigationPresentation.find(
-    (item) => item.moduleId === module.moduleId && item.href === module.href,
-  );
-  const current =
-    currentEntrypointKey !== undefined && presentation !== undefined
-      ? presentation.entrypoint === currentEntrypointKey
-      : currentModuleId === module.moduleId;
-  const label =
-    presentation === undefined ? module.label : t(`shell.dashboard.navigation.siampark.${presentation.label}`);
-  return (
-    <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2">
-      {module.enabled && module.href !== undefined ? (
-        <Link
-          aria-current={current ? 'page' : undefined}
-          as={LocalizedLink}
-          className="shell:flex shell:w-full shell:items-center shell:gap-3 shell:rounded-md shell:px-3 shell:py-2 shell:text-sm shell:font-medium shell:no-underline shell:hover:bg-(--color-overlay) shell:aria-[current=page]:bg-(--color-warning) shell:aria-[current=page]:text-(--color-page-fg)"
-          to={module.href}
-        >
-          <Icon icon={presentation?.icon ?? 'icon-[mdi--view-grid-outline]'} size="sm" />
-          <span>{label}</span>
-        </Link>
-      ) : (
-        <span className="shell:px-3 shell:py-2 shell:text-sm shell:text-(--color-fg-secondary)">{label}</span>
-      )}
-      {module.state === 'read_only' ? (
-        <Badge size="sm" variant="warning">
-          {t('shell.modules.state.readOnly')}
-        </Badge>
-      ) : null}
-      {module.state === 'deprecated' ? (
-        <Badge size="sm" variant="warning">
-          {t('shell.modules.state.deprecated')}
-        </Badge>
-      ) : null}
-      {module.unavailable ? (
-        <StatusText showIcon size="sm" status="warning">
-          {t('shell.modules.unavailable')}
-        </StatusText>
-      ) : null}
-    </li>
-  );
-};
-
-const DashboardDeploymentNavigationItem = ({ deployment }: DashboardDeploymentNavigationItemProps) => {
-  const { t } = useModernI18n();
-
-  return (
-    <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2">
-      <span>{deployment.appId}</span>
-      <StatusText showIcon size="sm" status="warning">
-        {t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`)}
-      </StatusText>
-    </li>
-  );
-};
-
-const DashboardNavigation = ({
-  currentEntrypointKey,
-  currentModuleId,
-  homeCurrent = true,
-  navigation,
-  unavailableDeployments,
-}: DashboardNavigationProps) => {
-  const { t } = useModernI18n();
-
-  return (
-    <nav
-      aria-label={t('shell.dashboard.navigation.label')}
-      className="shell:min-h-0 shell:flex-1 shell:overflow-y-auto"
-    >
-      <ul className="shell:grid shell:grid-cols-2 shell:gap-1 shell:md:flex shell:md:flex-col">
-        <li>
-          <Link
-            aria-current={homeCurrent && currentModuleId === undefined ? 'page' : undefined}
-            as={LocalizedLink}
-            className="shell:flex shell:items-center shell:gap-3 shell:rounded-md shell:px-3 shell:py-2 shell:text-sm shell:font-medium shell:no-underline shell:hover:bg-(--color-overlay) shell:aria-[current=page]:bg-(--color-warning) shell:aria-[current=page]:text-(--color-page-fg)"
-            to="/"
-          >
-            <Icon icon="icon-[mdi--home-outline]" size="sm" />
-            {t('shell.dashboard.navigation.home')}
-          </Link>
-        </li>
-        {navigation
-          .toSorted((left, right) => {
-            const leftOrder = siamparkNavigationPresentation.findIndex(
-              (item) => item.moduleId === left.moduleId && item.href === left.href,
-            );
-            const rightOrder = siamparkNavigationPresentation.findIndex(
-              (item) => item.moduleId === right.moduleId && item.href === right.href,
-            );
-            return (
-              (leftOrder === -1 ? siamparkNavigationPresentation.length : leftOrder) -
-              (rightOrder === -1 ? siamparkNavigationPresentation.length : rightOrder)
-            );
-          })
-          .map((module) => (
-            <DashboardModuleNavigationItem
-              currentEntrypointKey={currentEntrypointKey}
-              currentModuleId={currentModuleId}
-              key={module.href ?? module.moduleId}
-              module={module}
-            />
-          ))}
-        {unavailableDeployments.map((deployment) => (
-          <DashboardDeploymentNavigationItem deployment={deployment} key={deployment.appId} />
-        ))}
-      </ul>
-    </nav>
-  );
-};
-
-const DashboardHeader = ({
+const DashboardAccountMenu = ({
   identity,
   logoutPending,
   onLogout,
-  onSearch,
-  onValueChange,
-  title,
-  value,
-}: DashboardHeaderProps) => {
+}: Pick<AuthenticatedDashboardLayoutProps, 'identity' | 'logoutPending' | 'onLogout'>) => {
   const { t } = useModernI18n();
   const accountItems: MenuItem[] = [
     {
       disabled: logoutPending,
+      icon: 'icon-[mdi--logout]',
       label: t(logoutPending ? 'shell.auth.logout.pending' : 'shell.auth.logout.action'),
       type: 'action',
       value: 'logout',
     },
   ];
-
   return (
-    <Header
-      aria-label={t('shell.dashboard.header.label')}
-      className="shell:sticky shell:top-0 shell:z-20 shell:flex-wrap shell:gap-3 shell:border-b shell:border-(--color-border-muted) shell:bg-(--color-surface) shell:px-4 shell:py-2 shell:md:px-6"
+    <Menu
+      aria-label={t('shell.dashboard.account.label')}
+      customTrigger={
+        <Button
+          aria-label={identity.displayName}
+          className="hover:bg-overlay"
+          icon="icon-[mdi--account-circle-outline]"
+          size="sm"
+          theme="unstyled"
+          variant="secondary"
+        >
+          <span className="hidden md:inline">{identity.displayName}</span>
+        </Button>
+      }
+      items={accountItems}
+      onSelect={({ value: action }) => {
+        if (action === 'logout') {
+          onLogout();
+        }
+      }}
       size="sm"
-    >
-      <Header.Container
-        className="shell:min-w-0 shell:basis-full shell:gap-4 shell:md:basis-auto shell:md:flex-1"
-        position="start"
-      >
-        <DashboardSearch onSearch={onSearch} onValueChange={onValueChange} value={value} />
-      </Header.Container>
-      {title === undefined ? null : (
-        <Header.Container className="shell:min-w-0 shell:w-auto shell:flex-1" position="start">
-          <h1 className="shell:truncate shell:text-sm shell:font-semibold">{title}</h1>
-        </Header.Container>
-      )}
-      <Header.Container className="shell:w-auto shell:min-w-0 shell:shrink-0" position="end">
-        <Header.Actions>
-          <Header.ActionItem>
-            <Menu
-              aria-label={t('shell.dashboard.account.label')}
-              customTrigger={
-                <Button icon="icon-[mdi--account-circle-outline]" size="sm" theme="borderless" variant="secondary">
-                  {identity.displayName}
-                </Button>
-              }
-              items={accountItems}
-              onSelect={({ value: action }) => {
-                if (action === 'logout') {
-                  onLogout();
-                }
-              }}
-              size="sm"
-              triggerText={identity.displayName}
-            />
-          </Header.ActionItem>
-        </Header.Actions>
-      </Header.Container>
-    </Header>
+      triggerText={identity.displayName}
+    />
   );
 };
 
+/** Workspace identity: brand mark, product name and the workspace it serves. */
+const DashboardBrand = () => {
+  const { t } = useModernI18n();
+  return (
+    <span className="flex min-w-0 items-center gap-150">
+      <span className="flex size-icon-control-lg shrink-0 items-center justify-center rounded-md bg-primary text-fg-primary">
+        <Icon icon="icon-[mdi--hexagon-multiple-outline]" size="md" />
+      </span>
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate font-semibold text-sm">{t('shell.dashboard.brand')}</span>
+        <span className="truncate text-fg-secondary text-xs">{t('shell.dashboard.workspace')}</span>
+      </span>
+    </span>
+  );
+};
+
+/** Where am I: group and destination of the current page, shown in the top bar. */
+const DashboardTrail = ({ model }: { readonly model: ShellNavigationModel }) => {
+  const { t } = useModernI18n();
+  if (model.current === undefined) {
+    return null;
+  }
+  return (
+    <nav
+      aria-label={t('shell.dashboard.breadcrumb.label')}
+      className="hidden min-w-0 items-center gap-100 text-fg-secondary text-sm md:flex"
+    >
+      <span className="truncate">{model.current.group.label}</span>
+      <Icon icon="icon-[mdi--chevron-right]" size="sm" />
+      <span aria-current="page" className="truncate font-medium text-fg-primary">
+        {model.current.link.label}
+      </span>
+    </nav>
+  );
+};
+
+/** Navigation destination as a real link; unavailable destinations stay visible with their reason. */
+const DashboardNavigationLink = ({
+  collapsedSide,
+  link,
+}: {
+  /** Show a tooltip with the label when the icon rail is collapsed. */
+  readonly collapsedSide?: boolean;
+  readonly link: ShellNavigationLink;
+}) => {
+  const { t } = useModernI18n();
+  const badge =
+    link.state === 'read_only' || link.state === 'deprecated' ? (
+      <Badge size="sm" variant="warning">
+        {t(link.state === 'read_only' ? 'shell.modules.state.readOnly' : 'shell.modules.state.deprecated')}
+      </Badge>
+    ) : null;
+  const destination =
+    link.enabled && link.href !== null ? (
+      <LinkButton
+        aria-current={link.current ? 'page' : undefined}
+        as={ShellRouteLink}
+        block
+        className={link.current ? 'justify-start font-semibold' : 'justify-start hover:bg-overlay'}
+        icon={link.icon}
+        size="sm"
+        theme={link.current ? 'light' : 'unstyled'}
+        to={link.href}
+        variant={link.current ? 'primary' : 'secondary'}
+      >
+        <Sidebar.Label className="min-w-0 flex-1 truncate text-start">{link.label}</Sidebar.Label>
+      </LinkButton>
+    ) : (
+      <span className="flex h-form-control-sm items-center gap-button-sm p-button-sm text-button-sm text-fg-secondary">
+        <Icon icon={link.icon} size="sm" />
+        <Sidebar.Label className="min-w-0 flex-1 truncate">{link.label}</Sidebar.Label>
+        {link.inactive && link.notice !== null ? (
+          <Sidebar.Expanded>
+            <Badge size="sm" variant="outline">
+              {link.notice}
+            </Badge>
+          </Sidebar.Expanded>
+        ) : null}
+      </span>
+    );
+  const content =
+    badge === null && (link.notice === null || link.inactive) ? (
+      destination
+    ) : (
+      <div className="grid gap-50">
+        {destination}
+        <Sidebar.Expanded className="flex flex-wrap items-center gap-100 ps-150">
+          {badge}
+          {link.notice === null ? null : (
+            <StatusText showIcon size="sm" status="warning">
+              {link.notice}
+            </StatusText>
+          )}
+        </Sidebar.Expanded>
+      </div>
+    );
+  if (collapsedSide !== true) {
+    return content;
+  }
+  return (
+    <Sidebar.Context>
+      {(api) =>
+        !api.isDesktop || api.isExpanded('start') ? (
+          content
+        ) : (
+          <Tooltip content={link.label} placement="right">
+            {content}
+          </Tooltip>
+        )
+      }
+    </Sidebar.Context>
+  );
+};
+
+const navigationToggleKey = 'shell.dashboard.navigation.toggle';
+
+/** Grouped navigation panel: labelled groups on desktop, icon rail when collapsed, drawer below lg. */
+const GroupedSidebarPanel = ({
+  model,
+  selectors,
+}: {
+  readonly model: ShellNavigationModel;
+  readonly selectors: ReactNode;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <Sidebar.Panel aria-label={t('shell.dashboard.sidebar.label')} side="start">
+      <Sidebar.Content>
+        <div className="flex justify-end">
+          <Sidebar.CloseTrigger aria-label={t('shell.dashboard.navigation.close')} />
+        </div>
+        <nav aria-label={t('shell.dashboard.navigation.label')} className="grid gap-150">
+          <Sidebar.Menu>
+            <Sidebar.Item>
+              <DashboardNavigationLink collapsedSide link={model.home} />
+            </Sidebar.Item>
+          </Sidebar.Menu>
+          {model.groups.map((group) => (
+            <Sidebar.Group key={group.key}>
+              <Sidebar.Expanded>
+                <Sidebar.GroupLabel>{group.label}</Sidebar.GroupLabel>
+              </Sidebar.Expanded>
+              <Sidebar.GroupContent>
+                <Sidebar.Menu>
+                  {group.links.map((link) => (
+                    <Sidebar.Item key={link.key}>
+                      <DashboardNavigationLink collapsedSide link={link} />
+                    </Sidebar.Item>
+                  ))}
+                </Sidebar.Menu>
+              </Sidebar.GroupContent>
+            </Sidebar.Group>
+          ))}
+        </nav>
+      </Sidebar.Content>
+      <Sidebar.Footer>
+        <Sidebar.Expanded>{selectors}</Sidebar.Expanded>
+      </Sidebar.Footer>
+      <Sidebar.Rail aria-label={t(navigationToggleKey)} />
+    </Sidebar.Panel>
+  );
+};
+
+type SidebarOffsetStyle = CSSProperties & { '--spacing-sidebar-offset'?: string };
+const topBarOffsetStyle: SidebarOffsetStyle = { '--spacing-sidebar-offset': 'var(--spacing-700)' };
+
+/**
+ * Akros admin frame: a compact full-width top bar (brand, search, current trail, account) above a collapsible,
+ * grouped navigation Sidebar. Below the Sidebar breakpoint the same panel opens as a drawer from the top bar.
+ * Routed content renders in `<main>` with token spacing and no max width, so dense tables use the full column.
+ */
 export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayoutProps) => {
   const { t } = useModernI18n();
   const [searchValue, setSearchValue] = useState('');
   const { tenantSwitchFailed } = props;
-  const currentPresentation = siamparkNavigationPresentation.find(
-    (item) =>
-      item.entrypoint === props.currentEntrypointKey &&
-      props.navigation.some((entry) => entry.enabled && entry.moduleId === item.moduleId && entry.href === item.href),
-  );
+  const model = buildShellNavigation(props, t);
 
   useEffect(() => {
     if (tenantSwitchFailed) {
@@ -574,75 +859,74 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   }, [tenantSwitchFailed]);
 
   return (
-    <div className="shell:flex shell:min-h-screen shell:min-w-0 shell:flex-col shell:overflow-x-clip shell:scheme-light! shell:bg-(--color-surface) shell:text-(--color-page-fg) shell:md:flex-row">
+    <>
       {props.compositionRevision === undefined ? null : (
         <meta content={props.compositionRevision} name="ontos-composition-revision" />
       )}
-      <aside
-        aria-label={t('shell.dashboard.sidebar.label')}
-        className="shell:flex shell:w-full shell:shrink-0 shell:flex-col shell:gap-5 shell:border-b shell:border-(--color-border-muted) shell:bg-(--color-surface-subtle) shell:p-4 shell:md:sticky shell:md:top-0 shell:md:h-screen shell:md:w-64 shell:md:border-r shell:md:border-b-0"
+      <Sidebar
+        className="min-h-dvh flex-col overflow-x-clip bg-base text-fg-primary"
+        collapsible={{ start: 'icon' }}
+        defaultExpanded={['start']}
+        style={topBarOffsetStyle}
       >
-        <div className="shell:flex shell:items-center shell:gap-3 shell:py-1">
-          <span className="shell:flex shell:size-10 shell:shrink-0 shell:items-center shell:justify-center shell:rounded-lg shell:bg-(--color-overlay)">
-            <Icon icon="icon-[mdi--office-building-outline]" size="lg" />
-          </span>
-          <div className="shell:min-w-0">
-            <p className="shell:font-semibold">{t('shell.dashboard.brand')}</p>
-            <p className="shell:text-xs shell:text-(--color-fg-secondary)">{t('shell.dashboard.workspace')}</p>
-          </div>
-        </div>
-        <DashboardNavigation
-          currentEntrypointKey={props.currentEntrypointKey}
-          currentModuleId={props.currentModuleId}
-          homeCurrent={props.homeCurrent}
-          navigation={props.navigation}
-          unavailableDeployments={props.unavailableDeployments}
-        />
-        <div className="shell:grid shell:gap-4 shell:border-t shell:border-(--color-border-muted) shell:pt-4">
-          <DashboardTenantSelector
-            currentTenantId={props.currentTenantId}
-            onTenantChange={props.onTenantChange}
-            tenantChoices={props.tenantChoices}
-            tenantState={props.tenantState}
-            tenantSwitchFailed={props.tenantSwitchFailed}
-            tenantSwitchPending={props.tenantSwitchPending}
+        <Header
+          aria-label={t('shell.dashboard.header.label')}
+          className="sticky top-0 z-20 w-full max-w-none gap-200 border-border-primary border-b bg-base px-200"
+          size="sm"
+          style={{ height: 'var(--spacing-700)' }}
+        >
+          <Header.Container className="flex w-auto min-w-0 flex-1 flex-nowrap items-center gap-200" position="start">
+            <Sidebar.Trigger aria-label={t(navigationToggleKey)} side="start" tooltip={t(navigationToggleKey)} />
+            <LocalizedLink className="hidden no-underline md:flex" to="/">
+              <DashboardBrand />
+            </LocalizedLink>
+            <div className="min-w-0 max-w-lg flex-1">
+              <DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />
+            </div>
+            <DashboardTrail model={model} />
+          </Header.Container>
+          <Header.Container className="ms-auto w-auto shrink-0" position="end">
+            <Header.Actions>
+              <Header.ActionItem>
+                <DashboardAccountMenu
+                  identity={props.identity}
+                  logoutPending={props.logoutPending}
+                  onLogout={props.onLogout}
+                />
+              </Header.ActionItem>
+            </Header.Actions>
+          </Header.Container>
+        </Header>
+        <div className="flex min-h-0 flex-1">
+          <GroupedSidebarPanel
+            model={model}
+            selectors={
+              <DashboardContextSelectors
+                currentTenantId={props.currentTenantId}
+                legalEntityChoices={props.legalEntityChoices}
+                legalEntityState={props.legalEntityState}
+                legalEntitySwitchFailed={props.legalEntitySwitchFailed}
+                legalEntitySwitchPending={props.legalEntitySwitchPending}
+                onLegalEntityChange={props.onLegalEntityChange}
+                onTenantChange={props.onTenantChange}
+                tenantChoices={props.tenantChoices}
+                tenantState={props.tenantState}
+                tenantSwitchFailed={props.tenantSwitchFailed}
+                tenantSwitchPending={props.tenantSwitchPending}
+                {...(props.currentLegalEntityId === undefined
+                  ? {}
+                  : { currentLegalEntityId: props.currentLegalEntityId })}
+              />
+            }
           />
-          <DashboardLegalEntitySelector
-            currentLegalEntityId={props.currentLegalEntityId}
-            legalEntityChoices={props.legalEntityChoices}
-            legalEntityState={props.legalEntityState}
-            legalEntitySwitchFailed={props.legalEntitySwitchFailed}
-            legalEntitySwitchPending={props.legalEntitySwitchPending}
-            onLegalEntityChange={props.onLegalEntityChange}
-          />
+          <Sidebar.Inset className="flex min-w-0 flex-1 flex-col">
+            <div className="flex min-w-0 flex-1 flex-col gap-250 p-250">
+              {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}
+              {props.children}
+            </div>
+          </Sidebar.Inset>
         </div>
-      </aside>
-      <main className="shell:flex shell:min-w-0 shell:flex-1 shell:flex-col">
-        <DashboardHeader
-          identity={props.identity}
-          logoutPending={props.logoutPending}
-          onLogout={props.onLogout}
-          onSearch={props.onSearch}
-          onValueChange={setSearchValue}
-          title={props.title}
-          value={searchValue}
-        />
-        <div className="shell:min-w-0 shell:flex-1 shell:space-y-5 shell:p-4 shell:md:p-6">
-          {currentPresentation === undefined ? null : (
-            <nav
-              aria-label={t('shell.dashboard.breadcrumb.label')}
-              className="shell:flex shell:items-center shell:gap-2 shell:rounded-md shell:bg-(--color-surface-subtle) shell:px-3 shell:py-2 shell:text-xs shell:text-(--color-fg-secondary)"
-            >
-              <Link aria-label={t('shell.dashboard.breadcrumb.home')} as={LocalizedLink} to="/">
-                {t('shell.dashboard.navigation.home')}
-              </Link>
-              <Icon icon="icon-[mdi--chevron-right]" size="sm" />
-              <span aria-current="page">{t(`shell.dashboard.navigation.siampark.${currentPresentation.label}`)}</span>
-            </nav>
-          )}
-          {props.children}
-        </div>
-      </main>
-    </div>
+      </Sidebar>
+    </>
   );
 };
