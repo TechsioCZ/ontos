@@ -22,8 +22,15 @@ import {
 } from '../../src/db/schema.ts';
 import type { PartyTransaction } from '../../src/db/types.ts';
 import { lockAndResolveClaims, lockTenantIdentityWrites } from '../../src/services/party-identifier-claim.service.ts';
-import { createOrMatchParty } from '../../src/services/party-matching-persistence.service.ts';
-import { addOfficialIdentifierRecord } from '../../src/services/party-official-identifier-persistence.service.ts';
+import {
+  createOrMatchParty,
+  matchParty,
+  resolveDuplicateCandidateMatch,
+} from '../../src/services/party-matching-persistence.service.ts';
+import {
+  acceptMatchingOfficialIdentifierRecord,
+  addOfficialIdentifierRecord,
+} from '../../src/services/party-official-identifier-persistence.service.ts';
 import { openBoundaryDatabases } from '../support/database-boundary.ts';
 
 const tenantId = 'bc100000-0000-4000-8000-000000000001';
@@ -106,6 +113,115 @@ it.live('real PostgreSQL identity locks serialize concurrent exact creates and r
       .from(partyFactAssertions)
       .where(eq(partyFactAssertions.tenantId, tenantId));
     expect(nameAssertions.some((row) => row.factKind === 'DISPLAY_NAME')).toBe(false);
+    const weakCandidate = {
+      ...candidate,
+      officialIdentifiers: candidate.officialIdentifiers.map((identifier) => ({
+        ...identifier,
+        verification: 'UNVERIFIED' as const,
+      })),
+    };
+    const review = yield* scoped((transaction) =>
+      matchParty(transaction, {
+        actionInvocationId: 'bc300000-0000-4000-8000-000000000010',
+        candidate: weakCandidate,
+        tenantId,
+      }),
+    );
+    if (review.caseRef === null) {
+      return yield* Effect.die(new Error('Weak evidence did not open a review case'));
+    }
+    const priorId = review.caseRef.resourceId;
+    yield* scoped((transaction) =>
+      resolveDuplicateCandidateMatch(transaction, {
+        actionInvocationId: 'bc300000-0000-4000-8000-000000000011',
+        candidateCaseId: priorId,
+        expectedRevision: 1,
+        principalId,
+        reason: 'Reviewed the external subject',
+        selectedPartyId: partyId,
+        selectedPartyTenantId: tenantId,
+        tenantId,
+      }),
+    );
+    const changed = yield* scoped((transaction) =>
+      matchParty(transaction, {
+        actionInvocationId: 'bc300000-0000-4000-8000-000000000012',
+        candidate: { ...weakCandidate, evidenceRefs: ['evidence-artifact:identity-concurrency:new'] },
+        priorCandidateCaseId: priorId,
+        priorCaseTenantId: tenantId,
+        tenantId,
+      }),
+    );
+    expect(changed.outcome).toBe('AMBIGUOUS');
+    if (changed.caseRef === null) {
+      return yield* Effect.die(new Error('Changed evidence did not open a successor'));
+    }
+    const [successor] = yield* admin
+      .select()
+      .from(duplicateCandidateCases)
+      .where(eq(duplicateCandidateCases.candidateCaseId, changed.caseRef.resourceId));
+    expect(successor?.priorCandidateCaseId).toBe(priorId);
+    const [prior] = yield* admin
+      .select()
+      .from(duplicateCandidateCases)
+      .where(eq(duplicateCandidateCases.candidateCaseId, priorId));
+    expect(prior?.lifecycleState).toBe('RESOLVED');
+    expect(prior?.resolutionOutcome).toBe('MATCH_EXISTING');
+
+    if (prior === undefined) {
+      return yield* Effect.die(new Error('Prior review case disappeared'));
+    }
+    const explicitPriorId = 'bc400000-0000-4000-8000-000000000001';
+    yield* admin.insert(duplicateCandidateCases).values({
+      ...prior,
+      candidateCaseId: explicitPriorId,
+      createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(prior.createdAt.getTime() - 1000)),
+      lifecycleState: 'DISMISSED',
+      resolutionOutcome: 'DISMISSED_AS_NON_SUBJECT',
+      selectedPartyId: null,
+    });
+    yield* admin
+      .update(parties)
+      .set({ archivedAt: yield* DateTime.nowAsDate })
+      .where(eq(parties.partyId, partyId));
+    const continuation = yield* scoped((transaction) =>
+      matchParty(transaction, {
+        actionInvocationId: 'bc300000-0000-4000-8000-000000000014',
+        candidate: weakCandidate,
+        priorCandidateCaseId: explicitPriorId,
+        priorCaseTenantId: tenantId,
+        tenantId,
+      }),
+    );
+    if (continuation.caseRef === null) {
+      return yield* Effect.die(new Error('Archived target did not open a successor'));
+    }
+    const [explicitSuccessor] = yield* admin
+      .select()
+      .from(duplicateCandidateCases)
+      .where(eq(duplicateCandidateCases.candidateCaseId, continuation.caseRef.resourceId));
+    expect(explicitSuccessor?.priorCandidateCaseId).toBe(explicitPriorId);
+    yield* admin
+      .update(duplicateCandidateCases)
+      .set({ lifecycleState: 'DISMISSED', resolutionOutcome: 'DISMISSED_AS_NON_SUBJECT' })
+      .where(eq(duplicateCandidateCases.candidateCaseId, continuation.caseRef.resourceId));
+    const newestContinuation = yield* scoped((transaction) =>
+      matchParty(transaction, {
+        actionInvocationId: 'bc300000-0000-4000-8000-000000000015',
+        candidate: weakCandidate,
+        tenantId,
+      }),
+    );
+    if (newestContinuation.caseRef === null) {
+      return yield* Effect.die(new Error('Archived target did not open the next successor'));
+    }
+    const [newestSuccessor] = yield* admin
+      .select()
+      .from(duplicateCandidateCases)
+      .where(eq(duplicateCandidateCases.candidateCaseId, newestContinuation.caseRef.resourceId));
+    expect(newestSuccessor?.priorCandidateCaseId).toBe(continuation.caseRef.resourceId);
+    yield* admin.update(parties).set({ archivedAt: null }).where(eq(parties.partyId, partyId));
+
     const identifier = normalizeOfficialIdentifier({
       identifierType: 'CZ_DIC',
       value: 'CZ27074358',
@@ -135,5 +251,70 @@ it.live('real PostgreSQL identity locks serialize concurrent exact creates and r
       .from(partyIdentifierClaims)
       .where(eq(partyIdentifierClaims.tenantId, tenantId));
     expect(claims).toHaveLength(2);
+
+    const upgradeIdentifier = normalizeOfficialIdentifier({
+      identifierType: 'ICO',
+      value: '26168685',
+      verification: 'UNVERIFIED',
+    });
+    yield* scoped((transaction) =>
+      Effect.gen(function* seedUnverifiedIdentifier() {
+        yield* lockTenantIdentityWrites(transaction, tenantId);
+        return yield* addOfficialIdentifierRecord(transaction, tenantId, partyId, upgradeIdentifier, {
+          actionInvocationId: 'bc300000-0000-4000-8000-000000000005',
+          matchRuleVersion: 'party-exact-claims.v1',
+          partyType: 'ORGANIZATION',
+          principalId,
+          provenanceMethod: 'REGISTRY',
+          provenanceSource: 'identity-concurrency-test',
+          validFrom: candidate.validFrom,
+        });
+      }),
+    );
+    const accepted = yield* Effect.forEach(
+      ['bc300000-0000-4000-8000-000000000006', 'bc300000-0000-4000-8000-000000000007'],
+      (actionInvocationId) =>
+        scoped((transaction) =>
+          Effect.gen(function* concurrentUpgrade() {
+            yield* lockTenantIdentityWrites(transaction, tenantId);
+            yield* lockAndResolveClaims(transaction, tenantId, [{ ...upgradeIdentifier, verification: 'VERIFIED' }]);
+            return yield* acceptMatchingOfficialIdentifierRecord(
+              transaction,
+              tenantId,
+              partyId,
+              { ...upgradeIdentifier, verification: 'VERIFIED' },
+              {
+                actionInvocationId,
+                matchRuleVersion: 'party-exact-claims.v1',
+                partyType: 'ORGANIZATION',
+                principalId,
+                provenanceMethod: 'REGISTRY',
+                provenanceSource: 'identity-concurrency-test',
+                validFrom: candidate.validFrom,
+              },
+            );
+          }),
+        ),
+      { concurrency: 'unbounded' },
+    );
+    expect(accepted.map((result) => result._tag).toSorted()).toEqual(['reused', 'updated']);
+    const upgraded = yield* admin
+      .select()
+      .from(partyOfficialIdentifiers)
+      .where(eq(partyOfficialIdentifiers.tenantId, tenantId));
+    expect(upgraded.filter((row) => row.normalizedValue === '26168685')).toHaveLength(1);
+    const upgradedAssertion = upgraded.find((row) => row.normalizedValue === '26168685');
+    expect(upgradedAssertion?.verificationState).toBe('VERIFIED');
+    const upgradeClaims = yield* admin
+      .select()
+      .from(partyIdentifierClaims)
+      .where(eq(partyIdentifierClaims.tenantId, tenantId));
+    const exactUpgradeClaims = upgradeClaims.filter(
+      (claim) =>
+        claim.identifierTypeKey === 'ICO' && claim.namespace === 'CZ:ICO' && claim.normalizedValue === '26168685',
+    );
+    expect(exactUpgradeClaims).toHaveLength(1);
+    expect(exactUpgradeClaims[0]?.partyId).toBe(partyId);
+    expect(exactUpgradeClaims[0]?.officialIdentifierId).toBe(upgradedAssertion?.officialIdentifierId);
   }),
 );

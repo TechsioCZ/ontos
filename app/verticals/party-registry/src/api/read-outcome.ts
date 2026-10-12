@@ -13,7 +13,7 @@ export const readUnavailable =
 
 export const requireReadValue =
   (reason: string) =>
-  <Value>(found: LookupResult<Value>) =>
+  <Value>(found: LookupResult<Value>): Effect.Effect<Value, ReadHandlerNotFound, never> =>
     Match.value(found).pipe(
       Match.tag('found', ({ value }) => Effect.succeed(value)),
       Match.tag('not_found', () => Effect.fail(new ReadHandlerNotFound({ code: 'read_handler_not_found', reason }))),

@@ -50,6 +50,7 @@ import { attachPersonEngagementAction } from './src/actions/attach-person-engage
 import { confirmDuplicatePartiesAction } from './src/actions/confirm-duplicate-parties.action.ts';
 import { correctPartyFactAction } from './src/actions/correct-party-fact.action.ts';
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
+import { counterpartyCustomerOnboardAction } from './src/actions/counterparty-customer-onboard.action.ts';
 import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.action.ts';
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
 import { createPartyAction } from './src/actions/create-party.action.ts';
@@ -113,6 +114,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       confirmDuplicatePartiesAction,
       correctPartyFactAction,
       counterpartyCreateAction,
+      counterpartyCustomerOnboardAction,
       counterpartyRoleAddAction,
       counterpartyRoleEndAction,
       createPartyAction,

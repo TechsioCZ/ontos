@@ -1,4 +1,3 @@
-import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -27,8 +26,12 @@ export const handleEngagementLifecycle =
   ) =>
   (
     payload: Payload,
-    context: Pick<ActionHandlerContext<Readonly<Record<string, never>>, LifecycleServices<Value>>, 'services'>,
-  ) =>
+    context: { readonly services: LifecycleServices<Value> },
+  ): Effect.Effect<
+    Value,
+    EngagementProfileConflict | EngagementProfileNotFound | EngagementProfilePersistenceUnavailable,
+    never
+  > =>
     context.services
       .transition(payload.profileRef.resourceId)
       .pipe(

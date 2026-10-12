@@ -235,6 +235,7 @@ class DataFactoryProof {
       }
       const imported = model.imports.get(current.object.name);
       if (imported?.source === 'effect') {
+        if (imported.imported === 'Brand' && property === 'nominal') return 'nominal-brand';
         if (
           (imported.imported === 'Context' && property === 'Service') ||
           (imported.imported === 'Layer' && ['effect', 'succeed'].includes(property))
@@ -250,6 +251,7 @@ class DataFactoryProof {
             'Defect',
             'toEquivalence',
             'Struct',
+            'TaggedStruct',
             'Record',
             'Array',
             'Union',
@@ -259,6 +261,7 @@ class DataFactoryProof {
             'decodeUnknownSync',
             'encodeSync',
             'String',
+            'Trim',
             'NonEmptyString',
             'Number',
             'Boolean',
@@ -271,6 +274,7 @@ class DataFactoryProof {
             'tag',
             'optionalKey',
             'NullOr',
+            'OptionFromNullOr',
             'UndefinedOr',
             'makeFilter',
             'brand',
@@ -278,6 +282,7 @@ class DataFactoryProof {
             'isMinLength',
             'isMaxLength',
             'isInt',
+            'isGreaterThan',
             'isBetween',
             'isFinite',
             'isTrimmed',
@@ -314,6 +319,11 @@ class DataFactoryProof {
       if (node.type === 'CallExpression') {
         const origin = deferredOrigin(node);
         const callee = unwrap(node.callee);
+        // Brand.nominal only constructs an identity function. Admit its declaration, not calls
+        // through that function or arbitrary arguments/operations on a lookalike Brand object.
+        if (origin === 'nominal-brand') {
+          return callee.type === 'MemberExpression' && node.arguments.length === 0 && safe(callee.object);
+        }
         const creation =
           callee.type === 'MemberExpression' ||
           callee.type === 'Identifier' ||

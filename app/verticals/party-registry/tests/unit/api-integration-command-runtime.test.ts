@@ -186,6 +186,7 @@ const actionSlugs = [
   'confirm-duplicate-parties',
   'correct-party-fact',
   'counterparty-create',
+  'counterparty-customer-onboard',
   'counterparty-role-add',
   'counterparty-role-end',
   'create-party',
@@ -213,6 +214,7 @@ const endpointNames = [
   'confirmDuplicateParties',
   'correctPartyFact',
   'counterpartyCreate',
+  'counterpartyCustomerOnboard',
   'counterpartyRoleAdd',
   'counterpartyRoleEnd',
   'createParty',
@@ -519,7 +521,6 @@ it.live(
       const harness = yield* makeActionTestHarness();
       const app = yield* mountApp(harness, assertion.environment);
 
-      expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length).toBe(24);
       expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).toSorted()).toEqual(
         [...endpointNames].toSorted(),
       );

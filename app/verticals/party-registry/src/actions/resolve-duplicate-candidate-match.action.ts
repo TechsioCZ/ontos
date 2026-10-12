@@ -23,7 +23,11 @@ import {
   PartyAliasWriteRejected,
 } from '../../shared/domain/merge-alias-resolution.ts';
 import { resolveDuplicateCandidateMatch } from '../services/party-matching-persistence.service.ts';
-import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
+import {
+  publishAttachedOfficialIdentifiers,
+  publishUpdatedOfficialIdentifiers,
+} from './attached-official-identifier-events.ts';
+import { OfficialIdentifierUpdatedEventSchema } from './update-party-official-identifier.action.ts';
 
 export type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 const ErrorSchema = Schema.Union([
@@ -44,15 +48,17 @@ interface Services {
 }
 const domainEvents = {
   'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
+  'party.registry.official-identifier-updated.v1': OfficialIdentifierUpdatedEventSchema,
 } as const;
 const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function* resolveMatch(
   payload: ResolveDuplicateCandidateMatchPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
-  const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.resolve(
-    payload,
-    context.actionInvocationId,
-  );
+  const {
+    addedOfficialIdentifierRefs = [],
+    updatedOfficialIdentifiers = [],
+    ...result
+  } = yield* context.services.resolve(payload, context.actionInvocationId);
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: createHash('sha256').update(`duplicate-case-invariants:${payload.caseRef.resourceId}`).digest('hex'),
@@ -64,6 +70,7 @@ const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function
   });
   if (result.partyRef !== null) {
     yield* publishAttachedOfficialIdentifiers(context, result.partyRef, addedOfficialIdentifierRefs);
+    yield* publishUpdatedOfficialIdentifiers(context, result.partyRef, updatedOfficialIdentifiers, [], payload.reason);
   }
   return result;
 });

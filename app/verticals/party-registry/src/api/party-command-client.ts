@@ -8,6 +8,7 @@ import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import {
   AddContactPointPayloadSchema,
   AddPartyOfficialIdentifierPayloadSchema,
+  CounterpartyCustomerOnboardPayloadSchema,
   CreatePartyPayloadSchema,
   UpdatePartyPayloadSchema,
   partyRegistryCommandsApi,
@@ -20,6 +21,7 @@ import type {
   ConfirmDuplicatePartiesPayload,
   CorrectPartyFactPayload,
   CounterpartyCreatePayload,
+  CounterpartyCustomerOnboardPayload,
   CounterpartyRoleAddPayload,
   CounterpartyRoleEndPayload,
   CreatePartyRelationshipPayload,
@@ -162,6 +164,7 @@ const invoke = <Success, Failure, Options extends PartyCommandRecoveryOptions>(
   ) => Effect.Effect<Success, Failure>,
 ) =>
   Effect.promise(() => import('./action-gateway.ts')).pipe(
+    Effect.orDie,
     Effect.flatMap(({ operationGateway }) =>
       operationGateway.invoke(
         (credential, { apiBaseUrl, compositionRevision }) =>
@@ -239,6 +242,17 @@ export const { authorized: correctPartyFactWithAuthorization, execute: correctPa
 export const { authorized: counterpartyCreateWithAuthorization, execute: counterpartyCreate } = defineCommand(
   (client, payload: CounterpartyCreatePayload) => client.partyCommands.counterpartyCreate({ payload }),
 );
+
+export const { authorized: counterpartyCustomerOnboardWithAuthorization, execute: counterpartyCustomerOnboard } =
+  defineCommand((client, payload: CounterpartyCustomerOnboardPayload) =>
+    Schema.encodeUnknownEffect(CounterpartyCustomerOnboardPayloadSchema)(payload).pipe(
+      Effect.flatMap((endpointPayload) =>
+        client.partyCommands.counterpartyCustomerOnboard({
+          payload: endpointPayload,
+        }),
+      ),
+    ),
+  );
 
 export const { authorized: counterpartyRoleAddWithAuthorization, execute: counterpartyRoleAdd } = defineCommand(
   (client, payload: CounterpartyRoleAddPayload) => client.partyCommands.counterpartyRoleAdd({ payload }),

@@ -1,6 +1,17 @@
+import path from 'node:path';
+
+import { NodeServices } from '@effect/platform-node';
+import { DateTime, Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { validateAuthorizationRolloutContract } from '../authorization/rollout-contract.mts';
+import { checkModuleEntrypointBoundaries } from '../check-module-entrypoint-boundaries.mts';
+
+const InventoryBindingSchema = Schema.fromJsonString(
+  Schema.Struct({
+    inventoryHash: Schema.String,
+  }),
+);
 
 const entrypointKey = 'contacts.create-contact';
 const inventoryHash = 'inventory';
@@ -21,6 +32,26 @@ const context = {
   inventoryHash,
   nowEpochMs: Date.parse('2026-09-10T00:00:00.000Z'),
 };
+
+it.effect(
+  'the committed rollout baseline matches the current classified workspace inventory',
+  Effect.fn(function* currentWorkspaceInventoryBinding() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    yield* checkModuleEntrypointBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const inventory = yield* Schema.decodeUnknownEffect(InventoryBindingSchema)(
+      yield* fileSystem.readFileString(path.join(root, '.codex/reports/authorization/protected-entrypoints.json')),
+    );
+    const rollout = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+      yield* fileSystem.readFileString(path.join(root, 'topology/authorization-rollout.json')),
+    );
+    const validated = validateAuthorizationRolloutContract(rollout, {
+      inventoryHash: inventory.inventoryHash,
+      nowEpochMs: DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-10T00:00:00.000Z')),
+    });
+    expect(validated.baselineInventoryHash).toBe(inventory.inventoryHash);
+  }, Effect.provide(NodeServices.layer)),
+);
 
 it('rollout contract accepts an active configuration bound to the classified inventory', () => {
   expect(validateAuthorizationRolloutContract(contract, context)).toEqual(contract);
