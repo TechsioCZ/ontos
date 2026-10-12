@@ -2,7 +2,7 @@ import { Command, Flag } from 'effect/unstable/cli';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, ConfigProvider, Console, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
+import { Config, ConfigProvider, Console, DateTime, Effect, FileSystem, Layer, Option, Schema } from 'effect';
 import { WorkStateSchema } from '../shared/apis/records.ts';
 import { workStates, workRelations } from '../src/database/schema.ts';
 
@@ -56,7 +56,21 @@ const resetPgLive = PgClient.layerFrom(
     return yield* PgClient.makeClient({ url: connection });
   }),
 );
-const cli = Command.make('reset-siampark-demo', { fixture: Flag.String('fixture') }, ({ fixture }) => reset(fixture));
+// `--sales-demo` (scripts/demo/reset-demo.mts): the tasks lane replaces this no-op with its seed.
+const cli = Command.make(
+  'reset-siampark-demo',
+  {
+    fixture: Flag.String('fixture').pipe(Flag.optional),
+    salesDemo: Flag.Boolean('sales-demo').pipe(Flag.withDefault(false)),
+  },
+  ({ fixture, salesDemo }) =>
+    salesDemo
+      ? Console.log('siampark-work: no sales-demo seed yet')
+      : Option.match(fixture, {
+          onNone: () => Effect.fail(new ResetInputError({ reason: '--fixture is required' })),
+          onSome: reset,
+        }),
+);
 const mainLive = Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pipe(
   Layer.provide(resetPgLive),
   Layer.provide(Layer.mergeAll(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnv()))),

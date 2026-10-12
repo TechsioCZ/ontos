@@ -10,6 +10,7 @@ import {
   FileSystem,
   Layer,
   Logger,
+  Option,
   References,
   Schema,
   Tracer,
@@ -111,8 +112,20 @@ const reset = Effect.fn('Finance.resetDemo')(function* resetDemo(fixturePath: st
     Effect.scoped,
   );
 });
-const command = Command.make('siampark-finance-reset', { fixture: Flag.String('fixture') }, ({ fixture }) =>
-  reset(fixture),
+// `--sales-demo` (scripts/demo/reset-demo.mts): the billing lane replaces this no-op with its seed.
+const command = Command.make(
+  'siampark-finance-reset',
+  {
+    fixture: Flag.String('fixture').pipe(Flag.optional),
+    salesDemo: Flag.Boolean('sales-demo').pipe(Flag.withDefault(false)),
+  },
+  ({ fixture, salesDemo }) =>
+    salesDemo
+      ? Console.log('siampark-billing-finance: no sales-demo seed yet')
+      : Option.match(fixture, {
+          onNone: () => Effect.fail(new ResetInputError({ reason: '--fixture is required' })),
+          onSome: reset,
+        }),
 );
 const main = Command.run(command, { version: '1.0.0' });
 const resetProgram = Layer.effectDiscard(main).pipe(

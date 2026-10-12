@@ -131,6 +131,7 @@
     "dev:availability": "pnpm --filter @app/availability dev",
     "dev:privacy": "pnpm --filter @app/privacy dev",
     "demo:reset": "node scripts/siampark/reset-demo-entry.mts",
+    "demo:reset:sales": "node scripts/demo/reset-demo.mts",
     "demo:composition": "node scripts/siampark/development-composition.mts --environment development",
     "demo:serve": "node scripts/siampark/serve-demo.mts"
   },
