@@ -2,7 +2,6 @@
 import {
   OperationContextUnavailable,
   ReadHandlerUnavailable,
-  ReadPermissionDenied,
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
@@ -16,10 +15,6 @@ type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 const readFailure = (failure: Effect.Error<ReturnType<Services['records']>>) =>
   Match.value(failure).pipe(
-    Match.tag(
-      'SalesPipelinePermissionDenied',
-      () => new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'The requested record is forbidden' }),
-    ),
     Match.tag(
       'SalesPipelinePersistenceUnavailable',
       'SalesPipelineReferenceUnavailable',
@@ -80,7 +75,7 @@ export const recordsRead = defineRead(
     context: ReadHandlerContext<Services>,
   ): Effect.Effect<
     ReadHandlerResult<RecordsResponse>,
-    ReadPermissionDenied | ReadHandlerUnavailable,
+    ReadHandlerUnavailable,
     Effect.Services<ReturnType<typeof persistenceService>>
   > =>
     context.services.records(input).pipe(
