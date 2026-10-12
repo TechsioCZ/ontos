@@ -140,6 +140,15 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
   const topology = yield* Schema.decodeEffect(topologySchema)(
     yield* fs.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json')),
   );
+  // Sales demo: ONTOS_DEMO_VERTICALS (comma-separated owner IDs) composes only the owners actually running.
+  const selection = yield* Config.option(Config.String('ONTOS_DEMO_VERTICALS'));
+  const owners = Option.match(selection, {
+    onNone: () => topology.verticals,
+    onSome: (value) => {
+      const ids = new Set(value.split(',').map((id) => id.trim()));
+      return topology.verticals.filter((owner) => ids.has(owner.id));
+    },
+  });
   const shellPort = yield* Config.schema(portSchema, topology.shell.portEnv).pipe(Config.withDefault(3020));
   const shellOrigin = `http://127.0.0.1:${shellPort}`;
   const origin = `http://127.0.0.1:${port}`;
@@ -169,7 +178,7 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
     });
   const observeSnapshot = Effect.gen(function* observeEntireNativeTopology() {
     const modules = yield* Effect.forEach(
-      topology.verticals,
+      owners,
       (owner) =>
         Effect.gen(function* observeOwner() {
           yield* validateDevelopmentArtifactUrl(owner.moduleFederation.manifestUrl);
