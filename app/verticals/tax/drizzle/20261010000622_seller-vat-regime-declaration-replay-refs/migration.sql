@@ -1,0 +1,1 @@
+ALTER TABLE "tax"."tax_seller_vat_regime_declarations" ADD COLUMN "replaced_scheduled_declarations" jsonb DEFAULT '[]' NOT NULL;

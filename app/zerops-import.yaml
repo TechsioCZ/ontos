@@ -49,6 +49,9 @@ services:
   - hostname: inventory
     type: nodejs@24
     enableSubdomainAccess: true
+  - hostname: tax
+    type: nodejs@24
+    enableSubdomainAccess: true
   - hostname: partyregistryworker
     type: nodejs@24
   - hostname: commercecstmrcntxtworker

@@ -1,0 +1,6 @@
+ALTER TABLE "tax"."tax_seller_vat_regime_declarations" ADD COLUMN "effective_from_origin" text DEFAULT 'DECLARED' NOT NULL;--> statement-breakpoint
+ALTER TABLE "tax"."tax_seller_vat_regime_declarations" ADD COLUMN "migration_run_ref" text;--> statement-breakpoint
+ALTER TABLE "tax"."tax_seller_vat_regime_declarations" ADD COLUMN "source_record_ref" text;--> statement-breakpoint
+ALTER TABLE "tax"."tax_seller_vat_regime_declarations" ADD CONSTRAINT "tax_seller_vat_regime_declarations_effective_from_origin_ck" CHECK ("effective_from_origin" in ('DECLARED', 'SOURCE', 'MIGRATION_START'));--> statement-breakpoint
+ALTER TABLE "tax"."tax_seller_vat_regime_declarations" ADD CONSTRAINT "tax_seller_vat_regime_declarations_migration_ck" CHECK (("provenance" = 'MIGRATED' and "migration_run_ref" is not null and "source_record_ref" is not null and "effective_from_origin" in ('SOURCE', 'MIGRATION_START')) or ("provenance" = 'MERCHANT_DECLARED' and "migration_run_ref" is null and "source_record_ref" is null and "effective_from_origin" = 'DECLARED'));--> statement-breakpoint
+ALTER TABLE "tax"."tax_seller_vat_regime_declarations" DROP CONSTRAINT "tax_seller_vat_regime_declarations_backdating_reason_ck", ADD CONSTRAINT "tax_seller_vat_regime_declarations_backdating_reason_ck" CHECK ("provenance" = 'MIGRATED' or "reason" is not null or "effective_from" >= "recorded_at");

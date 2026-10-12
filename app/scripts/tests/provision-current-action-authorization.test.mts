@@ -295,6 +295,13 @@ const explicitlyProvisionedActionKeys = [
   'commerce.pricing.manage-zero-floor-authorization',
   'commerce.pricing.revise-commercial-fee',
   'commerce.pricing.revise-price',
+  'commerce.tax.correct-tax-rule-revision',
+  'commerce.tax.create-tax-rule',
+  'commerce.tax.create-tax-rule-revision',
+  'commerce.tax.declare-seller-vat-regime',
+  'commerce.tax.end-tax-rule-revision',
+  'commerce.tax.finalize-order-tax',
+  'commerce.tax.import-seller-vat-regime-declarations',
   'core.identity.activate-principal-binding',
   changePrincipalBindingStatusAction,
   'core.identity.reserve-principal-binding',
@@ -505,7 +512,7 @@ it.effect(
     expect(currentActionKeys.filter((key) => key.startsWith('core.')).length).toBe(8);
     expect(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length).toBe(30);
     expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
-    expect(completeCurrentActionKeys).toHaveLength(248);
+    expect(completeCurrentActionKeys).toHaveLength(255);
     expect(completeCurrentActionKeys.filter((key) => key.startsWith('commerce.pricing.'))).toHaveLength(13);
     expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
     expect(completeCurrentActionKeys).toContain('commerce.catalog.publish-product-configuration');
