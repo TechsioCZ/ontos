@@ -293,11 +293,6 @@ jobs:
             working-directory: app
             run: mise exec -- pnpm skills:check
 
-          - name: I18n Boundaries
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-            working-directory: app
-            run: mise exec -- pnpm i18n:boundaries
-
           - name: Database Access Boundaries
             if: ${{ !cancelled() && steps.install.outcome == 'success' }}
             working-directory: app
@@ -323,6 +318,13 @@ jobs:
             working-directory: app
             run: mise exec -- pnpm action:test:unit
 
+
+      # Module contract generation creates and deletes bundles inside verticals.
+      # Wait for it before the i18n scanner walks those source directories.
+      - name: I18n Boundaries
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: app
+        run: mise exec -- pnpm i18n:boundaries
 
       - name: API Boundaries
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
