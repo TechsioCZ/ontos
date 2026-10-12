@@ -2500,7 +2500,7 @@ const hasPublishedContract = (
       if (argument === '') {
         return callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index + 1) === undefined;
       }
-      if (!/^(?:GovernedReadLayer|Layer)\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
+      if (!/^Layer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
         return false;
       }
       index += 1;

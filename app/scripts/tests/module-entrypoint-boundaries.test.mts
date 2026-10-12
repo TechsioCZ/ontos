@@ -1101,7 +1101,7 @@ it.live(
     const handlerRootPath = `${INVENTORY_VERTICAL_PATH}/api/index.ts`;
     const handlerRoot = yield* Effect.promise(() => readFile(path.join(root, handlerRootPath), 'utf-8'));
     const runtimeProvider = 'GovernedReadLayer.provide(governedReadRuntimeLive)';
-    const permissionProvider = 'GovernedReadLayer.provide(ActionPermissionLive)';
+    const permissionProvider = 'Layer.provide(ActionPermissionLive)';
     const composed = handlerRoot.replace(runtimeProvider, `${runtimeProvider}, ${permissionProvider}`);
     yield* write(root, handlerRootPath, composed);
     yield* checkModuleEntrypointBoundaries(root);

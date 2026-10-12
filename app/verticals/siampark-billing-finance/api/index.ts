@@ -79,10 +79,7 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  recordsReadApiLive.pipe(
-    GovernedReadLayer.provide(governedReadRuntimeLive),
-    GovernedReadLayer.provide(ActionPermissionLive),
-  ),
+  recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(ActionPermissionLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
