@@ -4,14 +4,14 @@
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
-  Schema.brand('demo.workforce.employee.ResourceId'),
-);
-const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
+/** Employee identity; the client supplies it on create, so seeds can use deterministic UUIDs. */
+export const EmployeeIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('EmployeeId'));
+export type EmployeeId = typeof EmployeeIdSchema.Type;
+export const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
 
 export const EmployeeRefSchema = Schema.Struct({
   moduleId: Schema.Literal('demo.workforce'),
-  resourceId: ResourceIdSchema,
+  resourceId: EmployeeIdSchema,
   resourceType: Schema.Literal('demo.workforce.employee'),
   tenantId: TenantIdSchema,
 });

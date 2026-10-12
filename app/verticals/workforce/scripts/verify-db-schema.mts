@@ -33,15 +33,9 @@ const SnapshotSchema = Schema.Array(
 const demoTenant = '70000000-0000-4000-8000-000000000020';
 const demoCompany = '71000000-0000-4000-8000-000000000020';
 const stateMatchesDemoScope = (state: typeof WorkforceStateSchema.Type) =>
-  state.collection.ref.tenantId === demoTenant &&
-  new Set(state.employees.map((employee) => employee.ref.resourceId)).size === state.employees.length &&
+  new Set(state.employees.map((employee) => employee.id)).size === state.employees.length &&
   state.employees.every(
-    (employee) =>
-      employee.ref.tenantId === demoTenant &&
-      employee.collectionRef.tenantId === demoTenant &&
-      employee.collectionRef.resourceId === state.collection.ref.resourceId &&
-      employee.contextRefs.every((ref) => ref.tenantId === demoTenant) &&
-      (employee.ownerPrincipalRef === undefined || employee.ownerPrincipalRef.tenantId === demoTenant),
+    (employee) => employee.principalRef === undefined || employee.principalRef.tenantId === demoTenant,
   );
 const catalogMatches = (row: typeof CatalogSchema.Type) =>
   row.enabled &&

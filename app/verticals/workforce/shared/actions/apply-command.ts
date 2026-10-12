@@ -9,33 +9,56 @@ import { WorkforceReferenceUnavailable } from '../errors/workforce-reference-una
 import { WorkforceReferenceIneligible } from '../errors/workforce-reference-ineligible.ts';
 import { WorkforcePermissionDenied } from '../errors/workforce-permission-denied.ts';
 import {
-  CalendarDateSchema,
-  ContextRefSchema,
-  EmployeePrioritySchema,
+  EmployeeDepartmentSchema,
+  EmployeeEmailSchema,
+  EmployeeFullNameSchema,
+  EmployeeIdSchema,
+  EmployeePhoneSchema,
+  EmployeeRoleSchema,
   EmployeeSchema,
-  EmployeeStateSchema,
 } from '../apis/records.ts';
-import { EmployeeRefSchema } from '../resources/employee.ts';
 
-const editableFields = {
-  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
-  dueDate: Schema.optionalKey(CalendarDateSchema),
-  ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
-  priority: Schema.optionalKey(EmployeePrioritySchema),
+const employeeFields = {
+  active: Schema.Boolean,
+  department: EmployeeDepartmentSchema,
+  email: EmployeeEmailSchema,
+  fullName: EmployeeFullNameSchema,
+  phone: Schema.optionalKey(EmployeePhoneSchema),
+  principalRef: Schema.optionalKey(PrincipalRefSchema),
+  role: EmployeeRoleSchema,
 };
+
+/** Every field a caller may change on one Employee. Identity and timestamps are never patched. */
+const employeePatchFields = {
+  active: Schema.optionalKey(Schema.Boolean),
+  department: Schema.optionalKey(EmployeeDepartmentSchema),
+  email: Schema.optionalKey(EmployeeEmailSchema),
+  fullName: Schema.optionalKey(EmployeeFullNameSchema),
+  phone: Schema.optionalKey(EmployeePhoneSchema),
+  principalRef: Schema.optionalKey(PrincipalRefSchema),
+  role: Schema.optionalKey(EmployeeRoleSchema),
+};
+
+/** Bulk edits touch the organisational fields only; the bulk set is capped to keep one transaction small. */
+const bulkPatchFields = {
+  active: Schema.optionalKey(Schema.Boolean),
+  department: Schema.optionalKey(EmployeeDepartmentSchema),
+  role: Schema.optionalKey(EmployeeRoleSchema),
+};
+
 export const WorkforceCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateEmployee', {
-    ...editableFields,
-    contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
-    title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    ...employeeFields,
+    id: EmployeeIdSchema,
   }),
   Schema.TaggedStruct('UpdateEmployee', {
-    ...editableFields,
-    employeeRef: EmployeeRefSchema,
-    title: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    id: EmployeeIdSchema,
+    patch: Schema.Struct(employeePatchFields),
   }),
-  Schema.TaggedStruct('AssignEmployee', { employeeRef: EmployeeRefSchema, ownerPrincipalRef: PrincipalRefSchema }),
-  Schema.TaggedStruct('ChangeEmployeeState', { employeeRef: EmployeeRefSchema, state: EmployeeStateSchema }),
+  Schema.TaggedStruct('BulkUpdateEmployees', {
+    ids: Schema.Array(EmployeeIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+    patch: Schema.Struct(bulkPatchFields),
+  }),
 ]);
 export type WorkforceCommand = typeof WorkforceCommandSchema.Type;
 export const ApplyCommandPayloadSchema = Schema.Struct({
@@ -43,7 +66,12 @@ export const ApplyCommandPayloadSchema = Schema.Struct({
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
-export const ApplyCommandResultSchema = Schema.Struct({ employee: EmployeeSchema, revision: Schema.Int });
+/** Create and update return one Employee; a bulk update returns every Employee it changed. */
+export const ApplyCommandResultSchema = Schema.Struct({
+  employees: Schema.Array(EmployeeSchema),
+  revision: Schema.Int,
+});
+export type ApplyCommandResult = typeof ApplyCommandResultSchema.Type;
 export const WorkforceErrorSchema = Schema.Union([
   WorkforceScopeMismatch,
   WorkforceNotFound,

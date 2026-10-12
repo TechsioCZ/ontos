@@ -2,10 +2,9 @@
 import { ContextAccess, OperationContextUnavailable, principalEligibilityForTransaction } from '@app/core-runtime';
 import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Context, DateTime, Effect, Match, Option, Predicate, Schema, Struct } from 'effect';
+import { DateTime, Effect, Match, Predicate, Schema, Struct } from 'effect';
 
 import {
-  WorkforceLifecycleConflict,
   WorkforceNotFound,
   WorkforcePermissionDenied,
   WorkforcePersistenceUnavailable,
@@ -16,9 +15,20 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { WorkforceCommand } from '../../shared/actions/apply-command.ts';
 import { WorkforceStateSchema } from '../../shared/apis/records.ts';
-import type { ContextRef, RecordsRequest, Employee, EmployeeState, WorkforceState } from '../../shared/apis/records.ts';
-import { EmployeeRefSchema } from '../../shared/resources/employee.ts';
+import type { Employee, EmployeeRole, RecordsRequest, WorkforceState } from '../../shared/apis/records.ts';
+import { TenantIdSchema } from '../../shared/resources/employee.ts';
+import type { EmployeeId, EmployeeRef } from '../../shared/resources/employee.ts';
 import { workforceStates } from '../database/schema.ts';
+
+type TenantId = EmployeeRef['tenantId'];
+type ResourceDecisions = Effect.Success<ReturnType<ContextAccessService['resources']>>;
+type EmployeePatch = Partial<
+  Pick<Employee, 'active' | 'department' | 'email' | 'fullName' | 'phone' | 'principalRef' | 'role'>
+>;
+interface EmployeeChange {
+  readonly employees: readonly Employee[];
+  readonly state: WorkforceState;
+}
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -40,175 +50,107 @@ const referenceUnavailable = (cause?: unknown) =>
     { enumerable: false, value: cause },
   );
 
-export interface WorkforceReferenceVerifierService {
-  readonly verify: (
-    refs: readonly ContextRef[],
-    scope: OperationalScope,
-  ) => Effect.Effect<void, WorkforceReferenceIneligible | WorkforceReferenceUnavailable>;
-}
-export class WorkforceReferenceVerifier extends Context.Service<
-  WorkforceReferenceVerifier,
-  WorkforceReferenceVerifierService
->()('@app/workforce/services/persistence.service/WorkforceReferenceVerifier') {}
-
-/** Default verifier: references are opaque IDs, so only the tenant boundary is enforced here. */
-export const makeWorkReferenceVerifier = (): WorkforceReferenceVerifierService => ({
-  verify: (refs, scope) =>
-    refs.some((ref) => ref.tenantId !== scope.tenantId)
-      ? Effect.fail(
-          new WorkforceReferenceIneligible({
-            code: 'workforce_reference_ineligible',
-            reason: 'Reference must belong to the trusted tenant',
-          }),
-        )
-      : Effect.void,
+export const employeeRefFor = (id: EmployeeId, tenantId: TenantId): EmployeeRef => ({
+  moduleId: 'demo.workforce',
+  resourceId: id,
+  resourceType: 'demo.workforce.employee',
+  tenantId,
 });
 
-export const employeeStatusGroup = (state: EmployeeState) =>
-  Match.value(state).pipe(
-    Match.when('NEW', () => 'NOT_STARTED' as const),
-    Match.whenOr('DONE', 'CANCELLED', () => 'DONE' as const),
-    Match.whenOr('IN_PROGRESS', 'WAITING', () => 'IN_PROGRESS' as const),
+const resourceKey = (ref: EmployeeRef) => `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}`;
+
+/** Decisions must answer every requested resource, in order, with a usable key. */
+const decisionsMatch = (decisions: ResourceDecisions, refs: readonly EmployeeRef[]) =>
+  decisions.length === refs.length &&
+  decisions.every((decision, index) => {
+    const ref = refs[index];
+    return ref !== undefined && decision.decision !== 'unavailable' && decision.key === resourceKey(ref);
+  });
+
+const targetIds = (command: WorkforceCommand): readonly EmployeeId[] =>
+  Match.value(command).pipe(
+    Match.tag('CreateEmployee', ({ id }) => [id]),
+    Match.tag('UpdateEmployee', ({ id }) => [id]),
+    Match.tag('BulkUpdateEmployees', ({ ids }) => ids),
     Match.exhaustive,
   );
-export const employeeIsOverdue = (employee: Employee, referenceDate = '2026-10-05') =>
-  employeeStatusGroup(employee.state) !== 'DONE' && employee.dueDate !== undefined && employee.dueDate < referenceDate;
 
-const legalTransitions = {
-  CANCELLED: [],
-  DONE: [],
-  IN_PROGRESS: ['WAITING', 'DONE', 'CANCELLED'],
-  NEW: ['IN_PROGRESS', 'CANCELLED'],
-  WAITING: ['IN_PROGRESS', 'DONE', 'CANCELLED'],
-} as const satisfies Readonly<Record<EmployeeState, readonly EmployeeState[]>>;
+const principalOf = (command: WorkforceCommand) =>
+  Match.value(command).pipe(
+    Match.tag('CreateEmployee', ({ principalRef }) => principalRef ?? null),
+    Match.tag('UpdateEmployee', ({ patch }) => patch.principalRef ?? null),
+    Match.tag('BulkUpdateEmployees', () => null),
+    Match.exhaustive,
+  );
 
-export const evolveWorkState = Effect.fn('Workforce.evolveState')(function* evolveWorkState(
+const employeeNotFound = () =>
+  new WorkforceNotFound({
+    code: 'workforce_not_found',
+    reason: 'Employee does not exist in the authorized scope',
+  });
+
+const createEmployee = (input: {
+  readonly command: Extract<WorkforceCommand, { readonly _tag: 'CreateEmployee' }>;
+  readonly now: DateTime.Utc;
+  readonly state: WorkforceState;
+}): Effect.Effect<EmployeeChange, WorkforceRevisionConflict> => {
+  const { command, now, state } = input;
+  if (state.employees.some((entry) => entry.id === command.id)) {
+    return Effect.fail(
+      new WorkforceRevisionConflict({
+        code: 'workforce_revision_conflict',
+        reason: 'Employee identity is already in use',
+      }),
+    );
+  }
+  const employee: Employee = {
+    active: command.active,
+    createdAt: now,
+    department: command.department,
+    email: command.email,
+    fullName: command.fullName,
+    id: command.id,
+    ...Struct.pick(command, ['phone', 'principalRef']),
+    role: command.role,
+    updatedAt: now,
+  };
+  return Effect.succeed({ employees: [employee], state: { employees: [...state.employees, employee] } });
+};
+
+/** Shared by UpdateEmployee (one id) and BulkUpdateEmployees (all-or-nothing over the id set). */
+const patchEmployees = (input: {
+  readonly ids: readonly EmployeeId[];
+  readonly now: DateTime.Utc;
+  readonly patch: EmployeePatch;
+  readonly state: WorkforceState;
+}): Effect.Effect<EmployeeChange, WorkforceNotFound> => {
+  const { ids, now, patch, state } = input;
+  const targets = new Set(ids);
+  const found = state.employees.filter((entry) => targets.has(entry.id));
+  if (found.length !== targets.size) {
+    return Effect.fail(employeeNotFound());
+  }
+  const employees = found.map((entry) => ({ ...entry, ...patch, updatedAt: now }));
+  const replaced = new Map(employees.map((entry) => [entry.id, entry]));
+  return Effect.succeed({
+    employees,
+    state: { employees: state.employees.map((entry) => replaced.get(entry.id) ?? entry) },
+  });
+};
+
+/** Pure state transition: no I/O, so the rules are unit-testable without a database. */
+export const evolveEmployeeState = Effect.fn('Workforce.evolveState')(function* evolveEmployeeState(
   state: WorkforceState,
   command: WorkforceCommand,
-  input: { readonly now: DateTime.Utc; readonly resourceId: string; readonly tenantId: string },
+  input: { readonly now: DateTime.Utc },
 ) {
-  const { tenantId } = input;
-  const refs = Match.value(command).pipe(
-    Match.tag('CreateEmployee', ({ contextRefs = [] }) => contextRefs),
-    Match.tag('UpdateEmployee', 'AssignEmployee', 'ChangeEmployeeState', ({ employeeRef }) => [employeeRef]),
+  const change = Match.value(command).pipe(
+    Match.tag('CreateEmployee', (value) => createEmployee({ command: value, now: input.now, state })),
+    Match.tag('UpdateEmployee', ({ id, patch }) => patchEmployees({ ids: [id], now: input.now, patch, state })),
+    Match.tag('BulkUpdateEmployees', ({ ids, patch }) => patchEmployees({ ids, now: input.now, patch, state })),
     Match.exhaustive,
   );
-  const owner = Match.value(command).pipe(
-    Match.tag('CreateEmployee', 'UpdateEmployee', 'AssignEmployee', ({ ownerPrincipalRef }) =>
-      Option.fromUndefinedOr(ownerPrincipalRef),
-    ),
-    Match.tag('ChangeEmployeeState', () => Option.none()),
-    Match.exhaustive,
-  );
-  if (
-    state.collection.ref.tenantId !== tenantId ||
-    refs.some((ref) => ref.tenantId !== tenantId) ||
-    (Option.isSome(owner) && owner.value.tenantId !== tenantId)
-  ) {
-    return yield* new WorkforceScopeMismatch({
-      code: 'workforce_scope_mismatch',
-      reason: 'References must belong to the trusted tenant',
-    });
-  }
-  const employee = yield* Match.value(command).pipe(
-    Match.tag(
-      'CreateEmployee',
-      Effect.fn('Workforce.createEmployee')(function* createEmployee(
-        value: Extract<WorkforceCommand, { readonly _tag: 'CreateEmployee' }>,
-      ) {
-        const ref = yield* Schema.decodeEffect(EmployeeRefSchema)({
-          moduleId: 'demo.workforce',
-          resourceId: input.resourceId,
-          resourceType: 'demo.workforce.employee',
-          tenantId,
-        }).pipe(
-          Effect.mapError((cause) =>
-            Object.defineProperty(
-              new WorkforceScopeMismatch({
-                code: 'workforce_scope_mismatch',
-                reason: 'Employee identity must be valid',
-              }),
-              'cause',
-              { enumerable: false, value: cause },
-            ),
-          ),
-        );
-        return {
-          collectionRef: state.collection.ref,
-          contextRefs: value.contextRefs ?? [],
-          createdAt: input.now,
-          ...Struct.pick(value, ['description', 'dueDate', 'ownerPrincipalRef']),
-          priority: value.priority ?? 'NORMAL',
-          ref,
-          state: 'NEW' as const,
-          title: value.title,
-          updatedAt: input.now,
-        };
-      }),
-    ),
-    Match.tag(
-      'UpdateEmployee',
-      'AssignEmployee',
-      'ChangeEmployeeState',
-      Effect.fn('Workforce.updateEmployee')(function* updateEmployee(
-        value: Exclude<WorkforceCommand, { readonly _tag: 'CreateEmployee' }>,
-      ) {
-        const existing = state.employees.find(
-          (entry) => entry.ref.resourceId === value.employeeRef.resourceId && entry.ref.tenantId === tenantId,
-        );
-        if (existing === undefined) {
-          return yield* new WorkforceNotFound({
-            code: 'workforce_not_found',
-            reason: 'Employee does not exist in the authorized scope',
-          });
-        }
-        if (employeeStatusGroup(existing.state) === 'DONE') {
-          return yield* new WorkforceLifecycleConflict({
-            code: 'workforce_lifecycle_conflict',
-            reason: 'A completed or cancelled Employee cannot change',
-          });
-        }
-        return yield* Match.value(value).pipe(
-          Match.tag('AssignEmployee', ({ ownerPrincipalRef }) =>
-            Effect.succeed({ ...existing, ownerPrincipalRef, updatedAt: input.now }),
-          ),
-          Match.tag('ChangeEmployeeState', ({ state: target }) =>
-            legalTransitions[existing.state].some((candidate) => candidate === target)
-              ? Effect.succeed({ ...existing, state: target, updatedAt: input.now })
-              : Effect.fail(
-                  new WorkforceLifecycleConflict({
-                    code: 'workforce_lifecycle_conflict',
-                    reason: 'The requested Employee transition is not allowed',
-                  }),
-                ),
-          ),
-          Match.tag('UpdateEmployee', ({ _tag, employeeRef, ...changes }) => {
-            void _tag;
-            void employeeRef;
-            return Effect.succeed({ ...existing, ...changes, updatedAt: input.now });
-          }),
-          Match.exhaustive,
-        );
-      }),
-    ),
-    Match.exhaustive,
-  );
-  if (
-    state.employees.some((entry) => entry.ref.resourceId === employee.ref.resourceId) &&
-    Predicate.isTagged('CreateEmployee')(command)
-  ) {
-    return yield* new WorkforceRevisionConflict({
-      code: 'workforce_revision_conflict',
-      reason: 'Employee identity is already in use',
-    });
-  }
-  return {
-    employee,
-    state: {
-      ...state,
-      employees: [...state.employees.filter((entry) => entry.ref.resourceId !== employee.ref.resourceId), employee],
-    },
-  };
+  return yield* change;
 });
 
 const contextGrant = Effect.fn('Workforce.contextGrant')(function* contextGrant(
@@ -235,9 +177,10 @@ const contextGrant = Effect.fn('Workforce.contextGrant')(function* contextGrant(
   return decisions[0]?.decision === 'allowed';
 });
 
-export const visibleWorkEmployees = Effect.fn('Workforce.visibleEmployees')(function* visibleEmployees(
+export const visibleEmployees = Effect.fn('Workforce.visibleEmployees')(function* visibleEmployees(
   employees: readonly Employee[],
   scope: OperationalScope,
+  tenantId: TenantId,
 ) {
   const access = yield* ContextAccess;
   if (yield* contextGrant(scope, 'read_all')) {
@@ -246,33 +189,39 @@ export const visibleWorkEmployees = Effect.fn('Workforce.visibleEmployees')(func
   if (scope.legalEntityId === undefined) {
     return yield* referenceUnavailable();
   }
+  const refs = employees.map((employee) => employeeRefFor(employee.id, tenantId));
   const decisions = yield* access.resources({
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
-    resources: employees.map(({ ref }) => ref),
+    resources: refs,
     tenantId: scope.tenantId,
   });
-  if (
-    decisions.length !== employees.length ||
-    decisions.some(
-      (decision, index) =>
-        decision.decision === 'unavailable' ||
-        decision.key !==
-          `${employees[index]?.ref.moduleId}:${employees[index]?.ref.resourceType}:${employees[index]?.ref.resourceId}`,
-    )
-  ) {
+  if (!decisionsMatch(decisions, refs)) {
     return yield* referenceUnavailable();
   }
   return employees.filter((_, index) => decisions[index]?.decision === 'allowed');
 });
 
-const validWriteDecision = (
-  decisions: Effect.Success<ReturnType<ContextAccessService['resources']>>,
-  ref: Employee['ref'],
-) =>
-  decisions.length === 1 &&
-  decisions[0]?.key === `${ref.moduleId}:${ref.resourceType}:${ref.resourceId}` &&
-  decisions[0]?.decision !== 'unavailable';
+const roleCounts = (employees: readonly Employee[]) => {
+  const counts = { ACCOUNTANT: 0, SALES_HEAD: 0, SALES_REP: 0, SUPPORT: 0, WAREHOUSE: 0 } satisfies Record<
+    EmployeeRole,
+    number
+  >;
+  for (const employee of employees) {
+    counts[employee.role] += 1;
+  }
+  return counts;
+};
+
+const departmentCounts = (employees: readonly Employee[]) => {
+  const counts = new Map<string, number>();
+  for (const employee of employees) {
+    counts.set(employee.department, (counts.get(employee.department) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([department, count]) => ({ count, department }))
+    .toSorted((left, right) => left.department.localeCompare(right.department));
+};
 
 export const persistenceService = Effect.fn('Workforce.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
@@ -287,10 +236,20 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
         reason: 'A scoped company transaction is required',
       });
     }
+    const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new WorkforceScopeMismatch({
+            code: 'workforce_scope_mismatch',
+            reason: 'Tenant identity must be valid',
+          }),
+          'cause',
+          { enumerable: false, value: cause },
+        ),
+      ),
+    );
     const access = yield* ContextAccess;
     const principalEligibility = principalEligibilityForTransaction(transaction);
-    const injectedVerifier = yield* Effect.serviceOption(WorkforceReferenceVerifier);
-    const verifier = Option.getOrElse(injectedVerifier, () => makeWorkReferenceVerifier());
     const whereScope = and(
       eq(workforceStates.tenantId, scope.tenantId),
       eq(workforceStates.legalEntityId, legalEntityId),
@@ -328,11 +287,7 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
       }
       return expectedRevision + 1;
     });
-    const apply = Effect.fn('Workforce.apply')(function* apply(
-      command: WorkforceCommand,
-      expectedRevision: number,
-      resourceId: string,
-    ) {
+    const apply = Effect.fn('Workforce.apply')(function* apply(command: WorkforceCommand, expectedRevision: number) {
       if (!(yield* contextGrant(scope, 'write_all'))) {
         if (Predicate.isTagged('CreateEmployee')(command)) {
           return yield* new WorkforcePermissionDenied({
@@ -340,17 +295,18 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
             reason: 'Creating Employees requires Workforce write permission',
           });
         }
+        const refs = targetIds(command).map((id) => employeeRefFor(id, tenantId));
         const decisions = yield* access.resources({
           legalEntityId,
           permission: 'write',
           principalId: scope.principalId,
-          resources: [command.employeeRef],
+          resources: refs,
           tenantId: scope.tenantId,
         });
-        if (!validWriteDecision(decisions, command.employeeRef)) {
+        if (!decisionsMatch(decisions, refs)) {
           return yield* referenceUnavailable();
         }
-        if (decisions[0]?.decision !== 'allowed') {
+        if (decisions.some((decision) => decision.decision !== 'allowed')) {
           return yield* new WorkforcePermissionDenied({
             code: 'workforce_permission_denied',
             reason: 'Employee mutation is forbidden',
@@ -364,40 +320,34 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
           reason: 'Workforce changed; refresh before another operation',
         });
       }
-      const owner = Predicate.isTagged('ChangeEmployeeState')(command) ? undefined : command.ownerPrincipalRef;
-      if (owner !== undefined) {
-        if (owner.tenantId !== scope.tenantId) {
+      const principal = principalOf(command);
+      if (principal !== null) {
+        if (principal.tenantId !== scope.tenantId) {
           return yield* new WorkforceScopeMismatch({
             code: 'workforce_scope_mismatch',
             reason: 'Principal must belong to the trusted tenant',
           });
         }
-        const eligibility = yield* principalEligibility.resolve(owner);
+        const eligibility = yield* principalEligibility.resolve(principal);
         if (eligibility.decision === 'unavailable') {
           return yield* referenceUnavailable();
         }
         if (eligibility.decision !== 'eligible') {
           return yield* new WorkforceReferenceIneligible({
             code: 'workforce_reference_ineligible',
-            reason: 'Employee owner must be an active Principal in the trusted tenant',
+            reason: 'Employee principal must be an active Principal in the trusted tenant',
           });
         }
       }
-      if (Predicate.isTagged('CreateEmployee')(command) && (command.contextRefs?.length ?? 0) > 0) {
-        yield* verifier.verify(command.contextRefs ?? [], scope);
-      }
       const now = yield* DateTime.now;
-      const change = yield* evolveWorkState(snapshot.state, command, { now, resourceId, tenantId: scope.tenantId });
+      const change = yield* evolveEmployeeState(snapshot.state, command, { now });
       const revision = yield* save(expectedRevision, change.state);
-      return { employee: change.employee, revision };
+      return { employees: change.employees, revision };
     });
     const records = Effect.fn('Workforce.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();
-      const visible = yield* visibleWorkEmployees(snapshot.state.employees, scope);
-      if (
-        request.resourceId !== undefined &&
-        !visible.some((employee) => employee.ref.resourceId === request.resourceId)
-      ) {
+      const visible = yield* visibleEmployees(snapshot.state.employees, scope, tenantId);
+      if (request.employeeId !== undefined && !visible.some((employee) => employee.id === request.employeeId)) {
         return yield* new WorkforcePermissionDenied({
           code: 'workforce_permission_denied',
           reason: 'Employee detail is forbidden or absent',
@@ -405,23 +355,21 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
       }
       const items = visible.filter(
         (employee) =>
-          (request.resourceId === undefined || employee.ref.resourceId === request.resourceId) &&
-          (request.state === undefined || employee.state === request.state) &&
-          (request.ownerPrincipalId === undefined ||
-            employee.ownerPrincipalRef?.principalId === request.ownerPrincipalId) &&
-          (request.contextResourceId === undefined ||
-            employee.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
+          (request.employeeId === undefined || employee.id === request.employeeId) &&
+          (request.role === undefined || employee.role === request.role) &&
+          (request.department === undefined || employee.department === request.department) &&
+          (request.active === undefined || employee.active === request.active),
       );
       return {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite: yield* contextGrant(scope, 'write_all'),
-        collection: snapshot.state.collection,
         indicators: {
-          open: items.filter((employee) => employeeStatusGroup(employee.state) !== 'DONE').length,
-          overdue: items.filter((employee) => employeeIsOverdue(employee)).length,
+          active: items.filter((employee) => employee.active).length,
+          byDepartment: departmentCounts(items),
+          byRole: roleCounts(items),
+          total: items.length,
         },
         items,
-        referenceDate: '2026-10-05' as const,
         revision: snapshot.revision,
       };
     });
