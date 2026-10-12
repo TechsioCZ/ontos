@@ -10,6 +10,7 @@ import { expect, it } from 'effect-rstest';
 import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
 import {
   hasGeneratedActionRegistrationBinding,
+  hasGeneratedActionHttpClientExports,
   hasGeneratedGovernedServerContract,
 } from '../generated-governed-http-boundary.mts';
 import {
@@ -334,6 +335,55 @@ it.effect('governed clients retain every boundary check across formatter trailin
     }
   }),
 );
+
+it('governed module clients decode encoded DTOs without weakening credential or target checks', () => {
+  const expectation = {
+    authorizedOperation: 'executeRecordsWithAuthorization',
+    defaultApiPrefix: '/inventory-stock-api',
+    endpointGroup: 'records',
+    generatedHeader: MODULE_API_HEADER,
+    invocationKind: MODULE_API_KIND,
+    ownerApiValue: 'RecordsApi',
+    ownerContractImport: '../../shared/apis/records.ts',
+    publicOperation: 'executeRecords',
+  } as const;
+  const plain = governedClientFixture({
+    ...expectation,
+    apiValue: expectation.ownerApiValue,
+    clientHelper: 'recordsClient',
+    contractImport: expectation.ownerContractImport,
+  });
+  const source = plain
+    .replace('import { Effect, Redacted }', 'import { Effect, Redacted, Schema }')
+    .replace('import { RecordsApi }', 'import { RecordsApi, RecordsRequestSchema }')
+    .replace('import type { RecordsRequest }', 'import type { RecordsRequestEncoded }')
+    .replaceAll('payload: RecordsRequest,', 'payload: RecordsRequestEncoded,')
+    .replace(
+      'recordsClient(Redacted.make(credential), requestCorrelation, options).pipe(\n    Effect.flatMap((client) => client.records.execute({ payload })),\n  );',
+      `Schema.decodeEffect(RecordsRequestSchema)(payload).pipe(
+    Effect.flatMap((decoded) => recordsClient(Redacted.make(credential), requestCorrelation, options).pipe(
+      Effect.flatMap((client) => client.records.execute({ payload: decoded })),
+    )),
+  );`,
+    );
+  expect(hasGeneratedGovernedClientContract(source, expectation)).toBe(true);
+  expect(hasGeneratedGovernedClientContract(source.replaceAll(/,\s*(?=\))/gu, ''), expectation)).toBe(true);
+  for (const invalid of [
+    source.replace('Schema.decodeEffect', 'Schema.encodeEffect'),
+    source.replace('decodeEffect(RecordsRequestSchema)', 'decodeEffect(UnrelatedRequestSchema)'),
+    source.replace('{ payload: decoded }', '{ payload }'),
+    source.replace('Redacted.make(credential)', "Redacted.make('static-credential')"),
+    source.replace('baseUrl: apiBaseUrl', "baseUrl: '/untrusted-api'"),
+    source.replace('baseUrl: apiBaseUrl,\n      compositionRevision,', 'baseUrl: apiBaseUrl,'),
+    source.replace(
+      "import { RecordsApi, RecordsRequestSchema } from '../../shared/apis/records.ts'",
+      "import { RecordsApi, RecordsRequestSchema } from '../../shared/apis/unrelated.ts'",
+    ),
+    source.replace('(decoded) => recordsClient', '(Schema) => recordsClient'),
+  ]) {
+    expect(hasGeneratedGovernedClientContract(invalid, expectation)).toBe(false);
+  }
+});
 
 const problemKinds = [
   ['authentication', 'Authentication', 401],
@@ -1042,6 +1092,34 @@ for (const suffix of ['search', 'report']) {
     }),
   );
 }
+
+it.live(
+  'accepts the native Layer alias for additional read dependencies and retains the runtime boundary',
+  Effect.fn(function* nativeReadDependencyComposition() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const handlerRootPath = `${INVENTORY_VERTICAL_PATH}/api/index.ts`;
+    const handlerRoot = yield* Effect.promise(() => readFile(path.join(root, handlerRootPath), 'utf-8'));
+    const runtimeProvider = 'GovernedReadLayer.provide(governedReadRuntimeLive)';
+    const permissionProvider = 'GovernedReadLayer.provide(ActionPermissionLive)';
+    const composed = handlerRoot.replace(runtimeProvider, `${runtimeProvider}, ${permissionProvider}`);
+    yield* write(root, handlerRootPath, composed);
+    yield* checkModuleEntrypointBoundaries(root);
+    for (const invalid of [
+      composed.replace(runtimeProvider, 'GovernedReadLayer.provide(WrongRuntimeLive)'),
+      composed.replace(permissionProvider, 'ForeignLayer.provide(ActionPermissionLive)'),
+    ]) {
+      yield* write(root, handlerRootPath, invalid);
+      yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
+        onFailure: (cause) =>
+          expect(String(Cause.squash(cause))).toMatch(/module APIs require an approved Codesmith generator/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }
+  }),
+);
 
 it.live(
   'accepts only a complete generated governed module API seam',
@@ -2781,6 +2859,37 @@ it.live(
 );
 
 it.live(
+  'typed read callbacks keep generic commas separate from invocation arguments',
+  Effect.fn(function* typedReadCallbacks() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const source = yield* Effect.promise(() => readFile(path.join(root, STOCK_LIST_READ_FILE), 'utf-8'));
+    const typed = source.replace(
+      '() => Effect.succeed({})',
+      '(input: StockListRequest, context: ReadHandlerContext<Services>): Effect.Effect<ReadHandlerResult<StockListResponse>, ReadPermissionDenied | ReadHandlerUnavailable, Services> => Effect.succeed({})',
+    );
+    yield* write(root, STOCK_LIST_READ_FILE, typed);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* assertRejectedSources(
+      root,
+      STOCK_LIST_READ_FILE,
+      [
+        typed.replace('() => Layer.empty', 'undefined'),
+        typed.replace('Effect.succeed({})', 'undefined'),
+        typed.replace("permissionTarget: 'tenant'", "permissionTarget: 'tenant', ...attackerOverride"),
+      ],
+      /module APIs require an approved Codesmith generator/u,
+    );
+    yield* write(
+      root,
+      STOCK_LIST_READ_FILE,
+      source.replace('() => Effect.succeed({})', '() => 1 < 2 ? Effect.succeed({}) : Effect.succeed({})'),
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live(
   'shared issuer paths require the mounted gateway group and exact endpoint bindings',
   Effect.fn(function* mergedScenario1() {
     const root = yield* makeFixture();
@@ -3083,3 +3192,33 @@ it.live(
     yield* assertRejectedSources(root, contractPath, invalidSources, /module APIs require/u);
   }),
 );
+
+it('accepts explicit generated Action client bindings and rejects a missing authorized operation', () => {
+  const actionSlug = 'apply-command';
+  const actionType = 'ApplyCommand';
+  const start = '// <generated-action-http-client-exports>';
+  const end = '// </generated-action-http-client-exports>';
+  const values =
+    "export { executeApplyCommand, executeApplyCommandWithAuthorization } from './apply-command-action-client.ts';";
+  const options = "export type { ApplyCommandActionClientOptions } from './apply-command-action-client.ts';";
+  const named = [start, values, options, end].join('\n');
+  expect(hasGeneratedActionHttpClientExports(named, actionSlug, actionType)).toBe(true);
+  expect(
+    hasGeneratedActionHttpClientExports(
+      named.replace(', executeApplyCommandWithAuthorization', ''),
+      actionSlug,
+      actionType,
+    ),
+  ).toBe(false);
+  expect(hasGeneratedActionHttpClientExports(named.replace(options, ''), actionSlug, actionType)).toBe(false);
+  expect(hasGeneratedActionHttpClientExports([values, options, start, end].join('\n'), actionSlug, actionType)).toBe(
+    false,
+  );
+  expect(
+    hasGeneratedActionHttpClientExports(
+      [start, "export * from './apply-command-action-client.ts';", end].join('\n'),
+      actionSlug,
+      actionType,
+    ),
+  ).toBe(true);
+});

@@ -1,3 +1,4 @@
+import { ActionPermission as RuntimeActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -127,4 +128,10 @@ it('publishes the typed governed Read alternative-target composition', () => {
 
   expect(target.kind).toBe('any_of');
   expect(target.targets[0].kind).toBe('resource');
+});
+
+it('publishes the contextual permission tag through the server wiring port while keeping the main Action SDK narrow', () => {
+  expect(RuntimeActionPermission.key).toBe('@app/core-runtime/permissions/service/ActionPermission');
+  expect('ActionPermission' in publicSurface).toBe(false);
+  expect('ActionPermissionLive' in publicSurface).toBe(false);
 });

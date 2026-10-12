@@ -83,7 +83,7 @@
     "sonarjs/too-many-break-or-continue-in-loop": 2,
     "sonarjs/use-type-alias": 1,
     "typescript/array-type": 1,
-    "typescript/consistent-return": 10,
+    "typescript/consistent-return": 9,
     "typescript/consistent-type-specifier-style": 1,
     "typescript/no-unnecessary-type-arguments": 5,
     "typescript/no-unsafe-argument": 3,

@@ -1,0 +1,111 @@
+{
+  "siampark-billing-finance": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "siampark-billing-finance",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Faktury a finance",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Faktury a finance",
+        "description": "Ukázka s referenčním datem 5. 10. 2026. Účetní potvrzení a platby jsou simulované."
+      }
+    },
+    "demo": {
+      "simulation": "Ukázka s referenčním datem 5. 10. 2026. Účetní potvrzení a platby jsou simulované.",
+      "summary": "Výnosy {{revenue}} · Náklady {{cost}} · Neuhrazeno {{outstanding}} · Po splatnosti {{overdue}}",
+      "variance": "Odchylka výnosů od plánu {{revenue}} · Odchylka nákladů {{cost}}",
+      "direction": "Směr",
+      "property": "Nemovitost",
+      "number": "Číslo dokladu",
+      "amount": "Částka v CZK",
+      "states": "Stavy dokladu, platby a účetnictví",
+      "due": "Splatnost",
+      "detail": "Detail",
+      "invoices": "Provozní faktury",
+      "refresh": "Obnovit",
+      "none": "Bez vazby",
+      "empty": "Žádné faktury pro tento výběr.",
+      "paid": "Potvrzeno uhrazeno {{amount}}",
+      "edit": "Upravit koncept",
+      "confirm": "Potvrdit fakturu",
+      "void": "Zrušit fakturu",
+      "sync": "Vyžádat účetní export",
+      "retry": "Opakovat účetní export",
+      "observeAccounting": "Simulovat úspěšné účetní potvrzení",
+      "observePayment": "Simulovat potvrzenou úhradu",
+      "payment": "Celkem potvrzeno uhrazeno v CZK",
+      "noReceipt": "Zatím bez účetního potvrzení",
+      "history": "Historie účetního exportu",
+      "draft": "Koncept faktury",
+      "searchParty": "Hledat obchodní protistranu",
+      "search": "Hledat",
+      "counterparty": "Obchodní protistrana",
+      "occupancy": "Obsazenost",
+      "issue": "Datum vystavení",
+      "save": "Uložit koncept",
+      "create": "Vytvořit koncept",
+      "plan": "Finanční plán nemovitostí",
+      "period": "Období (konec nezahrnut)",
+      "category": "Kategorie",
+      "kind": "Druh",
+      "overdue": "Po splatnosti",
+      "outstanding": "Neuhrazeno",
+      "invoiceActions": "Faktura",
+      "accountingActions": "Účetní synchronizace",
+      "feedback": {
+        "loading": "Načítání…",
+        "ready": "Připraveno",
+        "saving": "Ukládání…",
+        "forbidden": "Pro tuto operaci nemáte oprávnění.",
+        "conflict": "Data se změnila. Obnovte je a zkuste operaci znovu.",
+        "validation": "Zkontrolujte částku, datum a obchodní vazby.",
+        "unavailable": "Služba je nedostupná. Zkuste obnovit data."
+      },
+      "labels": {
+        "ALL": "Vše",
+        "OUTGOING": "Vydaná",
+        "INCOMING": "Přijatá",
+        "DRAFT": "Koncept",
+        "CONFIRMED": "Potvrzená",
+        "VOIDED": "Zrušená",
+        "UNPAID": "Neuhrazená",
+        "PARTIALLY_PAID": "Částečně uhrazená",
+        "PAID": "Uhrazená",
+        "NOT_SYNCED": "Neodesláno",
+        "PENDING": "Čeká na účetnictví",
+        "SYNCED": "Účetně potvrzeno",
+        "FAILED": "Účetní chyba",
+        "COST": "Náklad",
+        "REVENUE": "Výnos",
+        "PLANNED": "Plánováno",
+        "CANCELLED": "Zrušeno"
+      },
+      "paymentHistory": "Potvrzené platební výsledky (simulace)",
+      "observedAt": "Čas pozorování",
+      "correlation": "Korelace",
+      "resultId": "Identifikátor výsledku",
+      "confirmedAmount": "Celkem potvrzeno uhrazeno",
+      "noPayments": "Zatím bez potvrzeného platebního výsledku.",
+      "counterpartyDetail": "Načíst kanonický detail protistrany",
+      "unnamedCounterparty": "Protistrana bez názvu",
+      "partyRoles": {
+        "CUSTOMER": "Zákazník",
+        "SUPPLIER": "Dodavatel"
+      },
+      "newInvoice": "Přejít k nové faktuře"
+    }
+  }
+}

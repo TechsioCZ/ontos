@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "siampark-agreements",
+    "buildMarker": "a9140e920b13357f",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/siampark-agreements",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/siampark-agreements",
+    "version": "0.1.0",
+    "build": "a9140e920b13357f"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "siampark-agreements",
+      "buildMarker": "a9140e920b13357f",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/siampark-agreements",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/siampark-agreements",
+      "version": "0.1.0",
+      "build": "a9140e920b13357f",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "siampark-agreements",
+      "buildMarker": "a9140e920b13357f",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/siampark-agreements",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/siampark-agreements",
+      "version": "0.1.0",
+      "build": "a9140e920b13357f",
+      "surface": "ui"
+    }
+  }
+}

@@ -69,6 +69,40 @@ const matchingDelimiterEnd = (source: string, start: number, opening: string, cl
 
 const maskComments = (source: string): string => maskNonCode(source, true);
 
+const arrowReturnTypeEnd = (
+  structure: string,
+  callStart: number,
+  callEnd: number,
+  colon: number,
+): number | undefined => {
+  const previousSeparator = topLevelSeparators(structure, ',', callStart + 1, colon).at(-1);
+  const argumentStart = (previousSeparator ?? callStart) + 1;
+  const prefix = /^\s*(?:async\s+)?\(/u.exec(structure.slice(argumentStart, colon));
+  if (prefix === null) {
+    return undefined;
+  }
+  const parametersStart = argumentStart + prefix[0].length - 1;
+  const parametersEnd = matchingDelimiter(structure, parametersStart, '(', ')');
+  if (parametersEnd === undefined || structure.slice(parametersEnd + 1, colon).trim() !== '') {
+    return undefined;
+  }
+  return topLevelSeparators(structure, '=', colon + 1, callEnd, true).find(
+    (candidate) => structure.charAt(candidate + 1) === '>',
+  );
+};
+
+/** Type argument commas after callback parameters are not invocation argument separators. */
+const maskArrowReturnTypeCommas = (structure: string, callStart: number, callEnd: number): string => {
+  let result = structure;
+  for (const colon of topLevelSeparators(structure, ':', callStart + 1, callEnd)) {
+    const arrow = arrowReturnTypeEnd(structure, callStart, callEnd, colon);
+    if (arrow !== undefined) {
+      result = result.slice(0, colon + 1) + result.slice(colon + 1, arrow).replaceAll(',', ' ') + result.slice(arrow);
+    }
+  }
+  return result;
+};
+
 const callArgument = (source: string | undefined, declaration: RegExp, argumentIndex = 0): string | undefined => {
   if (source === undefined) {
     return undefined;
@@ -87,9 +121,13 @@ const callArgument = (source: string | undefined, declaration: RegExp, argumentI
   if (callEnd === undefined) {
     return undefined;
   }
-  return separatedSource(code, topLevelSeparators(structure, ',', callStart + 1, callEnd), callStart + 1, callEnd)[
-    argumentIndex
-  ];
+  const argumentStructure = maskArrowReturnTypeCommas(structure, callStart, callEnd);
+  return separatedSource(
+    code,
+    topLevelSeparators(argumentStructure, ',', callStart + 1, callEnd),
+    callStart + 1,
+    callEnd,
+  )[argumentIndex];
 };
 
 const objectArgument = (source: string | undefined, declaration: RegExp, argumentIndex = 0): string | undefined => {
@@ -1834,6 +1872,7 @@ const hasReadContract = (
   sources: ReadonlyMap<string, string>,
   readFile: string,
   ownerPath: string,
+  diagnostics?: string[],
 ): boolean => {
   const camel = toCamelCase(contribution.name);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
@@ -1897,6 +1936,11 @@ const hasReadContract = (
     policy: hasReadDescriptorPolicy(read, allowedAccessKinds),
     readCall: isWholeObjectCall(readExpression, read, /^defineRead\(/u),
   };
+  for (const [name, valid] of Object.entries(checks)) {
+    if (!valid) {
+      diagnostics?.push(`${contribution.name} read: ${name}`);
+    }
+  }
   return Object.values(checks).every(Boolean);
 };
 
@@ -2456,7 +2500,7 @@ const hasPublishedContract = (
       if (argument === '') {
         return callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index + 1) === undefined;
       }
-      if (!/^Layer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
+      if (!/^(?:GovernedReadLayer|Layer)\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
         return false;
       }
       index += 1;
@@ -2623,8 +2667,29 @@ export const hasGeneratedActionClientPublication = (source: string, slug: string
   );
 };
 
+/** Codesmith roots may publish explicit bindings instead of an unrestricted wildcard. */
+export const hasGeneratedActionHttpClientExports = (source: string, slug: string, type: string): boolean => {
+  const modulePath = escapeRegExp(`./${slug}-action-client.ts`);
+  const start = '// <generated-action-http-client-exports>';
+  const end = '// </generated-action-http-client-exports>';
+  const wildcard = new RegExp(`export \\* from '${modulePath}';`, 'gu');
+  const values = new RegExp(
+    `export \\{\\s*execute${escapeRegExp(type)},\\s*execute${escapeRegExp(type)}WithAuthorization\\s*\\} from '${modulePath}';`,
+    'gu',
+  );
+  const options = new RegExp(
+    `export type \\{\\s*${escapeRegExp(type)}ActionClientOptions\\s*\\} from '${modulePath}';`,
+    'gu',
+  );
+  return (
+    slotHasExactlyOneCodeMatch(source, start, end, wildcard) ||
+    (slotHasExactlyOneCodeMatch(source, start, end, values) && slotHasExactlyOneCodeMatch(source, start, end, options))
+  );
+};
+
 const hasCompleteGeneratedActionHttpSeam = (input: {
   readonly deploymentAppId: string;
+  readonly diagnostics: string[] | undefined;
   readonly handlerRoot: string;
   readonly manifest: string;
   readonly moduleId: string;
@@ -2661,7 +2726,7 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
     const escapedApiValue = escapeRegExp(apiValue);
     const escapedLayerValue = escapeRegExp(layerValue);
     const escapedActionValue = escapeRegExp(`${camel}Action`);
-    return [
+    const checks = [
       actionSource.startsWith(
         `// @generated by OntOS Codesmith Action v1\n// @ontos-action-owner ${input.moduleId}\n// @ontos-action-slug ${slug}\n`,
       ),
@@ -2703,7 +2768,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
           'gu',
         ),
       ),
-      hasGeneratedActionClientPublication(clientRoot, slug),
+      hasGeneratedActionClientPublication(clientRoot, slug) ||
+        hasGeneratedActionHttpClientExports(clientRoot, slug, type),
       slotHasExactlyOneCodeMatch(
         input.manifest,
         '// <generated-module-manifest-actions>',
@@ -2716,7 +2782,35 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         '// </generated-module-registration-actions>',
         new RegExp(`${escapedActionValue},`, 'gu'),
       ),
-    ].every(Boolean);
+    ];
+    const labels = [
+      'Action provenance',
+      'Action registration',
+      'Action key',
+      'endpoint path',
+      'API identity',
+      'group identity',
+      'problem mapper',
+      'problem registration',
+      'HTTP runner',
+      'HTTP registration',
+      'HTTP group',
+      'client contract',
+      'client gateway',
+      'client fresh assertion',
+      'shared API contribution',
+      'handler import',
+      'handler runtime',
+      'client exports',
+      'manifest Action',
+      'runtime Action',
+    ];
+    for (const [index, valid] of checks.entries()) {
+      if (!valid) {
+        input.diagnostics?.push(`${slug}: ${labels[index]}`);
+      }
+    }
+    return checks.every(Boolean);
   });
 };
 
@@ -3122,8 +3216,9 @@ const hasCompleteContributionRead = (
   sources: ReadonlyMap<string, string>,
   readFile: string,
   ownerPath: string,
+  diagnostics?: string[],
 ): boolean =>
-  hasReadContract(readSource, contribution, moduleId, sources, readFile, ownerPath) &&
+  hasReadContract(readSource, contribution, moduleId, sources, readFile, ownerPath, diagnostics) &&
   (contribution.kind !== MODULE_API_KIND || hasGeneratedModuleApiReadContract(readSource, moduleId, contribution.name));
 
 const hasCompleteGeneratedContribution = (
@@ -3180,6 +3275,7 @@ const hasCompleteGeneratedContribution = (
       sources,
       path.posix.normalize(path.posix.join(verticalPath, 'api', readImport)),
       verticalPath,
+      context.diagnostics,
     ),
     server: hasServerContract(
       serverSource,
@@ -3245,6 +3341,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
     readsAreComplete &&
     hasCompleteGeneratedActionHttpSeam({
       deploymentAppId,
+      diagnostics,
       handlerRoot: inputs.handlerRoot,
       manifest: inputs.manifest,
       moduleId: inputs.moduleId,

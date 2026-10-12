@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "siampark-billing-finance",
+    "buildMarker": "0601eb5c20ee2712",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/siampark-billing-finance",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/siampark-billing-finance",
+    "version": "0.1.0",
+    "build": "0601eb5c20ee2712"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "siampark-billing-finance",
+      "buildMarker": "0601eb5c20ee2712",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/siampark-billing-finance",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/siampark-billing-finance",
+      "version": "0.1.0",
+      "build": "0601eb5c20ee2712",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "siampark-billing-finance",
+      "buildMarker": "0601eb5c20ee2712",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/siampark-billing-finance",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/siampark-billing-finance",
+      "version": "0.1.0",
+      "build": "0601eb5c20ee2712",
+      "surface": "ui"
+    }
+  }
+}

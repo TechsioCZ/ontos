@@ -122,6 +122,7 @@ export { databaseRuntime } from '#database-runtime';
 export type { DatabaseRuntime } from './db/database-runtime.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
+export { parseSpiceDbConfig } from './permissions/config.ts';
 export {
   DatabaseConfig,
   DatabaseConfigError,

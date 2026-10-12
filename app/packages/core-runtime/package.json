@@ -45,6 +45,7 @@
       "default": "./src/db/database-runtime.node.ts"
     },
     "#unit-service-fetch": {
+      "types": "./src/http/unit-service-fetch.ts",
       "workerd": "./src/http/unit-service-fetch.workerd.ts",
       "node": "./src/http/unit-service-fetch.node.ts"
     },

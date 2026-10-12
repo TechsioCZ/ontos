@@ -23,6 +23,7 @@ export interface EffectBffRequestContext {
 export interface EffectBffClientOptions {
   readonly baseUrl?: string | URL;
   readonly compositionRevision?: string;
+  readonly referenceCredentials?: Redacted.Redacted;
   readonly requestContext?: EffectBffRequestContext;
   readonly transportHeaders?: HttpHeaders.Input;
 }
@@ -118,7 +119,7 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     requestCorrelation,
     requestTrace,
   }: GovernedEffectBffClientConfig<ApiId, Groups>,
-  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision'>,
+  options: Pick<EffectBffClientOptions, 'baseUrl' | 'compositionRevision' | 'referenceCredentials'>,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
   // Header construction skips undefined values, so absent optional headers stay absent.
@@ -127,6 +128,8 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     'idempotency-key': idempotencyKey,
     'x-correlation-id': requestCorrelation,
     'x-ontos-composition-revision': options.compositionRevision,
+    'x-ontos-reference-credentials':
+      options.referenceCredentials === undefined ? undefined : Redacted.value(options.referenceCredentials),
     'x-trace-id': requestTrace,
   };
   const clientConfig = { api, baseUrl, defaultApiPrefix, transportHeaders };

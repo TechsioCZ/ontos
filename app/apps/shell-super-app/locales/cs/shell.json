@@ -23,7 +23,7 @@
       "account": {
         "label": "Nabídka účtu"
       },
-      "brand": "OntOS",
+      "brand": "Siampark",
       "header": {
         "label": "Záhlaví přehledu"
       },
@@ -41,18 +41,34 @@
       },
       "navigation": {
         "home": "Domů",
-        "label": "Navigace přehledu"
+        "label": "Navigace přehledu",
+        "siampark": {
+          "overview": "Přehled",
+          "properties": "Nemovitosti",
+          "occupancy": "Nájmy a pobyty",
+          "agreements": "Smlouvy",
+          "finance": "Finance",
+          "work": "Úkoly",
+          "relationships": "Aktivity",
+          "contacts": "Kontakty",
+          "integrations": "Integrace"
+        }
       },
       "sidebar": {
         "label": "Postranní panel přehledu"
       },
-    "tenant": {
+      "tenant": {
         "accessibleLabel": "Aktuální tenant",
         "failed": "Přepnutí tenantu selhalo. Zkuste to znovu.",
         "pending": "Přepínám tenant…",
-      "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
-    },
-    "unavailable": "Přihlášené prostředí je dočasně nedostupné. Znovu načtěte stránku a zkuste to znovu."
+        "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
+      },
+      "unavailable": "Přihlášené prostředí je dočasně nedostupné. Znovu načtěte stránku a zkuste to znovu.",
+      "workspace": "Správa nemovitostí",
+      "breadcrumb": {
+        "label": "Drobečková navigace",
+        "home": "Hlavní přehled"
+      }
     },
     "hero": {
       "cardOne": "Přidejte první business vertical příkazem create <domain> --vertical, až ho opravdu potřebujete.",
@@ -140,12 +156,16 @@
       "partial": "Někteří poskytovatelé vyhledávání jsou dočasně nedostupní. Zobrazujeme dostupné výsledky.",
       "party": "Subjekt",
       "reconciliation_required": "Vyžaduje sjednocení",
-      "roles": { "CUSTOMER": "Zákazník", "SUPPLIER": "Dodavatel" },
+      "roles": {
+        "CUSTOMER": "Zákazník",
+        "SUPPLIER": "Dodavatel"
+      },
       "selection_required": "Před vyhledáváním se přihlaste a vyberte tenanta.",
       "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
       "submit": "Hledat",
       "title": "Výsledky hledání",
-      "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu."
+      "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
+      "clear": "Vymazat hledání"
     },
     "resource": {
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",

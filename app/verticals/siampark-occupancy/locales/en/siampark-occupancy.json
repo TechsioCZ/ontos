@@ -1,0 +1,94 @@
+{
+  "siampark-occupancy": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Leases and stays"
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "siampark-occupancy",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Leases and stays",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Leases and stays",
+        "description": "Manage unit occupancy, leases and short stays."
+      }
+    },
+    "demo": {
+      "feedback": {
+        "loading": "Loading…",
+        "ready": "Ready",
+        "saving": "Saving…",
+        "forbidden": "You do not have permission for this area.",
+        "conflict": "The state has changed. Refresh data and try the operation again.",
+        "validation": "Check the input and the allowed state transition.",
+        "unavailable": "The service is temporarily unavailable. Refresh and try again."
+      },
+      "refresh": "Refresh",
+      "empty": "No records match the filter.",
+      "unit": "Unit",
+      "period": "Period",
+      "detail": "Detail",
+      "openEnd": "Open ended",
+      "customer": "Customer",
+      "simulated": "SIMULATED — provider simulation",
+      "activate": "Activate",
+      "choose": "Choose a record",
+      "startDate": "Start",
+      "endDate": "End",
+      "kind": {
+        "ALL": "All",
+        "LONG_TERM_LEASE": "Long-term lease",
+        "SHORT_STAY": "Short stay"
+      },
+      "state": "State",
+      "stateLabels": {
+        "DRAFT": "Draft",
+        "CONFIRMED": "Confirmed",
+        "ACTIVE": "Active",
+        "COMPLETED": "Completed",
+        "CANCELLED": "Cancelled"
+      },
+      "bookingStates": {
+        "SUCCESS": "Imported successfully",
+        "FAILED": "Import failed",
+        "CONFLICT": "Booking conflict"
+      },
+      "attempts": "Attempts: {{attemptCount}}",
+      "contract": "Contract",
+      "confirm": "Confirm",
+      "complete": "Complete",
+      "cancel": "Cancel",
+      "create": "Create a lease draft",
+      "customerSearch": "Find a customer",
+      "search": "Search",
+      "bookingObservations": "Booking simulation observations",
+      "list": "Leases and stays",
+      "importBooking": "Import a short stay",
+      "bookingFormContext": "Use the unit and dates from the lease form, then choose a guest. The simulated stay is for two people.",
+      "guestSearch": "Find a guest",
+      "guest": "Guest",
+      "simulateImport": "Simulate a successful import",
+      "simulateFailure": "Simulate an import failure",
+      "retry": "Retry import with the selected details",
+      "provider": "Provider",
+      "attemptedAt": "Attempt time",
+      "completedAt": "Result time",
+      "ownerReference": "Owner record reference",
+      "requestSummary": "Request summary",
+      "resultSummary": "Result summary",
+      "editDraft": "Edit draft period",
+      "saveDraft": "Save draft period",
+      "newDraft": "Start a new lease"
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "siampark-relationships": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "siampark-relationships",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Siampark Relationships Vertical",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Aktivity a kontakty",
+        "refresh": "Načíst aktivity",
+        "timeline": "Historie komunikace",
+        "occurredAt": "Kdy",
+        "summary": "Shrnutí",
+        "followUp": "Navazující úkol",
+        "contact": "Karta kontaktu",
+        "unnamed": "Kontakt bez názvu",
+        "query": "Hledat protistranu",
+        "find": "Vyhledat",
+        "loadTasks": "Načíst existující úkoly",
+        "record": "Zaznamenat hovor",
+        "save": "Uložit aktivitu",
+        "saved": "Aktivita uložena.",
+        "unavailable": "Aktivity se nepodařilo načíst.",
+        "forbidden": "K požadovanému kontaktu nemáte oprávnění.",
+        "invalid": "Aktivitu nelze uložit. Načtěte data a ověřte kontakt i úkol.",
+        "kinds": {
+          "CALL": "Hovor",
+          "EMAIL": "E-mail",
+          "MEETING": "Schůzka",
+          "NOTE": "Poznámka"
+        },
+        "choose": "Vyberte",
+        "intro": "Přehled komunikace, kontaktů a navazujících úkolů.",
+        "empty": "Zatím nejsou zaznamenané žádné aktivity.",
+        "kind": "Typ aktivity",
+        "partyType": "Typ kontaktu",
+        "roles": "Role"
+      }
+    }
+  }
+}

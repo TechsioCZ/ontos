@@ -12,7 +12,13 @@
     "inventory": "http://localhost:4110/.well-known/ontos-module-manifest.json",
     "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json",
     "tax": "http://localhost:4112/.well-known/ontos-module-manifest.json",
-    "privacy": "http://localhost:4113/.well-known/ontos-module-manifest.json"
+    "privacy": "http://localhost:4113/.well-known/ontos-module-manifest.json",
+    "siampark-property": "http://localhost:4114/.well-known/ontos-module-manifest.json",
+    "siampark-occupancy": "http://localhost:4115/.well-known/ontos-module-manifest.json",
+    "siampark-agreements": "http://localhost:4116/.well-known/ontos-module-manifest.json",
+    "siampark-work": "http://localhost:4117/.well-known/ontos-module-manifest.json",
+    "siampark-billing-finance": "http://localhost:4118/.well-known/ontos-module-manifest.json",
+    "siampark-relationships": "http://localhost:4119/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -31,7 +37,13 @@
     "inventory": 4110,
     "availability": 4111,
     "tax": 4112,
-    "privacy": 4113
+    "privacy": 4113,
+    "siampark-property": 4114,
+    "siampark-occupancy": 4115,
+    "siampark-agreements": 4116,
+    "siampark-work": 4117,
+    "siampark-billing-finance": 4118,
+    "siampark-relationships": 4119
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -39,7 +51,13 @@
     "commerce-market-catalog": "http://localhost:4109/mf-manifest.json",
     "catalog": "http://localhost:4105/mf-manifest.json",
     "inventory": "http://localhost:4110/mf-manifest.json",
-    "privacy": "http://localhost:4113/mf-manifest.json"
+    "privacy": "http://localhost:4113/mf-manifest.json",
+    "siampark-property": "http://localhost:4114/mf-manifest.json",
+    "siampark-occupancy": "http://localhost:4115/mf-manifest.json",
+    "siampark-agreements": "http://localhost:4116/mf-manifest.json",
+    "siampark-work": "http://localhost:4117/mf-manifest.json",
+    "siampark-billing-finance": "http://localhost:4118/mf-manifest.json",
+    "siampark-relationships": "http://localhost:4119/mf-manifest.json"
   },
   "serverExecution": {
     "party-registry": {
@@ -79,7 +97,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalPartyRegistryBackend",
         "manifestEnv": "VERTICAL_PARTY_REGISTRY_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4102/backend-mf-manifest.json",
@@ -135,7 +153,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalCommerceCustomerContextBackend",
         "manifestEnv": "VERTICAL_COMMERCE_CUSTOMER_CONTEXT_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
@@ -191,7 +209,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalPaymentTermCatalogBackend",
         "manifestEnv": "VERTICAL_PAYMENT_TERM_CATALOG_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4103/backend-mf-manifest.json",
@@ -242,7 +260,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalCommerceMarketCatalogBackend",
         "manifestEnv": "VERTICAL_COMMERCE_MARKET_CATALOG_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4109/backend-mf-manifest.json",
@@ -293,7 +311,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalCatalogBackend",
         "manifestEnv": "VERTICAL_CATALOG_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4105/backend-mf-manifest.json",
@@ -341,7 +359,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalPricingBackend",
         "manifestEnv": "VERTICAL_PRICING_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4106/backend-mf-manifest.json",
@@ -389,7 +407,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalStorefrontRegistryBackend",
         "manifestEnv": "VERTICAL_STOREFRONT_REGISTRY_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4107/backend-mf-manifest.json",
@@ -437,7 +455,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalPriceGroupCatalogBackend",
         "manifestEnv": "VERTICAL_PRICE_GROUP_CATALOG_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4108/backend-mf-manifest.json",
@@ -488,7 +506,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalInventoryBackend",
         "manifestEnv": "VERTICAL_INVENTORY_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4110/backend-mf-manifest.json",
@@ -539,7 +557,7 @@
       },
       "node": {
         "kind": "node-mf-runtime",
-        "adapterVersion": "backend-mf-effect-v1",
+        "adapterVersion": "backend-mf-effect-v2",
         "remoteName": "verticalAssortmentBackend",
         "manifestEnv": "VERTICAL_ASSORTMENT_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4104/backend-mf-manifest.json",
@@ -699,6 +717,312 @@
           "buildMarker": "00f31ee28a035d1a"
         }
       }
+    },
+    "siampark-property": {
+      "apiBaseUrl": "http://localhost:4114/siampark-property-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/siampark-property",
+        "buildMarker": "8d48a9e1624695e8"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-siampark-property",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_PROPERTY",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SIAMPARK_PROPERTY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SIAMPARK_PROPERTY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SIAMPARK_PROPERTY_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SIAMPARK_PROPERTY_WORKER",
+          "serviceBindingEnv": "VERTICAL_SIAMPARK_PROPERTY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_PROPERTY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_PROPERTY_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSiamparkPropertyBackend",
+        "manifestEnv": "VERTICAL_SIAMPARK_PROPERTY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4114/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4114/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/siampark-property",
+          "buildMarker": "8d48a9e1624695e8"
+        }
+      }
+    },
+    "siampark-occupancy": {
+      "apiBaseUrl": "http://localhost:4115/siampark-occupancy-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/siampark-occupancy",
+        "buildMarker": "9bdafd234cf26e8e"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-siampark-occupancy",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_OCCUPANCY",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SIAMPARK_OCCUPANCY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SIAMPARK_OCCUPANCY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SIAMPARK_OCCUPANCY_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SIAMPARK_OCCUPANCY_WORKER",
+          "serviceBindingEnv": "VERTICAL_SIAMPARK_OCCUPANCY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_OCCUPANCY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_OCCUPANCY_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSiamparkOccupancyBackend",
+        "manifestEnv": "VERTICAL_SIAMPARK_OCCUPANCY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4115/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4115/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/siampark-occupancy",
+          "buildMarker": "9bdafd234cf26e8e"
+        }
+      }
+    },
+    "siampark-agreements": {
+      "apiBaseUrl": "http://localhost:4116/siampark-agreements-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/siampark-agreements",
+        "buildMarker": "a9140e920b13357f"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-siampark-agreements",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_AGREEMENTS",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SIAMPARK_AGREEMENTS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SIAMPARK_AGREEMENTS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SIAMPARK_AGREEMENTS_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SIAMPARK_AGREEMENTS_WORKER",
+          "serviceBindingEnv": "VERTICAL_SIAMPARK_AGREEMENTS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_AGREEMENTS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_AGREEMENTS_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSiamparkAgreementsBackend",
+        "manifestEnv": "VERTICAL_SIAMPARK_AGREEMENTS_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4116/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4116/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/siampark-agreements",
+          "buildMarker": "a9140e920b13357f"
+        }
+      }
+    },
+    "siampark-work": {
+      "apiBaseUrl": "http://localhost:4117/siampark-work-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/siampark-work",
+        "buildMarker": "175a72e2a12e76df"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-siampark-work",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_WORK",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SIAMPARK_WORK_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SIAMPARK_WORK_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SIAMPARK_WORK_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SIAMPARK_WORK_WORKER",
+          "serviceBindingEnv": "VERTICAL_SIAMPARK_WORK_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_WORK_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_WORK_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSiamparkWorkBackend",
+        "manifestEnv": "VERTICAL_SIAMPARK_WORK_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4117/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4117/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/siampark-work",
+          "buildMarker": "175a72e2a12e76df"
+        }
+      }
+    },
+    "siampark-billing-finance": {
+      "apiBaseUrl": "http://localhost:4118/siampark-billing-finance-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/siampark-billing-finance",
+        "buildMarker": "0601eb5c20ee2712"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-siampark-billing-finance",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_BILLING_FINANCE",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SIAMPARK_BILLING_FINANCE_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SIAMPARK_BILLING_FINANCE_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SIAMPARK_BILLING_FINANCE_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SIAMPARK_BILLING_FINANCE_WORKER",
+          "serviceBindingEnv": "VERTICAL_SIAMPARK_BILLING_FINANCE_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_BILLING_FINANCE_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_BILLING_FINANCE_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSiamparkBillingFinanceBackend",
+        "manifestEnv": "VERTICAL_SIAMPARK_BILLING_FINANCE_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4118/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4118/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/siampark-billing-finance",
+          "buildMarker": "0601eb5c20ee2712"
+        }
+      }
+    },
+    "siampark-relationships": {
+      "apiBaseUrl": "http://localhost:4119/siampark-relationships-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/siampark-relationships",
+        "buildMarker": "34118b88515b135e"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-siampark-relationships",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_RELATIONSHIPS",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SIAMPARK_RELATIONSHIPS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SIAMPARK_RELATIONSHIPS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SIAMPARK_RELATIONSHIPS_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SIAMPARK_RELATIONSHIPS_WORKER",
+          "serviceBindingEnv": "VERTICAL_SIAMPARK_RELATIONSHIPS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_RELATIONSHIPS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_RELATIONSHIPS_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSiamparkRelationshipsBackend",
+        "manifestEnv": "VERTICAL_SIAMPARK_RELATIONSHIPS_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4119/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4119/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/siampark-relationships",
+          "buildMarker": "34118b88515b135e"
+        }
+      }
     }
   },
   "apis": {
@@ -714,6 +1038,12 @@
     "inventory": "http://localhost:4110/inventory-api",
     "availability": "http://localhost:4111/availability-api",
     "tax": "http://localhost:4112/tax-api",
-    "privacy": "http://localhost:4113/privacy-api"
+    "privacy": "http://localhost:4113/privacy-api",
+    "siampark-property": "http://localhost:4114/siampark-property-api",
+    "siampark-occupancy": "http://localhost:4115/siampark-occupancy-api",
+    "siampark-agreements": "http://localhost:4116/siampark-agreements-api",
+    "siampark-work": "http://localhost:4117/siampark-work-api",
+    "siampark-billing-finance": "http://localhost:4118/siampark-billing-finance-api",
+    "siampark-relationships": "http://localhost:4119/siampark-relationships-api"
   }
 }

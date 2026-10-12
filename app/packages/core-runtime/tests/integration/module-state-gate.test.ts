@@ -1,16 +1,23 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq } from 'drizzle-orm';
-import { Effect, Exit, Option, Predicate } from 'effect';
+import { and, eq, sql } from 'drizzle-orm';
+import { Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { CoreDatabase } from '../../src/db/client.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
-import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { tenantModuleStates, tenants } from '../../src/db/schema.ts';
-import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { coreRelations, dataAccessEvents, tenantModuleStates, tenants } from '../../src/db/schema.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../src/auth/system-principal-context.ts';
+import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
+import { defineRead } from '../../src/reads/definition.ts';
+import { makeReadRuntime } from '../../src/reads/runtime.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { decideModuleStateAccess, makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
 import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
+import { ModuleStateDeniedError } from '../../src/modules/module-state-gate-errors.ts';
 import type { TenantModuleStateServiceContract } from '../../src/modules/tenant-module-state-service.ts';
 import { TENANT_MODULE_STATES, makeTenantModuleStateService } from '../../src/modules/tenant-module-state-service.ts';
 
@@ -187,4 +194,155 @@ it.live('batches tenant-isolated states once, rejects malformed/unavailable read
     expect(Predicate.isTagged(malformed, 'ModuleStateCheckUnavailableError')).toBe(true);
     expect(malformed.reason).not.toMatch(/corrupt|storage/u);
   }),
+);
+
+it.live('allows nested governed-read evidence under the write fence while serializing module-state changes', () =>
+  Effect.gen(function* compatibleTenantWriteFence() {
+    const lifetime = yield* Scope.Scope;
+    const connections = yield* loadDatabaseConnectionPair();
+    const parentClient = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
+    const childClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 1 });
+    const parentDatabase = yield* makeTestDatabaseFromClient(parentClient, coreRelations);
+    const childDatabase = yield* makeTestDatabaseFromClient(childClient, coreRelations);
+    const tenantId = randomUUID();
+    const principalId = randomUUID();
+    const moduleKey = `gate.nested-read-${tenantId}`;
+    const readKey = `${moduleKey}.read`;
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* cleanupFenceFixture() {
+        yield* parentClient.unsafe('delete from core.data_access_events where tenant_id = $1', [tenantId]);
+        yield* parentClient.unsafe('delete from core.tenant_module_states where tenant_id = $1', [tenantId]);
+        yield* parentClient.unsafe('delete from core.principals where tenant_id = $1', [tenantId]);
+        yield* parentClient.unsafe('delete from core.tenants where tenant_id = $1', [tenantId]);
+      }).pipe(Effect.orDie),
+    );
+    yield* parentClient.unsafe(
+      "insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Nested Read fence', 'active', 'en')",
+      [tenantId, `nested-read-${tenantId}`],
+    );
+    yield* parentClient.unsafe(
+      "insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $2, 'system', 'Fence principal', 'active')",
+      [principalId, tenantId],
+    );
+    yield* parentClient.unsafe(
+      "insert into core.tenant_module_states (tenant_id, module_key, state) values ($1, $2, 'active')",
+      [tenantId, moduleKey],
+    );
+    const access = {
+      legalEntities: () => Effect.succeed([]),
+      modules: () => Effect.succeed([]),
+      resources: () => Effect.succeed([]),
+      tenants: () => Effect.succeed([]),
+    };
+    const principal = yield* makeSystemPrincipalContextResolver({ executor: childDatabase }).resolve({
+      principalId,
+      registration: registerSystemWorkload({ jobKey: 'nested-read-fence-integration' }),
+      runReference: readKey,
+      tenantId,
+    });
+    const read = defineRead(
+      {
+        accessKind: 'detail',
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'context_permission', permission: 'module.access' },
+          entrypointKey: readKey,
+          moduleKey: 'core.shell',
+          role: 'api',
+        }),
+        evidencePolicy: { captureMode: 'metadata_only', policyKey: `${readKey}.v1` },
+        inputSchema: Schema.Struct({}),
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'core.shell',
+        permissionTarget: 'module',
+        policies: [],
+        readKey,
+        resultSchema: Schema.Array(Schema.String),
+        schemaVersion: '1',
+      },
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: ['visible'] }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const readRuntime = makeReadRuntime(
+      { executor: childDatabase },
+      openModuleEntrypointGateway,
+      makeOperationalScopeResolver(makeOperationalScopeRepository({ executor: childDatabase }), access),
+      access,
+    );
+    const gate = makeModuleStateGate(makeTenantModuleStateService({ executor: parentDatabase }));
+    const write = defineTenantModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      entrypointKey: `${moduleKey}.write`,
+      moduleKey,
+      role: 'action',
+    });
+    const [childBackend] = yield* childClient.unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid');
+    const childPid = Option.getOrThrow(Option.fromNullishOr(childBackend)).pid;
+    const writeAcquired = yield* Deferred.make<boolean>();
+    const writer = yield* parentDatabase.transaction(
+      Effect.fn(function* holdParentFence(transaction) {
+        yield* gate.recheckWrite(transaction, tenantId, write);
+        const [parentBackend] = yield* transaction.execute<{ readonly pid: number }>(
+          sql`select pg_backend_pid() as pid`,
+          'objects',
+        );
+        const parentPid = Option.getOrThrow(Option.fromNullishOr(parentBackend)).pid;
+        expect(parentPid).not.toBe(childPid);
+        expect(
+          yield* readRuntime.runRead({
+            input: {},
+            principal,
+            registration: read,
+            transport: { correlationId: randomUUID() },
+          }),
+        ).toEqual(['visible']);
+        const evidence = yield* transaction
+          .select({ id: dataAccessEvents.dataAccessEventId })
+          .from(dataAccessEvents)
+          .where(eq(dataAccessEvents.tenantId, tenantId));
+        expect(evidence).toHaveLength(1);
+        const competingWrite = yield* Effect.forkIn(
+          childClient.withTransaction(
+            Effect.gen(function* changeModuleState() {
+              yield* childClient.unsafe("select set_config('ontos.tenant_id', $1, true)", [tenantId]);
+              yield* childClient.unsafe('select tenant_id from core.tenants where tenant_id = $1 for update', [
+                tenantId,
+              ]);
+              yield* Deferred.succeed(writeAcquired, true);
+              yield* childClient.unsafe(
+                "update core.tenant_module_states set state = 'read_only' where tenant_id = $1 and module_key = $2",
+                [tenantId, moduleKey],
+              );
+            }),
+          ),
+          lifetime,
+        );
+        let blocked = false;
+        for (let observation = 0; observation < 100 && !blocked; observation += 1) {
+          const rows = yield* transaction.execute<{ readonly blocked: boolean }>(
+            sql`select ${parentPid} = any(pg_blocking_pids(${childPid})) as blocked`,
+            'objects',
+          );
+          blocked = rows[0]?.blocked === true;
+          yield* Effect.yieldNow;
+        }
+        expect(blocked).toBe(true);
+        expect(yield* Deferred.isDone(writeAcquired)).toBe(false);
+        return competingWrite;
+      }),
+    );
+    yield* Fiber.join(writer);
+    expect(yield* Deferred.isDone(writeAcquired)).toBe(true);
+    const state = yield* parentDatabase
+      .select({ state: tenantModuleStates.state })
+      .from(tenantModuleStates)
+      .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, moduleKey)));
+    expect(state[0]?.state).toBe('read_only');
+    const denied = yield* parentDatabase.transaction((transaction) =>
+      Effect.flip(gate.recheckWrite(transaction, tenantId, write)),
+    );
+    expect(Schema.is(ModuleStateDeniedError)(denied)).toBe(true);
+  }).pipe(Effect.timeout('5 seconds')),
 );

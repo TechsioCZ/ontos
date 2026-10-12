@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { expect, it, layer } from 'effect-rstest';
 
 import { buildKnipModel, KnipConfigSchema } from '../../quality-audit/knip-model.mts';
 import { runQualityAudit } from '../quality-audit.mts';
@@ -26,6 +26,8 @@ const sourcePattern = 'src/**/*.{ts,mts}';
 const allTypedSourcePattern = '**/*.{ts,mts}';
 const knipManifestFile = 'node_modules/knip/package.json';
 const indexFile = 'src/index.ts';
+const moduleFederationConfigFile = 'module-federation.config.ts';
+const operatorScriptPattern = 'scripts/**/*.mts';
 const rstestConfigFile = 'rstest.config.ts';
 const auditConsumersFile = '.audit/consumers.mts';
 const rstestEnvironmentReason = 'Rstest testEnvironment consumer';
@@ -48,6 +50,7 @@ const ReportSchema = Schema.Struct({
   issues: Schema.Array(
     Schema.Struct({
       dependencies: Names,
+      duplicates: Schema.Array(Schema.Array(Schema.Struct({ name: Schema.String }))),
       exports: Names,
       file: Schema.String,
       files: Names,
@@ -287,7 +290,7 @@ const fixture = () =>
     );
     write(
       root,
-      'module-federation.config.ts',
+      moduleFederationConfigFile,
       [
         "throw new Error('configuration must never execute');",
         "const remotes = { declaredRemote: 'remote@https://example.test/remote.js' };",
@@ -562,7 +565,8 @@ it.live(
     const nativeFixture = 'scripts/native.fixture.mts';
     const coreFixture = `${core}/tests/fixtures/worker.fixture.ts`;
     const overrideFixture = `${core}/tests/fixtures/override.fixture.ts`;
-    for (const file of [nativeFixture, coreFixture, overrideFixture]) {
+    const nativeDirectoryFixture = `${core}/tests/fixtures/directory.fixture.ts`;
+    for (const file of [nativeFixture, coreFixture, overrideFixture, nativeDirectoryFixture]) {
       write(root, file, 'export const unusedNativeNeighbor = 1;');
     }
     const invalidFiles = [
@@ -583,6 +587,9 @@ it.live(
       'mutated-driver',
       'unused-default',
       'overridden-default',
+      'unknown-directory-root',
+      'recursive-directory-root',
+      'mutated-executable',
     ].map((name) => `scripts/${name}.fixture.mts`);
     for (const file of invalidFiles) {
       write(root, file, 'export const unusedControl = 1;');
@@ -618,19 +625,37 @@ it.live(
       `${core}/tests/unit/consumer.test.ts`,
       [
         "import { ChildProcess as Process } from 'effect/unstable/process';",
+        "import nativePath from 'node:path';",
+        "const packageRoot = nativePath.resolve(import.meta.dirname, '../..');",
+        "Process.make(process.execPath, [nativePath.join(packageRoot, 'tests/fixtures/directory.fixture.ts')], { cwd: packageRoot });",
+        'process.exitCode = 0;',
+        "const unknownRoot = nativePath.resolve(unknownDirectory, '../..');",
+        "Process.make(process.execPath, [nativePath.join(unknownRoot, '../../scripts/unknown-directory-root.fixture.mts')], { cwd: unknownRoot });",
+        "const recursiveRoot = nativePath.resolve(recursiveRoot, '../..');",
+        "Process.make(process.execPath, [nativePath.join(recursiveRoot, '../../scripts/recursive-directory-root.fixture.mts')], { cwd: recursiveRoot });",
         "const start = (signal, file = 'tests/fixtures/worker.fixture.ts') => (() => Process.make(process.execPath, ['--experimental-strip-types', file], { cwd: new URL('../..', import.meta.url).pathname }))();",
         "const assertStopped = (signal, file = 'tests/fixtures/worker.fixture.ts') => start(signal, file);",
         "assertStopped('SIGTERM'); assertStopped('SIGINT', 'tests/fixtures/override.fixture.ts');",
       ].join('\n'),
+    );
+    const executableMutationConsumer = 'tests/unit/executable-mutation.test.ts';
+    write(
+      root,
+      `${core}/${executableMutationConsumer}`,
+      "import { ChildProcess } from 'effect/unstable/process';\nprocess.execPath = '/usr/bin/printf';\nprocess.exitCode = 0;\nChildProcess.make(process.execPath, ['../../scripts/mutated-executable.fixture.mts']);",
     );
     const consumerPath = path.join(root, auditConsumersFile);
     const model = yield* buildKnipModel(
       root,
       {
         workspaces: {
-          '.': { entry: [], node: false, project: ['scripts/**/*.mts'] },
+          '.': { entry: [], node: false, project: [operatorScriptPattern] },
           'apps/*': { entry: ['tests/consumer.ts'], node: false, project: ['**/*.ts'] },
-          'packages/*': { entry: ['tests/unit/consumer.test.ts'], node: false, project: ['**/*.ts'] },
+          'packages/*': {
+            entry: ['tests/unit/consumer.test.ts', executableMutationConsumer],
+            node: false,
+            project: ['**/*.ts'],
+          },
         },
       },
       consumerPath,
@@ -645,6 +670,9 @@ it.live(
     expect(
       subprocesses.some((fact) => fact.workspace === core && fact.target === 'tests/fixtures/override.fixture.ts'),
     ).toBe(true);
+    expect(
+      subprocesses.some((fact) => fact.workspace === core && fact.target === 'tests/fixtures/directory.fixture.ts'),
+    ).toBe(true);
     for (const file of invalidFiles) {
       expect(subprocesses.some((fact) => fact.target.endsWith(path.basename(file)))).toBe(false);
     }
@@ -655,7 +683,7 @@ it.live(
     for (const file of invalidFiles) {
       expect(unusedFiles).toContain(file);
     }
-    for (const file of [nativeFixture, coreFixture, overrideFixture]) {
+    for (const file of [nativeFixture, coreFixture, overrideFixture, nativeDirectoryFixture]) {
       expect(unusedFiles).not.toContain(file);
       expect(report.issues.find((issue) => issue.file === file)?.exports.map((finding) => finding.name)).toContain(
         'unusedNativeNeighbor',
@@ -673,7 +701,7 @@ it.live(
       root,
       {
         workspaces: {
-          '.': { entry: [], node: false, project: ['scripts/**/*.mts'] },
+          '.': { entry: [], node: false, project: [operatorScriptPattern] },
           'apps/*': { entry: ['tests/integration/module-api-node-process.test.ts'], node: false, project: ['**/*.ts'] },
           'packages/*': { entry: ['tests/unit/outbox-process.test.ts'], node: false, project: ['**/*.ts'] },
         },
@@ -835,7 +863,7 @@ it.live(
   'modeling fails on invalid source instead of silently losing consumer evidence',
   Effect.fn(function* testEffect4() {
     const root = yield* fixture();
-    write(root, 'module-federation.config.ts', 'export default { broken: ;');
+    write(root, moduleFederationConfigFile, 'export default { broken: ;');
     yield* buildKnipModel(root, { entry: [indexFile] })
       .pipe(Effect.provide(NodeServices.layer))
       .pipe(
@@ -1363,3 +1391,236 @@ it.live(
     }
   }),
 );
+
+layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
+  testing.effect(
+    'actual owner reset tables and verifier loops require the native consumer; inert neighboring lists remain unused',
+    Effect.fn(function* dynamicOwnerTables() {
+      const root = yield* fixture();
+      const reset = 'scripts/siampark/reset-demo.mts';
+      const table = 'scripts/siampark/fixtures.mts';
+      const verifier = 'scripts/verify-application-db-schema.mts';
+      const appManifest =
+        '{"name":"dynamic-owner-controls","type":"module","workspaces":["verticals/*","apps/*","packages/*"]}';
+      write(root, packageFile, appManifest);
+      for (const source of [reset, table, verifier]) {
+        write(root, source, readFileSync(path.join(appRoot, source), 'utf-8'));
+      }
+      const valid = [
+        'apps/shell-super-app/scripts/reset-demo-accounts.mts',
+        'packages/core-runtime/scripts/bootstrap-development-context.mts',
+        'verticals/party-registry/scripts/reset-siampark-demo.mts',
+        ...['agreements', 'billing-finance', 'occupancy', 'property', 'relationships', 'work'].map(
+          (owner) => `verticals/siampark-${owner}/scripts/reset-demo.mts`,
+        ),
+      ];
+      const checked = ['agreements', 'occupancy'].map(
+        (owner) => `verticals/siampark-${owner}/scripts/verify-db-schema.mts`,
+      );
+      for (const file of [...valid, ...checked]) {
+        write(
+          root,
+          `${file.split('/').slice(0, 2).join('/')}/package.json`,
+          '{"name":"@fixture/owner","type":"module"}',
+        );
+        write(root, file, 'export const unusedOwnerNeighbor = 1;');
+      }
+      const dead = 'scripts/inert-port.mts';
+      write(root, dead, 'export const unusedInert = 1;');
+      write(
+        root,
+        table,
+        `${readFileSync(path.join(appRoot, table), 'utf-8')}\nconst inert = [{ script: '${dead}' }]; void inert;`,
+      );
+      const config = {
+        workspaces: {
+          '.': { entry: [reset, verifier], node: false, project: [operatorScriptPattern] },
+          'apps/*': { entry: [], node: false, project: [operatorScriptPattern] },
+          'packages/*': { entry: [], node: false, project: [operatorScriptPattern] },
+          'verticals/*': { entry: [], node: false, project: [operatorScriptPattern] },
+        },
+      };
+      const consumerPath = path.join(root, auditConsumersFile);
+      const model = yield* buildKnipModel(root, config, consumerPath);
+      const ports = model.evidence.filter((fact) => fact.reason.startsWith('Literal owner port'));
+      expect(ports).toHaveLength(valid.length);
+      expect(new Set(ports.map((fact) => fact.target))).toEqual(new Set(valid));
+      expect(ports.some((fact) => fact.target === dead)).toBe(false);
+      for (const target of checked) {
+        expect(
+          model.evidence.some((fact) => fact.target === target && fact.reason.startsWith('Immutable for-of')),
+        ).toBe(true);
+      }
+      const run = yield* runPinnedKnip(root, consumerPath, model);
+      const report = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+      const unusedFiles = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+      expect(unusedFiles).toContain(dead);
+      for (const file of [...valid, ...checked]) {
+        expect(unusedFiles).not.toContain(file);
+        expect(report.issues.find((issue) => issue.file === file)?.exports.map((finding) => finding.name)).toContain(
+          'unusedOwnerNeighbor',
+        );
+      }
+      write(
+        root,
+        reset,
+        readFileSync(path.join(appRoot, reset), 'utf-8').replace(
+          'ChildProcess.make(process.execPath',
+          "ChildProcess.make('/usr/bin/printf'",
+        ),
+      );
+      write(
+        root,
+        verifier,
+        readFileSync(path.join(appRoot, verifier), 'utf-8').replace(
+          'for (const ownerVerifierPath of ownerVerifierPaths)',
+          'for (const ownerVerifierPath of unknownPaths)',
+        ),
+      );
+      const invalid = yield* buildKnipModel(root, config, consumerPath);
+      expect(invalid.evidence.some((fact) => fact.reason.startsWith('Literal owner port'))).toBe(false);
+      expect(invalid.evidence.some((fact) => fact.reason.startsWith('Immutable for-of'))).toBe(false);
+    }),
+  );
+
+  testing.effect(
+    'page aliases require named manifest use and default federation exposure without exempting extra duplicate bindings',
+    Effect.fn(function* manifestPageAliases() {
+      const root = yield* fixture();
+      const owner = 'verticals/page-controls';
+      const page = `${owner}/src/routes/page.tsx`;
+      write(
+        root,
+        `${owner}/package.json`,
+        '{"name":"@fixture/pages","type":"module","modernjs":{"ontosModule":{"manifest":"./vertical.manifest.ts"}}}',
+      );
+      write(
+        root,
+        `${owner}/vertical.manifest.ts`,
+        "import { RecordsPage } from './src/routes/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+      );
+      write(
+        root,
+        `${owner}/module-federation.config.ts`,
+        "export default { exposes: { './Page': './src/routes/page.tsx' } };",
+      );
+      write(root, page, 'export const RecordsPage = () => null; export default RecordsPage;');
+      const config = {
+        workspaces: {
+          '.': { entry: [], node: false, project: [] },
+          'verticals/*': {
+            entry: ['vertical.manifest.ts', moduleFederationConfigFile],
+            node: false,
+            project: ['**/*.{ts,tsx}'],
+          },
+        },
+      };
+      const consumerPath = path.join(root, auditConsumersFile);
+      const readKnipReport = () =>
+        Effect.sync(() =>
+          spawnSync(
+            process.execPath,
+            [
+              path.join(appRoot, 'node_modules/knip/bin/knip.js'),
+              '--directory',
+              root,
+              '--config',
+              path.join(root, '.audit/knip.json'),
+              '--reporter',
+              'json',
+              '--no-progress',
+              '--include-entry-exports',
+            ],
+            { encoding: 'utf-8', timeout: 60_000 },
+          ),
+        );
+      const model = yield* buildKnipModel(root, config, consumerPath);
+      expect(model.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
+      yield* runPinnedKnip(root, consumerPath, model);
+      const run = yield* readKnipReport();
+      const validReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+      expect(validReport.issues.some((issue) => issue.file === page)).toBe(false);
+      write(
+        root,
+        page,
+        'export const RecordsPage = () => null; export default RecordsPage; export const projectAgenda = () => [];',
+      );
+      write(
+        root,
+        `${owner}/vertical.manifest.ts`,
+        "import { RecordsPage, projectAgenda } from './src/routes/page.tsx'; projectAgenda(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+      );
+      const helperModel = yield* buildKnipModel(root, config, consumerPath);
+      expect(helperModel.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
+      expect(helperModel.evidence.some((fact) => fact.target === `${page}#projectAgenda`)).toBe(false);
+      expect(
+        helperModel.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
+      ).toContain('duplicates');
+      yield* runPinnedKnip(root, consumerPath, helperModel);
+      const helperRun = yield* readKnipReport();
+      const helperReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(helperRun.stdout);
+      expect(helperReport.issues.some((issue) => issue.file === page)).toBe(false);
+      write(
+        root,
+        `${owner}/vertical.manifest.ts`,
+        "import { RecordsPage } from './src/routes/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+      );
+      write(
+        root,
+        page,
+        'export const RecordsPage = () => null; export default RecordsPage; export const Unused = () => null; export { Unused as OtherUnused };',
+      );
+      const neighbor = yield* buildKnipModel(root, config, consumerPath);
+      expect(neighbor.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
+      expect(
+        neighbor.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
+      ).not.toContain('duplicates');
+      yield* runPinnedKnip(root, consumerPath, neighbor);
+      const invalidRun = yield* readKnipReport();
+      expect(invalidRun.status).toBe(1);
+      expect(invalidRun.stdout).toContain('Unused');
+      expect(invalidRun.stdout).toContain('OtherUnused');
+      write(
+        root,
+        page,
+        'export const RecordsPage = () => null; export default RecordsPage; export { RecordsPage as OtherPage };',
+      );
+      const extraPageAlias = yield* buildKnipModel(root, config, consumerPath);
+      expect(extraPageAlias.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
+      expect(extraPageAlias.evidence.some((fact) => fact.target === `${page}#OtherPage=RecordsPage`)).toBe(false);
+      expect(
+        extraPageAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
+      ).not.toContain('duplicates');
+      yield* runPinnedKnip(root, consumerPath, extraPageAlias);
+      const extraAliasRun = yield* readKnipReport();
+      expect(extraAliasRun.status).toBe(1);
+      expect(extraAliasRun.stdout).toContain('OtherPage');
+      write(
+        root,
+        `${owner}/vertical.manifest.ts`,
+        "import { RecordsPage, OtherPage } from './src/routes/page.tsx'; OtherPage(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+      );
+      const usedExtraAlias = yield* buildKnipModel(root, config, consumerPath);
+      expect(usedExtraAlias.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
+      expect(
+        usedExtraAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
+      ).not.toContain('duplicates');
+      yield* runPinnedKnip(root, consumerPath, usedExtraAlias);
+      const usedExtraAliasRun = yield* readKnipReport();
+      const usedExtraAliasReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(
+        usedExtraAliasRun.stdout,
+      );
+      expect(usedExtraAliasReport.issues.find((issue) => issue.file === page)?.exports).toEqual([]);
+      expect(
+        usedExtraAliasReport.issues
+          .find((issue) => issue.file === page)
+          ?.duplicates.flat()
+          .map((item) => item.name),
+      ).toEqual(expect.arrayContaining(['RecordsPage', 'default']));
+      write(root, page, 'export const RecordsPage = () => null; export default RecordsPage;');
+      write(root, `${owner}/module-federation.config.ts`, 'export default {};');
+      const noExposure = yield* buildKnipModel(root, config, consumerPath);
+      expect(noExposure.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(false);
+    }),
+  );
+});

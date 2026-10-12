@@ -297,10 +297,14 @@ type SourceHost = typeof SourceHostSchema.Type;
 const hasSupportedConditions = (target: PackageImportTarget): boolean =>
   Predicate.isString(target) ||
   Object.keys(target).every(
-    (condition) => Schema.is(SourceHostSchema)(condition) || condition === 'import' || condition === 'default',
+    (condition) =>
+      Schema.is(SourceHostSchema)(condition) ||
+      condition === 'types' ||
+      condition === 'import' ||
+      condition === 'default',
   );
 
-/** Native conditional maps select the first matching property; default is not a fallback reordered by this gate. */
+/** Native runtime maps skip TypeScript's types condition and select the first matching runtime property. */
 const selectHostTarget = (target: PackageImportTarget, host: SourceHost): string | undefined => {
   if (Predicate.isString(target)) {
     return target;

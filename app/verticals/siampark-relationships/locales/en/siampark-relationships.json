@@ -1,0 +1,54 @@
+{
+  "siampark-relationships": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "siampark-relationships",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Siampark Relationships Vertical",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Activities and contacts",
+        "refresh": "Load activities",
+        "timeline": "Communication history",
+        "occurredAt": "When",
+        "summary": "Summary",
+        "followUp": "Follow-up Task",
+        "contact": "Contact card",
+        "unnamed": "Unnamed contact",
+        "query": "Find Counterparty",
+        "find": "Search",
+        "loadTasks": "Load existing Tasks",
+        "record": "Record call",
+        "save": "Save Activity",
+        "saved": "Activity saved.",
+        "unavailable": "Activities could not be loaded.",
+        "forbidden": "You do not have permission to read this contact.",
+        "invalid": "Activity could not be saved. Reload data and verify the contact and Task.",
+        "kinds": {
+          "CALL": "Call",
+          "EMAIL": "Email",
+          "MEETING": "Meeting",
+          "NOTE": "Note"
+        },
+        "choose": "Choose",
+        "intro": "Communication history, contacts and follow-up tasks.",
+        "empty": "No activities have been recorded yet.",
+        "kind": "Activity type",
+        "partyType": "Contact type",
+        "roles": "Roles"
+      }
+    }
+  }
+}

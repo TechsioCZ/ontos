@@ -1,0 +1,21 @@
+{
+  "siampark-relationships": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "siampark-relationships",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Siampark Relationships Vertical",
+    "widgetBody": "Owns a vertical route surface."
+  }
+}

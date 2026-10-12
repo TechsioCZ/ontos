@@ -1,0 +1,111 @@
+{
+  "siampark-billing-finance": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "siampark-billing-finance",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Invoices and finance",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Invoices and finance",
+        "description": "Demo reference date: 5 October 2026. Accounting receipts and payments are simulated."
+      }
+    },
+    "demo": {
+      "simulation": "Demo reference date: 5 October 2026. Accounting receipts and payments are simulated.",
+      "summary": "Revenue {{revenue}} · Costs {{cost}} · Outstanding {{outstanding}} · Overdue {{overdue}}",
+      "variance": "Revenue variance {{revenue}} · Cost variance {{cost}}",
+      "direction": "Direction",
+      "property": "Property",
+      "number": "Document number",
+      "amount": "Amount in CZK",
+      "states": "Invoice, payment and accounting states",
+      "due": "Due date",
+      "detail": "Detail",
+      "invoices": "Operational invoices",
+      "refresh": "Refresh",
+      "none": "No link",
+      "empty": "No invoices match the selection.",
+      "paid": "Confirmed paid {{amount}}",
+      "edit": "Edit draft",
+      "confirm": "Confirm invoice",
+      "void": "Void invoice",
+      "sync": "Request accounting export",
+      "retry": "Retry accounting export",
+      "observeAccounting": "Simulate successful accounting receipt",
+      "observePayment": "Simulate confirmed payment",
+      "payment": "Cumulative confirmed payment in CZK",
+      "noReceipt": "No accounting receipt yet",
+      "history": "Accounting export history",
+      "draft": "Invoice draft",
+      "searchParty": "Search business counterparty",
+      "search": "Search",
+      "counterparty": "Counterparty",
+      "occupancy": "Occupancy",
+      "issue": "Issue date",
+      "save": "Save draft",
+      "create": "Create draft",
+      "plan": "Property financial plan",
+      "period": "Period (end excluded)",
+      "category": "Category",
+      "kind": "Kind",
+      "overdue": "Overdue",
+      "outstanding": "Outstanding",
+      "invoiceActions": "Invoice actions",
+      "accountingActions": "Accounting sync",
+      "feedback": {
+        "loading": "Loading…",
+        "ready": "Ready",
+        "saving": "Saving…",
+        "forbidden": "You are not authorized for this operation.",
+        "conflict": "Data changed. Refresh and try again.",
+        "validation": "Check amounts, dates and business references.",
+        "unavailable": "Service unavailable. Refresh and try again."
+      },
+      "labels": {
+        "ALL": "All",
+        "OUTGOING": "Outgoing",
+        "INCOMING": "Incoming",
+        "DRAFT": "Draft",
+        "CONFIRMED": "Confirmed",
+        "VOIDED": "Voided",
+        "UNPAID": "Unpaid",
+        "PARTIALLY_PAID": "Partially paid",
+        "PAID": "Paid",
+        "NOT_SYNCED": "Not sent",
+        "PENDING": "Accounting pending",
+        "SYNCED": "Accounting acknowledged",
+        "FAILED": "Accounting failed",
+        "COST": "Cost",
+        "REVENUE": "Revenue",
+        "PLANNED": "Planned",
+        "CANCELLED": "Cancelled"
+      },
+      "paymentHistory": "Confirmed payment outcomes (simulation)",
+      "observedAt": "Observation time",
+      "correlation": "Correlation",
+      "resultId": "Result identifier",
+      "confirmedAmount": "Confirmed cumulative payment",
+      "noPayments": "No confirmed payment outcome yet.",
+      "counterpartyDetail": "Load canonical counterparty details",
+      "unnamedCounterparty": "Unnamed counterparty",
+      "partyRoles": {
+        "CUSTOMER": "Customer",
+        "SUPPLIER": "Supplier"
+      },
+      "newInvoice": "Create a new invoice"
+    }
+  }
+}

@@ -164,7 +164,9 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
     <ShellContentLayout
       controls={controls}
       shell={model.shell}
-      {...(model.state === 'resolved' ? { currentModuleId: model.target.moduleId } : {})}
+      {...(model.state === 'resolved'
+        ? { currentEntrypointKey: model.target.entrypointKey, currentModuleId: model.target.moduleId }
+        : {})}
     >
       {content}
     </ShellContentLayout>

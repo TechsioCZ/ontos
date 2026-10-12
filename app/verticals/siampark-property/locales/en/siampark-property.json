@@ -1,0 +1,182 @@
+{
+  "siampark-property": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "siampark-property",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Siampark Property Vertical",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "integrations": {
+        "title": "Integrations",
+        "description": "Demo accounting, booking and signature outcomes.",
+        "refresh": "Load outcomes",
+        "unavailable": "Unable to load outcomes. Please try again.",
+        "simulation": "SIMULATED · DEMO — outcomes are simulated without sending to external providers.",
+        "accounting": "Accounting",
+        "booking": "Bookings",
+        "signature": "Electronic signatures",
+        "correlation": "Correlation",
+        "state": "Outcome",
+        "attempt": "Attempt",
+        "summary": "Description",
+        "empty": "No outcomes yet.",
+        "retry": "Retry failed accounting from the corresponding invoice in Finance.",
+        "finance": "Open finance",
+        "occupancy": "Open occupancy",
+        "agreements": "Open agreements",
+        "other": "Other services",
+        "email": "Email notifications",
+        "payroll": "Payroll: placeholder; a data flow is outside this demonstration.",
+        "forbidden": "You do not have access to these integration outcomes.",
+        "attemptedAt": "Attempt time",
+        "states": {
+          "SUCCESS": "Success",
+          "FAILED": "Failed",
+          "CONFLICT": "Conflict",
+          "PENDING": "Pending",
+          "SENT": "Sent",
+          "SIGNED": "Signed",
+          "DECLINED": "Declined"
+        }
+      },
+      "overview": {
+        "title": "Siampark overview",
+        "referenceDate": "Business reference date",
+        "period": "Financial period: year 2026 (confirmed plans starting in this year)",
+        "refresh": "Refresh overview",
+        "unavailable": "Overview is unavailable. Check your permissions and try again.",
+        "occupied": "Occupied units",
+        "available": "Available units",
+        "reserved": "Reserved units",
+        "revenue": "Revenue",
+        "cost": "Cost",
+        "receivables": "Outstanding receivables",
+        "payables": "Outstanding payables",
+        "planRevenue": "Planned revenue",
+        "planCost": "Planned cost",
+        "variance": "Variance",
+        "openInvoices": "Open invoices",
+        "overdueInvoices": "Overdue invoices",
+        "openTasks": "Open tasks",
+        "overdueTasks": "Overdue tasks",
+        "expiring": "Contracts expiring soon",
+        "renewalMissing": "Missing renewal draft",
+        "activities": "Activities",
+        "warnings": "Integration warnings",
+        "bookingWarnings": "Booking warnings",
+        "accountingWarnings": "Accounting warnings",
+        "booking": "Booking",
+        "accounting": "Accounting",
+        "properties": "Properties",
+        "property": "Property",
+        "detail": "Detail",
+        "outOfService": "Out of service",
+        "modules": "Open module",
+        "availability": {
+          "AVAILABLE": "Available",
+          "RESERVED": "Reserved",
+          "OCCUPIED": "Occupied"
+        },
+        "modulesList": {
+          "properties": "Properties",
+          "agreements": "Agreements",
+          "occupancy": "Occupancy",
+          "finance": "Finance",
+          "work": "Tasks",
+          "relationships": "Relationships",
+          "integrations": "Integrations"
+        },
+        "forbidden": "You do not have permission to view this overview.",
+        "sourceRecords": "Source records",
+        "emptySources": "No records for this indicator.",
+        "openBooking": "Open booking outcomes",
+        "agenda": {
+          "title": "Calendar and agenda",
+          "description": "Dates are derived from tasks, contracts and stays. Make changes in the owning record detail.",
+          "date": "Date",
+          "kind": "Event",
+          "kinds": {
+            "task": "Task due date",
+            "contract": "Contract end",
+            "occupancyStart": "Stay / lease start",
+            "occupancyEnd": "Stay / lease end"
+          }
+        }
+      },
+      "records": {
+        "title": "Properties, units and assets",
+        "refresh": "Load properties",
+        "unavailable": "Unable to load properties. Check your permissions and try again.",
+        "properties": "Properties",
+        "units": "Units",
+        "assets": "Assets",
+        "code": "Code",
+        "name": "Name",
+        "state": "Lifecycle",
+        "detail": "Detail",
+        "kind": "Unit type",
+        "capacity": "Capacity",
+        "lastService": "Last service",
+        "nextService": "Next service",
+        "states": {
+          "PLANNED": "Planned",
+          "ACTIVE": "Active",
+          "INACTIVE": "Inactive",
+          "DISPOSED": "Disposed",
+          "OUT_OF_SERVICE": "Out of service",
+          "RETIRED": "Retired",
+          "IN_SERVICE": "Under maintenance"
+        },
+        "forbidden": "You do not have permission to view this overview.",
+        "loadSummary": "Load operations and financial summary",
+        "financialSummary": "Property finances — year 2026",
+        "financialValues": "Revenue {{revenue}} · Costs {{cost}} · Outstanding {{outstanding}}",
+        "summaryNotLoaded": "Summary not loaded",
+        "outOfService": "Out of service",
+        "availabilityLabel": "Availability on 5 October 2026",
+        "occupancyRecord": "Occupancy {{start}} → {{end}}",
+        "availability": {
+          "AVAILABLE": "Available",
+          "RESERVED": "Reserved",
+          "OCCUPIED": "Occupied"
+        },
+        "occupancyUnavailable": "Occupancy is unavailable or forbidden.",
+        "financeUnavailable": "Financial summary is unavailable or forbidden.",
+        "tasksUnavailable": "Linked tasks are unavailable or forbidden.",
+        "occupancies": "Active stays and leases",
+        "agreements": "Contracts",
+        "documents": "Documents",
+        "tasks": "Linked tasks",
+        "agreementsUnavailable": "Contracts and documents are unavailable or forbidden.",
+        "agreementRecord": "Contract {{start}} → {{end}}",
+        "emptyRelated": "No linked records.",
+        "occupancyStates": {
+          "DRAFT": "Draft",
+          "CONFIRMED": "Confirmed",
+          "ACTIVE": "Active",
+          "COMPLETED": "Completed",
+          "CANCELLED": "Cancelled"
+        },
+        "agreementStates": {
+          "DRAFT": "Draft",
+          "ACTIVE": "Active",
+          "TERMINATED": "Terminated",
+          "EXPIRED": "Expired"
+        },
+        "description": "Properties, units and assets with their operational and financial context."
+      }
+    }
+  }
+}

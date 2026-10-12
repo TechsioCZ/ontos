@@ -1,0 +1,99 @@
+{
+  "siampark-agreements": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Smlouvy a dokumenty"
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "siampark-agreements",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Smlouvy a dokumenty",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Smlouvy a dokumenty",
+        "description": "Spravujte smlouvy, podpisy a související dokumenty."
+      }
+    },
+    "demo": {
+      "feedback": {
+        "loading": "Načítání…",
+        "ready": "Připraveno",
+        "saving": "Ukládání…",
+        "forbidden": "Pro tuto oblast nemáte oprávnění.",
+        "conflict": "Stav se změnil. Obnovte data a zkuste operaci znovu.",
+        "validation": "Zkontrolujte vstupní údaje a povolený přechod stavu.",
+        "unavailable": "Služba je dočasně nedostupná. Zkuste obnovit data."
+      },
+      "refresh": "Obnovit",
+      "empty": "Žádné záznamy pro zvolený filtr.",
+      "unit": "Jednotka",
+      "period": "Období",
+      "detail": "Detail",
+      "openEnd": "Bez konce",
+      "customer": "Zákazník",
+      "simulated": "SIMULATED — simulace poskytovatele",
+      "activate": "Aktivovat",
+      "choose": "Vyberte záznam",
+      "startDate": "Začátek",
+      "endDate": "Konec",
+      "all": "Vše",
+      "expiring": "Brzy končící",
+      "lifecycle": "Životní cyklus",
+      "signature": "Podpis",
+      "lifecycleLabels": {
+        "DRAFT": "Návrh",
+        "ACTIVE": "Aktivní",
+        "TERMINATED": "Ukončeno",
+        "EXPIRED": "Vypršelo"
+      },
+      "signatureLabels": {
+        "NOT_SENT": "Neodesláno",
+        "SENT": "Odesláno",
+        "SIGNED": "Podepsáno",
+        "DECLINED": "Odmítnuto"
+      },
+      "documentLabels": {
+        "DRAFT": "Návrh",
+        "FINAL": "Finální",
+        "ARCHIVED": "Archivováno"
+      },
+      "successorExists": "Má návrh obnovy",
+      "expired": "Vypršelo",
+      "supersedes": "Předchozí smlouva",
+      "sendSignature": "Odeslat k podpisu (simulace)",
+      "simulateSigned": "Simulovat podpis",
+      "simulateDeclined": "Simulovat odmítnutí",
+      "renew": "Připravit obnovu",
+      "terminate": "Ukončit smlouvu",
+      "occupancy": "Nájem",
+      "documents": "Dokumenty",
+      "metadataOnly": "Pouze metadata dokumentu",
+      "archive": "Archivovat",
+      "create": "Vytvořit smlouvu k nájmu",
+      "noUnit": "Bez jednotky",
+      "signedDocumentTitle": "Podepsaná nájemní smlouva (simulace)",
+      "list": "Smlouvy",
+      "provider": "Poskytovatel",
+      "attemptedAt": "Čas pokusu",
+      "completedAt": "Čas výsledku",
+      "ownerReference": "Reference vlastněného záznamu",
+      "requestSummary": "Souhrn požadavku",
+      "resultSummary": "Souhrn výsledku",
+      "signerContact": "Kontakt pro simulovaný podpis",
+      "signerContactPlaceholder": "signer@example.test",
+      "signer": "Podepisující",
+      "editDraft": "Upravit období návrhu",
+      "saveDraft": "Uložit období návrhu",
+      "newContract": "Přejít k nové smlouvě"
+    }
+  }
+}

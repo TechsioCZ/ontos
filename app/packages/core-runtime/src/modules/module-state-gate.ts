@@ -261,7 +261,9 @@ export const makeModuleStateGate = (stateService: TenantModuleStateServiceContra
         .select({ tenantId: tenants.tenantId })
         .from(tenants)
         .where(eq(tenants.tenantId, tenantId))
-        .for('update')
+        // Serialize owner writes and lifecycle changes while allowing a nested provider Read
+        // to persist tenant-referencing evidence under PostgreSQL's FK KEY SHARE lock.
+        .for('no key update')
         .pipe(Effect.mapError(unavailable));
       if (tenantRows[0] === undefined) {
         return yield* unavailable();

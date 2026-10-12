@@ -1,0 +1,99 @@
+{
+  "siampark-agreements": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Contracts and documents"
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "siampark-agreements",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Contracts and documents",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Contracts and documents",
+        "description": "Manage contracts, signatures and related documents."
+      }
+    },
+    "demo": {
+      "feedback": {
+        "loading": "Loading…",
+        "ready": "Ready",
+        "saving": "Saving…",
+        "forbidden": "You do not have permission for this area.",
+        "conflict": "The state has changed. Refresh data and try the operation again.",
+        "validation": "Check the input and the allowed state transition.",
+        "unavailable": "The service is temporarily unavailable. Refresh and try again."
+      },
+      "refresh": "Refresh",
+      "empty": "No records match the filter.",
+      "unit": "Unit",
+      "period": "Period",
+      "detail": "Detail",
+      "openEnd": "Open ended",
+      "customer": "Customer",
+      "simulated": "SIMULATED — provider simulation",
+      "activate": "Activate",
+      "choose": "Choose a record",
+      "startDate": "Start",
+      "endDate": "End",
+      "all": "All",
+      "expiring": "Expiring soon",
+      "lifecycle": "Lifecycle",
+      "signature": "Signature",
+      "lifecycleLabels": {
+        "DRAFT": "Draft",
+        "ACTIVE": "Active",
+        "TERMINATED": "Terminated",
+        "EXPIRED": "Expired"
+      },
+      "signatureLabels": {
+        "NOT_SENT": "Not sent",
+        "SENT": "Sent",
+        "SIGNED": "Signed",
+        "DECLINED": "Declined"
+      },
+      "documentLabels": {
+        "DRAFT": "Draft",
+        "FINAL": "Final",
+        "ARCHIVED": "Archived"
+      },
+      "successorExists": "Renewal draft exists",
+      "expired": "Expired",
+      "supersedes": "Previous contract",
+      "sendSignature": "Send for signature (simulation)",
+      "simulateSigned": "Simulate signature",
+      "simulateDeclined": "Simulate rejection",
+      "renew": "Prepare renewal",
+      "terminate": "Terminate contract",
+      "occupancy": "Lease",
+      "documents": "Documents",
+      "metadataOnly": "Document metadata only",
+      "archive": "Archive",
+      "create": "Create a lease contract",
+      "noUnit": "No unit",
+      "signedDocumentTitle": "Signed lease contract (simulation)",
+      "list": "Contracts",
+      "provider": "Provider",
+      "attemptedAt": "Attempt time",
+      "completedAt": "Result time",
+      "ownerReference": "Owner record reference",
+      "requestSummary": "Request summary",
+      "resultSummary": "Result summary",
+      "signerContact": "Contact for simulated signature",
+      "signerContactPlaceholder": "signer@example.test",
+      "signer": "Signer",
+      "editDraft": "Edit draft period",
+      "saveDraft": "Save draft period",
+      "newContract": "Create a new contract"
+    }
+  }
+}

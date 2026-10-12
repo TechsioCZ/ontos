@@ -2085,11 +2085,88 @@ export const hasGeneratedModuleApiReadContract = (
   );
 };
 
+const normalizedInvocationTokens = (tokens: readonly GovernedClientToken[]): readonly GovernedClientToken[] =>
+  tokens.filter(
+    (token, index) =>
+      token.kind !== SyntaxKind.CommaToken ||
+      ![SyntaxKind.CloseParenToken, SyntaxKind.CloseBraceToken].includes(
+        tokenKind(tokens, index + 1) ?? SyntaxKind.Unknown,
+      ),
+  );
+
+const exactInvocationTokens = (
+  actual: readonly GovernedClientToken[],
+  expected: readonly GovernedClientToken[],
+): boolean => {
+  const left = normalizedInvocationTokens(actual);
+  const right = normalizedInvocationTokens(expected);
+  return (
+    left.length === right.length &&
+    right.every((token, index) => left[index]?.kind === token.kind && left[index]?.value === token.value)
+  );
+};
+
+/** Encoded request DTOs must decode before the native HttpApi client encodes its typed payload. */
+const normalizedDecodedClientTokens = (
+  tokens: readonly GovernedClientToken[],
+  expectation: GovernedClientExpectation,
+): readonly GovernedClientToken[] => {
+  if (expectation.invocationKind !== MODULE_API_INVOCATION_KIND) {
+    return tokens;
+  }
+  const request = governedRequestType(expectation);
+  const schema = `${request}Schema`;
+  const encoded = `${request}Encoded`;
+  const imports =
+    tokenizeGovernedClient(`import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { Effect, Redacted, Schema } from 'effect';
+import { ${expectation.ownerApiValue}, ${schema} } from '${expectation.ownerContractImport}';
+import type { ${encoded} } from '${expectation.ownerContractImport}';
+import { operationGateway } from './action-gateway.ts';`);
+  if (
+    !exactInvocationTokens(tokens.slice(0, imports.length), imports) ||
+    identifierOccurrences(tokens, 'Schema') !== 2 ||
+    identifierOccurrences(tokens, schema) !== 2 ||
+    identifierOccurrences(tokens, encoded) !== 3
+  ) {
+    return tokens;
+  }
+  const declarations = generatedOperationDeclarations(tokens, expectation);
+  const authorized = declarations?.[0];
+  const helper = authorized === undefined ? undefined : findClientHelper(tokens, authorized.start);
+  const arrow =
+    authorized === undefined
+      ? undefined
+      : findSequence(tokens, [[SyntaxKind.EqualsGreaterThanToken]], authorized.start, authorized.end);
+  if (authorized === undefined || helper === undefined || arrow === undefined) {
+    return tokens;
+  }
+  const invocation = `${helper.name}(Redacted.make(credential), requestCorrelation, options).pipe(
+    Effect.flatMap((client) => client.${expectation.endpointGroup}.execute({ payload: decoded })),
+  )`;
+  const decoded = tokenizeGovernedClient(`Schema.decodeEffect(${schema})(payload).pipe(
+    Effect.flatMap((decoded) => ${invocation}),
+  );`);
+  if (!exactInvocationTokens(tokens.slice(arrow + 1, authorized.end), decoded)) {
+    return tokens;
+  }
+  const directImports =
+    tokenizeGovernedClient(`import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { Effect, Redacted } from 'effect';
+import { ${expectation.ownerApiValue} } from '${expectation.ownerContractImport}';
+import type { ${request} } from '${expectation.ownerContractImport}';
+import { operationGateway } from './action-gateway.ts';`);
+  const direct = tokenizeGovernedClient(`${invocation.replace('{ payload: decoded }', '{ payload }')};`);
+  return [...directImports, ...tokens.slice(imports.length, arrow + 1), ...direct, ...tokens.slice(authorized.end)].map(
+    (token) => (token.kind === SyntaxKind.Identifier && token.value === encoded ? { ...token, value: request } : token),
+  );
+};
+
 export const hasGeneratedGovernedClientContract = (source: string, expectation: GovernedClientExpectation): boolean => {
   if (!hasGeneratedSourceHeader(source, expectation.generatedHeader)) {
     return false;
   }
-  const tokens = tokenizeGovernedClient(source);
+  const tokens = normalizedDecodedClientTokens(tokenizeGovernedClient(source), expectation);
   const declarations = exportedConsts(tokens);
   const authorized = declarations.find(({ name }) => name.endsWith('WithAuthorization'));
   if (authorized === undefined) {

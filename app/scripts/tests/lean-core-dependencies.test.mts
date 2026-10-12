@@ -192,6 +192,14 @@ const hostImports = {
   ]),
 };
 const hostExports = { '.': './src/index.ts', './transport': './src/transport.ts' };
+const typeAdapterPath = './src/transport.types.ts';
+const typesFirstHostImports = {
+  '#transport': Object.fromEntries([
+    ['types', typeAdapterPath],
+    ['workerd', workerAdapterPath],
+    ['node', nodeAdapterPath],
+  ]),
+};
 const hostSources = {
   'src/driver.ts': nodeDriverSource,
   'src/index.ts': "export { Effect } from 'effect';",
@@ -210,6 +218,31 @@ interface HostGraphControl {
 
 const hostGraphControls: readonly HostGraphControl[] = [
   { name: 'allows a consumed native Node conditional entry and its runtime descendants', rejected: false },
+  {
+    imports: typesFirstHostImports,
+    name: 'allows types-first declaration resolution while proving distinct Node and Workerd runtime branches',
+    rejected: false,
+    sources: { 'src/transport.types.ts': 'export declare const driver: string;' },
+  },
+  {
+    imports: {
+      '#transport': Object.fromEntries([
+        ['types', typeAdapterPath],
+        ['workerd', workerAdapterPath],
+        ['node', nodeAdapterPath],
+        ['default', nodeAdapterPath],
+      ]),
+    },
+    name: 'a types-first declaration does not authorize a default browser fallback into Node',
+    rejected: true,
+    sources: { 'src/transport.types.ts': 'export declare const driver: string;' },
+  },
+  {
+    imports: typesFirstHostImports,
+    name: 'a types condition does not conceal a runtime import from shared source into the Node driver',
+    rejected: true,
+    sources: { 'src/transport.types.ts': driverReExportSource },
+  },
   {
     name: 'does not treat a type-only worker reference as a runtime Node dependency',
     rejected: false,

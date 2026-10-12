@@ -1,0 +1,182 @@
+{
+  "siampark-property": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "siampark-property",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Siampark Property Vertical",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "integrations": {
+        "title": "Integrace",
+        "description": "Výsledky účetnictví, rezervací a podpisů v demonstraci.",
+        "refresh": "Načíst výsledky",
+        "unavailable": "Výsledky se nepodařilo načíst. Zkuste to znovu.",
+        "simulation": "SIMULATED · DEMO — výsledky jsou simulované, bez odeslání externím poskytovatelům.",
+        "accounting": "Účetnictví",
+        "booking": "Rezervace",
+        "signature": "Elektronické podpisy",
+        "correlation": "Korelace",
+        "state": "Výsledek",
+        "attempt": "Pokus",
+        "summary": "Popis",
+        "empty": "Zatím bez výsledků.",
+        "retry": "Opakování neúspěšného účetnictví proveďte u příslušné faktury ve Financích.",
+        "finance": "Otevřít finance",
+        "occupancy": "Otevřít obsazenost",
+        "agreements": "Otevřít smlouvy",
+        "other": "Další služby",
+        "email": "E-mailová oznámení",
+        "payroll": "Mzdy: placeholder; datový tok není součástí této demonstrace.",
+        "forbidden": "K výsledkům těchto integrací nemáte přístup.",
+        "attemptedAt": "Čas pokusu",
+        "states": {
+          "SUCCESS": "Úspěšné",
+          "FAILED": "Neúspěšné",
+          "CONFLICT": "Konflikt",
+          "PENDING": "Čeká na výsledek",
+          "SENT": "Odesláno",
+          "SIGNED": "Podepsáno",
+          "DECLINED": "Odmítnuto"
+        }
+      },
+      "overview": {
+        "title": "Přehled Siampark",
+        "referenceDate": "Referenční den",
+        "period": "Finanční období: rok 2026 (součet potvrzených plánů v tomto roce)",
+        "refresh": "Obnovit přehled",
+        "unavailable": "Přehled nelze načíst. Zkontrolujte oprávnění a zkuste to znovu.",
+        "occupied": "Obsazené jednotky",
+        "available": "Dostupné jednotky",
+        "reserved": "Rezervované jednotky",
+        "revenue": "Výnosy",
+        "cost": "Náklady",
+        "receivables": "Neuhrazené pohledávky",
+        "payables": "Neuhrazené závazky",
+        "planRevenue": "Plán výnosů",
+        "planCost": "Plán nákladů",
+        "variance": "Odchylka",
+        "openInvoices": "Otevřené faktury",
+        "overdueInvoices": "Faktury po splatnosti",
+        "openTasks": "Otevřené úkoly",
+        "overdueTasks": "Úkoly po termínu",
+        "expiring": "Končící smlouvy",
+        "renewalMissing": "Chybějící návrh obnovení",
+        "activities": "Aktivity",
+        "warnings": "Upozornění integrací",
+        "bookingWarnings": "Upozornění rezervací",
+        "accountingWarnings": "Upozornění účetnictví",
+        "booking": "Rezervace",
+        "accounting": "Účetnictví",
+        "properties": "Nemovitosti",
+        "property": "Nemovitost",
+        "detail": "Detail",
+        "outOfService": "Mimo provoz",
+        "modules": "Otevřít modul",
+        "availability": {
+          "AVAILABLE": "Dostupná",
+          "RESERVED": "Rezervovaná",
+          "OCCUPIED": "Obsazená"
+        },
+        "modulesList": {
+          "properties": "Nemovitosti",
+          "agreements": "Smlouvy",
+          "occupancy": "Obsazenost",
+          "finance": "Finance",
+          "work": "Úkoly",
+          "relationships": "Vztahy",
+          "integrations": "Integrace"
+        },
+        "forbidden": "Pro tento přehled nemáte oprávnění.",
+        "sourceRecords": "Zdrojové záznamy",
+        "emptySources": "Žádné záznamy pro tento ukazatel.",
+        "openBooking": "Otevřít výsledky rezervací",
+        "agenda": {
+          "title": "Kalendář a agenda",
+          "description": "Termíny jsou odvozené z úkolů, smluv a pobytů. Změny se provádějí v detailu příslušného záznamu.",
+          "date": "Datum",
+          "kind": "Událost",
+          "kinds": {
+            "task": "Termín úkolu",
+            "contract": "Konec smlouvy",
+            "occupancyStart": "Začátek pobytu / pronájmu",
+            "occupancyEnd": "Konec pobytu / pronájmu"
+          }
+        }
+      },
+      "records": {
+        "title": "Nemovitosti, jednotky a vybavení",
+        "refresh": "Načíst nemovitosti",
+        "unavailable": "Nemovitosti nelze načíst. Zkontrolujte oprávnění a zkuste to znovu.",
+        "properties": "Nemovitosti",
+        "units": "Jednotky",
+        "assets": "Vybavení",
+        "code": "Kód",
+        "name": "Název",
+        "state": "Životní cyklus",
+        "detail": "Detail",
+        "kind": "Typ jednotky",
+        "capacity": "Kapacita",
+        "lastService": "Poslední servis",
+        "nextService": "Příští servis",
+        "states": {
+          "PLANNED": "Plánováno",
+          "ACTIVE": "Aktivní",
+          "INACTIVE": "Neaktivní",
+          "DISPOSED": "Vyřazeno",
+          "OUT_OF_SERVICE": "Mimo provoz",
+          "RETIRED": "Vyřazeno",
+          "IN_SERVICE": "V servisu"
+        },
+        "forbidden": "Pro tento přehled nemáte oprávnění.",
+        "loadSummary": "Načíst provozní a finanční souhrn",
+        "financialSummary": "Finance nemovitosti — rok 2026",
+        "financialValues": "Výnosy {{revenue}} · Náklady {{cost}} · Neuhrazeno {{outstanding}}",
+        "summaryNotLoaded": "Souhrn není načten",
+        "outOfService": "Mimo provoz",
+        "availabilityLabel": "Dostupnost k 5. 10. 2026",
+        "occupancyRecord": "Obsazenost {{start}} → {{end}}",
+        "availability": {
+          "AVAILABLE": "Dostupná",
+          "RESERVED": "Rezervovaná",
+          "OCCUPIED": "Obsazená"
+        },
+        "occupancyUnavailable": "Obsazenost není dostupná nebo povolená.",
+        "financeUnavailable": "Finanční souhrn není dostupný nebo povolený.",
+        "tasksUnavailable": "Propojené úkoly nejsou dostupné nebo povolené.",
+        "occupancies": "Aktivní pobyty a pronájmy",
+        "agreements": "Smlouvy",
+        "documents": "Dokumenty",
+        "tasks": "Propojené úkoly",
+        "agreementsUnavailable": "Smlouvy a dokumenty nejsou dostupné nebo povolené.",
+        "agreementRecord": "Smlouva {{start}} → {{end}}",
+        "emptyRelated": "Žádné propojené záznamy.",
+        "occupancyStates": {
+          "DRAFT": "Návrh",
+          "CONFIRMED": "Potvrzený",
+          "ACTIVE": "Aktivní",
+          "COMPLETED": "Dokončený",
+          "CANCELLED": "Zrušený"
+        },
+        "agreementStates": {
+          "DRAFT": "Návrh",
+          "ACTIVE": "Aktivní",
+          "TERMINATED": "Ukončená",
+          "EXPIRED": "Vypršela"
+        },
+        "description": "Provozní a finanční souvislosti nemovitostí, jejich jednotek a vybavení."
+      }
+    }
+  }
+}

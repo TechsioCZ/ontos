@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "siampark-relationships",
+    "buildMarker": "34118b88515b135e",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/siampark-relationships",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/siampark-relationships",
+    "version": "0.1.0",
+    "build": "34118b88515b135e"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "siampark-relationships",
+      "buildMarker": "34118b88515b135e",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/siampark-relationships",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/siampark-relationships",
+      "version": "0.1.0",
+      "build": "34118b88515b135e",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "siampark-relationships",
+      "buildMarker": "34118b88515b135e",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/siampark-relationships",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/siampark-relationships",
+      "version": "0.1.0",
+      "build": "34118b88515b135e",
+      "surface": "ui"
+    }
+  }
+}

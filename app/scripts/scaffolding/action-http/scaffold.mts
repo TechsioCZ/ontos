@@ -800,7 +800,11 @@ const insertIdempotently = (
 };
 
 const patchClientRoot = (content: string, action: string): string => {
-  const entry = `export * from './${action}-action-client.ts';`;
+  const type = toPascalCase(action);
+  const entries = [
+    `export { execute${type}, execute${type}WithAuthorization } from './${action}-action-client.ts';`,
+    `export type { ${type}ActionClientOptions } from './${action}-action-client.ts';`,
+  ];
   let nextContent = content;
   if (!nextContent.includes(CLIENT_SLOT_START)) {
     const anchor = "export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';";
@@ -809,9 +813,15 @@ const patchClientRoot = (content: string, action: string): string => {
     }
     nextContent = nextContent.replace(anchor, `${anchor}\n${CLIENT_SLOT_START}\n${CLIENT_SLOT_END}`);
   }
-  return insertIdempotently(nextContent, CLIENT_SLOT_START, CLIENT_SLOT_END, entry, (candidate) =>
-    /^export \* from '\.\/[a-z][a-z0-9-]*-action-client\.ts';$/u.test(candidate),
-  );
+  nextContent = nextContent.replace(`export * from './${action}-action-client.ts';`, entries.join('\n'));
+  for (const entry of entries) {
+    nextContent = insertIdempotently(nextContent, CLIENT_SLOT_START, CLIENT_SLOT_END, entry, (candidate) =>
+      /^export (?:\*|\{ execute[A-Z][A-Za-z0-9]*, execute[A-Z][A-Za-z0-9]*WithAuthorization \}|type \{ [A-Z][A-Za-z0-9]*ActionClientOptions \}) from '\.\/[a-z][a-z0-9-]*-action-client\.ts';$/u.test(
+        candidate,
+      ),
+    );
+  }
+  return nextContent;
 };
 
 const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadata, layerValue: string): string => {
@@ -933,15 +943,14 @@ const validateActionSources = Effect.fn('ActionHttpScaffold.validateActionSource
 });
 /* oxlint-enable typescript/consistent-return */
 
-/* oxlint-disable typescript/consistent-return -- Effect failure branches return yielded scaffold errors while successful validation intentionally falls through with void. */
 const validateActionRuntimeIdentity = Effect.fn('ActionHttpScaffold.validateActionRuntimeIdentity')(
   function* validateActionRuntimeIdentity(action: ActionModuleLike, moduleId: string, actionName: string) {
     if (action.descriptor.actionKey !== `${moduleId}.${actionName}` || action.descriptor.owningModuleKey !== moduleId) {
       return yield* scaffoldFailure('Action runtime identity does not match owner/slug');
     }
+    return yield* Effect.void;
   },
 );
-/* oxlint-enable typescript/consistent-return */
 
 const appendDefinedMutations = (mutations: Mutation[], candidates: readonly (Mutation | undefined)[]): void => {
   for (const mutation of candidates) {

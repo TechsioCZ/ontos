@@ -114,7 +114,8 @@ export type {
   MicroVerticalOperationSource,
   MicroVerticalReadiness,
 } from '@modern-js/bff-effect/microvertical-api';
-export { makeOperationGateway } from './operation-gateway.ts';
+export { makeOperationGateway, makeReferenceGatewayCredentials } from './operation-gateway.ts';
+export { ReferenceGatewayCredentialsSchema, REFERENCE_GATEWAY_CREDENTIALS_HEADER } from './reference-gateway.ts';
 export type { OperationGateway, OperationGatewayAttempt, OperationGatewayIssuer } from './operation-gateway.ts';
 export {
   DocumentCompositionRevisionError,
@@ -414,3 +415,5 @@ export const onUltramodernPerformanceSignal = (
     event: CustomEvent<UltramodernPerformanceSignalPayload>,
   ) => void,
 ) => onUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.performanceSignal, handler);
+
+export { CalendarDateSchema, CalendarDateWireSchema } from './calendar-date.ts';

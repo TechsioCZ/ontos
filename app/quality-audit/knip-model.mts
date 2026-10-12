@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { Effect, FileSystem, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor } from 'oxc-parser';
-import type { Node, ObjectExpression, Program } from 'oxc-parser';
+import type { Function as AstFunction, FunctionBody, Node, ObjectExpression, Program } from 'oxc-parser';
 
 import { buildKnipRuntimeEvidence, workspaceDirectories } from './knip-runtime-model.mts';
 
@@ -39,8 +39,6 @@ const PackageSchema = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   exports: Schema.optional(ExportsSchema),
-  name: Schema.optional(Schema.String),
-  scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   modernjs: Schema.optional(
     Schema.Struct({
       ontosModule: Schema.optional(
@@ -51,6 +49,8 @@ const PackageSchema = Schema.Struct({
       ),
     }),
   ),
+  name: Schema.optional(Schema.String),
+  scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   'zephyr:dependencies': Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 
@@ -231,6 +231,13 @@ const exportLeaves = (value: typeof ExportsSchema.Type | undefined): string[] =>
 const importedUrlBase = (node: Node | undefined): boolean =>
   node?.type === 'MemberExpression' &&
   propertyName(node.property) === 'url' &&
+  node.object.type === 'MetaProperty' &&
+  node.object.meta.name === 'import';
+
+const importedDirectoryBase = (node: Node | undefined): boolean =>
+  node?.type === 'MemberExpression' &&
+  !node.computed &&
+  propertyName(node.property) === 'dirname' &&
   node.object.type === 'MetaProperty' &&
   node.object.meta.name === 'import';
 
@@ -523,7 +530,7 @@ const generatedActionContractEvidence = (facts: SourceFacts, workspace: string):
     }
     const fromSharedContract = /^\.\.\/\.\.\/shared\/actions\/[a-z0-9-]+\.ts$/u.test(node.source.value);
     const fromGeneratedOutboxSlot =
-      slotStart >= 0 &&
+      slotStart !== -1 &&
       slotEnd > slotStart &&
       node.start > slotStart &&
       node.end < slotEnd &&
@@ -935,6 +942,166 @@ const catalogAliasEvidence = (
   return evidence;
 };
 
+const consumesManifestComponent = (consumer: SourceFacts, name: string): boolean =>
+  consumer.program.body.some((node) => {
+    if (node.type !== 'ExportNamedDeclaration' || node.declaration?.type !== 'VariableDeclaration') {
+      return false;
+    }
+    return node.declaration.declarations.some((item) => {
+      const object = objectExpression(item.init ?? undefined, consumer.variables);
+      const surface = objectExpression(objectValue(object, 'publicSurface'), consumer.variables);
+      const components = staticObjectFields(objectExpression(objectValue(surface, 'components'), consumer.variables));
+      return [...(components?.values() ?? [])].some((value) => identifierName(value) === name);
+    });
+  });
+
+const manifestPageAliasEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  manifest: typeof PackageSchema.Type,
+  prefix: string,
+  workspace: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  const manifestFile = manifest.modernjs?.ontosModule?.manifest;
+  if (manifestFile === undefined) {
+    return [];
+  }
+  const consumer = factsByPath.get(path.normalize(path.join(prefix, manifestFile)));
+  const federation = factsByPath.get(`${prefix}module-federation.config.ts`);
+  if (consumer === undefined || federation === undefined) {
+    return [];
+  }
+  const exposes = staticObjectFields(
+    objectExpression(objectValue(exportedObject(federation), 'exposes'), federation.variables),
+  );
+  const exposed = new Set(
+    [...(exposes?.values() ?? [])].flatMap((node) => {
+      const target = staticString(node, federation.variables);
+      return target === undefined ? [] : [path.normalize(path.join(prefix, target))];
+    }),
+  );
+  return consumer.program.body.flatMap((statement) => {
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') {
+      return [];
+    }
+    const file = path.normalize(path.join(path.dirname(consumer.file), statement.source.value));
+    const facts = factsByPath.get(file);
+    if (facts === undefined || !exposed.has(file)) {
+      return [];
+    }
+    const defaults = facts.program.body.filter((node) => node.type === 'ExportDefaultDeclaration');
+    const [declaration] = defaults;
+    if (
+      defaults.length !== 1 ||
+      declaration?.type !== 'ExportDefaultDeclaration' ||
+      declaration.declaration.type !== 'Identifier'
+    ) {
+      return [];
+    }
+    const named = declaration.declaration.name;
+    const matchingExports = exportedBindings(facts).filter((item) => item.kind === 'export' && item.name === named);
+    if (matchingExports.length !== 1) {
+      return [];
+    }
+    const binding = statement.specifiers.find(
+      (specifier) =>
+        specifier.type === 'ImportSpecifier' &&
+        specifier.importKind !== 'type' &&
+        propertyName(specifier.imported) === named,
+    );
+    if (binding === undefined) {
+      return [];
+    }
+    const consumed = consumesManifestComponent(consumer, binding.local.name);
+    if (!consumed) {
+      return [];
+    }
+    return [
+      evidenceAt(
+        facts,
+        workspace,
+        'export',
+        `${facts.file}#default`,
+        declaration.start,
+        `Module Federation default component exposed by ${federation.file}`,
+      ),
+      evidenceAt(
+        facts,
+        workspace,
+        'alias',
+        `${facts.file}#default=${named}`,
+        declaration.start,
+        `Named component imported by ${consumer.file}; identical default component exposed by ${federation.file}`,
+      ),
+    ];
+  });
+};
+
+// Knip suppresses duplicates per file. A proven federation alias must never hide
+// another exported alias merely because it happens to be declared in that file.
+const pageDuplicateSuppressionIsProven = (facts: SourceFacts, evidence: readonly KnipModelEvidence[]): boolean => {
+  const proven = new Set(
+    evidence.flatMap((fact) => (fact.kind === 'alias' && fact.source === facts.file ? [fact.target] : [])),
+  );
+  const isProven = (alias: string | undefined, target: string | undefined): boolean =>
+    alias !== undefined && target !== undefined && proven.has(`${facts.file}#${alias}=${target}`);
+  const initializerIsProven = (alias: string | undefined, node: Node | undefined): boolean => {
+    if (node === undefined) {
+      return false;
+    }
+    if (
+      node.type === 'TSAsExpression' ||
+      node.type === 'TSSatisfiesExpression' ||
+      node.type === 'TSNonNullExpression'
+    ) {
+      return initializerIsProven(alias, node.expression);
+    }
+    if (node.type === 'Identifier') {
+      return isProven(alias, node.name);
+    }
+    return [
+      'ArrowFunctionExpression',
+      'FunctionExpression',
+      'ClassExpression',
+      'ObjectExpression',
+      'ArrayExpression',
+      'StringLiteral',
+      'NumericLiteral',
+      'BooleanLiteral',
+      'NullLiteral',
+      'BigIntLiteral',
+      'RegExpLiteral',
+      'TemplateLiteral',
+    ].includes(node.type);
+  };
+  return facts.program.body.every((node) => {
+    if (node.type === 'ExportAllDeclaration') {
+      return false;
+    }
+    if (node.type === 'ExportDefaultDeclaration') {
+      return isProven('default', identifierName(node.declaration));
+    }
+    if (node.type !== 'ExportNamedDeclaration' || node.exportKind === 'type') {
+      return true;
+    }
+    if (node.source !== null) {
+      return false;
+    }
+    if (node.declaration?.type === 'VariableDeclaration') {
+      return node.declaration.declarations.every((item) =>
+        initializerIsProven(identifierName(item.id), item.init ?? undefined),
+      );
+    }
+    return node.specifiers.every(
+      (item) =>
+        item.exportKind === 'type' ||
+        (identifierName(item.local) === identifierName(item.exported) &&
+          initializerIsProven(identifierName(item.local), facts.variables.get(identifierName(item.local) ?? ''))) ||
+        isProven(identifierName(item.exported), identifierName(item.local)),
+    );
+  });
+};
+
 const generatedActionGatewayEvidence = (facts: SourceFacts, workspace: string): KnipModelEvidence[] => {
   if (
     !facts.file.endsWith('/src/api/action-gateway.ts') ||
@@ -1053,22 +1220,30 @@ const federationEvidence = (facts: SourceFacts, workspace: string): KnipModelEvi
 const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string, Node> => {
   const variables = new Map(facts.variables);
   const blockBinding = (binding: Node) => {
-    if (binding.type === 'Identifier') variables.set(binding.name, binding);
-    else if (binding.type === 'AssignmentPattern') blockBinding(binding.left);
-    else if (binding.type === 'RestElement') blockBinding(binding.argument);
-    else if (binding.type === 'ObjectPattern') {
+    if (binding.type === 'Identifier') {
+      variables.set(binding.name, binding);
+    } else if (binding.type === 'AssignmentPattern') {
+      blockBinding(binding.left);
+    } else if (binding.type === 'RestElement') {
+      blockBinding(binding.argument);
+    } else if (binding.type === 'ObjectPattern') {
       for (const property of binding.properties) {
         blockBinding(property.type === 'Property' ? property.value : property.argument);
       }
     } else if (binding.type === 'ArrayPattern') {
-      for (const element of binding.elements) if (element !== null) blockBinding(element);
+      for (const element of binding.elements) {
+        if (element !== null) blockBinding(element);
+      }
     }
   };
   const recordDeclaration = (declaration: Node) => {
     if (declaration.type === 'VariableDeclaration') {
       for (const binding of declaration.declarations) {
-        if (binding.id.type === 'Identifier' && binding.init !== null) variables.set(binding.id.name, binding.init);
-        else blockBinding(binding.id);
+        if (binding.id.type === 'Identifier' && binding.init !== null) {
+          variables.set(binding.id.name, binding.init);
+        } else {
+          blockBinding(binding.id);
+        }
       }
     } else if (
       (declaration.type === 'FunctionDeclaration' || declaration.type === 'ClassDeclaration') &&
@@ -1079,7 +1254,9 @@ const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string
   };
   for (const statement of facts.program.body) {
     const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
-    if (declaration !== null) recordDeclaration(declaration);
+    if (declaration !== null) {
+      recordDeclaration(declaration);
+    }
   }
   const recordParameters = (
     node: Extract<Node, { type: 'FunctionDeclaration' | 'FunctionExpression' | 'ArrowFunctionExpression' }>,
@@ -1088,7 +1265,9 @@ const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string
       for (const parameter of node.params) {
         if (parameter.type === 'AssignmentPattern' && parameter.left.type === 'Identifier') {
           variables.set(parameter.left.name, parameter);
-        } else blockBinding(parameter);
+        } else {
+          blockBinding(parameter);
+        }
       }
     }
   };
@@ -1103,7 +1282,9 @@ const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string
     ArrowFunctionExpression: recordParameters,
     BlockStatement: recordBlock,
     CatchClause: (node) => {
-      if (node.param !== null && node.start <= offset && offset < node.end) blockBinding(node.param);
+      if (node.param !== null && node.start <= offset && offset < node.end) {
+        blockBinding(node.param);
+      }
     },
     FunctionDeclaration: recordParameters,
     FunctionExpression: recordParameters,
@@ -1243,10 +1424,14 @@ const nativeSubprocessEvidence = (
 ): KnipModelEvidence[] => {
   const imports = new Map<string, string>();
   for (const node of facts.program.body) {
-    if (node.type !== 'ImportDeclaration' || node.importKind === 'type') continue;
+    if (node.type !== 'ImportDeclaration' || node.importKind === 'type') {
+      continue;
+    }
     const moduleName = node.source.value.replace(/^node:/u, '');
     for (const specifier of node.specifiers) {
-      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue;
+      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') {
+        continue;
+      }
       const member = specifier.type === 'ImportSpecifier' ? propertyName(specifier.imported) : '*';
       imports.set(specifier.local.name, `${moduleName}:${member}`);
     }
@@ -1256,39 +1441,71 @@ const nativeSubprocessEvidence = (
       /^(?:child_process|effect\/unstable\/process):/u.test(origin) ? [name] : [],
     ),
   );
-  if (providers.size === 0) return [];
+  if (providers.size === 0) {
+    return [];
+  }
   const possibleFactory = (node: Node | undefined, seen = new Set<string>()): boolean => {
-    if (node?.type === 'MemberExpression') return possibleFactory(node.object, seen);
-    if (node?.type !== 'Identifier' || seen.has(node.name)) return false;
+    if (node?.type === 'MemberExpression') {
+      return possibleFactory(node.object, seen);
+    }
+    if (node?.type !== 'Identifier' || seen.has(node.name)) {
+      return false;
+    }
     seen.add(node.name);
     return providers.has(node.name) || possibleFactory(facts.variables.get(node.name), seen);
   };
   const mutable = new Set<string>();
   const calls: Extract<Node, { type: 'CallExpression' }>[] = [];
   const invalidate = (node: Node) => {
-    if (node.type === 'Identifier') mutable.add(node.name);
-    else if (node.type === 'MemberExpression') invalidate(node.object);
-    else new Visitor({ Identifier: (identifier) => mutable.add(identifier.name) }).visit(node);
+    if (node.type === 'Identifier') {
+      mutable.add(node.name);
+    } else if (node.type === 'MemberExpression') {
+      invalidate(node.object);
+    } else {
+      new Visitor({ Identifier: (identifier) => mutable.add(identifier.name) }).visit(node);
+    }
   };
   new Visitor({
-    AssignmentExpression: (node) => invalidate(node.left),
+    AssignmentExpression: (node) => {
+      const target = node.left;
+      if (
+        target.type === 'MemberExpression' &&
+        !target.computed &&
+        target.object.type === 'Identifier' &&
+        target.object.name === 'process' &&
+        propertyName(target.property) === 'exitCode' &&
+        !imports.has('process') &&
+        !scopedVariables(facts, node.start).has('process')
+      ) {
+        return;
+      }
+      invalidate(target);
+    },
     CallExpression: (node) => calls.push(node),
     UpdateExpression: (node) => invalidate(node.argument),
     VariableDeclaration: (node) => {
       if (node.kind !== 'const') {
-        for (const declaration of node.declarations) invalidate(declaration.id);
+        for (const declaration of node.declarations) {
+          invalidate(declaration.id);
+        }
       }
     },
   }).visit(facts.program);
-  const parameters = new Map<Node, { name: string; owner: Node; index: number }>();
+  const parameters = new Map<Node, { index: number; name: string; owner: Node }>();
   for (const [name, owner] of facts.variables) {
-    if (owner.type !== 'ArrowFunctionExpression' || mutable.has(name)) continue;
+    if (owner.type !== 'ArrowFunctionExpression' || mutable.has(name)) {
+      continue;
+    }
     owner.params.forEach((parameter, index) => {
-      if (parameter.type === 'AssignmentPattern') parameters.set(parameter, { name, owner, index });
+      if (parameter.type === 'AssignmentPattern') {
+        parameters.set(parameter, { name, owner, index });
+      }
     });
   }
   const values = (raw: Node | undefined, variables: ReadonlyMap<string, Node>, seen = new Set<Node>()): Node[] => {
-    if (raw === undefined || seen.has(raw)) return [];
+    if (raw === undefined || seen.has(raw)) {
+      return [];
+    }
     const visited = new Set(seen).add(raw);
     if (raw.type === 'Identifier') {
       return mutable.has(raw.name) ? [] : values(variables.get(raw.name), variables, visited);
@@ -1296,13 +1513,21 @@ const nativeSubprocessEvidence = (
     if (raw.type === 'TSAsExpression' || raw.type === 'TSSatisfiesExpression' || raw.type === 'TSNonNullExpression') {
       return values(raw.expression, variables, visited);
     }
-    if (raw.type !== 'AssignmentPattern') return [raw];
+    if (raw.type !== 'AssignmentPattern') {
+      return [raw];
+    }
     const parameter = parameters.get(raw);
-    if (parameter === undefined) return [];
+    if (parameter === undefined) {
+      return [];
+    }
     return calls.flatMap((call) => {
-      if (call.callee.type !== 'Identifier' || call.callee.name !== parameter.name) return [];
+      if (call.callee.type !== 'Identifier' || call.callee.name !== parameter.name) {
+        return [];
+      }
       const scope = scopedVariables(facts, call.start);
-      if (scope.get(parameter.name) !== parameter.owner) return [];
+      if (scope.get(parameter.name) !== parameter.owner) {
+        return [];
+      }
       const argument = call.arguments[parameter.index];
       const candidates =
         argument === undefined ? values(raw.right, facts.variables, visited) : values(argument, scope, visited);
@@ -1313,7 +1538,9 @@ const nativeSubprocessEvidence = (
   const sourceFile = path.resolve(appRoot, facts.file);
   const evidence: KnipModelEvidence[] = [];
   const record = (call: Extract<Node, { type: 'CallExpression' }>) => {
-    if (!possibleFactory(call.callee)) return;
+    if (!possibleFactory(call.callee)) {
+      return;
+    }
     const variables = scopedVariables(facts, call.start);
     const immutableValue = (raw: Node | undefined): Node | undefined => {
       const candidates = values(raw, variables);
@@ -1326,14 +1553,18 @@ const nativeSubprocessEvidence = (
       });
     const identity = (raw: Node | undefined, seen = new Set<string>()): string | undefined => {
       if (raw?.type === 'Identifier') {
-        if (mutable.has(raw.name) || seen.has(raw.name)) return undefined;
+        if (mutable.has(raw.name) || seen.has(raw.name)) {
+          return undefined;
+        }
         seen.add(raw.name);
         return variables.has(raw.name)
           ? identity(variables.get(raw.name), seen)
           : (imports.get(raw.name) ??
               (raw.name === 'process' || raw.name === 'URL' ? `global:${raw.name}` : undefined));
       }
-      if (raw?.type !== 'MemberExpression' || (raw.computed && raw.property.type !== 'Literal')) return undefined;
+      if (raw?.type !== 'MemberExpression' || (raw.computed && raw.property.type !== 'Literal')) {
+        return undefined;
+      }
       const host = identity(raw.object, seen);
       const member = propertyName(raw.property);
       return host === undefined || member === undefined ? undefined : `${host}.${member}`;
@@ -1343,32 +1574,53 @@ const nativeSubprocessEvidence = (
       !['child_process:spawn', 'child_process:*.spawn', 'effect/unstable/process:ChildProcess.make'].includes(
         factory ?? '',
       )
-    )
+    ) {
       return;
-    if (!['global:process.execPath', 'process:*.execPath'].includes(identity(call.arguments[0]) ?? '')) return;
+    }
+    if (!['global:process.execPath', 'process:*.execPath'].includes(identity(call.arguments[0]) ?? '')) {
+      return;
+    }
     const argv = immutableValue(call.arguments[1]);
-    if (argv?.type !== 'ArrayExpression') return;
-    const resolvePaths = (raw: Node | undefined, cwd: string): string[] =>
+    if (argv?.type !== 'ArrayExpression') {
+      return;
+    }
+    const resolvePaths = (raw: Node | undefined, cwd: string, seen = new Set<Node>()): string[] =>
       values(raw, variables).flatMap((value) => {
+        if (seen.has(value)) {
+          return [];
+        }
+        const visited = new Set(seen).add(value);
         const literal = staticString(value, new Map());
-        if (literal !== undefined) return [path.resolve(cwd, literal)];
+        if (literal !== undefined) {
+          return [path.resolve(cwd, literal)];
+        }
+        if (importedDirectoryBase(value)) {
+          return [path.dirname(sourceFile)];
+        }
         if (value.type === 'MemberExpression' && !value.computed && propertyName(value.property) === 'pathname') {
           const url = value.object;
           if (
             url.type !== 'NewExpression' ||
             identity(url.callee) !== 'global:URL' ||
             !importedUrlBase(url.arguments[1])
-          )
+          ) {
             return [];
+          }
           return literalStrings(url.arguments[0]).map((target) => path.resolve(path.dirname(sourceFile), target));
         }
         if (
           value.type !== 'CallExpression' ||
           !['path:*.resolve', 'path:resolve', 'path:*.join', 'path:join'].includes(identity(value.callee) ?? '')
-        )
+        ) {
           return [];
-        const segments = value.arguments.map((argument) => literalStrings(argument));
-        if (!segments.every((segment) => segment.length === 1)) return [];
+        }
+        const segments = value.arguments.map((argument) => {
+          const literals = literalStrings(argument);
+          return literals.length === 0 ? resolvePaths(argument, cwd, visited) : literals;
+        });
+        if (!segments.every((segment) => segment.length === 1)) {
+          return [];
+        }
         const parts = segments.flat();
         const operation = identity(value.callee);
         return [
@@ -1379,25 +1631,36 @@ const nativeSubprocessEvidence = (
       });
     const optionsValue = immutableValue(call.arguments[2]);
     const options = optionsValue?.type === 'ObjectExpression' ? optionsValue : undefined;
-    if (call.arguments[2] !== undefined && options === undefined) return;
-    if (options?.properties.some((property) => property.type !== 'Property' || property.computed)) return;
+    if (call.arguments[2] !== undefined && options === undefined) {
+      return;
+    }
+    if (options?.properties.some((property) => property.type !== 'Property' || property.computed)) {
+      return;
+    }
     const cwdProperty = options?.properties.findLast(
       (property) => property.type === 'Property' && propertyName(property.key) === 'cwd',
     );
-    if (cwdProperty?.type === 'Property' && cwdProperty.kind !== 'init') return;
+    if (cwdProperty?.type === 'Property' && cwdProperty.kind !== 'init') {
+      return;
+    }
     const directories = cwdProperty?.type === 'Property' ? resolvePaths(cwdProperty.value, ownerRoot) : [ownerRoot];
-    if (directories.length === 0) return;
+    if (directories.length === 0) {
+      return;
+    }
     for (const argument of argv.elements) {
       const options = literalStrings(argument ?? undefined);
       if (
         options.length === 1 &&
         ['--experimental-strip-types', '--enable-source-maps', '--no-warnings'].includes(options[0])
-      )
+      ) {
         continue;
-      if (options.some((option) => option.startsWith('-'))) return;
+      }
+      if (options.some((option) => option.startsWith('-'))) {
+        return;
+      }
       for (const cwd of directories) {
         for (const target of resolvePaths(argument ?? undefined, cwd)) {
-          if (/\.[cm]?[jt]s$/u.test(target))
+          if (/\.[cm]?[jt]s$/u.test(target)) {
             evidence.push(
               evidenceAt(
                 facts,
@@ -1408,6 +1671,7 @@ const nativeSubprocessEvidence = (
                 'Native Node subprocess executes this source with its declared working directory',
               ),
             );
+          }
         }
       }
       return;
@@ -1430,6 +1694,98 @@ const isJoinedSourceSpecifier = (
   node.arguments[0].name === directory &&
   staticString(node.arguments[1], variables) === file;
 
+const immutableModelBinding = (facts: SourceFacts, name: string): boolean => {
+  let mutable = false;
+  new Visitor({
+    AssignmentExpression: (node) => {
+      const target = node.left.type === 'MemberExpression' ? node.left.object : node.left;
+      if (identifierName(target) === name) {
+        mutable = true;
+      }
+    },
+    CallExpression: (node) => {
+      if (
+        node.callee.type === 'MemberExpression' &&
+        identifierName(node.callee.object) === name &&
+        ['push', 'pop', 'splice', 'shift', 'unshift', 'sort', 'reverse', 'fill', 'copyWithin'].includes(
+          propertyName(node.callee.property) ?? '',
+        )
+      ) {
+        mutable = true;
+      }
+    },
+    UpdateExpression: (node) => {
+      if (identifierName(node.argument) === name) {
+        mutable = true;
+      }
+    },
+    VariableDeclaration: (node) => {
+      if (node.kind !== 'const' && node.declarations.some((binding) => identifierName(binding.id) === name)) {
+        mutable = true;
+      }
+    },
+  }).visit(facts.program);
+  return !mutable;
+};
+
+/** An immutable literal list is executable evidence only inside its consuming for-of import. */
+const loopImportEvidence = (facts: SourceFacts, workspace: string, path: Path.Path): KnipModelEvidence[] => {
+  const evidence: KnipModelEvidence[] = [];
+  new Visitor({
+    ForOfStatement: (loop) => {
+      if (loop.left.type !== 'VariableDeclaration' || loop.left.kind !== 'const') {
+        return;
+      }
+      const binding = loop.left.declarations[0]?.id;
+      if (binding?.type !== 'Identifier') {
+        return;
+      }
+      const variables = scopedVariables(facts, loop.start);
+      if (loop.right.type === 'Identifier' && !immutableModelBinding(facts, loop.right.name)) {
+        return;
+      }
+      const values = unwrap(loop.right, variables);
+      if (values?.type !== 'ArrayExpression') {
+        return;
+      }
+      const targets = values.elements.map((element) => staticString(element ?? undefined, variables));
+      if (targets.some((target) => target === undefined || !target.startsWith('.'))) {
+        return;
+      }
+      new Visitor({
+        ImportExpression: (node) => {
+          if (node.start < loop.body.start || node.end > loop.body.end) {
+            return;
+          }
+          if (node.source.type !== 'Identifier' || node.source.name !== binding.name) {
+            return;
+          }
+          const scope = scopedVariables(facts, node.start);
+          if (scope.has(binding.name)) {
+            return;
+          }
+          for (const target of targets) {
+            if (target === undefined) {
+              continue;
+            }
+            evidence.push(
+              evidenceAt(
+                facts,
+                workspace,
+                'file',
+                path.relative(workspace, path.join(path.dirname(facts.file), target)),
+                node.start,
+                'Immutable for-of list is loaded by this dynamic import',
+              ),
+            );
+          }
+        },
+      }).visit(facts.program);
+    },
+  }).visit(facts.program);
+  return evidence;
+};
+
 const sourceEvidence = (
   facts: SourceFacts,
   workspace: string,
@@ -1443,6 +1799,7 @@ const sourceEvidence = (
     ...generatedActionPrincipalEvidence(facts, workspace),
     ...generatedActionGatewayEvidence(facts, workspace),
     ...nativeSubprocessEvidence(facts, workspace, appRoot, path),
+    ...loopImportEvidence(facts, workspace, path),
   ];
   const manualCommand = `Usage: node ${facts.file} `;
   if (
@@ -1889,6 +2246,285 @@ const drizzleEvidence = (
   return evidence;
 };
 
+const returnedEffectFunction = (node: Node | undefined): (AstFunction & { body: FunctionBody }) | undefined => {
+  if (node?.type !== 'CallExpression') {
+    return undefined;
+  }
+  const [argument] = node.arguments;
+  if (argument?.type !== 'FunctionExpression' || !argument.generator || argument.body === null) {
+    return undefined;
+  }
+  const callee = node.callee.type === 'CallExpression' ? node.callee.callee : node.callee;
+  return callee.type === 'MemberExpression' &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'Effect' &&
+    ['gen', 'fn'].includes(propertyName(callee.property) ?? '')
+    ? { ...argument, body: argument.body }
+    : undefined;
+};
+
+const modelMember = (node: Node | undefined): string | undefined => {
+  if (node?.type === 'Identifier') {
+    return node.name;
+  }
+  if (node?.type !== 'MemberExpression' || node.computed) {
+    return undefined;
+  }
+  const host = modelMember(node.object);
+  const member = propertyName(node.property);
+  return host === undefined || member === undefined ? undefined : `${host}.${member}`;
+};
+const importsModelMember = (facts: SourceFacts, source: string, name: string): boolean =>
+  facts.program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.importKind !== 'type' &&
+      statement.source.value === source &&
+      statement.specifiers.some(
+        (specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          propertyName(specifier.imported) === name &&
+          specifier.local.name === name,
+      ),
+  );
+const nativePortJoin = (
+  sink: Extract<Node, { type: 'CallExpression' }>,
+  script: string,
+): Extract<Node, { type: 'CallExpression' }> | undefined => {
+  if (modelMember(sink.callee) !== 'ChildProcess.make' || modelMember(sink.arguments[0]) !== 'process.execPath') {
+    return undefined;
+  }
+  const [, argv] = sink.arguments;
+  const joined = argv?.type === 'ArrayExpression' ? argv.elements[0] : undefined;
+  if (
+    joined?.type !== 'CallExpression' ||
+    joined.callee.type !== 'MemberExpression' ||
+    joined.callee.object.type !== 'Identifier' ||
+    propertyName(joined.callee.property) !== 'join' ||
+    joined.callee.computed ||
+    identifierName(joined.arguments[1]) !== script
+  ) {
+    return undefined;
+  }
+  return joined;
+};
+const nativePortRoot = (
+  facts: SourceFacts,
+  sink: Extract<Node, { type: 'CallExpression' }>,
+  joined: Extract<Node, { type: 'CallExpression' }>,
+  path: Path.Path,
+): boolean => {
+  const variables = scopedVariables(facts, sink.start);
+  const pathName = joined.callee.type === 'MemberExpression' ? identifierName(joined.callee.object) : undefined;
+  if (pathName === undefined) {
+    return false;
+  }
+  const pathBinding = variables.get(pathName);
+  if (pathBinding?.type !== 'YieldExpression' || modelMember(pathBinding.argument ?? undefined) !== 'Path.Path') {
+    return false;
+  }
+  const rootName = identifierName(joined.arguments[0]);
+  const cwd = staticObjectFields(sink.arguments[2])?.get('cwd');
+  if (rootName === undefined || identifierName(cwd) !== rootName) {
+    return false;
+  }
+  const root = variables.get(rootName);
+  const fromUrl = root?.type === 'YieldExpression' ? root.argument : undefined;
+  const url = fromUrl?.type === 'CallExpression' ? fromUrl.arguments[0] : undefined;
+  if (
+    fromUrl?.type !== 'CallExpression' ||
+    modelMember(fromUrl.callee) !== `${pathName}.fromFileUrl` ||
+    !isImportMetaUrl(url)
+  ) {
+    return false;
+  }
+  const relativeRoot = staticString(url.arguments[0], variables);
+  return relativeRoot !== undefined && path.normalize(path.join(path.dirname(facts.file), relativeRoot)) === '.';
+};
+const isNativePortSink = (
+  facts: SourceFacts,
+  sink: Extract<Node, { type: 'CallExpression' }>,
+  script: string,
+  path: Path.Path,
+): boolean => {
+  const variables = scopedVariables(facts, sink.start);
+  if (['ChildProcess', 'Path', 'Effect', 'process', 'URL'].some((name) => variables.has(name))) {
+    return false;
+  }
+  if (
+    !importsModelMember(facts, 'effect', 'Path') ||
+    !importsModelMember(facts, 'effect/unstable/process', 'ChildProcess')
+  ) {
+    return false;
+  }
+  const joined = nativePortJoin(sink, script);
+  return joined !== undefined && nativePortRoot(facts, sink, joined, path);
+};
+
+const importedPortTable = (
+  facts: SourceFacts,
+  name: string,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  path: Path.Path,
+): { facts: SourceFacts; node: Node | undefined } | undefined => {
+  for (const statement of facts.program.body) {
+    if (statement.type === 'ImportDeclaration' && statement.source.value.startsWith('.')) {
+      const binding = statement.specifiers.find(
+        (specifier) => specifier.type === 'ImportSpecifier' && specifier.local.name === name,
+      );
+      const imported = factsByPath.get(path.normalize(path.join(path.dirname(facts.file), statement.source.value)));
+      if (binding?.type === 'ImportSpecifier' && imported !== undefined) {
+        return { facts: imported, node: imported.variables.get(propertyName(binding.imported) ?? '') };
+      }
+    }
+  }
+  return undefined;
+};
+
+/** Finite literal port tables, including one imported Effect.gen table, feed a proven native runner. */
+const ownerPortEvidence = (
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  if (workspace !== '.') {
+    return [];
+  }
+  const evidence: KnipModelEvidence[] = [];
+  const tables = (
+    node: Node | undefined,
+    facts: SourceFacts,
+    variables: ReadonlyMap<string, Node>,
+    seen = new Set<Node>(),
+  ): { facts: SourceFacts; field: Node; target: string }[] => {
+    if (node === undefined || seen.has(node)) {
+      return [];
+    }
+    const visited = new Set(seen).add(node);
+    if (node.type === 'Identifier') {
+      if (!immutableModelBinding(facts, node.name)) {
+        return [];
+      }
+      const local = variables.get(node.name);
+      if (local !== undefined) {
+        return tables(local, facts, variables, visited);
+      }
+      const imported = importedPortTable(facts, node.name, factsByPath, path);
+      return imported === undefined ? [] : tables(imported.node, imported.facts, imported.facts.variables, visited);
+    }
+    if (node.type === 'YieldExpression' && node.delegate) {
+      return tables(node.argument ?? undefined, facts, variables, visited);
+    }
+    if (node.type === 'TSAsExpression') {
+      return tables(node.expression, facts, variables, visited);
+    }
+    const fn = returnedEffectFunction(node);
+    if (fn !== undefined) {
+      if (!importsModelMember(facts, 'effect', 'Effect') || scopedVariables(facts, node.start).has('Effect')) {
+        return [];
+      }
+      const returns = fn.body.body.filter((statement) => statement.type === 'ReturnStatement');
+      if (returns.length !== 1 || returns[0]?.type !== 'ReturnStatement') {
+        return [];
+      }
+      return tables(returns[0].argument ?? undefined, facts, scopedVariables(facts, returns[0].start), visited);
+    }
+    if (node.type !== 'ArrayExpression') {
+      return [];
+    }
+    return node.elements.flatMap((element) => {
+      if (element?.type === 'SpreadElement') {
+        return tables(element.argument, facts, variables, visited);
+      }
+      const field = staticObjectFields(element ?? undefined)?.get('script');
+      const target = staticString(field, variables);
+      return target !== undefined && /^[\w/-]+\.[cm]?[jt]s$/u.test(target) && field !== undefined
+        ? [{ facts, field, target }]
+        : [];
+    });
+  };
+  for (const facts of factsByPath.values()) {
+    const processImport = facts.program.body.some(
+      (statement) =>
+        statement.type === 'ImportDeclaration' &&
+        statement.source.value === 'effect/unstable/process' &&
+        statement.specifiers.some(
+          (specifier) =>
+            specifier.type === 'ImportSpecifier' &&
+            propertyName(specifier.imported) === 'ChildProcess' &&
+            specifier.local.name === 'ChildProcess',
+        ),
+    );
+    if (!processImport) {
+      continue;
+    }
+    new Visitor({
+      ForOfStatement: (loop) => {
+        if (loop.left.type !== 'VariableDeclaration' || loop.left.kind !== 'const') {
+          return;
+        }
+        const binding = loop.left.declarations[0]?.id;
+        if (binding?.type !== 'Identifier') {
+          return;
+        }
+        const records = tables(loop.right, facts, scopedVariables(facts, loop.start));
+        if (records.length === 0) {
+          return;
+        }
+        new Visitor({
+          CallExpression: (call) => {
+            if (call.start < loop.body.start || call.end > loop.body.end) {
+              return;
+            }
+            if (call.callee.type !== 'Identifier') {
+              return;
+            }
+            const [argument] = call.arguments;
+            if (
+              argument?.type !== 'MemberExpression' ||
+              argument.object.type !== 'Identifier' ||
+              argument.object.name !== binding.name ||
+              propertyName(argument.property) !== 'script' ||
+              argument.computed
+            ) {
+              return;
+            }
+            const runner = returnedEffectFunction(scopedVariables(facts, call.start).get(call.callee.name));
+            const [script] = runner?.params ?? [];
+            if (runner === undefined || script?.type !== 'Identifier') {
+              return;
+            }
+            new Visitor({
+              CallExpression: (sink) => {
+                if (sink.start < runner.body.start || sink.end > runner.body.end) {
+                  return;
+                }
+                if (!isNativePortSink(facts, sink, script.name, path)) {
+                  return;
+                }
+                for (const record of records) {
+                  evidence.push(
+                    evidenceAt(
+                      record.facts,
+                      workspace,
+                      'file',
+                      record.target,
+                      record.field.start,
+                      `Literal owner port reaches native Node runner in ${facts.file}; app-root cwd and script argument are proven`,
+                    ),
+                  );
+                }
+              },
+            }).visit(facts.program);
+          },
+        }).visit(facts.program);
+      },
+    }).visit(facts.program);
+  }
+  return evidence;
+};
+
 const nearestPackage = Effect.fn('QualityAudit.nearestPackage')(function* readNearestPackage(anchor: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -2063,19 +2699,31 @@ const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* bu
       add(fact);
     }
   }
+  const pageAliases = manifestPageAliasEvidence(factsByPath, manifest, prefix, workspace, path);
   evidence.push(
+    ...ownerPortEvidence(factsByPath, workspace, path),
     ...declarationSurfaceEvidence(factsByPath, workspace, path),
     ...modernRouteEvidence(factsByPath, manifest, prefix, workspace),
     ...catalogReadBindingEvidence(factsByPath, workspace),
     ...catalogSharedContractEvidence(factsByPath, workspace),
     ...catalogAliasEvidence(factsByPath, manifest, prefix, workspace, path),
+    ...pageAliases,
     ...generatedModuleApiEvidence(factsByPath, prefix, workspace),
     ...generatedOutboxMessageEvidence(factsByPath, manifest, prefix, workspace),
     ...drizzleEvidence(factsByPath, prefix, workspace, path),
   );
   const aliasFiles = new Set(
     evidence
-      .filter((fact) => fact.kind === 'alias')
+      .filter((fact) => {
+        if (fact.kind !== 'alias') {
+          return false;
+        }
+        if (!pageAliases.some((pageAlias) => pageAlias.source === fact.source)) {
+          return true;
+        }
+        const facts = factsByPath.get(fact.source);
+        return facts !== undefined && pageDuplicateSuppressionIsProven(facts, evidence);
+      })
       .map((fact) =>
         path.relative(path.resolve(appRoot, prefix), path.resolve(appRoot, fact.source)).replaceAll('\\', '/'),
       ),

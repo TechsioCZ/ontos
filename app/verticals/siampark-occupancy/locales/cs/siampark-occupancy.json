@@ -1,0 +1,94 @@
+{
+  "siampark-occupancy": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Nájmy a pobyty"
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "siampark-occupancy",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Nájmy a pobyty",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Nájmy a pobyty",
+        "description": "Spravujte obsazenost jednotek, nájmy a krátkodobé pobyty."
+      }
+    },
+    "demo": {
+      "feedback": {
+        "loading": "Načítání…",
+        "ready": "Připraveno",
+        "saving": "Ukládání…",
+        "forbidden": "Pro tuto oblast nemáte oprávnění.",
+        "conflict": "Stav se změnil. Obnovte data a zkuste operaci znovu.",
+        "validation": "Zkontrolujte vstupní údaje a povolený přechod stavu.",
+        "unavailable": "Služba je dočasně nedostupná. Zkuste obnovit data."
+      },
+      "refresh": "Obnovit",
+      "empty": "Žádné záznamy pro zvolený filtr.",
+      "unit": "Jednotka",
+      "period": "Období",
+      "detail": "Detail",
+      "openEnd": "Bez konce",
+      "customer": "Zákazník",
+      "simulated": "SIMULATED — simulace poskytovatele",
+      "activate": "Aktivovat",
+      "choose": "Vyberte záznam",
+      "startDate": "Začátek",
+      "endDate": "Konec",
+      "kind": {
+        "ALL": "Vše",
+        "LONG_TERM_LEASE": "Dlouhodobý nájem",
+        "SHORT_STAY": "Krátkodobý pobyt"
+      },
+      "state": "Stav",
+      "stateLabels": {
+        "DRAFT": "Návrh",
+        "CONFIRMED": "Potvrzeno",
+        "ACTIVE": "Aktivní",
+        "COMPLETED": "Dokončeno",
+        "CANCELLED": "Zrušeno"
+      },
+      "bookingStates": {
+        "SUCCESS": "Úspěšně přijato",
+        "FAILED": "Přijetí selhalo",
+        "CONFLICT": "Kolize termínu"
+      },
+      "attempts": "Pokusů: {{attemptCount}}",
+      "contract": "Smlouva",
+      "confirm": "Potvrdit",
+      "complete": "Dokončit",
+      "cancel": "Zrušit",
+      "create": "Vytvořit návrh nájmu",
+      "customerSearch": "Vyhledat zákazníka",
+      "search": "Vyhledat",
+      "bookingObservations": "Pozorování rezervační simulace",
+      "list": "Nájmy a pobyty",
+      "importBooking": "Import krátkodobého pobytu",
+      "bookingFormContext": "Použijte jednotku a termín z formuláře nájmu a vyberte hosta. Simulace pobytu je pro dvě osoby.",
+      "guestSearch": "Vyhledat hosta",
+      "guest": "Host",
+      "simulateImport": "Simulovat úspěšný import",
+      "simulateFailure": "Simulovat selhání importu",
+      "retry": "Opakovat import se zvolenými údaji",
+      "provider": "Poskytovatel",
+      "attemptedAt": "Čas pokusu",
+      "completedAt": "Čas výsledku",
+      "ownerReference": "Reference vlastněného záznamu",
+      "requestSummary": "Souhrn požadavku",
+      "resultSummary": "Souhrn výsledku",
+      "editDraft": "Upravit období návrhu",
+      "saveDraft": "Uložit období návrhu",
+      "newDraft": "Přejít k novému nájmu"
+    }
+  }
+}

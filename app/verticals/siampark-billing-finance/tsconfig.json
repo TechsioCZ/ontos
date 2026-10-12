@@ -1,0 +1,36 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/verticals__siampark-billing-finance",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/verticals__siampark-billing-finance.tsbuildinfo"
+  },
+  "include": [
+    "src",
+    "locales/**/*.json",
+    "package.json",
+    "shared",
+    "shared/ultramodern-build.json",
+    "server",
+    "api",
+    "vertical.manifest.ts",
+    "vertical.registration.ts",
+    "scripts",
+    "tests",
+    "drizzle.config.ts",
+    "rstest.config.ts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/shared-contracts"
+    },
+    {
+      "path": "../../packages/shared-design-tokens"
+    }
+  ]
+}

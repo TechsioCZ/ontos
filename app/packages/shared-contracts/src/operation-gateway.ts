@@ -1,4 +1,5 @@
 import { Effect, Redacted, Schema } from 'effect';
+import { ReferenceGatewayCredentialsSchema } from './reference-gateway.ts';
 
 import { DocumentCompositionRevisionError, getDocumentCompositionRevision } from './document-composition-revision.ts';
 import { GatewayContextResponseSchema, issueGatewayContext } from './gateway-context.ts';
@@ -71,3 +72,17 @@ export function makeOperationGateway<const Audience extends string, IssuerFailur
     ? makeOperationGatewayWithIssuer(audience, issueGatewayContext)
     : makeOperationGatewayWithIssuer(audience, acquire);
 }
+
+/** Acquire a separate single-use assertion for every receiving provider attempt. */
+export const makeReferenceGatewayCredentials = (audiences: readonly string[]) =>
+  Effect.forEach(
+    audiences,
+    (audience) =>
+      makeOperationGateway(audience).invoke((authorization) =>
+        Effect.succeed({ audience, authorization: Redacted.make(authorization) }),
+      ),
+    { concurrency: 1 },
+  ).pipe(
+    Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(ReferenceGatewayCredentialsSchema))),
+    Effect.map(Redacted.make),
+  );

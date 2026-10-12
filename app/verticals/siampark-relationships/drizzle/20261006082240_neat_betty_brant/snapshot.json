@@ -1,0 +1,254 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "a0bdc205-608d-494d-a4eb-5b7afcbe1e66",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "ddl": [
+    {
+      "name": "siampark_relationships",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "siampark_relationships"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "relationships_states",
+      "entityType": "tables",
+      "schema": "siampark_relationships"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "siampark_relationships_redemption_expiry",
+      "entityType": "indexes",
+      "schema": "siampark_relationships",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nameExplicit": false,
+      "name": "gateway_assertion_redemptions_pkey",
+      "entityType": "pks",
+      "schema": "siampark_relationships",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "nameExplicit": false,
+      "name": "relationships_states_pkey",
+      "entityType": "pks",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "value": "\"revision\" >= 0",
+      "name": "siampark_relationships_revision_nonnegative",
+      "entityType": "checks",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "value": "jsonb_typeof(\"state\") = 'object'",
+      "name": "siampark_relationships_state_object",
+      "entityType": "checks",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"siampark_relationships\".\"relationships_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_relationships\".\"relationships_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "siampark_relationships_state_scope_select",
+      "entityType": "policies",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"siampark_relationships\".\"relationships_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_relationships\".\"relationships_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "siampark_relationships_state_scope_insert",
+      "entityType": "policies",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"siampark_relationships\".\"relationships_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_relationships\".\"relationships_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"siampark_relationships\".\"relationships_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_relationships\".\"relationships_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "siampark_relationships_state_scope_update",
+      "entityType": "policies",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"siampark_relationships\".\"relationships_states\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_relationships\".\"relationships_states\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "siampark_relationships_state_scope_delete",
+      "entityType": "policies",
+      "schema": "siampark_relationships",
+      "table": "relationships_states"
+    }
+  ],
+  "renames": []
+}

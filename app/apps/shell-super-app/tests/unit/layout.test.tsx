@@ -24,6 +24,8 @@ const { accountMenuSelectHandlers, tenantValueChangeHandlers } = rstest.hoisted(
   };
 });
 
+rstest.mock('@modern-js/runtime/head', () => ({ Helmet: () => null }));
+
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   Outlet: () => <main>Current route</main>,
 }));
@@ -48,6 +50,8 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.auth.logout.pending': 'Logging out…',
         'shell.dashboard.account.label': 'Account menu',
         'shell.dashboard.brand': 'OntOS',
+        'shell.dashboard.breadcrumb.home': 'Back to home',
+        'shell.dashboard.breadcrumb.label': 'Breadcrumb',
         'shell.dashboard.header.label': 'Dashboard header',
         'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
         'shell.dashboard.legalEntity.failed': 'Legal entity switching failed. Try again.',
@@ -56,6 +60,9 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.legalEntity.unavailable': 'Legal entity choices are temporarily unavailable.',
         'shell.dashboard.navigation.home': 'Home',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
+        'shell.dashboard.navigation.siampark.integrations': 'Integrations',
+        'shell.dashboard.navigation.siampark.overview': 'Overview',
+        'shell.dashboard.navigation.siampark.properties': 'Properties',
         'shell.dashboard.sidebar.label': 'Dashboard sidebar',
         'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
         'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
@@ -220,7 +227,7 @@ test('supports an alternate title and current MicroVertical without changing chi
   expect(screen.getByRole('link', { name: 'Testing one' }).getAttribute('aria-current')).toBe('page');
 });
 
-test('supports module pages without a shell heading and keeps reduced horizontal content padding', () => {
+test('supports module pages with their own heading and preserves their content', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
@@ -235,9 +242,7 @@ test('supports module pages without a shell heading and keeps reduced horizontal
   );
 
   expect(screen.queryByRole('heading')).toBeNull();
-  const content = screen.getByText('Module content').parentElement;
-  expect(content?.classList.contains('shell:px-2')).toBe(true);
-  expect(content?.classList.contains('shell:py-4')).toBe(true);
+  expect(screen.getByText('Module content')).toBeTruthy();
 });
 
 test('keeps Home as the only navigation link when no active modules are supplied', () => {
@@ -580,3 +585,85 @@ test.each(legalEntitySelectorStateCases)(
     expect(screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-describedby')).toBeNull();
   },
 );
+
+test('selects the resolved Siampark page separately from other pages of the same owner', () => {
+  const propertiesNavigation = [
+    {
+      enabled: true,
+      href: '/siampark/integrations',
+      label: 'Property owner',
+      moduleId: 'siampark.property',
+      state: 'active' as const,
+      unavailable: false,
+    },
+    ...navigation,
+    {
+      enabled: true,
+      href: '/siampark/properties',
+      label: 'Property owner',
+      moduleId: 'siampark.property',
+      state: 'active' as const,
+      unavailable: false,
+    },
+    {
+      enabled: true,
+      href: '/siampark/overview',
+      label: 'Property owner',
+      moduleId: 'siampark.property',
+      state: 'active' as const,
+      unavailable: false,
+    },
+  ];
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="siampark.property.page.records"
+      currentModuleId="siampark.property"
+      identity={identity}
+      logoutPending={false}
+      navigation={propertiesNavigation}
+      onLogout={noopLogout}
+    >
+      <section>Property records</section>
+    </AuthenticatedDashboardLayout>,
+  );
+  const links = screen.getByRole('navigation', { name: 'Dashboard navigation' }).querySelectorAll('a');
+  expect([...links].map((link) => link.textContent)).toEqual([
+    'Home',
+    'Overview',
+    'Properties',
+    'Integrations',
+    'Future generated',
+    'Testing one',
+  ]);
+  expect(
+    [...links].filter((link) => link.getAttribute('aria-current') === 'page').map((link) => link.textContent),
+  ).toEqual(['Properties']);
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('HomeProperties');
+});
+
+test('does not add undiscovered Siampark routes or enable unavailable pages', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={[
+        {
+          enabled: false,
+          href: '/siampark/overview',
+          label: 'Property owner',
+          moduleId: 'siampark.property',
+          state: 'active' as const,
+          unavailable: false,
+        },
+      ]}
+      onLogout={noopLogout}
+    >
+      <section>Current content</section>
+    </AuthenticatedDashboardLayout>,
+  );
+  expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Properties' })).toBeNull();
+  expect(screen.getByText('Overview')).toBeTruthy();
+});

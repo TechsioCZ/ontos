@@ -23,7 +23,7 @@
       "account": {
         "label": "Account menu"
       },
-      "brand": "OntOS",
+      "brand": "Siampark",
       "header": {
         "label": "Dashboard header"
       },
@@ -41,18 +41,34 @@
       },
       "navigation": {
         "home": "Home",
-        "label": "Dashboard navigation"
+        "label": "Dashboard navigation",
+        "siampark": {
+          "overview": "Overview",
+          "properties": "Properties",
+          "occupancy": "Leases and stays",
+          "agreements": "Agreements",
+          "finance": "Finance",
+          "work": "Tasks",
+          "relationships": "Activities",
+          "contacts": "Contacts",
+          "integrations": "Integrations"
+        }
       },
       "sidebar": {
         "label": "Dashboard sidebar"
       },
-    "tenant": {
+      "tenant": {
         "accessibleLabel": "Current tenant",
         "failed": "Tenant switching failed. Try again.",
         "pending": "Switching tenant…",
-      "unavailable": "Tenant choices are temporarily unavailable. Reload the page to try again."
-    },
-    "unavailable": "The authenticated Shell is temporarily unavailable. Reload the page to try again."
+        "unavailable": "Tenant choices are temporarily unavailable. Reload the page to try again."
+      },
+      "unavailable": "The authenticated Shell is temporarily unavailable. Reload the page to try again.",
+      "workspace": "Property management",
+      "breadcrumb": {
+        "label": "Breadcrumb",
+        "home": "Workspace home"
+      }
     },
     "hero": {
       "cardOne": "Add the first business vertical with create <domain> --vertical when the product needs one.",
@@ -140,12 +156,16 @@
       "partial": "Some search providers are temporarily unavailable. The available results are shown.",
       "party": "Party",
       "reconciliation_required": "Reconciliation required",
-      "roles": { "CUSTOMER": "Customer", "SUPPLIER": "Supplier" },
+      "roles": {
+        "CUSTOMER": "Customer",
+        "SUPPLIER": "Supplier"
+      },
       "selection_required": "Sign in and select a tenant before searching.",
       "seoDescription": "Search authorized resources in the selected OntOS context.",
       "submit": "Search",
       "title": "Search results",
-      "unavailable": "Search is temporarily unavailable. Try again."
+      "unavailable": "Search is temporarily unavailable. Try again.",
+      "clear": "Clear search"
     },
     "resource": {
       "forbidden": "You do not have permission to view this resource.",

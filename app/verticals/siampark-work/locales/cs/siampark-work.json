@@ -1,0 +1,65 @@
+{
+  "siampark-work": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "siampark-work",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Siampark Work Vertical",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Úkoly",
+        "refresh": "Načíst úkoly",
+        "taskTitle": "Název",
+        "state": "Stav",
+        "dueDate": "Termín",
+        "detail": "Detail",
+        "filter": "Filtrovat podle názvu",
+        "description": "Popis",
+        "owner": "Odpovědná osoba",
+        "priority": "Priorita",
+        "unassigned": "Nepřiřazeno",
+        "create": "Nový úkol",
+        "edit": "Upravit úkol",
+        "save": "Uložit",
+        "new": "Nový úkol",
+        "assignMe": "Přiřadit mně",
+        "indicators": "Otevřené: {{open}} · Po termínu: {{overdue}} · Referenční datum: {{date}}",
+        "saved": "Úkol uložen.",
+        "unavailable": "Úkoly se nepodařilo načíst.",
+        "forbidden": "K této operaci nemáte oprávnění.",
+        "conflict": "Data se změnila. Načtěte úkoly znovu.",
+        "invalid": "Operaci nelze dokončit. Zkontrolujte vstup a stav úkolu.",
+        "states": {
+          "NEW": "Nový",
+          "IN_PROGRESS": "Probíhá",
+          "WAITING": "Čeká",
+          "DONE": "Hotový",
+          "CANCELLED": "Zrušený"
+        },
+        "priorities": {
+          "LOW": "Nízká",
+          "NORMAL": "Běžná",
+          "HIGH": "Vysoká"
+        },
+        "loadUnits": "Načíst jednotky",
+        "unit": "Jednotka (volitelně)",
+        "createdAt": "Vytvořeno",
+        "updatedAt": "Poslední změna",
+        "selectUnit": "Vyberte jednotku",
+        "empty": "Žádné úkoly odpovídající filtru."
+      }
+    }
+  }
+}

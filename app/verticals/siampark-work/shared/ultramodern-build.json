@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "siampark-work",
+    "buildMarker": "175a72e2a12e76df",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/siampark-work",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/siampark-work",
+    "version": "0.1.0",
+    "build": "175a72e2a12e76df"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "siampark-work",
+      "buildMarker": "175a72e2a12e76df",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/siampark-work",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/siampark-work",
+      "version": "0.1.0",
+      "build": "175a72e2a12e76df",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "siampark-work",
+      "buildMarker": "175a72e2a12e76df",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/siampark-work",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/siampark-work",
+      "version": "0.1.0",
+      "build": "175a72e2a12e76df",
+      "surface": "ui"
+    }
+  }
+}

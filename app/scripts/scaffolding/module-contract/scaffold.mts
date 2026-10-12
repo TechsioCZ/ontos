@@ -162,6 +162,7 @@ const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMet
     'GovernedReadLayer',
     'governedReadRuntimeLive',
     'governedReadApiHandlersLive',
+    'governedResolvedApiHandlersLive',
     GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
     GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
     GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,

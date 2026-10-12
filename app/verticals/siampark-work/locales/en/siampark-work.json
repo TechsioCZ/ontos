@@ -1,0 +1,65 @@
+{
+  "siampark-work": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "siampark-work",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Siampark Work Vertical",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Tasks",
+        "refresh": "Load tasks",
+        "taskTitle": "Title",
+        "state": "State",
+        "dueDate": "Due date",
+        "detail": "Detail",
+        "filter": "Filter by title",
+        "description": "Description",
+        "owner": "Owner",
+        "priority": "Priority",
+        "unassigned": "Unassigned",
+        "create": "New Task",
+        "edit": "Edit Task",
+        "save": "Save",
+        "new": "New Task",
+        "assignMe": "Assign to me",
+        "indicators": "Open: {{open}} · Overdue: {{overdue}} · Reference date: {{date}}",
+        "saved": "Task saved.",
+        "unavailable": "Tasks could not be loaded.",
+        "forbidden": "You do not have permission for this operation.",
+        "conflict": "Data changed. Reload tasks.",
+        "invalid": "The operation could not be completed. Check the input and Task state.",
+        "states": {
+          "NEW": "New",
+          "IN_PROGRESS": "In progress",
+          "WAITING": "Waiting",
+          "DONE": "Done",
+          "CANCELLED": "Cancelled"
+        },
+        "priorities": {
+          "LOW": "Low",
+          "NORMAL": "Normal",
+          "HIGH": "High"
+        },
+        "loadUnits": "Load units",
+        "unit": "Unit (optional)",
+        "createdAt": "Created",
+        "updatedAt": "Last updated",
+        "selectUnit": "Select a unit",
+        "empty": "No tasks match this filter."
+      }
+    }
+  }
+}

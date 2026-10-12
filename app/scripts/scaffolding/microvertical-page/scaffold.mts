@@ -22,6 +22,7 @@ import {
   insertSortedSlot,
   isModuleManifestImport,
   moduleFederationExposureSource,
+  maskNonCode,
   patchJsonObjectProperty,
   readJsonEffect as readSharedJson,
   readGeneratedSlotEntries,
@@ -44,6 +45,7 @@ import type {
 import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 
 interface PageVerticalMetadata extends OntosVerticalMetadata {
+  readonly inlineLocales: boolean;
   readonly locales: readonly string[];
   readonly mfBoundaryId: string;
   readonly namespace: string;
@@ -208,10 +210,12 @@ const validateLocale = (
   namespace: string,
   packageExports: JsonObject,
   locale: string,
+  runtimeLocales: boolean,
 ): Effect.Effect<void, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* validateLocaleEffect() {
     const expectedExport = `./locales/${locale}/${namespace}.json`;
-    if (packageExports[`./locales/${locale}`] !== expectedExport) {
+    const localeExport = packageExports[`./locales/${locale}`];
+    if (localeExport !== expectedExport && !(localeExport === undefined && runtimeLocales)) {
       yield* pageScaffoldFailure(`vertical ${vertical.slug} is missing its generated ${locale} locale export`);
     }
     const localePath = resolveContainedPath(
@@ -269,9 +273,40 @@ const discoverPageVertical = (
     if (unsupportedLocale !== undefined) {
       return yield* pageScaffoldFailure(`page scaffold has no starter translation for locale ${unsupportedLocale}`);
     }
+    const runtimePath = resolveContainedPath(vertical.directory, 'src', 'modern.runtime.ts');
+    const runtimeSource = (yield* fileExists(runtimePath)) ? yield* readTextFile(runtimePath) : '';
+    const runtimeStructure = maskNonCode(runtimeSource);
+    const namespaceIdentifier = namespace.replaceAll('.', String.raw`\.`);
+    const namespaceImport =
+      /import\s*\{\s*ultramodernRouteNamespace\s*\}\s*from\s*['"]\.\/routes\/ultramodern-route-metadata['"]/u.exec(
+        runtimeSource,
+      );
+    const namespaceImportIsCode =
+      namespaceImport !== null && /^import\s*\{/u.test(runtimeStructure.slice(namespaceImport.index));
+    const runtimeLocales =
+      locales.every((locale) => {
+        const importPattern = new RegExp(
+          `import\\s+${locale}Resource\\s+from\\s+['"]\\.\\./locales/${locale}/${namespaceIdentifier}\\.json['"]`,
+          'u',
+        );
+        const bindingPattern = new RegExp(
+          `${locale}:\\s*\\{\\s*\\[ultramodernRouteNamespace\\]:\\s*${locale}Resource\\s*\\}`,
+          'u',
+        );
+        const importMatch = importPattern.exec(runtimeSource);
+        return (
+          importMatch !== null &&
+          /^import\s/u.test(runtimeStructure.slice(importMatch.index)) &&
+          bindingPattern.test(runtimeStructure)
+        );
+      }) &&
+      /defaultNS:\s*ultramodernRouteNamespace/u.test(runtimeStructure) &&
+      namespaceImportIsCode;
     const packageExports = asJsonObject(vertical.packageJson['exports'], `vertical ${vertical.slug} package exports`);
     yield* Effect.all(
-      locales.map((locale) => validateLocale(workspaceRoot, vertical, namespace, packageExports, locale)),
+      locales.map((locale) =>
+        validateLocale(workspaceRoot, vertical, namespace, packageExports, locale, runtimeLocales),
+      ),
       { concurrency: 'unbounded' },
     );
     const routeHeadPath = resolveContainedPath(
@@ -305,17 +340,19 @@ const discoverPageVertical = (
       'i18n',
       'resources.ts',
     );
-    if (!(yield* fileExists(resourcesPath))) {
+    const resourcesExist = yield* fileExists(resourcesPath);
+    if (!resourcesExist && !runtimeLocales) {
       return yield* pageScaffoldFailure(`vertical ${vertical.slug} generated i18n resources are missing`);
     }
-    const resourcesContent = yield* readTextFile(resourcesPath);
-    if (!resourcesContent.includes(`export const ${resourcesName} =`)) {
+    const resourcesContent = resourcesExist ? yield* readTextFile(resourcesPath) : '';
+    if (resourcesExist && !resourcesContent.includes(`export const ${resourcesName} =`)) {
       return yield* pageScaffoldFailure(
         `vertical ${vertical.slug} generated i18n resources must export ${resourcesName}`,
       );
     }
     return {
       ...vertical,
+      inlineLocales: !resourcesExist,
       locales,
       mfBoundaryId,
       namespace,
@@ -327,6 +364,20 @@ const renderPage = (vertical: PageVerticalMetadata, page: string, route: PageRou
   const componentName = `${toPascalCase(page)}Page`;
   const contentComponentName = `${componentName}Content`;
   const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
+  const resourceImports = vertical.inlineLocales
+    ? vertical.locales
+        .map((locale) => {
+          const catalogPath = `../locales/${locale}/${vertical.namespace}.json`;
+          return `import ${locale}Resource from '${relativeFromRoute(route, catalogPath, 2)}';`;
+        })
+        .join('\n')
+    : `import { ${resourcesName} } from '${relativeFromRoute(route, 'i18n/resources', 2)}';`;
+  const resourceBindings = vertical.locales
+    .map((locale) => `  ${locale}: { '${vertical.namespace}': ${locale}Resource },`)
+    .join('\n');
+  const resourceDefinition = vertical.inlineLocales
+    ? `const ${resourcesName} = {\n${resourceBindings}\n} as const;\n\n`
+    : '';
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const prefix = vertical.tailwindPrefix;
   const schemaImport = route.isDynamic ? `import { Schema } from 'effect';\n` : '';
@@ -357,10 +408,10 @@ interface ${componentName}Props {
     : `<${contentComponentName} />`;
   return `import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 ${schemaImport}import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
-import { ${resourcesName} } from '${relativeFromRoute(route, 'i18n/resources', 2)}';
+${resourceImports}
 import '${relativeFromRoute(route, 'index.css', 1)}';
 
-${props}${declaration}
+${resourceDefinition}${props}${declaration}
   const { t } = useModernI18n();
   const headingId = '${page}-heading';
 

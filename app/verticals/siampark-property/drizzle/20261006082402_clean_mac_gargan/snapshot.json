@@ -1,0 +1,226 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "22d22c29-8cd0-4da5-93e4-b83f87c68711",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "ddl": [
+    {
+      "name": "siampark_property",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "siampark_property"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "state",
+      "entityType": "tables",
+      "schema": "siampark_property"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payload",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nameExplicit": false,
+      "name": "gateway_assertion_redemptions_pkey",
+      "entityType": "pks",
+      "schema": "siampark_property",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "nameExplicit": false,
+      "name": "state_pkey",
+      "entityType": "pks",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "value": "\"revision\" >= 0",
+      "name": "property_revision_nonnegative",
+      "entityType": "checks",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"siampark_property\".\"state\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_property\".\"state\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "property_state_select",
+      "entityType": "policies",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"siampark_property\".\"state\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_property\".\"state\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "property_state_insert",
+      "entityType": "policies",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"siampark_property\".\"state\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_property\".\"state\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"siampark_property\".\"state\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_property\".\"state\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "property_state_update",
+      "entityType": "policies",
+      "schema": "siampark_property",
+      "table": "state"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"siampark_property\".\"state\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"siampark_property\".\"state\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "property_state_delete",
+      "entityType": "policies",
+      "schema": "siampark_property",
+      "table": "state"
+    }
+  ],
+  "renames": []
+}

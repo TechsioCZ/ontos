@@ -2815,6 +2815,8 @@ it.live(
             `--metafile=${edgeMetafile}`,
             `--outfile=${path.join(edgeBundleDirectory, 'action-principal.mjs')}`,
             '--platform=browser',
+            '--conditions=workerd',
+            '--external:cloudflare:workers',
           ],
           { encoding: 'utf-8' },
         );
@@ -2926,19 +2928,23 @@ it.live(
             .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
         ).toEqual(principal);
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         yield* expectFailure(
-          billingGeneratedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          billingGeneratedModule
+            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         expect(yield* verify(retiringAssertion.token)).toEqual(principal);
@@ -3069,27 +3075,33 @@ it.live(
           expect(isGeneratedPrincipalError('ActionPrincipalInvalidError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal(undefined, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal(undefined, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalMissingError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal('bearer malformed', {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal('bearer malformed', {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalInvalidError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment: {},
-            redemption: testRedemption,
-          }),
+          generatedModule
+            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment: {},
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalConfigurationError')(error)).toBe(true),
         );
         let acquisitions = 0;
@@ -5806,6 +5818,99 @@ export default OrdersPage;
         );
       }),
     );
+  }),
+);
+
+const inventoryModernRuntimeFile = 'verticals/inventory-stock/src/modern.runtime.ts';
+
+const configureRuntimeLocaleFixture = Effect.fn(function* runtimeLocaleFixture(fixture: Fixture) {
+  const packagePath = path.join(fixture.root, inventoryPackageFile);
+  const packageJson = yield* decodeFixturePackage(yield* readFixtureFile(fixture.root, inventoryPackageFile));
+  const exports = Object.fromEntries(
+    Object.entries(packageJson.exports).filter(([key]) => !key.startsWith('./locales/')),
+  );
+  yield* Effect.promise(() => writeFile(packagePath, json({ ...packageJson, exports }), 'utf-8'));
+  yield* Effect.promise(() => rm(path.join(fixture.root, 'verticals/inventory-stock/src/i18n/resources.ts')));
+  yield* write(
+    fixture.root,
+    inventoryModernRuntimeFile,
+    `import csResource from '../locales/cs/inventory.json';
+import enResource from '../locales/en/inventory.json';
+import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
+const resources = {
+  cs: { [ultramodernRouteNamespace]: csResource },
+  en: { [ultramodernRouteNamespace]: enResource },
+} as const;
+export default defineRuntimeConfig({ i18n: { initOptions: { defaultNS: ultramodernRouteNamespace, resources } } });
+`,
+  );
+});
+
+it.live(
+  'generates and safely reruns pages using pinned runtime-local catalogs without legacy locale exports',
+  Effect.fn(function* runtimeLocalePage() {
+    yield* withFixture(
+      Effect.fn(function* runtimeLocalePageFixture(fixture) {
+        yield* configureRuntimeLocaleFixture(fixture);
+        const runtimeBefore = yield* readFixtureFile(fixture.root, inventoryModernRuntimeFile);
+        const args = [scaffoldFlag.vertical, inventorySlug, '--page', 'records', '--url', '/siampark/properties'];
+        yield* run(fixture, scaffoldCommand.microverticalPage, args);
+        const page = yield* readFixtureFile(
+          fixture.root,
+          'verticals/inventory-stock/src/routes/[lang]/siampark/properties/page.tsx',
+        );
+        expect(page).toContain("import csResource from '../../../../../locales/cs/inventory.json';");
+        expect(page).toContain("import enResource from '../../../../../locales/en/inventory.json';");
+        expect(page).toMatch(/cs:\s*\{\s*inventory:\s*csResource/u);
+        expect(page).toMatch(/en:\s*\{\s*inventory:\s*enResource/u);
+        expect(page).toContain("t('inventory.pages.records.title')");
+        expect(page).not.toContain('i18n/resources');
+        const catalog = yield* decodeInventoryLocale(yield* readFixtureFile(fixture.root, inventoryEnglishLocaleFile));
+        expect(catalog.inventory.pages['records']).toEqual({ description: pagePlaceholder, title: 'New Page' });
+        expect(yield* readFixtureFile(fixture.root, inventoryModernRuntimeFile)).toBe(runtimeBefore);
+        const beforeRerun = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.microverticalPage, args);
+        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'rejects broken runtime locale bindings and conflicting locale exports before any page write',
+  Effect.fn(function* invalidRuntimeLocalePage() {
+    for (const invalid of ['binding', 'export', 'comment']) {
+      yield* withFixture(
+        Effect.fn(function* invalidRuntimeLocalePageFixture(fixture) {
+          yield* configureRuntimeLocaleFixture(fixture);
+          if (invalid === 'binding') {
+            const runtimeFile = inventoryModernRuntimeFile;
+            const content = yield* readFixtureFile(fixture.root, runtimeFile);
+            yield* write(
+              fixture.root,
+              runtimeFile,
+              content.replace('[ultramodernRouteNamespace]: csResource', '[ultramodernRouteNamespace]: enResource'),
+            );
+          } else {
+            const packageJson = yield* decodeFixturePackage(yield* readFixtureFile(fixture.root, inventoryPackageFile));
+            yield* write(
+              fixture.root,
+              inventoryPackageFile,
+              json({
+                ...packageJson,
+                exports: { ...packageJson.exports, './locales/cs': './locales/cs/wrong-owner.json' },
+              }),
+            );
+          }
+          yield* assertScaffoldRefused(
+            fixture,
+            scaffoldCommand.microverticalPage,
+            [scaffoldFlag.vertical, inventorySlug, '--page', 'records'],
+            /missing its generated cs locale export/u,
+          );
+        }),
+      );
+    }
   }),
 );
 
