@@ -19,6 +19,14 @@ export const FinanceAttemptIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Sc
 export const FinanceResultIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceResultId')));
 const FinancePropertyIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinancePropertyId')));
 const FinanceResourceIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceResourceId')));
+/** Opaque customer identity owned by the party registry; never dereferenced by billing state. */
+export const FinancePartyIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinancePartyId')));
+/** Opaque sales-pipeline opportunity identity; the idempotency anchor for opportunity invoices. */
+export const FinanceOpportunityIdSchema = Schema.toEncoded(
+  FinanceTextSchema.pipe(Schema.brand('FinanceOpportunityId')),
+);
+/** Opaque merchandise product identity captured on an invoice line snapshot. */
+export const FinanceProductIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceProductId')));
 // Bounded aggregates keep sums of at most 1000 amounts safely inside Number's exact integer range.
 export const MoneyMinorSchema = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
@@ -28,6 +36,28 @@ export const InvoiceDirectionSchema = Schema.Literals(['OUTGOING', 'INCOMING']);
 export const InvoiceBusinessStateSchema = Schema.Literals(['DRAFT', 'CONFIRMED', 'VOIDED']);
 export const PaymentStateSchema = Schema.Literals(['UNPAID', 'PARTIALLY_PAID', 'PAID']);
 export const AccountingSyncStateSchema = Schema.Literals(['NOT_SYNCED', 'PENDING', 'SYNCED', 'FAILED']);
+/** Czech VAT rates in whole percent. */
+export const VatRateSchema = Schema.Literals([0, 10, 12, 21]);
+export type VatRate = typeof VatRateSchema.Type;
+/** One invoice line; a snapshot that is never re-priced from the catalog after it is stored. */
+export const InvoiceLineSchema = Schema.Struct({
+  description: FinanceTextSchema,
+  productId: Schema.optionalKey(FinanceProductIdSchema),
+  quantity: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1_000_000)),
+  unitPriceMinor: MoneyMinorSchema,
+  vatRate: VatRateSchema,
+});
+export type InvoiceLine = typeof InvoiceLineSchema.Type;
+export const InvoiceLinesSchema = Schema.Array(InvoiceLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200));
+export const VatRecapEntrySchema = Schema.Struct({
+  baseMinor: MoneyMinorSchema,
+  rate: VatRateSchema,
+  vatMinor: MoneyMinorSchema,
+});
+export type VatRecapEntry = typeof VatRecapEntrySchema.Type;
+/** Invoice numbers of the demo series, e.g. `FV-2026-0001`. */
+export const InvoiceNumberSchema = Schema.String.check(Schema.isPattern(/^FV-\d{4}-\d{4,}$/u));
+const PositiveTotalMinorSchema = MoneyMinorSchema.check(Schema.isGreaterThan(0));
 export const InvoiceDraftFields = {
   contractRef: Schema.optionalKey(ContractRefSchema),
   counterpartyRef: CounterpartyRefSchema,
@@ -36,12 +66,22 @@ export const InvoiceDraftFields = {
   documentNumber: FinanceTextSchema,
   dueDate: CalendarDateSchema,
   issueDate: CalendarDateSchema,
+  lines: Schema.optionalKey(InvoiceLinesSchema),
   note: Schema.optionalKey(FinanceTextSchema),
   occupancyRef: Schema.optionalKey(OccupancyRefSchema),
+  partyId: Schema.optionalKey(FinancePartyIdSchema),
   propertyRef: Schema.optionalKey(PropertyRefSchema),
   taskRef: Schema.optionalKey(TaskRefSchema),
-  totalMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
+  totalMinor: PositiveTotalMinorSchema,
   unitRef: Schema.optionalKey(UnitRefSchema),
+};
+/**
+ * Draft command fields. `totalMinor` is only required for legacy invoices without lines; when `lines` are
+ * present the stored totals are computed from them and any supplied `totalMinor` is ignored.
+ */
+export const InvoiceDraftCommandFields = {
+  ...InvoiceDraftFields,
+  totalMinor: Schema.optionalKey(PositiveTotalMinorSchema),
 };
 export const InvoiceSchema = Schema.Struct({
   ...InvoiceDraftFields,
@@ -50,10 +90,15 @@ export const InvoiceSchema = Schema.Struct({
   businessState: InvoiceBusinessStateSchema,
   createdAt: Schema.DateTimeUtcFromString,
   externalAccountingReference: Schema.optionalKey(FinanceTextSchema),
+  number: Schema.optionalKey(InvoiceNumberSchema),
+  opportunityId: Schema.optionalKey(FinanceOpportunityIdSchema),
   paidMinor: MoneyMinorSchema,
   paymentState: PaymentStateSchema,
   ref: InvoiceRefSchema,
+  subtotalMinor: Schema.optionalKey(MoneyMinorSchema),
   updatedAt: Schema.DateTimeUtcFromString,
+  vatMinor: Schema.optionalKey(MoneyMinorSchema),
+  vatRecap: Schema.optionalKey(Schema.Array(VatRecapEntrySchema).check(Schema.isMaxLength(4))),
 });
 export type Invoice = typeof InvoiceSchema.Type;
 export const FinancialPlanEntrySchema = Schema.Struct({
@@ -104,6 +149,8 @@ export const FinanceStateSchema = Schema.Struct({
 });
 export type FinanceState = typeof FinanceStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
+  opportunityId: Schema.optionalKey(FinanceOpportunityIdSchema),
+  partyId: Schema.optionalKey(FinancePartyIdSchema),
   propertyId: Schema.optionalKey(FinancePropertyIdSchema),
   resourceId: Schema.optionalKey(FinanceResourceIdSchema),
 });
@@ -115,6 +162,7 @@ const AggregateMinorSchema = Schema.Int.check(
 export const FinanceIndicatorsSchema = Schema.Struct({
   costMinor: AggregateMinorSchema,
   costVarianceMinor: Schema.Int,
+  draftCount: Schema.Int,
   grossOutstandingMinor: AggregateMinorSchema,
   integrationWarnings: Schema.Int,
   openIncomingInvoices: Schema.Int,

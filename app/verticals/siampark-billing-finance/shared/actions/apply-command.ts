@@ -4,12 +4,28 @@ import { FinanceNotFound } from './errors/finance-not-found.ts';
 import { FinanceConflict } from './errors/finance-conflict.ts';
 import { FinanceRejected } from './errors/finance-rejected.ts';
 import { Schema } from 'effect';
-import { FinanceTextSchema, InvoiceDraftFields, InvoiceSchema, MoneyMinorSchema } from '../apis/records.ts';
+import {
+  CalendarDateSchema,
+  FinanceOpportunityIdSchema,
+  FinancePartyIdSchema,
+  FinanceTextSchema,
+  InvoiceDraftCommandFields,
+  InvoiceLinesSchema,
+  InvoiceSchema,
+  MoneyMinorSchema,
+} from '../apis/records.ts';
 import { InvoiceRefSchema } from '../resources/invoice.ts';
 
 export const FinanceCommandSchema = Schema.Union([
-  Schema.TaggedStruct('CreateInvoiceDraft', InvoiceDraftFields),
-  Schema.TaggedStruct('UpdateInvoiceDraft', { ...InvoiceDraftFields, invoiceRef: InvoiceRefSchema }),
+  Schema.TaggedStruct('CreateInvoiceDraft', InvoiceDraftCommandFields),
+  Schema.TaggedStruct('UpdateInvoiceDraft', { ...InvoiceDraftCommandFields, invoiceRef: InvoiceRefSchema }),
+  // Idempotent by opportunityId: a second delivery for the same opportunity returns the existing invoice.
+  Schema.TaggedStruct('CreateInvoiceFromOpportunity', {
+    issueDate: Schema.optionalKey(CalendarDateSchema),
+    lines: InvoiceLinesSchema,
+    opportunityId: FinanceOpportunityIdSchema,
+    partyId: FinancePartyIdSchema,
+  }),
   Schema.TaggedStruct('ConfirmInvoice', { invoiceRef: InvoiceRefSchema }),
   Schema.TaggedStruct('VoidInvoice', { invoiceRef: InvoiceRefSchema }),
   Schema.TaggedStruct('RequestAccountingSync', { invoiceRef: InvoiceRefSchema }),

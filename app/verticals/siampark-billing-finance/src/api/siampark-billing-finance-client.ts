@@ -19,6 +19,6 @@ export type { ApplyCommandActionClientOptions } from './apply-command-action-cli
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>
-export { executeRecords, executeRecordsWithAuthorization } from './records-client.ts';
-export type { RecordsClientOptions } from './records-client.ts';
+export { executeRecords, executeRecordsWithAuthorization, listInvoices } from './records-client.ts';
+export type { InvoiceListFilters, RecordsClientOptions } from './records-client.ts';
 // </generated-module-api-client-exports>
