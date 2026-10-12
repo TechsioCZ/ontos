@@ -32,17 +32,18 @@ const SnapshotSchema = Schema.Array(
 );
 const demoTenant = '70000000-0000-4000-8000-000000000020';
 const demoCompany = '71000000-0000-4000-8000-000000000020';
-const stateMatchesDemoScope = (state: typeof MerchandiseStateSchema.Type) =>
-  state.collection.ref.tenantId === demoTenant &&
-  new Set(state.products.map((product) => product.ref.resourceId)).size === state.products.length &&
-  state.products.every(
-    (product) =>
-      product.ref.tenantId === demoTenant &&
-      product.collectionRef.tenantId === demoTenant &&
-      product.collectionRef.resourceId === state.collection.ref.resourceId &&
-      product.contextRefs.every((ref) => ref.tenantId === demoTenant) &&
-      (product.ownerPrincipalRef === undefined || product.ownerPrincipalRef.tenantId === demoTenant),
+// Products carry no tenant of their own; the row scope (tenant + legal entity) is checked by the query.
+// This only checks that the decoded state is internally consistent: unique ids and order lines that
+// reference known products.
+const stateMatchesDemoScope = (state: typeof MerchandiseStateSchema.Type) => {
+  const productIds = new Set(state.products.map((product) => product.id));
+  return (
+    productIds.size === state.products.length &&
+    new Set(state.orders.map((order) => order.id)).size === state.orders.length &&
+    state.movements.every((movement) => productIds.has(movement.productId)) &&
+    state.orders.every((order) => order.lines.every((line) => productIds.has(line.productId)))
   );
+};
 const catalogMatches = (row: typeof CatalogSchema.Type) =>
   row.enabled &&
   row.forced &&

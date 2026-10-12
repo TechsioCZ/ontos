@@ -2,7 +2,7 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import { RecordsApi, RecordsRequestSchema } from '../../shared/apis/records.ts';
-import type { RecordsRequestEncoded } from '../../shared/apis/records.ts';
+import type { RecordsRequestEncoded, RecordsView } from '../../shared/apis/records.ts';
 import { operationGateway } from './action-gateway.ts';
 
 export interface RecordsClientOptions {
@@ -52,3 +52,15 @@ export const executeRecords = (
       compositionRevision,
     }),
   );
+
+const viewPayload = (view: RecordsView | undefined): RecordsRequestEncoded => (view === undefined ? {} : { view });
+
+/** Typed collection reads. Each runs the single records read and returns one collection of it. */
+export const listProducts = (requestCorrelation: string, view?: RecordsView) =>
+  executeRecords(viewPayload(view), requestCorrelation).pipe(Effect.map((response) => response.products));
+
+export const listOrders = (requestCorrelation: string, view?: RecordsView) =>
+  executeRecords(viewPayload(view), requestCorrelation).pipe(Effect.map((response) => response.orders));
+
+export const listMovements = (requestCorrelation: string, view?: RecordsView) =>
+  executeRecords(viewPayload(view), requestCorrelation).pipe(Effect.map((response) => response.movements));

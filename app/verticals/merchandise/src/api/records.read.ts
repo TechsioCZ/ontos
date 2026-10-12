@@ -2,12 +2,16 @@
 import {
   OperationContextUnavailable,
   ReadHandlerUnavailable,
-  ReadPermissionDenied,
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
-import type { ReadHandlerContext, ReadHandlerResult, ReadServiceFactory } from '@app/core-runtime';
+import type {
+  ReadHandlerContext,
+  ReadHandlerResult,
+  ReadPermissionDenied,
+  ReadServiceFactory,
+} from '@app/core-runtime';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
@@ -16,10 +20,6 @@ type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 const readFailure = (failure: Effect.Error<ReturnType<Services['records']>>) =>
   Match.value(failure).pipe(
-    Match.tag(
-      'MerchandisePermissionDenied',
-      () => new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'The requested record is forbidden' }),
-    ),
     Match.tag(
       'MerchandisePersistenceUnavailable',
       'MerchandiseReferenceUnavailable',
@@ -85,7 +85,7 @@ export const recordsRead = defineRead(
   > =>
     context.services.records(input).pipe(
       Effect.mapError(readFailure),
-      Effect.map((result) => ({ evidence: { resultCount: result.items.length }, result })),
+      Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),
     ),
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: moduleKey }),

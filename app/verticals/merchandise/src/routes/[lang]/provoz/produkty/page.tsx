@@ -3,9 +3,9 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Match, Random } from 'effect';
 import { useState } from 'react';
-import { executeRecords } from '../../../../api/records-client.ts';
+import { listProducts } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -16,11 +16,11 @@ const merchandiseI18nResources = {
   en: { merchandise: enResource },
 } as const;
 
-const key = 'merchandise.pages.records';
+const key = 'merchandise.pages.products';
 
 const RecordsPageContent = () => {
   const { t } = useModernI18n();
-  const [records, setRecords] = useState<RecordsResponse>();
+  const [records, setRecords] = useState<readonly ProductRecord[]>();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
   const refresh = () => {
@@ -28,7 +28,7 @@ const RecordsPageContent = () => {
     void browserRuntime.runPromise(
       Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
         Effect.map(([first, second]) => `merchandise:${first}:${second}`),
-        Effect.flatMap((id) => executeRecords({}, id)),
+        Effect.flatMap((id) => listProducts(id)),
         Effect.match({
           onFailure: (error) => {
             setRecords(undefined);
@@ -69,7 +69,7 @@ const RecordsPageContent = () => {
         </output>
         {records !== undefined && (
           <p className="merchandise:text-sm merchandise:text-(--color-fg-secondary)">
-            {records.items.length === 0 ? t(`${key}.empty`) : t(`${key}.count`, { total: records.items.length })}
+            {records.length === 0 ? t(`${key}.empty`) : t(`${key}.count`, { total: records.length })}
           </p>
         )}
       </section>

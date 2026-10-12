@@ -22,7 +22,7 @@
         "description": "Customer orders with price snapshots.",
         "title": "Orders"
       },
-      "records": {
+      "products": {
         "title": "Products",
         "description": "Products, prices and stock movements.",
         "refresh": "Load",

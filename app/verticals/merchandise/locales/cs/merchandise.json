@@ -22,7 +22,7 @@
         "description": "Objednávky zákazníků se snímkem cen.",
         "title": "Objednávky"
       },
-      "records": {
+      "products": {
         "title": "Produkty",
         "description": "Produkty, ceny a skladové pohyby.",
         "refresh": "Načíst",

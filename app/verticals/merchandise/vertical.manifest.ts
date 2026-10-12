@@ -12,7 +12,6 @@ import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { merchandiseReadAllPermission } from './shared/permissions/merchandise-read-all.ts';
 import { merchandiseWriteAllPermission } from './shared/permissions/merchandise-write-all.ts';
 import { OrdersPage } from './src/routes/[lang]/prodej/objednavky/page.tsx';
-import { productCollectionResourceDescriptor } from './shared/resources/product-collection.ts';
 import { productResourceDescriptor } from './shared/resources/product.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/provoz/produkty/page.tsx';
@@ -75,7 +74,6 @@ export const merchandiseManifest = defineOntosModuleManifest({
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
-      productCollectionResourceDescriptor,
       productResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
