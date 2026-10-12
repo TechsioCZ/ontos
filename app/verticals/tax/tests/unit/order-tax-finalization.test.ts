@@ -62,6 +62,14 @@ const withSecondFact = (entry: ReturnType<typeof catalogEntry>, reversed: boolea
 };
 
 describe('Final Order Tax intent (#944 F10-F12, #941 F2-F4)', () => {
+  it('an unchanged legacy candidate keeps the baseline intent fingerprint without inventing eligibility', () => {
+    const { eligibility: _eligibility, ...legacyCandidate } = candidateInput();
+    // Golden computed by executing the original 70519ca contract, fixture and fingerprint implementation at T.
+    expect(orderTaxIntentFingerprint(decodeCandidate(legacyCandidate), T, taxMeaningFingerprint)).toBe(
+      'd4f452ae56e6a00ea07a6a597d7d61d595ccee59793818f3a9869b84fb603a3e',
+    );
+  });
+
   it('the final evaluation request is the frozen candidate at exactly T', () => {
     const request = finalEvaluationRequest(decodeCandidate(candidateInput()), T);
 

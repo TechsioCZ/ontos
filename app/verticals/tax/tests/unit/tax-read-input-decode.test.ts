@@ -66,6 +66,15 @@ describe('TAX governed reads decode their HTTP payload exactly once', () => {
     expect(Result.getOrThrow(accepted)).toEqual(httpDecoded);
   });
 
+  it('prospective Tax Evaluation: omitted rate classification survives both public decode passes', () => {
+    const input = evaluationRequestInput({ catalog: [] });
+    Reflect.deleteProperty(input, 'catalog');
+    const httpDecoded = Schema.decodeSync(TaxEvaluationRequestSchema)(input);
+    const accepted = readRuntimeAccepts(taxEvaluationRead.descriptor.inputSchema, httpDecoded);
+    expect(Result.getOrThrow(accepted)).toEqual(httpDecoded);
+    expect(httpDecoded).not.toHaveProperty('catalog');
+  });
+
   it('Tax materiality comparison: the decoded Tax Outcomes pass Read Runtime unchanged', () => {
     const wire = Schema.encodeSync(TaxMaterialityComparisonRequestSchema)({
       current: evaluate(),

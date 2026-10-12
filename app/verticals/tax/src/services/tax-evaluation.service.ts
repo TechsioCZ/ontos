@@ -93,6 +93,10 @@ const tokensOf = ({ ruleSets, seller }: ObservedTaxState): TaxEvaluationStateTok
 });
 
 const evidenceOf = (state: ObservedTaxState, request: TaxEvaluationRequest, taxEvaluationTime: TaxEvaluationTime) => ({
+  eligibility: {
+    foreignEvidenceOrigin: TAX_FOREIGN_EVIDENCE_ORIGIN,
+    observation: request.eligibility ?? { _tag: 'NOT_ESTABLISHED' as const },
+  },
   foreignEvidenceOrigin: TAX_FOREIGN_EVIDENCE_ORIGIN,
   ruleSets: [...state.ruleSets].map(([taxClassificationCode, { completeness, outcome }]) => ({
     outcome,
