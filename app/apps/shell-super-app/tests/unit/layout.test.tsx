@@ -8,6 +8,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
 import { afterEach, expect, it, rstest, test } from 'effect-rstest';
+import type { HelmetProps } from '@modern-js/runtime/head';
 import type { ComponentProps, ReactNode } from 'react';
 
 import { AppIdSchema } from '../../shared/api';
@@ -15,16 +16,27 @@ import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
 
-const { accountMenuSelectHandlers, tenantValueChangeHandlers } = rstest.hoisted(() => {
+type HtmlAttributes = NonNullable<HelmetProps['htmlAttributes']>;
+
+const { accountMenuSelectHandlers, helmetHtmlAttributes, tenantValueChangeHandlers } = rstest.hoisted(() => {
   const accountHandlers: ComponentProps<typeof ActualMenu>['onSelect'][] = [];
+  const htmlAttributes: HtmlAttributes[] = [];
   const tenantHandlers: ComponentProps<typeof ActualSelect>['onValueChange'][] = [];
   return {
     accountMenuSelectHandlers: accountHandlers,
+    helmetHtmlAttributes: htmlAttributes,
     tenantValueChangeHandlers: tenantHandlers,
   };
 });
 
-rstest.mock('@modern-js/runtime/head', () => ({ Helmet: () => null }));
+rstest.mock('@modern-js/runtime/head', () => ({
+  Helmet: ({ htmlAttributes }: Pick<HelmetProps, 'htmlAttributes'>) => {
+    if (htmlAttributes !== undefined) {
+      helmetHtmlAttributes.push(htmlAttributes);
+    }
+    return null;
+  },
+}));
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   Outlet: () => <main>Current route</main>,
@@ -150,7 +162,14 @@ const testingWorkspaceTitle = 'Testing workspace';
 afterEach(() => {
   cleanup();
   accountMenuSelectHandlers.length = 0;
+  helmetHtmlAttributes.length = 0;
   tenantValueChangeHandlers.length = 0;
+});
+
+test('selects the light Akros ui-kit theme on the server-rendered html element', () => {
+  render(<Layout />);
+
+  expect(helmetHtmlAttributes.at(-1)).toEqual({ className: 'light', 'data-theme': 'akros' });
 });
 
 test('leaves route content free of global user-perceivable UI', () => {

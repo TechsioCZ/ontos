@@ -63,7 +63,7 @@
     "@modern-js/runtime-renderer-extensions": "catalog:ultramodern",
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.3",
     "@tanstack/react-router": "1.170.39",
-    "@techsio/ui-kit": "0.25.1",
+    "@techsio/ui-kit": "0.56.0",
     "better-auth": "1.7.6",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0-rc.117",

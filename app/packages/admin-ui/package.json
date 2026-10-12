@@ -1,0 +1,32 @@
+{
+  "name": "@app/admin-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Akros back-office helpers (PageHeader, SectionCard, StatCard, StatusBadge, cs-CZ formatters) built on @techsio/ui-kit.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test:unit": "rstest --project unit",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.117"
+  },
+  "peerDependencies": {
+    "@techsio/ui-kit": "0.56.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@rstest/core": "0.11.12",
+    "@techsio/ui-kit": "0.56.0",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}

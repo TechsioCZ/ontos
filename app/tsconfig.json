@@ -23,6 +23,9 @@
       "path": "packages/shared-design-tokens"
     },
     {
+      "path": "packages/admin-ui"
+    },
+    {
       "path": "apps/shell-super-app"
     },
     {
