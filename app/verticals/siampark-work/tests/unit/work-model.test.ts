@@ -3,7 +3,7 @@ import {
   WorkLifecycleConflict,
   WorkScopeMismatch,
   WorkReferenceUnavailable,
-  WorkCommandSchema,
+  SingleWorkCommandSchema,
 } from '../../shared/actions/apply-command.ts';
 import { Effect, DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -70,7 +70,10 @@ const fakeAccess = (allowed: readonly string[], unavailable = false): ContextAcc
 it.effect('Title-only creation defaults to NEW without business context or principal', () =>
   Effect.gen(function* case1() {
     const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);
-    const command = yield* Schema.decodeEffect(WorkCommandSchema)({ _tag: 'CreateTask', title: 'Inspect apartment' });
+    const command = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
+      _tag: 'CreateTask',
+      title: 'Inspect apartment',
+    });
     const change = yield* evolveWorkState(state, command, { now, resourceId: 'new', tenantId });
     expect(change.task.state).toBe('NEW');
     expect(change.task.priority).toBe('NORMAL');

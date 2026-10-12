@@ -11,6 +11,9 @@ import { WorkPermissionDenied } from '../errors/work-permission-denied.ts';
 import {
   CalendarDateSchema,
   ContextRefSchema,
+  EmployeeIdSchema,
+  OpportunityIdSchema,
+  PartyIdSchema,
   TaskPrioritySchema,
   TaskSchema,
   TaskStateSchema,
@@ -18,12 +21,20 @@ import {
 import { TaskRefSchema } from '../resources/task.ts';
 
 const editableFields = {
+  assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   dueDate: Schema.optionalKey(CalendarDateSchema),
+  opportunityId: Schema.optionalKey(OpportunityIdSchema),
   ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
+  partyId: Schema.optionalKey(PartyIdSchema),
   priority: Schema.optionalKey(TaskPrioritySchema),
 };
-export const WorkCommandSchema = Schema.Union([
+const bulkTaskIdsSchema = Schema.Array(TaskRefSchema.fields.resourceId).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+  Schema.isUnique(),
+);
+export const SingleWorkCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateTask', {
     ...editableFields,
     contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
@@ -37,13 +48,37 @@ export const WorkCommandSchema = Schema.Union([
   Schema.TaggedStruct('AssignTask', { ownerPrincipalRef: PrincipalRefSchema, taskRef: TaskRefSchema }),
   Schema.TaggedStruct('ChangeTaskState', { state: TaskStateSchema, taskRef: TaskRefSchema }),
 ]);
+// Bulk commands apply each id independently: invalid ids are skipped and reported in `results`.
+export const BulkWorkCommandSchema = Schema.Union([
+  Schema.TaggedStruct('BulkAssignTasks', {
+    // Wire `null` clears the assignee (None in the decoded model).
+    assigneeEmployeeId: Schema.OptionFromNullOr(EmployeeIdSchema),
+    ids: bulkTaskIdsSchema,
+  }),
+  Schema.TaggedStruct('BulkChangeTaskState', { ids: bulkTaskIdsSchema, toState: TaskStateSchema }),
+]);
+export const WorkCommandSchema = Schema.Union([SingleWorkCommandSchema, BulkWorkCommandSchema]);
+export type SingleWorkCommand = typeof SingleWorkCommandSchema.Type;
+export type BulkWorkCommand = typeof BulkWorkCommandSchema.Type;
 export type WorkCommand = typeof WorkCommandSchema.Type;
 export const ApplyCommandPayloadSchema = Schema.Struct({
   command: WorkCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
-export const ApplyCommandResultSchema = Schema.Struct({ revision: Schema.Int, task: TaskSchema });
+export const BulkSkipReasonSchema = Schema.Literals(['closed', 'invalid_transition', 'not_found']);
+export type BulkSkipReason = typeof BulkSkipReasonSchema.Type;
+export const BulkTaskResultSchema = Schema.Struct({
+  outcome: Schema.Literals(['changed', 'skipped']),
+  reason: Schema.optionalKey(BulkSkipReasonSchema),
+  resourceId: TaskRefSchema.fields.resourceId,
+});
+export type BulkTaskResult = typeof BulkTaskResultSchema.Type;
+export const ApplyCommandResultSchema = Schema.Struct({
+  results: Schema.optionalKey(Schema.Array(BulkTaskResultSchema)),
+  revision: Schema.Int,
+  task: Schema.optionalKey(TaskSchema),
+});
 export const WorkErrorSchema = Schema.Union([
   WorkScopeMismatch,
   WorkNotFound,
