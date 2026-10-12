@@ -27,7 +27,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
-import { BulkActionBar, EmptyState, PageHeader, TagBadge } from '@ontos/admin-ui';
+import { BulkActionBar, EmptyState, PageHeader, TagBadge } from '@app/admin-ui';
 import { intlLocale, makeFormat } from '../../ui/format';
 import { tableCs } from '../../ui/table-cs';
 import { opportunityStage, StateBadge } from '../../ui/status';
@@ -354,7 +354,7 @@ the same grid. Not found or forbidden shows `EmptyState` with a link back to the
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
-import { EmptyState, SectionCard, StatCard, StatRow } from '@ontos/admin-ui';
+import { EmptyState, SectionCard, StatCard, StatRow } from '@app/admin-ui';
 
 <StatRow>
   <StatCard label="Hodnota pipeline" value={fmt.money(kpi.pipelineMinor)} delta={fmt.delta(kpi.pipelineDelta)}

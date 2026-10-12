@@ -21,7 +21,7 @@ Before writing classes, run:
 - The vertical prefix is the package name without dashes. Copy it from the vertical's `index.css`
   (e.g. `siamparkwork`, `salespipeline`).
 
-Most of the time you write almost no classes. ui-kit components and `@ontos/admin-ui` helpers
+Most of the time you write almost no classes. ui-kit components and `@app/admin-ui` helpers
 style themselves. Use classes only for page layout (grid/flex/gap) and secondary text.
 
 ## 2. ui-kit token cheat sheet (unprefixed)

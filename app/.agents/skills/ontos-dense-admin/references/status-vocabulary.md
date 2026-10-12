@@ -136,7 +136,7 @@ function StateBadge({ meta }: { meta: { variant: Variant; labelKey: string } }) 
 // <StateBadge meta={opportunityStage[row.stage]} />
 ```
 
-If `@ontos/admin-ui`'s `StatusBadge` accepts `{ variant, label }` (check its props in
+If `@app/admin-ui`'s `StatusBadge` accepts `{ variant, label }` (check its props in
 `app/packages/admin-ui/src`), use it instead of the local `StateBadge`. The variants above still apply.
 
 Locale fragment, `locales/cs/<vertical>.json` (include only the maps you use):
@@ -157,7 +157,7 @@ Locale fragment, `locales/cs/<vertical>.json` (include only the maps you use):
 
 ## Tags
 
-Tags are not statuses. Render them with `TagBadge` from `@ontos/admin-ui` (outline, or `dynamic`
+Tags are not statuses. Render them with `TagBadge` from `@app/admin-ui` (outline, or `dynamic`
 with the tag's stored colour). Show at most 3 tags in a table cell, then `+2`, as an outline Badge with a
 Tooltip that lists the rest. Never map a tag to `success`, `warning` or `danger`.
 

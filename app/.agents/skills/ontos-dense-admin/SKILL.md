@@ -4,7 +4,7 @@ description: >
   The rulebook for every OntOS admin screen (sales demo: customers, opportunities, invoices, tasks,
   products/stock, employees, tags, Statistiky). Use before writing or changing any vertical page,
   drawer, table, detail view or dashboard. Covers page anatomy, @techsio/ui-kit 0.56.0 +
-  @ontos/admin-ui component choice, Akros theme and Tailwind prefixes, Czech copy and cs-CZ Intl
+  @app/admin-ui component choice, Akros theme and Tailwind prefixes, Czech copy and cs-CZ Intl
   formatting, status → Badge mapping, density, empty/loading/error states and the visual
   verification checklist.
 ---
@@ -13,7 +13,7 @@ description: >
 
 You build dense, calm, Czech-first back-office screens with the Akros theme. The visual reference is the
 Akros admin in new-engine (`libs/ui/stories/pages/akros/*`). Do not invent widgets. Compose ui-kit
-components plus the `@ontos/admin-ui` helpers.
+components plus the `@app/admin-ui` helpers.
 
 ## Load order
 
@@ -87,7 +87,7 @@ Paths are relative to `app/.agents/skills/`. Read the file before you use the co
 | Shell nav (plan 03 only) | `organisms/sidebar`, `molecules/tree-view` | `techsio-ui-kit/sidebar-usage/SKILL.md`, `techsio-ui-kit/tree-view-usage/SKILL.md` |
 | Token / theme questions | — | `techsio-ui-kit/app-token-overrides/SKILL.md`, `techsio-ui-kit/tailwind-token-authoring/SKILL.md` |
 
-## `@ontos/admin-ui` helpers (app/packages/admin-ui; check its `package.json` name and props)
+## `@app/admin-ui` helpers (app/packages/admin-ui; check its `package.json` name and props)
 
 | Helper | Use |
 |---|---|
