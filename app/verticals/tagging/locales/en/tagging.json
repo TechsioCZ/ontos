@@ -62,6 +62,7 @@
         "forbidden": "You do not have permission to change tags.",
         "remove": "Remove",
         "submit": "Apply tag",
+        "submitRemove": "Remove tag",
         "success": "Tags updated",
         "tag": "Tag",
         "title": "Edit tags"
@@ -87,6 +88,10 @@
         "color": "Colour",
         "createSubmit": "Create tag",
         "description": "Description",
+        "discardConfirm": "Discard changes",
+        "discardDescription": "The details you entered in this form will be lost.",
+        "discardKeep": "Keep editing",
+        "discardTitle": "Discard unsaved changes?",
         "editSubmit": "Save changes",
         "kinds": "Applies to",
         "kindsRequired": "Choose at least one area.",

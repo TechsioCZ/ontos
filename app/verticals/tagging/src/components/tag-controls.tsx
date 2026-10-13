@@ -191,9 +191,13 @@ const TagPickerField = ({
   const own = useTagCatalog(kind, enabled && provided === undefined);
   const catalog = provided ?? own;
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
+  /** Text typed while the list is open. `null` once it closes. */
+  const [typed, setTyped] = useState<string | null>(null);
   const items = tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null);
   const fieldLabel = label ?? (labelKey === undefined ? undefined : t(labelKey));
+  const appliedName = catalog.tags.find((tag) => tag.id === value)?.name ?? '';
+  // A closed field always shows the applied tag, so text typed before Escape or a blur never outlives the list.
+  const query = open ? (typed ?? appliedName) : appliedName;
   return (
     <Combobox
       clearable={clearable}
@@ -201,6 +205,7 @@ const TagPickerField = ({
       // ui-kit's local filter matches accents exactly, so the picker filters the options itself.
       filterBehavior="external"
       helpText={helpText}
+      inputValue={query}
       items={visibleTagItems(items, query)}
       {...(fieldLabel === undefined ? {} : { label: fieldLabel })}
       loading={catalog.status === 'loading'}
@@ -208,17 +213,23 @@ const TagPickerField = ({
       noResultsMessage={t('tagging.tags.filter.noResults')}
       onChange={(next) => onChange(pickTagId(catalog.tags, next))}
       onInputValueChange={(text) => {
-        setQuery(text);
+        setTyped(text);
         // Emptying a filter's text clears the filter; zag restores a picked label on blur, never an empty one.
         if (compact && value !== null && text.trim() === '') {
           onChange(null);
         }
       }}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          setTyped(null);
+        }
+      }}
       onRetry={() => (provided === undefined ? onRetry() : provided.refetch())}
       open={open}
       openOnClick
-      placeholder={t('tagging.tags.filter.placeholder')}
+      // A filter with no tag applied reads "all tags", the same text its "all" option sets, so the placeholder never changes.
+      placeholder={compact ? t('tagging.tags.filter.all') : t('tagging.tags.filter.placeholder')}
       retryLabel={t('tagging.tags.retry')}
       size="sm"
       translations={{
@@ -514,7 +525,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
             size="sm"
             variant="primary"
           >
-            {t('tagging.tags.bulk.submit')}
+            {t(mode === 'remove' ? 'tagging.tags.bulk.submitRemove' : 'tagging.tags.bulk.submit')}
           </Button>
         </>
       }

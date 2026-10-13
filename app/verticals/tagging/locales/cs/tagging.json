@@ -62,6 +62,7 @@
         "forbidden": "Nemáte oprávnění upravovat štítky.",
         "remove": "Odebrat",
         "submit": "Použít štítek",
+        "submitRemove": "Odebrat štítek",
         "success": "Štítky upraveny",
         "tag": "Štítek",
         "title": "Upravit štítky"
@@ -87,6 +88,10 @@
         "color": "Barva",
         "createSubmit": "Vytvořit štítek",
         "description": "Popis",
+        "discardConfirm": "Zahodit změny",
+        "discardDescription": "Údaje, které jste ve formuláři zadali, se ztratí.",
+        "discardKeep": "Pokračovat v úpravách",
+        "discardTitle": "Zahodit neuložené změny?",
         "editSubmit": "Uložit změny",
         "kinds": "Platí pro",
         "kindsRequired": "Vyberte alespoň jednu oblast.",
