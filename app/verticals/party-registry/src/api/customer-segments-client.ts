@@ -19,8 +19,8 @@
  */
 import { makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
-import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { DateTime, Duration, Effect, Exit, Option, Random, Redacted, Schema, SchemaGetter } from 'effect';
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { DateTime, Duration, Effect, Exit, Option, Random, Redacted, Schedule, Schema, SchemaGetter } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
@@ -106,7 +106,11 @@ const ownerAction = <const Name extends string, P extends Schema.Top, S extends 
   HttpApi.make(`CustomerSegments${name}Api`).add(
     HttpApiGroup.make(name).add(
       HttpApiEndpoint.post('execute', `/commerce-customer-context/actions/${slug}`, {
-        error: [makeProblemDetailsSchema(`${name}ConflictProblem`, 409, { code: Schema.String })],
+        // The owner's transient 503 carries `retryable: true`; declaring it keeps that marker for the retry below.
+        error: [
+          makeProblemDetailsSchema(`${name}ConflictProblem`, 409, { code: Schema.String }),
+          makeRetryableProblemDetailsSchema(`${name}UnavailableProblem`, 503, { code: Schema.String }),
+        ],
         payload,
         success,
       }),
@@ -189,12 +193,22 @@ const MembersApi = HttpApi.make('CustomerSegmentsMembersApi').add(
 
 /** Any owner transport, authorization or problem failure, reduced to the owner's problem detail. */
 export class CustomerSegmentsError extends Schema.TaggedError<CustomerSegmentsError>()('CustomerSegmentsError', {
+  /** The owner answered 403: this role may not run the call, so asking again in this page lifetime cannot help. */
+  forbidden: Schema.Boolean,
   reason: Schema.String,
+  /** The owner marked the failure transient (`retryable: true`), so asking again may succeed. */
+  retryable: Schema.Boolean,
 }) {}
 
 const ProblemDetailSchema = Schema.Struct({ detail: Schema.String });
+const isRetryableProblem = Schema.is(Schema.Struct({ retryable: Schema.Literal(true) }));
+const isForbiddenProblem = Schema.is(Schema.Struct({ status: Schema.Literal(403) }));
 const toSegmentsError = (cause: unknown) =>
-  new CustomerSegmentsError({ reason: Schema.is(ProblemDetailSchema)(cause) ? cause.detail : String(cause) });
+  new CustomerSegmentsError({
+    forbidden: isForbiddenProblem(cause),
+    reason: Schema.is(ProblemDetailSchema)(cause) ? cause.detail : String(cause),
+    retryable: isRetryableProblem(cause),
+  });
 
 const correlation = (operation: string) =>
   Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
@@ -298,23 +312,33 @@ const resolveSegment = (definition: CustomerSegmentDefinition & { readonly busin
     ),
   );
 
+/** Two more attempts, 300 ms then 600 ms apart, for a failure the owner marked transient. */
+const transientRetry = Schedule.exponential('300 millis').pipe(Schedule.upTo({ times: 2 }));
+
 /**
  * Definitions resolve one at a time and the first failure stops the rest, so an owner that refuses the
- * call costs one request instead of four.
+ * call costs one request instead of four. Only a transient owner 503 (several list pages replaying the same
+ * create at once) is asked again, each time with a fresh gateway assertion and idempotency key.
  */
-const resolveSegmentGroups = Effect.forEach(customerSegmentDefinitions, resolveSegment, { concurrency: 1 }).pipe(
-  Effect.map((groups) => groups.filter((group) => group !== undefined)),
-);
+const resolveSegmentGroups = Effect.forEach(
+  customerSegmentDefinitions,
+  (definition) =>
+    resolveSegment(definition).pipe(Effect.retry({ schedule: transientRetry, while: (error) => error.retryable })),
+  { concurrency: 1 },
+).pipe(Effect.map((groups) => groups.filter((group) => group !== undefined)));
 
 /**
  * The seeded groups never change while the page is open, so the replayed create-customer-group Actions run once
  * per module lifetime instead of on every list load. Concurrent callers share one resolution. A failure drops the
- * cache, so the next call asks the owner again.
+ * cache, so the next call asks the owner again, except a 403: a read-only role (the accountant) may not run the
+ * create Action, so its refusal is kept and later list loads hide the segment column without another request.
  */
 const [cachedSegmentGroups, invalidateSegmentGroups] = browserRuntime.runSync(
   Effect.cachedInvalidateWithTTL(resolveSegmentGroups, Duration.infinity),
 );
-const segmentGroups = cachedSegmentGroups.pipe(Effect.tapError(() => invalidateSegmentGroups));
+const segmentGroups = cachedSegmentGroups.pipe(
+  Effect.tapError(({ forbidden }) => (forbidden ? Effect.void : invalidateSegmentGroups)),
+);
 
 /** The demo segments in definition order: [{ code, groupId, name }]. */
 export const listCustomerSegments = segmentGroups.pipe(Effect.map((groups) => groups.map(({ segment }) => segment)));

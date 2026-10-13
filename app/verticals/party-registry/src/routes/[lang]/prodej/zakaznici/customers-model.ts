@@ -2,6 +2,7 @@ import { DateTime, Option, Schema } from 'effect';
 
 import type { CustomerListItem } from '../../../../../shared/apis/customer-list.ts';
 import type { AresSubjectEvidence } from '../../../../../shared/domain/ares-evidence.ts';
+import { isValidCzechIco } from '../../../../../shared/domain/identifier-contracts.ts';
 
 const DAY_MS = 86_400_000;
 const NEW_CUSTOMER_WINDOW_MS = 30 * DAY_MS;
@@ -124,6 +125,7 @@ export const customerNameMaxLength = 200;
 export const CreateValidationKeySchema = Schema.Literals([
   'addressIncomplete',
   'emailInvalid',
+  'icoChecksum',
   'icoInvalid',
   'nameRequired',
   'vatIdInvalid',
@@ -153,6 +155,9 @@ export const validateCreateDraft = (draft: CreateDraft): CreateDraftErrors => {
   }
   if (ico.length > 0 && !/^\d{8}$/u.test(ico)) {
     errors.ico = 'icoInvalid';
+  } else if (ico.length > 0 && !isValidCzechIco(ico)) {
+    // The owner rejects a bad mod-11 checksum with a generic error, so the form names the field first.
+    errors.ico = 'icoChecksum';
   }
   if (vatId.length > 0 && !/^CZ\d{8,10}$/u.test(vatId)) {
     errors.vatId = 'vatIdInvalid';

@@ -27,6 +27,12 @@ it('accepts an address with two parts and an empty address', () => {
   expect(validateCreateDraft(emptyDraft)).toEqual({});
 });
 
+it('checks the IČO format first and the mod-11 checksum second', () => {
+  expect(validateCreateDraft({ ...emptyDraft, ico: '2574113' })).toEqual({ ico: 'icoInvalid' });
+  expect(validateCreateDraft({ ...emptyDraft, ico: '25741137' })).toEqual({ ico: 'icoChecksum' });
+  expect(validateCreateDraft({ ...emptyDraft, ico: '25741136' })).toEqual({});
+});
+
 it('keeps the name length limit that the owner subject key enforces', () => {
   expect(customerNameMaxLength).toBe(200);
 });

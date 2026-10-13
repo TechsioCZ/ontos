@@ -12,10 +12,9 @@
           "tags": "Štítky"
         },
         "bulkEdit": {
-          "actionAddTag": "Přidat štítek",
           "actionArchive": "Archivovat",
           "actionLabel": "Hromadná akce",
-          "actionRemoveTag": "Odebrat štítek",
+          "actionTags": "Přidat nebo odebrat štítek",
           "archiveConfirm": "Archivovat {{total}} aktivních zákazníků? Už archivovaní se přeskočí.",
           "archiveFailed": "Archivace se nepodařila u: {{names}}",
           "archiveNothing": "Ve výběru nejsou žádní aktivní zákazníci.",
@@ -49,6 +48,14 @@
           "cancel": "Zrušit",
           "city": "Město",
           "description": "IČO můžete načíst z ARES a údaje se doplní automaticky.",
+          "discard": {
+            "confirm": "Zahodit změny",
+            "description": "Údaje, které jste ve formuláři zadali, se ztratí.",
+            "keep": "Pokračovat v úpravách",
+            "title": "Zahodit neuložené změny?"
+          },
+          "duplicate": "Zákazník s tímto IČO už v evidenci existuje. Nový záznam nebyl vytvořen.",
+          "duplicateNamed": "Zákazník {{name}} s tímto IČO už v evidenci je. Nový záznam nebyl vytvořen.",
           "email": "E-mail",
           "errorAmbiguous": "Zákazník odpovídá více existujícím záznamům. Nejdřív je sloučte v modulu duplicit.",
           "errorForbidden": "Nemáte oprávnění zakládat zákazníky.",
@@ -67,6 +74,7 @@
           "validation": {
             "addressIncomplete": "Adresa potřebuje alespoň dva údaje z ulice, města a PSČ.",
             "emailInvalid": "E-mail zadejte ve tvaru jmeno@firma.cz.",
+            "icoChecksum": "Neplatné IČO. Zkontrolujte číslice.",
             "icoInvalid": "IČO má 8 číslic.",
             "nameRequired": "Vyplňte název zákazníka.",
             "vatIdInvalid": "DIČ zadejte ve tvaru CZ12345678."

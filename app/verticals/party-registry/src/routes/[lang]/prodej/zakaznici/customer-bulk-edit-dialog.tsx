@@ -14,16 +14,14 @@ import { bulkArchiveReason } from './customers-model.ts';
 
 const KEY = 'party-registry.pages.customers.bulkEdit';
 
-/** Tag actions open the shared BulkTagDialog, which owns the add/remove choice. */
-export const BulkEditActionSchema = Schema.Literals(['archive', 'tag-add', 'tag-remove']);
+/**
+ * One tag action opens the shared BulkTagDialog, which asks for the tag and owns the add/remove choice,
+ * so the next step never repeats a choice made here.
+ */
+export const BulkEditActionSchema = Schema.Literals(['archive', 'tags']);
 export type BulkEditAction = typeof BulkEditActionSchema.Type;
 
-const parseAction = (value: string | null): BulkEditAction => {
-  if (value === 'archive' || value === 'tag-remove') {
-    return value;
-  }
-  return 'tag-add';
-};
+const parseAction = (value: string | null): BulkEditAction => (value === 'archive' ? 'archive' : 'tags');
 
 type ArchiveError = Effect.Error<ReturnType<typeof archiveCustomer>>;
 
@@ -61,7 +59,7 @@ export const CustomerBulkEditDialog = ({
 }: CustomerBulkEditDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [action, setAction] = useState<BulkEditAction>('tag-add');
+  const [action, setAction] = useState<BulkEditAction>('tags');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(0);
   const [failed, setFailed] = useState<readonly string[]>([]);
@@ -156,15 +154,10 @@ export const CustomerBulkEditDialog = ({
         <RadioGroup onValueChange={(next) => setAction(parseAction(next))} size="sm" value={action}>
           <RadioGroup.Label>{t(`${KEY}.actionLabel`)}</RadioGroup.Label>
           <RadioGroup.ItemGroup>
-            <RadioGroup.Item value="tag-add">
+            <RadioGroup.Item value="tags">
               <RadioGroup.ItemHiddenInput />
               <RadioGroup.ItemControl />
-              <RadioGroup.ItemText>{t(`${KEY}.actionAddTag`)}</RadioGroup.ItemText>
-            </RadioGroup.Item>
-            <RadioGroup.Item value="tag-remove">
-              <RadioGroup.ItemHiddenInput />
-              <RadioGroup.ItemControl />
-              <RadioGroup.ItemText>{t(`${KEY}.actionRemoveTag`)}</RadioGroup.ItemText>
+              <RadioGroup.ItemText>{t(`${KEY}.actionTags`)}</RadioGroup.ItemText>
             </RadioGroup.Item>
             <RadioGroup.Item value="archive">
               <RadioGroup.ItemHiddenInput />

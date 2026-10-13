@@ -68,9 +68,18 @@ export class CustomerCreateAmbiguous extends Schema.TaggedError<CustomerCreateAm
   reason: Schema.String,
 }) {}
 
+/**
+ * `CREATED`: a new Party became a customer. `LINKED_EXISTING_PARTY`: the owner matched an existing Party and
+ * onboarded it as a customer. `EXISTING_CUSTOMER`: a current customer already carries the IČO, so nothing was written.
+ */
+export const CreatedCustomerOutcomeSchema = Schema.Literals(['CREATED', 'LINKED_EXISTING_PARTY', 'EXISTING_CUSTOMER']);
+export type CreatedCustomerOutcome = typeof CreatedCustomerOutcomeSchema.Type;
+
 export interface CreatedCustomer {
   readonly counterpartyRef: CustomerListItem['counterpartyRef'];
-  readonly matchedExistingParty: boolean;
+  /** Name of the customer the request ended at; for `EXISTING_CUSTOMER` the name already on record. */
+  readonly displayName: string | null;
+  readonly outcome: CreatedCustomerOutcome;
   readonly partyRef: PartyRef;
 }
 
@@ -188,7 +197,8 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
   if (Option.isSome(existing)) {
     return {
       counterpartyRef: existing.value.counterpartyRef,
-      matchedExistingParty: true,
+      displayName: existing.value.displayName,
+      outcome: 'EXISTING_CUSTOMER',
       partyRef: existing.value.partyRef,
     } satisfies CreatedCustomer;
   }
@@ -259,7 +269,8 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
   );
   return {
     counterpartyRef: onboarded.counterpartyRef,
-    matchedExistingParty: created.outcome === 'MATCHED_EXISTING',
+    displayName,
+    outcome: created.outcome === 'MATCHED_EXISTING' ? 'LINKED_EXISTING_PARTY' : 'CREATED',
     partyRef,
   } satisfies CreatedCustomer;
 });

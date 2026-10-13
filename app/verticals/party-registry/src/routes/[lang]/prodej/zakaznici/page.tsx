@@ -7,14 +7,13 @@ import {
   StatRow,
   formatDate,
   formatNumber,
-  toasterLabels,
+  Toaster,
   dataTableRowLabels,
   paginationTranslations,
 } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
-import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
@@ -337,7 +336,7 @@ const CustomersContent = () => {
     <>
       <UltramodernRouteHead titleKey="party-registry.pages.customers.title" />
       {/* The shell mounts no Toaster for remotes and ui-kit is not an MF singleton, so this page tree owns one. */}
-      <Toaster {...toasterLabels} />
+      <Toaster />
       <div className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={

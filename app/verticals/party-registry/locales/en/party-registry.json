@@ -12,10 +12,9 @@
           "tags": "Tags"
         },
         "bulkEdit": {
-          "actionAddTag": "Add tag",
           "actionArchive": "Archive",
           "actionLabel": "Bulk action",
-          "actionRemoveTag": "Remove tag",
+          "actionTags": "Add or remove a tag",
           "archiveConfirm": "Archive {{total}} active customers? Already archived ones are skipped.",
           "archiveFailed": "Archiving failed for: {{names}}",
           "archiveNothing": "No active customers in the selection.",
@@ -49,6 +48,14 @@
           "cancel": "Cancel",
           "city": "City",
           "description": "Load the company ID from ARES to fill in the details automatically.",
+          "discard": {
+            "confirm": "Discard changes",
+            "description": "The details you entered in the form will be lost.",
+            "keep": "Keep editing",
+            "title": "Discard unsaved changes?"
+          },
+          "duplicate": "A customer with this company ID already exists. No new record was created.",
+          "duplicateNamed": "The customer {{name}} with this company ID is already on record. No new record was created.",
           "email": "E-mail",
           "errorAmbiguous": "The customer matches several existing records. Merge them in the duplicates module first.",
           "errorForbidden": "You do not have permission to create customers.",
@@ -67,6 +74,7 @@
           "validation": {
             "addressIncomplete": "An address needs at least two of street, city and postal code.",
             "emailInvalid": "Enter the e-mail as name@company.cz.",
+            "icoChecksum": "Invalid company ID. Check the digits.",
             "icoInvalid": "The company ID has 8 digits.",
             "nameRequired": "Enter the customer name.",
             "vatIdInvalid": "Enter the VAT ID as CZ12345678."
