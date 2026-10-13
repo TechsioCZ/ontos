@@ -28,62 +28,71 @@ export const TaskFilterBar = ({
   const { t } = useModernI18n();
   return (
     <div className="flex flex-wrap items-end gap-150">
-      <FormInput
-        id="task-search"
-        label={t(`${key}.filters.search`)}
-        onChange={(event) => onChange({ ...filters, search: event.target.value })}
-        value={filters.search}
-      />
-      <Select
-        items={[
-          { label: t(`${key}.filters.allAssignees`), value: ALL },
-          { label: t(`${key}.unassigned`), value: NONE },
-          ...employeeItems(employees),
-        ]}
-        label={t(`${key}.filters.assignee`)}
-        onValueChange={({ value }) => {
-          const [next] = value;
-          if (next !== undefined) {
-            onChange({ ...filters, assignee: next });
-          }
-        }}
-        size="sm"
-        value={[filters.assignee]}
-      />
-      <Select
-        items={[
-          { label: t(`${key}.filters.all`), value: ALL },
-          ...STATE_OPTIONS.map((value) => ({ label: t(`${key}.states.${value}`), value })),
-        ]}
-        label={t(`${key}.filters.state`)}
-        onValueChange={({ value }) => {
-          const [next] = value;
-          if (next === ALL) {
-            onChange({ ...filters, state: ALL });
-          } else if (Schema.is(TaskStateSchema)(next)) {
-            onChange({ ...filters, state: next });
-          }
-        }}
-        size="sm"
-        value={[filters.state]}
-      />
-      <Select
-        items={[
-          { label: t(`${key}.filters.all`), value: ALL },
-          ...PRIORITY_OPTIONS.map((value) => ({ label: t(`${key}.priorities.${value}`), value })),
-        ]}
-        label={t(`${key}.filters.priority`)}
-        onValueChange={({ value }) => {
-          const [next] = value;
-          if (next === ALL) {
-            onChange({ ...filters, priority: ALL });
-          } else if (Schema.is(TaskPrioritySchema)(next)) {
-            onChange({ ...filters, priority: next });
-          }
-        }}
-        size="sm"
-        value={[filters.priority]}
-      />
+      <div className="w-64 min-w-0">
+        <FormInput
+          id="task-search"
+          label={t(`${key}.filters.search`)}
+          onChange={(event) => onChange({ ...filters, search: event.target.value })}
+          size="sm"
+          value={filters.search}
+        />
+      </div>
+      <div className="w-48 min-w-0">
+        <Select
+          items={[
+            { label: t(`${key}.filters.allAssignees`), value: ALL },
+            { label: t(`${key}.unassigned`), value: NONE },
+            ...employeeItems(employees),
+          ]}
+          label={t(`${key}.filters.assignee`)}
+          onValueChange={({ value }) => {
+            const [next] = value;
+            if (next !== undefined) {
+              onChange({ ...filters, assignee: next });
+            }
+          }}
+          size="sm"
+          value={[filters.assignee]}
+        />
+      </div>
+      <div className="w-48 min-w-0">
+        <Select
+          items={[
+            { label: t(`${key}.filters.all`), value: ALL },
+            ...STATE_OPTIONS.map((value) => ({ label: t(`${key}.states.${value}`), value })),
+          ]}
+          label={t(`${key}.filters.state`)}
+          onValueChange={({ value }) => {
+            const [next] = value;
+            if (next === ALL) {
+              onChange({ ...filters, state: ALL });
+            } else if (Schema.is(TaskStateSchema)(next)) {
+              onChange({ ...filters, state: next });
+            }
+          }}
+          size="sm"
+          value={[filters.state]}
+        />
+      </div>
+      <div className="w-48 min-w-0">
+        <Select
+          items={[
+            { label: t(`${key}.filters.all`), value: ALL },
+            ...PRIORITY_OPTIONS.map((value) => ({ label: t(`${key}.priorities.${value}`), value })),
+          ]}
+          label={t(`${key}.filters.priority`)}
+          onValueChange={({ value }) => {
+            const [next] = value;
+            if (next === ALL) {
+              onChange({ ...filters, priority: ALL });
+            } else if (Schema.is(TaskPrioritySchema)(next)) {
+              onChange({ ...filters, priority: next });
+            }
+          }}
+          size="sm"
+          value={[filters.priority]}
+        />
+      </div>
     </div>
   );
 };

@@ -20,7 +20,7 @@
     "pages": {
       "records": {
         "title": "Tasks",
-        "description": "Tasks assigned to employees, their due dates and state.",
+        "description": "Sales team tasks and their due dates.",
         "newTask": "New task",
         "create": "New task",
         "edit": "Edit task",
