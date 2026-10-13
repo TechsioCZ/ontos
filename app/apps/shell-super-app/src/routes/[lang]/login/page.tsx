@@ -164,34 +164,42 @@ const LoginPage = () => {
           <Link as={LocalizedLink} className="shell:self-center" to="/">
             {t('shell.login.back')}
           </Link>
+          {/* Once signed in the URL has moved on, so the title and fields step aside while the next page loads.
+              They are hidden, not unmounted, so their refs survive a failed navigation; the submit button stays. */}
           <div className="shell:mt-6">
-            <h1 className="shell:text-2xl shell:font-bold">{t('shell.login.title')}</h1>
+            <h1 className="shell:text-2xl shell:font-bold" hidden={attempt === 'opening'}>
+              {t('shell.login.title')}
+            </h1>
             <form action={handleSubmit} className="shell:mt-4 shell:flex shell:flex-col shell:gap-4" noValidate>
-              <FormInput
-                aria-invalid={validation.loginMissing || undefined}
-                autoComplete="username"
-                defaultValue={attemptedLogin}
-                helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
-                id="login"
-                label={t('shell.login.field.login')}
-                name="login"
-                ref={loginRef}
-                required
-                type="text"
-                validateStatus={validation.loginMissing ? 'error' : 'default'}
-              />
-              <FormInput
-                aria-invalid={validation.passwordMissing || undefined}
-                autoComplete="current-password"
-                helpText={validation.passwordMissing ? t('shell.login.required.password') : undefined}
-                id="password"
-                label={t('shell.login.field.password')}
-                name="password"
-                ref={passwordRef}
-                required
-                type="password"
-                validateStatus={validation.passwordMissing ? 'error' : 'default'}
-              />
+              <div hidden={attempt === 'opening'}>
+                <FormInput
+                  aria-invalid={validation.loginMissing || undefined}
+                  autoComplete="username"
+                  defaultValue={attemptedLogin}
+                  helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
+                  id="login"
+                  label={t('shell.login.field.login')}
+                  name="login"
+                  ref={loginRef}
+                  required
+                  type="text"
+                  validateStatus={validation.loginMissing ? 'error' : 'default'}
+                />
+              </div>
+              <div hidden={attempt === 'opening'}>
+                <FormInput
+                  aria-invalid={validation.passwordMissing || undefined}
+                  autoComplete="current-password"
+                  helpText={validation.passwordMissing ? t('shell.login.required.password') : undefined}
+                  id="password"
+                  label={t('shell.login.field.password')}
+                  name="password"
+                  ref={passwordRef}
+                  required
+                  type="password"
+                  validateStatus={validation.passwordMissing ? 'error' : 'default'}
+                />
+              </div>
               <Button
                 block
                 disabled={attempt !== 'idle'}

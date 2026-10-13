@@ -113,7 +113,7 @@
       "error": {
         "forbidden": "Tento účet nemá přístup do OntOS.",
         "internal": "Přihlášení selhalo. Zkuste to znovu.",
-        "invalid": "E-mailová adresa nebo heslo nejsou správné.",
+        "invalid": "Přihlašovací jméno nebo heslo nejsou správné.",
         "title": "Přihlášení se nezdařilo",
         "unavailable": "Ověření je dočasně nedostupné. Zkuste to znovu."
       },

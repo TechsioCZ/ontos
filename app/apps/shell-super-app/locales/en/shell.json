@@ -113,7 +113,7 @@
       "error": {
         "forbidden": "This account is not permitted to access OntOS.",
         "internal": "Login failed. Try again.",
-        "invalid": "The email address or password is invalid.",
+        "invalid": "The login or password is invalid.",
         "title": "Unable to log in",
         "unavailable": "Authentication is temporarily unavailable. Try again."
       },

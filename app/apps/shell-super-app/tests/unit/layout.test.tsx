@@ -64,10 +64,12 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   Link: ({
+    activeOptions: _activeOptions,
     children,
     to,
     ...props
   }: Omit<ComponentProps<'a'>, 'href'> & {
+    activeOptions?: unknown;
     children: ReactNode;
     to: string;
   }) => (

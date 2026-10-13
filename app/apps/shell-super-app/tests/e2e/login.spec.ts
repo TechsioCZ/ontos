@@ -153,7 +153,7 @@ test('shows one generic error for invalid English credentials', async ({ authent
     .then(
       async () =>
         await Promise.all([
-          expect(page.getByText('The email address or password is invalid.')).toHaveCount(1),
+          expect(page.getByText('The login or password is invalid.')).toHaveCount(1),
           expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
         ]),
     ));

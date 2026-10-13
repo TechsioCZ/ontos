@@ -1,4 +1,5 @@
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
@@ -14,7 +15,7 @@ import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
@@ -315,7 +316,9 @@ const ShellRouteLink = ({
   href: _unusedHref,
   ...props
 }: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => (
-  <LocalizedLink prefetch="intent" {...props} />
+  // Router-active styling matches a destination only when the location equals it. Without `exact`, the home link
+  // ("/") counts as active on every page and is marked as the current page beside the real destination.
+  <LocalizedLink activeOptions={{ exact: true }} prefetch="intent" {...props} />
 );
 
 const presentationOrder = (entry: DashboardNavigationItem) => {
@@ -817,7 +820,16 @@ const DashboardNavigationLink = ({
         !api.isDesktop || api.isExpanded('start') ? (
           content
         ) : (
-          <Tooltip content={link.label} placement="right">
+          // The label sits close to the rail and closes as soon as the pointer leaves the icon, so it covers as
+          // little of the page as possible.
+          <Tooltip
+            closeDelay={0}
+            content={link.label}
+            interactive={false}
+            offset={{ crossAxis: 0, mainAxis: 8 }}
+            placement="right"
+            size="sm"
+          >
             {content}
           </Tooltip>
         )
@@ -874,6 +886,28 @@ const GroupedSidebarPanel = ({
   );
 };
 
+/** Mounted once per route (keyed by pathname): closes the drawer when the route it was mounted for appears. */
+const CloseDrawerOnMount = ({ onClose }: { readonly onClose: () => void }) => {
+  const closeDrawer = useEffectEvent(() => onClose());
+  useEffect(() => {
+    closeDrawer();
+  }, []);
+  return null;
+};
+
+/**
+ * The link's own click closes the drawer, but a click can be lost while the drawer slides in. Every route change
+ * closes it as well, so a drawer never stays over the page the user just chose.
+ */
+const DrawerRouteSync = () => {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  return (
+    <Sidebar.Context>
+      {(sidebar) => <CloseDrawerOnMount key={pathname} onClose={() => sidebar.closeMobile()} />}
+    </Sidebar.Context>
+  );
+};
+
 const sidebarStorageKey = 'ontos.shell.sidebar';
 const sidebarChoiceEvent = 'ontos:shell-sidebar-choice';
 const expandedSidesByDefault: readonly SidebarSide[] = ['start'];
@@ -924,6 +958,19 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const pendingHref = pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, language ?? '');
   const model = buildShellNavigation({ ...props, pendingHref }, t);
 
+  // Back after sign-out or a tenant switch can restore this page from the back/forward cache with the old session's
+  // navigation on screen. Hide it before the browser paints and load the page again, so the server decides.
+  useEffect(() => {
+    const reloadRestoredPage = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        document.documentElement.style.visibility = 'hidden';
+        window.location.reload();
+      }
+    };
+    window.addEventListener('pageshow', reloadRestoredPage);
+    return () => window.removeEventListener('pageshow', reloadRestoredPage);
+  }, []);
+
   useEffect(() => {
     if (tenantSwitchFailed) {
       document.querySelector('#tenant-switch-status')?.scrollIntoView({ block: 'nearest' });
@@ -946,6 +993,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         onExpandedChange={handleSidebarExpandedChange}
         style={topBarOffsetStyle}
       >
+        <DrawerRouteSync />
         <Header
           aria-label={t('shell.dashboard.header.label')}
           className="sticky top-0 z-20 w-full max-w-none gap-200 border-border-primary border-b bg-base px-200"
@@ -953,15 +1001,20 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           style={{ height: 'var(--spacing-700)' }}
         >
           <Header.Container className="flex w-auto min-w-0 flex-1 flex-nowrap items-center gap-200" position="start">
-            <Sidebar.Trigger aria-label={t(navigationToggleKey)} side="start" tooltip={t(navigationToggleKey)} />
+            {/* Once sign-out has started, navigation, search and the page are hidden; only the account stays. */}
+            {props.logoutPending ? null : (
+              <Sidebar.Trigger aria-label={t(navigationToggleKey)} side="start" tooltip={t(navigationToggleKey)} />
+            )}
             {/* The brand is not a navigation item: the router would mark it current on every page. */}
             <LocalizedLink aria-current={false} className="hidden no-underline md:flex" prefetch="intent" to="/">
               <DashboardBrand />
             </LocalizedLink>
-            <div className="min-w-0 max-w-md flex-1">
-              <DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />
-            </div>
-            <DashboardTrail model={model} />
+            {props.logoutPending ? null : (
+              <div className="min-w-0 max-w-md flex-1">
+                <DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />
+              </div>
+            )}
+            {props.logoutPending ? null : <DashboardTrail model={model} />}
           </Header.Container>
           <Header.Container className="ms-auto w-auto shrink-0" position="end">
             <Header.Actions>
@@ -975,7 +1028,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             </Header.Actions>
           </Header.Container>
         </Header>
-        <div className="flex min-h-0 flex-1">
+        <div className={props.logoutPending ? 'hidden' : 'flex min-h-0 flex-1'}>
           <GroupedSidebarPanel
             model={model}
             selectors={

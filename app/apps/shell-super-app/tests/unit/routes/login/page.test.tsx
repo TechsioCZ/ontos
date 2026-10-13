@@ -101,10 +101,12 @@ const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 const renderLogin = () => render(<LoginPage />);
 
 afterEach(() => {
+  // Toasts are removed while the Toaster is still mounted, so it drops them; removed after unmount, they return
+  // with the next test's Toaster.
+  toaster.remove();
   cleanup();
   languageState.current = 'en';
   localizedLinkCalls.length = 0;
-  toaster.remove();
   window.history.replaceState(null, '', '/');
   rstest.unstubAllGlobals();
   rstest.clearAllMocks();
