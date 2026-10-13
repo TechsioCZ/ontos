@@ -23,3 +23,13 @@
 - Notes: both T3 `delegate_task` calls failed with `parent_not_active` (the lane ran as a subagent without a T3 parent run), so GLM and DeepSeek were dropped. The live build did not generate A's `xl:grid-cols-[18rem_minmax(0,1fr)]` class, so A-1440 was judged with injected CSS that emulates the intended grid (unemulated render: `20-stats-A-1440-unstyled.png`).
 - Evidence: /Volumes/TraceDecayKingston/techsio-demo/evidence/20-stats-{A,B}-{1440,390}.png, 20-stats-packet.md, 20-stats-judge-{opus,glm,deepseek}.json
 - Files: app/verticals/sales-insights/src/routes/[lang]/prehledy/statistiky/page.tsx, app/verticals/sales-insights/src/statistics/statistics-controls.tsx, app/verticals/sales-insights/locales/{cs,en}/sales-insights.json
+
+### Statistiky: rozložení — final vote (orchestrator re-run of cheap judges)
+
+| Judge               | Pick | Scores (A / B) | Note                                                    |
+| ------------------- | ---- | -------------- | ------------------------------------------------------- |
+| Opus 5.5            | B    | 18 / 19        | Narrow KPI cards in A truncate amounts                  |
+| DeepSeek V4.1 Flash | B    | 20 / 21        | Standard kit filter-bar pattern; presets wrap on mobile |
+| GLM 5.3 Flash       | A    | 20 / 19        | Persistent panel is faster for repeated tweaking        |
+
+Result: **B (Lišta nahoře)**, 2–1. Follow-up: tidy period-preset wrapping at 390 px.
