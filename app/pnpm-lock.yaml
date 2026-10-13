@@ -1859,6 +1859,9 @@ importers:
 
   verticals/party-registry:
     dependencies:
+      '@app/admin-ui':
+        specifier: workspace:*
+        version: link:../../packages/admin-ui
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
@@ -1916,6 +1919,9 @@ importers:
       '@tanstack/react-router':
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@techsio/ui-kit':
+        specifier: 0.56.0
+        version: 0.56.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
