@@ -20,7 +20,7 @@
     "pages": {
       "records": {
         "title": "Úkoly",
-        "description": "Úkoly přiřazené obchodníkům, jejich termíny a stav.",
+        "description": "Úkoly obchodního týmu a jejich termíny",
         "newTask": "Nový úkol",
         "create": "Nový úkol",
         "edit": "Upravit úkol",

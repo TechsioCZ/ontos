@@ -118,6 +118,13 @@ const toCalendarDate = (isoDate: string | undefined) =>
     ? null
     : new CalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)));
 
+/**
+ * The calendar is portalled to <body>, outside the drawer. Its content has no z-index of its own, so it would sit
+ * under the dialog (z 20) where clicks land on the form instead of a day. Lift it to the shared popup layer and give
+ * it the opaque popup surface (the kit surface token resolves to a translucent overlay in this theme).
+ */
+const datePickerContentClass = 'z-(--z-popup) bg-(--color-popup-bg)';
+
 /** Combobox values are arrays; the form keeps one id, or '' for none. */
 const singleValue = (value: string) => (value === '' ? [] : [value]);
 const firstValue = (next: string | string[]) => (Array.isArray(next) ? next[0] : next) ?? '';
@@ -216,6 +223,8 @@ export const TaskFormDialog = ({
           </Button>
         </>
       }
+      // The form holds unsaved input; a stray pointer or focus move outside must not discard it.
+      closeOnInteractOutside={false}
       customTrigger
       onOpenChange={({ open }) => {
         if (!open) {
@@ -284,7 +293,7 @@ export const TaskFormDialog = ({
                 </DatePicker.IndicatorGroup>
               </DatePicker.Control>
               <DatePicker.Positioner>
-                <DatePicker.Content>
+                <DatePicker.Content className={datePickerContentClass}>
                   <DatePicker.Calendar />
                 </DatePicker.Content>
               </DatePicker.Positioner>

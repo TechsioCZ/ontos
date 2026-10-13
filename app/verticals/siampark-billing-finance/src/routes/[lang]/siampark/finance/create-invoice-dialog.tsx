@@ -6,7 +6,7 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { useRef, useState } from 'react';
 import {
   addCalendarDays,
@@ -27,13 +27,18 @@ const ns = 'siampark-billing-finance.faktury';
 
 interface Draft {
   readonly customerId: string;
-  /** Unset until the user edits it; the reference date of the records read is the default. */
-  readonly issueDate?: CalendarDate;
+  /** Today's date (real clock) when the form opens. */
+  readonly issueDate: CalendarDate;
   readonly lines: readonly DraftLine[];
   readonly paymentDays: PaymentTermDays;
 }
 
-const emptyDraft = (): Draft => ({ customerId: '', lines: [newDraftLine('line-1', 'product')], paymentDays: 14 });
+const emptyDraft = (): Draft => ({
+  customerId: '',
+  issueDate: DateTime.formatIsoDateUtc(DateTime.nowUnsafe()),
+  lines: [newDraftLine('line-1', 'product')],
+  paymentDays: 14,
+});
 
 interface CreateInvoiceDialogProps {
   readonly onOpenChange: (open: boolean) => void;
@@ -42,15 +47,15 @@ interface CreateInvoiceDialogProps {
 }
 
 export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogProps) => {
-  const { confirmInvoice, createDraft, referenceDate, references, t } = vm;
+  const { confirmInvoice, createDraft, references, t } = vm;
   const toaster = useToast();
   const lineSequence = useRef(1);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<{ readonly message: string; readonly reason?: string } | null>(null);
 
-  const issueDate = draft.issueDate ?? referenceDate;
+  const { issueDate } = draft;
   const dueDate = issueDate === '' ? undefined : addCalendarDays(issueDate, draft.paymentDays);
   const customers = references.customers.filter((customer) => customer.status === 'ACTIVE');
   const customer = customers.find((item) => item.partyId === draft.customerId);
@@ -92,7 +97,14 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   const handleOutcome = (outcome: DraftInvoiceOutcome) => {
     setBusy(false);
     if (!outcome.ok) {
-      setServerError(t(`siampark-billing-finance.demo.feedback.${outcome.feedback}`));
+      const message = t(`siampark-billing-finance.demo.feedback.${outcome.feedback}`);
+      const reason = outcome.reason === null ? undefined : t(`${ns}.form.failureReason`, { reason: outcome.reason });
+      setServerError(reason === undefined ? { message } : { message, reason });
+      toaster.create({
+        description: reason === undefined ? message : `${message} ${reason}`,
+        title: t(`${ns}.form.createFailed`),
+        type: 'error',
+      });
       return;
     }
     const { invoice } = outcome;
@@ -148,6 +160,9 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           </Button>
         </>
       }
+      // The form holds unsaved input, and the date field opens a picker outside the drawer. A stray pointer or
+      // focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
+      closeOnInteractOutside={false}
       customTrigger
       onOpenChange={({ open: next }) => {
         if (!next) {
@@ -167,9 +182,14 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
         }}
       >
         {serverError !== null && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
+          <div className="flex flex-col gap-50">
+            <StatusText showIcon status="error">
+              {serverError.message}
+            </StatusText>
+            {serverError.reason !== undefined && (
+              <p className="break-words text-fg-secondary text-xs">{serverError.reason}</p>
+            )}
+          </div>
         )}
         <Combobox
           {...(customerError === undefined ? {} : { helpText: customerError })}

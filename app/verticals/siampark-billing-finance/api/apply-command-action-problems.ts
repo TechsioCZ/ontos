@@ -51,10 +51,11 @@ export const applyCommandActionProblem = {
     }),
   conflict: (
     code: ProblemOf<'ApplyCommandActionConflictProblem'>['code'],
+    detail = 'The Action conflicts with current state.',
   ): ProblemOf<'ApplyCommandActionConflictProblem'> =>
     ApplyCommandActionConflictProblemSchema.make({
       code,
-      detail: 'The Action conflicts with current state.',
+      detail,
       status: problemStatus.conflict,
       title: 'Action conflict',
       type: 'https://ontos.dev/problems/action-conflict',
@@ -71,10 +72,11 @@ export const applyCommandActionProblem = {
     }),
   ineligible: (
     code: ProblemOf<'ApplyCommandActionIneligibleProblem'>['code'],
+    detail = 'The request is not eligible for this Action.',
   ): ProblemOf<'ApplyCommandActionIneligibleProblem'> =>
     ApplyCommandActionIneligibleProblemSchema.make({
       code,
-      detail: 'The request is not eligible for this Action.',
+      detail,
       status: problemStatus.ineligible,
       title: 'Action ineligible',
       type: 'https://ontos.dev/problems/action-ineligible',
@@ -95,10 +97,11 @@ export const applyCommandActionProblem = {
     }),
   notFound: (
     code: ProblemOf<'ApplyCommandActionNotFoundProblem'>['code'],
+    detail = 'The requested resource was not found.',
   ): ProblemOf<'ApplyCommandActionNotFoundProblem'> =>
     ApplyCommandActionNotFoundProblemSchema.make({
       code,
-      detail: 'The requested resource was not found.',
+      detail,
       status: problemStatus.notFound,
       title: 'Resource not found',
       type: 'https://ontos.dev/problems/action-resource-not-found',
@@ -112,10 +115,11 @@ export const applyCommandActionProblem = {
     }),
   unavailable: (
     code: ProblemOf<'ApplyCommandActionUnavailableProblem'>['code'],
+    detail = 'The Action capability is temporarily unavailable.',
   ): ProblemOf<'ApplyCommandActionUnavailableProblem'> =>
     ApplyCommandActionUnavailableProblemSchema.make({
       code,
-      detail: 'The Action capability is temporarily unavailable.',
+      detail,
       retryable: true,
       status: problemStatus.unavailable,
       title: 'Action unavailable',
@@ -126,11 +130,14 @@ export const applyCommandActionProblem = {
 const mapDomainProblem = (error: DomainError): ApplyCommandActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      FinanceConflict: () => applyCommandActionProblem.conflict('finance_conflict'),
-      FinanceNotFound: () => applyCommandActionProblem.notFound('finance_not_found'),
-      FinancePersistenceUnavailable: () => applyCommandActionProblem.unavailable('finance_persistence_unavailable'),
-      FinanceReferenceUnavailable: () => applyCommandActionProblem.unavailable('finance_reference_unavailable'),
-      FinanceRejected: () => applyCommandActionProblem.ineligible('finance_rejected'),
+      // The domain reason (e.g. `counterparty_role_not_usable`) is a stable code, safe to show as the detail.
+      FinanceConflict: (failure) => applyCommandActionProblem.conflict('finance_conflict', failure.reason),
+      FinanceNotFound: (failure) => applyCommandActionProblem.notFound('finance_not_found', failure.reason),
+      FinancePersistenceUnavailable: (failure) =>
+        applyCommandActionProblem.unavailable('finance_persistence_unavailable', failure.reason),
+      FinanceReferenceUnavailable: (failure) =>
+        applyCommandActionProblem.unavailable('finance_reference_unavailable', failure.reason),
+      FinanceRejected: (failure) => applyCommandActionProblem.ineligible('finance_rejected', failure.reason),
     }),
     Match.exhaustive,
   );

@@ -33,9 +33,22 @@ const OPEN_STATES = new Set<Task['state']>(['NEW', 'IN_PROGRESS', 'WAITING']);
 
 export const isOpenTask = (task: Task) => OPEN_STATES.has(task.state);
 
-/** Calendar dates are ISO `YYYY-MM-DD`, so string comparison orders them correctly. */
-export const isOverdue = (task: Task, referenceDate: string) =>
-  isOpenTask(task) && task.dueDate !== undefined && task.dueDate < referenceDate;
+const todayFormat = new Intl.DateTimeFormat('en-CA', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Europe/Prague',
+  year: 'numeric',
+});
+
+/** The real current business date (Europe/Prague) as ISO `YYYY-MM-DD`. */
+export const todayIsoDate = () => todayFormat.format(DateTime.toDateUtc(DateTime.nowUnsafe()));
+
+/** Open and past its due date. Calendar dates are ISO `YYYY-MM-DD`, so string comparison orders them. */
+export const isOverdue = (task: Task, today: string) =>
+  isOpenTask(task) && task.dueDate !== undefined && task.dueDate < today;
+
+export const overdueCount = (tasks: readonly Task[], today: string) =>
+  tasks.filter((task) => isOverdue(task, today)).length;
 
 /** Epoch millis of UTC midnight for an ISO calendar date. */
 const calendarMillis = (isoDate: string) => {
@@ -55,9 +68,9 @@ const dueDateFormat = new Intl.DateTimeFormat('cs-CZ', {
 
 export const formatDueDate = (isoDate: string) => dueDateFormat.format(calendarMillis(isoDate));
 
-/** Tasks completed in the ISO week that contains the reference date. */
-export const doneThisWeek = (tasks: readonly Task[], referenceDate: string) => {
-  const referenceMillis = calendarMillis(referenceDate);
+/** Tasks completed in the ISO week that contains today. */
+export const doneThisWeek = (tasks: readonly Task[], today: string) => {
+  const referenceMillis = calendarMillis(today);
   const weekStart = referenceMillis - mondayFirstWeekday(referenceMillis) * DAY_MS;
   const weekEnd = weekStart + 7 * DAY_MS;
   return tasks.filter((task) => {

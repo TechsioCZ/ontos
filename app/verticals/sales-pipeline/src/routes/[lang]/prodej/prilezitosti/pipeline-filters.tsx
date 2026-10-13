@@ -1,4 +1,4 @@
-import { formatMoney, formatPercent, StatCard, StatRow, statusPresentation } from '@app/admin-ui';
+import { formatPercent, StatCard, StatRow, statusPresentation } from '@app/admin-ui';
 import type { OpportunityIndicators } from '../../../../../shared/apis/records.ts';
 import {
   EmployeeIdSchema,
@@ -9,15 +9,21 @@ import { TagFilter } from '@app/tagging/components/tag-controls';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Option, Schema } from 'effect';
-import { firstValue, isOpportunityStage, opportunityCount, opportunityStages } from './pipeline-model.ts';
+import {
+  firstValue,
+  formatWholeKc,
+  isOpportunityStage,
+  opportunityCount,
+  opportunityStages,
+} from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 import type { CustomerOption, EmployeeOption, LoadState } from './pipeline-references.ts';
 
 const K = 'sales-pipeline.pages.records';
 const ALL = '__all__';
-const UNASSIGNED = '__unassigned__';
 
 type PartyId = typeof PartyIdSchema.Type;
 
@@ -47,16 +53,16 @@ export const PipelineStats = ({ indicators }: { indicators: OpportunityIndicator
       <Kpi
         hint={indicators === undefined ? undefined : opportunityCount(indicators.openCount)}
         label={t(`${K}.stats.open`)}
-        value={indicators === undefined ? '—' : formatMoney(indicators.openValueMinor)}
+        value={indicators === undefined ? '—' : formatWholeKc(indicators.openValueMinor)}
       />
       <Kpi
         label={t(`${K}.stats.weighted`)}
-        value={indicators === undefined ? '—' : formatMoney(indicators.weightedValueMinor)}
+        value={indicators === undefined ? '—' : formatWholeKc(indicators.weightedValueMinor)}
       />
       <Kpi
         hint={indicators === undefined ? undefined : opportunityCount(indicators.wonCount)}
         label={t(`${K}.stats.won`)}
-        value={indicators === undefined ? '—' : formatMoney(indicators.wonValueMinor)}
+        value={indicators === undefined ? '—' : formatWholeKc(indicators.wonValueMinor)}
       />
       <Kpi
         label={t(`${K}.stats.winRate`)}
@@ -116,10 +122,6 @@ export const PipelineFilters = ({
     { label: t(`${K}.filters.allOwners`), value: ALL },
     ...employees.map((employee) => ({ label: employee.fullName, value: employee.id })),
   ];
-  const assignmentItems = [
-    { label: t(`${K}.filters.allOpportunities`), value: ALL },
-    { label: t(`${K}.filters.unassignedOnly`), value: UNASSIGNED },
-  ];
   const unknownCustomer = t(`${K}.create.unknownCustomer`);
   const customerItems =
     customers.status === 'ready'
@@ -140,7 +142,7 @@ export const PipelineFilters = ({
       : [];
 
   return (
-    <div className="flex flex-wrap items-end gap-200">
+    <div className="flex flex-wrap items-end gap-150">
       <div className="w-64 min-w-0">
         <FormInput
           id="pipeline-search"
@@ -148,10 +150,11 @@ export const PipelineFilters = ({
           name="search"
           onChange={(event) => onSearch(event.target.value)}
           placeholder={t(`${K}.filters.search`)}
+          size="sm"
           value={search}
         />
       </div>
-      <div className="w-56">
+      <div className="w-48">
         <Combobox
           clearable
           items={customerItems}
@@ -165,7 +168,7 @@ export const PipelineFilters = ({
           value={customer === '' ? [] : [customer]}
         />
       </div>
-      <div className="w-52">
+      <div className="w-48">
         <SelectTemplate
           items={stageItems}
           label={t(`${K}.filters.stage`)}
@@ -177,7 +180,7 @@ export const PipelineFilters = ({
           value={[stage === '' ? ALL : stage]}
         />
       </div>
-      <div className="w-52">
+      <div className="w-48">
         <SelectTemplate
           items={ownerItems}
           label={t(`${K}.filters.owner`)}
@@ -187,18 +190,13 @@ export const PipelineFilters = ({
           value={[owner === '' ? ALL : owner]}
         />
       </div>
-      <div className="w-52">
-        <SelectTemplate
-          items={assignmentItems}
-          label={t(`${K}.filters.assignment`)}
-          name="assignment"
-          onValueChange={({ value: [next] }) => onUnassignedOnly(next === UNASSIGNED)}
-          size="sm"
-          value={[unassignedOnly ? UNASSIGNED : ALL]}
-        />
-      </div>
-      <div className="w-52">
+      <div className="w-48">
         <TagFilter kind="opportunity" onChange={onTag} value={tag} />
+      </div>
+      <div className="pb-100">
+        <Switch checked={unassignedOnly} onCheckedChange={onUnassignedOnly}>
+          {t(`${K}.filters.unassignedOnly`)}
+        </Switch>
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ import {
   isTimeGrouping,
   parseStatisticsQuery,
   presetRange,
+  resolveChartKind,
   serializeStatisticsQuery,
 } from '../../src/statistics/statistics-query.ts';
 
@@ -95,6 +96,15 @@ it('folds pie slices beyond the limit into one other slice', () => {
   expect(folded.slice(0, 5).map((point) => point.key)).toEqual(['p1', 'p2', 'p3', 'p4', 'p5']);
   expect(folded[5]).toEqual({ key: 'other', label: 'Ostatní', value: 4 + 3 + 2 });
   expect(foldSlices(points.slice(0, 6), 6, 'other', 'Ostatní')).toHaveLength(6);
+});
+
+it('keeps a pie only for a time series of at most six slices', () => {
+  expect(resolveChartKind('pie', 'month', 6)).toBe('pie');
+  expect(resolveChartKind('pie', 'month', 7)).toBe('bar-horizontal');
+  expect(resolveChartKind('pie', 'employee', 3)).toBe('bar-horizontal');
+  expect(resolveChartKind('pie', 'tag', 2)).toBe('bar-horizontal');
+  expect(resolveChartKind('bar', 'employee', 3)).toBe('bar');
+  expect(resolveChartKind('line', 'month', 12)).toBe('line');
 });
 
 it('lists the five chart kinds in the requested order and flags time groupings', () => {

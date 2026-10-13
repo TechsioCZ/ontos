@@ -38,7 +38,6 @@
           "customer": "Customer",
           "lines": "Items",
           "number": "Number",
-          "source": "Source",
           "status": "Status",
           "tags": "Tags",
           "total": "Total incl. VAT"
@@ -97,6 +96,10 @@
           "updatedAt": "Last changed",
           "vatTotal": "VAT"
         },
+        "filters": {
+          "allStatuses": "All statuses",
+          "status": "Status"
+        },
         "source": {
           "manual": "Manual",
           "opportunity": "Opportunity"
@@ -133,7 +136,7 @@
           "requiredLabel": "Required",
           "searchButtonLabel": "Search",
           "searchLabel": "Search",
-          "searchPlaceholder": "Search by order number…",
+          "searchPlaceholder": "Search by number or customer…",
           "selectAllLabel": "Select all rows",
           "selectionLabel": "Select row"
         },

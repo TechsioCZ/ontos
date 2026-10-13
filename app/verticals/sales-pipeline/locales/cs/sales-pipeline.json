@@ -81,7 +81,7 @@
         "columns": {
           "amount": "Hodnota",
           "customer": "Zákazník",
-          "expectedClose": "Očekávané uzavření",
+          "expectedClose": "Uzavření",
           "owner": "Obchodník",
           "probability": "Pravděpodobnost",
           "stage": "Fáze",
@@ -160,7 +160,13 @@
         "toasts": {
           "created": "Příležitost vytvořena",
           "ownerAssigned": "Obchodník přiřazen",
-          "skipped": "Přeskočeno: {{total}}",
+          "skipReasons": {
+            "closed": "uzavřené: {{total}}",
+            "invalidTransition": "nepovolená změna: {{total}}",
+            "notFound": "nenalezené: {{total}}",
+            "other": "beze změny: {{total}}"
+          },
+          "skipped": "Přeskočeno: {{total}} ({{reasons}})",
           "stageChanged": "Fáze změněna",
           "updated": "Příležitost uložena",
           "bulkChanged": "Změněno {{changed}}, přeskočeno {{skipped}}"

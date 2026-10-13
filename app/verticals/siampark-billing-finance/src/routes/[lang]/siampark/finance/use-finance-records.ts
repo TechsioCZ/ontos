@@ -8,6 +8,8 @@ import { useEffect, useState } from 'react';
 import type { FinanceCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { CalendarDateSchema, Invoice, InvoiceLine, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { nextInvoiceNumber } from '../../../../../shared/domain/invoice-totals.ts';
+import { formatProblemReason, isProblemReason } from '../../../../../shared/domain/problem-reason.ts';
+import { commandReferenceAudiences } from '../../../../../shared/domain/reference-audiences.ts';
 import { InvoiceRefSchema } from '../../../../../shared/resources/invoice.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { browserCrypto } from '../../../../api/browser-crypto.ts';
@@ -25,7 +27,7 @@ export interface DraftInvoiceInput {
 }
 
 export type DraftInvoiceOutcome =
-  | { readonly feedback: Feedback; readonly ok: false }
+  | { readonly feedback: Feedback; readonly ok: false; readonly reason: string | null }
   | { readonly invoice: Invoice; readonly ok: true };
 
 const searchSchema = Schema.Struct({
@@ -57,21 +59,20 @@ export const financeFailureFeedback = (error: UiFailure): Feedback =>
     Match.when(invalid, () => 'validation' as const),
     Match.orElse(() => 'unavailable' as const),
   );
+/** The problem detail the server answered with; transport failures that never got a response have none. */
+const financeFailureReason = (error: UiFailure): string | null =>
+  isProblemReason(error) ? formatProblemReason(error) : null;
 
 const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submitFinanceCommand(
-  revision: number,
+  snapshot: RecordsResponse,
   command: FinanceCommand,
 ) {
-  const referenceCredentials = yield* makeReferenceGatewayCredentials([
-    'party-registry',
-    'siampark-property',
-    'siampark-property',
-    'siampark-occupancy',
-    'siampark-agreements',
-    'siampark-work',
-  ]);
+  // Only the modules the validators will read: asking for an audience outside the composition fails the command.
+  const referenceCredentials = yield* makeReferenceGatewayCredentials(
+    commandReferenceAudiences(command, snapshot.state.invoices),
+  );
   const idempotencyKey = yield* browserCrypto.randomUUIDv4;
-  return yield* executeApplyCommand({ command, expectedRevision: revision }, 'siampark-finance.command', {
+  return yield* executeApplyCommand({ command, expectedRevision: snapshot.revision }, 'siampark-finance.command', {
     idempotencyKey,
     referenceCredentials,
   });
@@ -83,7 +84,7 @@ const fetchRecords = () => executeRecords({}, 'siampark-finance.records');
 export const useFinanceRecords = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const search = Schema.decodeOption(searchSchema)(useRouterState().location.search);
+  const search = Schema.decodeUnknownOption(searchSchema)(useRouterState().location.search);
   const requestedId = Option.getOrUndefined(search)?.resourceId;
   const [snapshot, setSnapshot] = useState<RecordsResponse>();
   const [feedback, setFeedback] = useState<Feedback>('loading');
@@ -102,7 +103,7 @@ export const useFinanceRecords = () => {
    */
   const createDraft = (input: DraftInvoiceInput): Effect.Effect<DraftInvoiceOutcome> => {
     if (snapshot === undefined || !canWrite) {
-      return Effect.succeed({ feedback: 'unavailable', ok: false });
+      return Effect.succeed({ feedback: 'unavailable', ok: false, reason: null });
     }
     const command: FinanceCommand = {
       _tag: 'CreateInvoiceDraft',
@@ -115,10 +116,14 @@ export const useFinanceRecords = () => {
       lines: [...input.lines],
       partyId: input.customer.partyId,
     };
-    return submitFinanceCommand(snapshot.revision, command).pipe(
+    return submitFinanceCommand(snapshot, command).pipe(
       Effect.tap(() => load().pipe(Effect.ignore)),
       Effect.match({
-        onFailure: (error): DraftInvoiceOutcome => ({ feedback: financeFailureFeedback(error), ok: false }),
+        onFailure: (error): DraftInvoiceOutcome => ({
+          feedback: financeFailureFeedback(error),
+          ok: false,
+          reason: financeFailureReason(error),
+        }),
         onSuccess: (result): DraftInvoiceOutcome => ({ invoice: result.invoice, ok: true }),
       }),
     );
@@ -166,7 +171,7 @@ export const useFinanceRecords = () => {
     }
     setFeedback('saving');
     void financeBrowserRuntime.runPromise(
-      submitFinanceCommand(snapshot.revision, command).pipe(
+      submitFinanceCommand(snapshot, command).pipe(
         Effect.flatMap((result) => load().pipe(Effect.map(() => result))),
         Effect.match({
           onFailure: (error) => setFeedback(financeFailureFeedback(error)),

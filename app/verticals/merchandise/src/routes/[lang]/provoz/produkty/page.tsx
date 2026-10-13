@@ -1,12 +1,12 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { PageHeader, StatCard, StatRow, formatMoney, formatNumber } from '@app/admin-ui';
+import { PageHeader, StatCard, StatRow, formatNumber } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { DateTime, Schema } from 'effect';
 import { useEffect, useState } from 'react';
@@ -17,6 +17,7 @@ import enResource from '../../../../../locales/en/merchandise.json';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
+import { formatKc } from '../../../../list-cells.tsx';
 import { loadProducts, runCommand } from './products-api.ts';
 import type { FailureReason, LoadOutcome } from './products-api.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
@@ -54,7 +55,7 @@ const ProductStats = ({ indicators, label }: ProductStatsProps) => (
     />
     <StatCard
       label={label('stats.stockValue')}
-      value={indicators === undefined ? '—' : formatMoney(indicators.stockValueMinor)}
+      value={indicators === undefined ? '—' : formatKc(indicators.stockValueMinor)}
     />
     <StatCard
       label={label('stats.lowStock')}
@@ -62,7 +63,7 @@ const ProductStats = ({ indicators, label }: ProductStatsProps) => (
     />
     <StatCard
       label={label('stats.openOrders')}
-      value={indicators === undefined ? '—' : formatMoney(indicators.openOrderValueMinor)}
+      value={indicators === undefined ? '—' : formatKc(indicators.openOrderValueMinor)}
     />
   </StatRow>
 );
@@ -191,17 +192,17 @@ const RecordsPageContent = () => {
 
         <ProductStats indicators={ready?.indicators} label={k} />
 
-        <div className="flex flex-wrap items-end gap-200">
-          <div className="min-w-64 flex-1">
-            <FormInput
-              id="products-search"
-              label={k('filters.search')}
-              name="search"
-              onChange={(event) => setSearch(event.target.value)}
-              value={search}
-            />
-          </div>
-          <div className="min-w-56">
+        <div className="flex flex-wrap items-end gap-150">
+          <Input
+            aria-label={k('filters.search')}
+            className="w-64"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={k('filters.search')}
+            size="sm"
+            type="search"
+            value={search}
+          />
+          <div className="w-48">
             <SelectTemplate
               items={[
                 { label: k('filters.allCategories'), value: ALL_CATEGORIES },
@@ -213,10 +214,11 @@ const RecordsPageContent = () => {
                 const [next] = details.value;
                 setCategory(next ?? ALL_CATEGORIES);
               }}
+              size="sm"
               value={[category]}
             />
           </div>
-          <div className="min-w-56">
+          <div className="w-48">
             <TagFilter kind="product" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
           </div>
           <Switch checked={lowStockOnly} name="lowStockOnly" onCheckedChange={setLowStockOnly}>

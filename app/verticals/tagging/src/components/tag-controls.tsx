@@ -14,7 +14,6 @@
  *   `@techsio/ui-kit/molecules/toast`.
  */
 import { TagBadge } from '@app/admin-ui';
-import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
@@ -74,16 +73,16 @@ export const runTagEffect = <A, E>(
   void browserRuntime.runPromise(effect.pipe(Effect.match(handlers)));
 };
 
-/** The tags of one row: three chips, then a `+N` badge for the rest. */
+/** The tags of one row: two chips, then a muted `+N` for the rest. */
 export const TagCell = ({ tags }: { tags: readonly Tag[] }) => {
-  const visible = tags.slice(0, 3);
+  const visible = tags.slice(0, 2);
   const hiddenCount = tags.length - visible.length;
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-50">
       {visible.map((tag) => (
         <TagBadge color={tagColorValue[tag.color]} key={tag.id} name={tag.name} />
       ))}
-      {hiddenCount > 0 && <Badge size="sm" variant="outline">{`+${hiddenCount}`}</Badge>}
+      {hiddenCount > 0 && <span className="text-fg-secondary text-xs tabular-nums">{`+${hiddenCount}`}</span>}
     </span>
   );
 };
@@ -123,16 +122,24 @@ const pickTagId = (tags: readonly Tag[], next: string | string[]): TagId | null 
   return tags.find((tag) => tag.id === id)?.id ?? null;
 };
 
-const tagItems = (tags: readonly Tag[]) => tags.map((tag) => ({ id: tag.id, label: tag.name, value: tag.id }));
+/** Value of the filter's "all tags" option. It is not a tag id, so `pickTagId` maps it to no selection. */
+const allTagsValue = '__all_tags__';
+
+const tagItems = (tags: readonly Tag[], allLabel: string | null) => [
+  ...(allLabel === null ? [] : [{ id: allTagsValue, label: allLabel, value: allTagsValue }]),
+  ...tags.map((tag) => ({ id: tag.id, label: tag.name, value: tag.id })),
+];
 
 interface TagPickerFieldProps {
   readonly clearable: boolean;
+  /** Filter mode: small control, no visible label, and a leading "all tags" option. */
+  readonly compact?: boolean;
   readonly enabled: boolean;
   /** Empty string when there is no message. */
   readonly helpText: string;
   readonly invalid: boolean;
   readonly kind: SubjectKind;
-  readonly labelKey: string;
+  readonly labelKey?: string;
   readonly onChange: (tagId: TagId | null) => void;
   readonly onRetry: () => void;
   readonly value: TagId | null;
@@ -140,6 +147,7 @@ interface TagPickerFieldProps {
 
 const TagPickerField = ({
   clearable,
+  compact = false,
   enabled,
   helpText,
   invalid,
@@ -156,14 +164,15 @@ const TagPickerField = ({
       clearable={clearable}
       error={catalog.status === 'error' ? t('tagging.tags.loadFailed') : undefined}
       helpText={helpText}
-      items={tagItems(catalog.tags)}
-      label={t(labelKey)}
+      items={tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null)}
+      {...(labelKey === undefined ? {} : { label: t(labelKey) })}
       loading={catalog.status === 'loading'}
       noResultsMessage={t('tagging.tags.filter.noResults')}
       onChange={(next) => onChange(pickTagId(catalog.tags, next))}
       onRetry={() => onRetry()}
       placeholder={t('tagging.tags.filter.placeholder')}
       retryLabel={t('tagging.tags.retry')}
+      size={compact ? 'sm' : 'md'}
       validateStatus={invalid ? 'error' : 'default'}
       value={value === null ? [] : [value]}
     />
@@ -188,16 +197,9 @@ export interface TagFilterProps {
 
 /** Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. */
 export const TagFilter = ({ kind, onChange, value }: TagFilterProps) => (
-  <TagPicker
-    clearable
-    enabled
-    helpText=""
-    invalid={false}
-    kind={kind}
-    labelKey="tagging.tags.filter.label"
-    onChange={onChange}
-    value={value}
-  />
+  <div className="w-48">
+    <TagPicker clearable compact enabled helpText="" invalid={false} kind={kind} onChange={onChange} value={value} />
+  </div>
 );
 
 interface TagsRequest {

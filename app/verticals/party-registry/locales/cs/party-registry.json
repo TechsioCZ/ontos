@@ -91,9 +91,12 @@
           "toastRenamed": "Změny uloženy",
           "vatId": "DIČ"
         },
+        "filters": {
+          "allSegments": "Všechny segmenty"
+        },
         "newCustomer": "Nový zákazník",
         "search": {
-          "placeholder": "Hledat název, IČO, e-mail nebo město…"
+          "placeholder": "Hledat zákazníka…"
         },
         "state": {
           "clearFilters": "Zrušit hledání",
@@ -106,9 +109,9 @@
           "retry": "Zkusit znovu"
         },
         "stats": {
-          "archived": "Archivovaní",
-          "newLast30Days": "Noví za 30 dní",
-          "total": "Zákazníci celkem",
+          "archived": "Archivovaných",
+          "newLast30Days": "Nových za 30 dní",
+          "total": "Zákazníků celkem",
           "withEmail": "S e-mailem"
         },
         "status": {

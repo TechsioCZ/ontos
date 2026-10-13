@@ -1,18 +1,10 @@
+import { StatusBadge } from '@app/admin-ui';
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import type { Task } from '../../../../../shared/apis/records.ts';
 import { formatDueDate, isOverdue } from './tasks-model.ts';
 
 const key = 'siampark-work.pages.records';
-const stateVariant = {
-  CANCELLED: 'outline',
-  DONE: 'success',
-  IN_PROGRESS: 'info',
-  NEW: 'outline',
-  WAITING: 'warning',
-} as const;
-const priorityVariant = { HIGH: 'danger', LOW: 'outline', NORMAL: 'outline' } as const;
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
@@ -33,20 +25,20 @@ export const buildTaskColumns = ({
   customerNames,
   employeeNames,
   opportunityTitles,
-  referenceDate,
   t,
+  today,
 }: {
   readonly customerNames: ReadonlyMap<string, string>;
   readonly employeeNames: ReadonlyMap<string, string>;
   readonly opportunityTitles: ReadonlyMap<string, string>;
-  readonly referenceDate: string;
   readonly t: Translate;
+  readonly today: string;
 }): ColumnDef<Task>[] => [
   {
     accessorKey: 'title',
     cell: (info) => <span className="block truncate font-medium">{info.row.original.title}</span>,
     header: t(`${key}.columns.title`),
-    meta: { width: 300 },
+    meta: { width: 250 },
   },
   {
     accessorFn: (task) =>
@@ -60,14 +52,14 @@ export const buildTaskColumns = ({
     },
     header: t(`${key}.columns.assignee`),
     id: 'assignee',
-    meta: { width: 180 },
+    meta: { width: 150 },
   },
   {
     accessorFn: (task) => (task.partyId === undefined ? '' : (customerNames.get(task.partyId) ?? '')),
     cell: (info) => nameCell(info.row.original.partyId, customerNames, t(`${key}.unknownCustomer`)),
     header: t(`${key}.columns.party`),
     id: 'party',
-    meta: { width: 170 },
+    meta: { width: 160 },
   },
   {
     accessorFn: (task) => (task.opportunityId === undefined ? '' : (opportunityTitles.get(task.opportunityId) ?? '')),
@@ -84,42 +76,25 @@ export const buildTaskColumns = ({
         return '—';
       }
       const label = formatDueDate(task.dueDate);
-      return isOverdue(task, referenceDate) ? (
-        <Badge size="sm" variant="danger">
-          {label}
-        </Badge>
+      return isOverdue(task, today) ? (
+        <span className="tabular-nums text-fg-accent-danger">{label}</span>
       ) : (
         <span className="tabular-nums">{label}</span>
       );
     },
     header: t(`${key}.columns.dueDate`),
-    meta: { width: 140 },
+    meta: { width: 110 },
   },
   {
     accessorKey: 'priority',
-    cell: (info) => (
-      <Badge size="sm" variant={priorityVariant[info.row.original.priority]}>
-        {t(`${key}.priorities.${info.row.original.priority}`)}
-      </Badge>
-    ),
+    cell: (info) => <StatusBadge kind="priority" value={info.row.original.priority} />,
     header: t(`${key}.columns.priority`),
-    meta: { width: 130 },
+    meta: { width: 100 },
   },
   {
     accessorKey: 'state',
-    cell: (info) => (
-      <Badge size="sm" variant={stateVariant[info.row.original.state]}>
-        {t(`${key}.states.${info.row.original.state}`)}
-      </Badge>
-    ),
+    cell: (info) => <StatusBadge kind="task" value={info.row.original.state} />,
     header: t(`${key}.columns.state`),
-    meta: { width: 150 },
-  },
-  {
-    cell: () => null,
-    enableSorting: false,
-    header: t(`${key}.columns.labels`),
-    id: 'labels',
-    meta: { width: 140 },
+    meta: { width: 130 },
   },
 ];
