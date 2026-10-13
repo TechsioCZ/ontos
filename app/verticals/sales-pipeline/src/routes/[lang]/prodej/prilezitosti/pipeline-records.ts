@@ -10,12 +10,16 @@ export type RecordsLoadError = typeof RecordsLoadErrorSchema.Type;
 
 /**
  * Visible opportunities for the server filters. The read reruns when a filter changes or `reloadKey` is bumped;
- * a failed read keeps the last good response out of the way and reports why it failed.
+ * a failed read keeps the last good response out of the way and reports why it failed. `pending` is true while
+ * the read for changed filters has not settled, so the old rows are not presented as the new result.
  */
 export const usePipelineRecords = (filters: PipelineFilterValues, reloadKey: number) => {
   const [response, setResponse] = useState<RecordsResponse>();
   const [loadError, setLoadError] = useState<RecordsLoadError>();
+  const [settledKey, setSettledKey] = useState<string>();
   const { customer, owner, stage } = filters;
+  // A reload after a command keeps the current rows on screen; only a filter change marks the list as pending.
+  const filterKey = `${customer}|${owner}|${stage}`;
 
   useEffect(() => {
     let current = true;
@@ -24,6 +28,7 @@ export const usePipelineRecords = (filters: PipelineFilterValues, reloadKey: num
         Effect.match({
           onFailure: (error) => {
             if (current) {
+              setSettledKey(filterKey);
               setLoadError(
                 Match.value(error).pipe(
                   Match.tag('RecordsForbiddenProblem', () => 'forbidden' as const),
@@ -34,6 +39,7 @@ export const usePipelineRecords = (filters: PipelineFilterValues, reloadKey: num
           },
           onSuccess: (result) => {
             if (current) {
+              setSettledKey(filterKey);
               setLoadError(undefined);
               setResponse(result);
             }
@@ -44,7 +50,7 @@ export const usePipelineRecords = (filters: PipelineFilterValues, reloadKey: num
     return () => {
       current = false;
     };
-  }, [customer, owner, reloadKey, stage]);
+  }, [customer, filterKey, owner, reloadKey, stage]);
 
-  return { loadError, response };
+  return { loadError, pending: settledKey !== filterKey, response };
 };

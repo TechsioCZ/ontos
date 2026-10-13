@@ -12,7 +12,9 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Option, Schema } from 'effect';
+import { useState } from 'react';
 import {
+  filterItemsByQuery,
   firstValue,
   formatWholeKc,
   isOpportunityStage,
@@ -123,6 +125,7 @@ export const PipelineFilters = ({
     ...employees.map((employee) => ({ label: employee.fullName, value: employee.id })),
   ];
   const unknownCustomer = t(`${K}.create.unknownCustomer`);
+  const [customerQuery, setCustomerQuery] = useState('');
   const customerItems =
     customers.status === 'ready'
       ? customers.items.flatMap((item) =>
@@ -140,6 +143,12 @@ export const PipelineFilters = ({
               ],
         )
       : [];
+  // The list filters on the typed text here, not inside Combobox, so it always follows the input.
+  const shownCustomerItems = filterItemsByQuery(
+    customerItems,
+    customerQuery,
+    customerItems.find((item) => item.value === customer)?.label,
+  );
 
   return (
     <div className="flex flex-wrap items-end gap-150">
@@ -157,13 +166,15 @@ export const PipelineFilters = ({
       <div className="w-48">
         <Combobox
           clearable
-          items={customerItems}
+          filterBehavior="external"
+          items={shownCustomerItems}
           label={t(`${K}.filters.customer`)}
           loading={customers.status === 'loading'}
           loadingMessage={t('sales-pipeline.loading')}
           name="customer"
           noResultsMessage={t(`${K}.create.noCustomerMatch`)}
           onChange={(values) => onCustomer(customerFilterOf(firstValue(values)))}
+          onInputValueChange={setCustomerQuery}
           placeholder={t(`${K}.filters.allCustomers`)}
           size="sm"
           value={customer === '' ? [] : [customer]}

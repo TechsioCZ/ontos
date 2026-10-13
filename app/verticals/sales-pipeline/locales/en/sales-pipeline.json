@@ -126,6 +126,7 @@
             "dateRequired": "Choose the expected close date.",
             "noteTooLong": "The note can have at most 2000 characters.",
             "productRequired": "Choose a product.",
+            "quantityMin": "Quantity must be a whole number of at least 1.",
             "titleRequired": "Enter the opportunity name."
           },
           "fields": {

@@ -1,10 +1,9 @@
 import { CalendarDateSchema } from '@app/shared-contracts';
-import { statusPresentation } from '@app/admin-ui';
+import { SidePanel, statusPresentation } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
@@ -17,7 +16,7 @@ import {
   PartyIdSchema,
 } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import { firstValue, isOpportunityStage, opportunityStages } from './pipeline-model.ts';
+import { filterItemsByQuery, firstValue, isOpportunityStage, opportunityStages } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 import { LinesEditor } from './pipeline-line-editor.tsx';
 import type { LineEntry } from './pipeline-line-editor.tsx';
@@ -49,6 +48,8 @@ interface FormDraft {
 interface FormErrors {
   readonly close: string | undefined;
   readonly customer: string | undefined;
+  /** A line quantity field holds an invalid value; the line itself shows the message. */
+  readonly lines: string | undefined;
   readonly note: string | undefined;
   readonly title: string | undefined;
 }
@@ -61,6 +62,9 @@ const formErrors = (draft: FormDraft, closeText: string, t: Translate): FormErro
     draft.customerId === null || Option.isNone(Schema.decodeOption(PartyIdSchema)(draft.customerId))
       ? t(`${K}.create.errors.customerRequired`)
       : undefined,
+  lines: draft.lines.some((entry) => entry.invalidQuantity !== undefined)
+    ? t(`${K}.create.errors.quantityMin`)
+    : undefined,
   note: isValidNote(draft.note.trim()) ? undefined : t(`${K}.create.errors.noteTooLong`),
   title: isValidTitle(draft.title.trim()) ? undefined : t(`${K}.create.errors.titleRequired`),
 });
@@ -109,6 +113,7 @@ export const OpportunityFormDialog = ({
   /** Calendar date as typed; decoded to a CalendarDate only on submit. */
   const [closeText, setCloseText] = useState<string>(() => initial?.expectedCloseDate ?? '');
   const [submitted, setSubmitted] = useState(false);
+  const [customerQuery, setCustomerQuery] = useState('');
 
   const errors = formErrors(draft, closeText, t);
   const visible = (message: string | undefined) => (submitted ? message : undefined);
@@ -124,6 +129,13 @@ export const OpportunityFormDialog = ({
             : [{ id: customer.id, label: customerLabel(customer, unknownCustomer), value: customer.id }],
         )
       : [];
+
+  // The list filters on the typed text here, not inside Combobox, so it always follows the input.
+  const shownCustomerItems = filterItemsByQuery(
+    customerItems,
+    customerQuery,
+    customerItems.find((item) => item.value === draft.customerId)?.label,
+  );
 
   const ownerItems = [
     { label: t(`${K}.owner.none`), value: NONE },
@@ -171,7 +183,7 @@ export const OpportunityFormDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
@@ -185,11 +197,9 @@ export const OpportunityFormDialog = ({
       // The form holds unsaved input, and the date control opens a picker layered outside the drawer. A stray
       // pointer or focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
       closeOnInteractOutside={false}
-      customTrigger
       description={isEdit ? t(`${K}.edit.description`) : t(`${K}.create.description`)}
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open
-      placement="right"
       size="lg"
       title={isEdit ? t(`${K}.edit.title`) : t(`${K}.create.title`)}
     >
@@ -207,8 +217,9 @@ export const OpportunityFormDialog = ({
         )}
         <Combobox
           error={customers.status === 'error' ? t(`${K}.create.customersFailed`) : undefined}
+          filterBehavior="external"
           helpText={visible(errors.customer) ?? ''}
-          items={customerItems}
+          items={shownCustomerItems}
           label={t(`${K}.create.fields.customer`)}
           loading={customers.status === 'loading'}
           loadingMessage={t('sales-pipeline.loading')}
@@ -218,12 +229,14 @@ export const OpportunityFormDialog = ({
             const next = firstValue(values);
             patch({ customerId: next === undefined || next === '' ? null : next });
           }}
+          onInputValueChange={setCustomerQuery}
           placeholder={t(`${K}.create.customerPlaceholder`)}
           required
           validateStatus={statusOf(visible(errors.customer))}
           value={draft.customerId === null ? [] : [draft.customerId]}
         />
         <FormInput
+          autoComplete="off"
           helpText={visible(errors.title)}
           id="opportunity-title"
           label={t(`${K}.create.fields.title`)}
@@ -259,6 +272,7 @@ export const OpportunityFormDialog = ({
           value={closeText}
         />
         <FormTextarea
+          autoComplete="off"
           helpText={visible(errors.note)}
           id="opportunity-note"
           label={t(`${K}.create.fields.note`)}
@@ -270,7 +284,7 @@ export const OpportunityFormDialog = ({
         />
         <LinesEditor lines={draft.lines} onChange={(lines) => patch({ lines })} products={products} />
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -313,7 +327,7 @@ export const StageDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
@@ -324,11 +338,10 @@ export const StageDialog = ({
           </Button>
         </>
       }
-      customTrigger
+      closeOnInteractOutside={false}
       description={description}
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open
-      placement="right"
       size="md"
       title={t(`${K}.stageDialog.title`)}
     >
@@ -368,6 +381,7 @@ export const StageDialog = ({
         )}
         {showNote && (
           <FormTextarea
+            autoComplete="off"
             helpText={submitted ? noteError : undefined}
             id="stage-note"
             label={t(`${K}.stageDialog.note`)}
@@ -379,7 +393,7 @@ export const StageDialog = ({
           />
         )}
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -419,7 +433,7 @@ export const OwnerDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
@@ -430,11 +444,10 @@ export const OwnerDialog = ({
           </Button>
         </>
       }
-      customTrigger
+      closeOnInteractOutside={false}
       description={description}
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open
-      placement="right"
       size="md"
       title={t(`${K}.owner.title`)}
     >
@@ -457,6 +470,6 @@ export const OwnerDialog = ({
           value={[owner]}
         />
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };

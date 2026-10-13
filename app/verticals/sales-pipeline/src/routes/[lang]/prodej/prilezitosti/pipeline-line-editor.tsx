@@ -8,12 +8,17 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { useRef, useState } from 'react';
 import { opportunityAmountMinor } from '../../../../../shared/model/opportunity.ts';
 import type { OpportunityLine } from '../../../../../shared/model/opportunity.ts';
-import { firstValue } from './pipeline-model.ts';
+import { firstValue, isValidQuantity } from './pipeline-model.ts';
 import type { LoadState, ProductOption } from './pipeline-references.ts';
 
 const K = 'sales-pipeline.pages.records';
 
 export interface LineEntry {
+  /**
+   * The number typed into the quantity field when it is not a whole number of at least 1. The field keeps showing
+   * it and the line reports it; `line` keeps the last valid quantity.
+   */
+  readonly invalidQuantity?: number;
   readonly key: string;
   readonly line: OpportunityLine;
 }
@@ -22,6 +27,8 @@ interface PickState {
   readonly productId: string | null;
   readonly quantity: number;
 }
+
+const emptyPick: PickState = { productId: null, quantity: 1 };
 
 interface LinesEditorProps {
   readonly lines: readonly LineEntry[];
@@ -37,34 +44,51 @@ interface LineRowProps {
 
 const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
   const { t } = useModernI18n();
-  const { line } = entry;
+  const { invalidQuantity, line } = entry;
+  const quantityInvalid = invalidQuantity !== undefined;
   return (
-    <li className="flex items-center gap-150 rounded-md border border-border-primary p-150">
-      <div className="flex min-w-0 flex-1 flex-col gap-50">
-        <span className="truncate font-medium text-sm">{line.productName}</span>
-        <span className="text-fg-secondary text-xs tabular-nums">
-          {t(`${K}.create.lineMeta`, { price: formatMoney(line.unitPriceMinor), vat: line.vatRate })}
+    <li className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
+      <div className="flex items-center gap-150">
+        <div className="flex min-w-0 flex-1 flex-col gap-50">
+          <span className="truncate font-medium text-sm">{line.productName}</span>
+          <span className="text-fg-secondary text-xs tabular-nums">
+            {t(`${K}.create.lineMeta`, { price: formatMoney(line.unitPriceMinor), vat: line.vatRate })}
+          </span>
+        </div>
+        <div className="w-24 shrink-0">
+          <NumericInput
+            clampValueOnBlur={false}
+            invalid={quantityInvalid}
+            locale="cs-CZ"
+            min={1}
+            onChange={onQuantity}
+            size="sm"
+            step={1}
+            value={invalidQuantity ?? line.quantity}
+          >
+            <NumericInput.Control>
+              <NumericInput.Input aria-label={t(`${K}.create.fields.quantity`)} />
+            </NumericInput.Control>
+          </NumericInput>
+        </div>
+        <span className="w-28 shrink-0 text-end font-medium text-sm tabular-nums">
+          {formatMoney(line.quantity * line.unitPriceMinor)}
         </span>
+        <Button
+          aria-label={t(`${K}.create.removeLine`)}
+          icon="icon-[mdi--delete-outline]"
+          onClick={onRemove}
+          size="sm"
+          theme="borderless"
+          type="button"
+          variant="secondary"
+        />
       </div>
-      <div className="w-24 shrink-0">
-        <NumericInput locale="cs-CZ" min={1} onChange={onQuantity} size="sm" step={1} value={line.quantity}>
-          <NumericInput.Control>
-            <NumericInput.Input aria-label={t(`${K}.create.fields.quantity`)} />
-          </NumericInput.Control>
-        </NumericInput>
-      </div>
-      <span className="w-28 shrink-0 text-end font-medium text-sm tabular-nums">
-        {formatMoney(line.quantity * line.unitPriceMinor)}
-      </span>
-      <Button
-        aria-label={t(`${K}.create.removeLine`)}
-        icon="icon-[mdi--delete-outline]"
-        onClick={onRemove}
-        size="sm"
-        theme="borderless"
-        type="button"
-        variant="secondary"
-      />
+      {quantityInvalid && (
+        <StatusText showIcon size="sm" status="error">
+          {t(`${K}.create.errors.quantityMin`)}
+        </StatusText>
+      )}
     </li>
   );
 };
@@ -75,7 +99,7 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
  */
 export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => {
   const { t } = useModernI18n();
-  const [pick, setPick] = useState<PickState>({ productId: null, quantity: 1 });
+  const [pick, setPick] = useState<PickState>(emptyPick);
   const [lineError, setLineError] = useState<string>();
   /** Local React keys for draft lines; never sent to the server. */
   const keySequence = useRef(0);
@@ -88,6 +112,8 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
     value: product.id,
   }));
   const total = opportunityAmountMinor(lines.map((entry) => entry.line));
+  // The typed quantity is kept as entered so an invalid value is reported, not silently replaced.
+  const quantityValid = isValidQuantity(pick.quantity);
 
   const addLine = () => {
     if (pickedProduct === undefined) {
@@ -107,15 +133,27 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
       },
     };
     onChange([...lines, entry]);
-    setPick({ productId: null, quantity: 1 });
+    setPick(emptyPick);
   };
 
+  /**
+   * A valid quantity updates the line; any other number stays as typed and is reported, never replaced. A field
+   * that is empty or mid-edit (not a number yet) changes nothing.
+   */
   const setQuantity = (key: string, value: number) => {
     if (!Number.isFinite(value)) {
       return;
     }
-    const quantity = Math.max(1, Math.trunc(value));
-    onChange(lines.map((entry) => (entry.key === key ? { ...entry, line: { ...entry.line, quantity } } : entry)));
+    onChange(
+      lines.map((entry): LineEntry => {
+        if (entry.key !== key) {
+          return entry;
+        }
+        return isValidQuantity(value)
+          ? { key: entry.key, line: { ...entry.line, quantity: value } }
+          : { ...entry, invalidQuantity: value };
+      }),
+    );
   };
 
   return (
@@ -144,6 +182,8 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
         </div>
         <div className="min-w-0">
           <FormNumericInput
+            clampValueOnBlur={false}
+            helpText={quantityValid ? undefined : t(`${K}.create.errors.quantityMin`)}
             id="opportunity-line-quantity"
             label={t(`${K}.create.fields.quantity`)}
             locale="cs-CZ"
@@ -151,10 +191,11 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
             name="lineQuantity"
             onChange={(value) => {
               if (Number.isFinite(value)) {
-                setPick((current) => ({ ...current, quantity: Math.max(1, Math.trunc(value)) }));
+                setPick((current) => ({ ...current, quantity: value }));
               }
             }}
             step={1}
+            validateStatus={quantityValid ? 'default' : 'error'}
             value={pick.quantity}
           >
             <NumericInput.Control>
@@ -172,7 +213,7 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
             })}
         </p>
         <Button
-          disabled={pick.productId === null}
+          disabled={pick.productId === null || !quantityValid}
           icon="icon-[mdi--plus]"
           onClick={addLine}
           size="sm"

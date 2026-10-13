@@ -31,7 +31,7 @@ const vocabulary = {
     VOIDED: { label: 'Stornovaná', variant: 'outline' },
   },
   opportunity: {
-    LEAD: { label: 'Lead', variant: 'outline' },
+    LEAD: { label: 'Nová', variant: 'outline' },
     LOST: { label: 'Prohraná', variant: 'danger' },
     NEGOTIATION: { label: 'Vyjednávání', variant: 'warning' },
     PROPOSAL: { label: 'Nabídka', variant: 'info' },

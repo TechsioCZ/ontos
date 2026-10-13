@@ -7,7 +7,7 @@ import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms
 import { DateTime } from 'effect';
 import type { ReactElement } from 'react';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
-import { formatWholeKc, opportunityStages } from './pipeline-model.ts';
+import { formatWholeKc, opportunityStages, stageRank } from './pipeline-model.ts';
 import type { EmployeeId } from './pipeline-model.ts';
 import type { CustomerOption, EmployeeOption } from './pipeline-references.ts';
 
@@ -90,6 +90,8 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     cell: (info) => <StatusBadge kind="opportunity" value={info.row.original.stage} />,
     header: t(`${K}.columns.stage`),
     meta: { options: stageOptions(), type: 'enum', width: 120 },
+    // The cell value stays the stage code for the enum options; sorting follows the pipeline order instead.
+    sortFn: (left, right) => stageRank(left.original.stage) - stageRank(right.original.stage),
   },
   {
     accessorKey: 'probability',

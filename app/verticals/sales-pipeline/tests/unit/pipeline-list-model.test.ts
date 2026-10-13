@@ -2,7 +2,14 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
-import { skipTally, sortNewestFirst } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-model.ts';
+import {
+  filterItemsByQuery,
+  foldSearchText,
+  isValidQuantity,
+  skipTally,
+  sortNewestFirst,
+  stageRank,
+} from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-model.ts';
 
 const idOf = (suffix: number) => `0196a8a0-0000-7000-8000-${String(suffix).padStart(12, '0')}`;
 const partyId = '0196a8a0-0000-7000-8000-0000000000aa';
@@ -55,4 +62,28 @@ it('counts an unchanged single-record command as skipped without a reason', () =
   const tally = skipTally(1, decodeResult({ opportunities: [], revision: 7 }));
   expect(tally).toEqual({ closed: 0, invalidTransition: 0, notFound: 0, other: 1, total: 1 });
   expect(skipTally(0, decodeResult({ opportunities: [], revision: 7 })).total).toBe(0);
+});
+
+it('finds accented names from an unaccented query', () => {
+  expect(foldSearchText('Zálohování')).toBe('zalohovani');
+  expect(foldSearchText('Příležitost ŘEŠENÍ')).toBe('prilezitost reseni');
+});
+
+it('filters customer labels by the typed text and keeps the picked label listed', () => {
+  const items = [{ label: 'Kroměřížská tiskárna s.r.o.' }, { label: 'Pražská pekárna' }];
+  expect(filterItemsByQuery(items, 'Kro')).toEqual([items[0]]);
+  expect(filterItemsByQuery(items, 'prazska')).toEqual([items[1]]);
+  expect(filterItemsByQuery(items, '  ')).toEqual(items);
+  expect(filterItemsByQuery(items, items[0].label, items[0].label)).toEqual(items);
+});
+
+it('ranks stages in pipeline order, not by code name', () => {
+  // Code order would put LOST before NEGOTIATION and WON; the pipeline puts them after PROPOSAL.
+  const pipelineOrder = ['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST'] as const;
+  expect(pipelineOrder.map((stage) => stageRank(stage))).toEqual([0, 1, 2, 3, 4, 5]);
+});
+
+it('accepts only whole line quantities of at least 1', () => {
+  expect([1, 5, 120].map((value) => isValidQuantity(value))).toEqual([true, true, true]);
+  expect([0, -5, 1.5, Number.NaN].map((value) => isValidQuantity(value))).toEqual([false, false, false, false]);
 });

@@ -1,10 +1,9 @@
-import { StatusBadge } from '@app/admin-ui';
+import { SidePanel, StatusBadge } from '@app/admin-ui';
 import { TagFilter } from '@app/tagging/components/tag-controls';
 import type { TagId } from '@app/tagging/contracts/records';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Effect, Match, Option, Schema } from 'effect';
 import { useState } from 'react';
@@ -294,7 +293,7 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
   ];
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
@@ -311,11 +310,10 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
           </Button>
         </>
       }
-      customTrigger
+      closeOnInteractOutside={false}
       description={t(`${K}.bulkByTag.description`)}
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open
-      placement="right"
       size="lg"
       title={t(`${K}.bulkByTag.title`)}
     >
@@ -363,6 +361,6 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
           valueMissing={submitted && patch === undefined}
         />
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };

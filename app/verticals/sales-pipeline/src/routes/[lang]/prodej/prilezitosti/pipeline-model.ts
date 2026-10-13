@@ -22,6 +22,9 @@ export const opportunityStages = [
 
 export const isOpportunityStage = Schema.is(OpportunityStageSchema);
 
+/** Position of a stage in the sales order, so sorting follows the pipeline rather than the code names. */
+export const stageRank = (stage: OpportunityStage): number => opportunityStages.indexOf(stage);
+
 const pluralRules = new Intl.PluralRules('cs-CZ');
 
 const opportunityNoun = (rule: string): string => {
@@ -69,5 +72,31 @@ export const skipTally = (requested: number, result: ApplyCommandResult): SkipTa
   };
 };
 
+/** A line quantity must be a whole number of at least 1. */
+export const isValidQuantity = (value: number): boolean => Number.isInteger(value) && value >= 1;
+
 /** First value of a Combobox or Select selection, or `undefined` when nothing is selected. */
 export const firstValue = (value: string | string[]): string | undefined => (Array.isArray(value) ? value[0] : value);
+
+/** Lowercase text without diacritics, so a search for `zalohovani` finds `Zálohování`. */
+export const foldSearchText = (text: string): string =>
+  text.normalize('NFD').replaceAll(/\p{M}/gu, '').toLocaleLowerCase('cs-CZ');
+
+/** Whether `text` contains `needle`, both compared through `foldSearchText`. `needle` must already be folded. */
+export const containsFolded = (text: string, needle: string): boolean => foldSearchText(text).includes(needle);
+
+/**
+ * Items whose label contains the typed query, ignoring case and diacritics. An empty query, or the label of the
+ * item already picked (the input shows it after a pick), keeps every item listed.
+ */
+export const filterItemsByQuery = <T extends { readonly label: string }>(
+  items: readonly T[],
+  query: string,
+  chosenLabel?: string,
+): T[] => {
+  const needle = foldSearchText(query.trim());
+  if (needle === '' || query === chosenLabel) {
+    return [...items];
+  }
+  return items.filter((item) => containsFolded(item.label, needle));
+};

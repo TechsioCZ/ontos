@@ -25,7 +25,7 @@ import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from '
 import { PipelineFilters, PipelineStats } from './pipeline-filters.tsx';
 import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import { skipTally, sortNewestFirst } from './pipeline-model.ts';
+import { containsFolded, foldSearchText, skipTally, sortNewestFirst } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage, SkipTally } from './pipeline-model.ts';
 import {
   PipelineEmptyState,
@@ -65,11 +65,11 @@ const filterRows = (
   unassignedOnly: boolean,
   tagMembers: ReadonlySet<string> | undefined,
 ) => {
-  const query = search.trim().toLocaleLowerCase('cs-CZ');
+  const query = foldSearchText(search.trim());
   return sortNewestFirst(
     items.filter(
       (item) =>
-        (query === '' || item.title.toLocaleLowerCase('cs-CZ').includes(query)) &&
+        (query === '' || containsFolded(item.title, query)) &&
         (!unassignedOnly || item.ownerEmployeeId === undefined) &&
         (tagMembers === undefined || tagMembers.has(item.id)),
     ),
@@ -273,7 +273,7 @@ const RecordsPageContent = () => {
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string>();
 
-  const { loadError, response } = usePipelineRecords(
+  const { loadError, pending, response } = usePipelineRecords(
     { customer: customerFilter, owner: ownerFilter, stage: stageFilter },
     reloadKey,
   );
@@ -494,7 +494,7 @@ const RecordsPageContent = () => {
         filtersActive={filtersActive}
         hasResponse={response !== undefined}
         loadError={loadError}
-        loading={(response === undefined && loadError === undefined) || tagState?.status === 'loading'}
+        loading={(response === undefined && loadError === undefined) || pending || tagState?.status === 'loading'}
         lookups={lookups}
         onClearFilters={clearFilters}
         onCreate={openCreate}

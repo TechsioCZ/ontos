@@ -19,7 +19,7 @@
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "status": {
       "opportunity": {
-        "LEAD": "Lead",
+        "LEAD": "Nová",
         "QUALIFIED": "Kvalifikovaná",
         "PROPOSAL": "Nabídka",
         "NEGOTIATION": "Vyjednávání",
@@ -105,7 +105,7 @@
           "submit": "Vytvořit příležitost",
           "submitting": "Ukládám…",
           "title": "Nová příležitost",
-          "description": "Příležitost se založí ve fázi Lead. Produkty se oceňují aktuální cenou.",
+          "description": "Příležitost se založí v první fázi obchodu. Produkty se oceňují aktuální cenou.",
           "customerPlaceholder": "Vyhledejte zákazníka…",
           "noCustomerMatch": "Žádný zákazník neodpovídá hledání.",
           "unknownCustomer": "Neznámý zákazník",
@@ -126,6 +126,7 @@
             "dateRequired": "Vyberte očekávané datum uzavření.",
             "noteTooLong": "Poznámka může mít nejvýše 2000 znaků.",
             "productRequired": "Vyberte produkt.",
+            "quantityMin": "Množství musí být celé číslo alespoň 1.",
             "titleRequired": "Vyplňte název příležitosti."
           },
           "fields": {
