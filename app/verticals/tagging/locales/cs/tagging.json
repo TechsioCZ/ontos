@@ -76,9 +76,9 @@
       "edit": "Upravit štítek",
       "failure": "Změnu se nepodařilo uložit. Zkuste to znovu.",
       "filter": {
-        "label": "Štítek",
+        "all": "Všechny štítky",
         "noResults": "Žádný štítek neodpovídá.",
-        "placeholder": "Vyberte štítek…"
+        "placeholder": "Štítek"
       },
       "form": {
         "cancel": "Zrušit",

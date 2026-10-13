@@ -152,7 +152,7 @@ const TagEditorDialog = ({
       <span className="flex items-center gap-100">
         <span
           aria-hidden
-          className="size-100 shrink-0 rounded-full"
+          className="size-2.5 shrink-0 rounded-full"
           style={{ backgroundColor: tagColorValue[color] }}
         />
         {t(`tagging.colors.${color}`)}
@@ -461,18 +461,25 @@ const tagColumns = (t: Translate): ColumnDef<TagWithCounts>[] => [
     meta: { width: 320 },
   },
   {
-    cell: (info) => (
-      <span className="flex flex-wrap gap-50">
-        {info.row.original.subjectKinds.map((kind) => {
-          const kindLabel = t(`tagging.kinds.${kind}`);
-          return (
-            <Badge key={kind} size="sm" variant="outline">
-              {`${kindLabel} ${info.row.original.counts[kind] ?? 0}`}
-            </Badge>
-          );
-        })}
-      </span>
-    ),
+    cell: (info) => {
+      const { counts, subjectKinds } = info.row.original;
+      return (
+        <span className="flex flex-wrap gap-50">
+          {subjectKinds.flatMap((kind) => {
+            const count = counts[kind] ?? 0;
+            if (count === 0) {
+              return [];
+            }
+            const kindLabel = t(`tagging.kinds.${kind}`);
+            return [
+              <Badge key={kind} size="sm" variant="outline">
+                {`${kindLabel} ${count}`}
+              </Badge>,
+            ];
+          })}
+        </span>
+      );
+    },
     enableSorting: false,
     header: t('tagging.tags.table.appliesTo'),
     id: 'appliesTo',
@@ -514,6 +521,9 @@ const TagsPageContent = () => {
     setRequest((current) => ({ id: current.id + 1 }));
   };
   const tags = state.status === 'ready' ? state.tags : noTags;
+  // The Popis column only earns its width when at least one tag has a description.
+  const hasDescriptions = tags.some((tag) => (tag.description ?? '') !== '');
+  const columns = tagColumns(t).filter((column) => hasDescriptions || column.id !== 'description');
 
   return (
     <>
@@ -528,7 +538,7 @@ const TagsPageContent = () => {
         title={t('tagging.pages.records.title')}
       />
       <DataTable
-        columns={tagColumns(t)}
+        columns={columns}
         data={tags}
         enableGlobalFilter
         enablePagination
