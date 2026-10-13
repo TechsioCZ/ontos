@@ -88,6 +88,17 @@ export const sameDraft = (left: EmployeeDraft, right: EmployeeDraft): boolean =>
   left.phone === right.phone &&
   left.role === right.role;
 
+/** The fields the list shows, trimmed as the server stores them. The page applies them to the rows before the reread. */
+export const listedFieldsOf = (
+  draft: EmployeeDraft,
+): Pick<Employee, 'active' | 'department' | 'email' | 'fullName' | 'role'> => ({
+  active: draft.active,
+  department: draft.department.trim(),
+  email: draft.email.trim(),
+  fullName: draft.fullName.trim(),
+  role: draft.role,
+});
+
 export const DraftFieldSchema = Schema.Literals(['department', 'email', 'fullName', 'phone']);
 export type DraftField = typeof DraftFieldSchema.Type;
 

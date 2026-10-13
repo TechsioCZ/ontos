@@ -20,6 +20,7 @@ import {
   employeeRoles,
   errorFieldKey,
   isDepartmentName,
+  listedFieldsOf,
   newEmployeeId,
   roleFromValue,
   sameDraft,
@@ -30,10 +31,20 @@ import type { CommitOutcome, DraftField, EmployeeDraft } from './employee-model.
 const key = 'workforce.pages.employees';
 const employeeFormId = 'employee-form';
 
-/** Runs one command. The page owns the revision, the toast and the list reload. */
+/** Fields a saved command shows on the rows of `ids` before the list reread settles. */
+export interface ShownEdit {
+  readonly ids: readonly EmployeeId[];
+  readonly patch: Partial<Employee>;
+}
+
+/**
+ * Runs one command. The page owns the revision, the toast and the list reload. `shown` is applied to the rows of `ids`
+ * as soon as the command saves, so the table matches the toast while the reread is still on its way.
+ */
 export type CommitCommand = (
   build: Effect.Effect<WorkforceCommand>,
   successKey: string,
+  shown?: ShownEdit,
 ) => Effect.Effect<CommitOutcome>;
 
 const commitErrorKey = (outcome: CommitOutcome): string => {
@@ -53,8 +64,11 @@ const roleItemsOf = (translate: (key: string) => string) =>
     return { displayValue: label, label, value: role };
   });
 
-/** Select labels inherit the surrounding font size; FormInput labels use the `md` label token. Match them. */
-const roleLabelProps = { className: 'text-label-md' };
+/**
+ * Select labels inherit the surrounding font size; FormInput and Combobox labels use the `md` label token. Every
+ * Select on this page takes these props, in the forms and in the filter bar, so all labels match.
+ */
+export const selectLabelProps = { className: 'text-label-md' };
 
 const closeWhenDismissed =
   (onClose: () => void) =>
@@ -66,7 +80,8 @@ const closeWhenDismissed =
 
 /**
  * Create (employee is null) or edit one Employee in a right-hand dialog. Every dialog on this page holds a draft,
- * so an outside click keeps it open; Escape, the close button and Zrušit close it.
+ * so an outside click keeps it open. Escape, the close button and Zrušit close it, after a discard confirmation when
+ * the draft has unsaved edits.
  */
 export const EmployeeFormDialog = ({
   commit,
@@ -86,6 +101,7 @@ export const EmployeeFormDialog = ({
   const [serverError, setServerError] = useState<string | null>(null);
   /** Set when the server reports that another Employee already uses the typed e-mail. */
   const [emailTaken, setEmailTaken] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const errors = draftErrors(draft);
   const set = (patch: Partial<EmployeeDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const fieldStatus = (field: DraftField) =>
@@ -96,6 +112,16 @@ export const EmployeeFormDialog = ({
     ? { helpText: t(`${key}.errors.emailTaken`), validateStatus: 'error' as const }
     : fieldStatus('email');
   const roleItems = roleItemsOf(t);
+
+  /** A dirty draft asks before Escape, the close button or Zrušit drop the typed edits. */
+  const dirty = !sameDraft(draft, employee === null ? emptyDraft : draftFromEmployee(employee));
+  const requestClose = () => {
+    if (dirty && !busy) {
+      setDiscardOpen(true);
+      return;
+    }
+    onClose();
+  };
 
   const submit = () => {
     // Enter in a field submits too; a save already running must not send a second command.
@@ -117,8 +143,9 @@ export const EmployeeFormDialog = ({
       employee === null
         ? newEmployeeId.pipe(Effect.map((id) => createCommand(id, draft)))
         : Effect.succeed(updateCommand(employee.id, draft));
+    const shown = employee === null ? undefined : { ids: [employee.id], patch: listedFieldsOf(draft) };
     void browserRuntime.runPromise(
-      commit(build, `${key}.toast.saved`).pipe(
+      commit(build, `${key}.toast.saved`, shown).pipe(
         Effect.tap((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -136,110 +163,137 @@ export const EmployeeFormDialog = ({
   };
 
   return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t(`${key}.form.cancel`)}
-          </Button>
-          {/* The form lives in the panel body, so the footer submit button points at it through `form`. Enter submits too. */}
-          <Button
-            form={employeeFormId}
-            isLoading={busy}
-            loadingText={t(`${key}.form.saving`)}
-            type="submit"
-            variant="primary"
-          >
-            {t(employee === null ? `${key}.form.create` : `${key}.form.save`)}
-          </Button>
-        </>
-      }
-      closeOnInteractOutside={false}
-      onOpenChange={(next) => {
-        if (!next) {
-          onClose();
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={requestClose} theme="outlined" variant="secondary">
+              {t(`${key}.form.cancel`)}
+            </Button>
+            {/* The form lives in the panel body, so the footer submit button points at it through `form`. Enter submits too. */}
+            <Button
+              form={employeeFormId}
+              isLoading={busy}
+              loadingText={t(`${key}.form.saving`)}
+              type="submit"
+              variant="primary"
+            >
+              {t(employee === null ? `${key}.form.create` : `${key}.form.save`)}
+            </Button>
+          </>
         }
-      }}
-      open
-      size="md"
-      title={t(employee === null ? `${key}.form.createTitle` : `${key}.form.editTitle`)}
-    >
-      <form
-        className="flex flex-col gap-200 py-200"
-        id={employeeFormId}
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
+        closeOnInteractOutside={false}
+        // The first field takes focus, not the close button the panel renders first.
+        initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#employee-full-name')}
+        onOpenChange={(next) => {
+          if (!next) {
+            requestClose();
+          }
         }}
+        open
+        size="md"
+        title={t(employee === null ? `${key}.form.createTitle` : `${key}.form.editTitle`)}
       >
-        {serverError !== null && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
-        )}
-        <FormInput
-          autoComplete="off"
-          id="employee-full-name"
-          label={t(`${key}.form.fullName`)}
-          name="fullName"
-          onChange={(event) => set({ fullName: event.target.value })}
-          required
-          value={draft.fullName}
-          {...fieldStatus('fullName')}
-        />
-        <FormInput
-          autoComplete="email"
-          id="employee-email"
-          label={t(`${key}.form.email`)}
-          name="email"
-          onChange={(event) => {
-            setEmailTaken(false);
-            set({ email: event.target.value });
+        <form
+          className="flex flex-col gap-200 py-200"
+          id={employeeFormId}
+          // Required-field and format messages stay inline in Czech; the browser bubble would show in English.
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
           }}
-          required
-          type="email"
-          value={draft.email}
-          {...emailStatus}
-        />
-        <FormInput
-          autoComplete="tel"
-          id="employee-phone"
-          label={t(`${key}.form.phone`)}
-          name="phone"
-          onChange={(event) => set({ phone: event.target.value })}
-          type="tel"
-          value={draft.phone}
-          {...fieldStatus('phone')}
-        />
-        <SelectTemplate
-          items={roleItems}
-          label={t(`${key}.form.role`)}
-          labelProps={roleLabelProps}
-          name="role"
-          onValueChange={(details) => {
-            const next = roleFromValue(details.value[0]);
-            if (next !== null) {
-              set({ role: next });
-            }
-          }}
-          placeholder={t('workforce.selectPlaceholder')}
-          value={[draft.role]}
-        />
-        <FormInput
-          autoComplete="off"
-          id="employee-department"
-          label={t(`${key}.form.department`)}
-          name="department"
-          onChange={(event) => set({ department: event.target.value })}
-          required
-          value={draft.department}
-          {...fieldStatus('department')}
-        />
-        <Switch checked={draft.active} onCheckedChange={(checked) => set({ active: checked })}>
-          {t(`${key}.form.active`)}
-        </Switch>
-      </form>
-    </SidePanel>
+        >
+          {serverError !== null && (
+            <StatusText showIcon status="error">
+              {serverError}
+            </StatusText>
+          )}
+          <FormInput
+            autoComplete="off"
+            id="employee-full-name"
+            label={t(`${key}.form.fullName`)}
+            name="fullName"
+            onChange={(event) => set({ fullName: event.target.value })}
+            required
+            value={draft.fullName}
+            {...fieldStatus('fullName')}
+          />
+          <FormInput
+            autoComplete="email"
+            id="employee-email"
+            label={t(`${key}.form.email`)}
+            name="email"
+            onChange={(event) => {
+              setEmailTaken(false);
+              set({ email: event.target.value });
+            }}
+            required
+            type="email"
+            value={draft.email}
+            {...emailStatus}
+          />
+          <FormInput
+            autoComplete="tel"
+            id="employee-phone"
+            label={t(`${key}.form.phone`)}
+            name="phone"
+            onChange={(event) => set({ phone: event.target.value })}
+            type="tel"
+            value={draft.phone}
+            {...fieldStatus('phone')}
+          />
+          <SelectTemplate
+            items={roleItems}
+            label={t(`${key}.form.role`)}
+            labelProps={selectLabelProps}
+            name="role"
+            onValueChange={(details) => {
+              const next = roleFromValue(details.value[0]);
+              if (next !== null) {
+                set({ role: next });
+              }
+            }}
+            placeholder={t('workforce.selectPlaceholder')}
+            value={[draft.role]}
+          />
+          <FormInput
+            autoComplete="off"
+            id="employee-department"
+            label={t(`${key}.form.department`)}
+            name="department"
+            onChange={(event) => set({ department: event.target.value })}
+            required
+            value={draft.department}
+            {...fieldStatus('department')}
+          />
+          <Switch checked={draft.active} onCheckedChange={(checked) => set({ active: checked })}>
+            {t(`${key}.form.active`)}
+          </Switch>
+        </form>
+      </SidePanel>
+      <Dialog
+        actions={
+          <>
+            <Button onClick={() => setDiscardOpen(false)} theme="outlined" type="button" variant="secondary">
+              {t(`${key}.discard.keep`)}
+            </Button>
+            <Button onClick={onClose} type="button" variant="danger">
+              {t(`${key}.discard.confirm`)}
+            </Button>
+          </>
+        }
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description={t(`${key}.discard.description`)}
+        hideCloseButton
+        onOpenChange={(details) => setDiscardOpen(details.open)}
+        open={discardOpen}
+        role="alertdialog"
+        size="sm"
+        title={t(`${key}.discard.title`)}
+      />
+    </>
   );
 };
 
@@ -271,7 +325,10 @@ export const BulkDepartmentDialog = ({
     setBusy(true);
     setServerError(null);
     void browserRuntime.runPromise(
-      commit(Effect.succeed(bulkCommand(ids, { department: trimmed })), `${key}.toast.bulkSaved`).pipe(
+      commit(Effect.succeed(bulkCommand(ids, { department: trimmed })), `${key}.toast.bulkSaved`, {
+        ids,
+        patch: { department: trimmed },
+      }).pipe(
         Effect.tap((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -308,6 +365,7 @@ export const BulkDepartmentDialog = ({
     >
       <form
         className="flex flex-col gap-200 py-200"
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
           submit();
@@ -355,7 +413,7 @@ export const BulkRoleDialog = ({
     setBusy(true);
     setServerError(null);
     void browserRuntime.runPromise(
-      commit(Effect.succeed(bulkCommand(ids, { role })), `${key}.toast.bulkSaved`).pipe(
+      commit(Effect.succeed(bulkCommand(ids, { role })), `${key}.toast.bulkSaved`, { ids, patch: { role } }).pipe(
         Effect.tap((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -399,7 +457,7 @@ export const BulkRoleDialog = ({
         <SelectTemplate
           items={roleItems}
           label={t(`${key}.form.role`)}
-          labelProps={roleLabelProps}
+          labelProps={selectLabelProps}
           name="bulkRole"
           onValueChange={(details) => {
             const next = roleFromValue(details.value[0]);

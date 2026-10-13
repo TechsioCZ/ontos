@@ -22,6 +22,12 @@
         "title": "Employees",
         "description": "People on the sales team, their roles and departments.",
         "create": "New employee",
+        "discard": {
+          "confirm": "Discard changes",
+          "description": "The details you entered in this form will be lost.",
+          "keep": "Keep editing",
+          "title": "Discard unsaved changes?"
+        },
         "stats": {
           "active": "Active",
           "departments": "Departments",

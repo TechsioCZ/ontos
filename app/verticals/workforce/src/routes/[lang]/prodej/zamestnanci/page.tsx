@@ -35,8 +35,8 @@ import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
-import { BulkDepartmentDialog, BulkRoleDialog, EmployeeFormDialog } from './employee-dialogs.tsx';
-import type { CommitCommand } from './employee-dialogs.tsx';
+import { BulkDepartmentDialog, BulkRoleDialog, EmployeeFormDialog, selectLabelProps } from './employee-dialogs.tsx';
+import type { CommitCommand, ShownEdit } from './employee-dialogs.tsx';
 import type { CommitOutcome, EmployeeFilters } from './employee-model.ts';
 import {
   allOption,
@@ -157,6 +157,21 @@ const outcomeOfFailure = (error: Effect.Error<ReturnType<typeof executeApplyComm
     Match.tag('ApplyCommandActionForbiddenProblem', (): CommitOutcome => 'forbidden'),
     Match.orElse((): CommitOutcome => 'failed'),
   );
+
+/** The list after a saved edit: the named rows show the saved fields. The reread that follows brings the server's values. */
+const withSavedEdit = (state: LoadState, shown: ShownEdit): LoadState => {
+  if (state.status !== 'ready') {
+    return state;
+  }
+  const ids = new Set(shown.ids);
+  return {
+    ...state,
+    data: {
+      ...state.data,
+      items: state.data.items.map((employee) => (ids.has(employee.id) ? { ...employee, ...shown.patch } : employee)),
+    },
+  };
+};
 
 /** Rows that carry the selected tag, read from the tags the list already loaded. No tag selected keeps every row. */
 const rowsWithTag = (rows: readonly Employee[], tagId: TagId | null, tagsBySubject: TagsBySubject): Employee[] =>
@@ -286,6 +301,7 @@ const EmployeeFilterBar = ({
         className="w-48"
         items={roleItems}
         label={t(`${key}.filters.role`)}
+        labelProps={selectLabelProps}
         name="roleFilter"
         onValueChange={(details) => onChange({ role: roleFromValue(details.value[0]) })}
         placeholder={t('workforce.selectPlaceholder')}
@@ -296,6 +312,7 @@ const EmployeeFilterBar = ({
         className="w-48"
         items={departmentItems}
         label={t(`${key}.filters.department`)}
+        labelProps={selectLabelProps}
         name="departmentFilter"
         onValueChange={(details) => onChange({ department: departmentFromValue(details.value[0]) })}
         placeholder={t('workforce.selectPlaceholder')}
@@ -336,40 +353,48 @@ const EmployeeBulkBar = ({
   readonly onTags: () => void;
 }) => {
   const { t } = useModernI18n();
+  // No selection renders nothing, so the page column keeps no empty gap for the bar.
+  if (count === 0) {
+    return null;
+  }
   return (
-    <BulkActionBar onClear={onClear} selectedCount={count}>
-      <Button disabled={busy} onClick={onDepartment} size="sm" theme="outlined" variant="secondary">
-        {t(`${key}.bulk.department`)}
-      </Button>
-      <Button disabled={busy} onClick={onRole} size="sm" theme="outlined" variant="secondary">
-        {t(`${key}.bulk.role`)}
-      </Button>
-      <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
-        {t(`${key}.bulk.tags`)}
-      </Button>
-      <Button
-        disabled={busy}
-        onClick={() => {
-          onSetActive(true);
-        }}
-        size="sm"
-        theme="outlined"
-        variant="secondary"
-      >
-        {t(`${key}.bulk.activate`)}
-      </Button>
-      <Button
-        disabled={busy}
-        onClick={() => {
-          onSetActive(false);
-        }}
-        size="sm"
-        theme="outlined"
-        variant="secondary"
-      >
-        {t(`${key}.bulk.deactivate`)}
-      </Button>
-    </BulkActionBar>
+    // Stays under the shell top bar (`--spacing-700` high) while the page scrolls, so the bulk actions stay in reach.
+    // The page background hides the rows scrolling under the bar's rounded corners.
+    <div className="sticky top-(--spacing-700) z-10 bg-base">
+      <BulkActionBar onClear={onClear} selectedCount={count}>
+        <Button disabled={busy} onClick={onDepartment} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.bulk.department`)}
+        </Button>
+        <Button disabled={busy} onClick={onRole} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.bulk.role`)}
+        </Button>
+        <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.bulk.tags`)}
+        </Button>
+        <Button
+          disabled={busy}
+          onClick={() => {
+            onSetActive(true);
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {t(`${key}.bulk.activate`)}
+        </Button>
+        <Button
+          disabled={busy}
+          onClick={() => {
+            onSetActive(false);
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {t(`${key}.bulk.deactivate`)}
+        </Button>
+      </BulkActionBar>
+    </div>
   );
 };
 
@@ -391,8 +416,10 @@ const EmployeesPageContent = () => {
 
   const reload = () => loadEmployees(setState);
 
+  const showSaved = (shown: ShownEdit) => setState((current) => withSavedEdit(current, shown));
+
   /** Sends one command on the revision the page last read. A conflict or a success reloads the list. */
-  const commit: CommitCommand = (build, successKey) => {
+  const commit: CommitCommand = (build, successKey, shown) => {
     if (state.status !== 'ready') {
       return Effect.succeed<CommitOutcome>('failed');
     }
@@ -414,6 +441,9 @@ const EmployeesPageContent = () => {
       Effect.tap((outcome) =>
         Effect.sync(() => {
           if (outcome === 'saved') {
+            if (shown !== undefined) {
+              showSaved(shown);
+            }
             toaster.create({ title: t(successKey), type: 'success' });
           }
           if (outcome === 'saved' || outcome === 'conflict') {
@@ -455,7 +485,10 @@ const EmployeesPageContent = () => {
   const bulkSetActive = (active: boolean) => {
     setBulkBusy(true);
     void browserRuntime.runPromise(
-      commit(Effect.succeed(bulkCommand(selectedIds, { active })), `${key}.toast.bulkSaved`).pipe(
+      commit(Effect.succeed(bulkCommand(selectedIds, { active })), `${key}.toast.bulkSaved`, {
+        ids: selectedIds,
+        patch: { active },
+      }).pipe(
         Effect.tap((outcome) =>
           Effect.sync(() => {
             setBulkBusy(false);
@@ -645,7 +678,11 @@ const EmployeesPageContent = () => {
       {form !== null && <EmployeeFormDialog commit={commit} employee={form.employee} onClose={() => setForm(null)} />}
       <BulkTagDialog
         kind="employee"
-        onDone={refetchTags}
+        onDone={() => {
+          refetchTags();
+          // Like the bulk role and department changes, a finished bulk tag change clears the selection.
+          setSelection({});
+        }}
         onOpenChange={setTagDialogOpen}
         open={tagDialogOpen}
         subjectIds={subjectIdsOf(selectedIds)}

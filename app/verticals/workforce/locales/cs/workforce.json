@@ -22,6 +22,12 @@
         "title": "Zaměstnanci",
         "description": "Lidé v obchodním týmu, jejich role a oddělení.",
         "create": "Nový zaměstnanec",
+        "discard": {
+          "confirm": "Zahodit změny",
+          "description": "Údaje, které jste ve formuláři zadali, se ztratí.",
+          "keep": "Pokračovat v úpravách",
+          "title": "Zahodit neuložené změny?"
+        },
         "stats": {
           "active": "Aktivní",
           "departments": "Oddělení",
