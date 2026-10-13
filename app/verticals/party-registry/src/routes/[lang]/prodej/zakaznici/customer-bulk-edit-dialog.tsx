@@ -61,6 +61,8 @@ const archiveOne = (customer: CustomerListItem, batch: ArchiveBatch, onStep: () 
       );
 
 export interface CustomerBulkEditDialogProps {
+  /** False without tagging write: the tag action is left out and archive is the only choice. */
+  readonly canTag: boolean;
   readonly items: readonly CustomerListItem[];
   readonly onArchived: () => void;
   readonly onChooseTag: () => void;
@@ -71,6 +73,7 @@ export interface CustomerBulkEditDialogProps {
 }
 
 export const CustomerBulkEditDialog = ({
+  canTag,
   items,
   onArchived,
   onChooseTag,
@@ -80,7 +83,9 @@ export const CustomerBulkEditDialog = ({
 }: CustomerBulkEditDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [action, setAction] = useState<BulkEditAction>('tags');
+  const [chosenAction, setChosenAction] = useState<BulkEditAction>('tags');
+  // Without tagging write the tag choice is not offered, so archive is the action whatever was chosen before.
+  const action: BulkEditAction = canTag ? chosenAction : 'archive';
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(0);
   const [failed, setFailed] = useState<readonly string[]>([]);
@@ -89,7 +94,9 @@ export const CustomerBulkEditDialog = ({
   const activeItems = items.filter((item) => item.status === 'ACTIVE');
   const advance = () => setDone(advanceCount);
 
+  // The dialog stays mounted, so the action resets to the neutral tag choice; a reopen never preselects archive.
   const close = () => {
+    setChosenAction('tags');
     setNotice(null);
     setFailed([]);
     onOpenChange(false);
@@ -183,14 +190,16 @@ export const CustomerBulkEditDialog = ({
       title={t(`${KEY}.title`)}
     >
       <div className="flex flex-col gap-200 py-200">
-        <RadioGroup onValueChange={(next) => setAction(parseAction(next))} size="sm" value={action}>
+        <RadioGroup onValueChange={(next) => setChosenAction(parseAction(next))} size="sm" value={action}>
           <RadioGroup.Label>{t(`${KEY}.actionLabel`)}</RadioGroup.Label>
           <RadioGroup.ItemGroup>
-            <RadioGroup.Item value="tags">
-              <RadioGroup.ItemHiddenInput />
-              <RadioGroup.ItemControl />
-              <RadioGroup.ItemText>{t(`${KEY}.actionTags`)}</RadioGroup.ItemText>
-            </RadioGroup.Item>
+            {canTag && (
+              <RadioGroup.Item value="tags">
+                <RadioGroup.ItemHiddenInput />
+                <RadioGroup.ItemControl />
+                <RadioGroup.ItemText>{t(`${KEY}.actionTags`)}</RadioGroup.ItemText>
+              </RadioGroup.Item>
+            )}
             <RadioGroup.Item value="archive">
               <RadioGroup.ItemHiddenInput />
               <RadioGroup.ItemControl />

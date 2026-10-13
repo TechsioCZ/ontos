@@ -93,6 +93,12 @@
           "companyId": "IČO",
           "conflict": "Someone else changed this record in the meantime. Reload it and repeat the change.",
           "createdAt": "Created",
+          "discard": {
+            "confirm": "Discard changes",
+            "description": "The unsaved name change will be lost.",
+            "keep": "Keep editing",
+            "title": "Discard unsaved changes?"
+          },
           "email": "E-mail",
           "errorRename": "The changes could not be saved. Try again.",
           "name": "Name",
@@ -107,20 +113,21 @@
           "vatId": "DIČ"
         },
         "filters": {
-          "allSegments": "All segments"
+          "allSegments": "All segments",
+          "allStatuses": "All statuses"
         },
         "newCustomer": "New customer",
         "search": {
           "placeholder": "Search name, IČO, e-mail or city…"
         },
         "state": {
-          "clearFilters": "Clear search",
+          "clearFilters": "Clear filters",
           "emptyDescription": "Create the first customer and start tracking deals.",
           "emptyTitle": "There are no customers yet.",
           "forbidden": "You do not have permission to view this section.",
           "loadError": "Data could not be loaded.",
           "loadErrorDescription": "Check the connection and try again.",
-          "noResults": "No customer matches the search.",
+          "noResults": "No customer matches the filters.",
           "retry": "Try again"
         },
         "stats": {

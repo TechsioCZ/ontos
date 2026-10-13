@@ -94,6 +94,12 @@
           "companyId": "IČO",
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "createdAt": "Vytvořeno",
+          "discard": {
+            "confirm": "Zahodit změny",
+            "description": "Neuložená změna názvu se ztratí.",
+            "keep": "Pokračovat v úpravách",
+            "title": "Zahodit neuložené změny?"
+          },
           "email": "E-mail",
           "errorRename": "Změny se nepodařilo uložit. Zkuste to znovu.",
           "name": "Název",
@@ -108,20 +114,21 @@
           "vatId": "DIČ"
         },
         "filters": {
-          "allSegments": "Všechny segmenty"
+          "allSegments": "Všechny segmenty",
+          "allStatuses": "Všechny stavy"
         },
         "newCustomer": "Nový zákazník",
         "search": {
           "placeholder": "Hledat zákazníka…"
         },
         "state": {
-          "clearFilters": "Zrušit hledání",
+          "clearFilters": "Zrušit filtry",
           "emptyDescription": "Vytvořte prvního zákazníka a začněte evidovat obchody.",
           "emptyTitle": "Zatím tu nejsou žádní zákazníci.",
           "forbidden": "K této sekci nemáte oprávnění.",
           "loadError": "Data se nepodařilo načíst.",
           "loadErrorDescription": "Zkontrolujte připojení a zkuste to znovu.",
-          "noResults": "Hledání neodpovídá žádnému zákazníkovi.",
+          "noResults": "Filtrům neodpovídá žádný zákazník.",
           "retry": "Zkusit znovu"
         },
         "stats": {

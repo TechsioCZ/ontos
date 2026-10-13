@@ -131,5 +131,7 @@ export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
     taggedIds,
     tagsBySubject: tags.tagsBySubject,
     tagStatus: tags.status,
+    /** Only a tagging read that says so offers tag edits; while it loads or after it fails, they stay hidden. */
+    tagsWritable: tags.canWrite === true,
   };
 };

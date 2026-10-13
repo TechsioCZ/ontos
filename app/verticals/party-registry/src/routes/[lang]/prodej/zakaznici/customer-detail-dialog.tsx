@@ -9,6 +9,7 @@ import { DetailList, SidePanel, formatDate } from '@app/admin-ui';
 
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { DiscardDialog } from './customer-discard-dialog.tsx';
 import { renameCustomer, renameFailureKey } from './customers-data.ts';
 import { orDash } from './customers-model.ts';
 
@@ -34,13 +35,24 @@ const CustomerDetailView = ({ customer, onOpenChange, onRenamed }: CustomerDetai
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const trimmed = name.trim();
   const nameError = submitted && trimmed.length === 0 ? t(`${KEY}.nameRequired`) : undefined;
+  const dirty = name !== (customer.displayName ?? '');
 
   const applyRenamed = () => {
     toaster.create({ title: t(`${KEY}.toastRenamed`), type: 'success' });
     onRenamed();
     onOpenChange(false);
+  };
+
+  /** Escape, the close button and the footer Zavřít ask before a changed name is dropped. */
+  const requestClose = (open: boolean) => {
+    if (!open && dirty && !busy) {
+      setDiscardOpen(true);
+      return;
+    }
+    onOpenChange(open);
   };
 
   const save = () => {
@@ -62,52 +74,66 @@ const CustomerDetailView = ({ customer, onOpenChange, onRenamed }: CustomerDetai
   };
 
   return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
-            {t(`${KEY}.cancel`)}
-          </Button>
-          <Button isLoading={busy} loadingText={t(`${KEY}.saving`)} onClick={save} variant="primary">
-            {t(`${KEY}.save`)}
-          </Button>
-        </>
-      }
-      onOpenChange={onOpenChange}
-      open
-      size="md"
-      title={customer.displayName ?? t(`${KEY}.title`)}
-    >
-      <div className="flex flex-col gap-250 py-200">
-        {notice !== null && (
-          <StatusText showIcon status="error">
-            {notice}
-          </StatusText>
-        )}
-        <DetailList
-          items={[
-            { label: t(`${KEY}.companyId`), value: orDash(customer.companyId) },
-            { label: t(`${KEY}.vatId`), value: orDash(customer.vatId) },
-            { label: t(`${KEY}.email`), value: orDash(customer.email) },
-            { label: t(`${KEY}.phone`), value: orDash(customer.phone) },
-            { label: t(`${KEY}.city`), value: orDash(customer.city) },
-            { label: t(`${KEY}.createdAt`), value: formatDate(customer.createdAt) },
-            { label: t(`${KEY}.status`), value: t(`${STATUS_KEY}.${customer.status}`) },
-          ]}
-        />
-        <FormInput
-          autoComplete="off"
-          helpText={nameError}
-          id="customer-rename"
-          label={t(`${KEY}.rename`)}
-          name="displayName"
-          onChange={(event) => setName(event.target.value)}
-          required
-          validateStatus={nameError === undefined ? 'default' : 'error'}
-          value={name}
-        />
-      </div>
-    </SidePanel>
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={() => requestClose(false)} theme="outlined" variant="secondary">
+              {t(`${KEY}.cancel`)}
+            </Button>
+            <Button isLoading={busy} loadingText={t(`${KEY}.saving`)} onClick={save} variant="primary">
+              {t(`${KEY}.save`)}
+            </Button>
+          </>
+        }
+        // A stray click outside must not drop a changed name; Escape, the close button and Zavřít still ask first.
+        closeOnInteractOutside={false}
+        onOpenChange={requestClose}
+        open
+        size="md"
+        title={customer.displayName ?? t(`${KEY}.title`)}
+      >
+        <div className="flex flex-col gap-250 py-200">
+          {notice !== null && (
+            <StatusText showIcon status="error">
+              {notice}
+            </StatusText>
+          )}
+          <DetailList
+            items={[
+              { label: t(`${KEY}.companyId`), value: orDash(customer.companyId) },
+              { label: t(`${KEY}.vatId`), value: orDash(customer.vatId) },
+              { label: t(`${KEY}.email`), value: orDash(customer.email) },
+              { label: t(`${KEY}.phone`), value: orDash(customer.phone) },
+              { label: t(`${KEY}.city`), value: orDash(customer.city) },
+              { label: t(`${KEY}.createdAt`), value: formatDate(customer.createdAt) },
+              { label: t(`${KEY}.status`), value: t(`${STATUS_KEY}.${customer.status}`) },
+            ]}
+          />
+          <FormInput
+            autoComplete="off"
+            helpText={nameError}
+            id="customer-rename"
+            label={t(`${KEY}.rename`)}
+            name="displayName"
+            onChange={(event) => setName(event.target.value)}
+            required
+            validateStatus={nameError === undefined ? 'default' : 'error'}
+            value={name}
+          />
+        </div>
+      </SidePanel>
+      <DiscardDialog
+        copyKey={KEY}
+        onCancel={() => setDiscardOpen(false)}
+        onConfirm={() => {
+          setDiscardOpen(false);
+          onOpenChange(false);
+        }}
+        onOpenChange={setDiscardOpen}
+        open={discardOpen}
+      />
+    </>
   );
 };
 

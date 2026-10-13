@@ -4,14 +4,14 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SidePanel, dialogCloseLabel } from '@app/admin-ui';
+import { SidePanel } from '@app/admin-ui';
 
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CreatedCustomer, CustomerListItem } from '../../../../api/customers-client.ts';
 import { existingCustomerWithCompanyId } from '../../../../api/customer-create-decision.ts';
+import { DiscardDialog } from './customer-discard-dialog.tsx';
 import {
   aresFailureKey,
   createCustomerFromDraft,
@@ -97,41 +97,6 @@ const NO_FIELD_NOTICES: FieldNotices = { ico: null, name: null };
 
 /** Fields carrying a notice, for focusing the first of them. */
 const noticedFields = (notices: FieldNotices) => (['ico', 'name'] as const).filter((field) => notices[field] !== null);
-
-interface DiscardDialogProps {
-  readonly onCancel: () => void;
-  readonly onConfirm: () => void;
-  readonly onOpenChange: (open: boolean) => void;
-  readonly open: boolean;
-}
-
-/** Asks before a dirty form is dropped; Escape and the keep button both leave the typed values alone. */
-const DiscardDialog = ({ onCancel, onConfirm, onOpenChange, open }: DiscardDialogProps) => {
-  const { t } = useModernI18n();
-  return (
-    <Dialog
-      actions={
-        <>
-          <Button onClick={onCancel} theme="outlined" type="button" variant="secondary">
-            {t(`${KEY}.discard.keep`)}
-          </Button>
-          <Button onClick={onConfirm} type="button" variant="danger">
-            {t(`${KEY}.discard.confirm`)}
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      customTrigger
-      description={t(`${KEY}.discard.description`)}
-      hideCloseButton
-      onOpenChange={(details) => onOpenChange(details.open)}
-      open={open}
-      role="alertdialog"
-      size="sm"
-      title={t(`${KEY}.discard.title`)}
-    />
-  );
-};
 
 /** Message props one field takes from the dialog: help text, or an error or warning about its value. */
 interface FieldMessage {
@@ -525,6 +490,7 @@ export const CustomerCreateDialog = ({
         </form>
       </SidePanel>
       <DiscardDialog
+        copyKey={KEY}
         onCancel={() => setDiscardOpen(false)}
         onConfirm={discard}
         onOpenChange={setDiscardOpen}

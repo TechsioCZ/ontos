@@ -54,6 +54,9 @@ const pinning = { end: [], start: ['__select', 'displayName'] };
  */
 const defaultColumnVisibility = { phone: false, status: false, vatId: false } satisfies ColumnVisibility;
 const allSegments = 'all';
+/** Archived customers stay out of the list until the status filter asks for them. */
+const allStatuses = 'all';
+const defaultStatusFilter = 'ACTIVE';
 
 type LoadState =
   | { readonly status: 'loading' }
@@ -107,22 +110,26 @@ const downloadCsv = (csv: string) => {
 interface CustomerFilterRowProps {
   readonly onSearchChange: (search: string) => void;
   readonly onSegmentChange: (segment: string) => void;
+  readonly onStatusChange: (status: string) => void;
   readonly onTagChange: (tagId: TagId | null) => void;
   readonly search: string;
   /** Null hides the segment select, which appears only while segments load. */
   readonly segmentFilter: string | null;
+  readonly statusFilter: string;
   readonly tagFilter: TagId | null;
   readonly tagFilterFailed: boolean;
   readonly tagFilterLoading: boolean;
 }
 
-/** The one filter row: search, tag and segment, all size sm at fixed widths. */
+/** The one filter row: search, status, tag and segment, all size sm at fixed widths. */
 const CustomerFilterRow = ({
   onSearchChange,
   onSegmentChange,
+  onStatusChange,
   onTagChange,
   search,
   segmentFilter,
+  statusFilter,
   tagFilter,
   tagFilterFailed,
   tagFilterLoading,
@@ -131,6 +138,11 @@ const CustomerFilterRow = ({
   const segmentItems = [
     { label: t(`${key}.filters.allSegments`), value: allSegments },
     ...customerSegmentDefinitions.map((definition) => ({ label: definition.name, value: definition.businessCode })),
+  ];
+  const statusItems = [
+    { label: t(`${key}.filters.allStatuses`), value: allStatuses },
+    { label: t(`${key}.status.ACTIVE`), value: 'ACTIVE' },
+    { label: t(`${key}.status.ARCHIVED`), value: 'ARCHIVED' },
   ];
   return (
     <>
@@ -144,6 +156,20 @@ const CustomerFilterRow = ({
           type="search"
           value={search}
         />
+        <div className="w-48">
+          <SelectTemplate
+            items={statusItems}
+            label={t(`${key}.columns.status`)}
+            name="status"
+            onValueChange={(details) => {
+              const [next] = details.value;
+              onStatusChange(next ?? allStatuses);
+            }}
+            placeholder={t('party-registry.selectPlaceholder')}
+            size="sm"
+            value={[statusFilter]}
+          />
+        </div>
         <TagFilter kind="customer" onChange={onTagChange} value={tagFilter} />
         {segmentFilter !== null && (
           <div className="w-48">
@@ -175,15 +201,19 @@ interface CustomerBulkBarProps {
   readonly onExport: () => void;
   readonly onTags: () => void;
   readonly selectedCount: number;
+  /** False without tagging write, so a read-only role never opens a tag panel the owner would refuse. */
+  readonly tagsWritable: boolean;
 }
 
-const CustomerBulkBar = ({ onClear, onEdit, onExport, onTags, selectedCount }: CustomerBulkBarProps) => {
+const CustomerBulkBar = ({ onClear, onEdit, onExport, onTags, selectedCount, tagsWritable }: CustomerBulkBarProps) => {
   const { t } = useModernI18n();
   return (
     <BulkActionBar onClear={onClear} selectedCount={selectedCount}>
-      <Button icon="icon-[mdi--tag-multiple-outline]" onClick={onTags} size="sm" theme="outlined" variant="secondary">
-        {t(`${key}.bulk.tags`)}
-      </Button>
+      {tagsWritable && (
+        <Button icon="icon-[mdi--tag-multiple-outline]" onClick={onTags} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.bulk.tags`)}
+        </Button>
+      )}
       {onEdit !== undefined && (
         <Button icon="icon-[mdi--square-edit-outline]" onClick={onEdit} size="sm" theme="outlined" variant="secondary">
           {t(`${key}.bulk.edit`)}
@@ -202,6 +232,62 @@ const CustomerBulkBar = ({ onClear, onEdit, onExport, onTags, selectedCount }: C
   );
 };
 
+interface CustomersEmptyProps {
+  /** A narrowing filter hides every loaded customer, so the table offers to clear filters instead of creating. */
+  readonly filtered: boolean;
+  readonly onClearFilters: () => void;
+  /** Absent when the owner refused customer writes for this role. */
+  readonly onCreate: (() => void) | undefined;
+  readonly onRetry: () => void;
+  readonly status: LoadState['status'];
+}
+
+/** The table's empty body: load error, no access, no filter match, or an empty register. */
+const CustomersEmpty = ({ filtered, onClearFilters, onCreate, onRetry, status }: CustomersEmptyProps) => {
+  const { t } = useModernI18n();
+  if (status === 'error') {
+    return (
+      <EmptyState
+        action={
+          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.state.retry`)}
+          </Button>
+        }
+        description={t(`${key}.state.loadErrorDescription`)}
+        title={t(`${key}.state.loadError`)}
+      />
+    );
+  }
+  if (status === 'forbidden') {
+    return <EmptyState title={t(`${key}.state.forbidden`)} />;
+  }
+  if (filtered) {
+    return (
+      <EmptyState
+        action={
+          <Button onClick={onClearFilters} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.state.clearFilters`)}
+          </Button>
+        }
+        title={t(`${key}.state.noResults`)}
+      />
+    );
+  }
+  return (
+    <EmptyState
+      action={
+        onCreate === undefined ? undefined : (
+          <Button onClick={onCreate} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.newCustomer`)}
+          </Button>
+        )
+      }
+      description={t(`${key}.state.emptyDescription`)}
+      title={t(`${key}.state.emptyTitle`)}
+    />
+  );
+};
+
 const CustomersContent = () => {
   const { t } = useModernI18n();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -213,6 +299,7 @@ const CustomersContent = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
   const [segmentFilter, setSegmentFilter] = useState<string>(allSegments);
+  const [statusFilter, setStatusFilter] = useState<string>(defaultStatusFilter);
   /** The owner refused a customer write for this role, so create and archive actions are hidden. */
   const [writesRefused, setWritesRefused] = useState(customerWritesRefused);
   const refuseWrites = () => {
@@ -240,6 +327,7 @@ const CustomersContent = () => {
   const segmentsShown = segments !== null && !enrichment.segmentsFailed;
   const visible = items.filter(
     (item) =>
+      (statusFilter === allStatuses || item.status === statusFilter) &&
       matchesCustomerSearch(item, search) &&
       (tagFilter === null || (taggedIds?.has(item.partyId) ?? false)) &&
       (!segmentsShown || segmentFilter === allSegments || segments?.get(item.partyId)?.code === segmentFilter),
@@ -342,6 +430,20 @@ const CustomersContent = () => {
     downloadCsv(buildCustomersCsv(header, rows));
   };
 
+  // Any narrowing filter, the default Aktivní status included, makes an empty table read "no match", not "no customers".
+  const filtered =
+    items.length > 0 &&
+    (search.trim().length > 0 ||
+      statusFilter !== allStatuses ||
+      tagFilter !== null ||
+      (segmentsShown && segmentFilter !== allSegments));
+  const clearFilters = () => {
+    setSearch('');
+    setStatusFilter(allStatuses);
+    setSegmentFilter(allSegments);
+    enrichment.handleTagFilterChange(null);
+  };
+
   const openCreate = () => setCreateOpen(true);
   const closeDetail = (open: boolean) => {
     if (!open) {
@@ -349,49 +451,15 @@ const CustomersContent = () => {
     }
   };
 
-  const renderEmpty = () => {
-    if (state.status === 'error') {
-      return (
-        <EmptyState
-          action={
-            <Button onClick={retry} size="sm" theme="outlined" variant="secondary">
-              {t(`${key}.state.retry`)}
-            </Button>
-          }
-          description={t(`${key}.state.loadErrorDescription`)}
-          title={t(`${key}.state.loadError`)}
-        />
-      );
-    }
-    if (state.status === 'forbidden') {
-      return <EmptyState title={t(`${key}.state.forbidden`)} />;
-    }
-    if (search.trim().length > 0) {
-      return (
-        <EmptyState
-          action={
-            <Button onClick={() => setSearch('')} size="sm" theme="outlined" variant="secondary">
-              {t(`${key}.state.clearFilters`)}
-            </Button>
-          }
-          title={t(`${key}.state.noResults`)}
-        />
-      );
-    }
-    return (
-      <EmptyState
-        action={
-          writesRefused ? undefined : (
-            <Button onClick={openCreate} size="sm" theme="outlined" variant="secondary">
-              {t(`${key}.newCustomer`)}
-            </Button>
-          )
-        }
-        description={t(`${key}.state.emptyDescription`)}
-        title={t(`${key}.state.emptyTitle`)}
-      />
-    );
-  };
+  const renderEmpty = () => (
+    <CustomersEmpty
+      filtered={filtered}
+      onClearFilters={clearFilters}
+      onCreate={writesRefused ? undefined : openCreate}
+      onRetry={retry}
+      status={state.status}
+    />
+  );
 
   return (
     <>
@@ -421,9 +489,11 @@ const CustomersContent = () => {
         <CustomerFilterRow
           onSearchChange={setSearch}
           onSegmentChange={setSegmentFilter}
+          onStatusChange={setStatusFilter}
           onTagChange={enrichment.handleTagFilterChange}
           search={search}
           segmentFilter={segmentsShown ? segmentFilter : null}
+          statusFilter={statusFilter}
           tagFilter={tagFilter}
           tagFilterFailed={enrichment.tagFilterFailed}
           tagFilterLoading={enrichment.tagFilterLoading}
@@ -435,6 +505,7 @@ const CustomersContent = () => {
           onExport={exportSelected}
           onTags={() => setTagOpen(true)}
           selectedCount={selectedItems.length}
+          tagsWritable={enrichment.tagsWritable}
         />
 
         <DataTable
@@ -475,6 +546,7 @@ const CustomersContent = () => {
       />
       <CustomerDetailDialog customer={detail} onOpenChange={closeDetail} onRenamed={reload} />
       <CustomerBulkEditDialog
+        canTag={enrichment.tagsWritable}
         items={selectedItems}
         onArchived={reload}
         onChooseTag={() => setTagOpen(true)}

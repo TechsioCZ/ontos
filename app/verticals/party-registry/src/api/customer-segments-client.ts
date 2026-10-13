@@ -227,12 +227,14 @@ const toSegmentsError = (cause: unknown) =>
       });
 
 /**
- * A role without the create permission gets a 403 for create-customer-group on every full page load, because the
- * module cache below starts empty each time. The refusal is therefore also kept in sessionStorage, keyed by the
- * principal and tenant named in the gateway assertion, and a later load with the same identity skips the request.
- * Another account or tenant in the same tab has a different key, so it still asks the owner.
+ * The module cache below starts empty on every full page load, so without a memo each load replays the four
+ * create-customer-group Actions, and a role without the create permission gets a 403 each time. Both outcomes are
+ * therefore kept in sessionStorage, keyed by the principal and tenant named in the gateway assertion: the refusal,
+ * and the resolved groups. A later load with the same identity skips the create requests. Another account or tenant
+ * in the same tab has a different key, so it still asks the owner.
  */
 const refusedCreateStorageKey = (principalKey: string) => `party-registry.segments.create-refused:${principalKey}`;
+const resolvedGroupsStorageKey = (principalKey: string) => `party-registry.segments.groups:${principalKey}`;
 const AssertionClaimsSchema = Schema.fromJsonString(
   Schema.Struct({ principal: Schema.Struct({ principalId: Schema.String, tenantId: Schema.String }) }),
 );
@@ -258,17 +260,21 @@ const createWasRefused = (principalKey: string | undefined): boolean => {
     return false;
   }
 };
-const rememberCreateRefusal = (principalKey: string | undefined) =>
+/** Stores `value` under `key`; `null` removes the item. */
+const writeSessionItem = (key: string, value: string | null) =>
   Effect.sync(() => {
-    if (principalKey === undefined) {
-      return;
-    }
     try {
-      sessionStorageOrUndefined()?.setItem(refusedCreateStorageKey(principalKey), '1');
+      if (value === null) {
+        sessionStorageOrUndefined()?.removeItem(key);
+      } else {
+        sessionStorageOrUndefined()?.setItem(key, value);
+      }
     } catch {
       // Storage is full or blocked: the next full page load asks the owner again.
     }
   });
+const rememberCreateRefusal = (principalKey: string | undefined) =>
+  principalKey === undefined ? Effect.void : writeSessionItem(refusedCreateStorageKey(principalKey), '1');
 
 const correlation = (operation: string) =>
   Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
@@ -339,20 +345,61 @@ interface SegmentGroup {
   readonly segment: CustomerSegment;
 }
 
-const resolveSegment = (definition: CustomerSegmentDefinition & { readonly businessCode: CustomerSegmentCode }) =>
-  viaOwner('segment', 'action', ({ config, options }) => {
-    const principalKey = principalKeyOf(config.credential);
-    const refusedEarlier: Effect.Effect<void, CustomerSegmentsError> = createWasRefused(principalKey)
-      ? Effect.fail(
-          new CustomerSegmentsError({
-            forbidden: true,
-            reason: 'create-customer-group was refused earlier in this browser session',
-            retryable: false,
-          }),
-        )
-      : Effect.void;
-    return refusedEarlier.pipe(
-      Effect.andThen(makeGovernedEffectBffClient({ api: CreateGroupApi, ...config }, options)),
+/** Stored form of the resolved groups: the owner's group ref and current name per segment code. */
+const StoredSegmentGroupsSchema = Schema.fromJsonString(
+  Schema.Array(Schema.Struct({ code: Schema.String, name: Schema.String, ref: GroupRefSchema })),
+);
+const decodeStoredSegmentGroups = Schema.decodeUnknownOption(StoredSegmentGroupsSchema);
+const encodeStoredSegmentGroups = Schema.encodeOption(StoredSegmentGroupsSchema);
+
+/** Groups resolved earlier in this browser session, when every stored code is still one of the definitions. */
+const storedSegmentGroups = (principalKey: string): readonly SegmentGroup[] | undefined => {
+  let raw: string | null | undefined;
+  try {
+    raw = sessionStorageOrUndefined()?.getItem(resolvedGroupsStorageKey(principalKey));
+  } catch {
+    return undefined;
+  }
+  const stored = raw === null || raw === undefined ? Option.none() : decodeStoredSegmentGroups(raw);
+  if (Option.isNone(stored)) {
+    return undefined;
+  }
+  const groups: SegmentGroup[] = [];
+  for (const { code, name, ref } of stored.value) {
+    const definition = customerSegmentDefinitions.find((candidate) => candidate.businessCode === code);
+    if (definition === undefined) {
+      return undefined;
+    }
+    groups.push({ ref, segment: { code: definition.businessCode, groupId: ref.resourceId, name } });
+  }
+  return groups;
+};
+/** Stores the resolved groups, or removes them with `null`. */
+const rememberSegmentGroups = (principalKey: string | undefined, groups: readonly SegmentGroup[] | null) => {
+  if (principalKey === undefined) {
+    return Effect.void;
+  }
+  const encoded =
+    groups === null
+      ? Option.none<string>()
+      : encodeStoredSegmentGroups(groups.map(({ ref, segment }) => ({ code: segment.code, name: segment.name, ref })));
+  return writeSessionItem(resolvedGroupsStorageKey(principalKey), Option.getOrNull(encoded));
+};
+
+/**
+ * The `principalId:tenantId` of the signed-in user, read from a fresh owner-audience gateway assertion. The
+ * assertion is never sent to the owner; it only keys the session memos before any owner request is made.
+ */
+const currentPrincipalKey = ownerGateway
+  .invoke((credential) => Effect.succeed(principalKeyOf(Redacted.make(credential))))
+  .pipe(Effect.mapError(toSegmentsError));
+
+const resolveSegment = (
+  definition: CustomerSegmentDefinition & { readonly businessCode: CustomerSegmentCode },
+  principalKey: string | undefined,
+) =>
+  viaOwner('segment', 'action', ({ config, options }) =>
+    makeGovernedEffectBffClient({ api: CreateGroupApi, ...config }, options).pipe(
       Effect.flatMap((client) =>
         client.CreateCustomerGroupAction.execute({
           payload: {
@@ -368,8 +415,8 @@ const resolveSegment = (definition: CustomerSegmentDefinition & { readonly busin
         }),
       ),
       Effect.tapError((cause) => (isForbiddenProblem(cause) ? rememberCreateRefusal(principalKey) : Effect.void)),
-    );
-  }).pipe(
+    ),
+  ).pipe(
     Effect.map(({ group }): SegmentGroup | undefined =>
       group.currentState === 'ACTIVE'
         ? {
@@ -388,16 +435,46 @@ const resolveSegment = (definition: CustomerSegmentDefinition & { readonly busin
 const transientRetry = Schedule.exponential('300 millis').pipe(Schedule.upTo({ times: 2 }));
 
 /**
- * Definitions resolve one at a time and the first failure stops the rest, so an owner that refuses the
- * call costs one request instead of four. Only a transient owner 503 (several list pages replaying the same
- * create at once) is asked again, each time with a fresh gateway assertion and idempotency key.
+ * Groups resolved earlier in this browser session come from sessionStorage without an owner request, and a role
+ * refused earlier fails at once. Otherwise definitions resolve one at a time and the first failure stops the
+ * rest, so an owner that refuses the call costs one request instead of four. Only a transient owner 503 (several
+ * list pages replaying the same create at once) is asked again, each time with a fresh gateway assertion and
+ * idempotency key. Resolved groups are stored for the next page load.
  */
-const resolveSegmentGroups = Effect.forEach(
-  customerSegmentDefinitions,
-  (definition) =>
-    resolveSegment(definition).pipe(Effect.retry({ schedule: transientRetry, while: (error) => error.retryable })),
-  { concurrency: 1 },
-).pipe(Effect.map((groups) => groups.filter((group) => group !== undefined)));
+const resolveSegmentGroups = Effect.gen(function* resolveSegmentGroups() {
+  const principalKey = yield* currentPrincipalKey;
+  if (createWasRefused(principalKey)) {
+    return yield* new CustomerSegmentsError({
+      forbidden: true,
+      reason: 'create-customer-group was refused earlier in this browser session',
+      retryable: false,
+    });
+  }
+  const stored = principalKey === undefined ? undefined : storedSegmentGroups(principalKey);
+  if (stored !== undefined) {
+    return stored;
+  }
+  const resolved = yield* Effect.forEach(
+    customerSegmentDefinitions,
+    (definition) =>
+      resolveSegment(definition, principalKey).pipe(
+        Effect.retry({ schedule: transientRetry, while: (error) => error.retryable }),
+      ),
+    { concurrency: 1 },
+  );
+  const groups = resolved.filter((group) => group !== undefined);
+  yield* rememberSegmentGroups(principalKey, groups);
+  return groups;
+});
+
+/**
+ * A stored group the owner no longer knows (a demo reset recreates the groups) fails the member reads, so any
+ * failure that is not a refusal drops the stored groups and the next load resolves them again.
+ */
+const forgetStoredSegmentGroups = currentPrincipalKey.pipe(
+  Effect.flatMap((principalKey) => rememberSegmentGroups(principalKey, null)),
+  Effect.ignore,
+);
 
 /**
  * The seeded groups never change while the page is open, so the replayed create-customer-group Actions run once
@@ -476,7 +553,11 @@ const currentOf = (memberships: readonly Membership[]) => {
 /** VALID memberships per profile id across the demo segments, plus the segments by group id. */
 const segmentMemberships = Effect.gen(function* segmentMemberships() {
   const groups = yield* segmentGroups;
-  const members = yield* Effect.forEach(groups, ({ ref }) => groupMembers(ref), { concurrency: 4 });
+  const members = yield* Effect.forEach(groups, ({ ref }) => groupMembers(ref), { concurrency: 4 }).pipe(
+    Effect.tapError(({ forbidden }) =>
+      forbidden ? Effect.void : Effect.andThen(invalidateSegmentGroups, forgetStoredSegmentGroups),
+    ),
+  );
   const byProfile = new Map<string, readonly Membership[]>();
   for (const membership of members.flat()) {
     if (membership.state === 'VALID') {

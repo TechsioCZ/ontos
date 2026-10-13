@@ -1,3 +1,4 @@
+import { foldSearchText } from '@app/admin-ui';
 import { DateTime, Option, Schema } from 'effect';
 
 import type { CustomerListItem } from '../../../../../shared/apis/customer-list.ts';
@@ -27,8 +28,8 @@ export interface CustomerStats {
 }
 
 /**
- * Total, new, e-mail and archived counts. The total counts every listed customer, archived included, because the
- * table shows archived rows by default and the header must match its row count. New and e-mail counts stay active only.
+ * Total, new, e-mail and archived counts. The total counts every listed customer, archived included, so the tiles
+ * describe the whole register whatever the table filter shows. New and e-mail counts stay active only.
  */
 export const computeCustomerStats = (items: readonly CustomerListItem[], nowMillis: number): CustomerStats => {
   const active = items.filter((item) => item.status === 'ACTIVE');
@@ -46,14 +47,17 @@ export const computeCustomerStats = (items: readonly CustomerListItem[], nowMill
   };
 };
 
-/** Search covers name, IČO, e-mail and city only, matching the list's search contract. */
+/**
+ * Search covers name, IČO, e-mail and city only, matching the list's search contract. Case and diacritics are
+ * folded on both sides, so `dvorak` finds `Dvořák` and `usti` finds `Ústí`.
+ */
 export const matchesCustomerSearch = (item: CustomerListItem, query: string): boolean => {
-  const needle = query.trim().toLocaleLowerCase('cs-CZ');
+  const needle = foldSearchText(query.trim());
   if (needle.length === 0) {
     return true;
   }
   return [item.displayName, item.companyId, item.email, item.city].some(
-    (field) => field !== null && field.toLocaleLowerCase('cs-CZ').includes(needle),
+    (field) => field !== null && foldSearchText(field).includes(needle),
   );
 };
 
