@@ -34,8 +34,8 @@ export const StatisticsControls = ({ onChange, query, today }: StatisticsControl
   const currentPreset = activePreset(query, today);
 
   return (
-    <div className="flex flex-wrap items-start gap-200">
-      <div className="min-w-48 flex-1">
+    <div className="flex flex-wrap items-end gap-150">
+      <div className="w-48">
         <SelectTemplate
           id="statistics-metric"
           items={metricItems}
@@ -50,7 +50,7 @@ export const StatisticsControls = ({ onChange, query, today }: StatisticsControl
           value={[query.metric]}
         />
       </div>
-      <div className="min-w-48 flex-1">
+      <div className="w-48">
         <SelectTemplate
           id="statistics-chart"
           items={chartItems}
@@ -65,7 +65,7 @@ export const StatisticsControls = ({ onChange, query, today }: StatisticsControl
           value={[query.chart]}
         />
       </div>
-      <div className="min-w-48 flex-1">
+      <div className="flex min-w-0 flex-col gap-100">
         <DatePicker.Root
           locale="cs-CZ"
           onValueChange={(details) => {
@@ -91,22 +91,28 @@ export const StatisticsControls = ({ onChange, query, today }: StatisticsControl
             </DatePicker.Content>
           </DatePicker.Positioner>
         </DatePicker.Root>
-        <div className="mt-100 flex flex-wrap gap-100">
-          {presets.map((preset) => (
-            <Button
-              aria-pressed={currentPreset === preset}
-              key={preset}
-              onClick={() => onChange(presetRange(preset, today))}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              {t(`${key}.presets.${preset}`)}
-            </Button>
-          ))}
-        </div>
+        <fieldset
+          aria-label={t(`${key}.presetsLabel`)}
+          className="inline-flex min-w-0 max-w-full self-start overflow-x-auto whitespace-nowrap rounded-button-sm border border-border-primary p-50"
+        >
+          {presets.map((preset) => {
+            const active = currentPreset === preset;
+            return (
+              <Button
+                aria-pressed={active}
+                key={preset}
+                onClick={() => onChange(presetRange(preset, today))}
+                size="sm"
+                theme={active ? 'solid' : 'borderless'}
+                variant={active ? 'primary' : 'secondary'}
+              >
+                {t(`${key}.presets.${preset}`)}
+              </Button>
+            );
+          })}
+        </fieldset>
       </div>
-      <div className="min-w-48 flex-1">
+      <div className="w-48">
         <SelectTemplate
           id="statistics-group"
           items={groupingItems}

@@ -36,6 +36,49 @@ interface ChartBodyProps {
   readonly warning: string | undefined;
 }
 
+const UNASSIGNED_KEY = 'none';
+
+/**
+ * Sorted horizontal bars in markup, because the chart library gives every mark the same series color and
+ * cannot make one row neutral. Unassigned buckets (key `none`) use the neutral foreground color.
+ */
+interface RankedBarsProps {
+  readonly ariaLabel: string;
+  readonly points: readonly MetricPoint[];
+  readonly unit: MetricUnit;
+}
+
+const RankedBars = ({ ariaLabel, points, unit }: RankedBarsProps) => {
+  const max = Math.max(0, ...points.map((point) => point.value));
+  return (
+    <ul aria-label={ariaLabel} className="flex flex-col gap-100">
+      {points.map((point) => {
+        const unassigned = point.key === UNASSIGNED_KEY;
+        const share = max > 0 ? (point.value / max) * 100 : 0;
+        return (
+          <li
+            className="grid grid-cols-[minmax(7rem,14rem)_minmax(0,1fr)_auto] items-center gap-150 text-sm"
+            key={point.key}
+          >
+            <span className="min-w-0 break-words">{point.label}</span>
+            <span className="h-4 rounded-sm border border-border-primary">
+              <span
+                className="block h-full rounded-sm"
+                style={{
+                  backgroundColor: unassigned ? 'var(--color-fg-secondary)' : 'var(--color-chart-series-1)',
+                  opacity: unassigned ? 0.45 : 1,
+                  width: `${share}%`,
+                }}
+              />
+            </span>
+            <span className="text-end tabular-nums">{formatMetricValue(point.value, unit)}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
+
 const ChartBody = ({ ariaLabel, chart, emptyText, loading, otherLabel, series, unit, warning }: ChartBodyProps) => {
   if (loading) {
     return (
@@ -56,16 +99,20 @@ const ChartBody = ({ ariaLabel, chart, emptyText, loading, otherLabel, series, u
           {warning}
         </StatusText>
       )}
-      <Chart
-        ariaLabel={ariaLabel}
-        data={points.map((point) => ({ key: point.key, label: point.label, value: point.value / scale }))}
-        formatValue={(value) => formatMetricValue(value * scale, unit)}
-        height={280}
-        points={chart === 'line'}
-        type={chart}
-        x="label"
-        y="value"
-      />
+      {chart === 'bar-horizontal' ? (
+        <RankedBars ariaLabel={ariaLabel} points={series} unit={unit} />
+      ) : (
+        <Chart
+          ariaLabel={ariaLabel}
+          data={points.map((point) => ({ key: point.key, label: point.label, value: point.value / scale }))}
+          formatValue={(value) => formatMetricValue(value * scale, unit)}
+          height={280}
+          points={chart === 'line'}
+          type={chart}
+          x="label"
+          y="value"
+        />
+      )}
     </>
   );
 };

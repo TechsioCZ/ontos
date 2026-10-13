@@ -61,6 +61,7 @@
           "quarter": "This quarter",
           "ytd": "Year to date"
         },
+        "presetsLabel": "Quick period selection",
         "sourceError": "Some data could not be loaded: {{sources}}.",
         "sources": {
           "customers": "customers",

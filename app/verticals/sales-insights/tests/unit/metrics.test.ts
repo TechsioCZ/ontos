@@ -258,7 +258,7 @@ it('groups revenue by owning employee through the opportunity, with a none bucke
   expect(result.series).toEqual([
     { key: 'emp-b', label: 'Obchodník B', value: 200_000 },
     { key: 'emp-a', label: 'Obchodník A', value: 100_000 },
-    { key: 'none', label: 'Bez obchodníka', value: 50_000 },
+    { key: 'none', label: 'Nepřiřazeno', value: 50_000 },
   ]);
 });
 
@@ -297,18 +297,35 @@ it('keeps the top twelve categories and folds the rest into Ostatní', () => {
   expect(result.series[12]).toEqual({ key: 'other', label: 'Ostatní', value: 1000 });
 });
 
-it('computes headline KPIs and resolves overdue tasks against the reference day', () => {
+it('computes the four headline KPIs over the period', () => {
   const kpis = computeKpis(fixture, { ...range, today: '2026-10-13' });
   const byId = new Map(kpis.map((kpi) => [kpi.id, kpi.value]));
+  expect(kpis.map((kpi) => [kpi.id, kpi.label, kpi.unit])).toEqual([
+    ['revenue_invoiced', 'Tržby (potvrzené)', 'CZK'],
+    ['pipeline_open_value', 'Otevřená pipeline', 'CZK'],
+    ['opportunities_won', 'Vyhráno', 'CZK'],
+    ['win_rate', 'Úspěšnost', 'percent'],
+  ]);
   expect(byId.get('revenue_invoiced')).toBe(350_000);
   // Snapshot: includes opp-open-late, which closes after the range.
   expect(byId.get('pipeline_open_value')).toBe(480_000);
+  expect(byId.get('opportunities_won')).toBe(500_000);
   expect(byId.get('win_rate')).toBe(66.7);
-  expect(byId.get('units_sold')).toBe(10);
-  expect(byId.get('tasks_overdue')).toBe(1);
-  expect(computeKpis(fixture, { ...range, today: '2026-10-05' }).find((kpi) => kpi.id === 'tasks_overdue')?.value).toBe(
-    0,
-  );
+});
+
+it('keeps every KPI equal to the total of the same metric under each of its groupings', () => {
+  const today = '2026-10-13';
+  for (const kpi of computeKpis(fixture, { ...range, today })) {
+    const entry = metricCatalog.find((candidate) => candidate.id === kpi.id);
+    for (const groupBy of entry?.allowedGroupings ?? []) {
+      expect(computeMetric(kpi.id, fixture, { ...range, groupBy, today }).total).toBe(kpi.value);
+    }
+  }
+});
+
+it('resolves overdue tasks against the reference day in the metric series', () => {
+  expect(computeMetric('tasks_overdue', fixture, { ...range, groupBy: 'employee', today: '2026-10-13' }).total).toBe(1);
+  expect(computeMetric('tasks_overdue', fixture, { ...range, groupBy: 'employee', today: '2026-10-05' }).total).toBe(0);
 });
 
 it('counts open and done tasks by assignee', () => {
@@ -370,4 +387,33 @@ it('values the open pipeline as a snapshot of every open opportunity, regardless
   expect(
     computeMetric('pipeline_open_value', seeded, { ...lastTwelveMonths, groupBy: 'month' }).series.map((p) => p.key),
   ).toEqual(['2026-11', '2026-12']);
+});
+
+// Regression: the win-rate KPI read 69,2 % for one metric/grouping and 70,4 % for another over the same period.
+it('reports the same win rate for the same period whatever metric or grouping is selected', () => {
+  const stages = ['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION'] as const;
+  const open = Array.from({ length: 34 }, (_, index) => ({
+    amountMinor: 100_000 * (index + 1),
+    expectedCloseDate: '2026-11-15',
+    id: `opp-open-${index}`,
+    partyId: 'c1',
+    probability: 50,
+    stage: stages[index % stages.length] ?? 'LEAD',
+  }));
+  const closed = Array.from({ length: 26 }, (_, index) => ({
+    amountMinor: 50_000,
+    closedAt: at('2026-05-10T10:00:00.000Z'),
+    expectedCloseDate: '2026-05-10',
+    id: `opp-closed-${index}`,
+    partyId: 'c2',
+    probability: index < 18 ? 100 : 0,
+    stage: index < 18 ? ('WON' as const) : ('LOST' as const),
+  }));
+  const seeded: MetricInputs = { ...fixture, opportunities: [...open, ...closed] };
+  const period = { from: '2025-11-01', to: '2026-10-13', today: '2026-10-13' };
+  const kpiWinRate = computeKpis(seeded, period).find((kpi) => kpi.id === 'win_rate')?.value;
+  expect(kpiWinRate).toBe(69.2);
+  for (const groupBy of ['month', 'employee', 'customer', 'tag'] as const) {
+    expect(computeMetric('win_rate', seeded, { ...period, groupBy }).total).toBe(69.2);
+  }
 });
