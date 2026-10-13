@@ -17,9 +17,10 @@ import { demoId, demoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 
 /**
  * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, siampark-work,
- * siampark-billing-finance, workforce, tagging, sales-pipeline, merchandise, sales-insights.
+ * siampark-billing-finance, workforce, tagging, sales-pipeline, merchandise, sales-insights, commerce-customer-context.
  */
 export const demoModuleIds = [
+  'commerce.customer-context',
   'party.registry',
   'siampark.work',
   'siampark.billing-finance',
@@ -50,6 +51,7 @@ export const contextPermissionKey = (moduleId: DemoModuleId, access: ModuleAcces
   `${moduleId.replaceAll('-', '_')}.${access === 'read' ? 'read_all' : 'write_all'}`;
 
 const everything = {
+  'commerce.customer-context': 'write',
   'demo.merchandise': 'write',
   'demo.sales-insights': 'write',
   'demo.sales-pipeline': 'write',
@@ -71,12 +73,18 @@ export const demoRoles = {
   accountant: {
     identityAdmin: false,
     label: 'Účetní',
-    modules: { 'demo.sales-insights': 'read', 'party.registry': 'read', 'siampark.billing-finance': 'write' },
+    modules: {
+      'commerce.customer-context': 'read',
+      'demo.sales-insights': 'read',
+      'party.registry': 'read',
+      'siampark.billing-finance': 'write',
+    },
   },
   agentBot: {
     identityAdmin: false,
     label: 'Agent (bot)',
     modules: {
+      'commerce.customer-context': 'read',
       'demo.merchandise': 'read',
       'demo.sales-insights': 'read',
       'demo.sales-pipeline': 'write',
@@ -93,6 +101,7 @@ export const demoRoles = {
     label: 'Obchodník',
     // Billing is visible but not writable: the rep cannot confirm or void invoices.
     modules: {
+      'commerce.customer-context': 'write',
       'demo.merchandise': 'read',
       'demo.sales-insights': 'read',
       'demo.sales-pipeline': 'write',

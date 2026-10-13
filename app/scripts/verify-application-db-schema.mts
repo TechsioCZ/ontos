@@ -15,6 +15,7 @@ const EXPECTED_APPLICATION_SCHEMAS = [
   'auth',
   'catalog',
   'commerce_customer_context',
+  'commerce_customer_context_gateway',
   'commerce_market_catalog',
   'contacts',
   'core',

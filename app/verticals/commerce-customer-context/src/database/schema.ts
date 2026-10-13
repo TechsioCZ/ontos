@@ -2755,3 +2755,9 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
 
 /** Relational Queries v2 entry point for the owner-local database. */
 export const commerceCustomerContextRelations = defineRelations(commerceCustomerContextDatabaseSchema);
+
+/**
+ * Re-exported so drizzle-kit, which reads this entry file only, migrates the separate gateway
+ * replay-evidence schema too. It is not part of the owner table catalog above.
+ */
+export { commerceCustomerContextGatewaySchema, gatewayAssertionRedemptions } from './gateway-assertion-schema.ts';

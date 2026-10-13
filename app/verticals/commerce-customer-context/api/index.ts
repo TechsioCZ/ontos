@@ -106,7 +106,10 @@ import {
 } from '../src/enrollment/orchestration/prepared-owner-authority.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 import {
   commerceCustomerContextOwnerRuntimeServicesLive,
@@ -740,7 +743,11 @@ const productionReadRuntimeLive = commerceCustomerContextReadRuntime.pipe(
 type CommerceCustomerContextApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  /** One-time redemption of Shell-issued gateway assertions; a construction failure fails the runtime closed. */
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
   /**
    * The optional Commerce portal realm: the installed provider graph for a host that opted in, or
    * the fail-closed realm for one that did not. It is a parameter rather than a fixed import so the
@@ -976,10 +983,16 @@ export const makeCommerceCustomerContextApiRuntime = (
   });
 };
 
+/** Replay evidence gets its own pool, so redemption never shares a business handler's persistence services. */
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
+
 const apiRuntime = makeCommerceCustomerContextApiRuntime(
   productionReadRuntimeLive,
   productionActionRuntimeLive,
-  GovernedGatewayAssertionRedemptionLive,
+  productionGatewayAssertionRedemptionLive,
   deploymentPortalAuthRuntimeLive,
   Layer.empty,
   DatabaseConfigLive,
