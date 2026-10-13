@@ -2,26 +2,32 @@
 import { ContextAccess, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { Effect, DateTime, Match, Schema } from 'effect';
+import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 
 import {
-  MerchandiseNotImplemented,
+  MerchandiseLifecycleConflict,
   MerchandisePermissionDenied,
   MerchandisePersistenceUnavailable,
   MerchandiseReferenceUnavailable,
   MerchandiseRevisionConflict,
   MerchandiseScopeMismatch,
+  MerchandiseNotFound,
 } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState, RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import { EntityIdSchema, ProductIdSchema, StockMovementIdSchema } from '../../shared/domain/merchandise-model.ts';
 import type {
   EntityId,
+  Order,
+  OrderLine,
   OrderStatus,
   Product,
   ProductRecord,
   StockMovement,
 } from '../../shared/domain/merchandise-model.ts';
+import { nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
 import { merchandiseStates } from '../database/schema.ts';
 
 const unavailable = (cause?: unknown) =>
@@ -77,26 +83,323 @@ export const toProductRecord = (product: Product, movements: readonly StockMovem
   };
 };
 
-/** Result of applying one command to the state. Filled in by the command-logic task. */
+/** Result of applying one command to the state. */
 export interface MerchandiseChange {
   readonly entityIds: readonly EntityId[];
   readonly state: MerchandiseState;
 }
 
+/** Errors command logic raises from the state alone. Persistence adds its own around this. */
+export type MerchandiseCommandError = MerchandiseLifecycleConflict | MerchandiseNotFound;
+
+export interface MerchandiseCommandInput {
+  readonly actor: PrincipalRef;
+  readonly now: DateTime.Utc;
+  /** Server-minted identity for commands that create a record (invocation id). */
+  readonly resourceId: string;
+}
+
+type CommandOf<Tag extends MerchandiseCommand['_tag']> = Extract<MerchandiseCommand, { readonly _tag: Tag }>;
+type OrderLineRequest = CommandOf<'CreateOrder'>['lines'][number];
+type BulkPatch = CommandOf<'BulkUpdateProducts'>['patch'];
+
+const notFound = (reason: string) => new MerchandiseNotFound({ code: 'merchandise_not_found', reason });
+
+const conflict = (reason: string) =>
+  new MerchandiseLifecycleConflict({ code: 'merchandise_lifecycle_conflict', reason });
+
 /**
- * Command logic stub. Every command fails with a typed MerchandiseNotImplemented until the
- * command-logic task replaces this body. The signature is the frozen contract.
+ * Brands an id the server produced. A value that fails its schema is a server defect, not a client error,
+ * so it dies instead of joining the typed error channel.
  */
+const mintId = <S extends Schema.Codec<string>>(schema: S, value: string) =>
+  Schema.decodeEffect(schema)(value).pipe(Effect.orDie);
+
+const entityIdOf = (value: string) => mintId(EntityIdSchema, value);
+
+/** Line-scoped movement ids add the line index to the invocation id, so one invocation can write many movements. */
+const movementIdOf = (resourceId: string, index?: number) =>
+  mintId(StockMovementIdSchema, index === undefined ? resourceId : `${resourceId}:${index}`);
+
+const findProduct = Effect.fn('Merchandise.findProduct')(function* findProduct(
+  products: readonly Product[],
+  id: string,
+) {
+  const product = products.find((entry) => entry.id === id);
+  if (product === undefined) {
+    return yield* notFound('Product does not exist');
+  }
+  return product;
+});
+
+const withProduct = (state: MerchandiseState, updated: Product): MerchandiseState => ({
+  ...state,
+  products: state.products.map((entry) => (entry.id === updated.id ? updated : entry)),
+});
+
+/** Whole-CZK percent change: the minor amount scaled, then rounded half-up to the nearest 100 minor units. */
+export const percentChangedPriceMinor = (currentMinor: number, percent: number): number =>
+  Math.round((currentMinor * (100 + percent)) / 10_000) * 100;
+
+/** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
+const repriced = (product: Product, priceMinor: number, input: MerchandiseCommandInput): Product =>
+  product.currentPriceMinor === priceMinor
+    ? product
+    : {
+        ...product,
+        currentPriceMinor: priceMinor,
+        priceHistory: [...product.priceHistory, { changedBy: input.actor, effectiveFrom: input.now, priceMinor }],
+        updatedAt: input.now,
+      };
+
+const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
+  state: MerchandiseState,
+  value: CommandOf<'CreateProduct'>,
+  input: MerchandiseCommandInput,
+) {
+  const id = yield* mintId(ProductIdSchema, input.resourceId);
+  if (state.products.some((entry) => entry.id === id)) {
+    return yield* conflict('Product id already exists');
+  }
+  if (state.products.some((entry) => entry.sku === value.sku)) {
+    return yield* conflict('A product with this SKU already exists');
+  }
+  const product: Product = {
+    active: value.active,
+    category: value.category,
+    createdAt: input.now,
+    currentPriceMinor: value.priceMinor,
+    id,
+    lowStockThreshold: value.lowStockThreshold,
+    name: value.name,
+    priceHistory: [{ changedBy: input.actor, effectiveFrom: input.now, priceMinor: value.priceMinor }],
+    sku: value.sku,
+    unit: value.unit,
+    updatedAt: input.now,
+    vatRate: value.vatRate,
+  };
+  const entity = yield* entityIdOf(id);
+  return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
+});
+
+const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updateProduct(
+  state: MerchandiseState,
+  value: CommandOf<'UpdateProduct'>,
+  input: MerchandiseCommandInput,
+) {
+  const product = yield* findProduct(state.products, value.id);
+  const updated: Product = { ...product, ...value.patch, updatedAt: input.now };
+  const entity = yield* entityIdOf(product.id);
+  return { entityIds: [entity], state: withProduct(state, updated) };
+});
+
+const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
+  state: MerchandiseState,
+  value: CommandOf<'ChangePrice'>,
+  input: MerchandiseCommandInput,
+) {
+  const product = yield* findProduct(state.products, value.id);
+  const entity = yield* entityIdOf(product.id);
+  return { entityIds: [entity], state: withProduct(state, repriced(product, value.priceMinor, input)) };
+});
+
+const editBulkProduct = Effect.fn('Merchandise.editBulkProduct')(function* editBulkProduct(
+  state: MerchandiseState,
+  id: string,
+  patch: BulkPatch,
+  input: MerchandiseCommandInput,
+) {
+  const product = yield* findProduct(state.products, id);
+  const { priceChangePercent, ...fields } = patch;
+  const edited: Product = { ...product, ...fields, updatedAt: input.now };
+  const priced =
+    priceChangePercent === undefined
+      ? edited
+      : repriced(edited, percentChangedPriceMinor(product.currentPriceMinor, priceChangePercent), input);
+  return withProduct(state, priced);
+});
+
+/** All-or-nothing: an unknown id fails the whole command, so the result list always matches the request. */
+const bulkUpdateProducts = Effect.fn('Merchandise.bulkUpdateProducts')(function* bulkUpdateProducts(
+  state: MerchandiseState,
+  value: CommandOf<'BulkUpdateProducts'>,
+  input: MerchandiseCommandInput,
+) {
+  const ids = [...new Set(value.ids)];
+  const next = yield* Effect.reduce(
+    ids,
+    () => state,
+    (current, id) => editBulkProduct(current, id, value.patch, input),
+  );
+  const entities = yield* Effect.forEach(ids, entityIdOf, { concurrency: 1 });
+  return { entityIds: entities, state: next };
+});
+
+const recordStockMovement = Effect.fn('Merchandise.recordStockMovement')(function* recordStockMovement(
+  state: MerchandiseState,
+  value: CommandOf<'RecordStockMovement'>,
+  input: MerchandiseCommandInput,
+) {
+  const product = yield* findProduct(state.products, value.productId);
+  if (value.delta === 0) {
+    return yield* conflict('A stock movement must change the quantity');
+  }
+  if (value.reason === 'RECEIPT' && value.delta < 0) {
+    return yield* conflict('A receipt must increase stock');
+  }
+  if (value.reason === 'ISSUE' && value.delta > 0) {
+    return yield* conflict('An issue must decrease stock');
+  }
+  if (stockOnHandOf(state.movements, product.id) + value.delta < 0) {
+    return yield* conflict('Stock cannot go below zero');
+  }
+  const base: StockMovement = {
+    at: input.now,
+    delta: value.delta,
+    id: yield* movementIdOf(input.resourceId),
+    productId: product.id,
+    reason: value.reason,
+  };
+  const movement = value.note === undefined ? base : { ...base, note: value.note };
+  const entity = yield* entityIdOf(movement.id);
+  return { entityIds: [entity], state: { ...state, movements: [...state.movements, movement] } };
+});
+
+interface OrderBuild {
+  readonly lines: readonly OrderLine[];
+  readonly movements: readonly StockMovement[];
+}
+
+/**
+ * Snapshots one line (name, SKU, current net price, VAT rate) and its ORDER movement onto the build.
+ * Stock is checked against the running ledger, so a product listed twice cannot oversell.
+ */
+const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLine(
+  build: OrderBuild,
+  request: OrderLineRequest,
+  context: {
+    readonly input: MerchandiseCommandInput;
+    readonly number: string;
+    readonly products: readonly Product[];
+  },
+) {
+  const product = yield* findProduct(context.products, request.productId);
+  if (stockOnHandOf(build.movements, product.id) < request.quantity) {
+    return yield* conflict(`Insufficient stock for ${product.sku}`);
+  }
+  const line: OrderLine = {
+    productId: product.id,
+    productName: product.name,
+    quantity: request.quantity,
+    sku: product.sku,
+    unitPriceMinor: product.currentPriceMinor,
+    vatRate: product.vatRate,
+  };
+  const movement: StockMovement = {
+    at: context.input.now,
+    delta: -request.quantity,
+    id: yield* movementIdOf(context.input.resourceId, build.lines.length),
+    productId: product.id,
+    reason: 'ORDER',
+    reference: context.number,
+  };
+  return { lines: [...build.lines, line], movements: [...build.movements, movement] };
+});
+
+const placeOrder = Effect.fn('Merchandise.placeOrder')(function* placeOrder(
+  state: MerchandiseState,
+  value: CommandOf<'CreateOrder'>,
+  input: MerchandiseCommandInput,
+) {
+  if (state.orders.some((entry) => entry.id === value.id)) {
+    return yield* conflict('Order id already exists');
+  }
+  const number = nextOrderNumber(state.orders);
+  const initial: OrderBuild = { lines: [], movements: state.movements };
+  const build = yield* Effect.reduce(
+    value.lines,
+    () => initial,
+    (acc, request) => addOrderLine(acc, request, { input, number, products: state.products }),
+  );
+  const base: Order = {
+    createdAt: input.now,
+    id: value.id,
+    lines: build.lines,
+    number,
+    partyId: value.partyId,
+    status: 'NEW',
+    ...orderTotals(build.lines),
+    updatedAt: input.now,
+  };
+  const order = value.opportunityId === undefined ? base : { ...base, opportunityId: value.opportunityId };
+  const entity = yield* entityIdOf(order.id);
+  return {
+    entityIds: [entity],
+    state: { ...state, movements: [...build.movements], orders: [...state.orders, order] },
+  };
+});
+
+const orderTransitions = {
+  CANCELLED: [],
+  CONFIRMED: ['SHIPPED', 'CANCELLED'],
+  DELIVERED: [],
+  NEW: ['CONFIRMED', 'CANCELLED'],
+  SHIPPED: ['DELIVERED'],
+} satisfies Readonly<Record<OrderStatus, readonly OrderStatus[]>>;
+
+/** Cancelling returns each snapshot line to stock with a positive compensating ORDER movement. */
+const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* changeOrderStatus(
+  state: MerchandiseState,
+  value: CommandOf<'ChangeOrderStatus'>,
+  input: MerchandiseCommandInput,
+) {
+  const existing = state.orders.find((entry) => entry.id === value.id);
+  if (existing === undefined) {
+    return yield* notFound('Order does not exist');
+  }
+  const allowed: readonly OrderStatus[] = orderTransitions[existing.status];
+  if (!allowed.includes(value.status)) {
+    return yield* conflict('The requested order transition is not allowed');
+  }
+  const updated: Order = { ...existing, status: value.status, updatedAt: input.now };
+  const orders = state.orders.map((entry) => (entry.id === updated.id ? updated : entry));
+  const entity = yield* entityIdOf(existing.id);
+  if (value.status !== 'CANCELLED') {
+    return { entityIds: [entity], state: { ...state, orders } };
+  }
+  const restored = yield* Effect.forEach(
+    existing.lines,
+    (line, index) =>
+      movementIdOf(input.resourceId, index).pipe(
+        Effect.map((id): StockMovement => ({
+          at: input.now,
+          delta: line.quantity,
+          id,
+          productId: line.productId,
+          reason: 'ORDER',
+          reference: existing.number,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+  return { entityIds: [entity], state: { ...state, movements: [...state.movements, ...restored], orders } };
+});
+
+/** Applies one command to the state. Pure: persistence decides when the result is saved. */
 export const evolveMerchandiseState = (
-  _state: MerchandiseState,
+  state: MerchandiseState,
   command: MerchandiseCommand,
-  _input: { readonly now: DateTime.Utc; readonly resourceId: string },
-): Effect.Effect<MerchandiseChange, MerchandiseNotImplemented> =>
-  Effect.fail(
-    new MerchandiseNotImplemented({
-      code: 'merchandise_not_implemented',
-      reason: `Merchandise command ${command._tag} is not implemented yet`,
-    }),
+  input: MerchandiseCommandInput,
+): Effect.Effect<MerchandiseChange, MerchandiseCommandError> =>
+  Match.value(command).pipe(
+    Match.tag('CreateProduct', (value) => addProduct(state, value, input)),
+    Match.tag('UpdateProduct', (value) => updateProduct(state, value, input)),
+    Match.tag('ChangePrice', (value) => changePrice(state, value, input)),
+    Match.tag('BulkUpdateProducts', (value) => bulkUpdateProducts(state, value, input)),
+    Match.tag('RecordStockMovement', (value) => recordStockMovement(state, value, input)),
+    Match.tag('CreateOrder', (value) => placeOrder(state, value, input)),
+    Match.tag('ChangeOrderStatus', (value) => changeOrderStatus(state, value, input)),
+    Match.exhaustive,
   );
 
 export const persistenceService = Effect.fn('Merchandise.persistenceService')(
@@ -190,7 +493,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         });
       }
       const now = yield* DateTime.now;
-      const change = yield* evolveMerchandiseState(snapshot.state, command, { now, resourceId });
+      const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
+      const change = yield* evolveMerchandiseState(snapshot.state, command, { actor, now, resourceId });
       const revision = yield* save(expectedRevision, change.state);
       return { entityIds: [...change.entityIds], revision };
     });
