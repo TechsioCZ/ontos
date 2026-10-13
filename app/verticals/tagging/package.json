@@ -31,10 +31,15 @@
     "db:verify": "node scripts/verify-db-schema.mts"
   },
   "dependencies": {
+    "@app/admin-ui": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/merchandise": "workspace:*",
+    "@app/party-registry": "workspace:*",
+    "@app/sales-pipeline": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/workforce": "workspace:*",
     "@effect/opentelemetry": "4.0.0-rc.117",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",

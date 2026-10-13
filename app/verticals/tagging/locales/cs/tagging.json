@@ -47,7 +47,9 @@
         "empty": "Žádné přiřazení.",
         "failed": "Přiřazení se nepodařilo načíst.",
         "loading": "Načítání přiřazení…",
-        "title": "Přiřazení štítku {{name}}"
+        "title": "Přiřazení štítku {{name}}",
+        "unknown": "Neznámý záznam",
+        "unknownCustomer": "Neznámý zákazník"
       },
       "assignments": "Přiřazení",
       "bulk": {

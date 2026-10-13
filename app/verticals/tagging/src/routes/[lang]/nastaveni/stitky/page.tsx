@@ -1,3 +1,4 @@
+import { EmptyState, PageHeader, TagBadge } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -12,14 +13,15 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Random } from 'effect';
-import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords, subjectsWithTag } from '../../../../api/records-client.ts';
-import { runTagEffect, TagChip, TagI18n, tagColorValue } from '../../../../components/tag-controls.tsx';
+import { loadSubjectNames } from '../../../../api/subject-names.ts';
+import type { SubjectNames } from '../../../../api/subject-names.ts';
+import { runTagEffect, TagI18n, tagColorValue } from '../../../../components/tag-controls.tsx';
 import type { TaggingCommand } from '../../../../../shared/actions/apply-command.ts';
 import { subjectKindValues, tagColorValues } from '../../../../../shared/apis/records.ts';
-import type { SubjectId, SubjectKind, TagColor, TagWithCounts } from '../../../../../shared/apis/records.ts';
+import type { SubjectId, SubjectKind, TagColor, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 
@@ -79,16 +81,6 @@ const CancelButton = ({ onClick }: { onClick: () => void }) => {
     </Button>
   );
 };
-
-const EmptyBlock = ({ action, description, title }: { action?: ReactNode; description?: ReactNode; title: string }) => (
-  <div className="flex flex-col items-center gap-150 p-450 text-center">
-    <div className="flex flex-col gap-50">
-      <p className="font-semibold text-md">{title}</p>
-      {description !== undefined && <div className="max-w-prose text-fg-secondary text-sm">{description}</div>}
-    </div>
-    {action}
-  </div>
-);
 
 const TagEditorDialog = ({
   onClose,
@@ -329,44 +321,105 @@ const DeleteTagDialog = ({
   );
 };
 
-type AssignmentsState =
+type KindState =
   | { readonly status: 'loading' }
   | { readonly status: 'error' }
-  | { readonly byKind: ReadonlyMap<SubjectKind, readonly SubjectId[]>; readonly status: 'ready' };
+  | { readonly ids: readonly SubjectId[]; readonly names: SubjectNames; readonly status: 'ready' };
 
-const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagWithCounts }) => {
+const unknownNameKey = (kind: SubjectKind) =>
+  kind === 'customer' ? 'tagging.tags.assigned.unknownCustomer' : 'tagging.tags.assigned.unknown';
+
+/** Rows of one expanded kind: human names, with a muted fallback for ids that have no readable record. */
+const KindRows = ({ kind, state }: { kind: SubjectKind; state: KindState }) => {
   const { t } = useModernI18n();
-  const [state, setState] = useState<AssignmentsState>({ status: 'loading' });
-  const kinds = kindsOf(tag);
+  if (state.status === 'loading') {
+    return <p className="text-fg-secondary text-sm">{t('tagging.tags.assigned.loading')}</p>;
+  }
+  if (state.status === 'error') {
+    return (
+      <StatusText showIcon status="error">
+        {t('tagging.tags.assigned.failed')}
+      </StatusText>
+    );
+  }
+  if (state.ids.length === 0) {
+    return <p className="text-fg-secondary text-sm">{t('tagging.tags.assigned.empty')}</p>;
+  }
+  return (
+    <ul className="flex flex-col gap-50">
+      {state.ids.map((id) => {
+        const name = state.names.get(id);
+        return (
+          <li className="text-sm" key={id}>
+            {name ?? <span className="text-fg-secondary">{t(unknownNameKey(kind))}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
+
+/** One kind of the drill-down. Its subject ids and names load the first time it expands. */
+const KindSection = ({ kind, tagId, total }: { kind: SubjectKind; tagId: TagId; total: number }) => {
+  const { t } = useModernI18n();
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<KindState>({ status: 'loading' });
 
   useEffect(() => {
     let active = true;
-    const loadKinds = kindsOf(tag);
-    runTagEffect(
-      Effect.forEach(loadKinds, (kind) => subjectsWithTag(kind, tag.id), { concurrency: 1 }),
-      {
-        onFailure: () => {
-          if (active) {
-            setState({ status: 'error' });
-          }
+    if (open) {
+      runTagEffect(
+        subjectsWithTag(kind, tagId).pipe(
+          Effect.flatMap((ids) => loadSubjectNames(kind, ids).pipe(Effect.map((names) => ({ ids, names })))),
+        ),
+        {
+          onFailure: () => {
+            if (active) {
+              setState({ status: 'error' });
+            }
+          },
+          onSuccess: ({ ids, names }) => {
+            if (active) {
+              setState({ ids, names, status: 'ready' });
+            }
+          },
         },
-        onSuccess: (lists) => {
-          if (active) {
-            setState({
-              byKind: new Map(
-                loadKinds.map((kind, index): [SubjectKind, readonly SubjectId[]] => [kind, lists[index] ?? []]),
-              ),
-              status: 'ready',
-            });
-          }
-        },
-      },
-    );
+      );
+    }
     return () => {
       active = false;
     };
-  }, [tag]);
+  }, [kind, open, tagId]);
 
+  // The rows load on the first expand; the loading state is set here, not inside the effect.
+  const toggle = () => {
+    if (!open) {
+      setState({ status: 'loading' });
+    }
+    setOpen(!open);
+  };
+
+  return (
+    <section className="flex flex-col gap-100">
+      <button
+        aria-expanded={open}
+        className="flex items-center justify-between gap-100 text-left font-semibold text-sm"
+        onClick={() => toggle()}
+        type="button"
+      >
+        <span className="flex items-center gap-100">
+          <span aria-hidden className={open ? 'icon-[mdi--chevron-down]' : 'icon-[mdi--chevron-right]'} />
+          {t(`tagging.kinds.${kind}`)}
+        </span>
+        <span className="tabular-nums">{total}</span>
+      </button>
+      {open && <KindRows kind={kind} state={state} />}
+    </section>
+  );
+};
+
+const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagWithCounts }) => {
+  const { t } = useModernI18n();
   return (
     <Dialog
       actions={<CancelButton onClick={onClose} />}
@@ -381,38 +434,10 @@ const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagW
       size="md"
       title={t('tagging.tags.assigned.title', { name: tag.name })}
     >
-      <div className="flex flex-col gap-250 py-200">
-        {state.status === 'loading' && (
-          <p className="text-fg-secondary text-sm">{t('tagging.tags.assigned.loading')}</p>
-        )}
-        {state.status === 'error' && (
-          <StatusText showIcon status="error">
-            {t('tagging.tags.assigned.failed')}
-          </StatusText>
-        )}
-        {state.status === 'ready' &&
-          kinds.map((kind) => {
-            const ids = state.byKind.get(kind) ?? [];
-            return (
-              <section className="flex flex-col gap-100" key={kind}>
-                <h2 className="flex items-center gap-100 font-semibold text-sm">
-                  {t(`tagging.kinds.${kind}`)}
-                  <span className="tabular-nums">{ids.length}</span>
-                </h2>
-                {ids.length === 0 ? (
-                  <p className="text-fg-secondary text-sm">{t('tagging.tags.assigned.empty')}</p>
-                ) : (
-                  <ul className="flex flex-col gap-50">
-                    {ids.map((id) => (
-                      <li className="break-all text-fg-secondary text-xs" key={id}>
-                        {id}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            );
-          })}
+      <div className="flex flex-col gap-200 py-200">
+        {kindsOf(tag).map((kind) => (
+          <KindSection key={kind} kind={kind} tagId={tag.id} total={tag.counts[kind] ?? 0} />
+        ))}
       </div>
     </Dialog>
   );
@@ -421,7 +446,7 @@ const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagW
 const tagColumns = (t: Translate): ColumnDef<TagWithCounts>[] => [
   {
     accessorKey: 'name',
-    cell: (info) => <TagChip color={tagColorValue[info.row.original.color]} name={info.row.original.name} />,
+    cell: (info) => <TagBadge color={tagColorValue[info.row.original.color]} name={info.row.original.name} />,
     header: t('tagging.tags.table.name'),
     meta: { width: 240 },
   },
@@ -493,19 +518,15 @@ const TagsPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <header className="flex flex-col gap-150">
-        <div className="flex flex-wrap items-start justify-between gap-200">
-          <div className="flex min-w-0 flex-col gap-100">
-            <h1 className="font-semibold text-xl">{t('tagging.pages.records.title')}</h1>
-            <p className="max-w-prose text-fg-secondary text-sm">{t('tagging.pages.records.description')}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-100">
-            <Button icon="icon-[mdi--plus]" onClick={() => setEditor({ tag: null })} size="sm" variant="primary">
-              {t(newTagKey)}
-            </Button>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        actions={
+          <Button icon="icon-[mdi--plus]" onClick={() => setEditor({ tag: null })} size="sm" variant="primary">
+            {t(newTagKey)}
+          </Button>
+        }
+        description={t('tagging.pages.records.description')}
+        title={t('tagging.pages.records.title')}
+      />
       <DataTable
         columns={tagColumns(t)}
         data={tags}
@@ -524,7 +545,7 @@ const TagsPageContent = () => {
         renderEmpty={() => {
           if (state.status === 'error') {
             return (
-              <EmptyBlock
+              <EmptyState
                 action={
                   <Button onClick={() => reload()} size="sm" theme="outlined" variant="secondary">
                     {t('tagging.tags.retry')}
@@ -536,7 +557,7 @@ const TagsPageContent = () => {
           }
           if (globalFilter !== '') {
             return (
-              <EmptyBlock
+              <EmptyState
                 action={
                   <Button onClick={() => setGlobalFilter('')} size="sm" theme="outlined" variant="secondary">
                     {t('tagging.tags.table.clearSearch')}
@@ -547,7 +568,7 @@ const TagsPageContent = () => {
             );
           }
           return (
-            <EmptyBlock
+            <EmptyState
               action={
                 <Button
                   icon="icon-[mdi--plus]"

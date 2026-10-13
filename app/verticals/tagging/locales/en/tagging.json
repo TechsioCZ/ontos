@@ -47,7 +47,9 @@
         "empty": "No assignments.",
         "failed": "Assignments could not be loaded.",
         "loading": "Loading assignments…",
-        "title": "Assignments of tag {{name}}"
+        "title": "Assignments of tag {{name}}",
+        "unknown": "Unknown record",
+        "unknownCustomer": "Unknown customer"
       },
       "assignments": "Assignments",
       "bulk": {
