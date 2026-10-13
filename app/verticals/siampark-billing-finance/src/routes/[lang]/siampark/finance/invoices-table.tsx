@@ -1,4 +1,4 @@
-import { EmptyState, formatDate, formatMoney, StatusBadge } from '@app/admin-ui';
+import { EmptyState, formatDate, formatMoney, matchesSearch, StatusBadge } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
@@ -39,6 +39,10 @@ const tableTranslations = (t: Translate) => ({
   selectionLabel: t(`${ns}.table.selection`),
 });
 
+/**
+ * Column widths add up to 910 px, so the columns plus the row-actions column fit the ~980 px content area at a
+ * 1280 px viewport without horizontal scroll (the fixed layout spreads any extra width proportionally).
+ */
 const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
   const { referenceDate, references } = vm;
   const unknownCustomer = t(`${ns}.unknownCustomer`);
@@ -48,7 +52,7 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       cell: (info) => <span className="font-medium whitespace-nowrap">{info.getValue<string>()}</span>,
       header: t(`${ns}.columns.number`),
       id: 'number',
-      meta: { width: 130 },
+      meta: { width: 125 },
     },
     {
       accessorFn: (row) => customerDisplayName(customerOf(references.customerById, row), unknownCustomer),
@@ -70,44 +74,44 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       },
       header: t(`${ns}.columns.customer`),
       id: 'customer',
-      meta: { width: 220 },
+      meta: { width: 200 },
     },
     {
       accessorKey: 'issueDate',
       cell: (info) => formatDate(info.getValue<string>()),
       header: t(`${ns}.columns.issued`),
-      meta: { width: 110 },
+      meta: { width: 105 },
     },
     {
       accessorKey: 'dueDate',
       cell: (info) => formatDate(info.getValue<string>()),
       header: t(`${ns}.columns.due`),
-      meta: { width: 110 },
+      meta: { width: 105 },
     },
     {
       accessorKey: 'totalMinor',
       cell: (info) => <span className="tabular-nums">{formatMoney(info.getValue<number>())}</span>,
       header: t(`${ns}.columns.total`),
-      meta: { align: 'end', type: 'number', width: 130 },
+      meta: { align: 'end', type: 'number', width: 125 },
     },
     {
       accessorFn: (row) => invoiceStatusBadge(row, referenceDate).value,
       cell: (info) => <StatusBadge {...invoiceStatusBadge(info.row.original, referenceDate)} />,
       header: t(`${ns}.columns.status`),
       id: 'status',
-      meta: { width: 180 },
+      meta: { width: 115 },
     },
     {
       accessorFn: (row) => opportunityTitle(references.opportunityTitles, row) ?? '',
       cell: (info) => {
         if (info.row.original.opportunityId === undefined) {
-          return '—';
+          return t(`${ns}.sourceManual`);
         }
         const title = info.getValue<string>();
         const hiddenTitle = title === '' && references.opportunitiesForbidden;
         return (
           <span className="flex min-w-0 flex-col">
-            <span>{t(`${ns}.sourceOpportunity`)}</span>
+            <span className="truncate">{t(`${ns}.sourceOpportunity`)}</span>
             {title !== '' && <span className="truncate text-fg-secondary text-xs">{title}</span>}
             {hiddenTitle && (
               <span className="truncate text-fg-secondary text-xs">{t(`${ns}.opportunityForbidden`)}</span>
@@ -118,7 +122,7 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       enableSorting: false,
       header: t(`${ns}.columns.source`),
       id: 'source',
-      meta: { width: 180 },
+      meta: { width: 135 },
     },
   ];
 };
@@ -151,18 +155,15 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
   const filterActive = search.trim() !== '' || status !== ALL;
   const unknownCustomer = t(`${ns}.unknownCustomer`);
 
-  const query = search.trim().toLowerCase();
   const visibleInvoices = invoices.filter((invoice) => {
     if (status !== ALL && invoiceStatusBadge(invoice, referenceDate).value !== status) {
       return false;
     }
-    if (query === '') {
+    if (search.trim() === '') {
       return true;
     }
     const customerName = customerDisplayName(customerOf(references.customerById, invoice), unknownCustomer);
-    return [invoice.number ?? invoice.documentNumber, customerName].some((value) =>
-      value.toLowerCase().includes(query),
-    );
+    return [invoice.number ?? invoice.documentNumber, customerName].some((value) => matchesSearch(value, search));
   });
 
   const rowMenu = (invoice: Invoice) =>

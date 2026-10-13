@@ -1,11 +1,12 @@
-import { DateTime, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import type { InvoiceLine, VatRate } from '../apis/records.ts';
 import { computeInvoiceTotals } from './invoice-totals.ts';
 
 /** Payment terms offered on a new invoice, in calendar days after the issue date. */
 export const PAYMENT_TERM_DAYS = [7, 14, 30] as const;
 export type PaymentTermDays = (typeof PAYMENT_TERM_DAYS)[number];
-export const VAT_RATE_CHOICES: readonly VatRate[] = [0, 10, 12, 21];
+/** 10 % has been obsolete since 1. 1. 2024; `VatRate` still decodes it so stored invoices keep reading. */
+export const VAT_RATE_CHOICES: readonly VatRate[] = [0, 12, 21];
 
 export const DraftLineKindSchema = Schema.Literals(['free', 'product']);
 export type DraftLineKind = typeof DraftLineKindSchema.Type;
@@ -102,6 +103,13 @@ export const draftTotals = (lines: readonly DraftLine[]): DraftTotals => {
   };
 };
 
-/** Calendar date `days` after an ISO date (`YYYY-MM-DD`), computed as the backend computes due dates. */
-export const addCalendarDays = (isoDate: string, days: number): string =>
-  DateTime.formatIsoDateUtc(DateTime.add(DateTime.makeUnsafe(`${isoDate}T00:00:00.000Z`), { days }));
+/**
+ * Calendar date `days` after an ISO date (`YYYY-MM-DD`), computed as the backend computes due dates.
+ * Returns `undefined` for a date that does not parse, such as a half-typed year from a date input.
+ */
+export const addCalendarDays = (isoDate: string, days: number): string | undefined =>
+  Option.getOrUndefined(
+    Option.map(DateTime.make(`${isoDate}T00:00:00.000Z`), (date) =>
+      DateTime.formatIsoDateUtc(DateTime.add(date, { days })),
+    ),
+  );

@@ -173,8 +173,19 @@ export const useFinanceRecords = () => {
     void financeBrowserRuntime.runPromise(
       submitFinanceCommand(snapshot, command).pipe(
         Effect.flatMap((result) => load().pipe(Effect.map(() => result))),
+        // A 409 means the snapshot revision is stale (another user changed the ledger); reload it so a retry works.
+        Effect.tapError((cause) =>
+          financeFailureFeedback(cause) === 'conflict' ? load().pipe(Effect.ignore) : Effect.void,
+        ),
         Effect.match({
-          onFailure: (error) => setFeedback(financeFailureFeedback(error)),
+          onFailure: (error) => {
+            const failure = financeFailureFeedback(error);
+            setFeedback(failure);
+            // The detail panel covers the page's status line, so a rejected confirm or void also raises a toast.
+            const reason = financeFailureReason(error);
+            const toast = { title: t(`siampark-billing-finance.demo.feedback.${failure}`), type: 'error' as const };
+            toaster.create(reason === null ? toast : { ...toast, description: reason });
+          },
           onSuccess: (result) => {
             setFeedback('ready');
             toaster.create({

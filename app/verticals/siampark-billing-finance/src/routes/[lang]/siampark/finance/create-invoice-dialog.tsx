@@ -1,4 +1,4 @@
-import { DetailList, formatDate, formatMoney, SidePanel } from '@app/admin-ui';
+import { DetailList, formatDate, formatMoney, matchesSearch, SidePanel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
@@ -53,6 +53,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<{ readonly message: string; readonly reason?: string } | null>(null);
+  const [customerQuery, setCustomerQuery] = useState('');
 
   const { issueDate } = draft;
   const dueDate = issueDate === '' ? undefined : addCalendarDays(issueDate, draft.paymentDays);
@@ -61,6 +62,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   const products = references.products.filter((product) => product.active);
   const totals = draftTotals(draft.lines);
   const customerError = submitted && customer === undefined ? t(`${ns}.form.errorCustomer`) : undefined;
+  const issueDateError = submitted && dueDate === undefined ? t(`${ns}.form.errorIssueDate`) : undefined;
 
   const customerLabel = (item: (typeof customers)[number]) => {
     const name = item.displayName ?? item.partyId;
@@ -70,6 +72,11 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
     const companyIdLabel = t(`${ns}.companyId`);
     return `${name} · ${companyIdLabel} ${item.companyId}`;
   };
+
+  const customerItems = customers.flatMap((item) => {
+    const label = customerLabel(item);
+    return matchesSearch(label, customerQuery) ? [{ id: item.partyId, label, value: item.partyId }] : [];
+  });
 
   const updateLine = (lineKey: string, next: DraftLine) =>
     setDraft((current) => ({
@@ -180,7 +187,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
       >
         {serverError !== null && (
           <div className="flex flex-col gap-50">
-            <StatusText showIcon status="error">
+            <StatusText showIcon size="sm" status="error">
               {serverError.message}
             </StatusText>
             {serverError.reason !== undefined && (
@@ -188,26 +195,44 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
             )}
           </div>
         )}
-        <Combobox
-          {...(customerError === undefined ? {} : { helpText: customerError })}
-          items={customers.map((item) => ({ id: item.partyId, label: customerLabel(item), value: item.partyId }))}
-          label={t(`${ns}.form.customer`)}
-          noResultsMessage={t(`${ns}.form.customerNoMatch`)}
-          onChange={(values) => setDraft((current) => ({ ...current, customerId: values[0] ?? '' }))}
-          placeholder={t(`${ns}.form.customerPlaceholder`)}
-          validateStatus={customerError === undefined ? 'default' : 'error'}
-          value={draft.customerId === '' ? [] : [draft.customerId]}
-        />
-        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <FormInput
-            id="invoice-issue-date"
-            label={t(`${ns}.form.issueDate`)}
-            name="issueDate"
-            onChange={(event) => setDraft((current) => ({ ...current, issueDate: event.target.value }))}
+        <div className="flex flex-col gap-50">
+          <Combobox
+            filterBehavior="external"
+            items={customerItems}
+            label={t(`${ns}.form.customer`)}
+            noResultsMessage={t(`${ns}.form.customerNoMatch`)}
+            onChange={(values) => setDraft((current) => ({ ...current, customerId: values[0] ?? '' }))}
+            onInputValueChange={setCustomerQuery}
+            onOpenChange={() => setCustomerQuery('')}
+            placeholder={t(`${ns}.form.customerPlaceholder`)}
             required
-            type="date"
-            value={issueDate}
+            validateStatus={customerError === undefined ? 'default' : 'error'}
+            value={draft.customerId === '' ? [] : [draft.customerId]}
           />
+          {customerError !== undefined && (
+            <StatusText showIcon size="sm" status="error">
+              {customerError}
+            </StatusText>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+          <div className="flex flex-col gap-50">
+            <FormInput
+              id="invoice-issue-date"
+              label={t(`${ns}.form.issueDate`)}
+              name="issueDate"
+              onChange={(event) => setDraft((current) => ({ ...current, issueDate: event.target.value }))}
+              required
+              type="date"
+              validateStatus={issueDateError === undefined ? 'default' : 'error'}
+              value={issueDate}
+            />
+            {issueDateError !== undefined && (
+              <StatusText showIcon size="sm" status="error">
+                {issueDateError}
+              </StatusText>
+            )}
+          </div>
           <SelectTemplate
             items={PAYMENT_TERM_DAYS.map((days) => ({ label: t(`${ns}.form.term${days}`), value: String(days) }))}
             label={t(`${ns}.form.paymentTerm`)}

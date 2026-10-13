@@ -1,5 +1,5 @@
 import type { ProductRecord } from '@app/merchandise/contracts/records';
-import { formatMoney } from '@app/admin-ui';
+import { formatMoney, matchesSearch } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -8,6 +8,7 @@ import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { useState } from 'react';
 import {
   czkToMinor,
   newDraftLine,
@@ -28,11 +29,20 @@ interface InvoiceLineEditorProps {
   readonly products: readonly ProductRecord[];
 }
 
+const priceFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2, minimumFractionDigits: 0 };
+
 /** One invoice line: a product (snapshot on pick) or free text, then quantity, and price and VAT for free text. */
 export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, products }: InvoiceLineEditorProps) => {
   const { t } = useModernI18n();
+  const [productQuery, setProductQuery] = useState('');
+  const productItems = products.flatMap((item) => {
+    const label = `${item.name} (${item.sku})`;
+    return matchesSearch(label, productQuery) ? [{ id: item.id, label, value: item.id }] : [];
+  });
   const product = products.find((item) => item.id === line.productId);
   const errorText = issue === undefined ? undefined : t(`${ns}.form.error.${issue}`);
+  // Shown once the line is being filled in, so a freshly added line does not open with a warning.
+  const zeroPriceFreeLine = line.kind === 'free' && line.unitPriceMinor === 0 && line.description.trim() !== '';
   const kindItems = [
     { label: t(`${ns}.form.kindProduct`), value: 'product' },
     { label: t(`${ns}.form.kindFree`), value: 'free' },
@@ -60,7 +70,8 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
         <div className="min-w-0">
           {line.kind === 'product' ? (
             <Combobox
-              items={products.map((item) => ({ id: item.id, label: `${item.name} (${item.sku})`, value: item.id }))}
+              filterBehavior="external"
+              items={productItems}
               label={t(`${ns}.form.product`)}
               noResultsMessage={t(`${ns}.form.noProducts`)}
               onChange={(values) => {
@@ -69,6 +80,8 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
                   onChange(withProductSnapshot(line, next));
                 }
               }}
+              onInputValueChange={setProductQuery}
+              onOpenChange={() => setProductQuery('')}
               placeholder={t(`${ns}.form.product`)}
               value={line.productId === null ? [] : [line.productId]}
             />
@@ -114,14 +127,20 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
           <>
             <div className="min-w-0">
               <FormNumericInput
+                // Two decimals at most, so `1234,5` stays 1 234,50 Kč instead of being rounded to whole crowns.
+                formatOptions={priceFormatOptions}
                 id={`invoice-line-price-${line.key}`}
                 label={t(`${ns}.form.unitPrice`)}
                 locale="cs-CZ"
                 min={0}
                 name="unitPrice"
-                onChange={(value) => onChange({ ...line, unitPriceMinor: czkToMinor(value) })}
-                step={1}
-                value={line.unitPriceMinor / 100}
+                // Text that is not a price stores NaN, so `lineIssue` reports `price` instead of a silent 0.
+                onChange={(value) =>
+                  onChange({ ...line, unitPriceMinor: Number.isFinite(value) ? czkToMinor(value) : Number.NaN })
+                }
+                step={0.01}
+                // A NaN price leaves the field uncontrolled, so the typed text stays visible next to the error.
+                {...(Number.isFinite(line.unitPriceMinor) ? { value: line.unitPriceMinor / 100 } : {})}
               >
                 <NumericInput.Control>
                   <NumericInput.Input />
@@ -155,8 +174,14 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
         </p>
       )}
       {errorText !== undefined && (
-        <StatusText showIcon status="error">
+        <StatusText showIcon size="sm" status="error">
           {errorText}
+        </StatusText>
+      )}
+      {/* 0 Kč is a valid free line (e.g. a gift), so it warns instead of blocking the submit. */}
+      {errorText === undefined && zeroPriceFreeLine && (
+        <StatusText showIcon size="sm" status="warning">
+          {t(`${ns}.form.zeroPriceWarning`)}
         </StatusText>
       )}
     </div>
