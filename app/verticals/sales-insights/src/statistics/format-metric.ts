@@ -1,6 +1,6 @@
 import { formatMoney, formatNumber } from '@app/admin-ui';
 import { Match } from 'effect';
-import type { MetricUnit } from '../../shared/metrics.ts';
+import type { CalendarDay, MetricUnit } from '../../shared/metrics.ts';
 
 /**
  * CZK values arrive in minor units (haléře) and display as whole Kč. Percent arrives as a number of
@@ -18,4 +18,10 @@ export const formatMetricValue = (value: number | null, unit: MetricUnit): strin
     Match.when('count', () => formatNumber(value)),
     Match.exhaustive,
   );
+};
+
+/** `2025-11-01` → `1.11.2025`: the compact day form the period line uses, without spaces around the dots. */
+export const formatPeriodDay = (day: CalendarDay): string => {
+  const [year = '', month = '', date = ''] = day.split('-');
+  return `${Number(date)}.${Number(month)}.${year}`;
 };

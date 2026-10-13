@@ -1,4 +1,4 @@
-import { EmptyState, formatDate, SectionCard, StatCard, StatRow } from '@app/admin-ui';
+import { EmptyState, SectionCard, StatCard, StatRow } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -15,7 +15,7 @@ import type {
   MetricResult,
   MetricUnit,
 } from '../../shared/metrics.ts';
-import { formatMetricValue } from './format-metric.ts';
+import { formatMetricValue, formatPeriodDay } from './format-metric.ts';
 import { chartScale, isTimeGrouping, PIE_SLICE_LIMIT, pieSlices, roundSeriesToTotal } from './statistics-query.ts';
 import type { ChartKind, StatisticsQuery } from './statistics-query.ts';
 
@@ -80,17 +80,20 @@ interface RankedBarsProps {
 const RankedBars = ({ ariaLabel, points, unit }: RankedBarsProps) => {
   const max = Math.max(0, ...points.map((point) => point.value));
   return (
-    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <img> cannot hold the bar rows; the table below repeats these values.
-    <ul aria-label={ariaLabel} className="flex flex-col gap-100" role="img">
+    // The rows share one set of tracks, so every bar track has the same width. On phones the label takes a line of
+    // its own and the bar keeps the room beside the value.
+    <ul
+      aria-label={ariaLabel}
+      className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-150 gap-y-100 text-sm md:grid-cols-[minmax(7rem,14rem)_minmax(0,1fr)_auto]"
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <img> cannot hold the bar rows; the table below repeats these values.
+      role="img"
+    >
       {points.map((point) => {
         const unassigned = point.key === UNASSIGNED_KEY;
         const share = max > 0 ? (point.value / max) * 100 : 0;
         return (
-          <li
-            className="grid grid-cols-[minmax(7rem,14rem)_minmax(0,1fr)_auto] items-center gap-150 text-sm"
-            key={point.key}
-          >
-            <span className="min-w-0 break-words">{point.label}</span>
+          <li className="col-span-full grid grid-cols-subgrid items-center" key={point.key}>
+            <span className="col-span-2 min-w-0 break-words md:col-span-1">{point.label}</span>
             <span className="h-4 rounded-sm border border-border-primary">
               <span
                 className="block h-full rounded-sm"
@@ -139,7 +142,7 @@ const ChartBody = ({
   return (
     <>
       {warning !== undefined && (
-        <StatusText showIcon status="warning">
+        <StatusText showIcon size="sm" status="warning">
           {warning}
         </StatusText>
       )}
@@ -213,8 +216,8 @@ export const StatisticsResults = ({ isForbidden, kpis, loading, metric, query, r
   const { t } = useModernI18n();
   const unit = metric?.unit ?? 'count';
   const title = metric?.label ?? '';
-  const from = formatDate(query.from);
-  const to = formatDate(query.to);
+  const from = formatPeriodDay(query.from);
+  const to = formatPeriodDay(query.to);
   const blocked = !loading && isForbidden(query.metric);
   const series = blocked ? [] : displayedSeries(result, unit);
   const pieWarning = pieWarningKey(query, unit);
@@ -245,6 +248,7 @@ export const StatisticsResults = ({ isForbidden, kpis, loading, metric, query, r
         <div className="flex min-w-0 flex-col gap-150 px-250 pb-250">
           <p className="text-fg-secondary text-sm">{t(`${key}.chartDescription`, { from, to })}</p>
           {isSnapshotMetric(query.metric) && <p className="text-fg-secondary text-sm">{t(`${key}.snapshotNote`)}</p>}
+          {query.metric === 'stock_value' && <p className="text-fg-secondary text-sm">{t(`${key}.stockNote`)}</p>}
           {query.groupBy === 'tag' && <p className="text-fg-secondary text-sm">{t(`${key}.tagNote`)}</p>}
           <ChartBody
             ariaLabel={t(`${key}.chartLabel`, { from, metric: title, to })}

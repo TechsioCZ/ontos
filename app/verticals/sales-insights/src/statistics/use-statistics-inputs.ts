@@ -5,8 +5,8 @@ import { listInvoices } from '@app/siampark-billing-finance/clients/records';
 import { listTasks } from '@app/siampark-work/clients/records';
 import { assignmentsForSubjects, listTags } from '@app/tagging/clients/records';
 import { listEmployees } from '@app/workforce/clients/records';
-import { Effect, Random, Ref, Schema } from 'effect';
-import { useEffect, useState } from 'react';
+import { Effect, Option, Random, Ref, Schema } from 'effect';
+import { useEffect, useRef, useState } from 'react';
 import type {
   EmployeeInput,
   InvoiceInput,
@@ -50,6 +50,24 @@ interface Sourced<A> {
   readonly forbidden?: StatisticsSource;
   readonly value: A;
 }
+
+/** Tag assignments are a second read: they wait for the subject ids, so they are keyed apart from the tag names. */
+type SourceKey = StatisticsSource | 'tagAssignments';
+
+interface SourceValues {
+  readonly customers: readonly NamedInput[];
+  readonly employees: readonly EmployeeInput[];
+  readonly invoices: readonly InvoiceInput[];
+  readonly movements: readonly MovementInput[];
+  readonly opportunities: readonly OpportunityInput[];
+  readonly orders: readonly OrderInput[];
+  readonly products: readonly ProductInput[];
+  readonly tagAssignments: readonly TagAssignmentInput[];
+  readonly tags: readonly NamedInput[];
+  readonly tasks: readonly TaskInput[];
+}
+
+type Loaded = { readonly [K in SourceKey]?: Sourced<SourceValues[K]> | undefined };
 
 const isForbiddenProblem = Schema.is(Schema.Struct({ status: Schema.Literal(403) }));
 
@@ -185,92 +203,181 @@ const toEmployee = (item: { readonly fullName: string; readonly id: string }): E
 });
 
 const subjectKinds = ['customer', 'employee', 'opportunity', 'order', 'product'] as const;
+/** The entity reads whose ids address the tag assignments: one per subject kind. */
+const subjectSourceKeys = ['customers', 'employees', 'opportunities', 'orders', 'products'] as const;
 
-/** Reads every producer once. Each read is independent; a failed read is reported in `failed`. */
-const loadStatisticsInputs = Effect.gen(function* statisticsInputs() {
-  // The entity reads are independent and start together; only the tag assignments wait for the entity ids.
-  const [customers, employees, invoices, movements, opportunities, orders, products, tags, tasks] = yield* Effect.all(
-    [
-      sourced<readonly NamedInput[]>(
+/** A read the view does not need yields `none`, so it is never issued. */
+const whenMissing = <A, R>(
+  missing: ReadonlySet<SourceKey>,
+  key: SourceKey,
+  read: Effect.Effect<A, never, R>,
+): Effect.Effect<Option.Option<A>, never, R> =>
+  missing.has(key) ? read.pipe(Effect.asSome) : Effect.succeed(Option.none<A>());
+
+/** Result of one `readEntities` pass: the sources read in it, `undefined` for the ones it skipped. */
+interface FreshReads {
+  readonly customers: Option.Option<Sourced<readonly NamedInput[]>>;
+  readonly employees: Option.Option<Sourced<readonly EmployeeInput[]>>;
+  readonly invoices: Option.Option<Sourced<readonly InvoiceInput[]>>;
+  readonly movements: Option.Option<Sourced<readonly MovementInput[]>>;
+  readonly opportunities: Option.Option<Sourced<readonly OpportunityInput[]>>;
+  readonly orders: Option.Option<Sourced<readonly OrderInput[]>>;
+  readonly products: Option.Option<Sourced<readonly ProductInput[]>>;
+  readonly tags: Option.Option<Sourced<readonly NamedInput[]>>;
+  readonly tasks: Option.Option<Sourced<readonly TaskInput[]>>;
+}
+
+type MutableLoaded = { -readonly [K in SourceKey]?: Sourced<SourceValues[K]> | undefined };
+
+/** A skipped source stays absent, so merging a pass never erases what the cache already holds. */
+const takeRead = <K extends SourceKey>(
+  target: MutableLoaded,
+  key: K,
+  read: Option.Option<Sourced<SourceValues[K]>>,
+): void => {
+  if (Option.isSome(read)) {
+    Object.assign(target, { [key]: read.value });
+  }
+};
+
+const loadedFrom = (fresh: FreshReads): Loaded => {
+  const loaded: MutableLoaded = {};
+  takeRead(loaded, 'customers', fresh.customers);
+  takeRead(loaded, 'employees', fresh.employees);
+  takeRead(loaded, 'invoices', fresh.invoices);
+  takeRead(loaded, 'movements', fresh.movements);
+  takeRead(loaded, 'opportunities', fresh.opportunities);
+  takeRead(loaded, 'orders', fresh.orders);
+  takeRead(loaded, 'products', fresh.products);
+  takeRead(loaded, 'tags', fresh.tags);
+  takeRead(loaded, 'tasks', fresh.tasks);
+  return loaded;
+};
+
+/** Reads the entity and tag-name sources that are missing. Each read is independent; a failed read is a warning. */
+const readEntities = (missing: ReadonlySet<SourceKey>): Effect.Effect<Loaded> =>
+  Effect.all(
+    {
+      customers: whenMissing(
+        missing,
         'customers',
-        [],
-      )(
-        listCustomers({}).pipe(
-          Effect.map((items) =>
-            items.map((item): NamedInput => ({ id: item.partyId, name: item.displayName ?? item.partyId })),
+        sourced<readonly NamedInput[]>(
+          'customers',
+          [],
+        )(
+          listCustomers({}).pipe(
+            Effect.map((items) =>
+              items.map((item): NamedInput => ({ id: item.partyId, name: item.displayName ?? item.partyId })),
+            ),
           ),
         ),
       ),
-      sourced<readonly EmployeeInput[]>(
+      employees: whenMissing(
+        missing,
         'employees',
-        [],
-      )(listEmployees().pipe(Effect.map((items) => items.map(toEmployee)))),
-      sourced<readonly InvoiceInput[]>(
+        sourced<readonly EmployeeInput[]>(
+          'employees',
+          [],
+        )(listEmployees().pipe(Effect.map((items) => items.map(toEmployee)))),
+      ),
+      invoices: whenMissing(
+        missing,
         'invoices',
-        [],
-      )(
-        requestId('invoices').pipe(
-          Effect.flatMap((id) => listInvoices({}, id)),
-          Effect.map((items) => items.map(toInvoice)),
+        sourced<readonly InvoiceInput[]>(
+          'invoices',
+          [],
+        )(
+          requestId('invoices').pipe(
+            Effect.flatMap((id) => listInvoices({}, id)),
+            Effect.map((items) => items.map(toInvoice)),
+          ),
         ),
       ),
-      sourced<readonly MovementInput[]>(
+      movements: whenMissing(
+        missing,
         'movements',
-        [],
-      )(
-        requestId('movements').pipe(
-          Effect.flatMap((id) => listMovements(id)),
-          Effect.map((items) => items.map(toMovement)),
+        sourced<readonly MovementInput[]>(
+          'movements',
+          [],
+        )(
+          requestId('movements').pipe(
+            Effect.flatMap((id) => listMovements(id)),
+            Effect.map((items) => items.map(toMovement)),
+          ),
         ),
       ),
-      sourced<readonly OpportunityInput[]>(
+      opportunities: whenMissing(
+        missing,
         'opportunities',
-        [],
-      )(
-        requestId('opportunities').pipe(
-          Effect.flatMap((id) => listOpportunities({}, id)),
-          Effect.map((response) => response.items.map(toOpportunity)),
+        sourced<readonly OpportunityInput[]>(
+          'opportunities',
+          [],
+        )(
+          requestId('opportunities').pipe(
+            Effect.flatMap((id) => listOpportunities({}, id)),
+            Effect.map((response) => response.items.map(toOpportunity)),
+          ),
         ),
       ),
-      sourced<readonly OrderInput[]>(
+      orders: whenMissing(
+        missing,
         'orders',
-        [],
-      )(
-        requestId('orders').pipe(
-          Effect.flatMap((id) => listOrders(id)),
-          Effect.map((items) => items.map(toOrder)),
+        sourced<readonly OrderInput[]>(
+          'orders',
+          [],
+        )(
+          requestId('orders').pipe(
+            Effect.flatMap((id) => listOrders(id)),
+            Effect.map((items) => items.map(toOrder)),
+          ),
         ),
       ),
-      sourced<readonly ProductInput[]>(
+      products: whenMissing(
+        missing,
         'products',
-        [],
-      )(
-        requestId('products').pipe(
-          Effect.flatMap((id) => listProducts(id)),
-          Effect.map((items) => items.map(toProduct)),
+        sourced<readonly ProductInput[]>(
+          'products',
+          [],
+        )(
+          requestId('products').pipe(
+            Effect.flatMap((id) => listProducts(id)),
+            Effect.map((items) => items.map(toProduct)),
+          ),
         ),
       ),
-      sourced<readonly NamedInput[]>(
+      tags: whenMissing(
+        missing,
         'tags',
-        [],
-      )(listTags.pipe(Effect.map((items) => items.map((item): NamedInput => ({ id: item.id, name: item.name }))))),
-      sourced<readonly TaskInput[]>(
+        sourced<readonly NamedInput[]>(
+          'tags',
+          [],
+        )(listTags.pipe(Effect.map((items) => items.map((item): NamedInput => ({ id: item.id, name: item.name }))))),
+      ),
+      tasks: whenMissing(
+        missing,
         'tasks',
-        [],
-      )(listTasks({}).pipe(Effect.map((response) => response.items.map(toTask)))),
-    ],
+        sourced<readonly TaskInput[]>(
+          'tasks',
+          [],
+        )(listTasks({}).pipe(Effect.map((response) => response.items.map(toTask)))),
+      ),
+    },
     { concurrency: 6 },
-  );
+  ).pipe(Effect.map(loadedFrom));
 
+const idsOf = <T extends { readonly id: string }>(source: Sourced<readonly T[]> | undefined): readonly string[] =>
+  (source?.value ?? []).map((item) => item.id);
+
+/** One tagging read covers all five subject kinds; it needs the subject entities already loaded. */
+const readTagAssignments = (loaded: Loaded) => {
   const idsByKind = {
-    customer: customers.value.map((customer) => customer.id),
-    employee: employees.value.map((employee) => employee.id),
-    opportunity: opportunities.value.map((opportunity) => opportunity.id),
-    order: orders.value.map((order) => order.id),
-    product: products.value.map((product) => product.id),
+    customer: idsOf(loaded.customers),
+    employee: idsOf(loaded.employees),
+    opportunity: idsOf(loaded.opportunities),
+    order: idsOf(loaded.orders),
+    product: idsOf(loaded.products),
   } satisfies Record<(typeof subjectKinds)[number], readonly string[]>;
-  // One tagging read covers all five subject kinds.
-  const assignments = yield* sourced<readonly TagAssignmentInput[]>(
+  return sourced<readonly TagAssignmentInput[]>(
     'tags',
     [],
   )(
@@ -283,67 +390,126 @@ const loadStatisticsInputs = Effect.gen(function* statisticsInputs() {
       ),
     ),
   );
+};
 
-  const all = [customers, employees, invoices, movements, opportunities, orders, products, tags, tasks, assignments];
-  const failed = [...new Set(all.flatMap((source) => (source.failed === undefined ? [] : [source.failed])))];
-  const forbidden = [...new Set(all.flatMap((source) => (source.forbidden === undefined ? [] : [source.forbidden])))];
-  return {
-    failed,
-    forbidden,
-    inputs: {
-      customers: customers.value,
-      employees: employees.value,
-      invoices: invoices.value,
-      movements: movements.value,
-      opportunities: opportunities.value,
-      orders: orders.value,
-      products: products.value,
-      tagAssignments: assignments.value,
-      tags: tags.value,
-      tasks: tasks.value,
-    } satisfies MetricInputs,
-  };
-});
+/** Reads the missing sources; tag assignments follow the entity reads they depend on. */
+const loadMissing = (missing: ReadonlySet<SourceKey>, loaded: Loaded): Effect.Effect<Loaded> =>
+  readEntities(missing).pipe(
+    Effect.flatMap((fresh) =>
+      missing.has('tagAssignments')
+        ? readTagAssignments({ ...loaded, ...fresh }).pipe(
+            Effect.map((tagAssignments): Loaded => ({ ...fresh, tagAssignments })),
+          )
+        : Effect.succeed<Loaded>(fresh),
+    ),
+  );
+
+/** The sources a view reads. Tag assignments travel with the tag names. */
+const requestedKeysOf = (sources: readonly StatisticsSource[]): readonly SourceKey[] =>
+  sources.includes('tags') ? [...sources, 'tagAssignments'] : sources;
+
+const uniqueSources = (sources: readonly StatisticsSource[]): readonly StatisticsSource[] => [...new Set(sources)];
 
 const noSources: readonly StatisticsSource[] = [];
 
-const EMPTY_INPUTS: MetricInputs = {
-  employees: [],
-  invoices: [],
-  movements: [],
-  opportunities: [],
-  orders: [],
-  products: [],
-  tasks: [],
+/**
+ * The requested keys that must be read now: not cached, not in flight. Tag assignments wait until every subject
+ * entity is cached or being read in this pass, so they never address an empty subject list.
+ */
+const keysToRead = (
+  requested: readonly SourceKey[],
+  cache: Loaded,
+  pending: ReadonlySet<SourceKey>,
+): ReadonlySet<SourceKey> => {
+  const isMissing = (key: SourceKey) => cache[key] === undefined && !pending.has(key);
+  const missing = new Set<SourceKey>(requested.filter(isMissing));
+  const subjectsSettled = subjectSourceKeys.every((key) => cache[key] !== undefined || missing.has(key));
+  if (requested.includes('tagAssignments') && isMissing('tagAssignments') && subjectsSettled) {
+    missing.add('tagAssignments');
+  }
+  return missing;
 };
 
-/** Loads all producer reads once on mount. Stays `loading` during SSR and the first client render. */
-export const useStatisticsInputs = (): StatisticsData => {
-  const [data, setData] = useState<StatisticsData>({ status: 'loading' });
-  useEffect(() => {
-    let active = true;
-    const publish = (next: StatisticsData) =>
+/** A source not read yet, or read without a value, contributes no rows. */
+const valuesOf = <A>(entry: Sourced<readonly A[]> | undefined): readonly A[] => entry?.value ?? [];
+
+const inputsOf = (loaded: Loaded): MetricInputs =>
+  ({
+    customers: valuesOf(loaded.customers),
+    employees: valuesOf(loaded.employees),
+    invoices: valuesOf(loaded.invoices),
+    movements: valuesOf(loaded.movements),
+    opportunities: valuesOf(loaded.opportunities),
+    orders: valuesOf(loaded.orders),
+    products: valuesOf(loaded.products),
+    tagAssignments: valuesOf(loaded.tagAssignments),
+    tags: valuesOf(loaded.tags),
+    tasks: valuesOf(loaded.tasks),
+  }) satisfies MetricInputs;
+
+/** The ready state over the requested keys: a source that failed or was refused raises its flag. */
+const readyDataOf = (requested: readonly SourceKey[], loaded: Loaded): StatisticsData => {
+  const outcomes = requested.flatMap((key) => {
+    const entry = loaded[key];
+    return entry === undefined ? [] : [entry];
+  });
+  return {
+    failed: uniqueSources(outcomes.flatMap((entry) => (entry.failed === undefined ? noSources : [entry.failed]))),
+    forbidden: uniqueSources(
+      outcomes.flatMap((entry) => (entry.forbidden === undefined ? noSources : [entry.forbidden])),
+    ),
+    inputs: inputsOf(loaded),
+    status: 'ready',
+  };
+};
+
+/** Read state of one page visit, kept outside React so a finished read can start the next one. */
+interface ReadState {
+  cache: Loaded;
+  pending: Set<SourceKey>;
+  wanted: readonly SourceKey[];
+}
+
+/** Starts the reads the view wants that are neither cached nor in flight, then starts any it had to defer. */
+const startMissingReads = (state: ReadState, publish: (loaded: Loaded) => void): void => {
+  const missing = keysToRead(state.wanted, state.cache, state.pending);
+  if (missing.size === 0) {
+    return;
+  }
+  for (const key of missing) {
+    state.pending.add(key);
+  }
+  const program = loadMissing(missing, state.cache).pipe(
+    Effect.tap((patch) =>
       Effect.sync(() => {
-        if (active) {
-          setData(next);
-        }
-      });
-    const program = loadStatisticsInputs.pipe(
-      Effect.match({
-        onFailure: (cause) => ({
-          cause,
-          failed: StatisticsSourceSchema.literals,
-          forbidden: noSources,
-          inputs: EMPTY_INPUTS,
-        }),
-        onSuccess: (result) => ({ failed: result.failed, forbidden: result.forbidden, inputs: result.inputs }),
+        state.cache = { ...state.cache, ...patch };
+        publish(state.cache);
       }),
-      Effect.flatMap(({ failed, forbidden, inputs }) => publish({ failed, forbidden, inputs, status: 'ready' })),
-    );
-    void browserRuntime.runPromise(program);
-    return () => {
-      active = false;
-    };
-  }, []);
-  return data;
+    ),
+    Effect.ensuring(
+      Effect.sync(() => {
+        for (const key of missing) {
+          state.pending.delete(key);
+        }
+      }),
+    ),
+  );
+  // A finished read can unblock a deferred one (tag assignments), so the wanted keys are checked again.
+  void browserRuntime.runPromise(program.pipe(Effect.tap(() => Effect.sync(() => startMissingReads(state, publish)))));
+};
+
+/**
+ * Reads the producers the view needs, once per page visit: a source already read stays in the cache, so switching
+ * metric or grouping reads only what is new. Stays `loading` during SSR and the first client render.
+ */
+export const useStatisticsInputs = (sources: readonly StatisticsSource[]): StatisticsData => {
+  const [loaded, setLoaded] = useState<Loaded>({});
+  const reads = useRef<ReadState>({ cache: {}, pending: new Set(), wanted: [] });
+  useEffect(() => {
+    reads.current.wanted = requestedKeysOf(sources);
+    startMissingReads(reads.current, setLoaded);
+  }, [sources]);
+
+  const requested = requestedKeysOf(sources);
+  return requested.every((key) => loaded[key] !== undefined) ? readyDataOf(requested, loaded) : { status: 'loading' };
 };

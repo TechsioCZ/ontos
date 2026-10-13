@@ -1,4 +1,4 @@
-import type { MetricId } from '../../shared/metrics.ts';
+import type { Grouping, MetricId } from '../../shared/metrics.ts';
 import type { StatisticsSource } from './use-statistics-inputs.ts';
 
 /**
@@ -27,3 +27,23 @@ export const isMetricForbidden = (id: MetricId, forbidden: ReadonlySet<Statistic
   const sources: readonly StatisticsSource[] = metricSources[id];
   return sources.some((source) => forbidden.has(source));
 };
+
+/** The KPI row reads invoices and opportunities whatever the metric, so every view needs both. */
+const kpiSources: readonly StatisticsSource[] = ['invoices', 'opportunities'];
+
+/** Reads that name the groups of a grouping. Tag groups need every subject id to address their assignments. */
+const groupingSources = {
+  customer: ['customers'],
+  day: [],
+  employee: ['employees'],
+  month: [],
+  product: ['products'],
+  stage: [],
+  tag: ['customers', 'employees', 'opportunities', 'orders', 'products', 'tags'],
+  week: [],
+} as const satisfies Record<Grouping, readonly StatisticsSource[]>;
+
+/** The producer reads one view needs. Every other source stays unread until a later view asks for it. */
+export const statisticsSourcesFor = (metric: MetricId, groupBy: Grouping): readonly StatisticsSource[] => [
+  ...new Set<StatisticsSource>([...kpiSources, ...metricSources[metric], ...groupingSources[groupBy]]),
+];

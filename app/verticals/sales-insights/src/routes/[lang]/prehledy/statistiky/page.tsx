@@ -7,15 +7,15 @@ import csResource from '../../../../../locales/cs/sales-insights.json';
 import enResource from '../../../../../locales/en/sales-insights.json';
 import { computeKpis, computeMetric, metricCatalog } from '../../../../../shared/metrics.ts';
 import type { CalendarDay } from '../../../../../shared/metrics.ts';
-import { isMetricForbidden } from '../../../../statistics/statistics-access.ts';
+import { isMetricForbidden, statisticsSourcesFor } from '../../../../statistics/statistics-access.ts';
 import { StatisticsControls } from '../../../../statistics/statistics-controls.tsx';
 import { StatisticsResults } from '../../../../statistics/statistics-results.tsx';
 import type { StatisticsQuery } from '../../../../statistics/statistics-query.ts';
 import {
-  coerceGrouping,
   defaultQuery,
   invertedRangeOf,
   parseStatisticsQuery,
+  requestedGroupingOf,
   serializeStatisticsQuery,
 } from '../../../../statistics/statistics-query.ts';
 import { useStatisticsInputs } from '../../../../statistics/use-statistics-inputs.ts';
@@ -45,11 +45,14 @@ const StatisticsPageContent = () => {
   const today = todayDay();
   const search = useRouterState({ select: (state) => state.location.searchStr });
   const query = parseStatisticsQuery(search, defaultQuery(today));
-  const data = useStatisticsInputs();
+  const data = useStatisticsInputs(statisticsSourcesFor(query.metric, query.groupBy));
 
+  // The query holds the grouping the metric can show; the URL keeps the one the user asked for, so a metric switch
+  // that drops it can restore it. Parsing applies the same fallback again.
   const onChange = (patch: Partial<StatisticsQuery>) => {
     const next = { ...query, ...patch };
-    writeUrlSearch(serializeStatisticsQuery({ ...next, groupBy: coerceGrouping(next.metric, next.groupBy) }));
+    const groupBy = patch.groupBy ?? requestedGroupingOf(search) ?? next.groupBy;
+    writeUrlSearch(serializeStatisticsQuery({ ...next, groupBy }));
   };
 
   const metric = metricCatalog.find((entry) => entry.id === query.metric);
@@ -86,7 +89,13 @@ const StatisticsPageContent = () => {
           </StatusText>
         )}
         <SectionCard>
-          <StatisticsControls invertedRange={invertedRangeOf(search)} onChange={onChange} query={query} today={today} />
+          <StatisticsControls
+            invertedRange={invertedRangeOf(search)}
+            isForbidden={(id) => isMetricForbidden(id, forbiddenSet)}
+            onChange={onChange}
+            query={query}
+            today={today}
+          />
         </SectionCard>
         <StatisticsResults
           isForbidden={(id) => isMetricForbidden(id, forbiddenSet)}

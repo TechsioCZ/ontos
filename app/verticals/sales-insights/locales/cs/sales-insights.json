@@ -38,6 +38,7 @@
         "chartDescription": "Období {{from}} – {{to}}",
         "chartLabel": "{{metric}}, {{from}} až {{to}}",
         "chartType": "Typ grafu",
+        "dateFuture": "Datum nesmí být v budoucnosti.",
         "dateInvalid": "Zadejte platné datum.",
         "description": "Vyberte ukazatel, typ grafu, období a seskupení",
         "empty": "Za zvolené období nejsou žádná data.",
@@ -84,6 +85,7 @@
           "tags": "štítky",
           "tasks": "úkoly"
         },
+        "stockNote": "Hodnota skladu je aktuální stav k dnešnímu dni. Zvolené období ji nemění.",
         "table": {
           "group": "Skupina",
           "value": "Hodnota"

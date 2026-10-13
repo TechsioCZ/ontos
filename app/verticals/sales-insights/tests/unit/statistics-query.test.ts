@@ -13,6 +13,7 @@ import {
   parseStatisticsQuery,
   pieSlices,
   presetRange,
+  requestedGroupingOf,
   roundSeriesToTotal,
   serializeStatisticsQuery,
 } from '../../src/statistics/statistics-query.ts';
@@ -143,4 +144,11 @@ it('lists the five chart kinds in the requested order and flags time groupings',
   expect(chartKinds).toEqual(['line', 'area', 'bar', 'bar-horizontal', 'pie']);
   expect(isTimeGrouping('month')).toBe(true);
   expect(isTimeGrouping('customer')).toBe(false);
+});
+
+it('keeps the requested grouping in the URL so a metric switch can restore it', () => {
+  const search = 'metric=stock_value&group=month';
+  expect(parseStatisticsQuery(search, defaultQuery(today)).groupBy).toBe('product');
+  expect(requestedGroupingOf(search)).toBe('month');
+  expect(requestedGroupingOf('group=unknown')).toBeUndefined();
 });

@@ -128,6 +128,15 @@ export const parseStatisticsQuery = (search: string, fallback: StatisticsQuery):
   };
 };
 
+/**
+ * The grouping the URL asks for, before a metric that does not offer it falls back. The URL keeps it, so switching
+ * metric and back restores the grouping instead of losing it to the fallback.
+ */
+export const requestedGroupingOf = (search: string): Grouping | undefined => {
+  const groupParam = new URLSearchParams(search).get('group');
+  return Schema.is(GroupingSchema)(groupParam) ? groupParam : undefined;
+};
+
 export const serializeStatisticsQuery = (query: StatisticsQuery): string =>
   new URLSearchParams({
     chart: query.chart,
