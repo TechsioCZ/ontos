@@ -96,6 +96,7 @@ export const ApplyCommandResultSchema = Schema.Struct({
   results: Schema.optionalKey(Schema.Array(BulkOpportunityResultSchema)),
   revision: Schema.Int,
 });
+export type ApplyCommandResult = typeof ApplyCommandResultSchema.Type;
 export const SalesPipelineErrorSchema = Schema.Union([
   SalesPipelineScopeMismatch,
   SalesPipelineNotFound,
