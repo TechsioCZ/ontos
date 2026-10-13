@@ -151,8 +151,28 @@ export const buildTableTranslations = (t: Translate): DataTableTranslations => (
   selectionLabel: t('sales-pipeline.table.selectionLabel'),
 });
 
+/**
+ * Pagination labels for ui-kit's Pagination. Its defaults are English ("previous page", "last page, page 2").
+ * Labels follow zag's item shape: `{ page, totalPages }`.
+ */
+export const buildPaginationProps = (t: Translate) => ({
+  translations: {
+    firstTriggerLabel: t('sales-pipeline.table.pagination.first'),
+    itemLabel: ({ page, totalPages }: { page: number; totalPages: number }) =>
+      totalPages > 1 && page === totalPages
+        ? t('sales-pipeline.table.pagination.lastPage', { page })
+        : t('sales-pipeline.table.pagination.page', { page }),
+    lastTriggerLabel: t('sales-pipeline.table.pagination.last'),
+    nextTriggerLabel: t('sales-pipeline.table.pagination.next'),
+    prevTriggerLabel: t('sales-pipeline.table.pagination.previous'),
+    rootLabel: t('sales-pipeline.table.pagination.root'),
+  },
+});
+
 interface PipelineEmptyStateProps {
   readonly canWrite: boolean;
+  /** Owner and "Jen nepřiřazené" are both set; they cannot match the same opportunity. */
+  readonly conflictingFilters: boolean;
   readonly filtersActive: boolean;
   readonly hasResponse: boolean;
   readonly loadError: 'forbidden' | 'unavailable' | undefined;
@@ -164,6 +184,7 @@ interface PipelineEmptyStateProps {
 /** Load error, no results and first use each get their own message and next step. */
 export const PipelineEmptyState = ({
   canWrite,
+  conflictingFilters,
   filtersActive,
   hasResponse,
   loadError,
@@ -196,6 +217,7 @@ export const PipelineEmptyState = ({
             {t(`${K}.clearFilters`)}
           </Button>
         }
+        description={conflictingFilters ? t(`${K}.noResultsConflict`) : undefined}
         title={t(`${K}.noResults`)}
       />
     );

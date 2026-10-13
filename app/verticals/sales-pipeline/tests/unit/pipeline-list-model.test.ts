@@ -3,8 +3,8 @@ import { expect, it } from 'effect-rstest';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import {
+  MAX_LINE_QUANTITY,
   filterItemsByQuery,
-  foldSearchText,
   isValidQuantity,
   skipTally,
   sortNewestFirst,
@@ -64,11 +64,6 @@ it('counts an unchanged single-record command as skipped without a reason', () =
   expect(skipTally(0, decodeResult({ opportunities: [], revision: 7 })).total).toBe(0);
 });
 
-it('finds accented names from an unaccented query', () => {
-  expect(foldSearchText('Zálohování')).toBe('zalohovani');
-  expect(foldSearchText('Příležitost ŘEŠENÍ')).toBe('prilezitost reseni');
-});
-
 it('filters customer labels by the typed text and keeps the picked label listed', () => {
   const items = [{ label: 'Kroměřížská tiskárna s.r.o.' }, { label: 'Pražská pekárna' }];
   expect(filterItemsByQuery(items, 'Kro')).toEqual([items[0]]);
@@ -86,4 +81,12 @@ it('ranks stages in pipeline order, not by code name', () => {
 it('accepts only whole line quantities of at least 1', () => {
   expect([1, 5, 120].map((value) => isValidQuantity(value))).toEqual([true, true, true]);
   expect([0, -5, 1.5, Number.NaN].map((value) => isValidQuantity(value))).toEqual([false, false, false, false]);
+});
+
+it('caps one line quantity at the form maximum', () => {
+  expect([MAX_LINE_QUANTITY, MAX_LINE_QUANTITY + 1, 999_999_999].map((value) => isValidQuantity(value))).toEqual([
+    true,
+    false,
+    false,
+  ]);
 });

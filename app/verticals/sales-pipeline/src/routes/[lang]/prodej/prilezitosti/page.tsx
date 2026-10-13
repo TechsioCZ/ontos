@@ -1,4 +1,4 @@
-import { BulkActionBar, PageHeader } from '@app/admin-ui';
+import { BulkActionBar, foldSearchText, PageHeader } from '@app/admin-ui';
 import { useTagsFor } from '@app/tagging/components/tag-controls';
 import type { TagId } from '@app/tagging/contracts/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -25,11 +25,12 @@ import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from '
 import { PipelineFilters, PipelineStats } from './pipeline-filters.tsx';
 import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import { containsFolded, foldSearchText, skipTally, sortNewestFirst } from './pipeline-model.ts';
+import { containsFolded, skipTally, sortNewestFirst } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage, SkipTally } from './pipeline-model.ts';
 import {
   PipelineEmptyState,
   buildColumns,
+  buildPaginationProps,
   buildTableTranslations,
   defaultColumnVisibility,
 } from './pipeline-table.tsx';
@@ -117,6 +118,7 @@ const PipelineBulkBar = ({ onClear, onOwner, onStage, onTags, selectedCount }: P
 
 interface PipelineTableProps {
   readonly canWrite: boolean;
+  readonly conflictingFilters: boolean;
   readonly filtersActive: boolean;
   readonly hasResponse: boolean;
   readonly loadError: RecordsLoadError | undefined;
@@ -135,6 +137,7 @@ interface PipelineTableProps {
 
 const PipelineTable = ({
   canWrite,
+  conflictingFilters,
   filtersActive,
   hasResponse,
   loadError,
@@ -173,9 +176,11 @@ const PipelineTable = ({
       onColumnVisibilityChange={setColumnVisibility}
       onRowSelectionChange={onSelection}
       pageSizeOptions={[50, 100, 200]}
+      paginationProps={buildPaginationProps(t)}
       renderEmpty={() => (
         <PipelineEmptyState
           canWrite={canWrite}
+          conflictingFilters={conflictingFilters}
           filtersActive={filtersActive}
           hasResponse={hasResponse}
           loadError={loadError}
@@ -491,6 +496,7 @@ const RecordsPageContent = () => {
 
       <PipelineTable
         canWrite={canWrite}
+        conflictingFilters={ownerFilter !== '' && unassignedOnly}
         filtersActive={filtersActive}
         hasResponse={response !== undefined}
         loadError={loadError}

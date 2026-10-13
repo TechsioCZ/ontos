@@ -1,4 +1,4 @@
-import { formatMoney } from '@app/admin-ui';
+import { formatMoney, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -8,10 +8,16 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { useRef, useState } from 'react';
 import { opportunityAmountMinor } from '../../../../../shared/model/opportunity.ts';
 import type { OpportunityLine } from '../../../../../shared/model/opportunity.ts';
-import { firstValue, isValidQuantity } from './pipeline-model.ts';
+import { MAX_LINE_QUANTITY, firstValue, isValidQuantity } from './pipeline-model.ts';
 import type { LoadState, ProductOption } from './pipeline-references.ts';
 
 const K = 'sales-pipeline.pages.records';
+
+/**
+ * ui-kit parses a number field with `parseFloat` unless it gets format options, which reads `1,5` as `1`.
+ * With these options the parser follows cs-CZ, so a decimal stays visible and is reported as invalid.
+ */
+const quantityFormatOptions = { maximumFractionDigits: 3 };
 
 export interface LineEntry {
   /**
@@ -52,14 +58,20 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
         <div className="flex min-w-0 flex-1 flex-col gap-50">
           <span className="truncate font-medium text-sm">{line.productName}</span>
           <span className="text-fg-secondary text-xs tabular-nums">
-            {t(`${K}.create.lineMeta`, { price: formatMoney(line.unitPriceMinor), vat: line.vatRate })}
+            {t(`${K}.create.lineMeta`, {
+              price: formatMoney(line.unitPriceMinor),
+              quantity: formatNumber(line.quantity),
+              vat: line.vatRate,
+            })}
           </span>
         </div>
-        <div className="w-24 shrink-0">
+        <div className="w-32 shrink-0">
           <NumericInput
             clampValueOnBlur={false}
+            formatOptions={quantityFormatOptions}
             invalid={quantityInvalid}
             locale="cs-CZ"
+            max={MAX_LINE_QUANTITY}
             min={1}
             onChange={onQuantity}
             size="sm"
@@ -71,7 +83,8 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
             </NumericInput.Control>
           </NumericInput>
         </div>
-        <span className="w-28 shrink-0 text-end font-medium text-sm tabular-nums">
+        {/* A minimum width keeps totals aligned across rows; a longer total grows instead of running into the delete button. */}
+        <span className="min-w-28 shrink-0 whitespace-nowrap text-end font-medium text-sm tabular-nums">
           {formatMoney(line.quantity * line.unitPriceMinor)}
         </span>
         <Button
@@ -86,7 +99,7 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
       </div>
       {quantityInvalid && (
         <StatusText showIcon size="sm" status="error">
-          {t(`${K}.create.errors.quantityMin`)}
+          {t(`${K}.create.errors.quantityRange`, { max: formatNumber(MAX_LINE_QUANTITY) })}
         </StatusText>
       )}
     </li>
@@ -183,10 +196,16 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
         <div className="min-w-0">
           <FormNumericInput
             clampValueOnBlur={false}
-            helpText={quantityValid ? undefined : t(`${K}.create.errors.quantityMin`)}
+            formatOptions={quantityFormatOptions}
+            helpText={
+              quantityValid
+                ? undefined
+                : t(`${K}.create.errors.quantityRange`, { max: formatNumber(MAX_LINE_QUANTITY) })
+            }
             id="opportunity-line-quantity"
             label={t(`${K}.create.fields.quantity`)}
             locale="cs-CZ"
+            max={MAX_LINE_QUANTITY}
             min={1}
             name="lineQuantity"
             onChange={(value) => {

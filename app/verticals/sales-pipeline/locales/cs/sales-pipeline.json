@@ -37,6 +37,15 @@
       "filtersLabel": "Filtry sloupců",
       "loadingLabel": "Načítání dat",
       "pageSizeLabel": "Řádků na stránku",
+      "pagination": {
+        "first": "První stránka",
+        "last": "Poslední stránka",
+        "lastPage": "Stránka {{page}}, poslední",
+        "next": "Další stránka",
+        "page": "Stránka {{page}}",
+        "previous": "Předchozí stránka",
+        "root": "Stránkování"
+      },
       "reorderLabel": "Změnit pořadí řádků",
       "requiredLabel": "Povinné",
       "searchButtonLabel": "Hledat",
@@ -57,6 +66,7 @@
         "emptyTitle": "Zatím tu nejsou žádné příležitosti.",
         "emptyDescription": "Založte první příležitost a sledujte ji až do výhry.",
         "noResults": "Filtrům neodpovídá žádná příležitost.",
+        "noResultsConflict": "Filtry „Obchodník“ a „Jen nepřiřazené“ se navzájem vylučují. Zrušte jeden z nich.",
         "clearFilters": "Zrušit filtry",
         "stats": {
           "open": "Otevřené",
@@ -119,14 +129,20 @@
           "removeLine": "Odebrat položku",
           "noLines": "Zatím bez položek.",
           "priceFixedHint": "Cena zafixována při přidání.",
-          "lineMeta": "{{price}} za kus, DPH {{vat}} %",
+          "lineMeta": "{{quantity}} × {{price}} za kus, DPH {{vat}} %",
+          "discard": {
+            "confirm": "Zahodit změny",
+            "description": "Údaje, které jste ve formuláři zadali, se ztratí.",
+            "keep": "Pokračovat v úpravách",
+            "title": "Zahodit neuložené změny?"
+          },
           "total": "Celkem bez DPH",
           "errors": {
             "customerRequired": "Vyberte zákazníka.",
             "dateRequired": "Vyberte očekávané datum uzavření.",
             "noteTooLong": "Poznámka může mít nejvýše 2000 znaků.",
             "productRequired": "Vyberte produkt.",
-            "quantityMin": "Množství musí být celé číslo alespoň 1.",
+            "quantityRange": "Množství musí být celé číslo od 1 do {{max}}.",
             "titleRequired": "Vyplňte název příležitosti."
           },
           "fields": {

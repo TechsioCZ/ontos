@@ -37,6 +37,15 @@
       "filtersLabel": "Column filters",
       "loadingLabel": "Loading data",
       "pageSizeLabel": "Rows per page",
+      "pagination": {
+        "first": "First page",
+        "last": "Last page",
+        "lastPage": "Page {{page}}, last",
+        "next": "Next page",
+        "page": "Page {{page}}",
+        "previous": "Previous page",
+        "root": "Pagination"
+      },
       "reorderLabel": "Change row order",
       "requiredLabel": "Required",
       "searchButtonLabel": "Search",
@@ -57,6 +66,7 @@
         "emptyTitle": "No opportunities yet.",
         "emptyDescription": "Create the first opportunity and follow it through to a win.",
         "noResults": "No opportunities match the filters.",
+        "noResultsConflict": "The “Owner” and “Unassigned only” filters exclude each other. Clear one of them.",
         "clearFilters": "Clear filters",
         "stats": {
           "open": "Open",
@@ -119,14 +129,20 @@
           "removeLine": "Remove line",
           "noLines": "No lines yet.",
           "priceFixedHint": "Price fixed when added.",
-          "lineMeta": "{{price}} per unit, VAT {{vat}} %",
+          "lineMeta": "{{quantity}} × {{price}} per unit, VAT {{vat}} %",
+          "discard": {
+            "confirm": "Discard changes",
+            "description": "What you entered in this form will be lost.",
+            "keep": "Keep editing",
+            "title": "Discard unsaved changes?"
+          },
           "total": "Total excl. VAT",
           "errors": {
             "customerRequired": "Choose a customer.",
             "dateRequired": "Choose the expected close date.",
             "noteTooLong": "The note can have at most 2000 characters.",
             "productRequired": "Choose a product.",
-            "quantityMin": "Quantity must be a whole number of at least 1.",
+            "quantityRange": "Quantity must be a whole number from 1 to {{max}}.",
             "titleRequired": "Enter the opportunity name."
           },
           "fields": {

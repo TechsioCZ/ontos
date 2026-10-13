@@ -174,7 +174,13 @@ export const PipelineFilters = ({
           name="customer"
           noResultsMessage={t(`${K}.create.noCustomerMatch`)}
           onChange={(values) => onCustomer(customerFilterOf(firstValue(values)))}
-          onInputValueChange={setCustomerQuery}
+          // Deleting the typed text does not fire onChange in Combobox, so an emptied field clears the filter here.
+          onInputValueChange={(text) => {
+            setCustomerQuery(text);
+            if (text === '') {
+              onCustomer('');
+            }
+          }}
           placeholder={t(`${K}.filters.allCustomers`)}
           size="sm"
           value={customer === '' ? [] : [customer]}

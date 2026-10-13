@@ -1,14 +1,15 @@
 import { CalendarDateSchema } from '@app/shared-contracts';
-import { SidePanel, statusPresentation } from '@app/admin-ui';
+import { SidePanel, formatNumber, statusPresentation } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Option, Schema } from 'effect';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { OpportunityNoteSchema, OpportunityTitleSchema } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import {
@@ -16,7 +17,13 @@ import {
   PartyIdSchema,
 } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import { filterItemsByQuery, firstValue, isOpportunityStage, opportunityStages } from './pipeline-model.ts';
+import {
+  MAX_LINE_QUANTITY,
+  filterItemsByQuery,
+  firstValue,
+  isOpportunityStage,
+  opportunityStages,
+} from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 import { LinesEditor } from './pipeline-line-editor.tsx';
 import type { LineEntry } from './pipeline-line-editor.tsx';
@@ -63,7 +70,7 @@ const formErrors = (draft: FormDraft, closeText: string, t: Translate): FormErro
       ? t(`${K}.create.errors.customerRequired`)
       : undefined,
   lines: draft.lines.some((entry) => entry.invalidQuantity !== undefined)
-    ? t(`${K}.create.errors.quantityMin`)
+    ? t(`${K}.create.errors.quantityRange`, { max: formatNumber(MAX_LINE_QUANTITY) })
     : undefined,
   note: isValidNote(draft.note.trim()) ? undefined : t(`${K}.create.errors.noteTooLong`),
   title: isValidTitle(draft.title.trim()) ? undefined : t(`${K}.create.errors.titleRequired`),
@@ -114,10 +121,34 @@ export const OpportunityFormDialog = ({
   const [closeText, setCloseText] = useState<string>(() => initial?.expectedCloseDate ?? '');
   const [submitted, setSubmitted] = useState(false);
   const [customerQuery, setCustomerQuery] = useState('');
+  /** Set on the first edit. A dirty form asks before Escape, the close button or Zrušit drops the draft. */
+  const dirty = useRef(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  /** Bumped on a rejected submit, so the first invalid field takes focus. */
+  const [invalidAttempt, setInvalidAttempt] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const errors = formErrors(draft, closeText, t);
   const visible = (message: string | undefined) => (submitted ? message : undefined);
-  const patch = (next: Partial<FormDraft>) => setDraft((current) => ({ ...current, ...next }));
+  const patch = (next: Partial<FormDraft>) => {
+    dirty.current = true;
+    setDraft((current) => ({ ...current, ...next }));
+  };
+  const requestClose = (open: boolean) => {
+    if (open) {
+      return;
+    }
+    if (dirty.current) {
+      setDiscardOpen(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+  useEffect(() => {
+    if (invalidAttempt > 0) {
+      formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }
+  }, [invalidAttempt]);
   const unknownCustomer = t(`${K}.create.unknownCustomer`);
   const unknownOwner = t(`${K}.unknownOwner`);
 
@@ -154,9 +185,11 @@ export const OpportunityFormDialog = ({
       draft.customerId === null ? Option.none() : Schema.decodeOption(PartyIdSchema)(draft.customerId);
     const dateOption = Schema.decodeOption(CalendarDateSchema)(closeText);
     if (Object.values(errors).some((error) => error !== undefined)) {
+      setInvalidAttempt((count) => count + 1);
       return;
     }
     if (Option.isNone(partyOption) || Option.isNone(dateOption)) {
+      setInvalidAttempt((count) => count + 1);
       return;
     }
     const title = draft.title.trim();
@@ -183,108 +216,138 @@ export const OpportunityFormDialog = ({
   };
 
   return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
-            {t(`${K}.create.cancel`)}
-          </Button>
-          <Button isLoading={busy} loadingText={t(`${K}.create.submitting`)} onClick={submit} variant="primary">
-            {isEdit ? t(`${K}.edit.submit`) : t(`${K}.create.submit`)}
-          </Button>
-        </>
-      }
-      // The form holds unsaved input, and the date control opens a picker layered outside the drawer. A stray
-      // pointer or focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
-      closeOnInteractOutside={false}
-      description={isEdit ? t(`${K}.edit.description`) : t(`${K}.create.description`)}
-      onOpenChange={onOpenChange}
-      open
-      size="lg"
-      title={isEdit ? t(`${K}.edit.title`) : t(`${K}.create.title`)}
-    >
-      <form
-        className="flex flex-col gap-200 py-200"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={() => requestClose(false)} theme="outlined" type="button" variant="secondary">
+              {t(`${K}.create.cancel`)}
+            </Button>
+            <Button isLoading={busy} loadingText={t(`${K}.create.submitting`)} onClick={submit} variant="primary">
+              {isEdit ? t(`${K}.edit.submit`) : t(`${K}.create.submit`)}
+            </Button>
+          </>
+        }
+        // The form holds unsaved input, and the date control opens a picker layered outside the drawer. A stray
+        // pointer or focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
+        closeOnInteractOutside={false}
+        description={isEdit ? t(`${K}.edit.description`) : t(`${K}.create.description`)}
+        onOpenChange={requestClose}
+        open
+        size="lg"
+        title={isEdit ? t(`${K}.edit.title`) : t(`${K}.create.title`)}
       >
-        {serverError !== undefined && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
-        )}
-        <Combobox
-          error={customers.status === 'error' ? t(`${K}.create.customersFailed`) : undefined}
-          filterBehavior="external"
-          helpText={visible(errors.customer) ?? ''}
-          items={shownCustomerItems}
-          label={t(`${K}.create.fields.customer`)}
-          loading={customers.status === 'loading'}
-          loadingMessage={t('sales-pipeline.loading')}
-          name="partyId"
-          noResultsMessage={t(`${K}.create.noCustomerMatch`)}
-          onChange={(values) => {
-            const next = firstValue(values);
-            patch({ customerId: next === undefined || next === '' ? null : next });
+        {/* The form scrolls on its own, so the footer with Zrušit and the submit button stays at the panel bottom.
+            The small inline padding keeps focus rings from being clipped by the scroll edge. */}
+        <form
+          className="-mx-100 flex min-h-0 flex-1 flex-col gap-200 overflow-y-auto px-100 py-200"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
           }}
-          onInputValueChange={setCustomerQuery}
-          placeholder={t(`${K}.create.customerPlaceholder`)}
-          required
-          validateStatus={statusOf(visible(errors.customer))}
-          value={draft.customerId === null ? [] : [draft.customerId]}
-        />
-        <FormInput
-          autoComplete="off"
-          helpText={visible(errors.title)}
-          id="opportunity-title"
-          label={t(`${K}.create.fields.title`)}
-          name="title"
-          onChange={(event) => patch({ title: event.target.value })}
-          required
-          validateStatus={statusOf(visible(errors.title))}
-          value={draft.title}
-        />
-        <Combobox
-          disabled={isEdit}
-          helpText={isEdit ? t(`${K}.create.ownerEditHint`) : ''}
-          items={ownerItems}
-          label={t(`${K}.create.fields.assignee`)}
-          name="ownerEmployeeId"
-          noResultsMessage={t('sales-pipeline.noResults')}
-          onChange={(values) => {
-            const next = firstValue(values);
-            patch({ ownerId: next === undefined || next === NONE ? null : next });
-          }}
-          placeholder={t(SELECT_PLACEHOLDER)}
-          value={[draft.ownerId ?? NONE]}
-        />
-        <FormInput
-          helpText={visible(errors.close)}
-          id="opportunity-close-date"
-          label={t(`${K}.create.fields.expectedClose`)}
-          name="expectedCloseDate"
-          onChange={(event) => setCloseText(event.target.value)}
-          required
-          type="date"
-          validateStatus={statusOf(visible(errors.close))}
-          value={closeText}
-        />
-        <FormTextarea
-          autoComplete="off"
-          helpText={visible(errors.note)}
-          id="opportunity-note"
-          label={t(`${K}.create.fields.note`)}
-          name="note"
-          onChange={(event) => patch({ note: event.target.value })}
-          rows={3}
-          validateStatus={statusOf(visible(errors.note))}
-          value={draft.note}
-        />
-        <LinesEditor lines={draft.lines} onChange={(lines) => patch({ lines })} products={products} />
-      </form>
-    </SidePanel>
+          ref={formRef}
+        >
+          {serverError !== undefined && (
+            <StatusText showIcon status="error">
+              {serverError}
+            </StatusText>
+          )}
+          <Combobox
+            error={customers.status === 'error' ? t(`${K}.create.customersFailed`) : undefined}
+            filterBehavior="external"
+            helpText={visible(errors.customer) ?? ''}
+            items={shownCustomerItems}
+            label={t(`${K}.create.fields.customer`)}
+            loading={customers.status === 'loading'}
+            loadingMessage={t('sales-pipeline.loading')}
+            name="partyId"
+            noResultsMessage={t(`${K}.create.noCustomerMatch`)}
+            onChange={(values) => {
+              const next = firstValue(values);
+              patch({ customerId: next === undefined || next === '' ? null : next });
+            }}
+            onInputValueChange={setCustomerQuery}
+            placeholder={t(`${K}.create.customerPlaceholder`)}
+            required
+            validateStatus={statusOf(visible(errors.customer))}
+            value={draft.customerId === null ? [] : [draft.customerId]}
+          />
+          <FormInput
+            autoComplete="off"
+            helpText={visible(errors.title)}
+            id="opportunity-title"
+            label={t(`${K}.create.fields.title`)}
+            name="title"
+            onChange={(event) => patch({ title: event.target.value })}
+            required
+            validateStatus={statusOf(visible(errors.title))}
+            value={draft.title}
+          />
+          {/* A Select, like the Obchodník filter, so a click anywhere on the field opens the list. */}
+          <div className="flex flex-col gap-50">
+            <SelectTemplate
+              disabled={isEdit}
+              items={ownerItems}
+              label={t(`${K}.create.fields.assignee`)}
+              name="ownerEmployeeId"
+              onValueChange={({ value: [next] }) => {
+                patch({ ownerId: next === undefined || next === NONE ? null : next });
+              }}
+              placeholder={t(SELECT_PLACEHOLDER)}
+              size="md"
+              value={[draft.ownerId ?? NONE]}
+            />
+            {isEdit && <p className="text-fg-secondary text-xs">{t(`${K}.create.ownerEditHint`)}</p>}
+          </div>
+          <FormInput
+            helpText={visible(errors.close)}
+            id="opportunity-close-date"
+            label={t(`${K}.create.fields.expectedClose`)}
+            name="expectedCloseDate"
+            onChange={(event) => {
+              dirty.current = true;
+              setCloseText(event.target.value);
+            }}
+            required
+            type="date"
+            validateStatus={statusOf(visible(errors.close))}
+            value={closeText}
+          />
+          <FormTextarea
+            autoComplete="off"
+            helpText={visible(errors.note)}
+            id="opportunity-note"
+            label={t(`${K}.create.fields.note`)}
+            name="note"
+            onChange={(event) => patch({ note: event.target.value })}
+            rows={3}
+            validateStatus={statusOf(visible(errors.note))}
+            value={draft.note}
+          />
+          <LinesEditor lines={draft.lines} onChange={(lines) => patch({ lines })} products={products} />
+        </form>
+      </SidePanel>
+      <Dialog
+        actions={
+          <>
+            <Button onClick={() => setDiscardOpen(false)} theme="outlined" type="button" variant="secondary">
+              {t(`${K}.create.discard.keep`)}
+            </Button>
+            <Button onClick={() => onOpenChange(false)} type="button" variant="danger">
+              {t(`${K}.create.discard.confirm`)}
+            </Button>
+          </>
+        }
+        customTrigger
+        description={t(`${K}.create.discard.description`)}
+        hideCloseButton
+        onOpenChange={(details) => setDiscardOpen(details.open)}
+        open={discardOpen}
+        role="alertdialog"
+        size="sm"
+        title={t(`${K}.create.discard.title`)}
+      />
+    </>
   );
 };
 
@@ -330,7 +393,7 @@ export const StageDialog = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
+          <Button onClick={() => onOpenChange(false)} theme="outlined" type="button" variant="secondary">
             {t(`${K}.stageDialog.cancel`)}
           </Button>
           <Button isLoading={busy} loadingText={t(`${K}.stageDialog.submitting`)} onClick={submit} variant="primary">
@@ -436,7 +499,7 @@ export const OwnerDialog = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
+          <Button onClick={() => onOpenChange(false)} theme="outlined" type="button" variant="secondary">
             {t(`${K}.owner.cancel`)}
           </Button>
           <Button isLoading={busy} loadingText={t(`${K}.owner.submitting`)} onClick={submit} variant="primary">

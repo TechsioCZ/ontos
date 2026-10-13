@@ -1,4 +1,4 @@
-import { formatMoney, formatNumber } from '@app/admin-ui';
+import { foldSearchText, formatMoney, formatNumber } from '@app/admin-ui';
 import { Array as Arr, DateTime, Order, Schema } from 'effect';
 import type { ApplyCommandResult, BulkSkipReason } from '../../../../../shared/actions/apply-command.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
@@ -72,15 +72,15 @@ export const skipTally = (requested: number, result: ApplyCommandResult): SkipTa
   };
 };
 
-/** A line quantity must be a whole number of at least 1. */
-export const isValidQuantity = (value: number): boolean => Number.isInteger(value) && value >= 1;
+/** Largest quantity one product line takes in the form; a bigger number is almost always a typing error. */
+export const MAX_LINE_QUANTITY = 10_000;
+
+/** A line quantity must be a whole number from 1 to `MAX_LINE_QUANTITY`. */
+export const isValidQuantity = (value: number): boolean =>
+  Number.isInteger(value) && value >= 1 && value <= MAX_LINE_QUANTITY;
 
 /** First value of a Combobox or Select selection, or `undefined` when nothing is selected. */
 export const firstValue = (value: string | string[]): string | undefined => (Array.isArray(value) ? value[0] : value);
-
-/** Lowercase text without diacritics, so a search for `zalohovani` finds `Zálohování`. */
-export const foldSearchText = (text: string): string =>
-  text.normalize('NFD').replaceAll(/\p{M}/gu, '').toLocaleLowerCase('cs-CZ');
 
 /** Whether `text` contains `needle`, both compared through `foldSearchText`. `needle` must already be folded. */
 export const containsFolded = (text: string, needle: string): boolean => foldSearchText(text).includes(needle);

@@ -296,7 +296,7 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
     <SidePanel
       actions={
         <>
-          <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
+          <Button onClick={() => onOpenChange(false)} theme="outlined" type="button" variant="secondary">
             {t(`${K}.bulkByTag.cancel`)}
           </Button>
           <Button
