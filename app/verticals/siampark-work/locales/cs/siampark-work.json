@@ -76,7 +76,19 @@
           "changeState": "Změnit stav",
           "assign": "Přiřadit řešitele",
           "changed": "Změněno {{changed}}, přeskočeno {{skipped}}",
-          "assigned": "Přiřazeno {{changed}}, přeskočeno {{skipped}}"
+          "assigned": "Přiřazeno {{changed}}, přeskočeno {{skipped}}",
+          "skipped": {
+            "closed": "Dokončené a zrušené úkoly nelze přeřadit, zůstaly beze změny.",
+            "invalid_transition": "Některé úkoly nelze přesunout do vybraného stavu.",
+            "not_found": "Některé úkoly už neexistují."
+          }
+        },
+        "discard": {
+          "createTitle": "Zahodit nový úkol?",
+          "editTitle": "Zahodit změny v úkolu „{{title}}“?",
+          "description": "Neuložené údaje se ztratí.",
+          "keep": "Pokračovat v úpravách",
+          "confirm": "Zahodit"
         },
         "table": {
           "actions": "Akce",

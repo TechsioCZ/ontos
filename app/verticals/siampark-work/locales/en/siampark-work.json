@@ -76,7 +76,19 @@
           "changeState": "Change state",
           "assign": "Assign assignee",
           "changed": "Changed {{changed}}, skipped {{skipped}}",
-          "assigned": "Assigned {{changed}}, skipped {{skipped}}"
+          "assigned": "Assigned {{changed}}, skipped {{skipped}}",
+          "skipped": {
+            "closed": "Completed and cancelled tasks cannot be reassigned, so they were left unchanged.",
+            "invalid_transition": "Some tasks cannot move to the selected state.",
+            "not_found": "Some tasks no longer exist."
+          }
+        },
+        "discard": {
+          "createTitle": "Discard new task?",
+          "editTitle": "Discard changes to “{{title}}”?",
+          "description": "Unsaved details will be lost.",
+          "keep": "Keep editing",
+          "confirm": "Discard"
         },
         "table": {
           "actions": "Actions",

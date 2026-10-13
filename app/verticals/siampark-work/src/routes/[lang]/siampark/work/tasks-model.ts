@@ -1,3 +1,4 @@
+import { foldSearchText } from '@app/admin-ui';
 import { DateTime, Schema } from 'effect';
 import type { Employee } from '@app/workforce/contracts/records';
 import type { Task } from '../../../../../shared/apis/records.ts';
@@ -98,10 +99,27 @@ export const unassignedOpenCount = (tasks: readonly Task[]) =>
 export const employeeIdOf = (actorPrincipalId: string, employees: readonly Employee[]) =>
   employees.find((employee) => employee.principalRef?.principalId === actorPrincipalId)?.id;
 
-/** Lower case with diacritics removed, so a search without háčky or čárky ("uklid") finds "Úklid". */
-const foldSearchText = (text: string) => text.normalize('NFD').replaceAll(/\p{M}/gu, '').toLocaleLowerCase('cs-CZ');
+const nameMatches = (name: string, needle: string) => foldSearchText(name).includes(needle);
 
-const matchesSearch = (task: Task, needle: string) => foldSearchText(task.title).includes(needle);
+/** Picker items for customers whose display name matches the typed text. Customers without a name are left out. */
+export const customerOptionItems = (customers: readonly CustomerOption[], query: string) => {
+  const needle = foldSearchText(query.trim());
+  return customers.flatMap((customer) =>
+    customer.displayName !== null && nameMatches(customer.displayName, needle)
+      ? [{ label: customer.displayName, value: customer.partyId }]
+      : [],
+  );
+};
+
+const noCustomerNames: ReadonlyMap<string, string> = new Map();
+
+/** Matches the title or the customer name shown in the Zákazník column. */
+const matchesSearch = (task: Task, needle: string, customerNames: ReadonlyMap<string, string>) => {
+  const customer = task.partyId === undefined ? undefined : customerNames.get(task.partyId);
+  return (
+    foldSearchText(task.title).includes(needle) || (customer !== undefined && foldSearchText(customer).includes(needle))
+  );
+};
 
 const matchesAssignee = (task: Task, assignee: string) => {
   if (assignee === 'all') {
@@ -113,10 +131,12 @@ const matchesAssignee = (task: Task, assignee: string) => {
 export const filterTasks = (
   tasks: readonly Task[],
   {
+    customerNames = noCustomerNames,
     filters,
     mineEmployeeId,
     tab,
   }: {
+    readonly customerNames?: ReadonlyMap<string, string>;
     readonly filters: TaskFilters;
     readonly mineEmployeeId: string | undefined;
     readonly tab: TaskTab;
@@ -126,7 +146,7 @@ export const filterTasks = (
   return tasks.filter(
     (task) =>
       (tab === 'all' || mineEmployeeId === undefined || task.assigneeEmployeeId === mineEmployeeId) &&
-      (needle === '' || matchesSearch(task, needle)) &&
+      (needle === '' || matchesSearch(task, needle, customerNames)) &&
       matchesAssignee(task, filters.assignee) &&
       (filters.priority === 'all' || task.priority === filters.priority) &&
       (filters.state === 'all' || task.state === filters.state),

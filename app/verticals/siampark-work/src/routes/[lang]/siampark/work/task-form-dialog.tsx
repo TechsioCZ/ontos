@@ -6,6 +6,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
@@ -18,7 +19,7 @@ import {
   TaskPrioritySchema,
 } from '../../../../../shared/apis/records.ts';
 import type { Task } from '../../../../../shared/apis/records.ts';
-import { selectOption } from './tasks-model.ts';
+import { customerOptionItems, selectOption } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
 const NONE = 'none';
@@ -136,6 +137,64 @@ const firstValue = (next: string | string[]) => (Array.isArray(next) ? next[0] :
 const invalidProps = (message: string | undefined) =>
   message === undefined ? {} : { helpText: message, validateStatus: 'error' as const };
 
+/** True when a field differs from the saved task (or from the empty form), so closing would lose input. */
+const hasUnsavedInput = (values: FormValues, task: Task | undefined) => {
+  const initial = initialValues(task);
+  return (
+    values.assigneeId !== initial.assigneeId ||
+    values.description !== initial.description ||
+    values.dueDate !== initial.dueDate ||
+    values.opportunityId !== initial.opportunityId ||
+    values.partyId !== initial.partyId ||
+    values.priority !== initial.priority ||
+    values.title !== initial.title
+  );
+};
+
+const DiscardDialog = ({
+  finalFocusEl,
+  onDiscard,
+  onKeep,
+  open,
+  task,
+}: {
+  readonly finalFocusEl: () => HTMLElement | null;
+  readonly onDiscard: () => void;
+  readonly onKeep: () => void;
+  readonly open: boolean;
+  readonly task: Task | undefined;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <Dialog
+      actions={
+        <>
+          <Button onClick={onKeep} theme="outlined" variant="secondary">
+            {t(`${key}.discard.keep`)}
+          </Button>
+          <Button onClick={onDiscard} variant="danger">
+            {t(`${key}.discard.confirm`)}
+          </Button>
+        </>
+      }
+      customTrigger
+      description={t(`${key}.discard.description`)}
+      finalFocusEl={finalFocusEl}
+      onOpenChange={({ open: next }) => {
+        if (!next) {
+          onKeep();
+        }
+      }}
+      open={open}
+      role="alertdialog"
+      size="sm"
+      title={
+        task === undefined ? t(`${key}.discard.createTitle`) : t(`${key}.discard.editTitle`, { title: task.title })
+      }
+    />
+  );
+};
+
 export const TaskFormDialog = ({
   busy,
   customers,
@@ -160,8 +219,21 @@ export const TaskFormDialog = ({
   const [values, setValues] = useState(() => initialValues(task));
   const [submitted, setSubmitted] = useState(false);
   const [submitAttempts, setSubmitAttempts] = useState(0);
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const formRef = useRef<HTMLDivElement>(null);
+  // The field focused when closing was asked for (the Řešitel trigger after Escape); "keep editing" returns there.
+  const closeRequester = useRef<HTMLElement | null>(null);
   const set = (patch: Partial<FormValues>) => setValues((current) => ({ ...current, ...patch }));
+  // Escape, the close button and Zrušit keep the draft behind a confirmation while it holds unsaved input.
+  const requestClose = () => {
+    if (hasUnsavedInput(values, task)) {
+      closeRequester.current = globalThis.document.querySelector<HTMLElement>(':focus');
+      setConfirmDiscard(true);
+    } else {
+      onClose();
+    }
+  };
 
   // A failed submit moves focus to the first invalid field. The error state renders after this submit, so the
   // effect waits for it.
@@ -209,10 +281,10 @@ export const TaskFormDialog = ({
     selectOption(t(`${key}.unassigned`), NONE),
     ...employees.map((employee) => selectOption(employee.fullName, employee.id)),
   ];
-  // Customers without a display name cannot be told apart in a picker, so they are left out.
-  const customerItems = customers.flatMap((customer) =>
-    customer.displayName === null ? [] : [{ label: customer.displayName, value: customer.partyId }],
-  );
+  // Filtered here, not by the kit: its local filter ignores diacritics ("plzen" misses "Plzeň") and resets on open.
+  // The input shows the chosen customer's name until the user edits it; that text alone must not narrow the list.
+  const selectedCustomerName = customers.find((customer) => customer.partyId === values.partyId)?.displayName;
+  const customerItems = customerOptionItems(customers, customerQuery === selectedCustomerName ? '' : customerQuery);
   const companyIds = new Map(customers.map((customer) => [customer.partyId, customer.companyId] as const));
   // With a customer chosen, only that customer's opportunities are offered.
   const opportunityItems = opportunities.flatMap((opportunity) =>
@@ -225,150 +297,171 @@ export const TaskFormDialog = ({
   const dueMessage = message('dueDate');
 
   return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t(`${key}.cancel`)}
-          </Button>
-          <Button disabled={busy} isLoading={busy} loadingText={t(`${key}.saving`)} onClick={submit} variant="primary">
-            {t(isEdit ? `${key}.submitEdit` : `${key}.submitCreate`)}
-          </Button>
-        </>
-      }
-      // The form holds unsaved input; a stray pointer or focus move outside must not discard it.
-      closeOnInteractOutside={false}
-      onOpenChange={(next) => {
-        if (!next) {
-          onClose();
-        }
-      }}
-      open
-      size="md"
-      title={t(isEdit ? `${key}.edit` : `${key}.create`)}
-    >
-      <div className="flex flex-col gap-200 py-200" ref={formRef}>
-        {error !== undefined && (
-          <StatusText showIcon status="error">
-            {error}
-          </StatusText>
-        )}
-        <FormInput
-          autoComplete="off"
-          disabled={busy}
-          id="task-title"
-          label={t(`${key}.taskTitle`)}
-          maxLength={200}
-          onChange={(event) => set({ title: event.target.value })}
-          required
-          value={values.title}
-          {...invalidProps(message('title'))}
-        />
-        <FormTextarea
-          autoComplete="off"
-          disabled={busy}
-          id="task-description"
-          label={t(`${key}.description`)}
-          maxLength={2000}
-          onChange={(event) => set({ description: event.target.value })}
-          value={values.description}
-        />
-        <div className="flex flex-col gap-50">
-          <Select
-            disabled={busy}
-            items={assigneeItems}
-            label={t(`${key}.assignee`)}
-            labelProps={dialogLabelProps}
-            name="assignee"
-            onValueChange={({ value }) => {
-              const [next] = value;
-              set({ assigneeId: next === undefined || next === NONE ? '' : next });
-            }}
-            placeholder={t(`${key}.unassigned`)}
-            size="md"
-            value={[values.assigneeId === '' ? NONE : values.assigneeId]}
-          />
-          {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
-        </div>
-        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <div className="flex flex-col gap-50">
-            <DatePicker.Root
-              defaultValue={toCalendarDate(values.dueDate)}
-              locale="cs-CZ"
-              onValueChange={(details) => set({ dueDate: details.value === null ? undefined : details.valueAsString })}
-              size="md"
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={requestClose} theme="outlined" variant="secondary">
+              {t(`${key}.cancel`)}
+            </Button>
+            <Button
+              disabled={busy}
+              isLoading={busy}
+              loadingText={t(`${key}.saving`)}
+              onClick={submit}
+              variant="primary"
             >
-              <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
-              <DatePicker.Control>
-                <DatePicker.Segments />
-                <DatePicker.IndicatorGroup>
-                  {!isEdit && <DatePicker.ClearTrigger />}
-                  <DatePicker.Trigger />
-                </DatePicker.IndicatorGroup>
-              </DatePicker.Control>
-              <DatePicker.Positioner>
-                <DatePicker.Content className={datePickerContentClass}>
-                  <DatePicker.Calendar />
-                </DatePicker.Content>
-              </DatePicker.Positioner>
-            </DatePicker.Root>
-            {dueMessage !== undefined && <StatusText status="error">{dueMessage}</StatusText>}
-          </div>
-          <Select
+              {t(isEdit ? `${key}.submitEdit` : `${key}.submitCreate`)}
+            </Button>
+          </>
+        }
+        // The form holds unsaved input; a stray pointer or focus move outside must not discard it.
+        closeOnInteractOutside={false}
+        onOpenChange={(next) => {
+          if (!next) {
+            requestClose();
+          }
+        }}
+        open
+        size="md"
+        title={t(isEdit ? `${key}.edit` : `${key}.create`)}
+      >
+        <div className="flex flex-col gap-200 py-200" ref={formRef}>
+          {error !== undefined && (
+            <StatusText showIcon status="error">
+              {error}
+            </StatusText>
+          )}
+          <FormInput
+            autoComplete="off"
             disabled={busy}
-            items={priorityItems}
-            label={t(`${key}.priority`)}
-            labelProps={dialogLabelProps}
-            name="priority"
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (Schema.is(TaskPrioritySchema)(next)) {
-                set({ priority: next });
-              }
+            id="task-title"
+            label={t(`${key}.taskTitle`)}
+            maxLength={200}
+            onChange={(event) => set({ title: event.target.value })}
+            required
+            value={values.title}
+            {...invalidProps(message('title'))}
+          />
+          <FormTextarea
+            autoComplete="off"
+            disabled={busy}
+            id="task-description"
+            label={t(`${key}.description`)}
+            maxLength={2000}
+            onChange={(event) => set({ description: event.target.value })}
+            value={values.description}
+          />
+          <div className="flex flex-col gap-50">
+            <Select
+              disabled={busy}
+              items={assigneeItems}
+              label={t(`${key}.assignee`)}
+              labelProps={dialogLabelProps}
+              name="assignee"
+              onValueChange={({ value }) => {
+                const [next] = value;
+                set({ assigneeId: next === undefined || next === NONE ? '' : next });
+              }}
+              placeholder={t(`${key}.unassigned`)}
+              size="md"
+              value={[values.assigneeId === '' ? NONE : values.assigneeId]}
+            />
+            {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
+          </div>
+          <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+            <div className="flex flex-col gap-50">
+              <DatePicker.Root
+                defaultValue={toCalendarDate(values.dueDate)}
+                locale="cs-CZ"
+                onValueChange={(details) =>
+                  set({ dueDate: details.value === null ? undefined : details.valueAsString })
+                }
+                size="md"
+              >
+                <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
+                <DatePicker.Control>
+                  <DatePicker.Segments />
+                  <DatePicker.IndicatorGroup>
+                    {!isEdit && <DatePicker.ClearTrigger />}
+                    <DatePicker.Trigger />
+                  </DatePicker.IndicatorGroup>
+                </DatePicker.Control>
+                <DatePicker.Positioner>
+                  <DatePicker.Content className={datePickerContentClass}>
+                    <DatePicker.Calendar />
+                  </DatePicker.Content>
+                </DatePicker.Positioner>
+              </DatePicker.Root>
+              {dueMessage !== undefined && <StatusText status="error">{dueMessage}</StatusText>}
+            </div>
+            <Select
+              disabled={busy}
+              items={priorityItems}
+              label={t(`${key}.priority`)}
+              labelProps={dialogLabelProps}
+              name="priority"
+              onValueChange={({ value }) => {
+                const [next] = value;
+                if (Schema.is(TaskPrioritySchema)(next)) {
+                  set({ priority: next });
+                }
+              }}
+              placeholder={t('siampark-work.selectPlaceholder')}
+              size="md"
+              value={[values.priority]}
+            />
+          </div>
+          <Combobox
+            clearable={!isEdit}
+            disabled={busy}
+            filterBehavior="external"
+            items={customerItems}
+            label={t(`${key}.party`)}
+            name="party"
+            noResultsMessage={t(`${key}.comboboxEmpty`)}
+            onChange={(next) => set({ partyId: firstValue(next) })}
+            // No reset on open: typing into a closed list reports the text first and opens second, so a reset
+            // there would drop the first query and list every customer.
+            onInputValueChange={setCustomerQuery}
+            placeholder={t(`${key}.pickCustomer`)}
+            renderItem={(item) => {
+              const companyId = companyIds.get(item.value) ?? '';
+              return (
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{item.label}</span>
+                  {companyId !== '' && (
+                    <span className="text-fg-secondary text-xs">{t(`${key}.companyId`, { id: companyId })}</span>
+                  )}
+                </span>
+              );
             }}
-            placeholder={t('siampark-work.selectPlaceholder')}
             size="md"
-            value={[values.priority]}
+            value={singleValue(values.partyId)}
+            {...invalidProps(message('partyId'))}
+          />
+          <Combobox
+            clearable={!isEdit}
+            disabled={busy}
+            items={opportunityItems}
+            label={t(`${key}.opportunity`)}
+            name="opportunity"
+            noResultsMessage={t(`${key}.comboboxEmpty`)}
+            onChange={(next) => set({ opportunityId: firstValue(next) })}
+            placeholder={t(`${key}.pickOpportunity`)}
+            size="md"
+            value={singleValue(values.opportunityId)}
+            {...invalidProps(message('opportunityId'))}
           />
         </div>
-        <Combobox
-          clearable={!isEdit}
-          disabled={busy}
-          items={customerItems}
-          label={t(`${key}.party`)}
-          name="party"
-          noResultsMessage={t(`${key}.comboboxEmpty`)}
-          onChange={(next) => set({ partyId: firstValue(next) })}
-          placeholder={t(`${key}.pickCustomer`)}
-          renderItem={(item) => {
-            const companyId = companyIds.get(item.value) ?? '';
-            return (
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate">{item.label}</span>
-                {companyId !== '' && (
-                  <span className="text-fg-secondary text-xs">{t(`${key}.companyId`, { id: companyId })}</span>
-                )}
-              </span>
-            );
-          }}
-          size="md"
-          value={singleValue(values.partyId)}
-          {...invalidProps(message('partyId'))}
-        />
-        <Combobox
-          clearable={!isEdit}
-          disabled={busy}
-          items={opportunityItems}
-          label={t(`${key}.opportunity`)}
-          name="opportunity"
-          noResultsMessage={t(`${key}.comboboxEmpty`)}
-          onChange={(next) => set({ opportunityId: firstValue(next) })}
-          placeholder={t(`${key}.pickOpportunity`)}
-          size="md"
-          value={singleValue(values.opportunityId)}
-          {...invalidProps(message('opportunityId'))}
-        />
-      </div>
-    </SidePanel>
+      </SidePanel>
+      <DiscardDialog
+        finalFocusEl={() => (closeRequester.current?.isConnected === true ? closeRequester.current : null)}
+        onDiscard={onClose}
+        onKeep={() => setConfirmDiscard(false)}
+        open={confirmDiscard}
+        task={task}
+      />
+    </>
   );
 };

@@ -12,11 +12,11 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Random, Schema } from 'effect';
 import type { Types } from 'effect';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import type { WorkCommand } from '../../../../../shared/actions/apply-command.ts';
+import type { BulkSkipReason, WorkCommand } from '../../../../../shared/actions/apply-command.ts';
 import { EmployeeIdSchema } from '../../../../../shared/apis/records.ts';
 import type { RecordsResponse, Task } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -61,7 +61,13 @@ const LoadStateSchema = Schema.Literals(['loading', 'ready', 'error', 'forbidden
 type LoadState = typeof LoadStateSchema.Type;
 type Editor = { readonly mode: 'create' } | { readonly mode: 'edit'; readonly task: Task };
 type CommandOutcome =
-  | { readonly ok: true; readonly results: readonly { readonly outcome: 'changed' | 'skipped' }[] }
+  | {
+      readonly ok: true;
+      readonly results: readonly {
+        readonly outcome: 'changed' | 'skipped';
+        readonly reason?: BulkSkipReason;
+      }[];
+    }
   | { readonly message: string; readonly ok: false };
 
 const requestId = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
@@ -232,6 +238,27 @@ const useTasksPage = () => {
   const [formError, setFormError] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [bulkBusy, setBulkBusy] = useState(false);
+  // The control that opened the task panel. The panel unmounts on close, so focus goes back there explicitly.
+  const panelOpener = useRef<HTMLElement | null>(null);
+
+  const openEditor = (next: Editor) => {
+    // `:focus` never matches <body>, so a click that focused nothing records no opener.
+    panelOpener.current = globalThis.document.querySelector<HTMLElement>(':focus');
+    setFormError(undefined);
+    setEditor(next);
+  };
+
+  const closeEditor = () => {
+    setEditor(undefined);
+    const opener = panelOpener.current;
+    panelOpener.current = null;
+    // Runs after the panel unmounts and only moves a focus that fell to <body>, so a restore zag made stays put.
+    globalThis.requestAnimationFrame(() => {
+      if (opener?.isConnected === true && globalThis.document.activeElement === globalThis.document.body) {
+        opener.focus({ preventScroll: true });
+      }
+    });
+  };
 
   useEffect(() => {
     loadRecords({ setLoadState, setRecords });
@@ -253,7 +280,8 @@ const useTasksPage = () => {
   const canWrite = records?.canWrite === true;
   const mineEmployeeId =
     records === undefined ? undefined : employeeIdOf(records.actorPrincipalRef.principalId, employees);
-  const visibleTasks = records === undefined ? [] : filterTasks(records.items, { filters, mineEmployeeId, tab });
+  const visibleTasks =
+    records === undefined ? [] : filterTasks(records.items, { customerNames, filters, mineEmployeeId, tab });
   // Without an employee bound to this login, "mine" cannot narrow the list, so the page says so.
   const mineUnlinked = tab === 'mine' && records !== undefined && mineEmployeeId === undefined && employees.length > 0;
   const selectedIds = visibleTasks.flatMap((task) =>
@@ -327,7 +355,7 @@ const useTasksPage = () => {
     runCommand(command, records.revision, (result) => {
       setSaving(false);
       if (result.ok) {
-        setEditor(undefined);
+        closeEditor();
         setActionError(undefined);
         toaster.create({ title: t(successKey), type: 'success' });
       } else {
@@ -340,13 +368,29 @@ const useTasksPage = () => {
     setBulkBusy(false);
     if (outcome.ok) {
       const changed = outcome.results.filter((item) => item.outcome === 'changed').length;
+      // Each skipped id has a reason; the toast names every distinct one so the skipped count is explained.
+      const skipReasons = [
+        ...new Set(
+          outcome.results.flatMap((item) =>
+            item.outcome === 'skipped' && item.reason !== undefined ? [item.reason] : [],
+          ),
+        ),
+      ];
+      const skipped = outcome.results.length - changed;
       setSelection({});
       // The summary carries counts to read, so it stays longer than zag's short default for success toasts.
-      toaster.create({
-        duration: BULK_TOAST_DURATION_MS,
-        title: t(`${key}.bulk.${summaryKey}`, { changed, skipped: outcome.results.length - changed }),
-        type: 'success',
-      });
+      // Skipped rows turn it into a warning, so the explanation is not read as a plain success.
+      const title = t(`${key}.bulk.${summaryKey}`, { changed, skipped });
+      if (skipped === 0) {
+        toaster.create({ duration: BULK_TOAST_DURATION_MS, title, type: 'success' });
+      } else {
+        toaster.create({
+          description: skipReasons.map((reason) => t(`${key}.bulk.skipped.${reason}`)).join(' '),
+          duration: BULK_TOAST_DURATION_MS,
+          title,
+          type: 'warning',
+        });
+      }
     } else {
       setActionError(outcome.message);
     }
@@ -393,17 +437,15 @@ const useTasksPage = () => {
   };
 
   const handleOpenCreate = () => {
-    setFormError(undefined);
-    setEditor({ mode: 'create' });
+    openEditor({ mode: 'create' });
   };
 
   const handleOpenEdit = (task: Task) => {
-    setFormError(undefined);
-    setEditor({ mode: 'edit', task });
+    openEditor({ mode: 'edit', task });
   };
 
   const handleCloseEditor = () => {
-    setEditor(undefined);
+    closeEditor();
     setFormError(undefined);
   };
 
