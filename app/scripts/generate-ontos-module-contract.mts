@@ -136,7 +136,10 @@ const repositoryEsbuildPath = (): string => {
   });
 };
 
-const sourceOnlyReactPackages = [{ entry: 'packages/admin-ui/src/index.ts', name: '@app/admin-ui' }] as const;
+const sourceOnlyReactPackages = [
+  { entry: 'packages/admin-ui/src/index.ts', name: '@app/admin-ui' },
+  { entry: 'verticals/tagging/src/components/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
+] as const;
 
 const assertPlainTarget = (value: string, label: string, pattern: RegExp) =>
   pattern.test(value) ? Effect.succeed(value) : Effect.fail(failure(`${label} must be one safe generated identifier`));
