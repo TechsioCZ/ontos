@@ -30,7 +30,8 @@
           "partial": "Some orders could not be changed.",
           "result": "Changed: {{changed}}, failed: {{failed}}",
           "statusPlaceholder": "Change status…",
-          "success": "Order status changed"
+          "success": "Order status changed",
+          "tags": "Tags"
         },
         "columns": {
           "createdAt": "Created",
@@ -55,7 +56,7 @@
           "cancel": "Cancel",
           "conflict": "Someone else changed this record in the meantime. Reload it and repeat your change.",
           "customer": "Customer",
-          "customerHelp": "Enter the customer ID from the party registry.",
+          "customerHelp": "Choose the customer from the party registry.",
           "description": "Choose a customer and items. The order is saved with a price snapshot.",
           "errorCustomer": "Enter a customer.",
           "errorLines": "Add at least one item.",
@@ -72,7 +73,10 @@
           "removeLine": "Remove item",
           "submit": "Create order",
           "submitting": "Creating…",
-          "title": "New order"
+          "title": "New order",
+          "customerPlaceholder": "Search for a customer…",
+          "customersFailed": "The customer list could not be loaded.",
+          "noCustomerMatch": "No customer matches."
         },
         "description": "Customer orders with price snapshots.",
         "detail": {
@@ -112,7 +116,8 @@
           "firstDescription": "Create the first order and follow it through delivery.",
           "firstTitle": "There are no orders yet.",
           "forbiddenTitle": "You do not have access to this section.",
-          "retry": "Try again"
+          "retry": "Try again",
+          "tagFilterFailed": "Tags could not be loaded. Try again."
         },
         "table": {
           "actionsLabel": "Actions",
@@ -140,6 +145,9 @@
           "delivered": "Order delivered",
           "shipped": "Order shipped",
           "statusFailed": "The status could not be changed."
+        },
+        "customers": {
+          "unknown": "Unknown customer"
         }
       },
       "products": {
@@ -153,7 +161,8 @@
           "changePrice": "Change price by %",
           "clear": "Clear selection",
           "deactivate": "Deactivate",
-          "selected": "Selected: {{total}}"
+          "selected": "Selected: {{total}}",
+          "tags": "Tags"
         },
         "category": {
           "field": "New category",
@@ -251,7 +260,8 @@
           "error": "Data could not be loaded.",
           "errorDescription": "Check your connection and try again.",
           "forbidden": "You do not have access to this section.",
-          "noResults": "No product matches the filters."
+          "noResults": "No product matches the filters.",
+          "tagFilterFailed": "Tags could not be loaded. Try again."
         },
         "stats": {
           "lowStock": "Below minimum",

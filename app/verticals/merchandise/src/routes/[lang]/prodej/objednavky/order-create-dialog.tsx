@@ -1,14 +1,15 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DetailList, formatMoney } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import type { CustomerDirectory, CustomerEntry } from './customers-directory.ts';
 import { lineAmounts, sumAmounts } from './orders-model.ts';
 import { createOrder, isRevisionConflict } from './orders-records.ts';
 import { OrderLineEditor } from './order-line-editor.tsx';
@@ -23,7 +24,10 @@ interface Draft {
 
 const isValidQuantity = (quantity: number) => Number.isInteger(quantity) && quantity >= 1;
 
+const firstValue = (value: string | string[]) => (Array.isArray(value) ? value[0] : value);
+
 interface OrderCreateDialogProps {
+  readonly customers: CustomerDirectory;
   readonly onCreated: () => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
@@ -31,7 +35,14 @@ interface OrderCreateDialogProps {
   readonly revision: number;
 }
 
-export const OrderCreateDialog = ({ onCreated, onOpenChange, open, products, revision }: OrderCreateDialogProps) => {
+export const OrderCreateDialog = ({
+  customers,
+  onCreated,
+  onOpenChange,
+  open,
+  products,
+  revision,
+}: OrderCreateDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const lineSequence = useRef(1);
@@ -147,15 +158,34 @@ export const OrderCreateDialog = ({ onCreated, onOpenChange, open, products, rev
             {serverError}
           </StatusText>
         )}
-        <FormInput
+        <Combobox<CustomerEntry>
+          error={customers.status === 'error' ? t(key('create.customersFailed')) : undefined}
           helpText={submitted && partyError !== undefined ? partyError : t(key('create.customerHelp'))}
-          id="orders-create-party"
+          items={customers.active.map((customer) => ({
+            data: customer,
+            label: customer.name ?? customer.partyId,
+            value: customer.partyId,
+          }))}
           label={t(key('create.customer'))}
-          name="partyId"
-          onChange={(event) => setDraft((current) => ({ ...current, partyId: event.target.value }))}
+          loading={customers.status === 'loading'}
+          noResultsMessage={t(key('create.noCustomerMatch'))}
+          onChange={(values) => {
+            setDraft((current) => ({ ...current, partyId: firstValue(values) ?? '' }));
+          }}
+          onRetry={() => customers.reload()}
+          placeholder={t(key('create.customerPlaceholder'))}
+          renderItem={(item) => (
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate">{item.label}</span>
+              {item.data?.companyId !== null && item.data?.companyId !== undefined && item.data.companyId !== '' && (
+                <span className="text-fg-secondary text-xs">{`IČO ${item.data.companyId}`}</span>
+              )}
+            </span>
+          )}
           required
+          retryLabel={t(key('states.retry'))}
           validateStatus={submitted && partyError !== undefined ? 'error' : 'default'}
-          value={draft.partyId}
+          value={draft.partyId === '' ? [] : [draft.partyId]}
         />
 
         <div className="flex flex-col gap-150">

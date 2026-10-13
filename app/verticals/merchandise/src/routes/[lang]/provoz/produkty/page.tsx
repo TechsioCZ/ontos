@@ -6,12 +6,15 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { PageHeader, StatCard, StatRow, formatMoney, formatNumber } from '@app/admin-ui';
+import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { DateTime, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
+import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { loadProducts, runCommand } from './products-api.ts';
@@ -19,7 +22,6 @@ import type { FailureReason, LoadOutcome } from './products-api.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
 import { ProductDetailDialog } from './product-detail-dialog.tsx';
 import { CategoryDialog, CreateProductDialog, PriceChangeDialog, ReceiptDialog } from './product-forms.tsx';
-import { useProductFormat } from './products-format.ts';
 import { ProductsTable } from './products-table.tsx';
 
 const merchandiseI18nResources = {
@@ -28,7 +30,7 @@ const merchandiseI18nResources = {
 } as const;
 
 const ALL_CATEGORIES = '__all__';
-const DialogKind = Schema.Literals(['create', 'receipt', 'price', 'category']);
+const DialogKind = Schema.Literals(['create', 'receipt', 'price', 'category', 'tags']);
 
 type LoadState =
   | { readonly reason: FailureReason; readonly status: 'error' }
@@ -38,18 +40,38 @@ type LoadState =
 const toLoadState = (outcome: LoadOutcome): LoadState =>
   outcome.ok ? { response: outcome.response, status: 'ready' } : { reason: outcome.reason, status: 'error' };
 
-const StatCard = ({ label, value }: { readonly label: string; readonly value: string }) => (
-  <div className="flex min-w-0 flex-col gap-100 rounded-lg border border-border-primary bg-surface p-200">
-    <span className="text-fg-secondary text-sm">{label}</span>
-    <span className="font-semibold text-xl tabular-nums">{value}</span>
-  </div>
+interface ProductStatsProps {
+  readonly indicators: RecordsResponse['indicators'] | undefined;
+  readonly label: (path: string) => string;
+}
+
+/** Header KPIs. Dashes until the first read lands. */
+const ProductStats = ({ indicators, label }: ProductStatsProps) => (
+  <StatRow>
+    <StatCard
+      label={label('stats.products')}
+      value={indicators === undefined ? '—' : formatNumber(indicators.productCount)}
+    />
+    <StatCard
+      label={label('stats.stockValue')}
+      value={indicators === undefined ? '—' : formatMoney(indicators.stockValueMinor)}
+    />
+    <StatCard
+      label={label('stats.lowStock')}
+      value={indicators === undefined ? '—' : formatNumber(indicators.lowStockCount)}
+    />
+    <StatCard
+      label={label('stats.openOrders')}
+      value={indicators === undefined ? '—' : formatMoney(indicators.openOrderValueMinor)}
+    />
+  </StatRow>
 );
 
 const RecordsPageContent = () => {
   const { t } = useModernI18n();
-  const fmt = useProductFormat();
   const toaster = useToast();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
+  const tagFilter = useSubjectTagFilter('product');
 
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [search, setSearch] = useState('');
@@ -75,6 +97,10 @@ const RecordsPageContent = () => {
 
   const ready = state.status === 'ready' ? state.response : undefined;
   const products = ready?.products ?? [];
+  const productTags = useSubjectTags(
+    'product',
+    products.map((product) => product.id),
+  );
   const canWrite = ready?.canWrite === true;
   const revision = ready?.revision ?? 0;
   const categories = [...new Set(products.map((product) => product.category))].toSorted((left, right) =>
@@ -86,10 +112,11 @@ const RecordsPageContent = () => {
     (product) =>
       (query === '' || `${product.name} ${product.sku}`.toLowerCase().includes(query)) &&
       (category === ALL_CATEGORIES || product.category === category) &&
-      (!lowStockOnly || product.lowStock),
+      (!lowStockOnly || product.lowStock) &&
+      tagFilter.matches(product.id),
   );
   const selectedIds = products.flatMap((product) => (selection[product.id] === true ? [product.id] : []));
-  const filtersActive = query !== '' || category !== ALL_CATEGORIES || lowStockOnly;
+  const filtersActive = query !== '' || category !== ALL_CATEGORIES || lowStockOnly || tagFilter.tagId !== null;
   const detail = products.find((product) => product.id === detailId);
 
   const onCommitted = (message: string) => {
@@ -100,6 +127,7 @@ const RecordsPageContent = () => {
     setSearch('');
     setCategory(ALL_CATEGORIES);
     setLowStockOnly(false);
+    tagFilter.setTagId(null);
   };
 
   const runBulk = (patch: BulkProductPatch, message: string) => {
@@ -138,47 +166,30 @@ const RecordsPageContent = () => {
     <>
       <UltramodernRouteHead />
       <div className="flex w-full min-w-0 flex-col gap-250">
-        <header className="flex flex-wrap items-start justify-between gap-200">
-          <div className="flex min-w-0 flex-col gap-100">
-            <h1 className="font-semibold text-xl">{k('title')}</h1>
-            <p className="max-w-prose text-fg-secondary text-sm">{k('description')}</p>
-          </div>
-          {canWrite && (
-            <div className="flex flex-wrap items-center gap-100">
-              <Button
-                icon="icon-[mdi--package-down]"
-                onClick={() => setDialog('receipt')}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {k('actions.receipt')}
-              </Button>
-              <Button icon="icon-[mdi--plus]" onClick={() => setDialog('create')} size="sm" variant="primary">
-                {k('actions.newProduct')}
-              </Button>
-            </div>
-          )}
-        </header>
+        <PageHeader
+          actions={
+            canWrite ? (
+              <div className="flex flex-wrap items-center gap-100">
+                <Button
+                  icon="icon-[mdi--package-down]"
+                  onClick={() => setDialog('receipt')}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  {k('actions.receipt')}
+                </Button>
+                <Button icon="icon-[mdi--plus]" onClick={() => setDialog('create')} size="sm" variant="primary">
+                  {k('actions.newProduct')}
+                </Button>
+              </div>
+            ) : undefined
+          }
+          description={k('description')}
+          title={k('title')}
+        />
 
-        <div className="grid grid-cols-2 gap-200 xl:grid-cols-4">
-          <StatCard
-            label={k('stats.products')}
-            value={ready === undefined ? '—' : fmt.count(ready.indicators.productCount)}
-          />
-          <StatCard
-            label={k('stats.stockValue')}
-            value={ready === undefined ? '—' : fmt.money(ready.indicators.stockValueMinor)}
-          />
-          <StatCard
-            label={k('stats.lowStock')}
-            value={ready === undefined ? '—' : fmt.count(ready.indicators.lowStockCount)}
-          />
-          <StatCard
-            label={k('stats.openOrders')}
-            value={ready === undefined ? '—' : fmt.money(ready.indicators.openOrderValueMinor)}
-          />
-        </div>
+        <ProductStats indicators={ready?.indicators} label={k} />
 
         <div className="flex flex-wrap items-end gap-200">
           <div className="min-w-64 flex-1">
@@ -205,10 +216,18 @@ const RecordsPageContent = () => {
               value={[category]}
             />
           </div>
+          <div className="min-w-56">
+            <TagFilter kind="product" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
+          </div>
           <Switch checked={lowStockOnly} name="lowStockOnly" onCheckedChange={setLowStockOnly}>
             {k('filters.lowStockOnly')}
           </Switch>
         </div>
+        {tagFilter.status === 'error' && (
+          <StatusText showIcon status="error">
+            {k('states.tagFilterFailed')}
+          </StatusText>
+        )}
 
         <ProductBulkBar
           busy={bulkBusy}
@@ -218,6 +237,7 @@ const RecordsPageContent = () => {
           onChangePrice={() => setDialog('price')}
           onClear={() => setSelection({})}
           onSetActive={(active) => runBulk({ active }, k('messages.bulkUpdated'))}
+          onTags={() => setDialog('tags')}
         />
 
         {state.status === 'error' && state.reason === 'forbidden' && (
@@ -237,6 +257,7 @@ const RecordsPageContent = () => {
           rows={filtered}
           selection={selection}
           status={state.status}
+          tagsOf={productTags.tagsOf}
         />
 
         {ready !== undefined && (
@@ -271,6 +292,17 @@ const RecordsPageContent = () => {
               onReload={reload}
               open={dialog === 'category'}
               revision={revision}
+            />
+            <BulkTagDialog
+              kind="product"
+              onDone={() => {
+                setSelection({});
+                productTags.refetch();
+                tagFilter.refresh();
+              }}
+              onOpenChange={closeDialog}
+              open={dialog === 'tags'}
+              subjectIds={toSubjectIds(selectedIds)}
             />
           </>
         )}

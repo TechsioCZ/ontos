@@ -9,6 +9,7 @@ export interface ProductBulkBarProps {
   readonly onChangePrice: () => void;
   readonly onClear: () => void;
   readonly onSetActive: (active: boolean) => void;
+  readonly onTags: () => void;
 }
 
 /** Shown only while rows are selected. Write actions are hidden for read-only roles. */
@@ -20,6 +21,7 @@ export const ProductBulkBar = ({
   onChangePrice,
   onClear,
   onSetActive,
+  onTags,
 }: ProductBulkBarProps) => {
   const { t } = useModernI18n();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
@@ -44,6 +46,9 @@ export const ProductBulkBar = ({
           </Button>
           <Button disabled={busy} onClick={() => onSetActive(false)} size="sm" theme="outlined" variant="secondary">
             {k('bulk.deactivate')}
+          </Button>
+          <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
+            {k('bulk.tags')}
           </Button>
         </div>
       )}
