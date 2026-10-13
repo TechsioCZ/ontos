@@ -5,10 +5,10 @@ import { executeRecordsWithAuthorization as readAgreements } from '@app/siampark
 import { executeRecordsWithAuthorization as readOccupancies } from '@app/siampark-occupancy/clients/records';
 import { executeRecordsWithAuthorization as readProperty } from '@app/siampark-property/clients/records';
 import { executeRecordsWithAuthorization as readWork } from '@app/siampark-work/clients/records';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { FinanceReferenceUnavailable, FinanceRejected } from '../../shared/actions/apply-command.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
-import { DEMO_BUSINESS_DATE } from '../../shared/apis/records.ts';
+import { hasUsableRole } from '../../shared/domain/reference-audiences.ts';
 import { matchesFinanceRef } from './persistence.service.ts';
 import type { FinanceValidators } from './persistence.service.ts';
 
@@ -50,17 +50,13 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
       { baseUrl: partyTarget.apiBaseUrl, compositionRevision: partyTarget.compositionRevision },
     ).pipe(Effect.mapError(unavailable));
     const roleType = invoice.direction === 'INCOMING' ? 'SUPPLIER' : 'CUSTOMER';
+    // The role must be usable today (real clock), so customers added during the demo can be invoiced at once.
+    const today = DateTime.formatIsoDateUtc(yield* DateTime.now);
     if (
       !matchesFinanceRef(party.counterpartyRef, invoice.counterpartyRef) ||
       party.legalEntityRef.resourceId !== legalEntityId ||
       party.party.archived ||
-      !party.currentRoles.some(
-        (role) =>
-          role.roleType === roleType &&
-          role.state === 'ACTIVE' &&
-          role.validFrom.slice(0, 10) <= DEMO_BUSINESS_DATE &&
-          (role.validTo === null || role.validTo.slice(0, 10) > DEMO_BUSINESS_DATE),
-      )
+      !hasUsableRole(party.currentRoles, roleType, today)
     ) {
       return yield* rejected('counterparty_role_not_usable');
     }

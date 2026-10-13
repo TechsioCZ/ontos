@@ -59,6 +59,8 @@
         "submit": "Create draft",
         "submitting": "Creating…",
         "created": "Invoice created",
+        "createFailed": "The invoice could not be created",
+        "failureReason": "Reason: {{reason}}",
         "errorCustomer": "Choose a customer.",
         "error": {
           "product": "Choose a product.",
