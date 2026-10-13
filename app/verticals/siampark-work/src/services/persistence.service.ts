@@ -28,6 +28,7 @@ import { WorkStateSchema } from '../../shared/apis/records.ts';
 import type { ContextRef, RecordsRequest, Task, TaskState, WorkState } from '../../shared/apis/records.ts';
 import { TaskRefSchema } from '../../shared/resources/task.ts';
 import type { TaskRef } from '../../shared/resources/task.ts';
+import { legalTransitions } from '../../shared/actions/task-transitions.ts';
 import { workStates } from '../database/schema.ts';
 
 const workModuleId = 'siampark.work' as const;
@@ -144,14 +145,6 @@ export const taskStatusGroup = (state: TaskState) =>
   );
 export const taskIsOverdue = (task: Task, referenceDate = '2026-10-05') =>
   taskStatusGroup(task.state) !== 'DONE' && task.dueDate !== undefined && task.dueDate < referenceDate;
-
-const legalTransitions = {
-  CANCELLED: [],
-  DONE: [],
-  IN_PROGRESS: ['WAITING', 'DONE', 'CANCELLED'],
-  NEW: ['IN_PROGRESS', 'CANCELLED'],
-  WAITING: ['IN_PROGRESS', 'DONE', 'CANCELLED'],
-} as const satisfies Readonly<Record<TaskState, readonly TaskState[]>>;
 
 export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWorkState(
   state: WorkState,

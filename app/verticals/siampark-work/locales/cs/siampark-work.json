@@ -26,6 +26,12 @@
         "edit": "Upravit úkol",
         "saved": "Úkol uložen.",
         "created": "Úkol vytvořen.",
+        "started": "Úkol zahájen.",
+        "completed": "Úkol dokončen.",
+        "start": "Zahájit",
+        "complete": "Dokončit",
+        "closedTask": "Dokončený nebo zrušený úkol nelze upravit.",
+        "loadingNames": "Načítání…",
         "cancel": "Zrušit",
         "saving": "Ukládám…",
         "submitCreate": "Vytvořit úkol",
@@ -46,6 +52,7 @@
         "comboboxEmpty": "Nic nenalezeno.",
         "tabs": {
           "mine": "Moje úkoly",
+          "mineNamed": "Moje úkoly ({{name}})",
           "all": "Všechny"
         },
         "stats": {
@@ -60,8 +67,22 @@
           "allAssignees": "Všichni řešitelé",
           "state": "Stav",
           "priority": "Priorita",
+          "due": "Termín",
+          "dueOptions": {
+            "overdue": "Po termínu",
+            "today": "Dnes",
+            "none": "Bez termínu"
+          },
           "all": "Všechny",
           "clear": "Zrušit filtry"
+        },
+        "pagination": {
+          "label": "Stránkování",
+          "first": "První stránka",
+          "last": "Poslední stránka",
+          "next": "Další stránka",
+          "previous": "Předchozí stránka",
+          "page": "Stránka {{page}}"
         },
         "columns": {
           "title": "Název",

@@ -1,4 +1,4 @@
-import { SidePanel } from '@app/admin-ui';
+import { SidePanel, comboboxTranslations, datePickerTranslations, dialogCloseLabel } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { Employee } from '@app/workforce/contracts/records';
 import { CalendarDate } from '@internationalized/date';
@@ -12,6 +12,7 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import {
   EmployeeIdSchema,
   OpportunityIdSchema,
@@ -19,7 +20,8 @@ import {
   TaskPrioritySchema,
 } from '../../../../../shared/apis/records.ts';
 import type { Task } from '../../../../../shared/apis/records.ts';
-import { customerOptionItems, selectOption } from './tasks-model.ts';
+import { isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
+import { customerOptionItems, opportunityOptionItems, selectOption } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
 const NONE = 'none';
@@ -97,9 +99,20 @@ const idError = (text: string, hadValue: boolean, isValid: boolean): FieldError 
   return clearedError(hadValue, isValid);
 };
 
-/** An opportunity belongs to one customer, so a chosen customer that differs from its owner is inconsistent. */
-const mismatchError = (partyId: string, opportunityOwner: string | undefined): FieldError | undefined =>
-  partyId !== '' && opportunityOwner !== undefined && opportunityOwner !== partyId ? 'mismatch' : undefined;
+/**
+ * An opportunity belongs to one customer, so a chosen customer that differs from its owner is inconsistent. Only a
+ * pair the user changes is checked: a saved task keeps its pair, so an untouched one never blocks other edits.
+ */
+const mismatchError = (
+  values: FormValues,
+  task: Task | undefined,
+  opportunityOwner: string | undefined,
+): FieldError | undefined => {
+  const pairChanged = values.partyId !== (task?.partyId ?? '') || values.opportunityId !== (task?.opportunityId ?? '');
+  return pairChanged && values.partyId !== '' && opportunityOwner !== undefined && opportunityOwner !== values.partyId
+    ? 'mismatch'
+    : undefined;
+};
 
 const validate = (
   values: FormValues,
@@ -111,7 +124,7 @@ const validate = (
   dueDate: clearedError(task?.dueDate !== undefined, decoded.dueDate !== undefined),
   opportunityId:
     idError(values.opportunityId, task?.opportunityId !== undefined, decoded.opportunityId !== undefined) ??
-    mismatchError(values.partyId, opportunityOwner),
+    mismatchError(values, task, opportunityOwner),
   partyId: idError(values.partyId, task?.partyId !== undefined, decoded.partyId !== undefined),
   title: values.title.trim() === '' ? 'title' : undefined,
 });
@@ -169,7 +182,7 @@ const DiscardDialog = ({
     <Dialog
       actions={
         <>
-          <Button onClick={onKeep} theme="outlined" variant="secondary">
+          <Button id="task-discard-keep" onClick={onKeep} theme="outlined" variant="secondary">
             {t(`${key}.discard.keep`)}
           </Button>
           <Button onClick={onDiscard} variant="danger">
@@ -177,9 +190,12 @@ const DiscardDialog = ({
           </Button>
         </>
       }
+      closeLabel={dialogCloseLabel}
       customTrigger
       description={t(`${key}.discard.description`)}
       finalFocusEl={finalFocusEl}
+      // The safe choice gets focus: a stray Enter keeps the draft.
+      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#task-discard-keep')}
       onOpenChange={({ open: next }) => {
         if (!next) {
           onKeep();
@@ -192,6 +208,107 @@ const DiscardDialog = ({
         task === undefined ? t(`${key}.discard.createTitle`) : t(`${key}.discard.editTitle`, { title: task.title })
       }
     />
+  );
+};
+
+/** Zákazník and Příležitost pickers. Each keeps its typed query and its open state. */
+const ReferencePickers = ({
+  customers,
+  disabled,
+  isEdit,
+  onChange,
+  opportunities,
+  opportunityId,
+  opportunityMessage,
+  partyId,
+  partyMessage,
+}: {
+  readonly customers: readonly CustomerOption[];
+  readonly disabled: boolean;
+  readonly isEdit: boolean;
+  readonly onChange: (patch: Partial<FormValues>) => void;
+  readonly opportunities: readonly OpportunityOption[];
+  readonly opportunityId: string;
+  readonly opportunityMessage: string | undefined;
+  readonly partyId: string;
+  readonly partyMessage: string | undefined;
+}) => {
+  const { t } = useModernI18n();
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [opportunityQuery, setOpportunityQuery] = useState('');
+  // The pickers open on focus or click, not only on typing; zag's own open state is kept by these flags.
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [opportunityOpen, setOpportunityOpen] = useState(false);
+  // Filtered here, not by the kit: its local filter ignores diacritics ("plzen" misses "Plzeň") and resets on open.
+  // The input shows the chosen customer's name until the user edits it; that text alone must not narrow the list.
+  const selectedCustomerName = customers.find((customer) => customer.partyId === partyId)?.displayName;
+  const customerItems = customerOptionItems(customers, customerQuery === selectedCustomerName ? '' : customerQuery);
+  const companyIds = new Map(customers.map((customer) => [customer.partyId, customer.companyId] as const));
+  // With a customer chosen, only that customer's opportunities are offered. Filtered here like customers: the kit's
+  // local filter is reset when typing opens the list, so a no-match query used to list every opportunity.
+  const selectedOpportunityTitle = opportunities.find((opportunity) => opportunity.id === opportunityId)?.title;
+  const opportunityItems = opportunityOptionItems(opportunities, {
+    partyId,
+    query: opportunityQuery === selectedOpportunityTitle ? '' : opportunityQuery,
+    selectedId: opportunityId,
+  });
+  return (
+    <>
+      {/* Focus or click opens the list: the kit only opens it on typing, so an empty field looked dead. */}
+      <div onFocus={() => setCustomerOpen(true)}>
+        <Combobox
+          clearable={!isEdit}
+          disabled={disabled}
+          filterBehavior="external"
+          items={customerItems}
+          label={t(`${key}.party`)}
+          name="party"
+          noResultsMessage={t(`${key}.comboboxEmpty`)}
+          onChange={(next) => onChange({ partyId: firstValue(next) })}
+          // No reset on open: typing into a closed list reports the text first and opens second, so a reset
+          // there would drop the first query and list every customer.
+          onInputValueChange={setCustomerQuery}
+          onOpenChange={setCustomerOpen}
+          open={customerOpen}
+          placeholder={t(`${key}.pickCustomer`)}
+          renderItem={(item) => {
+            const companyId = companyIds.get(item.value) ?? '';
+            return (
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">{item.label}</span>
+                {companyId !== '' && (
+                  <span className="text-fg-secondary text-xs">{t(`${key}.companyId`, { id: companyId })}</span>
+                )}
+              </span>
+            );
+          }}
+          size="md"
+          translations={comboboxTranslations}
+          value={singleValue(partyId)}
+          {...invalidProps(partyMessage)}
+        />
+      </div>
+      <div onFocus={() => setOpportunityOpen(true)}>
+        <Combobox
+          clearable={!isEdit}
+          disabled={disabled}
+          filterBehavior="external"
+          items={opportunityItems}
+          label={t(`${key}.opportunity`)}
+          name="opportunity"
+          noResultsMessage={t(`${key}.comboboxEmpty`)}
+          onChange={(next) => onChange({ opportunityId: firstValue(next) })}
+          onInputValueChange={setOpportunityQuery}
+          onOpenChange={setOpportunityOpen}
+          open={opportunityOpen}
+          placeholder={t(`${key}.pickOpportunity`)}
+          size="md"
+          translations={comboboxTranslations}
+          value={singleValue(opportunityId)}
+          {...invalidProps(opportunityMessage)}
+        />
+      </div>{' '}
+    </>
   );
 };
 
@@ -219,8 +336,10 @@ export const TaskFormDialog = ({
   const [values, setValues] = useState(() => initialValues(task));
   const [submitted, setSubmitted] = useState(false);
   const [submitAttempts, setSubmitAttempts] = useState(0);
-  const [customerQuery, setCustomerQuery] = useState('');
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // A done or cancelled task cannot change, so its panel shows the values read-only.
+  const locked = task !== undefined && isClosedTaskState(task.state);
+  const fieldsDisabled = busy || locked;
   const formRef = useRef<HTMLDivElement>(null);
   // The field focused when closing was asked for (the Řešitel trigger after Escape); "keep editing" returns there.
   const closeRequester = useRef<HTMLElement | null>(null);
@@ -258,6 +377,9 @@ export const TaskFormDialog = ({
   const hasErrors = Object.values(errors).some((code) => code !== undefined);
 
   const submit = () => {
+    if (locked) {
+      return;
+    }
     setSubmitted(true);
     if (hasErrors) {
       setSubmitAttempts((count) => count + 1);
@@ -281,17 +403,6 @@ export const TaskFormDialog = ({
     selectOption(t(`${key}.unassigned`), NONE),
     ...employees.map((employee) => selectOption(employee.fullName, employee.id)),
   ];
-  // Filtered here, not by the kit: its local filter ignores diacritics ("plzen" misses "Plzeň") and resets on open.
-  // The input shows the chosen customer's name until the user edits it; that text alone must not narrow the list.
-  const selectedCustomerName = customers.find((customer) => customer.partyId === values.partyId)?.displayName;
-  const customerItems = customerOptionItems(customers, customerQuery === selectedCustomerName ? '' : customerQuery);
-  const companyIds = new Map(customers.map((customer) => [customer.partyId, customer.companyId] as const));
-  // With a customer chosen, only that customer's opportunities are offered.
-  const opportunityItems = opportunities.flatMap((opportunity) =>
-    values.partyId === '' || opportunity.partyId === values.partyId
-      ? [{ label: opportunity.title, value: opportunity.id }]
-      : [],
-  );
   const isEdit = task !== undefined;
   const assigneeMessage = message('assigneeId');
   const dueMessage = message('dueDate');
@@ -305,7 +416,7 @@ export const TaskFormDialog = ({
               {t(`${key}.cancel`)}
             </Button>
             <Button
-              disabled={busy}
+              disabled={fieldsDisabled}
               isLoading={busy}
               loadingText={t(`${key}.saving`)}
               onClick={submit}
@@ -317,6 +428,8 @@ export const TaskFormDialog = ({
         }
         // The form holds unsaved input; a stray pointer or focus move outside must not discard it.
         closeOnInteractOutside={false}
+        // The first field takes focus, so typing starts at once.
+        initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#task-title')}
         onOpenChange={(next) => {
           if (!next) {
             requestClose();
@@ -332,20 +445,28 @@ export const TaskFormDialog = ({
               {error}
             </StatusText>
           )}
+          {locked && <StatusText status="warning">{t(`${key}.closedTask`)}</StatusText>}
           <FormInput
             autoComplete="off"
-            disabled={busy}
+            disabled={fieldsDisabled}
             id="task-title"
             label={t(`${key}.taskTitle`)}
             maxLength={200}
             onChange={(event) => set({ title: event.target.value })}
+            // Enter submits, so an empty title gets the same field message as the button.
+            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                submit();
+              }
+            }}
             required
             value={values.title}
             {...invalidProps(message('title'))}
           />
           <FormTextarea
             autoComplete="off"
-            disabled={busy}
+            disabled={fieldsDisabled}
             id="task-description"
             label={t(`${key}.description`)}
             maxLength={2000}
@@ -354,7 +475,7 @@ export const TaskFormDialog = ({
           />
           <div className="flex flex-col gap-50">
             <Select
-              disabled={busy}
+              disabled={fieldsDisabled}
               items={assigneeItems}
               label={t(`${key}.assignee`)}
               labelProps={dialogLabelProps}
@@ -373,11 +494,13 @@ export const TaskFormDialog = ({
             <div className="flex flex-col gap-50">
               <DatePicker.Root
                 defaultValue={toCalendarDate(values.dueDate)}
+                disabled={fieldsDisabled}
                 locale="cs-CZ"
                 onValueChange={(details) =>
                   set({ dueDate: details.value === null ? undefined : details.valueAsString })
                 }
                 size="md"
+                translations={datePickerTranslations}
               >
                 <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
                 <DatePicker.Control>
@@ -396,7 +519,7 @@ export const TaskFormDialog = ({
               {dueMessage !== undefined && <StatusText status="error">{dueMessage}</StatusText>}
             </div>
             <Select
-              disabled={busy}
+              disabled={fieldsDisabled}
               items={priorityItems}
               label={t(`${key}.priority`)}
               labelProps={dialogLabelProps}
@@ -412,46 +535,16 @@ export const TaskFormDialog = ({
               value={[values.priority]}
             />
           </div>
-          <Combobox
-            clearable={!isEdit}
-            disabled={busy}
-            filterBehavior="external"
-            items={customerItems}
-            label={t(`${key}.party`)}
-            name="party"
-            noResultsMessage={t(`${key}.comboboxEmpty`)}
-            onChange={(next) => set({ partyId: firstValue(next) })}
-            // No reset on open: typing into a closed list reports the text first and opens second, so a reset
-            // there would drop the first query and list every customer.
-            onInputValueChange={setCustomerQuery}
-            placeholder={t(`${key}.pickCustomer`)}
-            renderItem={(item) => {
-              const companyId = companyIds.get(item.value) ?? '';
-              return (
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate">{item.label}</span>
-                  {companyId !== '' && (
-                    <span className="text-fg-secondary text-xs">{t(`${key}.companyId`, { id: companyId })}</span>
-                  )}
-                </span>
-              );
-            }}
-            size="md"
-            value={singleValue(values.partyId)}
-            {...invalidProps(message('partyId'))}
-          />
-          <Combobox
-            clearable={!isEdit}
-            disabled={busy}
-            items={opportunityItems}
-            label={t(`${key}.opportunity`)}
-            name="opportunity"
-            noResultsMessage={t(`${key}.comboboxEmpty`)}
-            onChange={(next) => set({ opportunityId: firstValue(next) })}
-            placeholder={t(`${key}.pickOpportunity`)}
-            size="md"
-            value={singleValue(values.opportunityId)}
-            {...invalidProps(message('opportunityId'))}
+          <ReferencePickers
+            customers={customers}
+            disabled={fieldsDisabled}
+            isEdit={isEdit}
+            onChange={set}
+            opportunities={opportunities}
+            opportunityId={values.opportunityId}
+            opportunityMessage={message('opportunityId')}
+            partyId={values.partyId}
+            partyMessage={message('partyId')}
           />
         </div>
       </SidePanel>

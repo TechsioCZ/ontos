@@ -7,6 +7,7 @@ import { WorkStateSchema } from '../shared/apis/records.ts';
 import type { TaskState, WorkState } from '../shared/apis/records.ts';
 import { workStates, workRelations } from '../src/database/schema.ts';
 import { demoId, demoLegalEntityId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
+import { opportunities as plannedOpportunities } from '../../../scripts/demo/sales-plan.mts';
 
 const FixtureSchema = Schema.Struct({
   legalEntityId: Schema.Literal('71000000-0000-4000-8000-000000000020'),
@@ -160,11 +161,18 @@ const salesDemoAssigneeFields = (i: number) => {
   const employeeKey = employees[Math.floor(i / 10) % employees.length];
   return { assigneeEmployeeId: demoId('employee', employeeKey ?? employees[0]) };
 };
-// Every 4th task has no customer (60 with a customer).
+const salesDemoOpportunityKey = (i: number) => `o${pad2(((i * 3) % 30) + 1)}`;
+// Every 4th task has no customer (60 with a customer). A task linked to an opportunity takes that opportunity's
+// customer from the shared sales plan, so the pair stays consistent (the task form rejects a mismatched pair).
+const salesDemoCustomerKey = (i: number) => {
+  const opportunityKey = salesDemoHasOpportunity(i) ? salesDemoOpportunityKey(i) : undefined;
+  const planned = plannedOpportunities.find((opportunity) => opportunity.key === opportunityKey);
+  return planned?.customerKey ?? `c${pad2(((i * 7) % 40) + 1)}`;
+};
 const salesDemoPartyFields = (i: number) =>
-  i % 4 === 0 ? undefined : { partyId: demoId('customer', `c${pad2(((i * 7) % 40) + 1)}`) };
+  i % 4 === 0 ? undefined : { partyId: demoId('customer', salesDemoCustomerKey(i)) };
 const salesDemoOpportunityFields = (i: number) =>
-  salesDemoHasOpportunity(i) ? { opportunityId: demoId('opportunity', `o${pad2(((i * 3) % 30) + 1)}`) } : undefined;
+  salesDemoHasOpportunity(i) ? { opportunityId: demoId('opportunity', salesDemoOpportunityKey(i)) } : undefined;
 
 /** Task `t01`..`t80` (index `i`, zero-based), encoded as the work-state wire shape. */
 const salesDemoTask = (i: number) => {

@@ -1,20 +1,58 @@
 import { foldSearchText } from '@app/admin-ui';
-import { DateTime, Schema } from 'effect';
+import { DateTime, Match, Option, Result, Schema } from 'effect';
 import type { Employee } from '@app/workforce/contracts/records';
-import type { Task } from '../../../../../shared/apis/records.ts';
+import { canTransition } from '../../../../../shared/actions/task-transitions.ts';
+import { TaskPrioritySchema, TaskStateSchema } from '../../../../../shared/apis/records.ts';
+import type { Task, TaskState } from '../../../../../shared/apis/records.ts';
 
 export const TaskTabSchema = Schema.Literals(['mine', 'all']);
 export type TaskTab = typeof TaskTabSchema.Type;
 
+export const DueFilterSchema = Schema.Literals(['all', 'overdue', 'today', 'none']);
+export type DueFilter = typeof DueFilterSchema.Type;
+
 export interface TaskFilters {
   /** `all`, `none` (unassigned) or an employee id. */
   readonly assignee: string;
+  readonly due: DueFilter;
   readonly priority: 'all' | Task['priority'];
   readonly search: string;
   readonly state: 'all' | Task['state'];
 }
 
-export const initialTaskFilters: TaskFilters = { assignee: 'all', priority: 'all', search: '', state: 'all' };
+export const initialTaskFilters: TaskFilters = {
+  assignee: 'all',
+  due: 'all',
+  priority: 'all',
+  search: '',
+  state: 'all',
+};
+
+/** Workflow order for the State column and the bulk state menu. */
+export const TASK_STATE_ORDER = [
+  'NEW',
+  'IN_PROGRESS',
+  'WAITING',
+  'DONE',
+  'CANCELLED',
+] as const satisfies readonly TaskState[];
+
+/** Sort ranks by meaning: the table sorts by these, never by the internal English keys. */
+export const PRIORITY_RANK = { HIGH: 2, LOW: 0, NORMAL: 1 } as const satisfies Record<Task['priority'], number>;
+export const STATE_RANK = {
+  CANCELLED: 4,
+  DONE: 3,
+  IN_PROGRESS: 1,
+  NEW: 0,
+  WAITING: 2,
+} as const satisfies Record<TaskState, number>;
+
+/** Czech collation: "Č" sorts after "C" and before "D", and accented letters sort with their base letter. */
+export const czechCollator = new Intl.Collator('cs-CZ');
+
+/** Target states that every given task can move to. A bulk state change applies one target to all of them. */
+export const commonTransitionTargets = (tasks: readonly Task[]): readonly TaskState[] =>
+  TASK_STATE_ORDER.filter((target) => tasks.length > 0 && tasks.every((task) => canTransition(task.state, target)));
 
 /**
  * A ui-kit select item. The kit's hidden native `<option>` takes its text from `displayValue`; without it the
@@ -67,13 +105,27 @@ const calendarMillis = (isoDate: string) => {
 const mondayFirstWeekday = (millis: number) => (Math.floor(millis / DAY_MS) + 3) % 7;
 
 const dueDateFormat = new Intl.DateTimeFormat('cs-CZ', {
-  day: 'numeric',
-  month: 'numeric',
+  day: '2-digit',
+  month: '2-digit',
   timeZone: 'UTC',
   year: 'numeric',
 });
 
-export const formatDueDate = (isoDate: string) => dueDateFormat.format(calendarMillis(isoDate));
+/** `31.10.2026`, the same shape the Termín field shows. Intl's `31. 10. 2026` spacing is dropped. */
+export const formatDueDate = (isoDate: string) =>
+  dueDateFormat
+    .formatToParts(calendarMillis(isoDate))
+    .flatMap((part) => (part.type === 'literal' ? [] : [part.value]))
+    .join('.');
+
+export const matchesDueFilter = (task: Task, due: DueFilter, today: string) =>
+  Match.value(due).pipe(
+    Match.when('all', () => true),
+    Match.when('overdue', () => isOverdue(task, today)),
+    Match.when('today', () => task.dueDate === today),
+    Match.when('none', () => task.dueDate === undefined),
+    Match.exhaustive,
+  );
 
 /** Tasks completed in the ISO week that contains today. */
 export const doneThisWeek = (tasks: readonly Task[], today: string) => {
@@ -101,6 +153,9 @@ export const employeeIdOf = (actorPrincipalId: string, employees: readonly Emplo
 
 const nameMatches = (name: string, needle: string) => foldSearchText(name).includes(needle);
 
+/** Text search and the picker share one fold, so "Novak" finds "Nováková" and "plzen" finds "Plzeň". */
+const textMatches = (name: string | undefined, needle: string) => name !== undefined && nameMatches(name, needle);
+
 /** Picker items for customers whose display name matches the typed text. Customers without a name are left out. */
 export const customerOptionItems = (customers: readonly CustomerOption[], query: string) => {
   const needle = foldSearchText(query.trim());
@@ -111,14 +166,35 @@ export const customerOptionItems = (customers: readonly CustomerOption[], query:
   );
 };
 
-const noCustomerNames: ReadonlyMap<string, string> = new Map();
-
-/** Matches the title or the customer name shown in the Zákazník column. */
-const matchesSearch = (task: Task, needle: string, customerNames: ReadonlyMap<string, string>) => {
-  const customer = task.partyId === undefined ? undefined : customerNames.get(task.partyId);
-  return (
-    foldSearchText(task.title).includes(needle) || (customer !== undefined && foldSearchText(customer).includes(needle))
+/**
+ * Picker items for opportunities: the chosen customer's ones (all of them without a customer) whose title matches
+ * the typed text. The selected opportunity always stays listed, so the field shows its title even when it belongs
+ * to another customer.
+ */
+export const opportunityOptionItems = (
+  opportunities: readonly OpportunityOption[],
+  { partyId, query, selectedId }: { readonly partyId: string; readonly query: string; readonly selectedId: string },
+) => {
+  const needle = foldSearchText(query.trim());
+  return opportunities.flatMap((opportunity) =>
+    opportunity.id === selectedId ||
+    ((partyId === '' || opportunity.partyId === partyId) && nameMatches(opportunity.title, needle))
+      ? [{ label: opportunity.title, value: opportunity.id }]
+      : [],
   );
+};
+
+const noNames: ReadonlyMap<string, string> = new Map();
+
+/** Matches the title, the customer name (Zákazník column) or the assignee name (Řešitel column). */
+const matchesSearch = (
+  task: Task,
+  needle: string,
+  names: { readonly customerNames: ReadonlyMap<string, string>; readonly employeeNames: ReadonlyMap<string, string> },
+) => {
+  const customer = task.partyId === undefined ? undefined : names.customerNames.get(task.partyId);
+  const assignee = task.assigneeEmployeeId === undefined ? undefined : names.employeeNames.get(task.assigneeEmployeeId);
+  return foldSearchText(task.title).includes(needle) || textMatches(customer, needle) || textMatches(assignee, needle);
 };
 
 const matchesAssignee = (task: Task, assignee: string) => {
@@ -131,24 +207,77 @@ const matchesAssignee = (task: Task, assignee: string) => {
 export const filterTasks = (
   tasks: readonly Task[],
   {
-    customerNames = noCustomerNames,
+    customerNames = noNames,
+    employeeNames = noNames,
     filters,
     mineEmployeeId,
     tab,
+    today = todayIsoDate(),
   }: {
     readonly customerNames?: ReadonlyMap<string, string>;
+    readonly employeeNames?: ReadonlyMap<string, string>;
     readonly filters: TaskFilters;
-    readonly mineEmployeeId: string | undefined;
+    readonly mineEmployeeId?: string | undefined;
     readonly tab: TaskTab;
+    readonly today?: string;
   },
 ) => {
   const needle = foldSearchText(filters.search.trim());
   return tasks.filter(
     (task) =>
       (tab === 'all' || mineEmployeeId === undefined || task.assigneeEmployeeId === mineEmployeeId) &&
-      (needle === '' || matchesSearch(task, needle, customerNames)) &&
+      (needle === '' || matchesSearch(task, needle, { customerNames, employeeNames })) &&
       matchesAssignee(task, filters.assignee) &&
+      matchesDueFilter(task, filters.due, today) &&
       (filters.priority === 'all' || task.priority === filters.priority) &&
       (filters.state === 'all' || task.state === filters.state),
   );
+};
+
+/**
+ * The Úkoly view (tab and filters) survives a reload within the browser session. Only the page reads it after
+ * mount, so server and first client render agree. Storage that is missing or full keeps the defaults.
+ */
+const StoredTaskFiltersSchema = Schema.Struct({
+  assignee: Schema.String,
+  due: DueFilterSchema,
+  priority: Schema.Union([Schema.Literal('all'), TaskPrioritySchema]),
+  search: Schema.String,
+  state: Schema.Union([Schema.Literal('all'), TaskStateSchema]),
+});
+const StoredTaskViewSchema = Schema.fromJsonString(
+  Schema.Struct({ filters: StoredTaskFiltersSchema, tab: TaskTabSchema }),
+);
+const taskViewStorageKey = 'siampark-work.tasks.view';
+
+const sessionStorageOrUndefined = (): Storage | undefined =>
+  'sessionStorage' in globalThis ? globalThis.sessionStorage : undefined;
+
+export interface StoredTaskView {
+  readonly filters: TaskFilters;
+  readonly tab: TaskTab;
+}
+
+export const readStoredTaskView = (): StoredTaskView | undefined => {
+  try {
+    const raw = sessionStorageOrUndefined()?.getItem(taskViewStorageKey);
+    return raw === null || raw === undefined
+      ? undefined
+      : Option.getOrUndefined(Schema.decodeOption(StoredTaskViewSchema)(raw));
+  } catch {
+    return undefined;
+  }
+};
+
+export const writeStoredTaskView = (view: StoredTaskView) => {
+  const encoded = Schema.encodeResult(StoredTaskViewSchema)(view);
+  const storage = sessionStorageOrUndefined();
+  if (storage === undefined || Result.isFailure(encoded)) {
+    return;
+  }
+  try {
+    storage.setItem(taskViewStorageKey, encoded.success);
+  } catch {
+    // Storage is full or blocked: the view is simply not kept across a reload.
+  }
 };

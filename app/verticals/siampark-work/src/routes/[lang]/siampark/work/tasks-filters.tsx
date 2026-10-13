@@ -1,11 +1,13 @@
 import { BulkActionBar } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { Employee } from '@app/workforce/contracts/records';
+import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { Schema } from 'effect';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../../shared/apis/records.ts';
-import { selectOption } from './tasks-model.ts';
+import type { TaskState } from '../../../../../shared/apis/records.ts';
+import { DueFilterSchema, TASK_STATE_ORDER, selectOption } from './tasks-model.ts';
 import type { TaskFilters } from './tasks-model.ts';
 
 const SELECT_PLACEHOLDER = 'siampark-work.selectPlaceholder';
@@ -13,7 +15,7 @@ const SELECT_PLACEHOLDER = 'siampark-work.selectPlaceholder';
 const key = 'siampark-work.pages.records';
 const ALL = 'all';
 const NONE = 'none';
-const STATE_OPTIONS = ['NEW', 'IN_PROGRESS', 'WAITING', 'DONE', 'CANCELLED'] as const;
+const DUE_OPTIONS = ['overdue', 'today', 'none'] as const;
 const PRIORITY_OPTIONS = ['LOW', 'NORMAL', 'HIGH'] as const;
 // Select labels take the filter row's label size, the same size FormInput uses for "Hledat úkol".
 const filterLabelProps = { className: 'font-label text-label-sm' };
@@ -24,13 +26,17 @@ const employeeItems = (employees: readonly Employee[]) =>
   employees.map((employee) => selectOption(employee.fullName, employee.id));
 
 export const TaskFilterBar = ({
+  active,
   employees,
   filters,
   onChange,
+  onClear,
 }: {
+  readonly active: boolean;
   readonly employees: readonly Employee[];
   readonly filters: TaskFilters;
   readonly onChange: (next: TaskFilters) => void;
+  readonly onClear: () => void;
 }) => {
   const { t } = useModernI18n();
   return (
@@ -68,7 +74,26 @@ export const TaskFilterBar = ({
         <Select
           items={[
             selectOption(t(`${key}.filters.all`), ALL),
-            ...STATE_OPTIONS.map((value) => selectOption(t(`${key}.states.${value}`), value)),
+            ...DUE_OPTIONS.map((value) => selectOption(t(`${key}.filters.dueOptions.${value}`), value)),
+          ]}
+          label={t(`${key}.filters.due`)}
+          labelProps={filterLabelProps}
+          onValueChange={({ value }) => {
+            const [next] = value;
+            if (Schema.is(DueFilterSchema)(next)) {
+              onChange({ ...filters, due: next });
+            }
+          }}
+          placeholder={t(SELECT_PLACEHOLDER)}
+          size="sm"
+          value={[filters.due]}
+        />
+      </div>
+      <div className="w-48 min-w-0">
+        <Select
+          items={[
+            selectOption(t(`${key}.filters.all`), ALL),
+            ...TASK_STATE_ORDER.map((value) => selectOption(t(`${key}.states.${value}`), value)),
           ]}
           label={t(`${key}.filters.state`)}
           labelProps={filterLabelProps}
@@ -106,6 +131,11 @@ export const TaskFilterBar = ({
           value={[filters.priority]}
         />
       </div>
+      {active && (
+        <Button onClick={onClear} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.filters.clear`)}
+        </Button>
+      )}
     </div>
   );
 };
@@ -117,20 +147,26 @@ export const TaskBulkBar = ({
   onAssign,
   onChangeState,
   onClear,
+  targets,
 }: {
   readonly busy: boolean;
   readonly count: number;
   readonly employees: readonly Employee[];
   readonly onAssign: (value: string) => void;
-  readonly onChangeState: (state: (typeof STATE_OPTIONS)[number]) => void;
+  readonly onChangeState: (state: TaskState) => void;
   readonly onClear: () => void;
+  /** States every selected task can move to. Options outside this list are not offered. */
+  readonly targets: readonly TaskState[];
 }) => {
   const { t } = useModernI18n();
+  const targetSet = new Set<TaskState>(targets);
   return (
     <BulkActionBar onClear={onClear} selectedCount={count}>
       <Select
-        disabled={busy}
-        items={STATE_OPTIONS.map((value) => selectOption(t(`${key}.states.${value}`), value))}
+        disabled={busy || targets.length === 0}
+        items={TASK_STATE_ORDER.flatMap((value) =>
+          targetSet.has(value) ? [selectOption(t(`${key}.states.${value}`), value)] : [],
+        )}
         label={t(`${key}.bulk.changeState`)}
         labelProps={bulkLabelProps}
         onValueChange={({ value }) => {

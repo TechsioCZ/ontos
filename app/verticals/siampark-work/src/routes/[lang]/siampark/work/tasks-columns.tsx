@@ -2,34 +2,53 @@ import { StatusBadge } from '@app/admin-ui';
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import type { Task } from '../../../../../shared/apis/records.ts';
-import { formatDueDate, isOverdue } from './tasks-model.ts';
+import { PRIORITY_RANK, STATE_RANK, czechCollator, formatDueDate, isOverdue } from './tasks-model.ts';
 
 const key = 'siampark-work.pages.records';
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
-/** The loaded name, or a muted placeholder when the id has no name in the loaded list. */
-const nameCell = (id: string | undefined, names: ReadonlyMap<string, string>, unknownLabel: string) => {
+/** Which reference lists have settled (loaded or failed). Until then their cells show a loading label. */
+export interface LookupState {
+  readonly customers: boolean;
+  readonly employees: boolean;
+  readonly opportunities: boolean;
+}
+
+/** Czech text order for the name columns. Every text accessor below returns a string. */
+const compareText = (left: string, right: string) => czechCollator.compare(left, right);
+
+const loadingCell = (t: Translate) => <span className="text-fg-secondary">{t(`${key}.loadingNames`)}</span>;
+
+/** The loaded name, a loading label while the list is pending, or a muted placeholder for an unknown id. */
+const nameCell = (
+  id: string | undefined,
+  names: ReadonlyMap<string, string>,
+  settled: boolean,
+  t: Translate,
+  unknownLabel: string,
+) => {
   if (id === undefined) {
     return '—';
   }
   const name = names.get(id);
-  return name === undefined ? (
-    <span className="block truncate text-fg-secondary">{unknownLabel}</span>
-  ) : (
-    <span className="block truncate">{name}</span>
-  );
+  if (name !== undefined) {
+    return <span className="block truncate">{name}</span>;
+  }
+  return settled ? <span className="block truncate text-fg-secondary">{unknownLabel}</span> : loadingCell(t);
 };
 
 export const buildTaskColumns = ({
   customerNames,
   employeeNames,
+  lookups,
   opportunityTitles,
   t,
   today,
 }: {
   readonly customerNames: ReadonlyMap<string, string>;
   readonly employeeNames: ReadonlyMap<string, string>;
+  readonly lookups: LookupState;
   readonly opportunityTitles: ReadonlyMap<string, string>;
   readonly t: Translate;
   readonly today: string;
@@ -43,7 +62,8 @@ export const buildTaskColumns = ({
           <span className="block truncate font-medium">{title}</span>
           {opportunityId !== undefined && (
             <span className="block truncate text-xs text-fg-secondary">
-              {opportunityTitles.get(opportunityId) ?? t(`${key}.unknownOpportunity`)}
+              {opportunityTitles.get(opportunityId) ??
+                (lookups.opportunities ? t(`${key}.unknownOpportunity`) : t(`${key}.loadingNames`))}
             </span>
           )}
         </span>
@@ -51,6 +71,7 @@ export const buildTaskColumns = ({
     },
     header: t(`${key}.columns.title`),
     meta: { width: 230 },
+    sortFn: (rowA, rowB, columnId) => compareText(rowA.getValue<string>(columnId), rowB.getValue<string>(columnId)),
   },
   {
     accessorFn: (task) =>
@@ -60,18 +81,24 @@ export const buildTaskColumns = ({
       if (assigneeEmployeeId === undefined) {
         return <span className="text-fg-secondary">{t(`${key}.unassigned`)}</span>;
       }
+      if (!lookups.employees) {
+        return loadingCell(t);
+      }
       return <span className="block truncate">{employeeNames.get(assigneeEmployeeId) ?? '—'}</span>;
     },
     header: t(`${key}.columns.assignee`),
     id: 'assignee',
     meta: { width: 140 },
+    sortFn: (rowA, rowB, columnId) => compareText(rowA.getValue<string>(columnId), rowB.getValue<string>(columnId)),
   },
   {
     accessorFn: (task) => (task.partyId === undefined ? '' : (customerNames.get(task.partyId) ?? '')),
-    cell: (info) => nameCell(info.row.original.partyId, customerNames, t(`${key}.unknownCustomer`)),
+    cell: (info) =>
+      nameCell(info.row.original.partyId, customerNames, lookups.customers, t, t(`${key}.unknownCustomer`)),
     header: t(`${key}.columns.party`),
     id: 'party',
     meta: { width: 150 },
+    sortFn: (rowA, rowB, columnId) => compareText(rowA.getValue<string>(columnId), rowB.getValue<string>(columnId)),
   },
   {
     accessorKey: 'dueDate',
@@ -89,17 +116,21 @@ export const buildTaskColumns = ({
     },
     header: t(`${key}.columns.dueDate`),
     meta: { width: 110 },
+    // Tasks without a date sort last in both directions.
+    sortUndefined: 'last',
   },
   {
-    accessorKey: 'priority',
+    accessorFn: (task) => PRIORITY_RANK[task.priority],
     cell: (info) => <StatusBadge kind="priority" value={info.row.original.priority} />,
     header: t(`${key}.columns.priority`),
+    id: 'priority',
     meta: { width: 95 },
   },
   {
-    accessorKey: 'state',
+    accessorFn: (task) => STATE_RANK[task.state],
     cell: (info) => <StatusBadge kind="task" value={info.row.original.state} />,
     header: t(`${key}.columns.state`),
+    id: 'state',
     meta: { width: 120 },
   },
 ];

@@ -26,6 +26,12 @@
         "edit": "Edit task",
         "saved": "Task saved.",
         "created": "Task created.",
+        "started": "Task started.",
+        "completed": "Task completed.",
+        "start": "Start",
+        "complete": "Complete",
+        "closedTask": "A completed or cancelled task cannot be edited.",
+        "loadingNames": "Loading…",
         "cancel": "Cancel",
         "saving": "Saving…",
         "submitCreate": "Create task",
@@ -46,6 +52,7 @@
         "comboboxEmpty": "Nothing found.",
         "tabs": {
           "mine": "My tasks",
+          "mineNamed": "My tasks ({{name}})",
           "all": "All"
         },
         "stats": {
@@ -60,8 +67,22 @@
           "allAssignees": "All assignees",
           "state": "State",
           "priority": "Priority",
+          "due": "Due date",
+          "dueOptions": {
+            "overdue": "Overdue",
+            "today": "Today",
+            "none": "No due date"
+          },
           "all": "All",
           "clear": "Clear filters"
+        },
+        "pagination": {
+          "label": "Pagination",
+          "first": "First page",
+          "last": "Last page",
+          "next": "Next page",
+          "previous": "Previous page",
+          "page": "Page {{page}}"
         },
         "columns": {
           "title": "Title",

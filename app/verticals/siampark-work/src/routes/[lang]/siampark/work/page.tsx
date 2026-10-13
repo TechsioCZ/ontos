@@ -1,4 +1,4 @@
-import { EmptyState, PageHeader, StatCard, StatRow } from '@app/admin-ui';
+import { EmptyState, PageHeader, StatCard, StatRow, toasterLabels, dataTableRowLabels } from '@app/admin-ui';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
@@ -17,22 +17,27 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import type { BulkSkipReason, WorkCommand } from '../../../../../shared/actions/apply-command.ts';
+import { canTransition, isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
 import { EmployeeIdSchema } from '../../../../../shared/apis/records.ts';
-import type { RecordsResponse, Task } from '../../../../../shared/apis/records.ts';
+import type { RecordsResponse, Task, TaskState } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { buildTaskColumns } from './tasks-columns.tsx';
+import type { LookupState } from './tasks-columns.tsx';
 import { TaskBulkBar, TaskFilterBar } from './tasks-filters.tsx';
 import { TaskFormDialog } from './task-form-dialog.tsx';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
 import {
   TaskTabSchema,
+  commonTransitionTargets,
   doneThisWeek,
   employeeIdOf,
   filterTasks,
   initialTaskFilters,
   overdueCount,
+  readStoredTaskView,
   todayIsoDate,
   unassignedOpenCount,
+  writeStoredTaskView,
 } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption, TaskFilters, TaskTab } from './tasks-model.ts';
 import csResource from '../../../../../locales/cs/siampark-work.json';
@@ -48,6 +53,8 @@ const key = 'siampark-work.pages.records';
 const NONE = 'none';
 const ALL = 'all';
 const BULK_TOAST_DURATION_MS = 6000;
+// zag's 2 s default for success toasts ends before the eye returns from the closing panel.
+const SUCCESS_TOAST_DURATION_MS = 5000;
 const count = new Intl.NumberFormat('cs-CZ');
 const decodeEmployeeId = Schema.decodeUnknownOption(EmployeeIdSchema);
 
@@ -84,6 +91,7 @@ interface RecordsSetters {
 interface EmployeeSetters {
   readonly setEmployees: (employees: readonly Employee[]) => void;
   readonly setEmployeesFailed: (failed: boolean) => void;
+  readonly settle: (name: keyof LookupState) => void;
 }
 
 // Module-scope loaders take the state setters as arguments, so the mount effect needs no dependencies.
@@ -108,18 +116,24 @@ const loadRecords = ({ setLoadState, setRecords }: RecordsSetters) => {
   );
 };
 
-const loadEmployees = ({ setEmployees, setEmployeesFailed }: EmployeeSetters) => {
+const loadEmployees = ({ setEmployees, setEmployeesFailed, settle }: EmployeeSetters) => {
   browserRuntime.runFork(
     listEmployees().pipe(
       Effect.matchEffect({
         onFailure: (error) =>
           Effect.logWarning('Employee list unavailable.', error).pipe(
-            Effect.andThen(Effect.sync(() => setEmployeesFailed(true))),
+            Effect.andThen(
+              Effect.sync(() => {
+                setEmployeesFailed(true);
+                settle('employees');
+              }),
+            ),
           ),
         onSuccess: (items) =>
           Effect.sync(() => {
             setEmployees(items);
             setEmployeesFailed(false);
+            settle('employees');
           }),
       }),
     ),
@@ -130,33 +144,52 @@ interface ReferenceSetters {
   readonly setCustomers: (customers: readonly CustomerOption[]) => void;
   readonly setOpportunities: (opportunities: readonly OpportunityOption[]) => void;
   readonly setReferenceFailed: (failed: boolean) => void;
+  readonly settle: (name: keyof LookupState) => void;
 }
 
 // Names for the table and the pickers. A failed load leaves the ids visible as muted placeholders.
-const loadCustomerNames = ({ setCustomers, setReferenceFailed }: ReferenceSetters) => {
+const loadCustomerNames = ({ setCustomers, setReferenceFailed, settle }: ReferenceSetters) => {
   browserRuntime.runFork(
     listCustomers().pipe(
       Effect.matchEffect({
         onFailure: (error) =>
           Effect.logWarning('Customer list unavailable.', error).pipe(
-            Effect.andThen(Effect.sync(() => setReferenceFailed(true))),
+            Effect.andThen(
+              Effect.sync(() => {
+                setReferenceFailed(true);
+                settle('customers');
+              }),
+            ),
           ),
-        onSuccess: (items) => Effect.sync(() => setCustomers(items)),
+        onSuccess: (items) =>
+          Effect.sync(() => {
+            setCustomers(items);
+            settle('customers');
+          }),
       }),
     ),
   );
 };
 
-const loadOpportunityNames = ({ setOpportunities, setReferenceFailed }: ReferenceSetters) => {
+const loadOpportunityNames = ({ setOpportunities, setReferenceFailed, settle }: ReferenceSetters) => {
   browserRuntime.runFork(
     requestId.pipe(
       Effect.flatMap((id) => listOpportunities({}, id)),
       Effect.matchEffect({
         onFailure: (error) =>
           Effect.logWarning('Opportunity list unavailable.', error).pipe(
-            Effect.andThen(Effect.sync(() => setReferenceFailed(true))),
+            Effect.andThen(
+              Effect.sync(() => {
+                setReferenceFailed(true);
+                settle('opportunities');
+              }),
+            ),
           ),
-        onSuccess: (result) => Effect.sync(() => setOpportunities(result.items)),
+        onSuccess: (result) =>
+          Effect.sync(() => {
+            setOpportunities(result.items);
+            settle('opportunities');
+          }),
       }),
     ),
   );
@@ -230,8 +263,11 @@ const useTasksPage = () => {
   const [customers, setCustomers] = useState<readonly CustomerOption[]>([]);
   const [opportunities, setOpportunities] = useState<readonly OpportunityOption[]>([]);
   const [referenceFailed, setReferenceFailed] = useState(false);
+  const [lookups, setLookups] = useState<LookupState>({ customers: false, employees: false, opportunities: false });
   const [tab, setTab] = useState<TaskTab>('mine');
   const [filters, setFilters] = useState<TaskFilters>(initialTaskFilters);
+  // Default order: the nearest due date first. Tasks without a date sort last (column option).
+  const [sorting, setSorting] = useState<{ desc: boolean; id: string }[]>([{ desc: false, id: 'dueDate' }]);
   const [selection, setSelection] = useState<Record<string, true>>({});
   const [editor, setEditor] = useState<Editor>();
   const [saving, setSaving] = useState(false);
@@ -261,10 +297,18 @@ const useTasksPage = () => {
   };
 
   useEffect(() => {
+    // Read after mount: the first render matches the server, and the saved view applies on top of it.
+    const stored = readStoredTaskView();
+    if (stored !== undefined) {
+      // oxlint-disable-next-line react/set-state-in-effect -- One-time sync from sessionStorage after mount; initial state from storage would break server/client hydration.
+      setTab(stored.tab);
+      setFilters(stored.filters);
+    }
+    const settle = (name: keyof LookupState) => setLookups((current) => ({ ...current, [name]: true }));
     loadRecords({ setLoadState, setRecords });
-    loadEmployees({ setEmployees, setEmployeesFailed });
-    loadCustomerNames({ setCustomers, setOpportunities, setReferenceFailed });
-    loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed });
+    loadEmployees({ setEmployees, setEmployeesFailed, settle });
+    loadCustomerNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
+    loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
   }, []);
 
   const today = todayIsoDate();
@@ -280,15 +324,29 @@ const useTasksPage = () => {
   const canWrite = records?.canWrite === true;
   const mineEmployeeId =
     records === undefined ? undefined : employeeIdOf(records.actorPrincipalRef.principalId, employees);
+  // "Mine" narrows by the employee linked to this login; until the employees settle the table stays in its loading
+  // state instead of flashing every task.
+  const mineResolving = tab === 'mine' && !lookups.employees;
   const visibleTasks =
-    records === undefined ? [] : filterTasks(records.items, { customerNames, filters, mineEmployeeId, tab });
+    records === undefined || mineResolving
+      ? []
+      : filterTasks(records.items, { customerNames, employeeNames, filters, mineEmployeeId, tab, today });
+  // The header shows the role only, so the "mine" tab names the employee it narrows to.
+  const mineName = mineEmployeeId === undefined ? undefined : employeeNames.get(mineEmployeeId);
   // Without an employee bound to this login, "mine" cannot narrow the list, so the page says so.
   const mineUnlinked = tab === 'mine' && records !== undefined && mineEmployeeId === undefined && employees.length > 0;
-  const selectedIds = visibleTasks.flatMap((task) =>
-    selection[task.ref.resourceId] === true ? [task.ref.resourceId] : [],
+  // A row selected before it closed drops out here, so a bulk command never carries a closed task.
+  const selectedTasks = visibleTasks.filter(
+    (task) => selection[task.ref.resourceId] === true && !isClosedTaskState(task.state),
   );
+  const selectedIds = selectedTasks.map((task) => task.ref.resourceId);
+  const stateTargets = commonTransitionTargets(selectedTasks);
   const filtersActive =
-    filters.search !== '' || filters.assignee !== ALL || filters.priority !== ALL || filters.state !== ALL;
+    filters.search !== '' ||
+    filters.assignee !== ALL ||
+    filters.due !== ALL ||
+    filters.priority !== ALL ||
+    filters.state !== ALL;
 
   // Runs one command against the revision the user saw, then reloads the list. Failures become messages.
   const runCommand = (command: WorkCommand, revision: number, onDone: (outcome: CommandOutcome) => void) =>
@@ -309,7 +367,10 @@ const useTasksPage = () => {
         Effect.match({
           onFailure: (error): CommandOutcome => ({
             message: Match.value(error).pipe(
-              Match.tag('ApplyCommandActionConflictProblem', () => t(`${key}.conflict`)),
+              // A closed task never changes, so a retry cannot help; the lifecycle conflict gets its own message.
+              Match.tag('ApplyCommandActionConflictProblem', (conflict) =>
+                t(conflict.code === 'work_lifecycle_conflict' ? `${key}.closedTask` : `${key}.conflict`),
+              ),
               Match.tag('ApplyCommandActionForbiddenProblem', 'RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
               Match.orElse(() => t(`${key}.invalid`)),
             ),
@@ -357,7 +418,7 @@ const useTasksPage = () => {
       if (result.ok) {
         closeEditor();
         setActionError(undefined);
-        toaster.create({ title: t(successKey), type: 'success' });
+        toaster.create({ duration: SUCCESS_TOAST_DURATION_MS, title: t(successKey), type: 'success' });
       } else {
         setFormError(result.message);
       }
@@ -424,11 +485,36 @@ const useTasksPage = () => {
     );
   };
 
+  // Row start and complete. Only transitions the table allows are offered, so the server accepts them.
+  const handleChangeRowState = (task: Task, toState: TaskState) => {
+    if (records === undefined) {
+      return;
+    }
+    setActionError(undefined);
+    runCommand({ _tag: 'ChangeTaskState', state: toState, taskRef: task.ref }, records.revision, (outcome) => {
+      if (outcome.ok) {
+        toaster.create({
+          duration: SUCCESS_TOAST_DURATION_MS,
+          title: t(toState === 'DONE' ? `${key}.completed` : `${key}.started`),
+          type: 'success',
+        });
+      } else {
+        setActionError(outcome.message);
+      }
+    });
+  };
+
   const handleChangeTab = (value: string) => {
     if (Schema.is(TaskTabSchema)(value)) {
       setTab(value);
       setSelection({});
+      writeStoredTaskView({ filters, tab: value });
     }
+  };
+
+  const handleFiltersChange = (next: TaskFilters) => {
+    setFilters(next);
+    writeStoredTaskView({ filters: next, tab });
   };
 
   const handleReload = () => {
@@ -464,16 +550,21 @@ const useTasksPage = () => {
     formError,
     handleBulkAssign,
     handleBulkChangeState,
+    handleChangeRowState,
     handleChangeTab,
-    handleClearFilters: () => setFilters(initialTaskFilters),
+    handleClearFilters: () => handleFiltersChange(initialTaskFilters),
     handleCloseEditor,
-    handleFiltersChange: setFilters,
+    handleFiltersChange,
     handleOpenCreate,
     handleOpenEdit,
     handleReload,
     handleSave: save,
     handleSelectionChange: setSelection,
+    handleSortingChange: setSorting,
     loadState,
+    lookups,
+    mineName,
+    mineResolving,
     mineUnlinked,
     opportunities,
     opportunityTitles,
@@ -482,6 +573,8 @@ const useTasksPage = () => {
     saving,
     selectedIds,
     selection,
+    sorting,
+    stateTargets,
     t,
     tab,
     today,
@@ -496,6 +589,7 @@ const TasksPageContent = () => {
   const columns = buildTaskColumns({
     customerNames: model.customerNames,
     employeeNames: model.employeeNames,
+    lookups: model.lookups,
     opportunityTitles: model.opportunityTitles,
     t,
     today: model.today,
@@ -535,7 +629,11 @@ const TasksPageContent = () => {
 
       <Tabs onValueChange={model.handleChangeTab} value={model.tab} variant="line">
         <Tabs.List>
-          <Tabs.Trigger value="mine">{t(`${key}.tabs.mine`)}</Tabs.Trigger>
+          <Tabs.Trigger value="mine">
+            {model.mineName === undefined
+              ? t(`${key}.tabs.mine`)
+              : t(`${key}.tabs.mineNamed`, { name: model.mineName })}
+          </Tabs.Trigger>
           <Tabs.Trigger value="all">{t(`${key}.tabs.all`)}</Tabs.Trigger>
           <Tabs.Indicator />
         </Tabs.List>
@@ -543,7 +641,13 @@ const TasksPageContent = () => {
 
       {model.mineUnlinked && <p className="text-fg-secondary text-sm">{t(`${key}.mineUnlinked`)}</p>}
 
-      <TaskFilterBar employees={model.employees} filters={model.filters} onChange={model.handleFiltersChange} />
+      <TaskFilterBar
+        active={model.filtersActive}
+        employees={model.employees}
+        filters={model.filters}
+        onChange={model.handleFiltersChange}
+        onClear={model.handleClearFilters}
+      />
 
       {model.canWrite && (
         <TaskBulkBar
@@ -553,6 +657,7 @@ const TasksPageContent = () => {
           onAssign={model.handleBulkAssign}
           onChangeState={model.handleBulkChangeState}
           onClear={() => model.handleSelectionChange({})}
+          targets={model.stateTargets}
         />
       )}
 
@@ -578,6 +683,8 @@ const TasksPageContent = () => {
       )}
 
       <DataTable
+        // Completed and cancelled tasks cannot be reassigned or moved, so they are not offered for selection.
+        canSelectRow={(row) => !isClosedTaskState(row.original.state)}
         // The row-selection column must stay first, so it is pinned ahead of the title.
         columnPinning={{ end: [], start: ['__select', 'title'] }}
         columns={columns}
@@ -588,7 +695,7 @@ const TasksPageContent = () => {
         enableSorting
         getRowId={(row) => row.ref.resourceId}
         getRowLabel={(row) => row.original.title}
-        loading={model.loadState === 'loading' && records === undefined}
+        loading={(model.loadState === 'loading' && records === undefined) || model.mineResolving}
         loadingRowCount={8}
         maxHeight="calc(100dvh - 15rem)"
         onRowClick={(row) => {
@@ -597,7 +704,18 @@ const TasksPageContent = () => {
           }
         }}
         onRowSelectionChange={model.handleSelectionChange}
+        onSortingChange={model.handleSortingChange}
         pageSizeOptions={[50, 100, 200]}
+        paginationProps={{
+          translations: {
+            firstTriggerLabel: t(`${key}.pagination.first`),
+            itemLabel: ({ page }: { page: number }) => t(`${key}.pagination.page`, { page }),
+            lastTriggerLabel: t(`${key}.pagination.last`),
+            nextTriggerLabel: t(`${key}.pagination.next`),
+            prevTriggerLabel: t(`${key}.pagination.previous`),
+            rootLabel: t(`${key}.pagination.label`),
+          },
+        }}
         renderEmpty={() => (
           <TaskEmptyState
             canWrite={model.canWrite}
@@ -614,6 +732,20 @@ const TasksPageContent = () => {
           model.canWrite
             ? [
                 {
+                  hidden: (row) => !canTransition(row.original.state, 'IN_PROGRESS'),
+                  icon: 'icon-[mdi--play-outline]',
+                  id: 'start',
+                  label: t(`${key}.start`),
+                  onAction: (row) => model.handleChangeRowState(row.original, 'IN_PROGRESS'),
+                },
+                {
+                  hidden: (row) => !canTransition(row.original.state, 'DONE'),
+                  icon: 'icon-[mdi--check-circle-outline]',
+                  id: 'complete',
+                  label: t(`${key}.complete`),
+                  onAction: (row) => model.handleChangeRowState(row.original, 'DONE'),
+                },
+                {
                   icon: 'icon-[mdi--pencil-outline]',
                   id: 'edit',
                   label: t(`${key}.edit`),
@@ -624,9 +756,11 @@ const TasksPageContent = () => {
         }
         rowSelection={model.selection}
         size="sm"
+        sorting={model.sorting}
         stickyHeader
         tableLayout="fixed"
         translations={{
+          ...dataTableRowLabels,
           actionsLabel: t(`${key}.table.actions`),
           loadingLabel: t(`${key}.table.loading`),
           pageSizeLabel: t(`${key}.table.pageSize`),
@@ -661,7 +795,7 @@ export const RecordsPage = () => (
     resources={siamparkWorkI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <Toaster />
+    <Toaster {...toasterLabels} />
     <TasksPageContent />
   </FederatedI18nBoundary>
 );
