@@ -20,45 +20,97 @@
     "pages": {
       "records": {
         "title": "Úkoly",
-        "refresh": "Načíst úkoly",
-        "taskTitle": "Název",
-        "state": "Stav",
-        "dueDate": "Termín",
-        "detail": "Detail",
-        "filter": "Filtrovat podle názvu",
-        "description": "Popis",
-        "owner": "Odpovědná osoba",
-        "priority": "Priorita",
-        "unassigned": "Nepřiřazeno",
+        "description": "Úkoly přiřazené obchodníkům, jejich termíny a stav.",
+        "newTask": "Nový úkol",
         "create": "Nový úkol",
         "edit": "Upravit úkol",
-        "save": "Uložit",
-        "new": "Nový úkol",
-        "assignMe": "Přiřadit mně",
-        "indicators": "Otevřené: {{open}} · Po termínu: {{overdue}} · Referenční datum: {{date}}",
         "saved": "Úkol uložen.",
-        "unavailable": "Úkoly se nepodařilo načíst.",
-        "forbidden": "K této operaci nemáte oprávnění.",
-        "conflict": "Data se změnila. Načtěte úkoly znovu.",
+        "created": "Úkol vytvořen.",
+        "cancel": "Zrušit",
+        "saving": "Ukládám…",
+        "submitCreate": "Vytvořit úkol",
+        "submitEdit": "Uložit změny",
+        "taskTitle": "Název",
+        "description": "Popis",
+        "assignee": "Řešitel",
+        "dueDate": "Termín",
+        "priority": "Priorita",
+        "party": "Zákazník (ID)",
+        "opportunity": "Příležitost (ID)",
+        "unassigned": "Nepřiřazeno",
+        "tabs": {
+          "mine": "Moje úkoly",
+          "all": "Všechny"
+        },
+        "stats": {
+          "open": "Otevřené",
+          "overdue": "Po termínu",
+          "doneThisWeek": "Hotovo tento týden",
+          "unassigned": "Nepřiřazené"
+        },
+        "filters": {
+          "search": "Hledat úkol",
+          "assignee": "Řešitel",
+          "allAssignees": "Všichni řešitelé",
+          "state": "Stav",
+          "priority": "Priorita",
+          "all": "Všechny",
+          "clear": "Zrušit filtry"
+        },
+        "columns": {
+          "title": "Název",
+          "assignee": "Řešitel",
+          "party": "Zákazník",
+          "opportunity": "Příležitost",
+          "dueDate": "Termín",
+          "priority": "Priorita",
+          "state": "Stav",
+          "labels": "Štítky"
+        },
+        "bulk": {
+          "selected": "Vybráno: {{selected}}",
+          "clear": "Zrušit výběr",
+          "changeState": "Změnit stav",
+          "assign": "Přiřadit řešitele",
+          "changed": "Změněno {{changed}}, přeskočeno {{skipped}}",
+          "assigned": "Přiřazeno {{changed}}, přeskočeno {{skipped}}"
+        },
+        "table": {
+          "actions": "Akce",
+          "loading": "Načítání dat",
+          "pageSize": "Řádků na stránku",
+          "range": "{{start}}–{{end}} z {{total}}",
+          "selectAll": "Vybrat všechny řádky",
+          "selection": "Vybrat řádek"
+        },
+        "errors": {
+          "title": "Vyplňte název úkolu.",
+          "id": "Zadejte platné ID.",
+          "clear": "Tuto hodnotu nelze v úpravě odebrat."
+        },
+        "empty": "Zatím tu nejsou žádné úkoly.",
+        "emptyDescription": "Založte první úkol a přiřaďte ho řešiteli.",
+        "emptyMine": "Nemáte přiřazené žádné úkoly.",
+        "noResults": "Filtrům neodpovídá žádný úkol.",
+        "unavailable": "Data se nepodařilo načíst.",
+        "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
+        "retry": "Zkusit znovu",
+        "forbidden": "K této sekci nemáte oprávnění.",
+        "employeesUnavailable": "Seznam řešitelů se nepodařilo načíst.",
+        "conflict": "Záznam mezitím upravil někdo jiný. Načtěte úkoly znovu a změnu zopakujte.",
         "invalid": "Operaci nelze dokončit. Zkontrolujte vstup a stav úkolu.",
         "states": {
           "NEW": "Nový",
-          "IN_PROGRESS": "Probíhá",
+          "IN_PROGRESS": "Rozpracovaný",
           "WAITING": "Čeká",
-          "DONE": "Hotový",
+          "DONE": "Dokončený",
           "CANCELLED": "Zrušený"
         },
         "priorities": {
           "LOW": "Nízká",
-          "NORMAL": "Běžná",
+          "NORMAL": "Normální",
           "HIGH": "Vysoká"
-        },
-        "loadUnits": "Načíst jednotky",
-        "unit": "Jednotka (volitelně)",
-        "createdAt": "Vytvořeno",
-        "updatedAt": "Poslední změna",
-        "selectUnit": "Vyberte jednotku",
-        "empty": "Žádné úkoly odpovídající filtru."
+        }
       }
     }
   }
