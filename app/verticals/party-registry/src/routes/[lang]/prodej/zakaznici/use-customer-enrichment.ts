@@ -2,7 +2,8 @@ import { subjectsWithTag } from '@app/tagging/clients/records';
 import { useTagsFor } from '@app/tagging/components/tag-controls';
 import type { SubjectId, TagId } from '@app/tagging/contracts/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
-import { Effect, Option, Result, Schema } from 'effect';
+import type { Cause } from 'effect';
+import { Duration, Effect, Option, Result, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 
 import type { CustomerSegment } from '../../../../api/customer-segments-client.ts';
@@ -11,7 +12,10 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
 
 type SegmentsError = Effect.Error<ReturnType<typeof customerSegmentsFor>>;
-type TagFilterError = Effect.Error<ReturnType<typeof subjectsWithTag>>;
+type TagFilterError = Effect.Error<ReturnType<typeof subjectsWithTag>> | Cause.TimeoutError;
+
+/** A tag lookup that has not answered by then counts as failed, so the table never stays a skeleton. */
+const TAG_LOOKUP_TIMEOUT = Duration.seconds(10);
 
 /** Customer partyIds are owner-validated resource ids, so they always satisfy the tagging subject contract. */
 export const subjectIdOf = (partyId: string): SubjectId =>
@@ -19,13 +23,17 @@ export const subjectIdOf = (partyId: string): SubjectId =>
 
 /**
  * Segment and tag data for the customers list. Both lookups are best effort: a failed segment lookup hides
- * the column, and a failed tag lookup clears the filter with a message instead of reading as "no results".
+ * the column, and a failed or stalled tag lookup clears the filter with a message instead of reading as
+ * "no results". Any failure counts, defects and timeouts included, so neither lookup can stay pending.
+ * A failed segment lookup is not repeated while the page stays open: the owner would refuse again, and each
+ * refusal is a failed request in the browser console.
  */
 export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
   const [segments, setSegments] = useState<ReadonlyMap<string, CustomerSegment> | null>(null);
-  const [segmentsFailure, setSegmentsFailure] = useState<Option.Option<SegmentsError>>(Option.none);
+  const [segmentsFailure, setSegmentsFailure] = useState<Option.Option<Cause.Cause<SegmentsError>>>(Option.none);
+  const segmentsFailed = Option.isSome(segmentsFailure);
   const [tagFilter, setTagFilter] = useState<TagId | null>(null);
-  const [tagFailure, setTagFailure] = useState<Option.Option<TagFilterError>>(Option.none);
+  const [tagFailure, setTagFailure] = useState<Option.Option<Cause.Cause<TagFilterError>>>(Option.none);
   const [tagRevision, setTagRevision] = useState(0);
   const [tagResult, setTagResult] = useState<{ readonly ids: ReadonlySet<string>; readonly key: string } | null>(null);
 
@@ -37,19 +45,18 @@ export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
 
   useEffect(() => {
     let active = true;
-    if (data !== undefined) {
+    if (data !== undefined && !segmentsFailed) {
       void browserRuntime.runPromise(
         customerSegmentsFor(data.items).pipe(
-          Effect.match({
-            onFailure: (failure) => {
+          Effect.matchCause({
+            onFailure: (cause) => {
               if (active) {
-                setSegmentsFailure(Option.some(failure));
+                setSegmentsFailure(Option.some(cause));
               }
             },
             onSuccess: (next) => {
               if (active) {
                 setSegments(next);
-                setSegmentsFailure(Option.none());
               }
             },
           }),
@@ -59,7 +66,7 @@ export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
     return () => {
       active = false;
     };
-  }, [data]);
+  }, [data, segmentsFailed]);
 
   // The key ties a lookup result to one tag and one tagging revision, so a stale result never filters rows.
   const lookupKey = tagFilter === null ? null : `${tagFilter}:${tagRevision}`;
@@ -68,10 +75,11 @@ export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
     if (tagFilter !== null && lookupKey !== null) {
       void browserRuntime.runPromise(
         subjectsWithTag('customer', tagFilter).pipe(
-          Effect.match({
-            onFailure: (failure) => {
+          Effect.timeout(TAG_LOOKUP_TIMEOUT),
+          Effect.matchCause({
+            onFailure: (cause) => {
               if (active) {
-                setTagFailure(Option.some(failure));
+                setTagFailure(Option.some(cause));
                 setTagFilter(null);
               }
             },
@@ -105,7 +113,7 @@ export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
     handleTagFilterChange,
     handleTagsChanged,
     segments,
-    segmentsFailed: Option.isSome(segmentsFailure),
+    segmentsFailed,
     tagFilter,
     tagFilterFailed: Option.isSome(tagFailure),
     tagFilterLoading: tagFilter !== null && taggedIds === null,

@@ -51,6 +51,7 @@
           "description": "IČO můžete načíst z ARES a údaje se doplní automaticky.",
           "email": "E-mail",
           "errorAmbiguous": "Zákazník odpovídá více existujícím záznamům. Nejdřív je sloučte v modulu duplicit.",
+          "errorForbidden": "Nemáte oprávnění zakládat zákazníky.",
           "errorGeneric": "Zákazníka se nepodařilo vytvořit. Zkuste to znovu.",
           "ico": "IČO",
           "icoHelp": "Osm číslic bez mezer.",

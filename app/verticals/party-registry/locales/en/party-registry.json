@@ -51,6 +51,7 @@
           "description": "Load the company ID from ARES to fill in the details automatically.",
           "email": "E-mail",
           "errorAmbiguous": "The customer matches several existing records. Merge them in the duplicates module first.",
+          "errorForbidden": "You do not have permission to create customers.",
           "errorGeneric": "The customer could not be created. Try again.",
           "ico": "Company ID (IČO)",
           "icoHelp": "Eight digits, no spaces.",

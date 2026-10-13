@@ -297,7 +297,11 @@ const resolveSegment = (definition: CustomerSegmentDefinition & { readonly busin
     ),
   );
 
-const segmentGroups = Effect.forEach(customerSegmentDefinitions, resolveSegment, { concurrency: 4 }).pipe(
+/**
+ * Definitions resolve one at a time and the first failure stops the rest, so an owner that refuses the
+ * call costs one request instead of four.
+ */
+const segmentGroups = Effect.forEach(customerSegmentDefinitions, resolveSegment, { concurrency: 1 }).pipe(
   Effect.map((groups) => groups.filter((group) => group !== undefined)),
 );
 

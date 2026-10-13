@@ -636,10 +636,34 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party', 'catalog', 'inventory', 'tax', 'privacy'\]/u);
-      expect(verifier).toMatch(
-        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'storefront_registry',\s*'tax',\s*\]/u,
+      // The platform schemas lead the grant list; the demo branch appends its vertical schemas after them.
+      expect(bootstrap).toMatch(
+        /\[\s*'core',\s*'auth',\s*'contacts',\s*'party',\s*'catalog',\s*'inventory',\s*'tax',\s*'privacy',/u,
       );
+      // Every platform schema stays verified; the demo branch adds its vertical schemas to the same list.
+      const verifiedSchemas = /const EXPECTED_APPLICATION_SCHEMAS = \[(?<schemas>[^\]]*)\]/u.exec(verifier)?.groups?.[
+        'schemas'
+      ];
+      expect(verifiedSchemas).toBeDefined();
+      for (const schema of [
+        'assortment',
+        'auth',
+        'catalog',
+        'commerce_customer_context',
+        'commerce_market_catalog',
+        'contacts',
+        'core',
+        'inventory',
+        'party',
+        'payment_term_catalog',
+        'price_group_catalog',
+        'pricing',
+        'privacy',
+        'storefront_registry',
+        'tax',
+      ]) {
+        expect(verifiedSchemas).toContain(`'${schema}'`);
+      }
       expect(verifier).toMatch(/__drizzle_migrations_assortment/u);
       expect(verifier).toMatch(/__drizzle_migrations_catalog/u);
       expect(verifier).toMatch(/__drizzle_migrations_party/u);

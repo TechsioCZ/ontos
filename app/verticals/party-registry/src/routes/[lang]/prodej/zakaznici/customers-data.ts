@@ -50,9 +50,13 @@ export const renameCustomer = (customer: Pick<CustomerListItem, 'partyRef' | 'pa
 export const aresFailureKey = (error: Effect.Error<ReturnType<typeof lookupAres>>) =>
   Predicate.isTagged(error, 'AresLookupNotFoundProblem') ? 'aresNotFound' : 'aresUnavailable';
 
-/** Translation key (under `create`) for a failed create. */
-export const createFailureKey = (error: Effect.Error<ReturnType<typeof createCustomerFromDraft>>) =>
-  Predicate.isTagged(error, 'CustomerCreateAmbiguous') ? 'errorAmbiguous' : 'errorGeneric';
+/** Translation key (under `create`) for a failed create. A 403 says so instead of suggesting a retry. */
+export const createFailureKey = (error: Effect.Error<ReturnType<typeof createCustomerFromDraft>>) => {
+  if (Predicate.isTagged(error, 'CustomerCreateAmbiguous')) {
+    return 'errorAmbiguous';
+  }
+  return Predicate.isTagged(error, 'PartyCommandForbiddenProblem') ? 'errorForbidden' : 'errorGeneric';
+};
 
 /** Translation key (under `detail`) for a failed rename. */
 export const renameFailureKey = (error: Effect.Error<ReturnType<typeof renameCustomer>>) =>

@@ -3,10 +3,9 @@ import { Effect } from 'effect';
 import { useState } from 'react';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { DetailList, formatDate } from '@app/admin-ui';
+import { DetailList, SidePanel, formatDate } from '@app/admin-ui';
 
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -63,7 +62,7 @@ const CustomerDetailView = ({ customer, onOpenChange, onRenamed }: CustomerDetai
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
@@ -74,10 +73,8 @@ const CustomerDetailView = ({ customer, onOpenChange, onRenamed }: CustomerDetai
           </Button>
         </>
       }
-      customTrigger
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open
-      placement="right"
       size="md"
       title={customer.displayName ?? t(`${KEY}.title`)}
     >
@@ -99,6 +96,7 @@ const CustomerDetailView = ({ customer, onOpenChange, onRenamed }: CustomerDetai
           ]}
         />
         <FormInput
+          autoComplete="off"
           helpText={nameError}
           id="customer-rename"
           label={t(`${KEY}.rename`)}
@@ -109,7 +107,7 @@ const CustomerDetailView = ({ customer, onOpenChange, onRenamed }: CustomerDetai
           value={name}
         />
       </div>
-    </Dialog>
+    </SidePanel>
   );
 };
 

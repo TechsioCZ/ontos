@@ -1,9 +1,9 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { SidePanel } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
 
@@ -124,7 +124,7 @@ export const CustomerBulkEditDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button disabled={busy} onClick={() => close()} theme="outlined" variant="secondary">
@@ -142,13 +142,12 @@ export const CustomerBulkEditDialog = ({
         </>
       }
       description={t(`${KEY}.selected`, { total: items.length })}
-      onOpenChange={(details) => {
-        if (!details.open && !busy) {
+      onOpenChange={(next) => {
+        if (!next && !busy) {
           close();
         }
       }}
       open={open}
-      placement="right"
       size="sm"
       title={t(`${KEY}.title`)}
     >
@@ -184,6 +183,6 @@ export const CustomerBulkEditDialog = ({
           </StatusText>
         )}
       </div>
-    </Dialog>
+    </SidePanel>
   );
 };

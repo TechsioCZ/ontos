@@ -317,7 +317,7 @@ const CustomersContent = () => {
 
   return (
     <>
-      <UltramodernRouteHead />
+      <UltramodernRouteHead titleKey="party-registry.pages.customers.title" />
       {/* The shell mounts no Toaster for remotes and ui-kit is not an MF singleton, so this page tree owns one. */}
       <Toaster />
       <div className="flex min-w-0 flex-col gap-250">

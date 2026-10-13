@@ -3,9 +3,9 @@ import { Effect } from 'effect';
 import { useState } from 'react';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { SidePanel } from '@app/admin-ui';
 
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CreatedCustomer } from '../../../../api/customers-client.ts';
@@ -128,7 +128,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={() => close(false)} theme="outlined" variant="secondary">
@@ -139,11 +139,9 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
           </Button>
         </>
       }
-      customTrigger
       description={t(`${KEY}.description`)}
-      onOpenChange={(details) => close(details.open)}
+      onOpenChange={close}
       open={open}
-      placement="right"
       size="md"
       title={t(`${KEY}.title`)}
     >
@@ -162,6 +160,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
         <div className="flex items-end gap-150">
           <div className="min-w-0 flex-1">
             <FormInput
+              autoComplete="off"
               id="customer-ico"
               inputMode="numeric"
               label={t(`${KEY}.ico`)}
@@ -184,6 +183,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
           </Button>
         </div>
         <FormInput
+          autoComplete="off"
           id="customer-name"
           label={t(`${KEY}.name`)}
           name="name"
@@ -194,6 +194,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
         />
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
           <FormInput
+            autoComplete="off"
             id="customer-vat-id"
             label={t(`${KEY}.vatId`)}
             name="vatId"
@@ -202,6 +203,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
             {...fieldProps('vatId')}
           />
           <FormInput
+            autoComplete="off"
             id="customer-email"
             label={t(`${KEY}.email`)}
             name="email"
@@ -211,6 +213,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
             {...fieldProps('email')}
           />
           <FormInput
+            autoComplete="off"
             id="customer-phone"
             label={t(`${KEY}.phone`)}
             name="phone"
@@ -220,6 +223,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
           />
         </div>
         <FormInput
+          autoComplete="off"
           id="customer-street"
           label={t(`${KEY}.street`)}
           name="street"
@@ -228,6 +232,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
         />
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
           <FormInput
+            autoComplete="off"
             id="customer-city"
             label={t(`${KEY}.city`)}
             name="city"
@@ -235,6 +240,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
             value={draft.city}
           />
           <FormInput
+            autoComplete="off"
             id="customer-postal-code"
             label={t(`${KEY}.postalCode`)}
             name="postalCode"
@@ -243,6 +249,6 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
           />
         </div>
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
