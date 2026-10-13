@@ -8,7 +8,8 @@ import {
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import { Effect } from 'effect';
 import type { OperationalScope, ReadHandlerContext, ReadServiceFactory } from '@app/core-runtime';
-import { persistenceService, projectFinanceRecords } from '../services/persistence.service.ts';
+import { persistenceService } from '../services/finance-state-repository.ts';
+import { projectFinanceRecords } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };

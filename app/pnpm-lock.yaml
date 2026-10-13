@@ -2881,6 +2881,9 @@ importers:
       '@app/party-registry':
         specifier: workspace:*
         version: link:../party-registry
+      '@app/sales-pipeline':
+        specifier: workspace:*
+        version: link:../sales-pipeline
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts

@@ -13,7 +13,8 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
-import { persistenceService, requireFinanceRevision, transitionFinance } from '../services/persistence.service.ts';
+import { persistenceService } from '../services/finance-state-repository.ts';
+import { requireFinanceRevision, transitionFinance } from '../services/persistence.service.ts';
 import type { FinanceValidators } from '../services/persistence.service.ts';
 import { makeFinanceValidators } from '../services/reference-validation.ts';
 import type { FinanceValidatorRequirements } from '../services/reference-validation.ts';
