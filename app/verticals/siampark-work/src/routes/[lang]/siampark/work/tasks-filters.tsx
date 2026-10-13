@@ -7,6 +7,8 @@ import { Schema } from 'effect';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../../shared/apis/records.ts';
 import type { TaskFilters } from './tasks-model.ts';
 
+const SELECT_PLACEHOLDER = 'siampark-work.selectPlaceholder';
+
 const key = 'siampark-work.pages.records';
 const ALL = 'all';
 const NONE = 'none';
@@ -51,6 +53,7 @@ export const TaskFilterBar = ({
               onChange({ ...filters, assignee: next });
             }
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="sm"
           value={[filters.assignee]}
         />
@@ -70,6 +73,7 @@ export const TaskFilterBar = ({
               onChange({ ...filters, state: next });
             }
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="sm"
           value={[filters.state]}
         />
@@ -89,6 +93,7 @@ export const TaskFilterBar = ({
               onChange({ ...filters, priority: next });
             }
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="sm"
           value={[filters.priority]}
         />

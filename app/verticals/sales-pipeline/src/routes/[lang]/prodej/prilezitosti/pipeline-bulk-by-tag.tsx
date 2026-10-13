@@ -20,6 +20,8 @@ import type { OpportunityStage, SkipTally } from './pipeline-model.ts';
 import { useAllOpportunities, useSubjectIdsWithTag } from './pipeline-references.ts';
 import type { EmployeeOption, LoadState } from './pipeline-references.ts';
 
+const SELECT_PLACEHOLDER = 'sales-pipeline.selectPlaceholder';
+
 const K = 'sales-pipeline.pages.records';
 const NONE = '__none__';
 /** Server limit for one bulk command. */
@@ -190,6 +192,7 @@ const BulkByTagValueFields = ({
         label={t(`${K}.bulkByTag.action`)}
         name="bulkAction"
         onValueChange={({ value: [next] }) => onAction(Schema.is(ActionSchema)(next) ? next : 'stage')}
+        placeholder={t(SELECT_PLACEHOLDER)}
         size="md"
         value={[action]}
       />
@@ -199,6 +202,7 @@ const BulkByTagValueFields = ({
           label={t(`${K}.bulkByTag.stage`)}
           name="stage"
           onValueChange={({ value: [next] }) => onStage(isOpportunityStage(next) ? next : '')}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="md"
           value={stage === '' ? [] : [stage]}
         />
@@ -208,6 +212,7 @@ const BulkByTagValueFields = ({
           label={t(`${K}.bulkByTag.owner`)}
           name="owner"
           onValueChange={({ value: [next] }) => onOwner(next ?? '')}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="md"
           value={owner === '' ? [] : [owner]}
         />
@@ -334,6 +339,7 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
             setKind(Schema.is(KindSchema)(next) ? next : 'customer');
             setTagId(null);
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="md"
           value={[kind]}
         />

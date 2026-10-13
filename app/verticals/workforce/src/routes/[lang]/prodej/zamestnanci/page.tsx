@@ -49,7 +49,8 @@ const workforceI18nResources = {
 
 const key = 'workforce.pages.employees';
 const pageSizeOptions = [50, 100, 200];
-const pinning = { end: [], start: ['fullName'] };
+/** The row-selection column stays first, ahead of the pinned name. */
+const pinning = { end: [], start: ['__select', 'fullName'] };
 
 type LoadState =
   | { readonly status: 'loading' }
@@ -289,6 +290,7 @@ const EmployeeFilterBar = ({
         label={t(`${key}.filters.role`)}
         name="roleFilter"
         onValueChange={(details) => onChange({ role: roleFromValue(details.value[0]) })}
+        placeholder={t('workforce.selectPlaceholder')}
         size="sm"
         value={[filters.role ?? allOption]}
       />
@@ -298,6 +300,7 @@ const EmployeeFilterBar = ({
         label={t(`${key}.filters.department`)}
         name="departmentFilter"
         onValueChange={(details) => onChange({ department: departmentFromValue(details.value[0]) })}
+        placeholder={t('workforce.selectPlaceholder')}
         size="sm"
         value={[filters.department ?? allOption]}
       />

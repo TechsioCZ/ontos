@@ -176,6 +176,7 @@ export const EmployeeFormDialog = ({
               set({ role: next });
             }
           }}
+          placeholder={t('workforce.selectPlaceholder')}
           value={[draft.role]}
         />
         <FormInput
@@ -353,6 +354,7 @@ export const BulkRoleDialog = ({
               setRole(next);
             }
           }}
+          placeholder={t('workforce.selectPlaceholder')}
           value={[role]}
         />
       </div>

@@ -180,6 +180,7 @@ const OrdersPageContent = () => {
                 const [next] = details.value;
                 setStatusFilter(orderStatuses.find((candidate) => candidate === next) ?? null);
               }}
+              placeholder={t('merchandise.selectPlaceholder')}
               size="sm"
               value={[statusFilter ?? ALL_STATUSES]}
             />
@@ -224,7 +225,7 @@ const OrdersPageContent = () => {
         )}
 
         <DataTable
-          columnPinning={{ end: [], start: ['number'] }}
+          columnPinning={{ end: [], start: ['__select', 'number'] }}
           columns={ordersColumns(t, directory, orderTags.tagsOf)}
           data={visible}
           enableColumnPinning

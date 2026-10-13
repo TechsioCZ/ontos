@@ -137,6 +137,7 @@
         },
         "title": "Zákazníci"
       }
-    }
+    },
+    "selectPlaceholder": "Vyberte…"
   }
 }

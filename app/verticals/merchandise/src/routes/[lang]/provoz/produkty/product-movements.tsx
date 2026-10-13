@@ -147,6 +147,7 @@ export const MovementForm = ({
               setReason(picked);
             }
           }}
+          placeholder={k('selectPlaceholder')}
           value={[reason]}
         />
         <FormNumericInput

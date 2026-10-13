@@ -309,8 +309,11 @@
           "positive": "Enter an amount greater than 0 CZK.",
           "quantity": "Enter a quantity greater than 0.",
           "required": "Fill in this field."
-        }
+        },
+        "selectPlaceholder": "Select…"
       }
-    }
+    },
+    "selectPlaceholder": "Select…",
+    "loading": "Loading…"
   }
 }

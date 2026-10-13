@@ -168,6 +168,7 @@ export const OrderCreateDialog = ({
           }))}
           label={t(key('create.customer'))}
           loading={customers.status === 'loading'}
+          loadingMessage={t('merchandise.loading')}
           noResultsMessage={t(key('create.noCustomerMatch'))}
           onChange={(values) => {
             setDraft((current) => ({ ...current, partyId: firstValue(values) ?? '' }));

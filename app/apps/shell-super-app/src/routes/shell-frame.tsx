@@ -927,7 +927,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             }
           />
           <Sidebar.Inset className="flex min-w-0 flex-1 flex-col">
-            <div className="flex min-w-0 flex-1 flex-col gap-250 p-250">
+            <div className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250">
               {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}
               {props.children}
             </div>

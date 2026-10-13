@@ -214,6 +214,7 @@ const RecordsPageContent = () => {
                 const [next] = details.value;
                 setCategory(next ?? ALL_CATEGORIES);
               }}
+              placeholder={t('merchandise.selectPlaceholder')}
               size="sm"
               value={[category]}
             />

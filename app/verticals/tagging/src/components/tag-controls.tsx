@@ -167,6 +167,7 @@ const TagPickerField = ({
       items={tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null)}
       {...(labelKey === undefined ? {} : { label: t(labelKey) })}
       loading={catalog.status === 'loading'}
+      loadingMessage={t('tagging.tags.loading')}
       noResultsMessage={t('tagging.tags.filter.noResults')}
       onChange={(next) => onChange(pickTagId(catalog.tags, next))}
       onRetry={() => onRetry()}

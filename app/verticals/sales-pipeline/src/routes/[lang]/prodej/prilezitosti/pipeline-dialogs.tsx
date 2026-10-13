@@ -23,6 +23,8 @@ import { LinesEditor } from './pipeline-line-editor.tsx';
 import type { LineEntry } from './pipeline-line-editor.tsx';
 import type { CustomerOption, EmployeeOption, LoadState, ProductOption } from './pipeline-references.ts';
 
+const SELECT_PLACEHOLDER = 'sales-pipeline.selectPlaceholder';
+
 const K = 'sales-pipeline.pages.records';
 const NONE = '__none__';
 const isValidTitle = Schema.is(OpportunityTitleSchema);
@@ -209,6 +211,7 @@ export const OpportunityFormDialog = ({
           items={customerItems}
           label={t(`${K}.create.fields.customer`)}
           loading={customers.status === 'loading'}
+          loadingMessage={t('sales-pipeline.loading')}
           name="partyId"
           noResultsMessage={t(`${K}.create.noCustomerMatch`)}
           onChange={(values) => {
@@ -236,10 +239,12 @@ export const OpportunityFormDialog = ({
           items={ownerItems}
           label={t(`${K}.create.fields.assignee`)}
           name="ownerEmployeeId"
+          noResultsMessage={t('sales-pipeline.noResults')}
           onChange={(values) => {
             const next = firstValue(values);
             patch({ ownerId: next === undefined || next === NONE ? null : next });
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           value={[draft.ownerId ?? NONE]}
         />
         <FormInput
@@ -347,6 +352,7 @@ export const StageDialog = ({
             const [next] = details.value;
             setStage(isOpportunityStage(next) ? next : '');
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="md"
           value={stage === '' ? [] : [stage]}
         />
@@ -446,6 +452,7 @@ export const OwnerDialog = ({
             const [next] = details.value;
             setOwner(next ?? NONE);
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="md"
           value={[owner]}
         />
