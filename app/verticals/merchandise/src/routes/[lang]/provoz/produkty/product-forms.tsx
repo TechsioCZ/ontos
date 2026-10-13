@@ -3,10 +3,10 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { SidePanel } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
@@ -144,14 +144,12 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <DialogActions busy={busy} onCancel={() => onOpenChange(false)} onSubmit={submit} submit={k('create.submit')} />
       }
-      customTrigger
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open={open}
-      placement="right"
       size="md"
       title={k('create.title')}
     >
@@ -164,6 +162,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
       >
         <ErrorLine message={serverError} />
         <FormInput
+          autoComplete="off"
           id="product-sku"
           label={k('fields.sku')}
           name="sku"
@@ -173,6 +172,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
           {...fieldError(submitted, skuError)}
         />
         <FormInput
+          autoComplete="off"
           id="product-name"
           label={k('fields.name')}
           name="name"
@@ -182,6 +182,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
           {...fieldError(submitted, nameError)}
         />
         <FormInput
+          autoComplete="off"
           id="product-category"
           label={k('fields.category')}
           name="category"
@@ -252,7 +253,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
           </FormNumericInput>
         </div>
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -307,7 +308,7 @@ export const ReceiptDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <DialogActions
           busy={busy}
@@ -316,11 +317,9 @@ export const ReceiptDialog = ({
           submit={k('receipt.submit')}
         />
       }
-      customTrigger
       description={k('receipt.description')}
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open={open}
-      placement="right"
       size="md"
       title={k('receipt.title')}
     >
@@ -365,6 +364,7 @@ export const ReceiptDialog = ({
           </NumericInput.Control>
         </FormNumericInput>
         <FormInput
+          autoComplete="off"
           id="receipt-note"
           label={k('fields.note')}
           name="note"
@@ -372,7 +372,7 @@ export const ReceiptDialog = ({
           value={note}
         />
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -418,7 +418,7 @@ export const PriceChangeDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <DialogActions
           busy={busy}
@@ -427,11 +427,9 @@ export const PriceChangeDialog = ({
           submit={k('priceDialog.submit')}
         />
       }
-      customTrigger
       description={k('priceDialog.description')}
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open={open}
-      placement="right"
       size="sm"
       title={k('priceDialog.title')}
     >
@@ -463,7 +461,7 @@ export const PriceChangeDialog = ({
           {k('priceDialog.warning')}
         </StatusText>
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -509,7 +507,7 @@ export const CategoryDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <DialogActions
           busy={busy}
@@ -518,10 +516,8 @@ export const CategoryDialog = ({
           submit={k('category.submit')}
         />
       }
-      customTrigger
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open={open}
-      placement="right"
       size="sm"
       title={k('category.title')}
     >
@@ -534,6 +530,7 @@ export const CategoryDialog = ({
       >
         <ErrorLine message={serverError} />
         <FormInput
+          autoComplete="off"
           id="bulk-category"
           label={k('category.field')}
           name="category"
@@ -543,6 +540,6 @@ export const CategoryDialog = ({
           {...fieldError(submitted && empty, k(REQUIRED_KEY))}
         />
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };

@@ -2,9 +2,8 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { DetailList, formatMoney } from '@app/admin-ui';
+import { DetailList, formatMoney, SidePanel } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
@@ -123,7 +122,7 @@ export const OrderCreateDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={close} theme="outlined" variant="secondary">
@@ -134,15 +133,13 @@ export const OrderCreateDialog = ({
           </Button>
         </>
       }
-      customTrigger
       description={t(key('create.description'))}
-      onOpenChange={({ open: next }) => {
+      onOpenChange={(next) => {
         if (!next) {
           close();
         }
       }}
       open={open}
-      placement="right"
       size="lg"
       title={t(key('create.title'))}
     >
@@ -234,6 +231,6 @@ export const OrderCreateDialog = ({
         />
         <p className="text-fg-secondary text-xs">{t(key('create.priceNote'))}</p>
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };

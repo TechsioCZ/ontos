@@ -15,6 +15,7 @@ import type { ProductRecord, RecordsResponse } from '../../../../../shared/apis/
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
+import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { formatKc } from '../../../../list-cells.tsx';
@@ -23,6 +24,7 @@ import type { FailureReason, LoadOutcome } from './products-api.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
 import { ProductDetailDialog } from './product-detail-dialog.tsx';
 import { CategoryDialog, CreateProductDialog, PriceChangeDialog, ReceiptDialog } from './product-forms.tsx';
+import type { ProductsTableStatus } from './products-table.tsx';
 import { ProductsTable } from './products-table.tsx';
 
 const merchandiseI18nResources = {
@@ -40,6 +42,20 @@ type LoadState =
 
 const toLoadState = (outcome: LoadOutcome): LoadState =>
   outcome.ok ? { response: outcome.response, status: 'ready' } : { reason: outcome.reason, status: 'error' };
+
+/** With a tag filter active, row tags still loading read as loading and a failed load as error, never as no match. */
+const tableStatusFor = (
+  productsStatus: LoadState['status'],
+  tagStatus: SubjectTagFilter['status'],
+): ProductsTableStatus => {
+  if (productsStatus !== 'ready') {
+    return productsStatus;
+  }
+  if (tagStatus === 'loading') {
+    return 'loading';
+  }
+  return tagStatus === 'error' ? 'error' : 'ready';
+};
 
 interface ProductStatsProps {
   readonly indicators: RecordsResponse['indicators'] | undefined;
@@ -72,7 +88,6 @@ const RecordsPageContent = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
-  const tagFilter = useSubjectTagFilter('product');
 
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [search, setSearch] = useState('');
@@ -102,6 +117,7 @@ const RecordsPageContent = () => {
     'product',
     products.map((product) => product.id),
   );
+  const tagFilter = useSubjectTagFilter(productTags);
   const canWrite = ready?.canWrite === true;
   const revision = ready?.revision ?? 0;
   const categories = [...new Set(products.map((product) => product.category))].toSorted((left, right) =>
@@ -118,6 +134,7 @@ const RecordsPageContent = () => {
   );
   const selectedIds = products.flatMap((product) => (selection[product.id] === true ? [product.id] : []));
   const filtersActive = query !== '' || category !== ALL_CATEGORIES || lowStockOnly || tagFilter.tagId !== null;
+  const tableStatus = tableStatusFor(state.status, tagFilter.status);
   const detail = products.find((product) => product.id === detailId);
 
   const onCommitted = (message: string) => {
@@ -255,11 +272,14 @@ const RecordsPageContent = () => {
           onClearFilters={clearFilters}
           onCreate={() => setDialog('create')}
           onOpen={setDetailId}
-          onRetry={reload}
+          onRetry={() => {
+            reload();
+            productTags.refetch();
+          }}
           onSelectionChange={setSelection}
           rows={filtered}
           selection={selection}
-          status={state.status}
+          status={tableStatus}
           tagsOf={productTags.tagsOf}
         />
 
@@ -301,7 +321,6 @@ const RecordsPageContent = () => {
               onDone={() => {
                 setSelection({});
                 productTags.refetch();
-                tagFilter.refresh();
               }}
               onOpenChange={closeDialog}
               open={dialog === 'tags'}

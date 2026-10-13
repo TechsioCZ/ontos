@@ -24,6 +24,7 @@ import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
+import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { formatKc } from '../../../../list-cells.tsx';
@@ -48,6 +49,10 @@ type RowSelection = NonNullable<OrderTableProps['rowSelection']>;
 const ALL_STATUSES = '__all__';
 const bulkStatusItems = orderStatuses.map((value) => ({ label: statusPresentation('order', value).label, value }));
 
+/** With a tag filter active, order tags still loading read as loading, never as no match. */
+const isTableLoading = (ordersLoading: boolean, tagStatus: SubjectTagFilter['status']): boolean =>
+  ordersLoading || tagStatus === 'loading';
+
 const OrdersPageContent = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
@@ -61,7 +66,6 @@ const OrdersPageContent = () => {
   const [busy, setBusy] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const directory = useCustomerDirectory();
-  const tagFilter = useSubjectTagFilter('order');
 
   const ready = state.kind === 'ready' ? state : undefined;
   const orders = [...(ready?.records.orders ?? [])];
@@ -69,6 +73,7 @@ const OrdersPageContent = () => {
     'order',
     orders.map((order) => order.id),
   );
+  const tagFilter = useSubjectTagFilter(orderTags);
   const statusItems = [{ label: t(key('filters.allStatuses')), value: ALL_STATUSES }, ...bulkStatusItems];
   const query = search.trim().toLowerCase();
   const visible = orders.filter(
@@ -234,7 +239,7 @@ const OrdersPageContent = () => {
           enableSorting
           getRowId={(row) => row.id}
           getRowLabel={(row) => row.original.number}
-          loading={state.kind === 'loading'}
+          loading={isTableLoading(state.kind === 'loading', tagFilter.status)}
           loadingRowCount={12}
           maxHeight="calc(100dvh - 15rem)"
           onRowClick={(row) => setDetailId(row.original.id)}
@@ -329,7 +334,6 @@ const OrdersPageContent = () => {
           onDone={() => {
             setSelection({});
             orderTags.refetch();
-            tagFilter.refresh();
           }}
           onOpenChange={setTagsOpen}
           open={tagsOpen}

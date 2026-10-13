@@ -168,6 +168,7 @@ export const MovementForm = ({
       </div>
       {isAdjustment && <p className="text-fg-secondary text-xs">{k('movements.quantityHint')}</p>}
       <FormInput
+        autoComplete="off"
         id="movement-note"
         label={k('fields.note')}
         name="movementNote"

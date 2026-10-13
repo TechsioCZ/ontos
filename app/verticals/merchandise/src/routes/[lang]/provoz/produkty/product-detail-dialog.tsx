@@ -1,14 +1,13 @@
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { formatDate, formatMoney } from '@app/admin-ui';
+import { formatDate, formatMoney, SidePanel } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
@@ -175,6 +174,7 @@ const DetailForm = ({
       )}
       <FormInput disabled id="detail-sku" label={k('fields.sku')} name="sku" value={product.sku} />
       <FormInput
+        autoComplete="off"
         disabled={!canWrite}
         id="detail-name"
         label={k('fields.name')}
@@ -185,6 +185,7 @@ const DetailForm = ({
         {...fieldError(submitted, nameError)}
       />
       <FormInput
+        autoComplete="off"
         disabled={!canWrite}
         id="detail-category"
         label={k('fields.category')}
@@ -290,12 +291,10 @@ export const ProductDetailDialog = ({
   const k = useProductLabel();
 
   return (
-    <Dialog
-      customTrigger
+    <SidePanel
       description={`${product.sku} · ${formatMoney(product.currentPriceMinor)}`}
-      onOpenChange={(details) => onOpenChange(details.open)}
+      onOpenChange={onOpenChange}
       open={open}
-      placement="right"
       size="lg"
       title={product.name}
     >
@@ -326,6 +325,6 @@ export const ProductDetailDialog = ({
           )}
         </Tabs.Content>
       </Tabs>
-    </Dialog>
+    </SidePanel>
   );
 };

@@ -1,9 +1,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { DetailList, formatDateTime, formatMoney, SectionCard, StatusBadge } from '@app/admin-ui';
+import { DetailList, formatDateTime, formatMoney, SectionCard, SidePanel, StatusBadge } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
@@ -58,16 +57,14 @@ export const OrderDetailDialog = ({ busy, canWrite, customers, onClose, onStatus
   );
 
   return (
-    <Dialog
+    <SidePanel
       actions={actions}
-      customTrigger
-      onOpenChange={({ open }) => {
-        if (!open) {
+      onOpenChange={(next) => {
+        if (!next) {
           onClose();
         }
       }}
       open
-      placement="right"
       size="lg"
       title={t('merchandise.pages.orders.detail.title', { number: order.number })}
     >
@@ -153,6 +150,6 @@ export const OrderDetailDialog = ({ busy, canWrite, customers, onClose, onStatus
           ]}
         />
       </div>
-    </Dialog>
+    </SidePanel>
   );
 };
