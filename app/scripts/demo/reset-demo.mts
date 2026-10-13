@@ -21,6 +21,7 @@ class SalesDemoResetError extends Schema.TaggedError<SalesDemoResetError>()('Sal
 /** Dependency order: referenced owners first, consumers of their IDs after. */
 const SALES_DEMO_OWNERS = [
   'party-registry',
+  'commerce-customer-context',
   'workforce',
   'merchandise',
   'tagging',
