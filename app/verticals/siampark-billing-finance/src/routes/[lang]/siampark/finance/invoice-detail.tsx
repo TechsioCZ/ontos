@@ -12,7 +12,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { Invoice } from '../../../../../shared/apis/records.ts';
-import { customerName, invoiceCustomerId, isOverdue, paymentKind } from './invoice-view.ts';
+import { customerDisplayName, customerOf, isOverdue, opportunityTitle, paymentKind } from './invoice-view.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 
 type FinanceViewModel = ReturnType<typeof useFinanceRecords>;
@@ -28,12 +28,17 @@ interface FinanceInvoiceDetailProps {
 }
 
 export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps) => {
-  const { busy, canWrite, closeDetail, confirmInvoice, referenceDate, requestVoid, t } = vm;
+  const { busy, canWrite, closeDetail, confirmInvoice, referenceDate, references, requestVoid, t } = vm;
   const number = invoice.number ?? invoice.documentNumber;
   const isDraft = invoice.businessState === 'DRAFT';
   const lines = invoice.lines ?? [];
   const vatRecap = invoice.vatRecap ?? [];
-  const sourceLabel = invoice.opportunityId === undefined ? t(`${ns}.sourceManual`) : t(`${ns}.sourceOpportunity`);
+  const customer = customerOf(references.customerById, invoice);
+  const title = opportunityTitle(references.opportunityTitles, invoice);
+  const sourceLabel =
+    invoice.opportunityId === undefined
+      ? t(`${ns}.sourceManual`)
+      : [t(`${ns}.sourceOpportunity`), title].filter((part) => part !== undefined && part !== '').join(' · ');
 
   return (
     <>
@@ -173,7 +178,13 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
           <SectionCard title={t(`${ns}.customer`)}>
             <DetailList
               items={[
-                { label: t(`${ns}.columns.customer`), value: customerName(invoiceCustomerId(invoice)) },
+                {
+                  label: t(`${ns}.columns.customer`),
+                  value: customerDisplayName(customer, t(`${ns}.unknownCustomer`)),
+                },
+                { label: t(`${ns}.companyId`), value: customer?.companyId ?? '—' },
+                { label: t(`${ns}.vatId`), value: customer?.vatId ?? '—' },
+                { label: t(`${ns}.city`), value: customer?.city ?? '—' },
                 { label: t(`${ns}.source`), value: sourceLabel },
               ]}
             />

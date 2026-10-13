@@ -1,3 +1,4 @@
+import type { CustomerListItem } from '@app/party-registry/api/client';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -5,12 +6,27 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { FinanceCommand } from '../../../../../shared/actions/apply-command.ts';
-import type { Invoice, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type { CalendarDateSchema, Invoice, InvoiceLine, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { nextInvoiceNumber } from '../../../../../shared/domain/invoice-totals.ts';
 import { InvoiceRefSchema } from '../../../../../shared/resources/invoice.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { browserCrypto } from '../../../../api/browser-crypto.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
+import { useFinanceReferences } from './use-finance-references.ts';
+
+export type CalendarDate = typeof CalendarDateSchema.Type;
+
+export interface DraftInvoiceInput {
+  readonly customer: CustomerListItem;
+  readonly dueDate: CalendarDate;
+  readonly issueDate: CalendarDate;
+  readonly lines: readonly InvoiceLine[];
+}
+
+export type DraftInvoiceOutcome =
+  | { readonly feedback: Feedback; readonly ok: false }
+  | { readonly invoice: Invoice; readonly ok: true };
 
 const searchSchema = Schema.Struct({
   resourceId: Schema.optional(InvoiceRefSchema.fields.resourceId.check(Schema.isUUID())),
@@ -76,8 +92,37 @@ export const useFinanceRecords = () => {
   const selected = snapshot?.state.invoices.find((record) => record.ref.resourceId === detailId);
   const busy = feedback === 'loading' || feedback === 'saving';
   const canWrite = snapshot?.canWrite === true;
+  const references = useFinanceReferences();
 
   const load = () => fetchRecords().pipe(Effect.tap((value) => Effect.sync(() => setSnapshot(value))));
+
+  /**
+   * Creates a draft from the form. The counterparty ref is the party registry's own ref for the customer, and the
+   * number is the next one in the series; the backend stores the lines as given (price snapshots).
+   */
+  const createDraft = (input: DraftInvoiceInput): Effect.Effect<DraftInvoiceOutcome> => {
+    if (snapshot === undefined || !canWrite) {
+      return Effect.succeed({ feedback: 'unavailable', ok: false });
+    }
+    const command: FinanceCommand = {
+      _tag: 'CreateInvoiceDraft',
+      counterpartyRef: input.customer.counterpartyRef,
+      currency: 'CZK',
+      direction: 'OUTGOING',
+      documentNumber: nextInvoiceNumber(snapshot.state.invoices),
+      dueDate: input.dueDate,
+      issueDate: input.issueDate,
+      lines: [...input.lines],
+      partyId: input.customer.partyId,
+    };
+    return submitFinanceCommand(snapshot.revision, command).pipe(
+      Effect.tap(() => load().pipe(Effect.ignore)),
+      Effect.match({
+        onFailure: (error): DraftInvoiceOutcome => ({ feedback: financeFailureFeedback(error), ok: false }),
+        onSuccess: (result): DraftInvoiceOutcome => ({ invoice: result.invoice, ok: true }),
+      }),
+    );
+  };
 
   useEffect(() => {
     let active = true;
@@ -151,11 +196,13 @@ export const useFinanceRecords = () => {
       }
       setVoidTarget(undefined);
     },
+    createDraft,
     feedback,
     indicators: snapshot?.indicators,
     invoices: [...(snapshot?.state.invoices ?? [])],
     openDetail: (id: string) => setDetailId(id),
     referenceDate: snapshot?.referenceDate ?? '',
+    references,
     reload,
     requestVoid: (invoice: Invoice) => setVoidTarget(invoice),
     selected,
