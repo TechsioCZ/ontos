@@ -17,16 +17,97 @@
     "routeSurface": "Route surface owned by this vertical.",
     "title": "Tags",
     "widgetBody": "Owns a vertical route surface.",
+    "colors": {
+      "blue": "Blue",
+      "gray": "Gray",
+      "green": "Green",
+      "orange": "Orange",
+      "pink": "Pink",
+      "purple": "Purple",
+      "red": "Red",
+      "yellow": "Yellow"
+    },
+    "kinds": {
+      "customer": "Customers",
+      "employee": "Employees",
+      "opportunity": "Opportunities",
+      "order": "Orders",
+      "product": "Products"
+    },
     "pages": {
       "records": {
         "title": "Tags",
         "description": "Tags and their assignments.",
-        "refresh": "Load",
-        "empty": "No tags yet.",
-        "count": "Records: {{total}}",
-        "unavailable": "Data could not be loaded.",
-        "forbidden": "You are not allowed to do this."
+        "unavailable": "Data could not be loaded."
       }
+    },
+    "tags": {
+      "assigned": {
+        "description": "Records carrying this tag, grouped by subject kind.",
+        "empty": "No assignments.",
+        "failed": "Assignments could not be loaded.",
+        "loading": "Loading assignments…",
+        "title": "Assignments of tag {{name}}"
+      },
+      "assignments": "Assignments",
+      "bulk": {
+        "action": "Action",
+        "add": "Add",
+        "busy": "Saving…",
+        "chooseTag": "Choose a tag.",
+        "description": "The change applies to the selected records ({{total}}).",
+        "failure": "Tags could not be updated. Try again.",
+        "remove": "Remove",
+        "submit": "Apply tag",
+        "success": "Tags updated",
+        "tag": "Tag",
+        "title": "Edit tags"
+      },
+      "created": "Tag created",
+      "deleted": "Tag deleted",
+      "delete": {
+        "busy": "Deleting…",
+        "description": "Deleting the tag removes it from all records.",
+        "submit": "Delete tag",
+        "title": "Delete tag “{{name}}”?"
+      },
+      "edit": "Edit tag",
+      "failure": "The change could not be saved. Try again.",
+      "filter": {
+        "label": "Tag",
+        "noResults": "No tag matches.",
+        "placeholder": "Choose a tag…"
+      },
+      "form": {
+        "cancel": "Cancel",
+        "color": "Colour",
+        "createSubmit": "Create tag",
+        "description": "Description",
+        "editSubmit": "Save changes",
+        "kinds": "Applies to",
+        "kindsRequired": "Choose at least one area.",
+        "name": "Name",
+        "nameRequired": "Enter a tag name.",
+        "nameTooLong": "The name can have at most 60 characters.",
+        "saving": "Saving…"
+      },
+      "loadFailed": "Tags could not be loaded.",
+      "new": "New tag",
+      "retry": "Try again",
+      "table": {
+        "actions": "Actions",
+        "appliesTo": "Applies to",
+        "clearSearch": "Clear search",
+        "description": "Description",
+        "empty": "No tags yet.",
+        "emptyDescription": "Create the first tag and assign it to records.",
+        "name": "Name",
+        "noResults": "No tag matches the search.",
+        "pageSize": "Rows per page",
+        "range": "{{start}}–{{end}} of {{total}}",
+        "search": "Search tags…"
+      },
+      "updated": "Tag updated"
     }
   }
 }
