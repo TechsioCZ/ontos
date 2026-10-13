@@ -4,7 +4,9 @@ import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, ConfigProvider, Console, DateTime, Effect, FileSystem, Layer, Option, Schema } from 'effect';
 import { WorkStateSchema } from '../shared/apis/records.ts';
+import type { TaskState, WorkState } from '../shared/apis/records.ts';
 import { workStates, workRelations } from '../src/database/schema.ts';
+import { demoId, demoLegalEntityId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 
 const FixtureSchema = Schema.Struct({
   legalEntityId: Schema.Literal('71000000-0000-4000-8000-000000000020'),
@@ -12,6 +14,30 @@ const FixtureSchema = Schema.Struct({
   tenantId: Schema.Literal('70000000-0000-4000-8000-000000000020'),
 });
 class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputError', { reason: Schema.String }) {}
+
+const writeWorkState = Effect.fn('ResetDemo.writeWorkState')(function* writeWorkState(
+  legalEntityId: string,
+  tenantId: string,
+  workState: WorkState,
+) {
+  const state = yield* Schema.encodeEffect(WorkStateSchema)(workState);
+  const db = yield* makeWithDefaults({ relations: workRelations });
+  const now = yield* DateTime.now;
+  yield* db
+    .insert(workStates)
+    .values({
+      legalEntityId,
+      revision: 0,
+      state,
+      tenantId,
+      updatedAt: DateTime.toDateUtc(now),
+    })
+    .onConflictDoUpdate({
+      set: { revision: 0, state, updatedAt: DateTime.toDateUtc(now) },
+      target: [workStates.tenantId, workStates.legalEntityId],
+    });
+});
+
 const reset = Effect.fn('ResetDemo.reset')(function* resetDemo(fixturePath: string) {
   const fs = yield* FileSystem.FileSystem;
   const data = yield* fs.readFileString(fixturePath);
@@ -29,24 +55,180 @@ const reset = Effect.fn('ResetDemo.reset')(function* resetDemo(fixturePath: stri
   ) {
     return yield* new ResetInputError({ reason: 'Fixture references must match the fixed demo tenant and collection' });
   }
-  const state = yield* Schema.encodeEffect(WorkStateSchema)(input.state);
-  const db = yield* makeWithDefaults({ relations: workRelations });
-  const now = yield* DateTime.now;
-  yield* db
-    .insert(workStates)
-    .values({
-      legalEntityId: input.legalEntityId,
-      revision: 0,
-      state,
-      tenantId: input.tenantId,
-      updatedAt: DateTime.toDateUtc(now),
-    })
-    .onConflictDoUpdate({
-      set: { revision: 0, state, updatedAt: DateTime.toDateUtc(now) },
-      target: [workStates.tenantId, workStates.legalEntityId],
-    });
+  yield* writeWorkState(input.legalEntityId, input.tenantId, input.state);
   return yield* Console.log('Siampark work demo state reset to revision 0');
 });
+
+// --- Sales demo (`--sales-demo`, called by app/scripts/demo/reset-demo.mts) -----------------------------------
+// Deterministic: the same 80 tasks on every run, so a re-run replaces the row at revision 0.
+
+const salesDemoModuleId = 'siampark.work';
+const salesDemoCollectionType = 'siampark.work.task-collection';
+const salesDemoTaskType = 'siampark.work.task';
+const salesDemoTaskCount = 80;
+// Business date the records read treats as "today" (records.referenceDate is fixed to this value).
+const salesDemoReferenceDate = '2026-10-05';
+// Due dates spread -20..+30 days around this anchor.
+const salesDemoAnchor = DateTime.makeUnsafe('2026-10-13T12:00:00.000Z');
+// Owner principal: the Siampark management demo account, the same principal the Siampark seed uses.
+const salesDemoOwnerPrincipalRef = {
+  principalId: '72000000-0000-4000-8000-000000000021',
+  tenantId: demoTenantId,
+};
+const salesDemoCollectionRef = {
+  moduleId: salesDemoModuleId,
+  resourceId: demoId(salesDemoCollectionType, 'sales-demo'),
+  resourceType: salesDemoCollectionType,
+  tenantId: demoTenantId,
+};
+const salesDemoPriorities = ['NORMAL', 'HIGH', 'NORMAL', 'LOW', 'HIGH', 'NORMAL'] as const;
+const salesDemoEmployeeKeys = {
+  accountant: ['ucetni', 'martin-kucera'],
+  sales: ['obchod', 'obchodnik', 'lucie-dvorakova', 'tomas-cerny', 'katerina-prochazkova'],
+  warehouse: ['sklad', 'jiri-horak'],
+} as const;
+const salesDemoTitles = {
+  accountant: [
+    'Ověřit platbu faktury',
+    'Vystavit fakturu za objednávku',
+    'Odeslat zálohovou fakturu',
+    'Spárovat platbu s fakturou',
+    'Upomenout splatnou fakturu',
+    'Doplnit IČO a DIČ na fakturu',
+    'Zkontrolovat splatnost pohledávek',
+    'Připravit podklady pro účetní uzávěrku',
+    'Vystavit dobropis k reklamaci',
+  ],
+  sales: [
+    'Zavolat zákazníkovi ohledně nabídky',
+    'Připravit cenovou nabídku',
+    'Schůzka – prezentace řešení',
+    'Poslat smlouvu k podpisu',
+    'Follow-up po veletrhu',
+    'Zaslat vzorek produktu',
+    'Naplánovat demo pro vedení zákazníka',
+    'Vyhodnotit konkurenční nabídku',
+    'Aktualizovat kontaktní údaje zákazníka',
+    'Zavolat po odeslání nabídky',
+    'Sjednat termín dodání',
+    'Zpracovat slevový požadavek',
+    'Připravit podklady pro jednání',
+    'Ověřit rozpočet zákazníka',
+    'Obnovit smlouvu o spolupráci',
+    'Domluvit zkušební provoz',
+    'Zaslat referenční případy',
+    'Schůzka s technickým týmem zákazníka',
+  ],
+  warehouse: [
+    'Naskladnit zboží',
+    'Inventura skladu',
+    'Ověřit dostupnost zboží',
+    'Objednat doplnění zásob',
+    'Předat objednávku k expedici',
+    'Zkontrolovat poškozené zásilky',
+    'Přepočítat minimální stav zásob',
+    'Vyřídit reklamaci zboží',
+  ],
+} as const;
+const repeatState = (state: TaskState, count: number): TaskState[] => Array.from({ length: count }, () => state);
+// Exact mix from the sales-demo plan: NEW 25, IN_PROGRESS 20, WAITING 8, DONE 22, CANCELLED 5.
+const salesDemoStateMix: readonly TaskState[] = [
+  ...repeatState('NEW', 25),
+  ...repeatState('IN_PROGRESS', 20),
+  ...repeatState('WAITING', 8),
+  ...repeatState('DONE', 22),
+  ...repeatState('CANCELLED', 5),
+];
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+const salesDemoRoleFor = (i: number): keyof typeof salesDemoTitles => {
+  const slot = i % 10;
+  if (slot < 5) {
+    return 'sales';
+  }
+  return slot < 8 ? 'accountant' : 'warehouse';
+};
+
+const salesDemoHasOpportunity = (i: number) => i % 8 === 1 || i % 8 === 3 || i % 8 === 6;
+
+// Every 10th task is unassigned (8 in total); the rest rotate through the role's employees.
+const salesDemoAssigneeFields = (i: number) => {
+  if (i % 10 === 9) {
+    return {};
+  }
+  const employees = salesDemoEmployeeKeys[salesDemoRoleFor(i)];
+  const employeeKey = employees[Math.floor(i / 10) % employees.length];
+  return { assigneeEmployeeId: demoId('employee', employeeKey ?? employees[0]) };
+};
+// Every 4th task has no customer (60 with a customer).
+const salesDemoPartyFields = (i: number) =>
+  i % 4 === 0 ? undefined : { partyId: demoId('customer', `c${pad2(((i * 7) % 40) + 1)}`) };
+const salesDemoOpportunityFields = (i: number) =>
+  salesDemoHasOpportunity(i) ? { opportunityId: demoId('opportunity', `o${pad2(((i * 3) % 30) + 1)}`) } : undefined;
+
+/** Task `t01`..`t80` (index `i`, zero-based), encoded as the work-state wire shape. */
+const salesDemoTask = (i: number) => {
+  const titles = salesDemoTitles[salesDemoRoleFor(i)];
+  const createdAt = DateTime.add(salesDemoAnchor, { days: -(1 + ((i * 17) % 60)), hours: -(i % 8) });
+  const updatedAt = DateTime.add(createdAt, { hours: ((i * 3) % 5) * 6 });
+  const dueDate = DateTime.add(salesDemoAnchor, { days: ((i * 13) % 51) - 20 });
+  return {
+    collectionRef: salesDemoCollectionRef,
+    contextRefs: [],
+    createdAt: DateTime.formatIso(createdAt),
+    dueDate: DateTime.formatIsoDateUtc(dueDate),
+    ownerPrincipalRef: salesDemoOwnerPrincipalRef,
+    priority: salesDemoPriorities[i % salesDemoPriorities.length],
+    ref: {
+      moduleId: salesDemoModuleId,
+      resourceId: demoId(salesDemoTaskType, `t${pad2(i + 1)}`),
+      resourceType: salesDemoTaskType,
+      tenantId: demoTenantId,
+    },
+    state: salesDemoStateMix[(i * 37) % salesDemoStateMix.length],
+    title: titles[i % titles.length],
+    updatedAt: DateTime.formatIso(updatedAt),
+    ...salesDemoAssigneeFields(i),
+    ...salesDemoPartyFields(i),
+    ...salesDemoOpportunityFields(i),
+  };
+};
+
+const salesDemoRawState = {
+  collection: {
+    properties: {
+      dueDate: { locked: true, type: 'DATE' },
+      ownerPrincipalRef: { locked: true, type: 'PRINCIPAL' },
+      status: { groups: ['NOT_STARTED', 'IN_PROGRESS', 'DONE'], locked: true, type: 'STATUS' },
+      title: { locked: true, type: 'TEXT' },
+    },
+    ref: salesDemoCollectionRef,
+    title: 'Obchodní úkoly',
+  },
+  tasks: Array.from({ length: salesDemoTaskCount }, (_, i) => salesDemoTask(i)),
+};
+
+const summarizeSalesDemo = (state: WorkState) => {
+  const open = state.tasks.filter((task) => task.state !== 'DONE' && task.state !== 'CANCELLED');
+  const overdue = open.filter((task) => task.dueDate !== undefined && task.dueDate < salesDemoReferenceDate);
+  const unassigned = state.tasks.filter((task) => task.assigneeEmployeeId === undefined).length;
+  const withParty = state.tasks.filter((task) => task.partyId !== undefined).length;
+  const withOpportunity = state.tasks.filter((task) => task.opportunityId !== undefined).length;
+  return `${state.tasks.length} tasks (open ${open.length}, overdue ${overdue.length} vs ${salesDemoReferenceDate}, unassigned ${unassigned}, with customer ${withParty}, with opportunity ${withOpportunity})`;
+};
+
+const seedSalesDemo = Effect.fn('ResetDemo.seedSalesDemo')(function* seedSalesDemo(validateOnly: boolean) {
+  const state = yield* Schema.decodeUnknownEffect(WorkStateSchema)(salesDemoRawState);
+  if (validateOnly) {
+    return yield* Console.log(`siampark-work sales-demo validated: ${summarizeSalesDemo(state)}; no data changed.`);
+  }
+  yield* writeWorkState(demoLegalEntityId, demoTenantId, state);
+  return yield* Console.log(`siampark-work sales-demo seeded: ${summarizeSalesDemo(state)}`);
+});
+
+// `--sales-demo` (scripts/demo/reset-demo.mts) seeds the tasks; `--validate-only` builds and checks them without writing.
+// As for every owner script, DATABASE_ADMIN_URL must be configured because the database layer is built at startup.
 const resetPgLive = PgClient.layerFrom(
   Effect.gen(function* resetPool() {
     const connection = yield* Config.schema(
@@ -56,16 +238,16 @@ const resetPgLive = PgClient.layerFrom(
     return yield* PgClient.makeClient({ url: connection });
   }),
 );
-// `--sales-demo` (scripts/demo/reset-demo.mts): the tasks lane replaces this no-op with its seed.
 const cli = Command.make(
   'reset-siampark-demo',
   {
     fixture: Flag.String('fixture').pipe(Flag.optional),
     salesDemo: Flag.Boolean('sales-demo').pipe(Flag.withDefault(false)),
+    validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)),
   },
-  ({ fixture, salesDemo }) =>
+  ({ fixture, salesDemo, validateOnly }) =>
     salesDemo
-      ? Console.log('siampark-work: no sales-demo seed yet')
+      ? seedSalesDemo(validateOnly)
       : Option.match(fixture, {
           onNone: () => Effect.fail(new ResetInputError({ reason: '--fixture is required' })),
           onSome: reset,
