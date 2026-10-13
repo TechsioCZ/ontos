@@ -1,162 +1,114 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
+import { formatMoney, formatNumber, PageHeader, StatCard, StatRow } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
-import { Effect } from 'effect';
-import { financeFailureFeedback, useFinanceRecords } from './use-finance-records.ts';
-import { FinanceInvoiceTable, FinanceInvoiceDetail, FinanceDraftForm, FinancePlanTable } from './finance-records.tsx';
-import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
+import { useState } from 'react';
 import csResource from '../../../../../locales/cs/siampark-billing-finance.json';
 import enResource from '../../../../../locales/en/siampark-billing-finance.json';
 import '../../../index.css';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import { FinanceInvoiceDetail } from './invoice-detail.tsx';
+import { FinanceInvoiceTable } from './invoices-table.tsx';
+import { useFinanceRecords } from './use-finance-records.ts';
 
 const resources = {
   cs: { 'siampark-billing-finance': csResource },
   en: { 'siampark-billing-finance': enResource },
 } as const;
+
+const ns = 'siampark-billing-finance.faktury';
+
 const RecordsPageContent = () => {
   const vm = useFinanceRecords();
-  const {
-    busy,
-    directionFilter,
-    feedback,
-    filterPropertyId,
-    load,
-    money,
-    properties,
-    selected,
-    setDirectionFilter,
-    setFeedback,
-    setFilterPropertyId,
-    snapshot,
-    t,
-    visible,
-  } = vm;
+  const { busy, cancelVoid, canWrite, confirmVoid, feedback, indicators, selected, t, voidTarget } = vm;
+  const [createOpen, setCreateOpen] = useState(false);
+  const kpi = (value: (source: NonNullable<typeof indicators>) => string) =>
+    indicators === undefined ? '—' : value(indicators);
+
   return (
     <>
       <UltramodernRouteHead />
-      <section className="siamparkbillingfinance:w-full siamparkbillingfinance:min-w-0 siamparkbillingfinance:max-w-none siamparkbillingfinance:space-y-6 siamparkbillingfinance:p-0 siamparkbillingfinance:text-(--color-page-fg)">
-        <header className="siamparkbillingfinance:flex siamparkbillingfinance:flex-wrap siamparkbillingfinance:items-start siamparkbillingfinance:justify-between siamparkbillingfinance:gap-4 siamparkbillingfinance:border-b siamparkbillingfinance:border-(--color-border-muted) siamparkbillingfinance:pb-5">
-          <div className="siamparkbillingfinance:space-y-2">
-            <h1 className="siamparkbillingfinance:text-2xl siamparkbillingfinance:font-semibold siamparkbillingfinance:tracking-tight">
-              {t('siampark-billing-finance.pages.records.title')}
-            </h1>
-            <p className="siamparkbillingfinance:text-sm siamparkbillingfinance:text-(--color-fg-secondary)">
-              {t('siampark-billing-finance.demo.simulation')}
-            </p>
-          </div>
-          <output aria-live="polite">
-            <Badge
-              size="sm"
-              variant={
-                (
-                  {
-                    conflict: 'warning',
-                    forbidden: 'danger',
-                    loading: 'info',
-                    ready: 'success',
-                    saving: 'info',
-                    unavailable: 'danger',
-                    validation: 'warning',
-                  } as const
-                )[feedback]
+      <section className="flex min-w-0 flex-col gap-250 text-fg-primary">
+        {selected === undefined ? (
+          <>
+            <PageHeader
+              actions={
+                canWrite ? (
+                  <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
+                    {t(`${ns}.newInvoice`)}
+                  </Button>
+                ) : undefined
               }
-            >
-              {t(`siampark-billing-finance.demo.feedback.${feedback}`)}
-            </Badge>
-          </output>
-        </header>
-        {snapshot !== undefined && (
-          <div className="siamparkbillingfinance:grid siamparkbillingfinance:gap-4 siamparkbillingfinance:sm:grid-cols-2 siamparkbillingfinance:xl:grid-cols-4">
-            {[
-              {
-                label: t('siampark-billing-finance.demo.labels.REVENUE'),
-                value: money(snapshot.indicators.revenueMinor),
-              },
-              { label: t('siampark-billing-finance.demo.labels.COST'), value: money(snapshot.indicators.costMinor) },
-              {
-                label: t('siampark-billing-finance.demo.outstanding'),
-                value: money(snapshot.indicators.grossOutstandingMinor),
-              },
-              { label: t('siampark-billing-finance.demo.overdue'), value: snapshot.indicators.overdueInvoices },
-            ].map(({ label, value }) => (
-              <article
-                className="siamparkbillingfinance:min-w-0 siamparkbillingfinance:rounded-lg siamparkbillingfinance:border siamparkbillingfinance:border-(--color-border-muted) siamparkbillingfinance:bg-(--color-surface) siamparkbillingfinance:p-5"
-                key={label}
-              >
-                <p className="siamparkbillingfinance:text-xs siamparkbillingfinance:font-medium siamparkbillingfinance:text-(--color-fg-secondary)">
-                  {label}
-                </p>
-                <p className="siamparkbillingfinance:mt-2 siamparkbillingfinance:text-2xl siamparkbillingfinance:font-semibold siamparkbillingfinance:tabular-nums">
-                  {value}
-                </p>
-              </article>
-            ))}
-          </div>
-        )}
-        <div className="siamparkbillingfinance:grid siamparkbillingfinance:items-end siamparkbillingfinance:gap-4 siamparkbillingfinance:rounded-lg siamparkbillingfinance:border siamparkbillingfinance:border-(--color-border-muted) siamparkbillingfinance:bg-(--color-surface-subtle) siamparkbillingfinance:p-4 siamparkbillingfinance:md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-          <Select
-            items={['ALL', 'OUTGOING', 'INCOMING'].map((value) => ({
-              label: t(`siampark-billing-finance.demo.labels.${value}`),
-              value,
-            }))}
-            label={t('siampark-billing-finance.demo.direction')}
-            onValueChange={({ value }) => setDirectionFilter(value[0] ?? '')}
-            value={[directionFilter]}
-          />
-          <Select
-            items={[
-              { label: t('siampark-billing-finance.demo.labels.ALL'), value: '' },
-              ...(properties?.properties.map((record) => ({
-                label: record.name,
-                value: record.propertyRef.resourceId,
-              })) ?? []),
-            ]}
-            label={t('siampark-billing-finance.demo.property')}
-            onValueChange={({ value }) => setFilterPropertyId(value[0] ?? '')}
-            value={[filterPropertyId]}
-          />
-          <Button
-            disabled={busy}
-            onClick={() => {
-              void financeBrowserRuntime.runPromise(
-                load().pipe(
-                  Effect.match({
-                    onFailure: (failure) => setFeedback(financeFailureFeedback(failure)),
-                    onSuccess: () => setFeedback('ready'),
-                  }),
-                ),
-              );
-            }}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            {t('siampark-billing-finance.demo.refresh')}
-          </Button>
-        </div>
-        {snapshot !== undefined && visible.length === 0 && (
-          <p className="siamparkbillingfinance:rounded-lg siamparkbillingfinance:border siamparkbillingfinance:border-(--color-border-muted) siamparkbillingfinance:bg-(--color-surface-subtle) siamparkbillingfinance:p-5 siamparkbillingfinance:text-sm siamparkbillingfinance:text-(--color-fg-secondary)">
-            {t('siampark-billing-finance.demo.empty')}
-          </p>
-        )}
-        <FinanceInvoiceTable vm={vm} />
-        {selected !== undefined && <FinanceInvoiceDetail vm={vm} />}
-        <FinanceDraftForm vm={vm} />
-        <FinancePlanTable vm={vm} />
-        {snapshot !== undefined && (
-          <p className="siamparkbillingfinance:rounded-lg siamparkbillingfinance:border siamparkbillingfinance:border-(--color-border-muted) siamparkbillingfinance:bg-(--color-surface-subtle) siamparkbillingfinance:p-4 siamparkbillingfinance:text-sm siamparkbillingfinance:text-(--color-fg-secondary)">
-            {t('siampark-billing-finance.demo.variance', {
-              cost: money(snapshot.indicators.costVarianceMinor),
-              revenue: money(snapshot.indicators.revenueVarianceMinor),
-            })}
-          </p>
+              description={t(`${ns}.description`)}
+              title={t(`${ns}.title`)}
+            />
+            <StatRow>
+              <StatCard label={t(`${ns}.kpi.revenue`)} value={kpi((source) => formatMoney(source.revenueMinor))} />
+              <StatCard
+                label={t(`${ns}.kpi.outstanding`)}
+                value={kpi((source) => formatMoney(source.grossOutstandingMinor))}
+              />
+              <StatCard label={t(`${ns}.kpi.overdue`)} value={kpi((source) => formatNumber(source.overdueInvoices))} />
+              <StatCard label={t(`${ns}.kpi.drafts`)} value={kpi((source) => formatNumber(source.draftCount))} />
+            </StatRow>
+            {(feedback === 'forbidden' ||
+              feedback === 'conflict' ||
+              feedback === 'unavailable' ||
+              feedback === 'validation') && (
+              <StatusText showIcon status="error">
+                {t(`siampark-billing-finance.demo.feedback.${feedback}`)}
+              </StatusText>
+            )}
+            <FinanceInvoiceTable vm={vm} />
+          </>
+        ) : (
+          <FinanceInvoiceDetail invoice={selected} vm={vm} />
         )}
       </section>
+      <Dialog
+        actions={
+          <Button onClick={() => setCreateOpen(false)} theme="outlined" variant="secondary">
+            {t(`${ns}.cancel`)}
+          </Button>
+        }
+        customTrigger
+        onOpenChange={(details) => setCreateOpen(details.open)}
+        open={createOpen}
+        placement="right"
+        size="md"
+        title={t(`${ns}.newInvoice`)}
+      >
+        <p className="py-200 text-fg-secondary text-sm">{t(`${ns}.formTodo`)}</p>
+      </Dialog>
+      <Dialog
+        actions={
+          <>
+            <Button onClick={cancelVoid} theme="outlined" variant="secondary">
+              {t(`${ns}.cancel`)}
+            </Button>
+            <Button disabled={busy} onClick={confirmVoid} variant="danger">
+              {t(`${ns}.voidConfirm`)}
+            </Button>
+          </>
+        }
+        customTrigger
+        description={t(`${ns}.voidDescription`)}
+        onOpenChange={(details) => {
+          if (!details.open) {
+            cancelVoid();
+          }
+        }}
+        open={voidTarget !== undefined}
+        placement="center"
+        role="alertdialog"
+        size="sm"
+        title={t(`${ns}.voidTitle`, { number: voidTarget?.number ?? voidTarget?.documentNumber ?? '' })}
+      />
     </>
   );
 };
+
 export const RecordsPage = () => (
   <FederatedI18nBoundary
     defaultNamespace="siampark-billing-finance"
