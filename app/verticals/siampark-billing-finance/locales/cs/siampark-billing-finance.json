@@ -59,6 +59,8 @@
         "submit": "Vytvořit koncept",
         "submitting": "Vytvářím…",
         "created": "Faktura vytvořena",
+        "createFailed": "Fakturu se nepodařilo vytvořit",
+        "failureReason": "Důvod: {{reason}}",
         "errorCustomer": "Vyberte zákazníka.",
         "error": {
           "product": "Vyberte produkt.",
