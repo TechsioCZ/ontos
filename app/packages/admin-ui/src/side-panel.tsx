@@ -124,7 +124,9 @@ export const SidePanel = ({
         size="md"
         tone="neutral"
       />
-      {children}
+      {/* The body scrolls on its own, so the footer actions stay visible at the bottom of a tall panel. The
+          inline padding pair keeps focus rings from being clipped by the scroll edge. */}
+      <div className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100">{children}</div>
     </Dialog>
   );
 };
