@@ -21,20 +21,57 @@ index a71a2b305cd74656d2da925c36b2e10f4ff2f230..9a25e341522bc608cd90ab8ab8efdba8
          allowCustomValue: !navigation && allowCustomValue,
          autoFocus,
 diff --git a/dist/molecules/date-picker.js b/dist/molecules/date-picker.js
-index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..ab378e6737133e77203dea41f935c984164db73a 100644
+index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..f4d5b10c50ab5bd2457a1018b085c20ec3f58ec5 100644
 --- a/dist/molecules/date-picker.js
 +++ b/dist/molecules/date-picker.js
-@@ -259,7 +259,8 @@ function serializeDatePickerValue(value) {
+@@ -8,6 +8,36 @@ import { Input } from "../atoms/input.js";
+ import { Label } from "../atoms/label.js";
+ import { canConfirmDatePickerDraft, createDatePickerCoordinatorState, datePickerCoordinatorReducer, getDatePickerDraftTimeParts } from "../internal/date-picker-coordinator.js";
+ import { tv } from "../utils.js";
++// Local patch: zag date-input announces each segment change with fixed English words ("Day, Empty").
++// Announce the DatePicker's `segmentLabels` and `emptySegment` translations instead; without them the
++// original zag action runs unchanged.
++const announceLocalizedSegment = (params)=>{
++    const { computed, context, prop, refs } = params;
++    const segmentLabels = prop("segmentLabels");
++    const emptySegmentLabel = prop("emptySegmentLabel");
++    if (!segmentLabels && !emptySegmentLabel) return machine.implementations.actions.announceSegmentValue(params);
++    const announcer = refs.get("announcer");
++    if (!announcer) return;
++    const index = context.get("activeIndex");
++    const segmentIndexToUse = refs.get("segmentToAnnounceIndex") ?? context.get("activeSegmentIndex");
++    refs.set("segmentToAnnounceIndex", null);
++    const allSegments = computed("segments");
++    const groupOffset = allSegments.slice(0, index).reduce((total, group)=>total + group.length, 0);
++    const segment = allSegments[index]?.[segmentIndexToUse - groupOffset];
++    if (!segment || "literal" === segment.type) return;
++    const valueText = segment.isPlaceholder ? emptySegmentLabel ?? "Empty" : segment.text;
++    announcer.announce(`${segmentLabels?.[segment.type] ?? segment.type}, ${valueText}`);
++};
++const localizedDateInputMachine = {
++    ...machine,
++    implementations: {
++        ...machine.implementations,
++        actions: {
++            ...machine.implementations.actions,
++            announceSegmentValue: announceLocalizedSegment
++        }
++    }
++};
+ const datePickerVariants = tv({
+     slots: {
+         root: "relative flex w-full flex-col gap-date-picker-root",
+@@ -259,7 +289,8 @@ function serializeDatePickerValue(value) {
  function DatePicker({ children, className, defaultOpen = false, defaultValue, disabled, endName, flip = true, form, granularity = "day", gutter = 8, hideTimeZone = false, hourCycle, id, invalid, isDateUnavailable, isTimeUnavailable, locale = "en-US", max, min, name, numOfMonths, offset = {
      mainAxis: 8,
      crossAxis: 0
 -}, onOpenChange, onValueChange, open, overflowPadding = 8, placement = "bottom-start", readOnly, ref, required, sameWidth = false, selectionMode = "single", shouldForceLeadingZeros = false, size = "md", slide = true, startOfWeek, startName, timeZone = "UTC", value, ...htmlProps }) {
 +}, onOpenChange, onValueChange, open, overflowPadding = 8, placement = "bottom-start", readOnly, ref, required, sameWidth = false, selectionMode = "single", shouldForceLeadingZeros = false, size = "md", slide = true, startOfWeek, startName, timeZone = "UTC", translations, value, ...htmlProps }) {
-+    const { segmentLabels, ...pickerTranslations } = translations ?? {};
++    const { emptySegment, segmentLabels, ...pickerTranslations } = translations ?? {};
      const generatedId = useId();
      const uniqueId = id ?? generatedId;
      const isTimed = "day" !== granularity;
-@@ -406,6 +407,7 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
+@@ -406,11 +437,13 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
          selectionMode,
          startOfWeek,
          timeZone,
@@ -42,7 +79,22 @@ index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..ab378e6737133e77203dea41f935c984
          value: pickerValues
      });
      const pickerApi = date_picker_connect(pickerService, normalizeProps);
-@@ -490,6 +492,7 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
+-    const dateInputService = useMachine(machine, {
++    const dateInputService = useMachine(localizedDateInputMachine, {
+         disabled,
++        emptySegmentLabel: emptySegment,
+         granularity,
+         hideTimeZone,
+         hourCycle,
+@@ -444,6 +477,7 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
+         },
+         readOnly: readOnly || isTimed && resolvedOpen,
+         required,
++        segmentLabels,
+         selectionMode,
+         shouldForceLeadingZeros,
+         timeZone,
+@@ -490,6 +524,7 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
              pickerApi,
              requestOpen,
              required: Boolean(required),
@@ -50,7 +102,7 @@ index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..ab378e6737133e77203dea41f935c984
              selectionMode,
              setDraftTimePart: (part, nextValue, index = 0)=>{
                  if ("day" !== granularity) dispatch({
-@@ -550,7 +553,9 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
+@@ -550,7 +585,9 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
  }
  DatePicker.Label = function({ children, className, ref, ...props }) {
      const { dateInputApi, pickerApi, required, size, styles } = useDatePickerContext();
@@ -61,7 +113,7 @@ index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..ab378e6737133e77203dea41f935c984
          ...props,
          ref
      }, pickerApi.getLabelProps(), dateInputApi.getLabelProps());
-@@ -586,7 +591,7 @@ DatePicker.Control = function({ children, className, ref, ...props }) {
+@@ -586,7 +623,7 @@ DatePicker.Control = function({ children, className, ref, ...props }) {
      });
  };
  DatePicker.Segments = function({ className, endLabel = "End", ref, separator = "–", startLabel = "Start", ...props }) {
@@ -70,7 +122,7 @@ index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..ab378e6737133e77203dea41f935c984
      const startDescriptorId = useId();
      const endDescriptorId = useId();
      const renderSegments = (index)=>dateInputApi.getSegments({
-@@ -596,6 +601,9 @@ DatePicker.Segments = function({ className, endLabel = "End", ref, separator = "
+@@ -596,6 +633,9 @@ DatePicker.Segments = function({ className, endLabel = "End", ref, separator = "
                      index,
                      segment
                  }),
@@ -80,7 +132,7 @@ index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..ab378e6737133e77203dea41f935c984
                  "aria-required": required && "literal" !== segment.type ? true : void 0,
                  className: styles.segment(),
                  key: `${segment.type}-${segmentIndex}`
-@@ -684,6 +692,7 @@ DatePicker.Trigger = function({ children, className, icon, iconSize = "current",
+@@ -684,6 +724,7 @@ DatePicker.Trigger = function({ children, className, icon, iconSize = "current",
      const triggerProps = mergeProps(props, pickerApi.getTriggerProps());
      return /*#__PURE__*/ jsx(Button, {
          ...triggerProps,
@@ -281,7 +333,7 @@ index ccb6c45dc5ffb7f28fc201d83c96757d6040c547..8e0b23d8dc79a69c6b5df078cd27e13b
  //# sourceMappingURL=combobox.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/molecules/date-picker.d.ts b/dist/src/molecules/date-picker.d.ts
-index 837f253c047f25c64b0e2abd9df2889a7702a989..9153f66e4f8f473d5b5b18ba548a8204bdf551ca 100644
+index 837f253c047f25c64b0e2abd9df2889a7702a989..bfd53d379853d0fab4e22902ca938a87b45b4ecf 100644
 --- a/dist/src/molecules/date-picker.d.ts
 +++ b/dist/src/molecules/date-picker.d.ts
 @@ -7,7 +7,7 @@
@@ -293,7 +345,7 @@ index 837f253c047f25c64b0e2abd9df2889a7702a989..9153f66e4f8f473d5b5b18ba548a8204
  import type { ComponentPropsWithoutRef, ReactElement, ReactNode, Ref } from "react";
  import { type ButtonProps } from "../atoms/button.js";
  export type DatePickerGranularity = "day" | "hour" | "minute" | "second";
-@@ -17,6 +17,15 @@ export type DatePickerTimedValue = CalendarDateTime | ZonedDateTime;
+@@ -17,6 +17,18 @@ export type DatePickerTimedValue = CalendarDateTime | ZonedDateTime;
  export type DatePickerRange<T> = readonly [T, T];
  export type DatePickerTimedRange = DatePickerRange<CalendarDateTime> | DatePickerRange<ZonedDateTime>;
  type DatePickerPublicValue = DateValue | DatePickerRange<DateValue>;
@@ -301,15 +353,18 @@ index 837f253c047f25c64b0e2abd9df2889a7702a989..9153f66e4f8f473d5b5b18ba548a8204
 +export type DatePickerSegmentType = "era" | "year" | "month" | "day" | "hour" | "minute" | "second" | "dayPeriod" | "timeZoneName";
 +/**
 + * Accessible names for the calendar (forwarded to the zag date-picker machine) plus
-+ * `segmentLabels`, which replace zag date-input's fixed English segment names.
++ * `segmentLabels` and `emptySegment`, which replace zag date-input's fixed English segment names and
++ * announcements.
 + */
 +export type DatePickerTranslations = DatePickerIntlTranslations & {
++    /** Word the screen-reader announcement uses for an empty segment. Defaults to "Empty". */
++    emptySegment?: string;
 +    segmentLabels?: Partial<Record<DatePickerSegmentType, string>>;
 +};
  export type DatePickerValueChangeDetails<T extends DatePickerPublicValue> = {
      value: T | null;
      valueAsString: T extends DatePickerRange<DateValue> ? DatePickerRange<string> : string;
-@@ -54,6 +63,7 @@ type DatePickerCommonRootProps<T extends DatePickerPublicValue> = Omit<Component
+@@ -54,6 +66,7 @@ type DatePickerCommonRootProps<T extends DatePickerPublicValue> = Omit<Component
      slide?: PositioningOptions["slide"];
      startOfWeek?: 0 | 1 | 2 | 3 | 4 | 5 | 6;
      timeZone?: string;

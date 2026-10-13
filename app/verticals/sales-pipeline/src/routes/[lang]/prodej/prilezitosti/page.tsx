@@ -1,11 +1,11 @@
-import { BulkActionBar, foldSearchText, PageHeader, toasterLabels } from '@app/admin-ui';
+import { BulkActionBar, foldSearchText, PageHeader, Toaster } from '@app/admin-ui';
 import { useTagsFor } from '@app/tagging/components/tag-controls';
 import type { TagId } from '@app/tagging/contracts/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
@@ -430,7 +430,7 @@ const RecordsPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <Toaster {...toasterLabels} />
+      <Toaster />
       <PageHeader
         actions={
           canWrite ? (

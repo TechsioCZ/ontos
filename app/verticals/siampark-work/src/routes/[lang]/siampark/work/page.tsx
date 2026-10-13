@@ -1,4 +1,4 @@
-import { EmptyState, PageHeader, StatCard, StatRow, toasterLabels, dataTableRowLabels } from '@app/admin-ui';
+import { EmptyState, PageHeader, StatCard, StatRow, Toaster, dataTableRowLabels } from '@app/admin-ui';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
@@ -7,7 +7,7 @@ import type { Employee } from '@app/workforce/contracts/records';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
-import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Random, Schema } from 'effect';
 import type { Types } from 'effect';
@@ -795,7 +795,7 @@ export const RecordsPage = () => (
     resources={siamparkWorkI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <Toaster {...toasterLabels} />
+    <Toaster />
     <TasksPageContent />
   </FederatedI18nBoundary>
 );

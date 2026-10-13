@@ -56,6 +56,7 @@ export const datePickerTranslations: DatePickerTranslations = {
   clearTrigger: 'Vymazat datum',
   content: 'Kalendář',
   dayCell: dayCellLabel,
+  emptySegment: 'Prázdné',
   monthSelect: 'Vybrat měsíc',
   nextTrigger: (view) => {
     if (view === 'year') {

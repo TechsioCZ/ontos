@@ -16,6 +16,7 @@ export {
   statusPresentation,
 } from './status-presentation.ts';
 export { TagBadge, type TagBadgeProps } from './tag-badge.tsx';
+export { Toaster } from './toaster.tsx';
 export {
   comboboxTranslations,
   dataTableRowLabels,
