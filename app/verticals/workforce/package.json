@@ -31,6 +31,7 @@
     "db:verify": "node scripts/verify-db-schema.mts"
   },
   "dependencies": {
+    "@app/admin-ui": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",

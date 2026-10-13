@@ -18,14 +18,106 @@
     "title": "Employees",
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
-      "records": {
+      "employees": {
         "title": "Employees",
-        "description": "Sales team employees.",
-        "refresh": "Load",
-        "empty": "No employees yet.",
-        "count": "Records: {{total}}",
-        "unavailable": "Data could not be loaded.",
-        "forbidden": "You are not allowed to do this."
+        "description": "People on the sales team, their roles and departments.",
+        "create": "New employee",
+        "stats": {
+          "active": "Active",
+          "departments": "Departments",
+          "sales": "Sales staff",
+          "total": "Total"
+        },
+        "filters": {
+          "activeOnly": "Active only",
+          "allDepartments": "All departments",
+          "allRoles": "All roles",
+          "clear": "Clear filters",
+          "department": "Department",
+          "role": "Role",
+          "search": "Search name or e-mail…",
+          "searchLabel": "Search"
+        },
+        "columns": {
+          "account": "Account",
+          "department": "Department",
+          "email": "E-mail",
+          "name": "Name",
+          "role": "Role",
+          "status": "Status",
+          "tags": "Tags"
+        },
+        "status": {
+          "active": "Active",
+          "inactive": "Inactive"
+        },
+        "account": {
+          "linked": "Linked",
+          "none": "No account"
+        },
+        "table": {
+          "actions": "Actions",
+          "filters": "Column filters",
+          "loading": "Loading employees",
+          "pageSize": "Rows per page",
+          "range": "{{start}}–{{end}} of {{total}}",
+          "selectAll": "Select all employees",
+          "selectRow": "Select employee"
+        },
+        "form": {
+          "active": "Active",
+          "cancel": "Cancel",
+          "create": "Create employee",
+          "createTitle": "New employee",
+          "department": "Department",
+          "editTitle": "Edit employee",
+          "email": "E-mail",
+          "fullName": "Full name",
+          "phone": "Phone",
+          "role": "Role",
+          "save": "Save changes",
+          "saving": "Saving…"
+        },
+        "bulk": {
+          "activate": "Activate",
+          "apply": "Save",
+          "deactivate": "Deactivate",
+          "department": "Change department",
+          "departmentTitle": "Change department",
+          "description": "The change applies to {{total}} selected employees.",
+          "role": "Change role",
+          "roleTitle": "Change role"
+        },
+        "errors": {
+          "conflict": "Someone else changed this record in the meantime. Reload it and repeat your change.",
+          "department": "Enter a department.",
+          "email": "Enter an e-mail like name@company.cz.",
+          "forbidden": "You are not allowed to do this.",
+          "fullName": "Enter a full name.",
+          "load": "Data could not be loaded.",
+          "loadDescription": "Check your connection and try again.",
+          "phone": "The phone number needs at least 3 characters.",
+          "retry": "Try again",
+          "save": "The employee could not be saved. Try again."
+        },
+        "empty": {
+          "first": "No employees yet.",
+          "firstDescription": "Add the first employee of the sales team.",
+          "forbidden": "You do not have access to this section.",
+          "noResults": "No employee matches the filters."
+        },
+        "toast": {
+          "bulkSaved": "Employees saved",
+          "error": "The action could not be completed. Try again.",
+          "saved": "Employee saved"
+        },
+        "roles": {
+          "ACCOUNTANT": "Accountant",
+          "SALES_HEAD": "Sales head",
+          "SALES_REP": "Sales representative",
+          "SUPPORT": "Support",
+          "WAREHOUSE": "Warehouse"
+        }
       }
     }
   }
