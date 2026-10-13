@@ -1,4 +1,4 @@
-import { createMemoryHistory, createRouter, isNotFound } from '@modern-js/plugin-tanstack/runtime';
+import { createMemoryHistory, createRouter, isNotFound, isRedirect } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
@@ -145,5 +145,19 @@ it.effect('the generated native catchall returns HTTP 404 for an unknown approve
       expect.any(Object),
     );
     expect(router._serverResult).toMatchObject({ status: 404, type: 'render' });
+  }),
+);
+
+it.effect('redirects the Czech tasks alias to the tasks page before target resolution', () =>
+  Effect.gen(function* redirectsTasksAlias() {
+    const thrown = yield* Effect.flip(
+      Effect.tryPromise({
+        catch: (cause) => cause,
+        try: () => loader({ params: { lang: 'cs' }, request: requestFor('/cs/provoz/ukoly/') }),
+      }),
+    );
+    expect(isRedirect(thrown)).toBe(true);
+    expect(thrown).toMatchObject({ options: { to: '/cs/siampark/work' } });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
   }),
 );

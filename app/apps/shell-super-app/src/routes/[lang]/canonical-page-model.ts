@@ -1,4 +1,4 @@
-import { notFound } from '@modern-js/plugin-tanstack/runtime';
+import { notFound, throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
 import type { NotFoundError } from '@modern-js/plugin-tanstack/runtime';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
@@ -20,6 +20,9 @@ export const canonicalPathFromRequest = (request: Request, language: string): st
   return Object.hasOwn(routeMeta.localisedPaths, language) && pathname.startsWith(prefix) ? normalizedPath : undefined;
 };
 
+/** Czech alias paths that open another module's canonical page. The tasks nav item accepts `/provoz/ukoly`. */
+const canonicalPathAliases: ReadonlyMap<string, string> = new Map([['/provoz/ukoly', '/siampark/work']]);
+
 export const loader = ({
   params,
   request,
@@ -27,6 +30,10 @@ export const loader = ({
   const canonicalPath = canonicalPathFromRequest(request, params.lang);
   if (canonicalPath === undefined) {
     return Promise.resolve().then(() => notFound({ throw: true }));
+  }
+  const aliasTarget = canonicalPathAliases.get(canonicalPath);
+  if (aliasTarget !== undefined) {
+    return Promise.resolve().then(() => throwTanstackRedirect(`/${encodeURIComponent(params.lang)}${aliasTarget}`));
   }
   return browserRuntime
     .runPromise(loadModulePageModel({ canonicalPath, request }), { signal: request.signal })
