@@ -15,7 +15,15 @@ import type { ProductRecord, StockMovement } from '../../../../../shared/apis/re
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { runCommand } from './products-api.ts';
 import type { CommandOutcome, FailureReason } from './products-api.ts';
-import { UNITS, VAT_RATES, fieldError, useCommandFailure, useProductLabel } from './product-forms.tsx';
+import {
+  UNITS,
+  VAT_RATES,
+  fieldError,
+  lowStockErrorKey,
+  priceErrorKey,
+  useCommandFailure,
+  useProductLabel,
+} from './product-forms.tsx';
 import { MovementForm, MovementsTable } from './product-movements.tsx';
 
 export interface ProductDetailDialogProps {
@@ -31,6 +39,12 @@ export interface ProductDetailDialogProps {
 
 /** Writable subset of ProductPatch, filled field by field so only changed values are sent. */
 type PatchDraft = { -readonly [Key in keyof ProductPatch]?: ProductPatch[Key] };
+
+/**
+ * The panel footer submits the detail form through this id, so the save button stays in the fixed
+ * footer. The footer offers Zrušit and Uložit změny on the Detail tab only; the other tabs show Zavřít.
+ */
+const DETAIL_FORM_ID = 'product-detail-form';
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const k = useProductLabel();
@@ -71,6 +85,7 @@ const DetailForm = ({
   onReload,
   product,
   revision,
+  setBusy,
 }: {
   readonly canWrite: boolean;
   readonly onCommitted: (message: string) => void;
@@ -78,6 +93,7 @@ const DetailForm = ({
   readonly onReload: () => void;
   readonly product: ProductRecord;
   readonly revision: number;
+  readonly setBusy: (busy: boolean) => void;
 }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
@@ -88,13 +104,15 @@ const DetailForm = ({
   const [lowStock, setLowStock] = useState(product.lowStockThreshold);
   const [priceCzk, setPriceCzk] = useState(product.currentPriceMinor / 100);
   const [active, setActive] = useState(product.active);
-  const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
   const nameError = name.trim() === '' ? k('validation.required') : undefined;
   const categoryError = category.trim() === '' ? k('validation.required') : undefined;
-  const priceError = priceCzk <= 0 ? k('validation.positive') : undefined;
+  const priceKey = priceErrorKey(priceCzk);
+  const priceError = priceKey === undefined ? undefined : k(priceKey);
+  const lowStockKey = lowStockErrorKey(lowStock);
+  const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
 
   const finish = (reason: FailureReason | null) => {
     setBusy(false);
@@ -108,7 +126,7 @@ const DetailForm = ({
 
   const save = () => {
     setSubmitted(true);
-    if (nameError !== undefined || categoryError !== undefined || priceError !== undefined) {
+    if ([nameError, categoryError, priceError, lowStockError].some((message) => message !== undefined)) {
       return;
     }
     const patch: PatchDraft = {};
@@ -124,8 +142,8 @@ const DetailForm = ({
     if (vatRate !== product.vatRate) {
       patch.vatRate = vatRate;
     }
-    if (Math.round(lowStock) !== product.lowStockThreshold) {
-      patch.lowStockThreshold = Math.max(0, Math.round(lowStock));
+    if (lowStock !== product.lowStockThreshold) {
+      patch.lowStockThreshold = lowStock;
     }
     if (active !== product.active) {
       patch.active = active;
@@ -162,6 +180,7 @@ const DetailForm = ({
   return (
     <form
       className="flex flex-col gap-200"
+      id={DETAIL_FORM_ID}
       onSubmit={(event) => {
         event.preventDefault();
         save();
@@ -249,11 +268,11 @@ const DetailForm = ({
           id="detail-low-stock"
           label={k('fields.lowStock')}
           locale="cs-CZ"
-          min={0}
           name="lowStock"
           onChange={setLowStock}
           step={1}
           value={lowStock}
+          {...fieldError(submitted, lowStockError)}
         >
           <NumericInput.Control>
             <NumericInput.Input />
@@ -263,13 +282,6 @@ const DetailForm = ({
       <Switch checked={active} disabled={!canWrite} name="active" onCheckedChange={setActive}>
         {k('detail.active')}
       </Switch>
-      {canWrite && (
-        <div className="flex justify-end gap-100">
-          <Button isLoading={busy} loadingText={k('common.save')} type="submit" variant="primary">
-            {k('common.save')}
-          </Button>
-        </div>
-      )}
     </form>
   );
 };
@@ -289,16 +301,37 @@ export const ProductDetailDialog = ({
   revision,
 }: ProductDetailDialogProps) => {
   const k = useProductLabel();
+  const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState('detail');
+  const editing = canWrite && tab === 'detail';
 
   return (
     <SidePanel
+      actions={
+        <>
+          <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
+            {k(editing ? 'common.cancel' : 'common.close')}
+          </Button>
+          {editing && (
+            <Button
+              form={DETAIL_FORM_ID}
+              isLoading={busy}
+              loadingText={k('common.save')}
+              type="submit"
+              variant="primary"
+            >
+              {k('common.save')}
+            </Button>
+          )}
+        </>
+      }
       description={`${product.sku} · ${formatMoney(product.currentPriceMinor)}`}
       onOpenChange={onOpenChange}
       open={open}
-      size="lg"
+      size="md"
       title={product.name}
     >
-      <Tabs defaultValue="detail" variant="line">
+      <Tabs onValueChange={setTab} value={tab} variant="line">
         <Tabs.List>
           <Tabs.Trigger value="detail">{k('detail.tab')}</Tabs.Trigger>
           <Tabs.Trigger value="prices">{k('prices.tab')}</Tabs.Trigger>
@@ -313,6 +346,7 @@ export const ProductDetailDialog = ({
             onReload={onReload}
             product={product}
             revision={revision}
+            setBusy={setBusy}
           />
         </Tabs.Content>
         <Tabs.Content className="py-200" value="prices">
@@ -321,7 +355,13 @@ export const ProductDetailDialog = ({
         <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
           <MovementsTable movements={movements} />
           {canWrite && (
-            <MovementForm onCommitted={onCommitted} onReload={onReload} productId={product.id} revision={revision} />
+            <MovementForm
+              onCommitted={onCommitted}
+              onReload={onReload}
+              productId={product.id}
+              revision={revision}
+              stockOnHand={product.stockOnHand}
+            />
           )}
         </Tabs.Content>
       </Tabs>

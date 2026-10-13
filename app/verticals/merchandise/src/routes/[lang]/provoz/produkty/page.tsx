@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { PageHeader, StatCard, StatRow, formatNumber } from '@app/admin-ui';
+import { PageHeader, StatCard, StatRow, foldSearchText, formatNumber } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { DateTime, Schema } from 'effect';
 import { useEffect, useState } from 'react';
@@ -84,6 +84,18 @@ const ProductStats = ({ indicators, label }: ProductStatsProps) => (
   </StatRow>
 );
 
+/** Toast text for a refused bulk command: stale data, a refused business rule, or a generic failure. */
+const bulkFailureKey = (reason: FailureReason): string => {
+  if (reason === 'conflict') {
+    return 'messages.conflict';
+  }
+  return reason === 'rejected' ? 'messages.rejected' : 'messages.failed';
+};
+
+/** Folded name and SKU contain the folded query, so diacritics on either side do not matter. */
+const matchesSearch = (product: ProductRecord, foldedQuery: string): boolean =>
+  foldSearchText(`${product.name} ${product.sku}`).includes(foldedQuery);
+
 const RecordsPageContent = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
@@ -124,10 +136,10 @@ const RecordsPageContent = () => {
     left.localeCompare(right, 'cs'),
   );
 
-  const query = search.trim().toLowerCase();
+  const query = foldSearchText(search.trim());
   const filtered = products.filter(
     (product) =>
-      (query === '' || `${product.name} ${product.sku}`.toLowerCase().includes(query)) &&
+      (query === '' || matchesSearch(product, query)) &&
       (category === ALL_CATEGORIES || product.category === category) &&
       (!lowStockOnly || product.lowStock) &&
       tagFilter.matches(product.id),
@@ -159,10 +171,7 @@ const RecordsPageContent = () => {
         if (outcome.reason === 'conflict') {
           reload();
         }
-        toaster.create({
-          title: outcome.reason === 'conflict' ? k('messages.conflict') : k('messages.failed'),
-          type: 'error',
-        });
+        toaster.create({ title: k(bulkFailureKey(outcome.reason)), type: 'error' });
         return;
       }
       setSelection({});

@@ -225,6 +225,7 @@
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
+          "rejected": "Akci nelze provést v aktuálním stavu, například kvůli nedostatečné zásobě. Zkontrolujte zadané hodnoty.",
           "updated": "Produkt uložen"
         },
         "movements": {
@@ -305,10 +306,12 @@
         "title": "Produkty a sklad",
         "validation": {
           "delta": "Zadejte celé číslo různé od nuly.",
+          "lowStock": "Zadejte celé číslo 0 nebo větší.",
           "percent": "Zadejte celé číslo mezi −90 a 1000.",
           "positive": "Zadejte částku větší než 0 Kč.",
-          "quantity": "Zadejte množství větší než 0.",
-          "required": "Vyplňte toto pole."
+          "quantity": "Zadejte celé číslo větší než 0.",
+          "required": "Vyplňte toto pole.",
+          "stock": "Množství převyšuje zásobu na skladě."
         },
         "selectPlaceholder": "Vyberte…"
       }

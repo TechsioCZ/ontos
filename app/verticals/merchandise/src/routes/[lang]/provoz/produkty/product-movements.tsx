@@ -8,7 +8,7 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { formatDateTime } from '@app/admin-ui';
 import { DateTime } from 'effect';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { StockMovementReason } from '../../../../../shared/domain/merchandise-model.ts';
 import { runCommand } from './products-api.ts';
@@ -75,17 +75,34 @@ export const MovementsTable = ({ movements }: { readonly movements: readonly Sto
   );
 };
 
-/** Manual stock movement. Výdej is sent as a negative delta; korekce takes the signed value as typed. */
+/** Validation message key for a typed quantity, or undefined when the movement can be sent. */
+const quantityErrorKey = (reason: ManualReason, quantity: number, stockOnHand: number): string | undefined => {
+  if (!Number.isInteger(quantity) || quantity === 0) {
+    return reason === 'ADJUSTMENT' ? 'validation.delta' : 'validation.quantity';
+  }
+  if (reason !== 'ADJUSTMENT' && quantity < 0) {
+    return 'validation.quantity';
+  }
+  return stockOnHand + signedDelta(reason, quantity) < 0 ? 'validation.stock' : undefined;
+};
+
+/**
+ * Manual stock movement. Výdej is sent as a negative delta; korekce takes the signed value as typed.
+ * The form stays open after a save, so it sends the newer of the page revision and the one its own
+ * last command returned; a second movement before the page reload finishes is not a false conflict.
+ */
 export const MovementForm = ({
   onCommitted,
   onReload,
   productId,
   revision,
+  stockOnHand,
 }: {
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
   readonly productId: ProductRecord['id'];
   readonly revision: number;
+  readonly stockOnHand: number;
 }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
@@ -95,25 +112,29 @@ export const MovementForm = ({
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  // Only read when sending, so a ref: the revision the last own command returned.
+  const savedRevision = useRef(revision);
 
   const isAdjustment = reason === 'ADJUSTMENT';
-  const invalid = !Number.isInteger(quantity) || quantity === 0 || (!isAdjustment && quantity < 0);
+  const errorKey = quantityErrorKey(reason, quantity, stockOnHand);
 
   const submit = () => {
     setSubmitted(true);
-    if (invalid) {
+    if (errorKey !== undefined) {
       return;
     }
     setBusy(true);
     setServerError(null);
     const trimmed = note.trim();
     const movement = { _tag: 'RecordStockMovement' as const, delta: signedDelta(reason, quantity), productId, reason };
-    runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, revision, (outcome) => {
+    const expected = Math.max(revision, savedRevision.current);
+    runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, expected, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
         setServerError(failure(outcome.reason, onReload));
         return;
       }
+      savedRevision.current = outcome.revision;
       setQuantity(1);
       setNote('');
       setSubmitted(false);
@@ -150,16 +171,16 @@ export const MovementForm = ({
           placeholder={k('selectPlaceholder')}
           value={[reason]}
         />
+        {/* No min: the input clamps typed values on blur, which would hide an invalid quantity from validation. */}
         <FormNumericInput
           id="movement-quantity"
           label={k('fields.quantity')}
           locale="cs-CZ"
-          min={isAdjustment ? undefined : 1}
           name="movementQuantity"
           onChange={setQuantity}
           step={1}
           value={quantity}
-          {...fieldError(submitted && invalid, k('validation.quantity'))}
+          {...fieldError(submitted, errorKey === undefined ? undefined : k(errorKey))}
         >
           <NumericInput.Control>
             <NumericInput.Input />

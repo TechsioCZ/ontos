@@ -225,6 +225,7 @@
           "movementRecorded": "Movement recorded",
           "priceChanged": "Price changed",
           "receiptRecorded": "Receipt recorded",
+          "rejected": "The action is not possible in the current state, for example because of insufficient stock. Check the values you entered.",
           "updated": "Product saved"
         },
         "movements": {
@@ -305,10 +306,12 @@
         "title": "Products and stock",
         "validation": {
           "delta": "Enter a whole number other than zero.",
+          "lowStock": "Enter a whole number of 0 or more.",
           "percent": "Enter a whole number between −90 and 1000.",
           "positive": "Enter an amount greater than 0 CZK.",
-          "quantity": "Enter a quantity greater than 0.",
-          "required": "Fill in this field."
+          "quantity": "Enter a whole number greater than 0.",
+          "required": "Fill in this field.",
+          "stock": "The quantity exceeds the stock on hand."
         },
         "selectPlaceholder": "Select…"
       }

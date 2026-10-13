@@ -5,7 +5,11 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 
-const FailureReasonSchema = Schema.Literals(['conflict', 'forbidden', 'invalid', 'unavailable']);
+/**
+ * `conflict` is a stale revision (someone else changed the data); `rejected` is a business rule the
+ * current state refuses, such as an issue larger than the stock on hand.
+ */
+const FailureReasonSchema = Schema.Literals(['conflict', 'forbidden', 'invalid', 'rejected', 'unavailable']);
 export type FailureReason = typeof FailureReasonSchema.Type;
 
 export type LoadOutcome =
@@ -34,10 +38,13 @@ const recordsReason = (error: RecordsFailure): FailureReason =>
     Match.orElse((): FailureReason => 'unavailable'),
   );
 
-/** Maps the apply-command problems onto the four UI outcomes. Anything unlisted reads as unavailable. */
+/** Maps the apply-command problems onto the UI outcomes. Anything unlisted reads as unavailable. */
 const commandReason = (error: CommandFailure): FailureReason =>
   Match.value(error).pipe(
-    Match.tag('ApplyCommandActionConflictProblem', (): FailureReason => 'conflict'),
+    Match.tag('ApplyCommandActionConflictProblem', (problem): FailureReason =>
+      problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict',
+    ),
+    Match.tag('ApplyCommandActionIneligibleProblem', (): FailureReason => 'rejected'),
     Match.tag(
       'ApplyCommandActionAuthenticationProblem',
       'ApplyCommandActionForbiddenProblem',

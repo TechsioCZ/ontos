@@ -35,7 +35,7 @@ export const useProductLabel = () => {
   return (path: string) => t(`${KEY_PREFIX}.${path}`);
 };
 
-/** Failure text for a rejected command. Conflicts also ask the page to reload. */
+/** Failure text for a refused command. Conflicts also ask the page to reload. */
 export const useCommandFailure = () => {
   const label = useProductLabel();
   return (reason: FailureReason, onReload: () => void): string => {
@@ -43,12 +43,23 @@ export const useCommandFailure = () => {
       onReload();
       return label('messages.conflict');
     }
+    if (reason === 'rejected') {
+      return label('messages.rejected');
+    }
     return label('messages.failed');
   };
 };
 
 /** Combobox reports a single value as a string or a one-item array; both shapes collapse to the picked id. */
 const pickFirst = (values: string | string[]): string | undefined => (Array.isArray(values) ? values[0] : values);
+
+/** Price in whole crowns: a finite number above zero. An emptied input reports NaN. */
+export const priceErrorKey = (priceCzk: number): string | undefined =>
+  Number.isFinite(priceCzk) && priceCzk > 0 ? undefined : 'validation.positive';
+
+/** Low-stock threshold: a whole number of zero or more. */
+export const lowStockErrorKey = (lowStock: number): string | undefined =>
+  Number.isInteger(lowStock) && lowStock >= 0 ? undefined : 'validation.lowStock';
 
 export const fieldError = (submitted: boolean, message: string | undefined) =>
   submitted && message !== undefined ? { helpText: message, validateStatus: 'error' as const } : {};
@@ -102,8 +113,13 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   const skuError = sku.trim() === '' ? k(REQUIRED_KEY) : undefined;
   const nameError = name.trim() === '' ? k(REQUIRED_KEY) : undefined;
   const categoryError = category.trim() === '' ? k(REQUIRED_KEY) : undefined;
-  const priceError = priceCzk <= 0 ? k('validation.positive') : undefined;
-  const hasErrors = [skuError, nameError, categoryError, priceError].some((message) => message !== undefined);
+  const priceKey = priceErrorKey(priceCzk);
+  const priceError = priceKey === undefined ? undefined : k(priceKey);
+  const lowStockKey = lowStockErrorKey(lowStock);
+  const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
+  const hasErrors = [skuError, nameError, categoryError, priceError, lowStockError].some(
+    (message) => message !== undefined,
+  );
 
   const submit = () => {
     setSubmitted(true);
@@ -117,7 +133,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
         _tag: 'CreateProduct',
         active: true,
         category: category.trim(),
-        lowStockThreshold: Math.max(0, Math.round(lowStock)),
+        lowStockThreshold: lowStock,
         name: name.trim(),
         priceMinor: Math.round(priceCzk * 100),
         sku: sku.trim(),
@@ -241,11 +257,11 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
             id="product-low-stock"
             label={k('fields.lowStock')}
             locale="cs-CZ"
-            min={0}
             name="lowStock"
             onChange={setLowStock}
             step={1}
             value={lowStock}
+            {...fieldError(submitted, lowStockError)}
           >
             <NumericInput.Control>
               <NumericInput.Input />
@@ -276,7 +292,7 @@ export const ReceiptDialog = ({
   const [serverError, setServerError] = useState<string | null>(null);
 
   const productError = productId === null ? k(REQUIRED_KEY) : undefined;
-  const quantityError = quantity < 1 ? k('validation.quantity') : undefined;
+  const quantityError = Number.isInteger(quantity) && quantity >= 1 ? undefined : k('validation.quantity');
 
   const submit = () => {
     setSubmitted(true);
@@ -331,7 +347,9 @@ export const ReceiptDialog = ({
         }}
       >
         <ErrorLine message={serverError} />
+        {/* Not clearable: ui-kit names the clear control "Clear value" in English; picking another product replaces it. */}
         <Combobox
+          clearable={false}
           items={products.map((product) => ({
             id: product.id,
             label: `${product.name} (${product.sku})`,
@@ -352,7 +370,6 @@ export const ReceiptDialog = ({
           id="receipt-quantity"
           label={k('fields.quantity')}
           locale="cs-CZ"
-          min={1}
           name="quantity"
           onChange={setQuantity}
           step={1}
@@ -430,7 +447,7 @@ export const PriceChangeDialog = ({
       description={k('priceDialog.description')}
       onOpenChange={onOpenChange}
       open={open}
-      size="sm"
+      size="md"
       title={k('priceDialog.title')}
     >
       <form
@@ -445,8 +462,6 @@ export const PriceChangeDialog = ({
           id="price-percent"
           label={k('priceDialog.field')}
           locale="cs-CZ"
-          max={1000}
-          min={-90}
           name="priceChangePercent"
           onChange={setPercent}
           step={1}
@@ -518,7 +533,7 @@ export const CategoryDialog = ({
       }
       onOpenChange={onOpenChange}
       open={open}
-      size="sm"
+      size="md"
       title={k('category.title')}
     >
       <form
