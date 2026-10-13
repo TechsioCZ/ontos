@@ -66,10 +66,9 @@ const salesDemoModuleId = 'siampark.work';
 const salesDemoCollectionType = 'siampark.work.task-collection';
 const salesDemoTaskType = 'siampark.work.task';
 const salesDemoTaskCount = 80;
-// Business date the records read treats as "today" (records.referenceDate is fixed to this value).
-const salesDemoReferenceDate = '2026-10-05';
-// Due dates spread -20..+30 days around this anchor.
+// Due dates spread -20..+30 days around this anchor. The UI marks overdue against the real current date.
 const salesDemoAnchor = DateTime.makeUnsafe('2026-10-13T12:00:00.000Z');
+const salesDemoAnchorDate = DateTime.formatIsoDateUtc(salesDemoAnchor);
 // Owner principal: the Siampark management demo account, the same principal the Siampark seed uses.
 const salesDemoOwnerPrincipalRef = {
   principalId: '72000000-0000-4000-8000-000000000021',
@@ -104,7 +103,7 @@ const salesDemoTitles = {
     'Připravit cenovou nabídku',
     'Schůzka – prezentace řešení',
     'Poslat smlouvu k podpisu',
-    'Follow-up po veletrhu',
+    'Navázání kontaktu po veletrhu',
     'Zaslat vzorek produktu',
     'Naplánovat demo pro vedení zákazníka',
     'Vyhodnotit konkurenční nabídku',
@@ -211,11 +210,11 @@ const salesDemoRawState = {
 
 const summarizeSalesDemo = (state: WorkState) => {
   const open = state.tasks.filter((task) => task.state !== 'DONE' && task.state !== 'CANCELLED');
-  const overdue = open.filter((task) => task.dueDate !== undefined && task.dueDate < salesDemoReferenceDate);
+  const overdue = open.filter((task) => task.dueDate !== undefined && task.dueDate < salesDemoAnchorDate);
   const unassigned = state.tasks.filter((task) => task.assigneeEmployeeId === undefined).length;
   const withParty = state.tasks.filter((task) => task.partyId !== undefined).length;
   const withOpportunity = state.tasks.filter((task) => task.opportunityId !== undefined).length;
-  return `${state.tasks.length} tasks (open ${open.length}, overdue ${overdue.length} vs ${salesDemoReferenceDate}, unassigned ${unassigned}, with customer ${withParty}, with opportunity ${withOpportunity})`;
+  return `${state.tasks.length} tasks (open ${open.length}, overdue ${overdue.length} vs ${salesDemoAnchorDate}, unassigned ${unassigned}, with customer ${withParty}, with opportunity ${withOpportunity})`;
 };
 
 const seedSalesDemo = Effect.fn('ResetDemo.seedSalesDemo')(function* seedSalesDemo(validateOnly: boolean) {

@@ -30,6 +30,8 @@ import {
   employeeIdOf,
   filterTasks,
   initialTaskFilters,
+  overdueCount,
+  todayIsoDate,
   unassignedOpenCount,
 } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption, TaskFilters, TaskTab } from './tasks-model.ts';
@@ -237,6 +239,7 @@ const useTasksPage = () => {
     loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed });
   }, []);
 
+  const today = todayIsoDate();
   const employeeNames = new Map<string, string>(employees.map((employee) => [employee.id, employee.fullName]));
   const customerNames = new Map<string, string>(
     customers.flatMap((customer) =>
@@ -246,7 +249,6 @@ const useTasksPage = () => {
   const opportunityTitles = new Map<string, string>(
     opportunities.map((opportunity) => [opportunity.id, opportunity.title] as const),
   );
-  const referenceDate = records?.referenceDate ?? '';
   const canWrite = records?.canWrite === true;
   const mineEmployeeId =
     records === undefined ? undefined : employeeIdOf(records.actorPrincipalRef.principalId, employees);
@@ -431,13 +433,13 @@ const useTasksPage = () => {
     opportunities,
     opportunityTitles,
     records,
-    referenceDate,
     referenceFailed,
     saving,
     selectedIds,
     selection,
     t,
     tab,
+    today,
     visibleTasks,
   };
 };
@@ -450,8 +452,8 @@ const TasksPageContent = () => {
     customerNames: model.customerNames,
     employeeNames: model.employeeNames,
     opportunityTitles: model.opportunityTitles,
-    referenceDate: model.referenceDate,
     t,
+    today: model.today,
   });
   const selectedCount = model.selectedIds.length;
 
@@ -466,15 +468,19 @@ const TasksPageContent = () => {
             </Button>
           ) : undefined
         }
+        description={t(`${key}.description`)}
         title={t(`${key}.title`)}
       />
 
       <StatRow>
         <StatCard label={t(`${key}.stats.open`)} value={formatCount(records?.indicators.open)} />
-        <StatCard label={t(`${key}.stats.overdue`)} value={formatCount(records?.indicators.overdue)} />
+        <StatCard
+          label={t(`${key}.stats.overdue`)}
+          value={formatCount(records === undefined ? undefined : overdueCount(records.items, model.today))}
+        />
         <StatCard
           label={t(`${key}.stats.doneThisWeek`)}
-          value={formatCount(records === undefined ? undefined : doneThisWeek(records.items, records.referenceDate))}
+          value={formatCount(records === undefined ? undefined : doneThisWeek(records.items, model.today))}
         />
         <StatCard
           label={t(`${key}.stats.unassigned`)}
