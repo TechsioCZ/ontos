@@ -91,6 +91,9 @@
           "toastRenamed": "Changes saved",
           "vatId": "DIČ"
         },
+        "filters": {
+          "allSegments": "All segments"
+        },
         "newCustomer": "New customer",
         "search": {
           "placeholder": "Search name, IČO, e-mail or city…"

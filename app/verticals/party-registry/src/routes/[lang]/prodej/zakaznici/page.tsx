@@ -2,9 +2,11 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { BulkActionBar, EmptyState, PageHeader, StatCard, StatRow, formatDate, formatNumber } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Input } from '@techsio/ui-kit/atoms/input';
 import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
+import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect, Predicate } from 'effect';
@@ -13,7 +15,9 @@ import { useEffect, useState } from 'react';
 import '../../../index.css';
 
 import { partyRegistryI18nResources } from '../../../../i18n/resources.ts';
+import type { TagId } from '@app/tagging/contracts/records';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
+import { customerSegmentDefinitions } from '../../../../api/customer-segments-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { CustomerBulkEditDialog } from './customer-bulk-edit-dialog.tsx';
@@ -27,8 +31,9 @@ import { subjectIdOf, useCustomerEnrichment } from './use-customer-enrichment.ts
 const key = 'party-registry.pages.customers';
 const pageSizeOptions = [50, 100, 200];
 const pinning = { end: [], start: ['displayName'] };
-/** Phone and DIČ stay in the column menu; the segment column is visible until its lookup fails. */
-const defaultColumnVisibility = { phone: false, vatId: false } satisfies ColumnVisibility;
+/** Phone, DIČ and Stav stay in the column menu; the segment column is visible until its lookup fails. */
+const defaultColumnVisibility = { phone: false, status: false, vatId: false } satisfies ColumnVisibility;
+const allSegments = 'all';
 
 type LoadState =
   | { readonly status: 'loading' }
@@ -79,6 +84,66 @@ const downloadCsv = (csv: string) => {
   URL.revokeObjectURL(url);
 };
 
+interface CustomerFilterRowProps {
+  readonly onSearchChange: (search: string) => void;
+  readonly onSegmentChange: (segment: string) => void;
+  readonly onTagChange: (tagId: TagId | null) => void;
+  readonly search: string;
+  /** Null hides the segment select, which appears only while segments load. */
+  readonly segmentFilter: string | null;
+  readonly tagFilter: TagId | null;
+  readonly tagFilterFailed: boolean;
+}
+
+/** The one filter row: search, tag and segment, all size sm at fixed widths. */
+const CustomerFilterRow = ({
+  onSearchChange,
+  onSegmentChange,
+  onTagChange,
+  search,
+  segmentFilter,
+  tagFilter,
+  tagFilterFailed,
+}: CustomerFilterRowProps) => {
+  const { t } = useModernI18n();
+  const segmentItems = [
+    { label: t(`${key}.filters.allSegments`), value: allSegments },
+    ...customerSegmentDefinitions.map((definition) => ({ label: definition.name, value: definition.businessCode })),
+  ];
+  return (
+    <>
+      <div className="flex flex-wrap items-end gap-150">
+        <Input
+          aria-label={t(`${key}.table.searchLabel`)}
+          className="w-64"
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder={t(`${key}.search.placeholder`)}
+          size="sm"
+          type="search"
+          value={search}
+        />
+        <TagFilter kind="customer" onChange={onTagChange} value={tagFilter} />
+        {segmentFilter !== null && (
+          <div className="w-48">
+            <SelectTemplate
+              items={segmentItems}
+              label={t(`${key}.columns.segment`)}
+              name="segment"
+              onValueChange={(details) => {
+                const [next] = details.value;
+                onSegmentChange(next ?? allSegments);
+              }}
+              size="sm"
+              value={[segmentFilter]}
+            />
+          </div>
+        )}
+      </div>
+      {tagFilterFailed && <StatusText status="error">{t(`${key}.tags.filterFailed`)}</StatusText>}
+    </>
+  );
+};
+
 const CustomersContent = () => {
   const { t } = useModernI18n();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -89,6 +154,7 @@ const CustomersContent = () => {
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(defaultColumnVisibility);
   const [editOpen, setEditOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
+  const [segmentFilter, setSegmentFilter] = useState<string>(allSegments);
 
   useEffect(() => {
     loadCustomersInto(setState);
@@ -106,8 +172,13 @@ const CustomersContent = () => {
   const enrichment = useCustomerEnrichment(data);
   const { segments, tagFilter, taggedIds, tagsBySubject, tagStatus } = enrichment;
 
+  // The segment filter exists only while segments load, so a hidden filter never narrows the rows.
+  const segmentsShown = segments !== null && !enrichment.segmentsFailed;
   const visible = items.filter(
-    (item) => matchesCustomerSearch(item, search) && (tagFilter === null || (taggedIds?.has(item.partyId) ?? false)),
+    (item) =>
+      matchesCustomerSearch(item, search) &&
+      (tagFilter === null || (taggedIds?.has(item.partyId) ?? false)) &&
+      (!segmentsShown || segmentFilter === allSegments || segments?.get(item.partyId)?.code === segmentFilter),
   );
   const stats = data === undefined ? undefined : computeCustomerStats(data.items, data.nowMillis);
   const selectedItems = items.filter((item) => selection[item.counterpartyId] === true);
@@ -130,19 +201,28 @@ const CustomersContent = () => {
     return <TagCell tags={tagsBySubject.get(subjectIdOf(info.row.original.partyId)) ?? []} />;
   };
 
+  // Seven visible columns at 1440px; phone, DIČ and Stav live in the column menu.
   const columns: ColumnDef<CustomerListItem>[] = [
-    { accessorKey: 'displayName', cell: nameCell, header: t(`${key}.columns.name`), meta: { width: 280 } },
-    { accessorKey: 'companyId', cell: textCell, header: t(`${key}.columns.companyId`), meta: { width: 110 } },
-    { accessorKey: 'vatId', cell: textCell, header: t(`${key}.columns.vatId`), meta: { width: 130 } },
-    { accessorKey: 'city', cell: textCell, header: t(`${key}.columns.city`), meta: { width: 140 } },
-    { accessorKey: 'email', cell: textCell, header: t(`${key}.columns.email`), meta: { width: 220 } },
-    { accessorKey: 'phone', cell: textCell, header: t(`${key}.columns.phone`), meta: { width: 140 } },
+    { accessorKey: 'displayName', cell: nameCell, header: t(`${key}.columns.name`), meta: { width: 220 } },
+    { accessorKey: 'companyId', cell: textCell, header: t(`${key}.columns.companyId`), meta: { width: 100 } },
+    { accessorKey: 'city', cell: textCell, header: t(`${key}.columns.city`), meta: { width: 130 } },
+    { accessorKey: 'email', cell: textCell, header: t(`${key}.columns.email`), meta: { width: 210 } },
+    {
+      cell: segmentCell,
+      enableSorting: false,
+      header: t(`${key}.columns.segment`),
+      id: 'segment',
+      meta: { width: 120 },
+    },
     {
       accessorKey: 'createdAt',
       cell: dateCell,
       header: t(`${key}.columns.createdAt`),
-      meta: { type: 'date', width: 130 },
+      meta: { type: 'date', width: 110 },
     },
+    { cell: tagsCell, enableSorting: false, header: t(`${key}.columns.tags`), id: 'tags', meta: { width: 180 } },
+    { accessorKey: 'vatId', cell: textCell, header: t(`${key}.columns.vatId`), meta: { width: 130 } },
+    { accessorKey: 'phone', cell: textCell, header: t(`${key}.columns.phone`), meta: { width: 140 } },
     {
       accessorFn: statusLabel,
       cell: statusCell,
@@ -150,14 +230,6 @@ const CustomersContent = () => {
       id: 'status',
       meta: { width: 120 },
     },
-    {
-      cell: segmentCell,
-      enableSorting: false,
-      header: t(`${key}.columns.segment`),
-      id: 'segment',
-      meta: { width: 140 },
-    },
-    { cell: tagsCell, enableSorting: false, header: t(`${key}.columns.tags`), id: 'tags', meta: { width: 200 } },
   ];
 
   const translations: DataTableTranslations = {
@@ -264,12 +336,15 @@ const CustomersContent = () => {
           <StatCard label={t(`${key}.stats.archived`)} value={format(stats?.archived)} />
         </StatRow>
 
-        <div className="flex flex-wrap items-end gap-200">
-          <div className="w-72">
-            <TagFilter kind="customer" onChange={enrichment.handleTagFilterChange} value={tagFilter} />
-          </div>
-          {enrichment.tagFilterFailed && <StatusText status="error">{t(`${key}.tags.filterFailed`)}</StatusText>}
-        </div>
+        <CustomerFilterRow
+          onSearchChange={setSearch}
+          onSegmentChange={setSegmentFilter}
+          onTagChange={enrichment.handleTagFilterChange}
+          search={search}
+          segmentFilter={segmentsShown ? segmentFilter : null}
+          tagFilter={tagFilter}
+          tagFilterFailed={enrichment.tagFilterFailed}
+        />
 
         <BulkActionBar onClear={() => setSelection({})} selectedCount={selectedItems.length}>
           <Button
@@ -308,18 +383,15 @@ const CustomersContent = () => {
           data={visible}
           enableColumnPinning
           enableColumnVisibility
-          enableGlobalFilter
           enablePagination
           enableRowSelection
           enableSorting
           getRowId={(row) => row.counterpartyId}
           getRowLabel={(row) => row.original.displayName ?? row.original.counterpartyId}
-          globalFilter={search}
           loading={state.status === 'loading' || enrichment.tagFilterLoading}
           loadingRowCount={12}
           maxHeight="calc(100dvh - 15rem)"
           onColumnVisibilityChange={setColumnVisibility}
-          onGlobalFilterChange={setSearch}
           onRowClick={(row) => setDetail(row.original)}
           onRowSelectionChange={setSelection}
           pageSizeOptions={pageSizeOptions}
