@@ -15,8 +15,8 @@ import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import { isOpportunityStage, opportunityCount, opportunityStages } from './pipeline-model.ts';
-import type { OpportunityStage } from './pipeline-model.ts';
+import { isOpportunityStage, opportunityCount, opportunityStages, skipTally } from './pipeline-model.ts';
+import type { OpportunityStage, SkipTally } from './pipeline-model.ts';
 import { useAllOpportunities, useSubjectIdsWithTag } from './pipeline-references.ts';
 import type { EmployeeOption, LoadState } from './pipeline-references.ts';
 
@@ -34,7 +34,7 @@ type Members = LoadState<ReadonlySet<string>> | undefined;
 
 export interface BulkByTagResult {
   readonly changed: number;
-  readonly skipped: number;
+  readonly skipped: SkipTally;
 }
 
 /**
@@ -275,8 +275,8 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
           },
           onSuccess: (result) => {
             setBusy(false);
-            const changed = (result.results ?? []).filter((item) => item.outcome === 'changed').length;
-            onDone({ changed, skipped: ids.length - changed });
+            const skipped = skipTally(ids.length, result);
+            onDone({ changed: ids.length - skipped.total, skipped });
           },
         }),
       ),

@@ -160,7 +160,13 @@
         "toasts": {
           "created": "Opportunity created",
           "ownerAssigned": "Owner assigned",
-          "skipped": "Skipped: {{total}}",
+          "skipReasons": {
+            "closed": "closed: {{total}}",
+            "invalidTransition": "change not allowed: {{total}}",
+            "notFound": "not found: {{total}}",
+            "other": "unchanged: {{total}}"
+          },
+          "skipped": "Skipped: {{total}} ({{reasons}})",
           "stageChanged": "Stage changed",
           "updated": "Opportunity saved",
           "bulkChanged": "Changed {{changed}}, skipped {{skipped}}"
