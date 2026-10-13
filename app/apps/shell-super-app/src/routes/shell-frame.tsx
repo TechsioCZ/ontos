@@ -497,7 +497,7 @@ const DashboardSelector = ({
     validateStatus={status}
     value={currentValue === undefined ? [] : [currentValue]}
   >
-    <Select.Label className="text-fg-secondary text-xs">{label}</Select.Label>
+    <Select.Label className="font-medium text-fg-secondary text-xs uppercase tracking-wide">{label}</Select.Label>
     <Select.Control>
       <Select.Trigger aria-label={ariaLabel}>
         <Select.ValueText placeholder={placeholder} />
@@ -556,7 +556,7 @@ const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => {
   const legalEntityUnavailable = props.legalEntityState === 'unavailable';
 
   return (
-    <div className="grid gap-150">
+    <div className="grid gap-100">
       <DashboardSelector
         ariaLabel={tenantLabel}
         currentValue={props.currentTenantId}
@@ -625,9 +625,7 @@ const DashboardSearch = ({ onSearch, onValueChange, value }: DashboardSearchProp
       <SearchForm.Control>
         <SearchForm.Input aria-label={searchLabel} placeholder={t('shell.search.placeholder')} />
         <SearchForm.ClearButton aria-label={t('shell.search.clear')} />
-        <SearchForm.Button aria-label={t('shell.search.submit')} showSearchIcon theme="borderless" variant="primary">
-          <span className="hidden sm:inline">{t('shell.search.submit')}</span>
-        </SearchForm.Button>
+        <SearchForm.Button aria-label={t('shell.search.submit')} showSearchIcon variant="primary" />
       </SearchForm.Control>
     </SearchForm>
   );
@@ -833,13 +831,22 @@ const GroupedSidebarPanel = ({
       <Sidebar.Footer>
         <Sidebar.Expanded>{selectors}</Sidebar.Expanded>
       </Sidebar.Footer>
-      <Sidebar.Rail aria-label={t(navigationToggleKey)} />
     </Sidebar.Panel>
   );
 };
 
-type SidebarOffsetStyle = CSSProperties & { '--spacing-sidebar-offset'?: string };
-const topBarOffsetStyle: SidebarOffsetStyle = { '--spacing-sidebar-offset': 'var(--spacing-700)' };
+type SidebarOffsetStyle = CSSProperties & {
+  '--height-sidebar-viewport'?: string;
+  '--spacing-sidebar-offset'?: string;
+};
+/**
+ * The kit derives `--height-sidebar-viewport` from the offset at `:root`, so an offset set on the root element alone
+ * leaves the panel a full viewport tall below the top bar and clips its footer. Re-derive both on the frame.
+ */
+const topBarOffsetStyle: SidebarOffsetStyle = {
+  '--height-sidebar-viewport': 'calc(100dvh - var(--spacing-700))',
+  '--spacing-sidebar-offset': 'var(--spacing-700)',
+};
 
 /**
  * Akros admin frame: a compact full-width top bar (brand, search, current trail, account) above a collapsible,
@@ -880,7 +887,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             <LocalizedLink className="hidden no-underline md:flex" to="/">
               <DashboardBrand />
             </LocalizedLink>
-            <div className="min-w-0 max-w-lg flex-1">
+            <div className="min-w-0 max-w-md flex-1">
               <DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />
             </div>
             <DashboardTrail model={model} />

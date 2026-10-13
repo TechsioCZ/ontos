@@ -187,7 +187,7 @@
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
       "clear": "Vymazat hledání",
-      "placeholder": "Hledat zákazníky, faktury, úkoly…"
+      "placeholder": "Hledat…"
     },
     "resource": {
       "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",

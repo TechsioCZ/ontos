@@ -187,7 +187,7 @@
       "title": "Search results",
       "unavailable": "Search is temporarily unavailable. Try again.",
       "clear": "Clear search",
-      "placeholder": "Search customers, invoices, tasks…"
+      "placeholder": "Search…"
     },
     "resource": {
       "forbidden": "You do not have permission to view this resource.",
