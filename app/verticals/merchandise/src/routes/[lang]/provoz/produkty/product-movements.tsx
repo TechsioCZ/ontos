@@ -14,7 +14,14 @@ import type { StockMovementReason } from '../../../../../shared/domain/merchandi
 import { NO_ARIA_MAX, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { formatDelta } from './products-format.ts';
-import { fieldError, focusFirstInvalid, useCommandFailure, useProductLabel } from './product-forms.tsx';
+import {
+  PRODUCT_LIMITS,
+  fieldError,
+  focusFirstInvalid,
+  tooLongMessage,
+  useCommandFailure,
+  useProductLabel,
+} from './product-forms.tsx';
 
 type ManualReason = Exclude<StockMovementReason, 'ORDER'>;
 const MANUAL_REASONS: readonly ManualReason[] = ['RECEIPT', 'ISSUE', 'ADJUSTMENT'];
@@ -87,19 +94,38 @@ const quantityErrorKey = (reason: ManualReason, quantity: number, stockOnHand: n
   return stockOnHand + signedDelta(reason, quantity) < 0 ? 'validation.stock' : undefined;
 };
 
+/** Typed movement fields. The product panel owns them, so Esc and outside clicks can see an unsent movement. */
+export interface MovementDraft {
+  readonly note: string;
+  readonly quantity: number;
+  readonly reason: ManualReason;
+}
+
+export const EMPTY_MOVEMENT_DRAFT: MovementDraft = { note: '', quantity: 1, reason: 'RECEIPT' };
+
+/** True when the movement form holds something the user typed or picked beyond the empty defaults. */
+export const isMovementDraftDirty = (draft: MovementDraft): boolean =>
+  draft.reason !== EMPTY_MOVEMENT_DRAFT.reason ||
+  draft.quantity !== EMPTY_MOVEMENT_DRAFT.quantity ||
+  draft.note.trim() !== EMPTY_MOVEMENT_DRAFT.note;
+
 /**
  * Manual stock movement. Výdej is sent as a negative delta; korekce takes the signed value as typed.
  * The form stays open after a save, so it sends the newer of the page revision and the one its own
  * last command returned; a second movement before the page reload finishes is not a false conflict.
  */
 export const MovementForm = ({
+  draft,
   onCommitted,
+  onDraftChange,
   onReload,
   productId,
   revision,
   stockOnHand,
 }: {
+  readonly draft: MovementDraft;
   readonly onCommitted: (message: string) => void;
+  readonly onDraftChange: (patch: Partial<MovementDraft>) => void;
   readonly onReload: () => void;
   readonly productId: ProductRecord['id'];
   readonly revision: number;
@@ -107,9 +133,16 @@ export const MovementForm = ({
 }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
-  const [reason, setReason] = useState<ManualReason>('RECEIPT');
-  const [quantity, setQuantity] = useState(1);
-  const [note, setNote] = useState('');
+  const { note, quantity, reason } = draft;
+  const setReason = (value: ManualReason) => {
+    onDraftChange({ reason: value });
+  };
+  const setQuantity = (value: number) => {
+    onDraftChange({ quantity: value });
+  };
+  const setNote = (value: string) => {
+    onDraftChange({ note: value });
+  };
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -118,11 +151,18 @@ export const MovementForm = ({
 
   const isAdjustment = reason === 'ADJUSTMENT';
   const errorKey = quantityErrorKey(reason, quantity, stockOnHand);
+  const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
 
   const submit = () => {
+    if (busy) {
+      return;
+    }
     setSubmitted(true);
-    if (errorKey !== undefined) {
-      focusFirstInvalid([['movement-quantity', true]]);
+    if (errorKey !== undefined || noteError !== undefined) {
+      focusFirstInvalid([
+        ['movement-quantity', errorKey !== undefined],
+        ['movement-note', noteError !== undefined],
+      ]);
       return;
     }
     setBusy(true);
@@ -137,8 +177,7 @@ export const MovementForm = ({
         return;
       }
       savedRevision.current = outcome.revision;
-      setQuantity(1);
-      setNote('');
+      onDraftChange(EMPTY_MOVEMENT_DRAFT);
       setSubmitted(false);
       onCommitted(k('messages.movementRecorded'));
     });
@@ -200,6 +239,7 @@ export const MovementForm = ({
         name="movementNote"
         onChange={(event) => setNote(event.target.value)}
         value={note}
+        {...fieldError(submitted, noteError)}
       />
       <div className="flex justify-end">
         <Button isLoading={busy} loadingText={k('movements.submit')} theme="outlined" type="submit" variant="secondary">

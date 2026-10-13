@@ -230,6 +230,7 @@
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
           "rejected": "Akci nelze provést v aktuálním stavu, například kvůli nedostatečné zásobě. Zkontrolujte zadané hodnoty.",
+          "saving": "Ukládám změny…",
           "updated": "Produkt uložen"
         },
         "movements": {
@@ -316,7 +317,9 @@
           "positive": "Zadejte částku větší než 0 Kč.",
           "quantity": "Zadejte celé číslo větší než 0.",
           "required": "Vyplňte toto pole.",
-          "stock": "Množství převyšuje zásobu na skladě."
+          "skuTaken": "Produkt s tímto SKU už existuje.",
+          "stock": "Množství převyšuje zásobu na skladě.",
+          "tooLong": "Zadejte nejvýše {{max}} znaků."
         },
         "selectPlaceholder": "Vyberte…"
       },

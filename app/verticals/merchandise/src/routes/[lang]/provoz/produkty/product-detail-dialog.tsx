@@ -7,11 +7,12 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { dialogCloseLabel, formatDate, formatMoney, SidePanel } from '@app/admin-ui';
 import { DateTime } from 'effect';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
@@ -19,16 +20,19 @@ import { MONEY_FORMAT, NO_ARIA_MAX, WHOLE_NUMBER_FORMAT, moneyInputText } from '
 import { runCommand } from './products-api.ts';
 import type { CommandOutcome, FailureReason } from './products-api.ts';
 import {
+  PRODUCT_LIMITS,
   UNITS,
   VAT_RATES,
   fieldError,
   focusFirstInvalid,
   lowStockErrorKey,
   priceErrorKey,
+  tooLongMessage,
   useCommandFailure,
   useProductLabel,
 } from './product-forms.tsx';
-import { MovementForm, MovementsTable } from './product-movements.tsx';
+import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirty } from './product-movements.tsx';
+import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailDialogProps {
   readonly canWrite: boolean;
@@ -46,9 +50,8 @@ type PatchDraft = { -readonly [Key in keyof ProductPatch]?: ProductPatch[Key] };
 
 /**
  * The panel footer submits the detail form through this id, so the save button stays in the fixed
- * footer. The footer is the same on every tab: Zavřít, plus Uložit změny for writers. Tab contents stay
- * mounted, so the draft survives a tab switch; saving from another tab first returns to Detail, where any
- * validation message is visible.
+ * footer. The footer shows only on the Detail tab, where the form lives. Tab contents stay mounted, so the
+ * draft survives a tab switch.
  */
 const DETAIL_FORM_ID = 'product-detail-form';
 
@@ -117,30 +120,41 @@ const isDraftDirty = (draft: DetailDraft, product: ProductRecord): boolean =>
   Math.round(draft.priceCzk * 100) !== product.currentPriceMinor ||
   draft.active !== product.active;
 
-/** Editable product fields. Changed fields go to UpdateProduct; a changed price follows as ChangePrice. */
+/**
+ * Editable product fields. Changed fields go to UpdateProduct; a changed price follows as ChangePrice. The two
+ * commands run one after the other and can take a few seconds, so a persistent "Ukládám změny…" toast shows
+ * from the first click until the outcome replaces it.
+ */
 const DetailForm = ({
+  busy,
   canWrite,
   draft,
+  onClose,
   onCommitted,
   onDraftChange,
-  onOpenChange,
   onReload,
+  onSaved,
   product,
   revision,
   setBusy,
 }: {
+  readonly busy: boolean;
   readonly canWrite: boolean;
   readonly draft: DetailDraft;
+  /** Close without saving: asks first when another tab still holds an unsent draft. */
+  readonly onClose: () => void;
   readonly onCommitted: (message: string) => void;
   readonly onDraftChange: (patch: Partial<DetailDraft>) => void;
-  readonly onOpenChange: (open: boolean) => void;
   readonly onReload: () => void;
+  /** Called after a successful save; the panel decides whether it can close. */
+  readonly onSaved: () => void;
   readonly product: ProductRecord;
   readonly revision: number;
   readonly setBusy: (busy: boolean) => void;
 }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
+  const toaster = useToast();
   const { active, category, lowStock, name, priceCzk, priceText, unit, vatRate } = draft;
   const setActive = (value: boolean) => {
     onDraftChange({ active: value });
@@ -163,25 +177,19 @@ const DetailForm = ({
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
-  const nameError = name.trim() === '' ? k('validation.required') : undefined;
-  const categoryError = category.trim() === '' ? k('validation.required') : undefined;
+  const nameError = name.trim() === '' ? k('validation.required') : tooLongMessage(k, name, PRODUCT_LIMITS.name);
+  const categoryError =
+    category.trim() === '' ? k('validation.required') : tooLongMessage(k, category, PRODUCT_LIMITS.category);
   const priceKey = priceErrorKey(priceCzk);
   const priceError = priceKey === undefined ? undefined : k(priceKey);
   const lowStockKey = lowStockErrorKey(lowStock);
   const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
   const priceMinor = Math.round(priceCzk * 100);
 
-  const finish = (reason: FailureReason | null) => {
-    setBusy(false);
-    if (reason !== null) {
-      setServerError(failure(reason, onReload));
+  const save = () => {
+    if (busy) {
       return;
     }
-    onOpenChange(false);
-    onCommitted(k('messages.updated'));
-  };
-
-  const save = () => {
     setSubmitted(true);
     if ([nameError, categoryError, priceError, lowStockError].some((message) => message !== undefined)) {
       focusFirstInvalid([
@@ -214,11 +222,26 @@ const DetailForm = ({
     const hasPatch = Object.keys(patch).length > 0;
     const priceChanged = priceMinor !== product.currentPriceMinor;
     if (!hasPatch && !priceChanged) {
-      onOpenChange(false);
+      onClose();
       return;
     }
     setBusy(true);
     setServerError(null);
+    const savingToast = toaster.create({
+      duration: Number.POSITIVE_INFINITY,
+      title: k('messages.saving'),
+      type: 'info',
+    });
+    const finish = (reason: FailureReason | null) => {
+      setBusy(false);
+      toaster.dismiss(savingToast);
+      if (reason !== null) {
+        setServerError(failure(reason, onReload));
+        return;
+      }
+      onSaved();
+      onCommitted(k('messages.updated'));
+    };
     const afterPatch = (outcome: CommandOutcome) => {
       if (!outcome.ok) {
         finish(outcome.reason);
@@ -377,10 +400,19 @@ export const ProductDetailDialog = ({
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState(() => draftOf(product));
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
+  // A detail save finishes seconds after the click; it reads the movement draft as it is then, not at the click.
+  const movementDraftRef = useRef(movementDraft);
+  useEffect(() => {
+    movementDraftRef.current = movementDraft;
+  }, [movementDraft]);
   const [tab, setTab] = useState('detail');
-  const dirty = isDraftDirty(draft, product);
+  const dirty = isDraftDirty(draft, product) || isMovementDraftDirty(movementDraft);
   const updateDraft = (patch: Partial<DetailDraft>) => {
     setDraft((current) => ({ ...current, ...patch }));
+  };
+  const updateMovementDraft = (patch: Partial<MovementDraft>) => {
+    setMovementDraft((current) => ({ ...current, ...patch }));
   };
 
   // A draft with unsaved edits is never dropped silently: Esc, the close button and Zrušit ask first.
@@ -395,27 +427,37 @@ export const ProductDetailDialog = ({
     onOpenChange(false);
   };
 
+  // After a detail save, an unsent movement keeps the panel open on Pohyby instead of being dropped.
+  const closeAfterSave = () => {
+    if (isMovementDraftDirty(movementDraftRef.current)) {
+      setTab('movements');
+      return;
+    }
+    onOpenChange(false);
+  };
+
   return (
     <>
       <SidePanel
         actions={
-          <>
-            <Button onClick={() => requestClose(false)} theme="outlined" variant="secondary">
-              {k('common.cancel')}
-            </Button>
-            {canWrite && (
-              <Button
-                form={DETAIL_FORM_ID}
-                isLoading={busy}
-                loadingText={k('common.save')}
-                onClick={() => setTab('detail')}
-                type="submit"
-                variant="primary"
-              >
-                {k('common.save')}
+          tab === 'detail' ? (
+            <>
+              <Button onClick={() => requestClose(false)} theme="outlined" variant="secondary">
+                {k('common.cancel')}
               </Button>
-            )}
-          </>
+              {canWrite && (
+                <Button
+                  form={DETAIL_FORM_ID}
+                  isLoading={busy}
+                  loadingText={k('messages.saving')}
+                  type="submit"
+                  variant="primary"
+                >
+                  {k('common.save')}
+                </Button>
+              )}
+            </>
+          ) : undefined
         }
         closeOnInteractOutside={!dirty}
         description={`${product.sku} · ${formatMoney(product.currentPriceMinor)}`}
@@ -433,12 +475,14 @@ export const ProductDetailDialog = ({
           </Tabs.List>
           <Tabs.Content className="py-200" value="detail">
             <DetailForm
+              busy={busy}
               canWrite={canWrite}
               draft={draft}
+              onClose={() => requestClose(false)}
               onCommitted={onCommitted}
               onDraftChange={updateDraft}
-              onOpenChange={onOpenChange}
               onReload={onReload}
+              onSaved={closeAfterSave}
               product={product}
               revision={revision}
               setBusy={setBusy}
@@ -451,7 +495,9 @@ export const ProductDetailDialog = ({
             <MovementsTable movements={movements} />
             {canWrite && (
               <MovementForm
+                draft={movementDraft}
                 onCommitted={onCommitted}
+                onDraftChange={updateMovementDraft}
                 onReload={onReload}
                 productId={product.id}
                 revision={revision}

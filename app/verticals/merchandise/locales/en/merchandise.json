@@ -230,6 +230,7 @@
           "priceChanged": "Price changed",
           "receiptRecorded": "Receipt recorded",
           "rejected": "The action is not possible in the current state, for example because of insufficient stock. Check the values you entered.",
+          "saving": "Saving changes…",
           "updated": "Product saved"
         },
         "movements": {
@@ -316,7 +317,9 @@
           "positive": "Enter an amount greater than 0 CZK.",
           "quantity": "Enter a whole number greater than 0.",
           "required": "Fill in this field.",
-          "stock": "The quantity exceeds the stock on hand."
+          "skuTaken": "A product with this SKU already exists.",
+          "stock": "The quantity exceeds the stock on hand.",
+          "tooLong": "Enter at most {{max}} characters."
         },
         "selectPlaceholder": "Select…"
       },

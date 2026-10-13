@@ -33,8 +33,19 @@ const KEY_PREFIX = 'merchandise.pages.products';
 /** Translates a key under the products namespace. */
 export const useProductLabel = () => {
   const { t } = useModernI18n();
-  return (path: string) => t(`${KEY_PREFIX}.${path}`);
+  return (path: string, values?: Record<string, number | string>) => t(`${KEY_PREFIX}.${path}`, values);
 };
+export type ProductLabel = ReturnType<typeof useProductLabel>;
+
+/**
+ * Text limits of the apply-command schema. The forms check them before sending: an over-long value would
+ * otherwise fail to encode, send nothing, and surface only as the generic failure toast.
+ */
+export const PRODUCT_LIMITS = { category: 120, name: 200, note: 2000, sku: 64 } as const;
+
+/** Length message for a trimmed text field over its limit, or undefined. Counts UTF-16 units, as the schema does. */
+export const tooLongMessage = (k: ProductLabel, value: string, maximum: number): string | undefined =>
+  value.trim().length > maximum ? k('validation.tooLong', { max: maximum }) : undefined;
 
 /** Failure text for a refused command. Conflicts also ask the page to reload. */
 export const useCommandFailure = () => {
@@ -107,8 +118,18 @@ const ErrorLine = ({ message }: { readonly message: string | null }) =>
     </StatusText>
   );
 
-/** Create product: SKU, name, unit, category, VAT, price, minimum stock. Sends CreateProduct. */
-export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
+/**
+ * Create product: SKU, name, unit, category, VAT, price, minimum stock. Sends CreateProduct. A SKU already in
+ * the loaded list is refused before sending; the server still refuses one created meanwhile by someone else.
+ */
+export const CreateProductDialog = ({
+  onCommitted,
+  onOpenChange,
+  onReload,
+  open,
+  products,
+  revision,
+}: FormDialogProps & { readonly products: readonly ProductRecord[] }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
   const [sku, setSku] = useState('');
@@ -121,13 +142,17 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   const [priceCzk, setPriceCzk] = useState(Number.NaN);
   const [priceText, setPriceText] = useState('');
   const [lowStock, setLowStock] = useState(0);
+  // The SKU the server refused as a duplicate. Only that exact value shows the message, so editing it clears it.
+  const [takenSku, setTakenSku] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const skuError = sku.trim() === '' ? k(REQUIRED_KEY) : undefined;
-  const nameError = name.trim() === '' ? k(REQUIRED_KEY) : undefined;
-  const categoryError = category.trim() === '' ? k(REQUIRED_KEY) : undefined;
+  const skuTaken = takenSku === sku.trim() || products.some((product) => product.sku === sku.trim());
+  const skuTakenError = skuTaken ? k('validation.skuTaken') : undefined;
+  const skuError = sku.trim() === '' ? k(REQUIRED_KEY) : (skuTakenError ?? tooLongMessage(k, sku, PRODUCT_LIMITS.sku));
+  const nameError = name.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, name, PRODUCT_LIMITS.name);
+  const categoryError = category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, category, PRODUCT_LIMITS.category);
   const priceKey = priceErrorKey(priceCzk);
   const priceError = priceKey === undefined ? undefined : k(priceKey);
   const lowStockKey = lowStockErrorKey(lowStock);
@@ -137,6 +162,9 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   );
 
   const submit = () => {
+    if (busy) {
+      return;
+    }
     setSubmitted(true);
     if (hasErrors) {
       focusFirstInvalid([
@@ -166,10 +194,16 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
       (outcome) => {
         setBusy(false);
         if (!outcome.ok) {
+          // CreateProduct's only business refusal is a duplicate SKU, so the stock wording in `rejected` does not apply.
+          if (outcome.reason === 'rejected') {
+            setTakenSku(sku.trim());
+            return;
+          }
           setServerError(failure(outcome.reason, onReload));
           return;
         }
         setSku('');
+        setTakenSku(null);
         setName('');
         setCategory('');
         setPriceCzk(Number.NaN);
@@ -324,14 +358,19 @@ export const ReceiptDialog = ({
 
   const productError = productId === null ? k(REQUIRED_KEY) : undefined;
   const quantityError = Number.isInteger(quantity) && quantity >= 1 ? undefined : k('validation.quantity');
+  const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
 
   const submit = () => {
+    if (busy) {
+      return;
+    }
     setSubmitted(true);
-    if (productId === null || quantityError !== undefined) {
+    if (productId === null || quantityError !== undefined || noteError !== undefined) {
       // The combobox puts its id on the input as `${id}-input`.
       focusFirstInvalid([
         ['receipt-product-input', productId === null],
         ['receipt-quantity', quantityError !== undefined],
+        ['receipt-note', noteError !== undefined],
       ]);
       return;
     }
@@ -428,6 +467,7 @@ export const ReceiptDialog = ({
           name="note"
           onChange={(event) => setNote(event.target.value)}
           value={note}
+          {...fieldError(submitted, noteError)}
         />
       </form>
     </SidePanel>
@@ -550,11 +590,11 @@ export const CategoryDialog = ({
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const empty = category.trim() === '';
+  const categoryError = category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, category, PRODUCT_LIMITS.category);
   const submit = () => {
     setSubmitted(true);
-    if (empty || ids.length === 0) {
-      focusFirstInvalid([['bulk-category', empty]]);
+    if (categoryError !== undefined || ids.length === 0) {
+      focusFirstInvalid([['bulk-category', categoryError !== undefined]]);
       return;
     }
     setBusy(true);
@@ -607,7 +647,7 @@ export const CategoryDialog = ({
           onChange={(event) => setCategory(event.target.value)}
           required
           value={category}
-          {...fieldError(submitted && empty, k(REQUIRED_KEY))}
+          {...fieldError(submitted, categoryError)}
         />
       </form>
     </SidePanel>

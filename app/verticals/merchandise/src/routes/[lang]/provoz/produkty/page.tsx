@@ -311,6 +311,7 @@ const RecordsPageContent = () => {
               onOpenChange={closeDialog}
               onReload={reload}
               open={dialog === 'create'}
+              products={products}
               revision={revision}
             />
             <ReceiptDialog
