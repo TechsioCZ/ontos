@@ -5,6 +5,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { Schema } from 'effect';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../../shared/apis/records.ts';
+import { selectOption } from './tasks-model.ts';
 import type { TaskFilters } from './tasks-model.ts';
 
 const SELECT_PLACEHOLDER = 'siampark-work.selectPlaceholder';
@@ -14,9 +15,13 @@ const ALL = 'all';
 const NONE = 'none';
 const STATE_OPTIONS = ['NEW', 'IN_PROGRESS', 'WAITING', 'DONE', 'CANCELLED'] as const;
 const PRIORITY_OPTIONS = ['LOW', 'NORMAL', 'HIGH'] as const;
+// Select labels take the filter row's label size, the same size FormInput uses for "Hledat úkol".
+const filterLabelProps = { className: 'font-label text-label-sm' };
+// The bulk bar shows placeholders only; its Select labels exist for screen readers, so each trigger has a name.
+const bulkLabelProps = { className: 'sr-only' };
 
 const employeeItems = (employees: readonly Employee[]) =>
-  employees.map((employee) => ({ label: employee.fullName, value: employee.id }));
+  employees.map((employee) => selectOption(employee.fullName, employee.id));
 
 export const TaskFilterBar = ({
   employees,
@@ -42,11 +47,12 @@ export const TaskFilterBar = ({
       <div className="w-48 min-w-0">
         <Select
           items={[
-            { label: t(`${key}.filters.allAssignees`), value: ALL },
-            { label: t(`${key}.unassigned`), value: NONE },
+            selectOption(t(`${key}.filters.allAssignees`), ALL),
+            selectOption(t(`${key}.unassigned`), NONE),
             ...employeeItems(employees),
           ]}
           label={t(`${key}.filters.assignee`)}
+          labelProps={filterLabelProps}
           onValueChange={({ value }) => {
             const [next] = value;
             if (next !== undefined) {
@@ -61,10 +67,11 @@ export const TaskFilterBar = ({
       <div className="w-48 min-w-0">
         <Select
           items={[
-            { label: t(`${key}.filters.all`), value: ALL },
-            ...STATE_OPTIONS.map((value) => ({ label: t(`${key}.states.${value}`), value })),
+            selectOption(t(`${key}.filters.all`), ALL),
+            ...STATE_OPTIONS.map((value) => selectOption(t(`${key}.states.${value}`), value)),
           ]}
           label={t(`${key}.filters.state`)}
+          labelProps={filterLabelProps}
           onValueChange={({ value }) => {
             const [next] = value;
             if (next === ALL) {
@@ -81,10 +88,11 @@ export const TaskFilterBar = ({
       <div className="w-48 min-w-0">
         <Select
           items={[
-            { label: t(`${key}.filters.all`), value: ALL },
-            ...PRIORITY_OPTIONS.map((value) => ({ label: t(`${key}.priorities.${value}`), value })),
+            selectOption(t(`${key}.filters.all`), ALL),
+            ...PRIORITY_OPTIONS.map((value) => selectOption(t(`${key}.priorities.${value}`), value)),
           ]}
           label={t(`${key}.filters.priority`)}
+          labelProps={filterLabelProps}
           onValueChange={({ value }) => {
             const [next] = value;
             if (next === ALL) {
@@ -122,7 +130,9 @@ export const TaskBulkBar = ({
     <BulkActionBar onClear={onClear} selectedCount={count}>
       <Select
         disabled={busy}
-        items={STATE_OPTIONS.map((value) => ({ label: t(`${key}.states.${value}`), value }))}
+        items={STATE_OPTIONS.map((value) => selectOption(t(`${key}.states.${value}`), value))}
+        label={t(`${key}.bulk.changeState`)}
+        labelProps={bulkLabelProps}
         onValueChange={({ value }) => {
           const [next] = value;
           if (Schema.is(TaskStateSchema)(next)) {
@@ -135,7 +145,9 @@ export const TaskBulkBar = ({
       />
       <Select
         disabled={busy}
-        items={[{ label: t(`${key}.unassigned`), value: NONE }, ...employeeItems(employees)]}
+        items={[selectOption(t(`${key}.unassigned`), NONE), ...employeeItems(employees)]}
+        label={t(`${key}.bulk.assign`)}
+        labelProps={bulkLabelProps}
         onValueChange={({ value }) => {
           const [next] = value;
           if (next !== undefined) {

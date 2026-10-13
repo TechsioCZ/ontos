@@ -36,7 +36,19 @@ export const buildTaskColumns = ({
 }): ColumnDef<Task>[] => [
   {
     accessorKey: 'title',
-    cell: (info) => <span className="block truncate font-medium">{info.row.original.title}</span>,
+    cell: (info) => {
+      const { opportunityId, title } = info.row.original;
+      return (
+        <span className="block min-w-0">
+          <span className="block truncate font-medium">{title}</span>
+          {opportunityId !== undefined && (
+            <span className="block truncate text-xs text-fg-secondary">
+              {opportunityTitles.get(opportunityId) ?? t(`${key}.unknownOpportunity`)}
+            </span>
+          )}
+        </span>
+      );
+    },
     header: t(`${key}.columns.title`),
     meta: { width: 230 },
   },
@@ -62,13 +74,6 @@ export const buildTaskColumns = ({
     meta: { width: 150 },
   },
   {
-    accessorFn: (task) => (task.opportunityId === undefined ? '' : (opportunityTitles.get(task.opportunityId) ?? '')),
-    cell: (info) => nameCell(info.row.original.opportunityId, opportunityTitles, t(`${key}.unknownOpportunity`)),
-    header: t(`${key}.columns.opportunity`),
-    id: 'opportunity',
-    meta: { width: 160 },
-  },
-  {
     accessorKey: 'dueDate',
     cell: (info) => {
       const task = info.row.original;
@@ -77,13 +82,13 @@ export const buildTaskColumns = ({
       }
       const label = formatDueDate(task.dueDate);
       return isOverdue(task, today) ? (
-        <span className="tabular-nums text-fg-accent-danger">{label}</span>
+        <span className="text-fg-accent-danger whitespace-nowrap tabular-nums">{label}</span>
       ) : (
-        <span className="tabular-nums">{label}</span>
+        <span className="whitespace-nowrap tabular-nums">{label}</span>
       );
     },
     header: t(`${key}.columns.dueDate`),
-    meta: { width: 105 },
+    meta: { width: 110 },
   },
   {
     accessorKey: 'priority',

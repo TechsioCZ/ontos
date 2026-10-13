@@ -15,6 +15,12 @@ export interface TaskFilters {
 
 export const initialTaskFilters: TaskFilters = { assignee: 'all', priority: 'all', search: '', state: 'all' };
 
+/**
+ * A ui-kit select item. The kit's hidden native `<option>` takes its text from `displayValue`; without it the
+ * option falls back to the raw value (an employee id or `none`), which then leaks into the page text.
+ */
+export const selectOption = (label: string, value: string) => ({ displayValue: label, label, value });
+
 /** Reference rows the page loads for names and pickers. Structural, so other verticals' rows fit without their types. */
 export interface CustomerOption {
   readonly companyId: string | null;
@@ -92,6 +98,11 @@ export const unassignedOpenCount = (tasks: readonly Task[]) =>
 export const employeeIdOf = (actorPrincipalId: string, employees: readonly Employee[]) =>
   employees.find((employee) => employee.principalRef?.principalId === actorPrincipalId)?.id;
 
+/** Lower case with diacritics removed, so a search without háčky or čárky ("uklid") finds "Úklid". */
+const foldSearchText = (text: string) => text.normalize('NFD').replaceAll(/\p{M}/gu, '').toLocaleLowerCase('cs-CZ');
+
+const matchesSearch = (task: Task, needle: string) => foldSearchText(task.title).includes(needle);
+
 const matchesAssignee = (task: Task, assignee: string) => {
   if (assignee === 'all') {
     return true;
@@ -111,11 +122,11 @@ export const filterTasks = (
     readonly tab: TaskTab;
   },
 ) => {
-  const needle = filters.search.trim().toLocaleLowerCase('cs-CZ');
+  const needle = foldSearchText(filters.search.trim());
   return tasks.filter(
     (task) =>
       (tab === 'all' || mineEmployeeId === undefined || task.assigneeEmployeeId === mineEmployeeId) &&
-      (needle === '' || task.title.toLocaleLowerCase('cs-CZ').includes(needle)) &&
+      (needle === '' || matchesSearch(task, needle)) &&
       matchesAssignee(task, filters.assignee) &&
       (filters.priority === 'all' || task.priority === filters.priority) &&
       (filters.state === 'all' || task.state === filters.state),

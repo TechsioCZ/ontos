@@ -47,6 +47,7 @@ const siamparkWorkI18nResources = {
 const key = 'siampark-work.pages.records';
 const NONE = 'none';
 const ALL = 'all';
+const BULK_TOAST_DURATION_MS = 6000;
 const count = new Intl.NumberFormat('cs-CZ');
 const decodeEmployeeId = Schema.decodeUnknownOption(EmployeeIdSchema);
 
@@ -340,7 +341,9 @@ const useTasksPage = () => {
     if (outcome.ok) {
       const changed = outcome.results.filter((item) => item.outcome === 'changed').length;
       setSelection({});
+      // The summary carries counts to read, so it stays longer than zag's short default for success toasts.
       toaster.create({
+        duration: BULK_TOAST_DURATION_MS,
         title: t(`${key}.bulk.${summaryKey}`, { changed, skipped: outcome.results.length - changed }),
         type: 'success',
       });

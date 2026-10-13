@@ -67,7 +67,6 @@
           "title": "Title",
           "assignee": "Assignee",
           "party": "Customer",
-          "opportunity": "Opportunity",
           "dueDate": "Due date",
           "priority": "Priority",
           "state": "State",

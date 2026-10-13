@@ -1,3 +1,4 @@
+import { SidePanel } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { Employee } from '@app/workforce/contracts/records';
 import { CalendarDate } from '@internationalized/date';
@@ -5,12 +6,11 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { Option, Schema } from 'effect';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   EmployeeIdSchema,
   OpportunityIdSchema,
@@ -18,9 +18,12 @@ import {
   TaskPrioritySchema,
 } from '../../../../../shared/apis/records.ts';
 import type { Task } from '../../../../../shared/apis/records.ts';
+import { selectOption } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
 const NONE = 'none';
+// Select labels take the dialog's label size, the same size FormInput, Combobox and DatePicker labels use.
+const dialogLabelProps = { className: 'font-label text-label-md' };
 const key = 'siampark-work.pages.records';
 
 type TaskDueDate = NonNullable<Task['dueDate']>;
@@ -156,7 +159,17 @@ export const TaskFormDialog = ({
   const { t } = useModernI18n();
   const [values, setValues] = useState(() => initialValues(task));
   const [submitted, setSubmitted] = useState(false);
+  const [submitAttempts, setSubmitAttempts] = useState(0);
+  const formRef = useRef<HTMLDivElement>(null);
   const set = (patch: Partial<FormValues>) => setValues((current) => ({ ...current, ...patch }));
+
+  // A failed submit moves focus to the first invalid field. The error state renders after this submit, so the
+  // effect waits for it.
+  useEffect(() => {
+    if (submitAttempts > 0) {
+      formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }
+  }, [submitAttempts]);
 
   const decoded: Decoded = {
     assigneeEmployeeId: decodeOptional(EmployeeIdSchema, values.assigneeId),
@@ -175,6 +188,7 @@ export const TaskFormDialog = ({
   const submit = () => {
     setSubmitted(true);
     if (hasErrors) {
+      setSubmitAttempts((count) => count + 1);
       return;
     }
     onSubmit({
@@ -188,13 +202,12 @@ export const TaskFormDialog = ({
     });
   };
 
-  const priorityItems = (['LOW', 'NORMAL', 'HIGH'] as const).map((value) => ({
-    label: t(`${key}.priorities.${value}`),
-    value,
-  }));
+  const priorityItems = (['LOW', 'NORMAL', 'HIGH'] as const).map((value) =>
+    selectOption(t(`${key}.priorities.${value}`), value),
+  );
   const assigneeItems = [
-    { label: t(`${key}.unassigned`), value: NONE },
-    ...employees.map((employee) => ({ label: employee.fullName, value: employee.id })),
+    selectOption(t(`${key}.unassigned`), NONE),
+    ...employees.map((employee) => selectOption(employee.fullName, employee.id)),
   ];
   // Customers without a display name cannot be told apart in a picker, so they are left out.
   const customerItems = customers.flatMap((customer) =>
@@ -212,7 +225,7 @@ export const TaskFormDialog = ({
   const dueMessage = message('dueDate');
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={onClose} theme="outlined" variant="secondary">
@@ -225,24 +238,23 @@ export const TaskFormDialog = ({
       }
       // The form holds unsaved input; a stray pointer or focus move outside must not discard it.
       closeOnInteractOutside={false}
-      customTrigger
-      onOpenChange={({ open }) => {
-        if (!open) {
+      onOpenChange={(next) => {
+        if (!next) {
           onClose();
         }
       }}
       open
-      placement="right"
       size="md"
       title={t(isEdit ? `${key}.edit` : `${key}.create`)}
     >
-      <div className="flex flex-col gap-200 py-200">
+      <div className="flex flex-col gap-200 py-200" ref={formRef}>
         {error !== undefined && (
           <StatusText showIcon status="error">
             {error}
           </StatusText>
         )}
         <FormInput
+          autoComplete="off"
           disabled={busy}
           id="task-title"
           label={t(`${key}.taskTitle`)}
@@ -253,6 +265,7 @@ export const TaskFormDialog = ({
           {...invalidProps(message('title'))}
         />
         <FormTextarea
+          autoComplete="off"
           disabled={busy}
           id="task-description"
           label={t(`${key}.description`)}
@@ -265,6 +278,7 @@ export const TaskFormDialog = ({
             disabled={busy}
             items={assigneeItems}
             label={t(`${key}.assignee`)}
+            labelProps={dialogLabelProps}
             name="assignee"
             onValueChange={({ value }) => {
               const [next] = value;
@@ -304,6 +318,7 @@ export const TaskFormDialog = ({
             disabled={busy}
             items={priorityItems}
             label={t(`${key}.priority`)}
+            labelProps={dialogLabelProps}
             name="priority"
             onValueChange={({ value }) => {
               const [next] = value;
@@ -354,6 +369,6 @@ export const TaskFormDialog = ({
           {...invalidProps(message('opportunityId'))}
         />
       </div>
-    </Dialog>
+    </SidePanel>
   );
 };
