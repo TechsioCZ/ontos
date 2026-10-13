@@ -8,10 +8,12 @@ import {
   coerceGrouping,
   defaultQuery,
   foldSlices,
+  invertedRangeOf,
   isTimeGrouping,
   parseStatisticsQuery,
+  pieSlices,
   presetRange,
-  resolveChartKind,
+  roundSeriesToTotal,
   serializeStatisticsQuery,
 } from '../../src/statistics/statistics-query.ts';
 
@@ -98,13 +100,43 @@ it('folds pie slices beyond the limit into one other slice', () => {
   expect(foldSlices(points.slice(0, 6), 6, 'other', 'Ostatní')).toHaveLength(6);
 });
 
-it('keeps a pie only for a time series of at most six slices', () => {
-  expect(resolveChartKind('pie', 'month', 6)).toBe('pie');
-  expect(resolveChartKind('pie', 'month', 7)).toBe('bar-horizontal');
-  expect(resolveChartKind('pie', 'employee', 3)).toBe('bar-horizontal');
-  expect(resolveChartKind('pie', 'tag', 2)).toBe('bar-horizontal');
-  expect(resolveChartKind('bar', 'employee', 3)).toBe('bar');
-  expect(resolveChartKind('line', 'month', 12)).toBe('line');
+it('returns a URL range whose end is before its start, and only for valid days', () => {
+  expect(invertedRangeOf('?from=2026-05-01&to=2026-04-01')).toEqual({ from: '2026-05-01', to: '2026-04-01' });
+  expect(invertedRangeOf('?from=2026-04-01&to=2026-05-01')).toBeUndefined();
+  expect(invertedRangeOf('?from=2026-05-01&to=2026-05-01')).toBeUndefined();
+  expect(invertedRangeOf('?from=2026-05-01&to=2026-02-30')).toBeUndefined();
+  expect(invertedRangeOf('')).toBeUndefined();
+});
+
+it('builds pie slices from positive values, largest first, with a single other slice', () => {
+  const points = [
+    { key: 'a', label: 'A', value: 1 },
+    { key: 'b', label: 'B', value: 5 },
+    { key: 'zero', label: 'Nula', value: 0 },
+    { key: 'c', label: 'C', value: 3 },
+    { key: 'other', label: 'Ostatní', value: 2 },
+  ];
+  expect(pieSlices(points, 3, 'other', 'Ostatní')).toEqual([
+    { key: 'b', label: 'B', value: 5 },
+    { key: 'c', label: 'C', value: 3 },
+    { key: 'other', label: 'Ostatní', value: 2 + 1 },
+  ]);
+  expect(pieSlices(points.slice(0, 4), 6, 'other', 'Ostatní').map((point) => point.key)).toEqual(['b', 'c', 'a']);
+  expect(pieSlices([{ key: 'n', label: 'N', value: -4 }], 6, 'other', 'Ostatní')).toEqual([]);
+});
+
+it('rounds a partitioning CZK series so the rows add up to the rounded total', () => {
+  // 3 × 10,33 Kč = 30,99 Kč: rounding each row gives 30 Kč against a 31 Kč total.
+  const points = [
+    { key: 'm1', label: 'M1', value: 1033 },
+    { key: 'm2', label: 'M2', value: 1033 },
+    { key: 'm3', label: 'M3', value: 1033 },
+  ];
+  const rounded = roundSeriesToTotal(points, 3099, 100);
+  expect(rounded.reduce((sum, point) => sum + point.value, 0)).toBe(3100);
+  expect(rounded.map((point) => point.value)).toEqual([1100, 1000, 1000]);
+  // Overlapping rows (a record under several tags) do not partition the total: each row rounds on its own.
+  expect(roundSeriesToTotal(points, 2000, 100).map((point) => point.value)).toEqual([1000, 1000, 1000]);
 });
 
 it('lists the five chart kinds in the requested order and flags time groupings', () => {

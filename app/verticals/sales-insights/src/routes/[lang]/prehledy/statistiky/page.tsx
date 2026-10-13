@@ -3,7 +3,6 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime } from 'effect';
-import { useSyncExternalStore } from 'react';
 import csResource from '../../../../../locales/cs/sales-insights.json';
 import enResource from '../../../../../locales/en/sales-insights.json';
 import { computeKpis, computeMetric, metricCatalog } from '../../../../../shared/metrics.ts';
@@ -14,8 +13,8 @@ import type { StatisticsQuery } from '../../../../statistics/statistics-query.ts
 import {
   coerceGrouping,
   defaultQuery,
+  invertedRangeOf,
   parseStatisticsQuery,
-  resolveChartKind,
   serializeStatisticsQuery,
 } from '../../../../statistics/statistics-query.ts';
 import { useStatisticsInputs } from '../../../../statistics/use-statistics-inputs.ts';
@@ -31,31 +30,19 @@ const key = 'sales-insights.pages.statistics';
 
 const todayDay = (): CalendarDay => DateTime.formatIsoDateUtc(DateTime.nowUnsafe());
 
-// The URL search string is the single source of truth for the query. `replaceState` fires no event,
-// so writes dispatch a window event that the subscription listens to alongside popstate.
-const urlChangeEvent = 'sales-insights:statistics-url';
-const subscribeToUrl = (listener: () => void) => {
-  window.addEventListener('popstate', listener);
-  window.addEventListener(urlChangeEvent, listener);
-  return () => {
-    window.removeEventListener('popstate', listener);
-    window.removeEventListener(urlChangeEvent, listener);
-  };
-};
-const readUrlSearch = () => window.location.search;
-const serverSearch = () => '';
-
+// The URL search string is the single source of truth for the query. The router tracks every URL write,
+// including the `replaceState` calls below, so the page reads `searchStr` from router state. Writes never
+// remount the page, which keeps the picker focused and the loaded data in place.
 const writeUrlSearch = (search: string) => {
   const url = new URL(window.location.href);
   url.search = search;
   window.history.replaceState(window.history.state, '', url);
-  window.dispatchEvent(new Event(urlChangeEvent));
 };
 
 const StatisticsPageContent = () => {
   const { t } = useModernI18n();
   const today = todayDay();
-  const search = useSyncExternalStore(subscribeToUrl, readUrlSearch, serverSearch);
+  const search = useRouterState({ select: (state) => state.location.searchStr });
   const query = parseStatisticsQuery(search, defaultQuery(today));
   const data = useStatisticsInputs();
 
@@ -73,8 +60,6 @@ const StatisticsPageContent = () => {
   // The StatRow takes only the period and the loaded inputs, so metric, chart and grouping changes cannot move it.
   const kpis =
     data.status === 'ready' ? computeKpis(data.inputs, { from: query.from, to: query.to, today }) : undefined;
-  const series = result?.series ?? [];
-  const shownQuery: StatisticsQuery = { ...query, chart: resolveChartKind(query.chart, query.groupBy, series.length) };
   const failedText =
     data.status === 'ready' && data.failed.length > 0
       ? data.failed.map((source) => t(`${key}.sources.${source}`)).join(', ')
@@ -91,26 +76,23 @@ const StatisticsPageContent = () => {
           </StatusText>
         )}
         <SectionCard>
-          <StatisticsControls onChange={onChange} query={shownQuery} today={today} />
+          <StatisticsControls invertedRange={invertedRangeOf(search)} onChange={onChange} query={query} today={today} />
         </SectionCard>
-        <StatisticsResults kpis={kpis} loading={!ready} metric={metric} query={shownQuery} result={result} />
+        <StatisticsResults kpis={kpis} loading={!ready} metric={metric} query={query} result={result} />
       </section>
     </>
   );
 };
 
-export const RecordsPage = () => {
-  const location = useRouterState({ select: (state) => state.location.href });
-  return (
-    <FederatedI18nBoundary
-      defaultNamespace="sales-insights"
-      fallbackLanguage="en"
-      resources={salesInsightsI18nResources}
-      supportedLanguages={['en', 'cs']}
-    >
-      <StatisticsPageContent key={location} />
-    </FederatedI18nBoundary>
-  );
-};
+export const RecordsPage = () => (
+  <FederatedI18nBoundary
+    defaultNamespace="sales-insights"
+    fallbackLanguage="en"
+    resources={salesInsightsI18nResources}
+    supportedLanguages={['en', 'cs']}
+  >
+    <StatisticsPageContent />
+  </FederatedI18nBoundary>
+);
 
 export default RecordsPage;

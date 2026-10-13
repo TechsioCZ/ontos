@@ -219,9 +219,24 @@ it('counts only confirmed outgoing invoices inside the range', () => {
 it('groups revenue by ISO week with Monday labels', () => {
   const result = computeMetric('revenue_invoiced', fixture, { ...range, groupBy: 'week' });
   expect(result.series).toEqual([
-    { key: '2026-09-14', label: 'Týden 14. 9.', value: 150_000 },
-    { key: '2026-09-28', label: 'Týden 28. 9.', value: 200_000 },
+    { key: '2026-09-14', label: 'Týden 14. 9. 2026', value: 150_000 },
+    { key: '2026-09-28', label: 'Týden 28. 9. 2026', value: 200_000 },
   ]);
+});
+
+it('labels day and week buckets with the year so a multi-year range stays readable', () => {
+  const daily = computeMetric('revenue_invoiced', fixture, { ...range, groupBy: 'day' });
+  expect(daily.series.length).toBeGreaterThan(0);
+  for (const point of daily.series) {
+    expect(point.label).toMatch(/^\d{1,2}\. \d{1,2}\. 2026$/u);
+  }
+});
+
+it('reports no win rate, not 0 %, for a period without closed opportunities', () => {
+  const empty = { from: '2030-01-01', to: '2030-01-31' };
+  expect(computeMetric('win_rate', fixture, { ...empty, groupBy: 'month' }).total).toBeNull();
+  expect(computeKpis(fixture, empty).find((kpi) => kpi.id === 'win_rate')?.value).toBeNull();
+  expect(computeMetric('revenue_invoiced', fixture, { ...empty, groupBy: 'month' }).total).toBe(0);
 });
 
 it('computes win rate as won over closed in range, overall and per employee', () => {

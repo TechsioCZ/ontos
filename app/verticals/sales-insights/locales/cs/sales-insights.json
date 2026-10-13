@@ -54,6 +54,7 @@
         "metric": "Ukazatel",
         "other": "Ostatní",
         "period": "Období",
+        "pieRateWarning": "Koláč ukazuje podíly na celku, ale míra úspěšnosti se nesčítá. Zvolte sloupcový graf.",
         "pieTimeWarning": "Koláč ukazuje podíly na celku. Pro časovou řadu zvolte sloupcový nebo čárový graf.",
         "presets": {
           "12m": "12 měsíců",
@@ -62,6 +63,11 @@
           "ytd": "Letos"
         },
         "presetsLabel": "Rychlý výběr období",
+        "rangeEnd": "Konec",
+        "rangeInvalid": "Konec období musí být stejný nebo pozdější než začátek.",
+        "rangeStart": "Začátek",
+        "rateTotal": "Za období: {{value}}",
+        "snapshotNote": "Pipeline zahrnuje všechny právě otevřené příležitosti bez ohledu na zvolené období. Časové skupiny vycházejí z očekávaného data uzavření.",
         "sourceError": "Některá data se nepodařilo načíst: {{sources}}.",
         "sources": {
           "customers": "zákazníci",
@@ -78,11 +84,13 @@
           "group": "Skupina",
           "value": "Hodnota"
         },
+        "tagNote": "Záznam se počítá u každého svého štítku, proto součet skupin může být vyšší než celkem.",
         "title": "Statistiky",
         "total": "Celkem: {{value}}"
       }
     },
     "selectPlaceholder": "Vyberte…",
-    "loading": "Načítám…"
+    "loading": "Načítám…",
+    "loadingContent": "Načítání obsahu"
   }
 }

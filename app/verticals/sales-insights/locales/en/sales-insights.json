@@ -54,6 +54,7 @@
         "metric": "Metric",
         "other": "Other",
         "period": "Period",
+        "pieRateWarning": "A pie shows shares of a whole, but a rate does not add up. Choose a bar chart.",
         "pieTimeWarning": "A pie shows parts of a whole. For a time series, pick a column or line chart.",
         "presets": {
           "12m": "12 months",
@@ -62,6 +63,11 @@
           "ytd": "Year to date"
         },
         "presetsLabel": "Quick period selection",
+        "rangeEnd": "End",
+        "rangeInvalid": "The end date must be the same as or later than the start date.",
+        "rangeStart": "Start",
+        "rateTotal": "For the period: {{value}}",
+        "snapshotNote": "The pipeline includes every currently open opportunity regardless of the selected period. Time groups follow the expected close date.",
         "sourceError": "Some data could not be loaded: {{sources}}.",
         "sources": {
           "customers": "customers",
@@ -78,11 +84,13 @@
           "group": "Group",
           "value": "Value"
         },
+        "tagNote": "A record counts under each of its tags, so the group rows can add up to more than the total.",
         "title": "Statistics",
         "total": "Total: {{value}}"
       }
     },
     "selectPlaceholder": "Select…",
-    "loading": "Loading…"
+    "loading": "Loading…",
+    "loadingContent": "Loading content"
   }
 }

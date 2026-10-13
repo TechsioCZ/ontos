@@ -171,14 +171,16 @@ export interface MetricPoint {
 export interface MetricResult {
   readonly series: readonly MetricPoint[];
   readonly supported: boolean;
-  readonly total: number;
+  /** `null` for a ratio with no closed records in the period: there is no rate to show. */
+  readonly total: number | null;
 }
 
 export interface KpiValue {
   readonly id: MetricId;
   readonly label: string;
   readonly unit: MetricUnit;
-  readonly value: number;
+  /** `null` for a ratio with no closed records in the period: there is no rate to show. */
+  readonly value: number | null;
 }
 
 interface Subject {
@@ -271,7 +273,8 @@ const SOURCE_TASKS = 'siampark-work · tasks';
 
 const dateOf = (instant: Instant): CalendarDay => DateTime.formatIsoDateUtc(instant);
 
-const dayLabel = (date: CalendarDay): string => `${Number(date.slice(8, 10))}. ${Number(date.slice(5, 7))}.`;
+const dayLabel = (date: CalendarDay): string =>
+  `${Number(date.slice(8, 10))}. ${Number(date.slice(5, 7))}. ${date.slice(0, 4)}`;
 
 const monthLabel = (date: CalendarDay): string =>
   `${CZ_MONTHS[Number(date.slice(5, 7)) - 1] ?? ''} ${date.slice(0, 4)}`;
@@ -569,7 +572,7 @@ const METRIC_DEFINITIONS = {
     allowedGroupings: CLOSED_GROUPINGS,
     collect: (inputs) => closedOpportunityRows(inputs, CLOSED_STAGES, (o) => (o.stage === 'WON' ? 1 : 0), 1),
     id: 'win_rate',
-    label: 'Úspěšnost (win rate)',
+    label: 'Úspěšnost příležitostí',
     ratio: true,
     source: 'sales-pipeline · won / (won + lost) by closedAt',
     unit: 'percent',
@@ -600,6 +603,12 @@ const KPI_TILES: readonly { readonly id: MetricId; readonly label: string }[] = 
   { id: 'opportunities_won', label: 'Vyhráno' },
   { id: 'win_rate', label: 'Úspěšnost' },
 ];
+
+/** True for metrics that describe the current state and ignore the selected range (the open pipeline). */
+export const isSnapshotMetric = (id: MetricId): boolean => {
+  const definition: MetricDefinition = METRIC_DEFINITIONS[id];
+  return definition.snapshot === true;
+};
 
 /** Catalog for the statistics page builder and the MCP get_metrics tool. */
 export const metricCatalog: readonly MetricCatalogEntry[] = METRIC_ORDER.map((id) => {
@@ -692,6 +701,12 @@ const valueFor = (totals: Totals, ratio: boolean): number => {
   return totals.den === 0 ? 0 : Math.round((totals.num / totals.den) * 1000) / 10;
 };
 
+/** Headline total of a set of rows. A ratio over nothing has no rate, so it is `null` rather than 0 %. */
+const totalOf = (rows: readonly Totals[], ratio: boolean): number | null => {
+  const totals = sumOf(rows);
+  return ratio && totals.den === 0 ? null : valueFor(totals, ratio);
+};
+
 const compareKeys = (a: { readonly key: string }, b: { readonly key: string }): number => {
   if (a.key === b.key) {
     return 0;
@@ -754,7 +769,7 @@ export const computeMetric = (id: MetricId, inputs: MetricInputs, query: MetricQ
   const series = TIME_GROUPINGS.has(query.groupBy)
     ? cellList.toSorted(compareKeys).map((cell) => pointOf(cell, definition.ratio))
     : categoricalSeries(cellList, definition.ratio);
-  return { series, supported: true, total: valueFor(sumOf(rows), definition.ratio) };
+  return { series, supported: true, total: totalOf(rows, definition.ratio) };
 };
 
 /** Headline numbers for the StatRow over one range (totals only). Takes no metric, chart or grouping input. */
@@ -765,6 +780,6 @@ export const computeKpis = (inputs: MetricInputs, range: MetricRange): readonly 
       id: tile.id,
       label: tile.label,
       unit: definition.unit,
-      value: valueFor(sumOf(collectRows(definition, inputs, range)), definition.ratio),
+      value: totalOf(collectRows(definition, inputs, range), definition.ratio),
     };
   });

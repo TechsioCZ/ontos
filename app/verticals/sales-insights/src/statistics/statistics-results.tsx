@@ -5,19 +5,27 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+import { isSnapshotMetric } from '../../shared/metrics.ts';
 import type { KpiValue, MetricCatalogEntry, MetricPoint, MetricResult, MetricUnit } from '../../shared/metrics.ts';
 import { formatMetricValue } from './format-metric.ts';
-import { chartScale, foldSlices, isTimeGrouping, PIE_SLICE_LIMIT } from './statistics-query.ts';
+import { chartScale, isTimeGrouping, PIE_SLICE_LIMIT, pieSlices, roundSeriesToTotal } from './statistics-query.ts';
 import type { ChartKind, StatisticsQuery } from './statistics-query.ts';
 
 const key = 'sales-insights.pages.statistics';
 const SKELETON_KPI_COUNT = 4;
 
-const KpiRow = ({ kpis }: { readonly kpis: readonly KpiValue[] | undefined }) => (
+const KpiRow = ({
+  kpis,
+  loadingLabel,
+}: {
+  readonly kpis: readonly KpiValue[] | undefined;
+  /** Accessible name of the loading skeletons; ui-kit's default is English. */
+  readonly loadingLabel: string;
+}) => (
   <StatRow>
     {kpis === undefined
       ? Array.from({ length: SKELETON_KPI_COUNT }, (_, index) => (
-          <Skeleton isLoaded={false} key={`kpi-${index}`}>
+          <Skeleton aria-label={loadingLabel} isLoaded={false} key={`kpi-${index}`}>
             <Skeleton.Rectangle className="h-24 w-full" />
           </Skeleton>
         ))
@@ -30,6 +38,8 @@ interface ChartBodyProps {
   readonly chart: ChartKind;
   readonly emptyText: string;
   readonly loading: boolean;
+  /** Accessible name of the loading skeleton; ui-kit's default is English. */
+  readonly loadingLabel: string;
   readonly otherLabel: string;
   readonly series: readonly MetricPoint[];
   readonly unit: MetricUnit;
@@ -79,10 +89,20 @@ const RankedBars = ({ ariaLabel, points, unit }: RankedBarsProps) => {
   );
 };
 
-const ChartBody = ({ ariaLabel, chart, emptyText, loading, otherLabel, series, unit, warning }: ChartBodyProps) => {
+const ChartBody = ({
+  ariaLabel,
+  chart,
+  emptyText,
+  loading,
+  loadingLabel,
+  otherLabel,
+  series,
+  unit,
+  warning,
+}: ChartBodyProps) => {
   if (loading) {
     return (
-      <Skeleton isLoaded={false}>
+      <Skeleton aria-label={loadingLabel} isLoaded={false}>
         <Skeleton.Rectangle className="h-70 w-full" />
       </Skeleton>
     );
@@ -91,7 +111,11 @@ const ChartBody = ({ ariaLabel, chart, emptyText, loading, otherLabel, series, u
     return <EmptyState title={emptyText} />;
   }
   const scale = chartScale(unit);
-  const points = chart === 'pie' ? foldSlices(series, PIE_SLICE_LIMIT, 'other', otherLabel) : series;
+  // A pie shows the largest positive slices; the rest fold into one "Ostatní" slice.
+  const points = chart === 'pie' ? pieSlices(series, PIE_SLICE_LIMIT, 'other', otherLabel) : series;
+  if (points.length === 0) {
+    return <EmptyState title={emptyText} />;
+  }
   return (
     <>
       {warning !== undefined && (
@@ -127,6 +151,17 @@ const seriesColumns = (unit: MetricUnit, groupHeader: string, valueHeader: strin
   },
 ];
 
+/** A pie shows shares of a whole: rates are not shares, and a time series reads better as bars. */
+const pieWarningKey = (query: StatisticsQuery, unit: MetricUnit): 'pieRateWarning' | 'pieTimeWarning' | undefined => {
+  if (query.chart !== 'pie') {
+    return undefined;
+  }
+  if (unit === 'percent') {
+    return 'pieRateWarning';
+  }
+  return isTimeGrouping(query.groupBy) ? 'pieTimeWarning' : undefined;
+};
+
 export interface StatisticsResultsProps {
   readonly kpis: readonly KpiValue[] | undefined;
   readonly loading: boolean;
@@ -142,19 +177,26 @@ export const StatisticsResults = ({ kpis, loading, metric, query, result }: Stat
   const title = metric?.label ?? '';
   const from = formatDate(query.from);
   const to = formatDate(query.to);
-  const series = result?.series ?? [];
-  const timePie = query.chart === 'pie' && isTimeGrouping(query.groupBy);
+  const rawSeries = result?.series ?? [];
+  // Whole-Kč rows that add up to the whole-Kč total, so the table never disagrees with "Celkem" by rounding.
+  const series =
+    unit === 'CZK' && result !== undefined && result.total !== null
+      ? roundSeriesToTotal(rawSeries, result.total, chartScale(unit))
+      : rawSeries;
+  const pieWarning = pieWarningKey(query, unit);
   const showTable = !loading && series.length > 0;
 
   return (
     <div className="flex min-w-0 flex-col gap-250">
-      <KpiRow kpis={loading ? undefined : kpis} />
+      <KpiRow kpis={loading ? undefined : kpis} loadingLabel={t('sales-insights.loadingContent')} />
 
       <SectionCard
         actions={
           result === undefined ? undefined : (
             <span className="tabular-nums text-sm">
-              {t(`${key}.total`, { value: formatMetricValue(result.total, unit) })}
+              {t(unit === 'percent' ? `${key}.rateTotal` : `${key}.total`, {
+                value: formatMetricValue(result.total, unit),
+              })}
             </span>
           )
         }
@@ -163,15 +205,18 @@ export const StatisticsResults = ({ kpis, loading, metric, query, result }: Stat
       >
         <div className="flex min-w-0 flex-col gap-150 px-250 pb-250">
           <p className="text-fg-secondary text-sm">{t(`${key}.chartDescription`, { from, to })}</p>
+          {isSnapshotMetric(query.metric) && <p className="text-fg-secondary text-sm">{t(`${key}.snapshotNote`)}</p>}
+          {query.groupBy === 'tag' && <p className="text-fg-secondary text-sm">{t(`${key}.tagNote`)}</p>}
           <ChartBody
             ariaLabel={t(`${key}.chartLabel`, { from, metric: title, to })}
             chart={query.chart}
             emptyText={t(`${key}.empty`)}
             loading={loading || result === undefined}
+            loadingLabel={t('sales-insights.loadingContent')}
             otherLabel={t(`${key}.other`)}
             series={series}
             unit={unit}
-            warning={timePie ? t(`${key}.pieTimeWarning`) : undefined}
+            warning={pieWarning === undefined ? undefined : t(`${key}.${pieWarning}`)}
           />
         </div>
       </SectionCard>

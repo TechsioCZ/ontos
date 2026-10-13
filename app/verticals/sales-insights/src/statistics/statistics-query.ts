@@ -89,12 +89,23 @@ export const coerceGrouping = (metric: MetricId, groupBy: Grouping): Grouping =>
 export const isTimeGrouping = (groupBy: Grouping): boolean =>
   groupBy === 'day' || groupBy === 'week' || groupBy === 'month';
 
+export interface DayRange {
+  readonly from: CalendarDay;
+  readonly to: CalendarDay;
+}
+
+export const isInvertedRange = (range: DayRange): boolean => range.from > range.to;
+
 /**
- * A pie only fits a time series with at most PIE_SLICE_LIMIT slices. Categorical groupings and longer
- * series show as a sorted horizontal bar instead, so the rendered kind can differ from the requested one.
+ * The URL range when it holds two valid days whose start is after their end. The query itself falls back to
+ * the default period, so the picker shows this range with a validation error instead.
  */
-export const resolveChartKind = (chart: ChartKind, groupBy: Grouping, sliceCount: number): ChartKind =>
-  chart === 'pie' && (!isTimeGrouping(groupBy) || sliceCount > PIE_SLICE_LIMIT) ? HORIZONTAL_BAR : chart;
+export const invertedRangeOf = (search: string): DayRange | undefined => {
+  const params = new URLSearchParams(search);
+  const from = asCalendarDay(params.get('from') ?? '');
+  const to = asCalendarDay(params.get('to') ?? '');
+  return from !== undefined && to !== undefined && isInvertedRange({ from, to }) ? { from, to } : undefined;
+};
 
 /** Reads the query from URL search params. Anything invalid falls back to the default for that field. */
 export const parseStatisticsQuery = (search: string, fallback: StatisticsQuery): StatisticsQuery => {
@@ -142,4 +153,55 @@ export const foldSlices = (
   const head = points.slice(0, limit - 1);
   const rest = points.slice(limit - 1);
   return [...head, { key: otherKey, label: otherLabel, value: rest.reduce((sum, point) => sum + point.value, 0) }];
+};
+
+/**
+ * Pie slices: positive values only (a pie cannot draw zero or negative shares), largest first, at most
+ * `limit` slices. An existing "other" point from the categorical series joins the folded remainder, so the
+ * pie never shows two "Ostatní" slices.
+ */
+export const pieSlices = (
+  points: readonly MetricPoint[],
+  limit: number,
+  otherKey: string,
+  otherLabel: string,
+): readonly MetricPoint[] => {
+  const existingOther = points.find((point) => point.key === otherKey);
+  const ranked = points
+    .filter((point) => point.key !== otherKey && point.value > 0)
+    .toSorted((a, b) => b.value - a.value);
+  const otherValue = existingOther !== undefined && existingOther.value > 0 ? existingOther.value : 0;
+  if (otherValue === 0) {
+    return foldSlices(ranked, limit, otherKey, otherLabel);
+  }
+  const head = ranked.slice(0, limit - 1);
+  const restValue = ranked.slice(limit - 1).reduce((sum, point) => sum + point.value, 0);
+  return [...head, { key: otherKey, label: otherLabel, value: otherValue + restValue }];
+};
+
+/**
+ * Rounds each point to whole units of `step` (100 haléřů = 1 Kč) so the rounded rows add up to the rounded
+ * total, using the largest-remainder method. Applies only when the rows partition the total; a series whose
+ * rows overlap (a record under several tags) is rounded row by row.
+ */
+export const roundSeriesToTotal = (
+  points: readonly MetricPoint[],
+  total: number,
+  step: number,
+): readonly MetricPoint[] => {
+  const exactSum = points.reduce((sum, point) => sum + point.value, 0);
+  if (points.length === 0 || Math.abs(exactSum - total) >= step / 2) {
+    return points.map((point) => ({ ...point, value: Math.round(point.value / step) * step }));
+  }
+  const floors = points.map((point) => Math.floor(point.value / step));
+  const target = Math.round(total / step);
+  const missing = target - floors.reduce((sum, value) => sum + value, 0);
+  const byRemainder = points
+    .map((point, index) => ({ index, remainder: point.value / step - (floors[index] ?? 0) }))
+    .toSorted((a, b) => b.remainder - a.remainder || a.index - b.index);
+  const bumped = new Set(byRemainder.slice(0, Math.max(0, missing)).map((entry) => entry.index));
+  return points.map((point, index) => ({
+    ...point,
+    value: ((floors[index] ?? 0) + (bumped.has(index) ? 1 : 0)) * step,
+  }));
 };
