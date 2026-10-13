@@ -10,6 +10,7 @@ import {
   TaggingErrorSchema,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
@@ -47,7 +48,7 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  handleApplyCommand,
+  withCommandGuard(handleApplyCommand),
   persistenceService,
 );
 

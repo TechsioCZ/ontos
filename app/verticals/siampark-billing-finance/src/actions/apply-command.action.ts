@@ -12,6 +12,7 @@ import {
   FinanceRejected,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { persistenceService, requireFinanceRevision, transitionFinance } from '../services/persistence.service.ts';
 import type { FinanceValidators } from '../services/persistence.service.ts';
 import { makeFinanceValidators } from '../services/reference-validation.ts';
@@ -92,7 +93,7 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  handleApplyCommand,
+  withCommandGuard(handleApplyCommand),
   makeActionServices,
 );
 
