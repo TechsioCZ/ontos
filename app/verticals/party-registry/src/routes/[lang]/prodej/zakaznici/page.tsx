@@ -1,5 +1,16 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { BulkActionBar, EmptyState, PageHeader, StatCard, StatRow, formatDate, formatNumber } from '@app/admin-ui';
+import {
+  BulkActionBar,
+  EmptyState,
+  PageHeader,
+  StatCard,
+  StatRow,
+  formatDate,
+  formatNumber,
+  toasterLabels,
+  dataTableRowLabels,
+  paginationTranslations,
+} from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
@@ -241,6 +252,7 @@ const CustomersContent = () => {
   ];
 
   const translations: DataTableTranslations = {
+    ...dataTableRowLabels,
     clearSearchLabel: t(`${key}.table.clearSearchLabel`),
     columnsLabel: t(`${key}.table.columnsLabel`),
     emptyDescription: t(`${key}.table.emptyDescription`),
@@ -325,7 +337,7 @@ const CustomersContent = () => {
     <>
       <UltramodernRouteHead titleKey="party-registry.pages.customers.title" />
       {/* The shell mounts no Toaster for remotes and ui-kit is not an MF singleton, so this page tree owns one. */}
-      <Toaster />
+      <Toaster {...toasterLabels} />
       <div className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
@@ -404,6 +416,7 @@ const CustomersContent = () => {
           onRowClick={(row) => setDetail(row.original)}
           onRowSelectionChange={setSelection}
           pageSizeOptions={pageSizeOptions}
+          paginationProps={{ translations: paginationTranslations }}
           renderEmpty={renderEmpty}
           rowSelection={selection}
           size="sm"

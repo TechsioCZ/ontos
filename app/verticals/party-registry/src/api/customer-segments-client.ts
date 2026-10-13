@@ -20,10 +20,11 @@
 import { makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { DateTime, Effect, Exit, Option, Random, Redacted, Schema, SchemaGetter } from 'effect';
+import { DateTime, Duration, Effect, Exit, Option, Random, Redacted, Schema, SchemaGetter } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import { customerSegmentDefinitions } from './customer-segment-definitions.ts';
 import type { CustomerSegmentCode, CustomerSegmentDefinition } from './customer-segment-definitions.ts';
@@ -301,9 +302,19 @@ const resolveSegment = (definition: CustomerSegmentDefinition & { readonly busin
  * Definitions resolve one at a time and the first failure stops the rest, so an owner that refuses the
  * call costs one request instead of four.
  */
-const segmentGroups = Effect.forEach(customerSegmentDefinitions, resolveSegment, { concurrency: 1 }).pipe(
+const resolveSegmentGroups = Effect.forEach(customerSegmentDefinitions, resolveSegment, { concurrency: 1 }).pipe(
   Effect.map((groups) => groups.filter((group) => group !== undefined)),
 );
+
+/**
+ * The seeded groups never change while the page is open, so the replayed create-customer-group Actions run once
+ * per module lifetime instead of on every list load. Concurrent callers share one resolution. A failure drops the
+ * cache, so the next call asks the owner again.
+ */
+const [cachedSegmentGroups, invalidateSegmentGroups] = browserRuntime.runSync(
+  Effect.cachedInvalidateWithTTL(resolveSegmentGroups, Duration.infinity),
+);
+const segmentGroups = cachedSegmentGroups.pipe(Effect.tapError(() => invalidateSegmentGroups));
 
 /** The demo segments in definition order: [{ code, groupId, name }]. */
 export const listCustomerSegments = segmentGroups.pipe(Effect.map((groups) => groups.map(({ segment }) => segment)));
