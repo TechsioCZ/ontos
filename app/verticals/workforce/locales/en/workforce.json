@@ -36,7 +36,7 @@
           "department": "Department",
           "role": "Role",
           "search": "Search name or e-mail…",
-          "searchLabel": "Search"
+          "searchLabel": "Filter employees"
         },
         "columns": {
           "account": "Account",

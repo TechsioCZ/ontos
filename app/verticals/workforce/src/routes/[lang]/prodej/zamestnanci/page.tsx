@@ -113,7 +113,11 @@ const subjectIdsOf = (ids: readonly string[]): SubjectId[] =>
     }),
   );
 
-const tagsCell = (info: CellContext<Employee>) => <TagCell tags={info.getValue<readonly Tag[]>()} />;
+/** The Štítky cell. The value is null while the tags still load, so an empty cell never reads as "no tags". */
+const tagsCell = (info: CellContext<Employee>) => {
+  const tags = info.getValue<readonly Tag[] | null>();
+  return <TagCell loading={tags === null} tags={tags ?? []} />;
+};
 
 /** Employees carrying the selected tag, with the tag they were loaded for so a stale answer never applies. */
 interface TaggedEmployees {
@@ -162,6 +166,8 @@ const useEmployeeTagFilter = () => {
   const tagId = request?.tagId ?? null;
   return {
     failed: tagId !== null && tagged?.tagId === tagId && tagged.failed,
+    // Until the picked tag's subject list arrives, the rows are hidden, so the table must read as loading, not empty.
+    loading: tagId !== null && tagged?.tagId !== tagId,
     reload: () => setRequest((current) => (current === null ? null : { ...current })),
     rows: (rows: readonly Employee[]) => rowsWithTag(rows, tagId, tagged),
     select: (next: TagId | null) => setRequest(next === null ? null : { tagId: next }),
@@ -430,10 +436,11 @@ const EmployeesPageContent = () => {
   const data = state.status === 'ready' ? state.data : undefined;
   const items = data?.items ?? [];
   const canWrite = data?.canWrite === true;
-  const { refetch: refetchTags, tagsBySubject } = useTagsFor(
-    'employee',
-    subjectIdsOf(items.map((employee) => employee.id)),
-  );
+  const {
+    refetch: refetchTags,
+    status: tagStatus,
+    tagsBySubject,
+  } = useTagsFor('employee', subjectIdsOf(items.map((employee) => employee.id)));
   const tagsOf = (id: string): Tag[] =>
     Option.match(subjectIdOf(id), {
       onNone: (): Tag[] => [],
@@ -512,7 +519,7 @@ const EmployeesPageContent = () => {
       meta: { width: 110 },
     },
     {
-      accessorFn: (row) => tagsOf(row.id),
+      accessorFn: (row) => (tagStatus === 'loading' ? null : tagsOf(row.id)),
       cell: tagsCell,
       enableSorting: false,
       header: t(`${key}.columns.tags`),
@@ -629,7 +636,7 @@ const EmployeesPageContent = () => {
           enableSorting
           getRowId={(row) => row.id}
           getRowLabel={(row) => row.original.fullName}
-          loading={state.status === 'loading'}
+          loading={state.status === 'loading' || tags.loading}
           loadingRowCount={10}
           maxHeight="calc(100dvh - 15rem)"
           {...(canWrite

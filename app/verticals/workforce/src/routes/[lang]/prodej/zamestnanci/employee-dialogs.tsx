@@ -1,3 +1,4 @@
+import { SidePanel } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -44,6 +45,9 @@ const commitErrorKey = (outcome: CommitOutcome): string => {
 
 const roleItemsOf = (translate: (key: string) => string) =>
   employeeRoles.map((role) => ({ label: translate(`${key}.roles.${role}`), value: role }));
+
+/** Select labels inherit the surrounding font size; FormInput labels use the `md` label token. Match them. */
+const roleLabelProps = { className: 'text-label-md' };
 
 const closeWhenDismissed =
   (onClose: () => void) =>
@@ -106,7 +110,7 @@ export const EmployeeFormDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={onClose} theme="outlined" variant="secondary">
@@ -117,10 +121,12 @@ export const EmployeeFormDialog = ({
           </Button>
         </>
       }
-      customTrigger
-      onOpenChange={closeWhenDismissed(onClose)}
+      onOpenChange={(next) => {
+        if (!next) {
+          onClose();
+        }
+      }}
       open
-      placement="right"
       size="md"
       title={t(employee === null ? `${key}.form.createTitle` : `${key}.form.editTitle`)}
     >
@@ -137,6 +143,7 @@ export const EmployeeFormDialog = ({
           </StatusText>
         )}
         <FormInput
+          autoComplete="off"
           id="employee-full-name"
           label={t(`${key}.form.fullName`)}
           name="fullName"
@@ -169,6 +176,7 @@ export const EmployeeFormDialog = ({
         <SelectTemplate
           items={roleItems}
           label={t(`${key}.form.role`)}
+          labelProps={roleLabelProps}
           name="role"
           onValueChange={(details) => {
             const next = roleFromValue(details.value[0]);
@@ -180,6 +188,7 @@ export const EmployeeFormDialog = ({
           value={[draft.role]}
         />
         <FormInput
+          autoComplete="off"
           id="employee-department"
           label={t(`${key}.form.department`)}
           name="department"
@@ -192,7 +201,7 @@ export const EmployeeFormDialog = ({
           {t(`${key}.form.active`)}
         </Switch>
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -270,6 +279,7 @@ export const BulkDepartmentDialog = ({
           </StatusText>
         )}
         <FormInput
+          autoComplete="off"
           id="bulk-department"
           label={t(`${key}.form.department`)}
           name="department"
@@ -347,6 +357,7 @@ export const BulkRoleDialog = ({
         <SelectTemplate
           items={roleItems}
           label={t(`${key}.form.role`)}
+          labelProps={roleLabelProps}
           name="bulkRole"
           onValueChange={(details) => {
             const next = roleFromValue(details.value[0]);
