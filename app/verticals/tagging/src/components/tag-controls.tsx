@@ -9,8 +9,9 @@
  *   and `catalog` when the page already loaded the tags, so the filter issues no read of its own.
  * - `TagCell({ tags, loading })`: the tags of one row as chips, two at most, then `+N`. Pass `loading`
  *   while `useTagsFor` is still loading, so an empty cell never reads as "no tags".
- * - `useTagsFor(kind, ids)`: `{ tagsBySubject, status, refetch }` for the rows of a list. `tagsBySubject`
- *   maps each subject id to its tags; `status` is `loading`, `ready` or `error`; `refetch` reloads.
+ * - `useTagsFor(kind, ids)`: `{ canWrite, tagsBySubject, status, refetch }` for the rows of a list.
+ *   `tagsBySubject` maps each subject id to its tags; `status` is `loading`, `ready` or `error`; `refetch` reloads;
+ *   `canWrite` says whether the role may change tags.
  * - `useTagsOfKind(kind)`: the same for every subject of `kind`, read on mount without waiting for the list ids,
  *   plus a `catalog` to hand to `TagFilter`.
  * - `BulkTagDialog({ kind, subjectIds, open, onOpenChange, onDone })`: adds or removes one tag on many
@@ -163,6 +164,8 @@ interface TagPickerFieldProps {
   readonly enabled: boolean;
   /** Empty string when there is no message. */
   readonly helpText: string;
+  /** DOM id of the Combobox. Its input is `combobox:<id>:input`, so a panel can name it as its first field. */
+  readonly id?: string;
   readonly invalid: boolean;
   readonly kind: SubjectKind;
   /** Visible label already translated by the caller. Wins over `labelKey`. */
@@ -179,6 +182,7 @@ const TagPickerField = ({
   compact = false,
   enabled,
   helpText,
+  id,
   invalid,
   kind,
   label,
@@ -202,6 +206,7 @@ const TagPickerField = ({
     <Combobox
       clearable={clearable}
       error={catalog.status === 'error' ? t('tagging.tags.loadFailed') : undefined}
+      {...(id === undefined ? {} : { id })}
       // ui-kit's local filter matches accents exactly, so the picker filters the options itself.
       filterBehavior="external"
       helpText={helpText}
@@ -264,7 +269,9 @@ export interface TagFilterProps {
 
 /** Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. */
 export const TagFilter = ({ catalog, kind, label, onChange, value }: TagFilterProps) => (
-  <div className="w-48">
+  // The Combobox root gaps its label wider than a Select root does (6 px against 4 px). Beside Selects in a filter row,
+  // that lifts the label, so the picker takes the Select gap.
+  <div className="w-48 *:gap-(--spacing-select)">
     {/* The "all tags" option clears the filter, so the picker needs no clear button. */}
     <TagPicker
       {...(catalog === undefined ? {} : { catalog })}
@@ -303,11 +310,16 @@ interface TagsRequest {
   readonly subjectKey: string;
 }
 
-/** Tags for the given subjects, keyed by subject id. Failures set `status` to `error`; they never read as no tags. */
+/**
+ * Tags for the given subjects, keyed by subject id. Failures set `status` to `error`; they never read as no tags.
+ * `canWrite` is the records read's `demo.tagging.write_all` answer, so a page can hide tag edits from a read-only role
+ * without a refused command. It stays `undefined` until a read succeeds.
+ */
 export const useTagsFor = (kind: SubjectKind, ids: readonly SubjectId[]) => {
   const subjectKey = ids.join(',');
   const [request, setRequest] = useState<TagsRequest>({ kind, subjectIds: ids, subjectKey });
   const [status, setStatus] = useState<TagsStatus>('loading');
+  const [canWrite, setCanWrite] = useState<boolean>();
   const [tagsBySubject, setTagsBySubject] = useState<ReadonlyMap<SubjectId, Tag[]>>(new Map());
   // A new kind or new subject ids start a new request; the previous rows stay until the new ones arrive.
   if (request.kind !== kind || request.subjectKey !== subjectKey) {
@@ -329,6 +341,7 @@ export const useTagsFor = (kind: SubjectKind, ids: readonly SubjectId[]) => {
             return;
           }
           setStatus('ready');
+          setCanWrite(records.canWrite);
           setTagsBySubject(tagsBySubjectOf(records));
         },
       });
@@ -339,7 +352,7 @@ export const useTagsFor = (kind: SubjectKind, ids: readonly SubjectId[]) => {
   }, [request]);
   const refetch = () => setRequest((current) => ({ ...current }));
   // An empty list has nothing to load, so it is ready at once and never issues a read.
-  return { refetch, status: request.subjectIds.length === 0 ? 'ready' : status, tagsBySubject };
+  return { canWrite, refetch, status: request.subjectIds.length === 0 ? 'ready' : status, tagsBySubject };
 };
 
 /** What `useTagsOfKind` returns: the tags of every subject of one kind, plus the tags that apply to that kind. */
@@ -532,6 +545,8 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
       // The picked tag and mode are a draft; Escape, the close button and Zrušit close the panel.
       closeOnInteractOutside={false}
       description={t('tagging.tags.bulk.description', { total: subjectIds.length })}
+      // The first field takes focus, not the close button the panel renders first.
+      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="combobox:bulk-tag-picker:input"]')}
       onOpenChange={(next) => {
         if (!next && !busy) {
           close();
@@ -558,6 +573,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
             clearable={false}
             enabled={open}
             helpText={tagError ? t('tagging.tags.bulk.chooseTag') : ''}
+            id="bulk-tag-picker"
             invalid={tagError}
             kind={kind}
             labelKey="tagging.tags.bulk.tag"

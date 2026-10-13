@@ -70,8 +70,12 @@
       "created": "Tag created",
       "deleted": "Tag deleted",
       "delete": {
+        "alreadyDeleted": "The tag was already deleted.",
         "busy": "Deleting…",
+        "conflict": "Tags changed in the meantime. Check the list and try again.",
         "description": "Deleting the tag removes it from all records.",
+        "failure": "The tag could not be deleted. Try again.",
+        "forbidden": "You do not have permission to delete tags.",
         "submit": "Delete tag",
         "title": "Delete tag “{{name}}”?"
       },

@@ -20,7 +20,7 @@ import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Random } from 'effect';
+import { Effect, Predicate, Random, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords, subjectsWithTag } from '../../../../api/records-client.ts';
@@ -305,27 +305,60 @@ const TagEditorDialog = ({
   );
 };
 
+type DeleteError = Effect.Error<ReturnType<typeof applyTaggingCommand>>;
+const DeleteFailureSchema = Schema.Literals(['conflict', 'failure', 'forbidden']);
+type DeleteFailure = typeof DeleteFailureSchema.Type;
+
+/**
+ * What a failed delete means. A tag the owner no longer has, or a delete it already committed, is gone, so the
+ * dialog reports it as deleted. A refusal and a concurrent change each get their own message; anything else is a
+ * plain failure the user may retry.
+ */
+const deleteOutcomeOf = (error: DeleteError): DeleteFailure | 'gone' => {
+  if (
+    Predicate.isTagged(error, 'ApplyCommandActionAlreadyCommittedProblem') ||
+    (Predicate.isTagged(error, 'ApplyCommandActionNotFoundProblem') && error.code === 'tagging_not_found')
+  ) {
+    return 'gone';
+  }
+  if (Predicate.isTagged(error, 'ApplyCommandActionForbiddenProblem')) {
+    return 'forbidden';
+  }
+  return Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') ? 'conflict' : 'failure';
+};
+
 const DeleteTagDialog = ({
   onClose,
   onDeleted,
+  onRefresh,
   tag,
 }: {
   onClose: () => void;
   onDeleted: () => void;
+  /** Re-reads the table after a failed delete, so its counts show what the owner holds now. */
+  onRefresh: () => void;
   tag: TagWithCounts;
 }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<DeleteFailure | null>(null);
 
   const confirm = () => {
     setBusy(true);
-    setFailed(false);
+    setFailure(null);
     runTagEffect(applyTaggingCommand({ _tag: 'DeleteTag', id: tag.id }), {
-      onFailure: () => {
+      onFailure: (error) => {
         setBusy(false);
-        setFailed(true);
+        const outcome = deleteOutcomeOf(error);
+        if (outcome === 'gone') {
+          toaster.create({ title: t('tagging.tags.delete.alreadyDeleted'), type: 'info' });
+          onDeleted();
+          onClose();
+          return;
+        }
+        setFailure(outcome);
+        onRefresh();
       },
       onSuccess: () => {
         setBusy(false);
@@ -364,10 +397,10 @@ const DeleteTagDialog = ({
       size="sm"
       title={t('tagging.tags.delete.title', { name: tag.name })}
     >
-      {failed && (
+      {failure !== null && (
         <div className="py-200">
           <StatusText showIcon status="error">
-            {t('tagging.tags.failure')}
+            {t(`tagging.tags.delete.${failure}`)}
           </StatusText>
         </div>
       )}
@@ -680,7 +713,12 @@ const TagsPageContent = () => {
       />
       {editor !== null && <TagEditorDialog onClose={() => setEditor(null)} onSaved={() => reload()} tag={editor.tag} />}
       {removing !== null && (
-        <DeleteTagDialog onClose={() => setRemoving(null)} onDeleted={() => reload()} tag={removing} />
+        <DeleteTagDialog
+          onClose={() => setRemoving(null)}
+          onDeleted={() => reload()}
+          onRefresh={() => reload()}
+          tag={removing}
+        />
       )}
       {inspecting !== null && <TagAssignmentsDialog onClose={() => setInspecting(null)} tag={inspecting} />}
       <Toaster />

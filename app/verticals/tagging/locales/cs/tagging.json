@@ -70,8 +70,12 @@
       "created": "Štítek vytvořen",
       "deleted": "Štítek smazán",
       "delete": {
+        "alreadyDeleted": "Štítek už byl smazán.",
         "busy": "Mažu…",
+        "conflict": "Štítky se mezitím změnily. Zkontrolujte seznam a zkuste to znovu.",
         "description": "Smazáním štítku se odebere ze všech záznamů.",
+        "failure": "Štítek se nepodařilo smazat. Zkuste to znovu.",
+        "forbidden": "Nemáte oprávnění mazat štítky.",
         "submit": "Smazat štítek",
         "title": "Smazat štítek „{{name}}“?"
       },
