@@ -76,9 +76,9 @@
       "edit": "Edit tag",
       "failure": "The change could not be saved. Try again.",
       "filter": {
-        "label": "Tag",
+        "all": "All tags",
         "noResults": "No tag matches.",
-        "placeholder": "Choose a tag…"
+        "placeholder": "Tag"
       },
       "form": {
         "cancel": "Cancel",
