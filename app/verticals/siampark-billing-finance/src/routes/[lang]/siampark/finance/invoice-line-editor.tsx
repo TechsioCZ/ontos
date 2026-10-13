@@ -41,8 +41,8 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
 
   return (
     <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
-      <div className="flex items-end gap-150">
-        <div className="w-36 shrink-0">
+      <div className="grid grid-cols-[8rem_minmax(0,1fr)_auto] items-end gap-150">
+        <div className="min-w-0">
           <SelectTemplate
             items={kindItems}
             label={t(`${ns}.form.lineKind`)}
@@ -53,10 +53,11 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
                 onChange(newDraftLine(line.key, kind));
               }
             }}
+            placeholder={t('siampark-billing-finance.selectPlaceholder')}
             value={[line.kind]}
           />
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0">
           {line.kind === 'product' ? (
             <Combobox
               items={products.map((item) => ({ id: item.id, label: `${item.name} (${item.sku})`, value: item.id }))}
@@ -81,7 +82,18 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
             />
           )}
         </div>
-        <div className="w-24 shrink-0">
+        <Button
+          aria-label={t(`${ns}.form.removeLine`)}
+          disabled={!canRemove}
+          icon="icon-[mdi--delete-outline]"
+          onClick={onRemove}
+          size="sm"
+          theme="borderless"
+          variant="secondary"
+        />
+      </div>
+      <div className="grid grid-cols-[6rem_9rem_7rem] items-end gap-150">
+        <div className="min-w-0">
           <FormNumericInput
             id={`invoice-line-quantity-${line.key}`}
             label={t(`${ns}.form.quantity`)}
@@ -97,58 +109,49 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
             </NumericInput.Control>
           </FormNumericInput>
         </div>
-        <Button
-          aria-label={t(`${ns}.form.removeLine`)}
-          disabled={!canRemove}
-          icon="icon-[mdi--delete-outline]"
-          onClick={onRemove}
-          size="sm"
-          theme="borderless"
-          variant="secondary"
-        />
+        {line.kind === 'free' && (
+          <>
+            <div className="min-w-0">
+              <FormNumericInput
+                id={`invoice-line-price-${line.key}`}
+                label={t(`${ns}.form.unitPrice`)}
+                locale="cs-CZ"
+                min={0}
+                name="unitPrice"
+                onChange={(value) => onChange({ ...line, unitPriceMinor: czkToMinor(value) })}
+                step={1}
+                value={line.unitPriceMinor / 100}
+              >
+                <NumericInput.Control>
+                  <NumericInput.Input />
+                </NumericInput.Control>
+              </FormNumericInput>
+            </div>
+            <div className="min-w-0">
+              <SelectTemplate
+                items={vatItems}
+                label={t(`${ns}.form.vat`)}
+                name={`invoice-line-vat-${line.key}`}
+                onValueChange={({ value }) => {
+                  const rate = VAT_RATE_CHOICES.find((item) => String(item) === value[0]);
+                  if (rate !== undefined) {
+                    onChange({ ...line, vatRate: rate });
+                  }
+                }}
+                placeholder={t('siampark-billing-finance.selectPlaceholder')}
+                value={[String(line.vatRate)]}
+              />
+            </div>
+          </>
+        )}
       </div>
-      {line.kind === 'free' ? (
-        <div className="flex items-end gap-150">
-          <div className="w-40 shrink-0">
-            <FormNumericInput
-              id={`invoice-line-price-${line.key}`}
-              label={t(`${ns}.form.unitPrice`)}
-              locale="cs-CZ"
-              min={0}
-              name="unitPrice"
-              onChange={(value) => onChange({ ...line, unitPriceMinor: czkToMinor(value) })}
-              step={1}
-              value={line.unitPriceMinor / 100}
-            >
-              <NumericInput.Control>
-                <NumericInput.Input />
-              </NumericInput.Control>
-            </FormNumericInput>
-          </div>
-          <div className="w-28 shrink-0">
-            <SelectTemplate
-              items={vatItems}
-              label={t(`${ns}.form.vat`)}
-              name={`invoice-line-vat-${line.key}`}
-              onValueChange={({ value }) => {
-                const rate = VAT_RATE_CHOICES.find((item) => String(item) === value[0]);
-                if (rate !== undefined) {
-                  onChange({ ...line, vatRate: rate });
-                }
-              }}
-              value={[String(line.vatRate)]}
-            />
-          </div>
-        </div>
-      ) : (
-        product !== undefined && (
-          <p className="text-fg-secondary text-xs">
-            {t(`${ns}.form.productMeta`, {
-              price: formatMoney(line.unitPriceMinor),
-              vat: line.vatRate,
-            })}
-          </p>
-        )
+      {line.kind === 'product' && product !== undefined && (
+        <p className="text-fg-secondary text-xs">
+          {t(`${ns}.form.productMeta`, {
+            price: formatMoney(line.unitPriceMinor),
+            vat: line.vatRate,
+          })}
+        </p>
       )}
       {errorText !== undefined && (
         <StatusText showIcon status="error">

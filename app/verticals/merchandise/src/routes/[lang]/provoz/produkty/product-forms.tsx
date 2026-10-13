@@ -202,6 +202,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
                 setUnit(picked);
               }
             }}
+            placeholder={k('selectPlaceholder')}
             value={[unit]}
           />
           <SelectTemplate
@@ -215,6 +216,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
                 setVatRate(picked);
               }
             }}
+            placeholder={k('selectPlaceholder')}
             value={[String(vatRate)]}
           />
         </div>

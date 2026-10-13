@@ -36,8 +36,8 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
 
   return (
     <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
-      <div className="flex items-start gap-150">
-        <div className="flex min-w-0 flex-1 flex-col gap-50">
+      <div className="grid grid-cols-[minmax(0,1fr)_7rem_auto] items-end gap-150">
+        <div className="min-w-0">
           <Combobox
             {...(error === undefined ? {} : { helpText: error })}
             items={products.map((item) => ({ id: item.id, label: `${item.name} (${item.sku})`, value: item.id }))}
@@ -51,16 +51,8 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
             validateStatus={error === undefined ? 'default' : 'error'}
             value={line.productId === null ? [] : [line.productId]}
           />
-          {product !== undefined && (
-            <p className="text-fg-secondary text-xs">
-              {t(key('create.productMeta'), {
-                price: formatMoney(product.currentPriceMinor),
-                stock: formatNumber(product.stockOnHand),
-              })}
-            </p>
-          )}
         </div>
-        <div className="w-28 shrink-0">
+        <div className="min-w-0">
           <FormNumericInput
             id={`orders-create-qty-${line.key}`}
             label={t(key('create.quantity'))}
@@ -86,6 +78,14 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
           variant="secondary"
         />
       </div>
+      {product !== undefined && (
+        <p className="text-fg-secondary text-xs">
+          {t(key('create.productMeta'), {
+            price: formatMoney(product.currentPriceMinor),
+            stock: formatNumber(product.stockOnHand),
+          })}
+        </p>
+      )}
     </div>
   );
 };

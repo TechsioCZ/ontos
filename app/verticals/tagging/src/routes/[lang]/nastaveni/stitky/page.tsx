@@ -218,6 +218,7 @@ const TagEditorDialog = ({
               setDraft((current) => ({ ...current, color: picked }));
             }
           }}
+          placeholder={t('tagging.tags.selectPlaceholder')}
           value={[draft.color]}
         />
         <FormTextarea

@@ -20,7 +20,7 @@
     "pages": {
       "records": {
         "title": "Úkoly",
-        "description": "Úkoly obchodního týmu a jejich termíny",
+        "pageDescription": "Úkoly obchodního týmu a jejich termíny",
         "newTask": "Nový úkol",
         "create": "Nový úkol",
         "edit": "Upravit úkol",
@@ -119,6 +119,7 @@
           "HIGH": "Vysoká"
         }
       }
-    }
+    },
+    "selectPlaceholder": "Vyberte…"
   }
 }

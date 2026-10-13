@@ -211,6 +211,9 @@
         },
         "unknownOwner": "Neznámý obchodník"
       }
-    }
+    },
+    "selectPlaceholder": "Vyberte…",
+    "loading": "Načítám…",
+    "noResults": "Nic nenalezeno"
   }
 }

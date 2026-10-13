@@ -241,6 +241,7 @@
         "SUPPLIER": "Supplier"
       },
       "newInvoice": "Create a new invoice"
-    }
+    },
+    "selectPlaceholder": "Select…"
   }
 }

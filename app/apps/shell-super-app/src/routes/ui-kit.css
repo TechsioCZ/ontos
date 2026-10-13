@@ -1,4 +1,5 @@
 @import '@techsio/ui-kit/tokens-with-tailwind';
 @source '../../node_modules/@techsio/ui-kit/dist';
 @source '../../../../packages/admin-ui/src';
-@source '../../../../verticals/*/src';
+/* A glob segment cannot resolve to a directory, so the scan needs an explicit file glob or it matches nothing. */
+@source '../../../../verticals/*/src/**/*';

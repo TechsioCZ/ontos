@@ -30,7 +30,8 @@ import { subjectIdOf, useCustomerEnrichment } from './use-customer-enrichment.ts
 
 const key = 'party-registry.pages.customers';
 const pageSizeOptions = [50, 100, 200];
-const pinning = { end: [], start: ['displayName'] };
+/** The row-selection column stays first, ahead of the pinned name. */
+const pinning = { end: [], start: ['__select', 'displayName'] };
 /** Phone, DIČ and Stav stay in the column menu; the segment column is visible until its lookup fails. */
 const defaultColumnVisibility = { phone: false, status: false, vatId: false } satisfies ColumnVisibility;
 const allSegments = 'all';
@@ -133,6 +134,7 @@ const CustomerFilterRow = ({
                 const [next] = details.value;
                 onSegmentChange(next ?? allSegments);
               }}
+              placeholder={t('party-registry.selectPlaceholder')}
               size="sm"
               value={[segmentFilter]}
             />

@@ -38,7 +38,7 @@ export const buildTaskColumns = ({
     accessorKey: 'title',
     cell: (info) => <span className="block truncate font-medium">{info.row.original.title}</span>,
     header: t(`${key}.columns.title`),
-    meta: { width: 250 },
+    meta: { width: 230 },
   },
   {
     accessorFn: (task) =>
@@ -52,21 +52,21 @@ export const buildTaskColumns = ({
     },
     header: t(`${key}.columns.assignee`),
     id: 'assignee',
-    meta: { width: 150 },
+    meta: { width: 140 },
   },
   {
     accessorFn: (task) => (task.partyId === undefined ? '' : (customerNames.get(task.partyId) ?? '')),
     cell: (info) => nameCell(info.row.original.partyId, customerNames, t(`${key}.unknownCustomer`)),
     header: t(`${key}.columns.party`),
     id: 'party',
-    meta: { width: 160 },
+    meta: { width: 150 },
   },
   {
     accessorFn: (task) => (task.opportunityId === undefined ? '' : (opportunityTitles.get(task.opportunityId) ?? '')),
     cell: (info) => nameCell(info.row.original.opportunityId, opportunityTitles, t(`${key}.unknownOpportunity`)),
     header: t(`${key}.columns.opportunity`),
     id: 'opportunity',
-    meta: { width: 170 },
+    meta: { width: 160 },
   },
   {
     accessorKey: 'dueDate',
@@ -83,18 +83,18 @@ export const buildTaskColumns = ({
       );
     },
     header: t(`${key}.columns.dueDate`),
-    meta: { width: 110 },
+    meta: { width: 105 },
   },
   {
     accessorKey: 'priority',
     cell: (info) => <StatusBadge kind="priority" value={info.row.original.priority} />,
     header: t(`${key}.columns.priority`),
-    meta: { width: 100 },
+    meta: { width: 95 },
   },
   {
     accessorKey: 'state',
     cell: (info) => <StatusBadge kind="task" value={info.row.original.state} />,
     header: t(`${key}.columns.state`),
-    meta: { width: 130 },
+    meta: { width: 120 },
   },
 ];

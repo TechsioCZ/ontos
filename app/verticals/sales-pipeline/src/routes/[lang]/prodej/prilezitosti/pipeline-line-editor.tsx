@@ -125,13 +125,14 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
         <span className="text-fg-secondary text-xs">{t(`${K}.create.priceFixedHint`)}</span>
       </div>
 
-      <div className="flex flex-wrap items-end gap-150">
-        <div className="flex min-w-0 flex-1 flex-col gap-50">
+      <div className="grid grid-cols-[minmax(0,1fr)_7rem] items-end gap-150">
+        <div className="min-w-0">
           <Combobox
             error={products.status === 'error' ? t(`${K}.create.productsFailed`) : undefined}
             items={productItems}
             label={t(`${K}.create.fields.product`)}
             loading={products.status === 'loading'}
+            loadingMessage={t('sales-pipeline.loading')}
             noResultsMessage={t(`${K}.create.noProductMatch`)}
             onChange={(values) => {
               setLineError(undefined);
@@ -140,16 +141,8 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
             placeholder={t(`${K}.create.productPlaceholder`)}
             value={pick.productId === null ? [] : [pick.productId]}
           />
-          {pickedProduct !== undefined && (
-            <p className="text-fg-secondary text-xs">
-              {t(`${K}.create.currentPrice`, {
-                price: formatMoney(pickedProduct.currentPriceMinor),
-                vat: pickedProduct.vatRate,
-              })}
-            </p>
-          )}
         </div>
-        <div className="w-28 shrink-0">
+        <div className="min-w-0">
           <FormNumericInput
             id="opportunity-line-quantity"
             label={t(`${K}.create.fields.quantity`)}
@@ -169,6 +162,15 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
             </NumericInput.Control>
           </FormNumericInput>
         </div>
+      </div>
+      <div className="flex items-center justify-between gap-150">
+        <p className="min-w-0 text-fg-secondary text-xs">
+          {pickedProduct !== undefined &&
+            t(`${K}.create.currentPrice`, {
+              price: formatMoney(pickedProduct.currentPriceMinor),
+              vat: pickedProduct.vatRate,
+            })}
+        </p>
         <Button
           disabled={pick.productId === null}
           icon="icon-[mdi--plus]"

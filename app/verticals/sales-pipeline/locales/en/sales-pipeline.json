@@ -211,6 +211,9 @@
         },
         "unknownOwner": "Unknown owner"
       }
-    }
+    },
+    "selectPlaceholder": "Select…",
+    "loading": "Loading…",
+    "noResults": "No results"
   }
 }

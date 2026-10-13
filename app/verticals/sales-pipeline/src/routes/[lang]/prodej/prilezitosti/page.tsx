@@ -154,7 +154,8 @@ const PipelineTable = ({
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(defaultColumnVisibility);
   return (
     <DataTable
-      columnPinning={{ end: [], start: ['title'] }}
+      // The row-selection column must stay first, so it is pinned ahead of the title.
+      columnPinning={{ end: [], start: ['__select', 'title'] }}
       columns={buildColumns(t, lookups)}
       columnVisibility={columnVisibility}
       data={rows}

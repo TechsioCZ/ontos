@@ -160,6 +160,7 @@ export const PipelineFilters = ({
           items={customerItems}
           label={t(`${K}.filters.customer`)}
           loading={customers.status === 'loading'}
+          loadingMessage={t('sales-pipeline.loading')}
           name="customer"
           noResultsMessage={t(`${K}.create.noCustomerMatch`)}
           onChange={(values) => onCustomer(customerFilterOf(firstValue(values)))}
@@ -176,6 +177,7 @@ export const PipelineFilters = ({
           onValueChange={({ value: [next] }) => {
             onStage(isOpportunityStage(next) ? next : '');
           }}
+          placeholder={t('sales-pipeline.selectPlaceholder')}
           size="sm"
           value={[stage === '' ? ALL : stage]}
         />
@@ -186,6 +188,7 @@ export const PipelineFilters = ({
           label={t(`${K}.filters.owner`)}
           name="owner"
           onValueChange={({ value: [next] }) => onOwner(ownerFilterOf(next))}
+          placeholder={t('sales-pipeline.selectPlaceholder')}
           size="sm"
           value={[owner === '' ? ALL : owner]}
         />

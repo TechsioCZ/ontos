@@ -221,6 +221,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
                 setDraft((current) => ({ ...current, paymentDays: next }));
               }
             }}
+            placeholder={t('siampark-billing-finance.selectPlaceholder')}
             value={[String(draft.paymentDays)]}
           />
         </div>

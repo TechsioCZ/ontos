@@ -182,6 +182,7 @@ export const StatisticsResults = ({ kpis, loading, metric, query, result }: Stat
           data={[...series]}
           getRowId={(row) => row.key}
           size="sm"
+          translations={{ emptyTitle: t(`${key}.empty`), loadingLabel: t('sales-insights.loading') }}
         />
       )}
     </div>

@@ -311,6 +311,7 @@ export const TaskFormDialog = ({
                 set({ priority: next });
               }
             }}
+            placeholder={t('siampark-work.selectPlaceholder')}
             size="md"
             value={[values.priority]}
           />

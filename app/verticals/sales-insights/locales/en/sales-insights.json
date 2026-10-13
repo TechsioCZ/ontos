@@ -81,6 +81,8 @@
         "title": "Statistics",
         "total": "Total: {{value}}"
       }
-    }
+    },
+    "selectPlaceholder": "Select…",
+    "loading": "Loading…"
   }
 }
