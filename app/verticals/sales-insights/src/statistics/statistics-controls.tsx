@@ -15,16 +15,13 @@ const toCalendarDate = (day: CalendarDay): CalendarDate =>
   new CalendarDate(Number(day.slice(0, 4)), Number(day.slice(5, 7)), Number(day.slice(8, 10)));
 
 export interface StatisticsControlsProps {
-  /** Variant key, so DOM ids stay unique when both layout variants are mounted. */
-  readonly id: string;
-  readonly layout: 'row' | 'stack';
   readonly onChange: (patch: Partial<StatisticsQuery>) => void;
   readonly query: StatisticsQuery;
   readonly today: CalendarDay;
 }
 
-/** Metric, chart type, period and grouping controls. The same state drives both layout variants. */
-export const StatisticsControls = ({ id, layout, onChange, query, today }: StatisticsControlsProps) => {
+/** Metric, chart type, period and grouping controls in one wrapping toolbar row above the results. */
+export const StatisticsControls = ({ onChange, query, today }: StatisticsControlsProps) => {
   const { t } = useModernI18n();
   const metricItems = metricCatalog.map((entry) => ({ label: entry.label, value: entry.id }));
   const chartItems = chartKinds.map((kind) => ({ label: t(`${key}.chart.${kind}`), value: kind }));
@@ -35,14 +32,12 @@ export const StatisticsControls = ({ id, layout, onChange, query, today }: Stati
   }));
   const rangeValue = [toCalendarDate(query.from), toCalendarDate(query.to)] as const;
   const currentPreset = activePreset(query, today);
-  const rowClass = layout === 'row' ? 'flex flex-wrap items-end gap-200' : 'flex flex-col gap-200';
-  const fieldClass = layout === 'row' ? 'min-w-48 flex-1' : 'w-full';
 
   return (
-    <div className={rowClass}>
-      <div className={fieldClass}>
+    <div className="flex flex-wrap items-start gap-200">
+      <div className="min-w-48 flex-1">
         <SelectTemplate
-          id={`${id}-metric`}
+          id="statistics-metric"
           items={metricItems}
           label={t(`${key}.metric`)}
           onValueChange={(details) => {
@@ -55,9 +50,9 @@ export const StatisticsControls = ({ id, layout, onChange, query, today }: Stati
           value={[query.metric]}
         />
       </div>
-      <div className={fieldClass}>
+      <div className="min-w-48 flex-1">
         <SelectTemplate
-          id={`${id}-chart`}
+          id="statistics-chart"
           items={chartItems}
           label={t(`${key}.chartType`)}
           onValueChange={(details) => {
@@ -70,7 +65,7 @@ export const StatisticsControls = ({ id, layout, onChange, query, today }: Stati
           value={[query.chart]}
         />
       </div>
-      <div className={fieldClass}>
+      <div className="min-w-48 flex-1">
         <DatePicker.Root
           locale="cs-CZ"
           onValueChange={(details) => {
@@ -111,9 +106,9 @@ export const StatisticsControls = ({ id, layout, onChange, query, today }: Stati
           ))}
         </div>
       </div>
-      <div className={fieldClass}>
+      <div className="min-w-48 flex-1">
         <SelectTemplate
-          id={`${id}-group`}
+          id="statistics-group"
           items={groupingItems}
           label={t(`${key}.grouping`)}
           onValueChange={(details) => {

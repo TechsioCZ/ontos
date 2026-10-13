@@ -301,7 +301,8 @@ it('computes headline KPIs and resolves overdue tasks against the reference day'
   const kpis = computeKpis(fixture, { ...range, today: '2026-10-13' });
   const byId = new Map(kpis.map((kpi) => [kpi.id, kpi.value]));
   expect(byId.get('revenue_invoiced')).toBe(350_000);
-  expect(byId.get('pipeline_open_value')).toBe(400_000);
+  // Snapshot: includes opp-open-late, which closes after the range.
+  expect(byId.get('pipeline_open_value')).toBe(480_000);
   expect(byId.get('win_rate')).toBe(66.7);
   expect(byId.get('units_sold')).toBe(10);
   expect(byId.get('tasks_overdue')).toBe(1);
@@ -324,4 +325,49 @@ it('exposes the full catalog with Czech labels and allowed groupings', () => {
   expect(revenue?.unit).toBe('CZK');
   expect(revenue?.allowedGroupings).toContain('month');
   expect(metricCatalog.find((entry) => entry.id === 'stock_value')?.allowedGroupings).toEqual(['product', 'tag']);
+});
+
+// Regression: seed-like data. Open opportunities expect to close after the selected range (the last
+// 12 months), so a range filter on expectedCloseDate made the open pipeline KPI read 0 Kč.
+it('values the open pipeline as a snapshot of every open opportunity, regardless of range', () => {
+  const stages = ['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION'] as const;
+  const probabilities = { LEAD: 10, NEGOTIATION: 75, PROPOSAL: 50, QUALIFIED: 25 } as const;
+  const open = Array.from({ length: 34 }, (_, index) => {
+    const stage = stages[index % stages.length] ?? 'LEAD';
+    return {
+      amountMinor: 100_000 * (index + 1),
+      expectedCloseDate: `2026-${String(11 + (index % 2)).padStart(2, '0')}-15`,
+      id: `opp-open-${index}`,
+      partyId: 'c1',
+      probability: probabilities[stage],
+      stage,
+    };
+  });
+  const closed = Array.from({ length: 26 }, (_, index) => ({
+    amountMinor: 50_000,
+    closedAt: at('2026-05-10T10:00:00.000Z'),
+    expectedCloseDate: '2026-05-10',
+    id: `opp-closed-${index}`,
+    partyId: 'c2',
+    probability: index < 18 ? 100 : 0,
+    stage: index < 18 ? ('WON' as const) : ('LOST' as const),
+  }));
+  const seeded: MetricInputs = { ...fixture, opportunities: [...open, ...closed] };
+  const lastTwelveMonths = { from: '2025-11-01', to: '2026-10-13', today: '2026-10-13' };
+  const expectedOpen = open.reduce((sum, o) => sum + o.amountMinor, 0);
+  const expectedWeighted = open.reduce((sum, o) => sum + Math.round((o.amountMinor * o.probability) / 100), 0);
+
+  const byId = new Map(computeKpis(seeded, lastTwelveMonths).map((kpi) => [kpi.id, kpi.value]));
+  expect(byId.get('pipeline_open_value')).toBe(expectedOpen);
+  expect(byId.get('win_rate')).toBe(69.2);
+  expect(computeMetric('pipeline_open_value', seeded, { ...lastTwelveMonths, groupBy: 'stage' }).total).toBe(
+    expectedOpen,
+  );
+  expect(computeMetric('pipeline_weighted_value', seeded, { ...lastTwelveMonths, groupBy: 'employee' }).total).toBe(
+    expectedWeighted,
+  );
+  // Time buckets follow expectedCloseDate, so the forecast months show up even past the range end.
+  expect(
+    computeMetric('pipeline_open_value', seeded, { ...lastTwelveMonths, groupBy: 'month' }).series.map((p) => p.key),
+  ).toEqual(['2026-11', '2026-12']);
 });

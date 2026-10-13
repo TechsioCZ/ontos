@@ -86,24 +86,10 @@ const StatisticsPageContent = () => {
             {t(`${key}.sourceError`, { sources: failedText })}
           </StatusText>
         )}
-        <div className="contents" data-uidotsh-pick="Statistiky: rozložení">
-          <div className="contents" data-uidotsh-option="A: Panel vlevo">
-            <div className="grid grid-cols-1 items-start gap-250 xl:grid-cols-[18rem_minmax(0,1fr)]">
-              <SectionCard title={t(`${key}.controls`)}>
-                <StatisticsControls id="left" layout="stack" onChange={onChange} query={query} today={today} />
-              </SectionCard>
-              <StatisticsResults kpis={kpis} loading={!ready} metric={metric} query={query} result={result} />
-            </div>
-          </div>
-          <div className="contents" data-uidotsh-option="B: Lišta nahoře" hidden>
-            <div className="flex min-w-0 flex-col gap-250">
-              <SectionCard>
-                <StatisticsControls id="top" layout="row" onChange={onChange} query={query} today={today} />
-              </SectionCard>
-              <StatisticsResults kpis={kpis} loading={!ready} metric={metric} query={query} result={result} />
-            </div>
-          </div>
-        </div>
+        <SectionCard>
+          <StatisticsControls onChange={onChange} query={query} today={today} />
+        </SectionCard>
+        <StatisticsResults kpis={kpis} loading={!ready} metric={metric} query={query} result={result} />
       </section>
     </>
   );
