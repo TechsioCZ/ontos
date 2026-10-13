@@ -1,5 +1,5 @@
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Effect, Match } from 'effect';
+import { Cache, Effect, Exit, Match } from 'effect';
 
 import type {
   AvailableTenant,
@@ -10,7 +10,7 @@ import type {
   ShellUnavailableDeployment,
 } from '../../../shared/api.ts';
 import { availableLegalEntities, availableTenants, currentSession, shellComposition } from '../../api/auth-client.ts';
-import type { AvailableTenantsClientError } from '../../api/auth-client.ts';
+import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
@@ -90,10 +90,33 @@ const tenantRead = (error: AvailableTenantsClientError, tenantId: SafeTenantIden
     Match.exhaustive,
   );
 
+/**
+ * TanStack runs this loader for every navigation and every link preload, so one Zákazníci visit read
+ * `/auth/session` more than a dozen times. In the browser an authenticated session is reused for a short
+ * window and concurrent loaders share one request. Anonymous and failed reads are never kept, so a fresh
+ * sign-in is seen at once; sign-out and tenant or legal-entity switches reload the document, which drops
+ * the cache. Requests that carry a cookie header (server rendering) always read fresh: one SSR process
+ * serves many users.
+ */
+const browserSessionCache = browserRuntime.runSync(
+  Cache.makeWith((baseUrl: string) => currentSession({ baseUrl: new URL(baseUrl) }), {
+    capacity: 4,
+    timeToLive: (exit) => (Exit.isSuccess(exit) && exit.value.state === 'authenticated' ? '30 seconds' : 0),
+  }),
+);
+
+/** Drops every cached browser session. Tests call it between cases. */
+export const resetBrowserSessionCache = Cache.invalidateAll(browserSessionCache);
+
+const sessionFor = ({ baseUrl, ...rest }: ShellAuthenticationClientOptions) =>
+  'document' in globalThis && baseUrl !== undefined && rest.cookie === undefined && rest.locale === undefined
+    ? Cache.get(browserSessionCache, String(baseUrl))
+    : currentSession(baseUrl === undefined ? rest : { ...rest, baseUrl });
+
 export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
   function* loadHomePageModelEffect(request: Request) {
     const options = yield* shellAuthenticationClientOptionsFromRequest(request);
-    const session = yield* currentSession(options);
+    const session = yield* sessionFor(options);
     if (session.state === 'anonymous') {
       return anonymousModel;
     }

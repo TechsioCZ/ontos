@@ -18,16 +18,34 @@ import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
 
 type HtmlAttributes = NonNullable<HelmetProps['htmlAttributes']>;
 
-const { accountMenuSelectHandlers, helmetHtmlAttributes, tenantValueChangeHandlers } = rstest.hoisted(() => {
-  const accountHandlers: ComponentProps<typeof ActualMenu>['onSelect'][] = [];
-  const htmlAttributes: HtmlAttributes[] = [];
-  const tenantHandlers: ComponentProps<typeof ActualSelect>['onValueChange'][] = [];
-  return {
-    accountMenuSelectHandlers: accountHandlers,
-    helmetHtmlAttributes: htmlAttributes,
-    tenantValueChangeHandlers: tenantHandlers,
-  };
-});
+interface RouterStateDouble {
+  readonly location: { readonly pathname: string };
+  readonly resolvedLocation?: { readonly pathname: string };
+}
+
+interface RouterStateSlot {
+  current: RouterStateDouble | null;
+}
+
+const settledRouterState: RouterStateDouble = {
+  location: { pathname: '/en' },
+  resolvedLocation: { pathname: '/en' },
+};
+
+const { accountMenuSelectHandlers, helmetHtmlAttributes, routerState, tenantValueChangeHandlers } = rstest.hoisted(
+  () => {
+    const accountHandlers: ComponentProps<typeof ActualMenu>['onSelect'][] = [];
+    const htmlAttributes: HtmlAttributes[] = [];
+    const tenantHandlers: ComponentProps<typeof ActualSelect>['onValueChange'][] = [];
+    const pendingRouterState: RouterStateSlot = { current: null };
+    return {
+      accountMenuSelectHandlers: accountHandlers,
+      helmetHtmlAttributes: htmlAttributes,
+      routerState: pendingRouterState,
+      tenantValueChangeHandlers: tenantHandlers,
+    };
+  },
+);
 
 rstest.mock('@modern-js/runtime/head', () => ({
   Helmet: ({ htmlAttributes }: Pick<HelmetProps, 'htmlAttributes'>) => {
@@ -40,6 +58,8 @@ rstest.mock('@modern-js/runtime/head', () => ({
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   Outlet: () => <main>Current route</main>,
+  useRouterState: ({ select }: { readonly select: (state: RouterStateDouble) => string | undefined }) =>
+    select(routerState.current ?? settledRouterState),
 }));
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -56,6 +76,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
     </a>
   ),
   useModernI18n: () => ({
+    language: 'en',
     t: (key: string) =>
       ({
         'shell.auth.logout.action': 'Logout',
@@ -87,6 +108,8 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.navigation.items.tags': 'Tags',
         'shell.dashboard.navigation.items.tasks': 'Tasks',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
+        'shell.dashboard.navigation.pending': 'Loading page…',
+        'shell.dashboard.navigation.siampark.contacts': 'Contacts',
         'shell.dashboard.navigation.siampark.integrations': 'Integrations',
         'shell.dashboard.navigation.siampark.overview': 'Overview',
         'shell.dashboard.navigation.siampark.properties': 'Properties',
@@ -176,6 +199,7 @@ const testingWorkspaceTitle = 'Testing workspace';
 
 afterEach(() => {
   cleanup();
+  routerState.current = null;
   accountMenuSelectHandlers.length = 0;
   helmetHtmlAttributes.length = 0;
   tenantValueChangeHandlers.length = 0;
@@ -709,4 +733,80 @@ test('keeps inactive and unavailable demo destinations visible without links', (
   expect(screen.getAllByText('Inactive').length).toBe(8);
   expect(navigationElement.textContent).not.toContain('Overview');
   expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+});
+
+const currentLinkNames = () =>
+  [...screen.getByRole('navigation', { name: 'Dashboard navigation' }).querySelectorAll('a')]
+    .filter((link) => link.getAttribute('aria-current') === 'page')
+    .map((link) => link.textContent);
+
+const customersAndContacts = [
+  demoEntry('party.registry', '/prodej/zakaznici'),
+  demoEntry('party.registry', '/contacts'),
+  demoEntry('demo.workforce', '/prodej/zamestnanci'),
+];
+
+test('marks only the page own destination current when two links share its module', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="party.registry.page.contacts"
+      currentModuleId="party.registry"
+      identity={identity}
+      logoutPending={false}
+      navigation={customersAndContacts}
+      onLogout={noopLogout}
+    >
+      <section>Contacts</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(currentLinkNames()).toEqual(['Contacts']);
+});
+
+test('hides the previous page and marks the destination while the next page loads', () => {
+  routerState.current = {
+    location: { pathname: '/en/contacts' },
+    resolvedLocation: { pathname: '/en/prodej/zamestnanci' },
+  };
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="demo.workforce.page.records"
+      currentModuleId="demo.workforce"
+      identity={identity}
+      logoutPending={false}
+      navigation={customersAndContacts}
+      onLogout={noopLogout}
+      title="Employees overview"
+    >
+      <section>Employee list</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.getByText('Loading page…')).toBeTruthy();
+  expect(screen.getByText('Employee list').closest('.hidden')).not.toBeNull();
+  expect(screen.getByRole('heading', { level: 1, name: 'Employees overview' }).closest('.hidden')).not.toBeNull();
+  expect(currentLinkNames()).toEqual(['Contacts']);
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('Other modulesContacts');
+});
+
+test('keeps the page visible when only search parameters or loader data refresh', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="demo.workforce.page.records"
+      currentModuleId="demo.workforce"
+      identity={identity}
+      logoutPending={false}
+      navigation={customersAndContacts}
+      onLogout={noopLogout}
+    >
+      <section>Employee list</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.queryByText('Loading page…')).toBeNull();
+  expect(screen.getByText('Employee list').closest('.hidden')).toBeNull();
+  expect(currentLinkNames()).toEqual(['Employees']);
 });

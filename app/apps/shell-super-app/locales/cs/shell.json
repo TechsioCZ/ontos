@@ -53,6 +53,7 @@
           "contacts": "Kontakty",
           "integrations": "Integrace"
         },
+        "pending": "Načítání stránky…",
         "inactive": "Neaktivní",
         "close": "Zavřít navigaci",
         "toggle": "Přepnout navigaci",

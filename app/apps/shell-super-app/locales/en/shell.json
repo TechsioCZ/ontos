@@ -53,6 +53,7 @@
           "contacts": "Contacts",
           "integrations": "Integrations"
         },
+        "pending": "Loading page…",
         "inactive": "Inactive",
         "close": "Close navigation",
         "toggle": "Toggle navigation",

@@ -4,7 +4,7 @@ import { beforeEach, expect, rstest, it } from 'effect-rstest';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
-import { loadHomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
+import { loadHomePageModel, resetBrowserSessionCache } from '../../../../src/routes/[lang]/home-page-model.ts';
 
 const {
   availableLegalEntitiesMock,
@@ -56,9 +56,11 @@ const request = () =>
     headers: { cookie: 'session=test-session' },
   });
 
+// Each case starts without the browser session memo, so it sees its own session mock.
 const loadModel = ({ request: input }: { readonly request: Request }) =>
   Effect.suspend(() =>
-    loadHomePageModel(input).pipe(
+    resetBrowserSessionCache.pipe(
+      Effect.andThen(loadHomePageModel(input)),
       Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(browserConfigValuesMock())),
     ),
   );
@@ -267,5 +269,22 @@ it.effect('tears down stale authenticated data when tenant context requires auth
     expect(yield* loadModel({ request: request() })).toEqual({
       state: 'anonymous',
     });
+  }),
+);
+
+it.effect('reuses one authenticated browser session across loaders and rereads after an anonymous answer', () =>
+  Effect.gen(function* verifySessionMemo() {
+    yield* resetBrowserSessionCache;
+    const load = loadHomePageModel(new Request('https://shell.example.test/en')).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    );
+    yield* Effect.all([load, load, load], { concurrency: 'unbounded' });
+    expect(currentSessionMock).toHaveBeenCalledTimes(1);
+
+    yield* resetBrowserSessionCache;
+    currentSessionMock.mockReturnValue(Effect.succeed({ state: 'anonymous' as const }));
+    yield* load;
+    yield* load;
+    expect(currentSessionMock).toHaveBeenCalledTimes(3);
   }),
 );

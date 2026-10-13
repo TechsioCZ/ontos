@@ -22,6 +22,7 @@ import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.t
 };
 import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
+import { useSettledRouterState } from '../../../support/settled-router-state.ts';
 
 const {
   browserRunPromiseMock,
@@ -99,6 +100,9 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 rstest.mock('@tanstack/react-router', () => ({
   useLoaderData: rstest.fn(),
   useNavigate: () => navigateMock,
+
+  // Read lazily: mock factories run before this module's imports are initialized.
+  useRouterState: (options: Parameters<typeof useSettledRouterState>[0]) => useSettledRouterState(options),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({

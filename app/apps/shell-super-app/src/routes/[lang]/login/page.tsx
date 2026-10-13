@@ -51,6 +51,8 @@ const LoginPage = () => {
   const passwordRef = useRef<HTMLInputElement>(null);
   const [validation, setValidation] = useState<LoginValidation>(validLogin);
   const [submitting, setSubmitting] = useState(false);
+  // A form action resets its uncontrolled fields after every attempt; keep the login so only the password is retyped.
+  const [attemptedLogin, setAttemptedLogin] = useState('');
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;
@@ -71,6 +73,7 @@ const LoginPage = () => {
     const password = formData.get('password');
     const loginValue = Predicate.isString(login) ? login : '';
     const passwordValue = Predicate.isString(password) ? password : '';
+    setAttemptedLogin(loginValue.trim());
     const nextValidation = {
       loginMissing: loginValue.trim().length === 0,
       passwordMissing: passwordValue.length === 0,
@@ -116,7 +119,8 @@ const LoginPage = () => {
                 title: t(errorTitleKey),
                 type: 'error',
               });
-              loginRef.current?.focus();
+              // The login stays filled after a failed attempt, so the retry starts at the password.
+              passwordRef.current?.focus();
             }),
           onSuccess: () =>
             Effect.tryPromise(() => router.invalidate({ sync: true })).pipe(
@@ -147,6 +151,7 @@ const LoginPage = () => {
               <FormInput
                 aria-invalid={validation.loginMissing || undefined}
                 autoComplete="username"
+                defaultValue={attemptedLogin}
                 helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
                 id="login"
                 label={t('shell.login.field.login')}

@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
+import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-navigation.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -195,7 +196,8 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         moduleId: 'demo.sales-pipeline',
       },
       {
-        entrypoints: ['party.registry.page.customers', 'party.registry.page.contacts'],
+        // The contacts page has its own link under other modules, so it must not also mark Customers current.
+        entrypoints: ['party.registry.page.customers'],
         hrefs: ['/prodej/zakaznici', '/zakaznici', '/customers', '/contacts'],
         icon: 'icon-[mdi--domain]',
         key: 'customers',
@@ -322,14 +324,23 @@ const entryNotice = (entry: DashboardNavigationItem | undefined, t: Translate): 
   return entry.unavailable ? t('shell.modules.unavailable') : null;
 };
 
+/** How a destination relates to the rendered page: its own entrypoint, or only the same module. */
+type MatchedNavigationLink = Omit<ShellNavigationLink, 'current'> & {
+  readonly entrypointMatch: boolean;
+  readonly moduleMatch: boolean;
+};
+
 const buildShellNavigation = (
   props: Pick<
     AuthenticatedDashboardLayoutProps,
     'currentEntrypointKey' | 'currentModuleId' | 'homeCurrent' | 'navigation' | 'unavailableDeployments'
-  >,
+  > & {
+    /** Destination href of a navigation whose page is still loading; it alone is current until the page settles. */
+    readonly pendingHref?: string | undefined;
+  },
   t: Translate,
 ): ShellNavigationModel => {
-  const { currentEntrypointKey, currentModuleId, homeCurrent = true } = props;
+  const { currentEntrypointKey, currentModuleId, homeCurrent = true, pendingHref } = props;
   const visible = props.navigation.filter((entry) => !hiddenNavigationModuleIds.has(entry.moduleId));
   const demoItems = demoNavigationPresentation.flatMap((group) => group.items);
   const claimed = new Map<DemoNavigationItemPresentation, DashboardNavigationItem>();
@@ -359,7 +370,7 @@ const buildShellNavigation = (
     icon: group.icon,
     key: group.key,
     label: t(`shell.dashboard.navigation.groups.${group.key}`),
-    links: group.items.map((item): ShellNavigationLink => {
+    links: group.items.map((item): MatchedNavigationLink => {
       const entry = claimed.get(item);
       const entrypointCurrent = currentEntrypointKey !== undefined && item.entrypoints.includes(currentEntrypointKey);
       const moduleCurrent =
@@ -368,13 +379,14 @@ const buildShellNavigation = (
         currentModuleId !== undefined &&
         currentModuleId === entry.moduleId;
       return {
-        current: entrypointCurrent || moduleCurrent,
         enabled: entry !== undefined && entry.enabled && entry.href !== undefined,
+        entrypointMatch: entrypointCurrent,
         href: entry?.href ?? null,
         icon: item.icon,
         inactive: entry === undefined,
         key: item.key,
         label: t(`shell.dashboard.navigation.items.${item.key}`),
+        moduleMatch: moduleCurrent,
         notice: entryNotice(entry, t),
         state: entry?.state ?? 'active',
       };
@@ -384,45 +396,58 @@ const buildShellNavigation = (
   const otherLinks = visible
     .filter((entry) => !isClaimed(entry))
     .toSorted((left, right) => presentationOrder(left) - presentationOrder(right))
-    .map((entry): ShellNavigationLink => {
+    .map((entry): MatchedNavigationLink => {
       const presentation = siamparkNavigationPresentation.find(
         (item) => item.moduleId === entry.moduleId && item.href === entry.href,
       );
-      const current =
-        currentEntrypointKey !== undefined && presentation !== undefined
-          ? presentation.entrypoint === currentEntrypointKey
-          : currentModuleId === entry.moduleId;
+      const exact = currentEntrypointKey !== undefined && presentation !== undefined;
       return {
-        current,
         enabled: entry.enabled && entry.href !== undefined,
+        entrypointMatch: exact && presentation.entrypoint === currentEntrypointKey,
         href: entry.href ?? null,
         icon: presentation?.icon ?? 'icon-[mdi--view-grid-outline]',
         inactive: false,
         key: entry.href ?? entry.moduleId,
         label:
           presentation === undefined ? entry.label : t(`shell.dashboard.navigation.siampark.${presentation.label}`),
+        moduleMatch: !exact && currentModuleId === entry.moduleId,
         notice: entryNotice(entry, t),
         state: entry.state,
       };
     });
-  const deploymentLinks = props.unavailableDeployments.map((deployment): ShellNavigationLink => ({
-    current: false,
+  const deploymentLinks = props.unavailableDeployments.map((deployment): MatchedNavigationLink => ({
     enabled: false,
+    entrypointMatch: false,
     href: null,
     icon: 'icon-[mdi--cloud-off-outline]',
     inactive: false,
     key: `deployment:${deployment.appId}`,
     label: deployment.appId,
+    moduleMatch: false,
     notice: t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`),
     state: 'active',
   }));
-  const otherGroup: ShellNavigationGroup = {
-    icon: 'icon-[mdi--view-grid-outline]',
+  const otherGroup = {
+    icon: 'icon-[mdi--view-grid-outline]' as const,
     key: 'other',
     label: t('shell.dashboard.navigation.groups.other'),
     links: [...otherLinks, ...deploymentLinks],
   };
-  const groups = otherGroup.links.length === 0 ? demoGroups : [...demoGroups, otherGroup];
+  const candidates = otherGroup.links.length === 0 ? demoGroups : [...demoGroups, otherGroup];
+  // A page's own destination wins over destinations that only share its module, so one link is current.
+  const exactMatch = candidates.some((group) => group.links.some((link) => link.entrypointMatch));
+  const settleLink = ({ entrypointMatch, moduleMatch, ...link }: MatchedNavigationLink): ShellNavigationLink => {
+    if (pendingHref !== undefined) {
+      return { ...link, current: link.enabled && link.href === pendingHref };
+    }
+    return { ...link, current: exactMatch ? entrypointMatch : moduleMatch };
+  };
+  const groups: ShellNavigationGroup[] = candidates.map((group) => ({
+    icon: group.icon,
+    key: group.key,
+    label: group.label,
+    links: group.links.map(settleLink),
+  }));
   const currentGroup = groups.find((group) => group.links.some((link) => link.current));
   const currentLink = currentGroup?.links.find((link) => link.current);
 
@@ -431,7 +456,7 @@ const buildShellNavigation = (
       currentGroup === undefined || currentLink === undefined ? undefined : { group: currentGroup, link: currentLink },
     groups,
     home: {
-      current: homeCurrent && currentModuleId === undefined,
+      current: pendingHref === undefined ? homeCurrent && currentModuleId === undefined : pendingHref === '/',
       enabled: true,
       href: '/',
       icon: 'icon-[mdi--home-outline]',
@@ -854,10 +879,12 @@ const topBarOffsetStyle: SidebarOffsetStyle = {
  * Routed content renders in `<main>` with token spacing and no max width, so dense tables use the full column.
  */
 export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayoutProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const [searchValue, setSearchValue] = useState('');
   const { tenantSwitchFailed } = props;
-  const model = buildShellNavigation(props, t);
+  const pendingPath = usePendingNavigationPath();
+  const pendingHref = pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, language ?? '');
+  const model = buildShellNavigation({ ...props, pendingHref }, t);
 
   useEffect(() => {
     if (tenantSwitchFailed) {
@@ -928,8 +955,17 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           />
           <Sidebar.Inset className="flex min-w-0 flex-1 flex-col">
             <div className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250">
-              {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}
-              {props.children}
+              {pendingHref === undefined ? null : (
+                <StatusText aria-live="polite" showIcon status="default">
+                  {t('shell.dashboard.navigation.pending')}
+                </StatusText>
+              )}
+              {/* The router keeps the previous page until the next one loads; hide it instead of showing it under
+                  the new URL, but keep it mounted so a cancelled navigation returns to it intact. */}
+              <div className={pendingHref === undefined ? 'contents' : 'hidden'}>
+                {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}
+                {props.children}
+              </div>
             </div>
           </Sidebar.Inset>
         </div>

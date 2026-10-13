@@ -317,3 +317,20 @@ it.effect('keeps navigation on the login route when auth cache refresh fails', (
     );
   }),
 );
+
+it.effect('keeps the login and clears only the password after rejected credentials', () =>
+  Effect.gen(function* keepsLoginAfterRejectedCredentials() {
+    signInMock.mockReturnValueOnce(Effect.fail({ _tag: 'InvalidCredentialsProblem' }));
+    yield* submitLogin('admin', 'wrong');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(screen.getByText('shell.login.error.invalid')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(getLogin()).toHaveProperty('value', 'admin');
+        expect(getPassword()).toHaveProperty('value', '');
+        expect(document.activeElement).toBe(getPassword());
+      }),
+    );
+  }),
+);
