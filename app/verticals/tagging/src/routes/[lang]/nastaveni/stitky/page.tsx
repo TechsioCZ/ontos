@@ -1,4 +1,4 @@
-import { EmptyState, PageHeader, TagBadge } from '@app/admin-ui';
+import { EmptyState, PageHeader, SidePanel, TagBadge } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -162,7 +162,7 @@ const TagEditorDialog = ({
   }));
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <CancelButton onClick={onClose} />
@@ -176,13 +176,12 @@ const TagEditorDialog = ({
           </Button>
         </>
       }
-      onOpenChange={(details) => {
-        if (!details.open) {
+      onOpenChange={(next) => {
+        if (!next) {
           onClose();
         }
       }}
       open
-      placement="right"
       size="md"
       title={t(tag === null ? newTagKey : 'tagging.tags.edit')}
     >
@@ -199,6 +198,7 @@ const TagEditorDialog = ({
           </StatusText>
         )}
         <FormInput
+          autoComplete="off"
           helpText={showNameError ? nameError : undefined}
           id="tag-name"
           label={t('tagging.tags.form.name')}
@@ -222,6 +222,7 @@ const TagEditorDialog = ({
           value={[draft.color]}
         />
         <FormTextarea
+          autoComplete="off"
           id="tag-description"
           label={t('tagging.tags.form.description')}
           name="description"
@@ -250,7 +251,7 @@ const TagEditorDialog = ({
           )}
         </fieldset>
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -300,6 +301,7 @@ const DeleteTagDialog = ({
           </Button>
         </>
       }
+      customTrigger
       description={t('tagging.tags.delete.description')}
       onOpenChange={(details) => {
         if (!details.open) {
@@ -422,16 +424,15 @@ const KindSection = ({ kind, tagId, total }: { kind: SubjectKind; tagId: TagId; 
 const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagWithCounts }) => {
   const { t } = useModernI18n();
   return (
-    <Dialog
+    <SidePanel
       actions={<CancelButton onClick={onClose} />}
       description={t('tagging.tags.assigned.description')}
-      onOpenChange={(details) => {
-        if (!details.open) {
+      onOpenChange={(next) => {
+        if (!next) {
           onClose();
         }
       }}
       open
-      placement="right"
       size="md"
       title={t('tagging.tags.assigned.title', { name: tag.name })}
     >
@@ -440,7 +441,7 @@ const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagW
           <KindSection key={kind} kind={kind} tagId={tag.id} total={tag.counts[kind] ?? 0} />
         ))}
       </div>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -617,10 +618,11 @@ const TagsPageContent = () => {
         translations={{
           actionsLabel: t('tagging.tags.table.actions'),
           clearSearchLabel: t('tagging.tags.table.clearSearch'),
+          loadingLabel: t('tagging.tags.table.loadingLabel'),
           pageSizeLabel: t('tagging.tags.table.pageSize'),
           rangeLabel: ({ end, start, total }) => t('tagging.tags.table.range', { end, start, total }),
           searchButtonLabel: t(searchKey),
-          searchLabel: t(searchKey),
+          searchLabel: t('tagging.tags.table.searchLabel'),
           searchPlaceholder: t(searchKey),
         }}
       />

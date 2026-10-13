@@ -103,11 +103,13 @@
         "description": "Popis",
         "empty": "Zatím tu nejsou žádné štítky.",
         "emptyDescription": "Založte první štítek a přiřaďte ho záznamům.",
+        "loadingLabel": "Načítání dat",
         "name": "Název",
         "noResults": "Hledání nenašlo žádný štítek.",
         "pageSize": "Řádků na stránku",
         "range": "{{start}}–{{end}} z {{total}}",
-        "search": "Hledat štítky…"
+        "search": "Hledat štítky…",
+        "searchLabel": "Filtrovat štítky"
       },
       "updated": "Štítek upraven",
       "selectPlaceholder": "Vyberte…",

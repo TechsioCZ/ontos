@@ -103,11 +103,13 @@
         "description": "Description",
         "empty": "No tags yet.",
         "emptyDescription": "Create the first tag and assign it to records.",
+        "loadingLabel": "Loading data",
         "name": "Name",
         "noResults": "No tag matches the search.",
         "pageSize": "Rows per page",
         "range": "{{start}}–{{end}} of {{total}}",
-        "search": "Search tags…"
+        "search": "Search tags…",
+        "searchLabel": "Filter tags"
       },
       "updated": "Tag updated",
       "selectPlaceholder": "Select…",

@@ -76,6 +76,10 @@ export const assignmentsFor = (kind: SubjectKind, ids: readonly string[]) =>
         Effect.map((records) => records.assignments),
       );
 
+/** Tags and the assignments of the given subject ids in one operation. Callers skip the call for an empty list. */
+export const recordsFor = (kind: SubjectKind, ids: readonly string[]) =>
+  freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectIds: ids.join(','), subjectKind: kind }, id)));
+
 /** Ids of the subjects of one kind that carry the given tag. */
 export const subjectsWithTag = (kind: SubjectKind, tagId: TagId) =>
   freshCorrelation.pipe(

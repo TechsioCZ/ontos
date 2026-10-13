@@ -6,25 +6,26 @@
  *
  * - `TagFilter({ kind, value, onChange })`: single-tag Combobox filter for subjects of `kind`.
  *   `value` is a `TagId` or `null`; `onChange` receives the same shape.
- * - `TagCell({ tags })`: the tags of one row as chips, three at most, then `+N`.
+ * - `TagCell({ tags, loading })`: the tags of one row as chips, two at most, then `+N`. Pass `loading`
+ *   while `useTagsFor` is still loading, so an empty cell never reads as "no tags".
  * - `useTagsFor(kind, ids)`: `{ tagsBySubject, status, refetch }` for the rows of a list. `tagsBySubject`
  *   maps each subject id to its tags; `status` is `loading`, `ready` or `error`; `refetch` reloads.
  * - `BulkTagDialog({ kind, subjectIds, open, onOpenChange, onDone })`: adds or removes one tag on many
  *   subjects. Confirms with a toast, so the host page must render one `<Toaster />` from
  *   `@techsio/ui-kit/molecules/toast`.
  */
-import { TagBadge } from '@app/admin-ui';
+import { SidePanel, TagBadge } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect, Schema } from 'effect';
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import { useEffect, useState } from 'react';
-import { assignmentsFor, assignTag, listTags, unassignTag } from '../api/records-client.ts';
+import { assignTag, listTags, recordsFor, unassignTag } from '../api/records-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { Subject, SubjectId, SubjectKind, Tag, TagColor, TagId } from '../../shared/apis/records.ts';
 import csResource from '../../locales/cs/tagging.json';
@@ -73,8 +74,11 @@ export const runTagEffect = <A, E>(
   void browserRuntime.runPromise(effect.pipe(Effect.match(handlers)));
 };
 
-/** The tags of one row: two chips, then a muted `+N` for the rest. */
-export const TagCell = ({ tags }: { tags: readonly Tag[] }) => {
+/** The tags of one row: two chips, then a muted `+N` for the rest. A skeleton while the row's tags still load. */
+export const TagCell = ({ loading = false, tags }: { loading?: boolean; tags: readonly Tag[] }) => {
+  if (loading && tags.length === 0) {
+    return <Skeleton.Text className="w-20" lastLineWidth="100%" noOfLines={1} size="sm" />;
+  }
   const visible = tags.slice(0, 2);
   const hiddenCount = tags.length - visible.length;
   return (
@@ -159,24 +163,37 @@ const TagPickerField = ({
 }: TagPickerFieldProps) => {
   const { t } = useModernI18n();
   const catalog = useTagCatalog(kind, enabled);
+  const [open, setOpen] = useState(false);
+  // ui-kit does not forward zag's `openOnClick`, so a click into the input opens the list here.
+  // Keyboard users keep ArrowDown and typing; clicks elsewhere (chevron, options) keep zag's own handling.
+  const openOnInputClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!open && event.target === event.currentTarget.querySelector('input')) {
+      setOpen(true);
+    }
+  };
   return (
-    <Combobox
-      clearable={clearable}
-      error={catalog.status === 'error' ? t('tagging.tags.loadFailed') : undefined}
-      helpText={helpText}
-      items={tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null)}
-      {...(labelKey === undefined ? {} : { label: t(labelKey) })}
-      loading={catalog.status === 'loading'}
-      loadingMessage={t('tagging.tags.loading')}
-      noResultsMessage={t('tagging.tags.filter.noResults')}
-      onChange={(next) => onChange(pickTagId(catalog.tags, next))}
-      onRetry={() => onRetry()}
-      placeholder={t('tagging.tags.filter.placeholder')}
-      retryLabel={t('tagging.tags.retry')}
-      size={compact ? 'sm' : 'md'}
-      validateStatus={invalid ? 'error' : 'default'}
-      value={value === null ? [] : [value]}
-    />
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer-only shortcut; the input inside keeps full keyboard access
+    <div className="contents" onClick={openOnInputClick}>
+      <Combobox
+        clearable={clearable}
+        error={catalog.status === 'error' ? t('tagging.tags.loadFailed') : undefined}
+        helpText={helpText}
+        items={tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null)}
+        {...(labelKey === undefined ? {} : { label: t(labelKey) })}
+        loading={catalog.status === 'loading'}
+        loadingMessage={t('tagging.tags.loading')}
+        noResultsMessage={t('tagging.tags.filter.noResults')}
+        onChange={(next) => onChange(pickTagId(catalog.tags, next))}
+        onOpenChange={setOpen}
+        onRetry={() => onRetry()}
+        open={open}
+        placeholder={t('tagging.tags.filter.placeholder')}
+        retryLabel={t('tagging.tags.retry')}
+        size="sm"
+        validateStatus={invalid ? 'error' : 'default'}
+        value={value === null ? [] : [value]}
+      />
+    </div>
   );
 };
 
@@ -221,35 +238,39 @@ export const useTagsFor = (kind: SubjectKind, ids: readonly SubjectId[]) => {
   }
   useEffect(() => {
     let active = true;
-    runTagEffect(Effect.all([listTags, assignmentsFor(request.kind, request.subjectIds)], { concurrency: 1 }), {
-      onFailure: () => {
-        if (active) {
-          setStatus('error');
-          setTagsBySubject(new Map());
-        }
-      },
-      onSuccess: ([tags, assignments]) => {
-        if (!active) {
-          return;
-        }
-        const tagById = new Map(tags.map((tag) => [tag.id, tag] as const));
-        const next = new Map<SubjectId, Tag[]>();
-        for (const assignment of assignments) {
-          const tag = tagById.get(assignment.tagId);
-          if (tag !== undefined) {
-            next.set(assignment.subject.id, [...(next.get(assignment.subject.id) ?? []), tag]);
+    // One records read carries both the tag catalog and the assignments, so a list costs one operation.
+    if (request.subjectIds.length > 0) {
+      runTagEffect(recordsFor(request.kind, request.subjectIds), {
+        onFailure: () => {
+          if (active) {
+            setStatus('error');
+            setTagsBySubject(new Map());
           }
-        }
-        setStatus('ready');
-        setTagsBySubject(next);
-      },
-    });
+        },
+        onSuccess: (records) => {
+          if (!active) {
+            return;
+          }
+          const tagById = new Map(records.tags.map((tag) => [tag.id, tag] as const));
+          const next = new Map<SubjectId, Tag[]>();
+          for (const assignment of records.assignments) {
+            const tag = tagById.get(assignment.tagId);
+            if (tag !== undefined) {
+              next.set(assignment.subject.id, [...(next.get(assignment.subject.id) ?? []), tag]);
+            }
+          }
+          setStatus('ready');
+          setTagsBySubject(next);
+        },
+      });
+    }
     return () => {
       active = false;
     };
   }, [request]);
   const refetch = () => setRequest((current) => ({ ...current }));
-  return { refetch, status, tagsBySubject };
+  // An empty list has nothing to load, so it is ready at once and never issues a read.
+  return { refetch, status: request.subjectIds.length === 0 ? 'ready' : status, tagsBySubject };
 };
 
 const subjectChunkSize = 500;
@@ -310,10 +331,10 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, subjectIds }: 
 
   const tagError = submitted && tagId === null;
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
-          <Button onClick={() => close()} theme="outlined" variant="secondary">
+          <Button disabled={busy} onClick={() => close()} size="sm" theme="outlined" variant="secondary">
             {t('tagging.tags.form.cancel')}
           </Button>
           <Button
@@ -321,20 +342,21 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, subjectIds }: 
             isLoading={busy}
             loadingText={t('tagging.tags.bulk.busy')}
             onClick={() => submit()}
+            size="sm"
             variant="primary"
           >
             {t('tagging.tags.bulk.submit')}
           </Button>
         </>
       }
+      closeOnInteractOutside={false}
       description={t('tagging.tags.bulk.description', { total: subjectIds.length })}
-      onOpenChange={(details) => {
-        if (!details.open) {
+      onOpenChange={(next) => {
+        if (!next && !busy) {
           close();
         }
       }}
       open={open}
-      placement="right"
       size="sm"
       title={t('tagging.tags.bulk.title')}
     >
@@ -354,7 +376,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, subjectIds }: 
           onChange={setTagId}
           value={tagId}
         />
-        <RadioGroup onValueChange={(next) => setMode(next === 'remove' ? 'remove' : 'add')} value={mode}>
+        <RadioGroup onValueChange={(next) => setMode(next === 'remove' ? 'remove' : 'add')} size="sm" value={mode}>
           <RadioGroup.Label>{t('tagging.tags.bulk.action')}</RadioGroup.Label>
           <RadioGroup.ItemGroup>
             <RadioGroup.Item value="add">
@@ -370,7 +392,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, subjectIds }: 
           </RadioGroup.ItemGroup>
         </RadioGroup>
       </div>
-    </Dialog>
+    </SidePanel>
   );
 };
 
