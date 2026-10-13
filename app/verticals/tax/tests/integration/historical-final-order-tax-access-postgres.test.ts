@@ -34,7 +34,7 @@ import {
   staffAuthenticationNamespaceRegistryLayer,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Config, ConfigProvider, Context, Data, Effect, Layer, Schema } from 'effect';
+import { Config, ConfigProvider, Context, Data, Effect, Layer, Schema, pipe } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
 
@@ -89,6 +89,11 @@ const AuthoritySchema = Schema.Struct({
   valid_until: Schema.String,
 });
 
+/** Native pg rows cross an unvalidated database boundary before TAX fixture schemas establish their shapes. */
+interface HistoricalFixtureDatabaseResult {
+  readonly rows: readonly unknown[];
+}
+
 /**
  * Native infrastructure bootstrap only: disposable records and exact SpiceDB relationships are admin-created and
  * cleaned up. Authenticated session and validated release publication are fixtures, not a signed/redeemed gateway
@@ -108,15 +113,15 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     return yield* new HistoricalAccessFixtureError({ reason: 'Native fixture bootstrap requires localhost services' });
   }
   const admin = yield* Effect.acquireRelease(
-    attempt('Connect historical-access fixture database', async () => {
-      const client = new Client({ connectionString: adminUrl });
-      await client.connect();
-      return client;
-    }),
+    Effect.sync(() => new Client({ connectionString: adminUrl })),
     (client) => attempt('Close historical-access fixture database', () => client.end()).pipe(Effect.orDie),
   );
+  yield* attempt('Connect historical-access fixture database', () => admin.connect());
   const query = (statement: string, values: readonly unknown[] = []) =>
-    attempt(`Historical-access fixture SQL ${statement.slice(0, 120)}`, () => admin.query(statement, [...values]));
+    attempt(`Historical-access fixture SQL ${statement.slice(0, 120)}`, () => admin.query(statement, [...values])).pipe(
+      // pg does not validate row shapes. Keep them unknown until the owning schema decodes the database boundary.
+      Effect.map(({ rows }): HistoricalFixtureDatabaseResult => ({ rows })),
+    );
   const spice = yield* Effect.acquireRelease(
     Effect.sync(() => v1.NewClientWithCustomCert(key, endpoint, Buffer.from(ca))),
     (client) => Effect.sync(() => client.close()),
@@ -302,8 +307,9 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   const context = yield* Layer.build(runtimes);
   const reads = Context.get(context, ReadRuntime);
   const actions = Context.get(context, ActionRuntime);
-  const principals = yield* Effect.all(
-    actorScopes.map((actor) =>
+  const principals = yield* pipe(
+    actorScopes,
+    Effect.forEach((actor) =>
       Schema.decodeEffect(TrustedPrincipalContextSchema)({
         ...actor,
         authContextRef: `better-auth-session:${actor.authBindingId}`,
