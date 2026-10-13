@@ -1,0 +1,405 @@
+diff --git a/dist/molecules/combobox.js b/dist/molecules/combobox.js
+index a71a2b305cd74656d2da925c36b2e10f4ff2f230..9a25e341522bc608cd90ab8ab8efdba87fdac340 100644
+--- a/dist/molecules/combobox.js
++++ b/dist/molecules/combobox.js
+@@ -154,7 +154,7 @@ const comboboxVariants = tv({
+         size: "md"
+     }
+ });
+-function Combobox({ id, name, label, size, placeholder = "Select option", disabled = false, readOnly = false, required = false, items, groups, value, defaultValue, inputValue, multiple = false, validateStatus, helpText, showHelpTextIcon = true, noResultsMessage = 'No results found for "{inputValue}"', clearable = true, selectionBehavior = "replace", closeOnSelect = true, allowCustomValue = false, loopFocus = true, autoFocus = false, open, defaultOpen, triggerIcon = "token-icon-combobox-chevron", triggerIconSize, clearIcon = "token-icon-combobox-clear", inputBehavior = "autocomplete", filterBehavior = "local", loading = false, loadingMessage = "Loading results", error, retryLabel = "Retry", onRetry, renderItem, onChange, onInputValueChange, onOpenChange, mode = "selection", navigate, footer, portalled = true }) {
++function Combobox({ id, name, label, size, placeholder = "Select option", disabled = false, readOnly = false, required = false, items, groups, value, defaultValue, inputValue, multiple = false, validateStatus, helpText, showHelpTextIcon = true, noResultsMessage = 'No results found for "{inputValue}"', clearable = true, selectionBehavior = "replace", closeOnSelect = true, allowCustomValue = false, loopFocus = true, autoFocus = false, open, defaultOpen, triggerIcon = "token-icon-combobox-chevron", triggerIconSize, clearIcon = "token-icon-combobox-clear", inputBehavior = "autocomplete", filterBehavior = "local", loading = false, loadingMessage = "Loading results", error, retryLabel = "Retry", onRetry, renderItem, onChange, onInputValueChange, onOpenChange, mode = "selection", navigate, footer, portalled = true, openOnClick = false, translations }) {
+     const generatedId = useId();
+     const uniqueId = id || generatedId;
+     const listId = `${uniqueId}-listbox`;
+@@ -193,6 +193,8 @@ function Combobox({ id, name, label, size, placeholder = "Select option", disabl
+         disabled,
+         readOnly,
+         closeOnSelect,
++        openOnClick,
++        translations,
+         selectionBehavior: navigation ? "preserve" : selectionBehavior,
+         allowCustomValue: !navigation && allowCustomValue,
+         autoFocus,
+diff --git a/dist/molecules/date-picker.js b/dist/molecules/date-picker.js
+index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..ab378e6737133e77203dea41f935c984164db73a 100644
+--- a/dist/molecules/date-picker.js
++++ b/dist/molecules/date-picker.js
+@@ -259,7 +259,8 @@ function serializeDatePickerValue(value) {
+ function DatePicker({ children, className, defaultOpen = false, defaultValue, disabled, endName, flip = true, form, granularity = "day", gutter = 8, hideTimeZone = false, hourCycle, id, invalid, isDateUnavailable, isTimeUnavailable, locale = "en-US", max, min, name, numOfMonths, offset = {
+     mainAxis: 8,
+     crossAxis: 0
+-}, onOpenChange, onValueChange, open, overflowPadding = 8, placement = "bottom-start", readOnly, ref, required, sameWidth = false, selectionMode = "single", shouldForceLeadingZeros = false, size = "md", slide = true, startOfWeek, startName, timeZone = "UTC", value, ...htmlProps }) {
++}, onOpenChange, onValueChange, open, overflowPadding = 8, placement = "bottom-start", readOnly, ref, required, sameWidth = false, selectionMode = "single", shouldForceLeadingZeros = false, size = "md", slide = true, startOfWeek, startName, timeZone = "UTC", translations, value, ...htmlProps }) {
++    const { segmentLabels, ...pickerTranslations } = translations ?? {};
+     const generatedId = useId();
+     const uniqueId = id ?? generatedId;
+     const isTimed = "day" !== granularity;
+@@ -406,6 +407,7 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
+         selectionMode,
+         startOfWeek,
+         timeZone,
++        translations: pickerTranslations,
+         value: pickerValues
+     });
+     const pickerApi = date_picker_connect(pickerService, normalizeProps);
+@@ -490,6 +492,7 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
+             pickerApi,
+             requestOpen,
+             required: Boolean(required),
++            segmentLabels,
+             selectionMode,
+             setDraftTimePart: (part, nextValue, index = 0)=>{
+                 if ("day" !== granularity) dispatch({
+@@ -550,7 +553,9 @@ function DatePicker({ children, className, defaultOpen = false, defaultValue, di
+ }
+ DatePicker.Label = function({ children, className, ref, ...props }) {
+     const { dateInputApi, pickerApi, required, size, styles } = useDatePickerContext();
+-    const labelProps = mergeProps({
++    // The machines point htmlFor at inputs that are never rendered; the segment group is
++    // aria-labelledby this label and the label's click handler focuses the first segment.
++    const { htmlFor: _unrenderedInputId, ...labelProps } = mergeProps({
+         ...props,
+         ref
+     }, pickerApi.getLabelProps(), dateInputApi.getLabelProps());
+@@ -586,7 +591,7 @@ DatePicker.Control = function({ children, className, ref, ...props }) {
+     });
+ };
+ DatePicker.Segments = function({ className, endLabel = "End", ref, separator = "–", startLabel = "Start", ...props }) {
+-    const { dateInputApi, required, selectionMode, styles } = useDatePickerContext();
++    const { dateInputApi, required, segmentLabels, selectionMode, styles } = useDatePickerContext();
+     const startDescriptorId = useId();
+     const endDescriptorId = useId();
+     const renderSegments = (index)=>dateInputApi.getSegments({
+@@ -596,6 +601,9 @@ DatePicker.Segments = function({ className, endLabel = "End", ref, separator = "
+                     index,
+                     segment
+                 }),
++                ...segmentLabels?.[segment.type] ? {
++                    "aria-label": segmentLabels[segment.type]
++                } : {},
+                 "aria-required": required && "literal" !== segment.type ? true : void 0,
+                 className: styles.segment(),
+                 key: `${segment.type}-${segmentIndex}`
+@@ -684,6 +692,7 @@ DatePicker.Trigger = function({ children, className, icon, iconSize = "current",
+     const triggerProps = mergeProps(props, pickerApi.getTriggerProps());
+     return /*#__PURE__*/ jsx(Button, {
+         ...triggerProps,
++        "aria-controls": pickerApi.open ? triggerProps["aria-controls"] : void 0,
+         "aria-invalid": dateInputApi.invalid || void 0,
+         className: styles.trigger({
+             className
+diff --git a/dist/molecules/dialog.js b/dist/molecules/dialog.js
+index 676e8e2e61f94e483fcdcce57c530b2d5b1d004a..67e733ee7f87c71f6fa327926c8cc08e62856fe4 100644
+--- a/dist/molecules/dialog.js
++++ b/dist/molecules/dialog.js
+@@ -224,7 +224,7 @@ const dialogVariants = tv({
+         position: "fixed"
+     }
+ });
+-function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "dialog", placement = "center", position = "fixed", size = "md", behavior = "modal", closeOnEscape = true, closeOnInteractOutside = true, preventScroll = true, trapFocus = true, customTrigger = false, triggerText = "Open", title, description, children, hideCloseButton = false, actions, className, modal = true, portal = true }) {
++function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "dialog", placement = "center", position = "fixed", size = "md", behavior = "modal", closeOnEscape = true, closeOnInteractOutside = true, preventScroll = true, trapFocus = true, customTrigger = false, triggerText = "Open", title, description, children, hideCloseButton = false, closeLabel = "Close dialog", actions, className, modal = true, portal = true }) {
+     const generatedId = useId();
+     const uniqueId = id || generatedId;
+     const service = useMachine(__rspack_external__zag_js_dialog_5c81bb31.machine, {
+@@ -270,7 +270,7 @@ function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "
+                                 size: "md",
+                                 tone: "neutral",
+                                 ...api.getCloseTriggerProps(),
+-                                "aria-label": "Close dialog"
++                                "aria-label": closeLabel
+                             }),
+                             title && /*#__PURE__*/ jsx("h2", {
+                                 className: titleSlot(),
+diff --git a/dist/molecules/switch.js b/dist/molecules/switch.js
+index dc835f307d1c2098f8c3249c284cbfcfa9e16094..a9bb0c34d03607e03cebaabff4dd52ff87af38aa 100644
+--- a/dist/molecules/switch.js
++++ b/dist/molecules/switch.js
+@@ -46,7 +46,7 @@ const switchVariants = tv({
+         hiddenInput: "sr-only"
+     }
+ });
+-function Switch({ id, name, value, checked, defaultChecked, disabled = false, readOnly = false, required = false, dir = "ltr", children, className, onCheckedChange, validateStatus, helpText, showHelpTextIcon = true }) {
++function Switch({ id, name, value, checked, defaultChecked, disabled = false, readOnly = false, required = false, dir = "ltr", children, className, onCheckedChange, validateStatus, helpText, showHelpTextIcon = true, "aria-label": ariaLabel }) {
+     const generatedId = useId();
+     const uniqueId = id || generatedId;
+     const helpTextId = `${uniqueId}-help`;
+@@ -78,7 +78,10 @@ function Switch({ id, name, value, checked, defaultChecked, disabled = false, re
+                     /*#__PURE__*/ jsx("input", {
+                         className: hiddenInput(),
+                         ...api.getHiddenInputProps(),
+-                        "aria-describedby": helpText ? helpTextId : void 0
++                        "aria-describedby": helpText ? helpTextId : void 0,
++                        "aria-label": children ? void 0 : ariaLabel,
++                        "aria-labelledby": children ? api.getHiddenInputProps()["aria-labelledby"] : void 0,
++                        role: "switch"
+                     }),
+                     /*#__PURE__*/ jsx("span", {
+                         className: control(),
+diff --git a/dist/molecules/toast.js b/dist/molecules/toast.js
+index 6681008502fd8d24452bd44e550c015a05af9de8..78cd1dbbd3c24362f6d351eaa4120212fd437236 100644
+--- a/dist/molecules/toast.js
++++ b/dist/molecules/toast.js
+@@ -44,7 +44,7 @@ const toastVariants = tv({
+         ]
+     }
+ });
+-function Toast({ actor, index, parent, placement }) {
++function Toast({ actor, index, parent, placement, closeLabel = "Close notification", loadingLabel = "loading..." }) {
+     const composedProps = {
+         ...actor,
+         index,
+@@ -72,7 +72,7 @@ function Toast({ actor, index, parent, placement }) {
+                     /*#__PURE__*/ jsx("div", {
+                         className: title(),
+                         "data-type": api.type,
+-                        children: "loading" === api.type ? "loading..." : api.title
++                        children: "loading" === api.type ? api.title ?? loadingLabel : api.title
+                     }),
+                     /*#__PURE__*/ jsx(ActionIcon, {
+                         className: closeButton(),
+@@ -80,7 +80,7 @@ function Toast({ actor, index, parent, placement }) {
+                         size: "sm",
+                         tone: "neutral",
+                         ...api.getCloseTriggerProps(),
+-                        "aria-label": "Close notification"
++                        "aria-label": closeLabel
+                     })
+                 ]
+             }),
+@@ -101,7 +101,7 @@ const toaster = __rspack_external__zag_js_toast_856c971b.createStore({
+     gap: 16,
+     offsets: "24px"
+ });
+-function Toaster() {
++function Toaster({ closeLabel, label, loadingLabel } = {}) {
+     const service = useMachine(__rspack_external__zag_js_toast_856c971b.group.machine, {
+         id: useId(),
+         store: toaster
+@@ -112,9 +112,14 @@ function Toaster() {
+         children: /*#__PURE__*/ jsx("div", {
+             className: group(),
+             ...api.getGroupProps(),
++            ...void 0 === label ? {} : {
++                "aria-label": label
++            },
+             children: api.getToasts().map((toast, index)=>/*#__PURE__*/ jsx(Toast, {
+                     actor: toast,
++                    closeLabel: closeLabel,
+                     index: index,
++                    loadingLabel: loadingLabel,
+                     parent: service
+                 }, toast.id))
+         })
+diff --git a/dist/organisms/data-table.fields.js b/dist/organisms/data-table.fields.js
+index 57bef4a7df1775110dbb9cd897ff34885ef72ae3..913bc61f5467712a2e37c5a63cb7aa6ac4946bf9 100644
+--- a/dist/organisms/data-table.fields.js
++++ b/dist/organisms/data-table.fields.js
+@@ -130,6 +130,9 @@ function FieldSelect({ items, value, ariaLabel, placeholder, disabled, size = "s
+                 /*#__PURE__*/ jsx(Select.Control, {
+                     children: /*#__PURE__*/ jsx(Select.Trigger, {
+                         "aria-label": ariaLabel,
++                        ...ariaLabel ? {
++                            "aria-labelledby": void 0
++                        } : {},
+                         children: /*#__PURE__*/ jsx(Select.ValueText, {
+                             placeholder: placeholder
+                         })
+diff --git a/dist/organisms/data-table.js b/dist/organisms/data-table.js
+index 763d1aead36d0d195eb66a1656dc504372fa73e6..805dfcd6a98d4ea8015935e36e2f2e2db8243929 100644
+--- a/dist/organisms/data-table.js
++++ b/dist/organisms/data-table.js
+@@ -349,7 +349,9 @@ const DEFAULT_TRANSLATIONS = {
+     operatorLabels: {},
+     editingLabel: "Editing a row — other table controls are locked",
+     rangeLabel: ({ start, end, total })=>`${start}–${end} of ${total}`,
+-    requiredLabel: "Required"
++    requiredLabel: "Required",
++    selectRowLabel: (rowLabel)=>`Select ${rowLabel}`,
++    editRowLabel: (rowLabel)=>`Edit ${rowLabel}`
+ };
+ const SELECTION_COLUMN_ID = "__select";
+ const EMPTY_COLUMN_PINNING = {
+@@ -718,6 +720,7 @@ function DataTable(props) {
+             selectAllLabel: translations.selectAllLabel,
+             selectionLabel: translations.selectionLabel,
+             reorderLabel: translations.reorderLabel,
++            selectRowLabel: translations.selectRowLabel,
+             showSelectAll: "multiple" === selectionMode && null == maxSelectedRows
+         }), [
+         userColumns,
+@@ -728,6 +731,7 @@ function DataTable(props) {
+         translations.selectAllLabel,
+         translations.selectionLabel,
+         translations.reorderLabel,
++        translations.selectRowLabel,
+         selectionMode,
+         maxSelectedRows
+     ]);
+@@ -1326,7 +1330,7 @@ function DataTable(props) {
+             ]
+         });
+         return /*#__PURE__*/ jsx(ActionIcon, {
+-            "aria-label": `Edit ${getRowLabel?.(row) ?? `row ${row.id}`}`,
++            "aria-label": translations.editRowLabel(getRowLabel?.(row) ?? `row ${row.id}`),
+             disabled: isEditing || (canEditRow ? !canEditRow(row) : false),
+             icon: "icon-[mdi--pencil-outline]",
+             id: `${instanceId}-edit-${row.id}`,
+@@ -1671,7 +1675,7 @@ function DataTable(props) {
+         })
+     });
+ }
+-function buildColumns({ userColumns, enableRowReorder, enableRowSelection, locked, getRowLabel, selectAllLabel, selectionLabel, reorderLabel, showSelectAll }) {
++function buildColumns({ userColumns, enableRowReorder, enableRowSelection, locked, getRowLabel, selectAllLabel, selectionLabel, reorderLabel, selectRowLabel, showSelectAll }) {
+     const leading = [];
+     if (enableRowReorder) leading.push({
+         id: DRAG_COLUMN_ID,
+@@ -1700,7 +1704,7 @@ function buildColumns({ userColumns, enableRowReorder, enableRowSelection, locke
+                 children: selectionLabel
+             }),
+         cell: ({ row })=>/*#__PURE__*/ jsx(Checkbox, {
+-                "aria-label": `Select ${getRowLabel?.(row) ?? `row ${row.id}`}`,
++                "aria-label": selectRowLabel(getRowLabel?.(row) ?? `row ${row.id}`),
+                 checked: row.getIsSelected(),
+                 disabled: locked || !row.getCanSelect(),
+                 indeterminate: row.getIsSomeSelected(),
+diff --git a/dist/src/molecules/combobox.d.ts b/dist/src/molecules/combobox.d.ts
+index ccb6c45dc5ffb7f28fc201d83c96757d6040c547..8e0b23d8dc79a69c6b5df078cd27e13bb37c7631 100644
+--- a/dist/src/molecules/combobox.d.ts
++++ b/dist/src/molecules/combobox.d.ts
+@@ -204,7 +204,11 @@ export type ComboboxProps<T = unknown> = VariantProps<typeof comboboxVariants> &
+     navigate?: ZagComboboxProps["navigate"];
+     footer?: ReactNode;
+     portalled?: boolean;
++    /** Open the listbox when the input is clicked. Defaults to false (zag default). */
++    openOnClick?: boolean;
++    /** Accessible names forwarded to the zag machine (trigger and clear buttons). */
++    translations?: ZagComboboxProps["translations"];
+ };
+-export declare function Combobox<T = unknown>({ id, name, label, size, placeholder, disabled, readOnly, required, items, groups, value, defaultValue, inputValue, multiple, validateStatus, helpText, showHelpTextIcon, noResultsMessage, clearable, selectionBehavior, closeOnSelect, allowCustomValue, loopFocus, autoFocus, open, defaultOpen, triggerIcon, triggerIconSize, clearIcon, inputBehavior, filterBehavior, loading, loadingMessage, error, retryLabel, onRetry, renderItem, onChange, onInputValueChange, onOpenChange, mode, navigate, footer, portalled, }: ComboboxProps<T>): import("react").JSX.Element;
++export declare function Combobox<T = unknown>({ id, name, label, size, placeholder, disabled, readOnly, required, items, groups, value, defaultValue, inputValue, multiple, validateStatus, helpText, showHelpTextIcon, noResultsMessage, clearable, selectionBehavior, closeOnSelect, allowCustomValue, loopFocus, autoFocus, open, defaultOpen, triggerIcon, triggerIconSize, clearIcon, inputBehavior, filterBehavior, loading, loadingMessage, error, retryLabel, onRetry, renderItem, onChange, onInputValueChange, onOpenChange, mode, navigate, footer, portalled, openOnClick, translations, }: ComboboxProps<T>): import("react").JSX.Element;
+ export {};
+ //# sourceMappingURL=combobox.d.ts.map
+\ No newline at end of file
+diff --git a/dist/src/molecules/date-picker.d.ts b/dist/src/molecules/date-picker.d.ts
+index 837f253c047f25c64b0e2abd9df2889a7702a989..9153f66e4f8f473d5b5b18ba548a8204bdf551ca 100644
+--- a/dist/src/molecules/date-picker.d.ts
++++ b/dist/src/molecules/date-picker.d.ts
+@@ -7,7 +7,7 @@
+  * @changelog libs/ui/stories/changelog/changelog.stories.tsx
+  */
+ import type { CalendarDate, CalendarDateTime, DateValue, ZonedDateTime } from "@internationalized/date";
+-import { type PositioningOptions } from "@zag-js/date-picker";
++import { type IntlTranslations as DatePickerIntlTranslations, type PositioningOptions } from "@zag-js/date-picker";
+ import type { ComponentPropsWithoutRef, ReactElement, ReactNode, Ref } from "react";
+ import { type ButtonProps } from "../atoms/button.js";
+ export type DatePickerGranularity = "day" | "hour" | "minute" | "second";
+@@ -17,6 +17,15 @@ export type DatePickerTimedValue = CalendarDateTime | ZonedDateTime;
+ export type DatePickerRange<T> = readonly [T, T];
+ export type DatePickerTimedRange = DatePickerRange<CalendarDateTime> | DatePickerRange<ZonedDateTime>;
+ type DatePickerPublicValue = DateValue | DatePickerRange<DateValue>;
++/** Editable date-input segment kinds whose accessible names can be overridden. */
++export type DatePickerSegmentType = "era" | "year" | "month" | "day" | "hour" | "minute" | "second" | "dayPeriod" | "timeZoneName";
++/**
++ * Accessible names for the calendar (forwarded to the zag date-picker machine) plus
++ * `segmentLabels`, which replace zag date-input's fixed English segment names.
++ */
++export type DatePickerTranslations = DatePickerIntlTranslations & {
++    segmentLabels?: Partial<Record<DatePickerSegmentType, string>>;
++};
+ export type DatePickerValueChangeDetails<T extends DatePickerPublicValue> = {
+     value: T | null;
+     valueAsString: T extends DatePickerRange<DateValue> ? DatePickerRange<string> : string;
+@@ -54,6 +63,7 @@ type DatePickerCommonRootProps<T extends DatePickerPublicValue> = Omit<Component
+     slide?: PositioningOptions["slide"];
+     startOfWeek?: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+     timeZone?: string;
++    translations?: DatePickerTranslations;
+     value?: T | null;
+ };
+ type DatePickerSingleRootFields = {
+diff --git a/dist/src/molecules/dialog.d.ts b/dist/src/molecules/dialog.d.ts
+index 7f5627826e740db3de45a4a03c3d2e13fe20c933..9b40877b3ff8bf4198e321647e83a72cdd53199e 100644
+--- a/dist/src/molecules/dialog.d.ts
++++ b/dist/src/molecules/dialog.d.ts
+@@ -225,10 +225,12 @@ export interface DialogProps extends VariantProps<typeof dialogVariants> {
+     children?: ReactNode;
+     actions?: ReactNode;
+     hideCloseButton?: boolean;
++    /** Accessible name of the built-in close button. Defaults to "Close dialog". */
++    closeLabel?: string;
+     className?: string;
+     modal?: boolean;
+     portal?: boolean;
+ }
+-export declare function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role, placement, position, size, behavior, closeOnEscape, closeOnInteractOutside, preventScroll, trapFocus, customTrigger, triggerText, title, description, children, hideCloseButton, actions, className, modal, portal, }: DialogProps): import("react").JSX.Element;
++export declare function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role, placement, position, size, behavior, closeOnEscape, closeOnInteractOutside, preventScroll, trapFocus, customTrigger, triggerText, title, description, children, hideCloseButton, closeLabel, actions, className, modal, portal, }: DialogProps): import("react").JSX.Element;
+ export {};
+ //# sourceMappingURL=dialog.d.ts.map
+\ No newline at end of file
+diff --git a/dist/src/molecules/switch.d.ts b/dist/src/molecules/switch.d.ts
+index d6a5e65395703f919f8cada94896e9f600acebee..4b980e2e9b33da315cd4440d8c65836b88544531 100644
+--- a/dist/src/molecules/switch.d.ts
++++ b/dist/src/molecules/switch.d.ts
+@@ -65,7 +65,9 @@ export interface SwitchProps extends VariantProps<typeof switchVariants> {
+     validateStatus?: "default" | "error" | "success" | "warning";
+     helpText?: ReactNode;
+     showHelpTextIcon?: boolean;
++    /** Accessible name when the switch has no visible label (`children`). */
++    "aria-label"?: string;
+ }
+-export declare function Switch({ id, name, value, checked, defaultChecked, disabled, readOnly, required, dir, children, className, onCheckedChange, validateStatus, helpText, showHelpTextIcon, }: SwitchProps): import("react").JSX.Element;
++export declare function Switch({ id, name, value, checked, defaultChecked, disabled, readOnly, required, dir, children, className, onCheckedChange, validateStatus, helpText, showHelpTextIcon, "aria-label": ariaLabel, }: SwitchProps): import("react").JSX.Element;
+ export {};
+ //# sourceMappingURL=switch.d.ts.map
+\ No newline at end of file
+diff --git a/dist/src/molecules/toast.d.ts b/dist/src/molecules/toast.d.ts
+index c72802bfb19c80d1f2e09a65ad43f12845cb6c2b..c30331b5f3f4eb1afe2596ec6e4b822b270b3a6f 100644
+--- a/dist/src/molecules/toast.d.ts
++++ b/dist/src/molecules/toast.d.ts
+@@ -67,8 +67,12 @@ interface ToastProps {
+     index: number;
+     parent: toast.GroupService;
+     placement?: toast.Placement;
++    /** Accessible name of the close button. Defaults to "Close notification". */
++    closeLabel?: string;
++    /** Title shown for a loading toast without its own title. Defaults to "loading...". */
++    loadingLabel?: string;
+ }
+-export declare function Toast({ actor, index, parent, placement }: ToastProps): import("react").JSX.Element;
++export declare function Toast({ actor, index, parent, placement, closeLabel, loadingLabel }: ToastProps): import("react").JSX.Element;
+ export interface ToastContainerProps extends VariantProps<typeof toastVariants> {
+     placement?: toast.Placement;
+     gap?: number;
+@@ -77,7 +81,15 @@ export interface ToastContainerProps extends VariantProps<typeof toastVariants>
+     max?: number;
+ }
+ export declare const toaster: toast.Store<any>;
+-export declare function Toaster(): import("react").JSX.Element;
++export interface ToasterProps {
++    /** Accessible name of each toast's close button. Defaults to "Close notification". */
++    closeLabel?: string;
++    /** Accessible name of the toast region. Defaults to zag's "Notifications, <placement> (<hotkey>)". */
++    label?: string;
++    /** Title shown for a loading toast without its own title. Defaults to "loading...". */
++    loadingLabel?: string;
++}
++export declare function Toaster({ closeLabel, label, loadingLabel }?: ToasterProps): import("react").JSX.Element;
+ export declare function useToast(): toast.Store<any>;
+ export {};
+ //# sourceMappingURL=toast.d.ts.map
+\ No newline at end of file
+diff --git a/dist/src/organisms/data-table.d.ts b/dist/src/organisms/data-table.d.ts
+index 72a946f5aa264ae75ffa34a908ee14602c88a5c2..b89652d1967af307b9596d25321d27c801a73969 100644
+--- a/dist/src/organisms/data-table.d.ts
++++ b/dist/src/organisms/data-table.d.ts
+@@ -107,6 +107,10 @@ export type DataTableTranslations = {
+     }) => string;
+     /** Inline-edit validation error for a blank `meta.required` field. */
+     requiredLabel?: string;
++    /** Accessible name of a row's selection checkbox; receives `getRowLabel` output. Keep the function stable. */
++    selectRowLabel?: (rowLabel: string) => string;
++    /** Accessible name of a row's inline-edit button; receives `getRowLabel` output. */
++    editRowLabel?: (rowLabel: string) => string;
+ };
+ export type DataTableProps<T extends RowData> = {
+     data: T[];

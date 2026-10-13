@@ -16,3 +16,11 @@ export {
   statusPresentation,
 } from './status-presentation.ts';
 export { TagBadge, type TagBadgeProps } from './tag-badge.tsx';
+export {
+  comboboxTranslations,
+  dataTableRowLabels,
+  datePickerTranslations,
+  dialogCloseLabel,
+  paginationTranslations,
+  toasterLabels,
+} from './ui-kit-labels.ts';

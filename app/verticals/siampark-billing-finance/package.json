@@ -47,6 +47,7 @@
     "@effect/opentelemetry": "4.0.0-rc.117",
     "@effect/platform-node": "4.0.0-rc.117",
     "@effect/sql-pg": "4.0.0-rc.117",
+    "@internationalized/date": "^3.12.4",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
     "@modern-js/i18n-integration": "catalog:ultramodern",
