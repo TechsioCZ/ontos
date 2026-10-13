@@ -236,7 +236,7 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         moduleId: 'demo.workforce',
       },
       {
-        entrypoints: ['demo.merchandise.page.products', 'demo.merchandise.page.records'],
+        entrypoints: ['demo.merchandise.page.products'],
         hrefs: ['/provoz/produkty'],
         icon: 'icon-[mdi--package-variant-closed]',
         key: 'products',

@@ -26,7 +26,7 @@ const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 
 const moduleKey = 'demo.merchandise';
-const recordsPageKey = 'demo.merchandise.page.records';
+const recordsPageKey = 'demo.merchandise.page.products';
 const ordersPageKey = 'demo.merchandise.page.orders';
 const moduleAccess = { kind: 'context_permission', permission: 'module.access' } as const;
 
@@ -64,7 +64,7 @@ export const merchandiseManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-orders': OrdersPage,
-      'page-records': RecordsPage,
+      'page-products': RecordsPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -132,7 +132,7 @@ export const merchandiseManifest = defineOntosModuleManifest({
           routePath: '/prodej/objednavky',
         }),
         pageContribution({
-          componentKey: 'demo.merchandise.page-records',
+          componentKey: 'demo.merchandise.page.products',
           contributionKey: recordsPageKey,
           entrypoint: {
             access: 'read',

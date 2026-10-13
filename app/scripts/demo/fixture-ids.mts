@@ -87,7 +87,7 @@ const customerIndexKey = /^c(?<index>\d{2})$/u;
  */
 const resolveCustomerShorthand = (key: string): string | undefined => {
   const match = customerIndexKey.exec(key);
-  const index = match?.groups?.index;
+  const { index } = match?.groups ?? {};
   const ico = index === undefined ? undefined : seededCustomerIcos[Number(index) - 1];
   return ico === undefined ? undefined : rawDemoId('party.customer', `ico-${ico}`);
 };
