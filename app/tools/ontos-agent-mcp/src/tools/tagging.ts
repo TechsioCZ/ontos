@@ -34,6 +34,19 @@ const assignShape = {
     .describe('Tag name, matched case-insensitively. Give either tagId or tagName.'),
 };
 
+export const TAG_COLORS = ['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink'] as const;
+
+export const createTagInput = {
+  color: z.enum(TAG_COLORS).optional().describe('Badge colour (default gray).'),
+  description: z.string().max(2000).optional().describe('What the tag means, e.g. the rule that assigns it.'),
+  name: z.string().trim().min(1).max(60).describe('Tag name. Must not repeat an existing tag name.'),
+  subjectKinds: z
+    .array(z.enum(SUBJECT_KINDS))
+    .min(1)
+    .max(SUBJECT_KINDS.length)
+    .describe('Subject kinds the tag may be assigned to.'),
+};
+
 export const assignTagsInput = assignShape;
 export const unassignTagsInput = assignShape;
 
@@ -73,6 +86,40 @@ export async function listTags(input: { readonly kind?: SubjectKind | undefined 
       subjectKinds: tag.subjectKinds,
     }));
   return { count: items.length, items, revision: response.revision };
+}
+
+/** Creates a tag. The bot may create tags; renaming and deleting them stays human-only (tagging command guard). */
+export async function createTag(input: {
+  readonly color?: (typeof TAG_COLORS)[number] | undefined;
+  readonly description?: string | undefined;
+  readonly name: string;
+  readonly subjectKinds: readonly SubjectKind[];
+}) {
+  const current = await readRecordsOf<TaggingRecordsWire>(VERTICAL.tagging, {});
+  const wanted = input.name.trim().toLocaleLowerCase('cs-CZ');
+  const clash = current.tags.find((tag) => tag.name.toLocaleLowerCase('cs-CZ') === wanted);
+  if (clash !== undefined) {
+    throw new Error(`Štítek "${clash.name}" už existuje (pro ${clash.subjectKinds.join(', ')}). Zvolte jiný název.`);
+  }
+  const result = await applyCommand<{ revision: number; tagId?: string }>(
+    VERTICAL.tagging,
+    {
+      _tag: 'CreateTag',
+      color: input.color ?? 'gray',
+      name: input.name.trim(),
+      subjectKinds: [...new Set(input.subjectKinds)],
+      ...(input.description === undefined ? {} : { description: input.description }),
+    },
+    () => readRevision(VERTICAL.tagging),
+    current.revision,
+  );
+  const created = (await readRecordsOf<TaggingRecordsWire>(VERTICAL.tagging, {})).tags.find(
+    (tag) => tag.name.toLocaleLowerCase('cs-CZ') === wanted,
+  );
+  return {
+    revision: result.revision,
+    tag: created === undefined ? null : { id: created.id, name: created.name, subjectKinds: created.subjectKinds },
+  };
 }
 
 async function changeTagging(
@@ -121,6 +168,13 @@ export function registerTaggingTools(server: McpServer): void {
     'List tags (štítky) with colour, the subject kinds they apply to and assignment counts. Optional kind filter.',
     listTagsInput,
     listTags,
+  );
+  defineTool(
+    server,
+    'create_tag',
+    'Create a new tag (štítek) for the given subject kinds. Use it only when no existing tag fits; the agent cannot rename or delete tags.',
+    createTagInput,
+    createTag,
   );
   defineTool(
     server,
