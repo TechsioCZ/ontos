@@ -1,7 +1,9 @@
+import { matchesSearch } from '@app/admin-ui';
 import { Effect, Option, Random, Schema } from 'effect';
 import {
   EmployeeDepartmentSchema,
   EmployeeEmailSchema,
+  EmployeeFullNameMaxLength,
   EmployeeFullNameSchema,
   EmployeeIdSchema,
   EmployeePhoneInputSchema,
@@ -40,18 +42,15 @@ export const sortEmployees = (items: readonly Employee[]): Employee[] => items.t
 export const departmentsOf = (items: readonly Employee[]): string[] =>
   [...new Set(items.map((employee) => employee.department))].toSorted((left, right) => left.localeCompare(right, 'cs'));
 
-export const filterEmployees = (items: readonly Employee[], filters: EmployeeFilters): Employee[] => {
-  const query = filters.query.trim().toLocaleLowerCase('cs');
-  return items.filter(
+/** Name or e-mail match that ignores case and diacritics, so `novak` finds Jana Nováková. An empty query matches all. */
+export const filterEmployees = (items: readonly Employee[], filters: EmployeeFilters): Employee[] =>
+  items.filter(
     (employee) =>
       (!filters.activeOnly || employee.active) &&
       (filters.role === null || employee.role === filters.role) &&
       (filters.department === null || employee.department === filters.department) &&
-      (query === '' ||
-        employee.fullName.toLocaleLowerCase('cs').includes(query) ||
-        employee.email.toLocaleLowerCase('cs').includes(query)),
+      (matchesSearch(employee.fullName, filters.query) || matchesSearch(employee.email, filters.query)),
   );
-};
 
 export interface EmployeeDraft {
   readonly active: boolean;
@@ -80,8 +79,21 @@ export const draftFromEmployee = (employee: Employee): EmployeeDraft => ({
   role: employee.role,
 });
 
+/** True when every field of two drafts holds the same value, so saving would change nothing. */
+export const sameDraft = (left: EmployeeDraft, right: EmployeeDraft): boolean =>
+  left.active === right.active &&
+  left.department === right.department &&
+  left.email === right.email &&
+  left.fullName === right.fullName &&
+  left.phone === right.phone &&
+  left.role === right.role;
+
 export const DraftFieldSchema = Schema.Literals(['department', 'email', 'fullName', 'phone']);
 export type DraftField = typeof DraftFieldSchema.Type;
+
+/** Message suffix for a field error. A name over the stored limit gets its own message instead of "required". */
+export const errorFieldKey = (draft: EmployeeDraft, field: DraftField): string =>
+  field === 'fullName' && draft.fullName.trim().length > EmployeeFullNameMaxLength ? 'fullNameTooLong' : field;
 
 export const isDepartmentName = (value: string): boolean =>
   Option.isSome(Schema.decodeOption(EmployeeDepartmentSchema)(value));

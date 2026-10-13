@@ -11,7 +11,11 @@ export type { EmployeeId } from '../resources/employee.ts';
 export const EmployeeRoleSchema = Schema.Literals(['SALES_HEAD', 'SALES_REP', 'ACCOUNTANT', 'WAREHOUSE', 'SUPPORT']);
 export type EmployeeRole = typeof EmployeeRoleSchema.Type;
 
-export const EmployeeFullNameSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200));
+export const EmployeeFullNameMaxLength = 200;
+export const EmployeeFullNameSchema = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(EmployeeFullNameMaxLength),
+);
 export const EmployeeEmailSchema = Schema.Trim.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(320),
@@ -19,9 +23,12 @@ export const EmployeeEmailSchema = Schema.Trim.check(
 );
 /** A stored phone. Lenient, so rows saved before the input format rule still decode. */
 export const EmployeePhoneSchema = Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(40));
-/** A phone a caller enters: at least six digits, optional leading +, and only digits, spaces and ( ) . / - separators. */
+/**
+ * A phone a caller enters: six to fifteen digits (E.164 allows at most fifteen), optional leading +, and only digits,
+ * spaces and ( ) . / - separators.
+ */
 export const EmployeePhoneInputSchema = EmployeePhoneSchema.check(
-  Schema.isPattern(/^(?=(?:\D*\d){6})\+?[\d\s()./-]+$/u),
+  Schema.isPattern(/^(?=(?:\D*\d){6,15}\D*$)\+?[\d\s()./-]+$/u),
 );
 export const EmployeeDepartmentSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120));
 

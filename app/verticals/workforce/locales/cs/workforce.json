@@ -36,7 +36,8 @@
           "department": "Oddělení",
           "role": "Role",
           "search": "Hledat jméno nebo e-mail…",
-          "searchLabel": "Filtrovat zaměstnance"
+          "searchLabel": "Filtrovat zaměstnance",
+          "tag": "Štítek"
         },
         "columns": {
           "account": "Účet",
@@ -96,9 +97,10 @@
           "emailTaken": "Tento e-mail už používá jiný zaměstnanec.",
           "forbidden": "K této operaci nemáte oprávnění.",
           "fullName": "Vyplňte jméno a příjmení.",
+          "fullNameTooLong": "Jméno a příjmení může mít nejvýše 200 znaků.",
           "load": "Data se nepodařilo načíst.",
           "loadDescription": "Zkontrolujte připojení a zkuste to znovu.",
-          "phone": "Zadejte telefon jako číslo, např. +420 777 123 456.",
+          "phone": "Zadejte telefon se 6 až 15 číslicemi, např. +420 777 123 456.",
           "retry": "Zkusit znovu",
           "save": "Zaměstnance se nepodařilo uložit. Zkuste to znovu."
         },

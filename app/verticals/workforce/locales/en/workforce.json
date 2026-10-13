@@ -36,7 +36,8 @@
           "department": "Department",
           "role": "Role",
           "search": "Search name or e-mail…",
-          "searchLabel": "Filter employees"
+          "searchLabel": "Filter employees",
+          "tag": "Tag"
         },
         "columns": {
           "account": "Account",
@@ -96,9 +97,10 @@
           "emailTaken": "Another employee already uses this e-mail.",
           "forbidden": "You are not allowed to do this.",
           "fullName": "Enter a full name.",
+          "fullNameTooLong": "A full name can have at most 200 characters.",
           "load": "Data could not be loaded.",
           "loadDescription": "Check your connection and try again.",
-          "phone": "Enter a phone number, e.g. +420 777 123 456.",
+          "phone": "Enter a phone number with 6 to 15 digits, e.g. +420 777 123 456.",
           "retry": "Try again",
           "save": "The employee could not be saved. Try again."
         },

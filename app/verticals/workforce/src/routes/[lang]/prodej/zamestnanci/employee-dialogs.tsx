@@ -18,14 +18,17 @@ import {
   draftFromEmployee,
   emptyDraft,
   employeeRoles,
+  errorFieldKey,
   isDepartmentName,
   newEmployeeId,
   roleFromValue,
+  sameDraft,
   updateCommand,
 } from './employee-model.ts';
 import type { CommitOutcome, DraftField, EmployeeDraft } from './employee-model.ts';
 
 const key = 'workforce.pages.employees';
+const employeeFormId = 'employee-form';
 
 /** Runs one command. The page owns the revision, the toast and the list reload. */
 export type CommitCommand = (
@@ -87,7 +90,7 @@ export const EmployeeFormDialog = ({
   const set = (patch: Partial<EmployeeDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const fieldStatus = (field: DraftField) =>
     submitted && errors.includes(field)
-      ? { helpText: t(`${key}.errors.${field}`), validateStatus: 'error' as const }
+      ? { helpText: t(`${key}.errors.${errorFieldKey(draft, field)}`), validateStatus: 'error' as const }
       : {};
   const emailStatus = emailTaken
     ? { helpText: t(`${key}.errors.emailTaken`), validateStatus: 'error' as const }
@@ -95,8 +98,17 @@ export const EmployeeFormDialog = ({
   const roleItems = roleItemsOf(t);
 
   const submit = () => {
+    // Enter in a field submits too; a save already running must not send a second command.
+    if (busy) {
+      return;
+    }
     setSubmitted(true);
     if (errors.length > 0) {
+      return;
+    }
+    // Nothing changed on an existing Employee: there is nothing to save, so the panel just closes.
+    if (employee !== null && sameDraft(draft, draftFromEmployee(employee))) {
+      onClose();
       return;
     }
     setBusy(true);
@@ -130,7 +142,14 @@ export const EmployeeFormDialog = ({
           <Button onClick={onClose} theme="outlined" variant="secondary">
             {t(`${key}.form.cancel`)}
           </Button>
-          <Button isLoading={busy} loadingText={t(`${key}.form.saving`)} onClick={submit} variant="primary">
+          {/* The form lives in the panel body, so the footer submit button points at it through `form`. Enter submits too. */}
+          <Button
+            form={employeeFormId}
+            isLoading={busy}
+            loadingText={t(`${key}.form.saving`)}
+            type="submit"
+            variant="primary"
+          >
             {t(employee === null ? `${key}.form.create` : `${key}.form.save`)}
           </Button>
         </>
@@ -147,6 +166,7 @@ export const EmployeeFormDialog = ({
     >
       <form
         className="flex flex-col gap-200 py-200"
+        id={employeeFormId}
         onSubmit={(event) => {
           event.preventDefault();
           submit();

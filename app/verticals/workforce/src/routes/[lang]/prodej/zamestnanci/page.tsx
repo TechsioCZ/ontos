@@ -7,12 +7,12 @@ import {
   StatCard,
   StatRow,
   formatNumber,
-  toasterLabels,
+  Toaster,
   dataTableRowLabels,
   paginationTranslations,
 } from '@app/admin-ui';
-import { BulkTagDialog, TagCell, TagFilter, useTagsFor } from '@app/tagging/components/tag-controls';
-import type { TagsStatus } from '@app/tagging/components/tag-controls';
+import { BulkTagDialog, TagCell, TagFilter, useTagsOfKind } from '@app/tagging/components/tag-controls';
+import type { TagCatalog, TagsStatus } from '@app/tagging/components/tag-controls';
 import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -21,7 +21,7 @@ import { Input } from '@techsio/ui-kit/atoms/input';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
@@ -249,12 +249,14 @@ const EmployeeFilterBar = ({
   filters,
   onChange,
   onTagChange,
+  tagCatalog,
   tagValue,
 }: {
   readonly departments: readonly string[];
   readonly filters: EmployeeFilters;
   readonly onChange: (patch: Partial<EmployeeFilters>) => void;
   readonly onTagChange: (tagId: TagId | null) => void;
+  readonly tagCatalog: TagCatalog;
   readonly tagValue: TagId | null;
 }) => {
   const { t } = useModernI18n();
@@ -301,7 +303,13 @@ const EmployeeFilterBar = ({
         value={[filters.department ?? allOption]}
       />
       <div className="w-48">
-        <TagFilter kind="employee" onChange={onTagChange} value={tagValue} />
+        <TagFilter
+          catalog={tagCatalog}
+          kind="employee"
+          label={t(`${key}.filters.tag`)}
+          onChange={onTagChange}
+          value={tagValue}
+        />
       </div>
       <Switch checked={filters.activeOnly} onCheckedChange={(checked) => onChange({ activeOnly: checked })}>
         {t(`${key}.filters.activeOnly`)}
@@ -419,11 +427,9 @@ const EmployeesPageContent = () => {
   const data = state.status === 'ready' ? state.data : undefined;
   const items = data?.items ?? [];
   const canWrite = data?.canWrite === true;
-  const {
-    refetch: refetchTags,
-    status: tagStatus,
-    tagsBySubject,
-  } = useTagsFor('employee', subjectIdsOf(items.map((employee) => employee.id)));
+  // Starts with the employee read instead of after it, so the Štítky cells settle together with the rows. The same
+  // read feeds the tag filter, so the page issues no separate catalog read.
+  const { catalog: tagCatalog, refetch: refetchTags, status: tagStatus, tagsBySubject } = useTagsOfKind('employee');
   // The tag filter works on the tags already loaded for the list, so picking a tag never waits for another read.
   const tagFilterLoading = tagFilter !== null && tagStatus === 'loading';
   const tagFilterFailed = tagFilter !== null && tagStatus === 'error';
@@ -565,7 +571,7 @@ const EmployeesPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <Toaster {...toasterLabels} />
+      <Toaster />
       <div className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
@@ -586,6 +592,7 @@ const EmployeesPageContent = () => {
           filters={filters}
           onChange={updateFilters}
           onTagChange={changeTagFilter}
+          tagCatalog={tagCatalog}
           tagValue={tagFilter}
         />
 
