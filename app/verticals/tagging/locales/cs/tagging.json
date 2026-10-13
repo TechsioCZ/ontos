@@ -59,6 +59,7 @@
         "chooseTag": "Vyberte štítek.",
         "description": "Změna se použije na vybrané záznamy ({{total}}).",
         "failure": "Štítky se nepodařilo upravit. Zkuste to znovu.",
+        "forbidden": "Nemáte oprávnění upravovat štítky.",
         "remove": "Odebrat",
         "submit": "Použít štítek",
         "success": "Štítky upraveny",

@@ -122,9 +122,30 @@ export const assignmentsForSubjects = (subjects: readonly { readonly id: string;
       );
 };
 
-/** Tags and the assignments of the given subject ids in one operation. Callers skip the call for an empty list. */
+/**
+ * Tags and the assignments of the given subject ids. One operation per query-limit chunk: the tags come from the
+ * first page and the assignments of every page are concatenated. Callers skip the call for an empty list.
+ */
 export const recordsFor = (kind: SubjectKind, ids: readonly string[]) =>
-  freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectIds: ids.join(','), subjectKind: kind }, id)));
+  Effect.forEach(
+    subjectIdQueries(ids),
+    (subjectIds) =>
+      freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectIds, subjectKind: kind }, id))),
+    { concurrency: 1 },
+  ).pipe(
+    Effect.flatMap(([first, ...rest]) =>
+      first === undefined
+        ? freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectIds: '', subjectKind: kind }, id)))
+        : Effect.succeed({
+            ...first,
+            assignments: [...first.assignments, ...rest.flatMap((page) => page.assignments)],
+          }),
+    ),
+  );
+
+/** Tags and every assignment of one subject kind in one operation, without needing the subject ids first. */
+export const recordsOfKind = (kind: SubjectKind) =>
+  freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectKind: kind }, id)));
 
 /** Ids of the subjects of one kind that carry the given tag. */
 export const subjectsWithTag = (kind: SubjectKind, tagId: TagId) =>

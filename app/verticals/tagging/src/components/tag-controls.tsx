@@ -4,12 +4,15 @@
  * Props-driven, no global state. Each control loads its own data through the tagging client and shows
  * loading, error and empty states inline.
  *
- * - `TagFilter({ kind, value, onChange })`: single-tag Combobox filter for subjects of `kind`.
- *   `value` is a `TagId` or `null`; `onChange` receives the same shape.
+ * - `TagFilter({ kind, label?, catalog?, value, onChange })`: single-tag Combobox filter for subjects of `kind`.
+ *   `value` is a `TagId` or `null`; `onChange` receives the same shape. Pass `label` when sibling filters show one,
+ *   and `catalog` when the page already loaded the tags, so the filter issues no read of its own.
  * - `TagCell({ tags, loading })`: the tags of one row as chips, two at most, then `+N`. Pass `loading`
  *   while `useTagsFor` is still loading, so an empty cell never reads as "no tags".
  * - `useTagsFor(kind, ids)`: `{ tagsBySubject, status, refetch }` for the rows of a list. `tagsBySubject`
  *   maps each subject id to its tags; `status` is `loading`, `ready` or `error`; `refetch` reloads.
+ * - `useTagsOfKind(kind)`: the same for every subject of `kind`, read on mount without waiting for the list ids,
+ *   plus a `catalog` to hand to `TagFilter`.
  * - `BulkTagDialog({ kind, subjectIds, open, onOpenChange, onDone })`: adds or removes one tag on many
  *   subjects. Confirms with a toast, so the host page must render one `<Toaster />` from
  *   `@techsio/ui-kit/molecules/toast`.
@@ -26,9 +29,11 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
-import { assignTag, listTags, recordsFor, unassignTag } from '../api/records-client.ts';
+import { assignTag, listTags, recordsFor, recordsOfKind, unassignTag } from '../api/records-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import type { Subject, SubjectId, SubjectKind, Tag, TagColor, TagId } from '../../shared/apis/records.ts';
+import { ApplyCommandActionForbiddenProblemSchema } from '../../shared/apis/apply-command-action.ts';
+import { RecordsForbiddenProblemSchema } from '../../shared/apis/records.ts';
+import type { Assignment, Subject, SubjectId, SubjectKind, Tag, TagColor, TagId } from '../../shared/apis/records.ts';
 import csResource from '../../locales/cs/tagging.json';
 import enResource from '../../locales/en/tagging.json';
 
@@ -121,6 +126,13 @@ const useTagCatalog = (kind: SubjectKind, enabled: boolean) => {
   return state;
 };
 
+/** Tags a picker offers, loaded by the picker itself or handed in by a page that already read them. */
+export interface TagCatalog {
+  readonly refetch: () => void;
+  readonly status: TagsStatus;
+  readonly tags: readonly Tag[];
+}
+
 /** Maps a Combobox value back to a loaded tag. Anything outside the loaded catalog counts as no selection. */
 const pickTagId = (tags: readonly Tag[], next: string | string[]): TagId | null => {
   const id = Array.isArray(next) ? next[0] : next;
@@ -143,14 +155,18 @@ const visibleTagItems = <T extends { readonly label: string }>(items: readonly T
   items.some((item) => item.label === query) ? [...items] : items.filter((item) => matchesSearch(item.label, query));
 
 interface TagPickerFieldProps {
+  /** Tags the caller already loaded. When set, the picker issues no read of its own and a retry calls `refetch`. */
+  readonly catalog?: TagCatalog;
   readonly clearable: boolean;
-  /** Filter mode: small control, no visible label, and a leading "all tags" option. */
+  /** Filter mode: small control and a leading "all tags" option. A label shows only when the caller passes one. */
   readonly compact?: boolean;
   readonly enabled: boolean;
   /** Empty string when there is no message. */
   readonly helpText: string;
   readonly invalid: boolean;
   readonly kind: SubjectKind;
+  /** Visible label already translated by the caller. Wins over `labelKey`. */
+  readonly label?: string;
   readonly labelKey?: string;
   readonly onChange: (tagId: TagId | null) => void;
   readonly onRetry: () => void;
@@ -158,22 +174,26 @@ interface TagPickerFieldProps {
 }
 
 const TagPickerField = ({
+  catalog: provided,
   clearable,
   compact = false,
   enabled,
   helpText,
   invalid,
   kind,
+  label,
   labelKey,
   onChange,
   onRetry,
   value,
 }: TagPickerFieldProps) => {
   const { t } = useModernI18n();
-  const catalog = useTagCatalog(kind, enabled);
+  const own = useTagCatalog(kind, enabled && provided === undefined);
+  const catalog = provided ?? own;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const items = tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null);
+  const fieldLabel = label ?? (labelKey === undefined ? undefined : t(labelKey));
   return (
     <Combobox
       clearable={clearable}
@@ -182,14 +202,20 @@ const TagPickerField = ({
       filterBehavior="external"
       helpText={helpText}
       items={visibleTagItems(items, query)}
-      {...(labelKey === undefined ? {} : { label: t(labelKey) })}
+      {...(fieldLabel === undefined ? {} : { label: fieldLabel })}
       loading={catalog.status === 'loading'}
       loadingMessage={t('tagging.tags.loading')}
       noResultsMessage={t('tagging.tags.filter.noResults')}
       onChange={(next) => onChange(pickTagId(catalog.tags, next))}
-      onInputValueChange={setQuery}
+      onInputValueChange={(text) => {
+        setQuery(text);
+        // Emptying a filter's text clears the filter; zag restores a picked label on blur, never an empty one.
+        if (compact && value !== null && text.trim() === '') {
+          onChange(null);
+        }
+      }}
       onOpenChange={setOpen}
-      onRetry={() => onRetry()}
+      onRetry={() => (provided === undefined ? onRetry() : provided.refetch())}
       open={open}
       openOnClick
       placeholder={t('tagging.tags.filter.placeholder')}
@@ -216,27 +242,49 @@ const TagPicker = (props: Omit<TagPickerFieldProps, 'onRetry'>) => {
 };
 
 export interface TagFilterProps {
+  /** Tags the page already loaded, for example `useTagsOfKind(kind).catalog`. Without it the filter reads its own. */
+  catalog?: TagCatalog;
   kind: SubjectKind;
+  /** Visible label above the filter, already translated. Pages pass one when sibling filters have labels. */
+  label?: string;
   onChange: (tagId: TagId | null) => void;
   value: TagId | null;
 }
 
 /** Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. */
-export const TagFilter = ({ kind, onChange, value }: TagFilterProps) => (
+export const TagFilter = ({ catalog, kind, label, onChange, value }: TagFilterProps) => (
   <div className="w-48">
     {/* The "all tags" option clears the filter, so the picker needs no clear button. */}
     <TagPicker
+      {...(catalog === undefined ? {} : { catalog })}
       clearable={false}
       compact
       enabled
       helpText=""
       invalid={false}
       kind={kind}
+      {...(label === undefined ? {} : { label })}
       onChange={onChange}
       value={value}
     />
   </div>
 );
+
+/** Groups the assignments of one records read by subject, resolving each tag id against the tags of that read. */
+const tagsBySubjectOf = (records: {
+  readonly assignments: readonly Assignment[];
+  readonly tags: readonly Tag[];
+}): ReadonlyMap<SubjectId, Tag[]> => {
+  const tagById = new Map(records.tags.map((tag) => [tag.id, tag] as const));
+  const next = new Map<SubjectId, Tag[]>();
+  for (const assignment of records.assignments) {
+    const tag = tagById.get(assignment.tagId);
+    if (tag !== undefined) {
+      next.set(assignment.subject.id, [...(next.get(assignment.subject.id) ?? []), tag]);
+    }
+  }
+  return next;
+};
 
 interface TagsRequest {
   readonly kind: SubjectKind;
@@ -269,16 +317,8 @@ export const useTagsFor = (kind: SubjectKind, ids: readonly SubjectId[]) => {
           if (!active) {
             return;
           }
-          const tagById = new Map(records.tags.map((tag) => [tag.id, tag] as const));
-          const next = new Map<SubjectId, Tag[]>();
-          for (const assignment of records.assignments) {
-            const tag = tagById.get(assignment.tagId);
-            if (tag !== undefined) {
-              next.set(assignment.subject.id, [...(next.get(assignment.subject.id) ?? []), tag]);
-            }
-          }
           setStatus('ready');
-          setTagsBySubject(next);
+          setTagsBySubject(tagsBySubjectOf(records));
         },
       });
     }
@@ -289,6 +329,64 @@ export const useTagsFor = (kind: SubjectKind, ids: readonly SubjectId[]) => {
   const refetch = () => setRequest((current) => ({ ...current }));
   // An empty list has nothing to load, so it is ready at once and never issues a read.
   return { refetch, status: request.subjectIds.length === 0 ? 'ready' : status, tagsBySubject };
+};
+
+/** What `useTagsOfKind` returns: the tags of every subject of one kind, plus the tags that apply to that kind. */
+export interface KindTags {
+  /** Tags that apply to the kind, for a `TagFilter` that should not read the catalog again. */
+  readonly catalog: TagCatalog;
+  readonly refetch: () => void;
+  readonly status: TagsStatus;
+  readonly tagsBySubject: ReadonlyMap<SubjectId, Tag[]>;
+}
+
+/**
+ * Tags of every subject of `kind`, read once on mount. Unlike `useTagsFor` it does not wait for the list's ids, so a
+ * page can start it next to its own list read and both settle together. Use it where the list shows every subject of
+ * the kind (small catalogs such as employees); rows look their tags up in `tagsBySubject`.
+ */
+export const useTagsOfKind = (kind: SubjectKind): KindTags => {
+  // A new object starts a new read, so a refetch re-runs the effect without a counter it would not read.
+  const [request, setRequest] = useState<{ readonly kind: SubjectKind }>({ kind });
+  const [state, setState] = useState<{
+    readonly catalog: readonly Tag[];
+    readonly status: TagsStatus;
+    readonly tagsBySubject: ReadonlyMap<SubjectId, Tag[]>;
+  }>({ catalog: [], status: 'loading', tagsBySubject: new Map() });
+  if (request.kind !== kind) {
+    setRequest({ kind });
+  }
+  useEffect(() => {
+    let active = true;
+    // One records read narrowed to the kind carries the tag catalog and every assignment of that kind.
+    runTagEffect(recordsOfKind(request.kind), {
+      onFailure: () => {
+        if (active) {
+          setState({ catalog: [], status: 'error', tagsBySubject: new Map() });
+        }
+      },
+      onSuccess: (records) => {
+        if (active) {
+          setState({
+            catalog: records.tags.filter((tag) => tag.subjectKinds.includes(request.kind)),
+            status: 'ready',
+            tagsBySubject: tagsBySubjectOf(records),
+          });
+        }
+      },
+    });
+    return () => {
+      active = false;
+    };
+  }, [request]);
+  // A refetch keeps the current tags on screen until the new read settles.
+  const refetch = () => setRequest((current) => ({ ...current }));
+  return {
+    catalog: { refetch, status: state.status, tags: state.catalog },
+    refetch,
+    status: state.status,
+    tagsBySubject: state.tagsBySubject,
+  };
 };
 
 const subjectChunkSize = 500;
@@ -303,19 +401,70 @@ export interface BulkTagDialogProps {
   subjectIds: readonly SubjectId[];
 }
 
+const bulkFailureValues = Schema.Literals(['none', 'retry', 'forbidden']);
+type BulkFailure = typeof bulkFailureValues.Type;
+
+/** A 403 from the records read or the apply command: retrying will not help, so the panel says so. */
+const isForbidden = Schema.is(Schema.Union([RecordsForbiddenProblemSchema, ApplyCommandActionForbiddenProblemSchema]));
+
+/** The bulk panel's tag catalog. Unlike the pickers' own read it keeps a 403 apart from other failures. */
+const useBulkCatalog = (kind: SubjectKind, enabled: boolean) => {
+  const [request, setRequest] = useState<{ readonly enabled: boolean }>({ enabled });
+  const [state, setState] = useState<{
+    readonly forbidden: boolean;
+    readonly status: TagsStatus;
+    readonly tags: readonly Tag[];
+  }>({ forbidden: false, status: 'loading', tags: [] });
+  if (request.enabled !== enabled) {
+    setRequest({ enabled });
+  }
+  useEffect(() => {
+    let active = true;
+    if (request.enabled) {
+      runTagEffect(listTags, {
+        onFailure: (error) => {
+          if (active) {
+            setState({ forbidden: isForbidden(error), status: 'error', tags: [] });
+          }
+        },
+        onSuccess: (tags) => {
+          if (active) {
+            setState({
+              forbidden: false,
+              status: 'ready',
+              tags: tags.filter((tag) => tag.subjectKinds.includes(kind)),
+            });
+          }
+        },
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [kind, request]);
+  const refetch = () => {
+    setState((current) => ({ ...current, status: 'loading' }));
+    setRequest((current) => ({ ...current }));
+  };
+  const catalog: TagCatalog = { refetch, status: state.status, tags: state.tags };
+  return { catalog, forbidden: state.forbidden };
+};
+
 const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', subjectIds }: BulkTagDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const [tagId, setTagId] = useState<TagId | null>(null);
   const [mode, setMode] = useState<BulkMode>('add');
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<BulkFailure>('none');
   const [submitted, setSubmitted] = useState(false);
+  const bulkCatalog = useBulkCatalog(kind, open);
+  const forbidden = bulkCatalog.forbidden || failure === 'forbidden';
 
   const close = () => {
     setTagId(null);
     setMode('add');
-    setFailed(false);
+    setFailure('none');
     setSubmitted(false);
     onOpenChange(false);
   };
@@ -331,13 +480,13 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
       subjects.slice(index * subjectChunkSize, (index + 1) * subjectChunkSize),
     );
     setBusy(true);
-    setFailed(false);
+    setFailure('none');
     runTagEffect(
       Effect.forEach(chunks, (part) => operation(tagId, part), { concurrency: 1, discard: true }),
       {
-        onFailure: () => {
+        onFailure: (error) => {
           setBusy(false);
-          setFailed(true);
+          setFailure(isForbidden(error) ? 'forbidden' : 'retry');
         },
         onSuccess: () => {
           setBusy(false);
@@ -358,7 +507,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
             {t('tagging.tags.form.cancel')}
           </Button>
           <Button
-            disabled={subjectIds.length === 0}
+            disabled={subjectIds.length === 0 || forbidden}
             isLoading={busy}
             loadingText={t('tagging.tags.bulk.busy')}
             onClick={() => submit()}
@@ -382,22 +531,35 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
       title={t('tagging.tags.bulk.title')}
     >
       <div className="flex flex-col gap-200 py-200">
-        {failed && (
+        {forbidden && (
+          <StatusText showIcon status="error">
+            {t('tagging.tags.bulk.forbidden')}
+          </StatusText>
+        )}
+        {!forbidden && failure === 'retry' && (
           <StatusText showIcon status="error">
             {t('tagging.tags.bulk.failure')}
           </StatusText>
         )}
-        <TagPicker
-          clearable={false}
-          enabled={open}
-          helpText={tagError ? t('tagging.tags.bulk.chooseTag') : ''}
-          invalid={tagError}
-          kind={kind}
-          labelKey="tagging.tags.bulk.tag"
-          onChange={setTagId}
-          value={tagId}
-        />
-        <RadioGroup onValueChange={(next) => setMode(next === 'remove' ? 'remove' : 'add')} size="sm" value={mode}>
+        {!forbidden && (
+          <TagPicker
+            catalog={bulkCatalog.catalog}
+            clearable={false}
+            enabled={open}
+            helpText={tagError ? t('tagging.tags.bulk.chooseTag') : ''}
+            invalid={tagError}
+            kind={kind}
+            labelKey="tagging.tags.bulk.tag"
+            onChange={setTagId}
+            value={tagId}
+          />
+        )}
+        <RadioGroup
+          disabled={forbidden}
+          onValueChange={(next) => setMode(next === 'remove' ? 'remove' : 'add')}
+          size="sm"
+          value={mode}
+        >
           <RadioGroup.Label>{t('tagging.tags.bulk.action')}</RadioGroup.Label>
           <RadioGroup.ItemGroup>
             <RadioGroup.Item value="add">

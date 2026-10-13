@@ -3,7 +3,7 @@ import {
   PageHeader,
   SidePanel,
   TagBadge,
-  toasterLabels,
+  Toaster,
   dialogCloseLabel,
   paginationTranslations,
 } from '@app/admin-ui';
@@ -14,7 +14,7 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
@@ -641,7 +641,7 @@ const TagsPageContent = () => {
         <DeleteTagDialog onClose={() => setRemoving(null)} onDeleted={() => reload()} tag={removing} />
       )}
       {inspecting !== null && <TagAssignmentsDialog onClose={() => setInspecting(null)} tag={inspecting} />}
-      <Toaster {...toasterLabels} />
+      <Toaster />
     </>
   );
 };

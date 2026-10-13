@@ -59,6 +59,7 @@
         "chooseTag": "Choose a tag.",
         "description": "The change applies to the selected records ({{total}}).",
         "failure": "Tags could not be updated. Try again.",
+        "forbidden": "You do not have permission to change tags.",
         "remove": "Remove",
         "submit": "Apply tag",
         "success": "Tags updated",
