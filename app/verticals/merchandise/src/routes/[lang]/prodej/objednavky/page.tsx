@@ -1,5 +1,6 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
@@ -8,7 +9,6 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import {
   BulkActionBar,
   EmptyState,
-  formatMoney,
   formatNumber,
   PageHeader,
   StatCard,
@@ -26,6 +26,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
+import { formatKc } from '../../../../list-cells.tsx';
 import { useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
@@ -43,17 +44,17 @@ const key = (path: string) => `merchandise.pages.orders.${path}`;
 
 type OrderTableProps = DataTableProps<Order>;
 type RowSelection = NonNullable<OrderTableProps['rowSelection']>;
-type ColumnFilters = NonNullable<OrderTableProps['columnFilters']>;
 
+const ALL_STATUSES = '__all__';
 const bulkStatusItems = orderStatuses.map((value) => ({ label: statusPresentation('order', value).label, value }));
 
 const OrdersPageContent = () => {
-  const { language, t } = useModernI18n();
+  const { t } = useModernI18n();
   const toaster = useToast();
   const { load, state } = useOrders();
   const [selection, setSelection] = useState<RowSelection>({});
-  const [globalFilter, setGlobalFilter] = useState('');
-  const [columnFilters, setColumnFilters] = useState<ColumnFilters>([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<OrderStatus | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
@@ -68,12 +69,19 @@ const OrdersPageContent = () => {
     'order',
     orders.map((order) => order.id),
   );
-  const visible = orders.filter((order) => tagFilter.matches(order.id));
+  const statusItems = [{ label: t(key('filters.allStatuses')), value: ALL_STATUSES }, ...bulkStatusItems];
+  const query = search.trim().toLowerCase();
+  const visible = orders.filter(
+    (order) =>
+      (query === '' || `${order.number} ${directory.nameOf(order.partyId) ?? ''}`.toLowerCase().includes(query)) &&
+      (statusFilter === null || order.status === statusFilter) &&
+      tagFilter.matches(order.id),
+  );
   const canWrite = ready?.records.canWrite === true;
   const stats = ready === undefined ? undefined : orderStats(orders, ready.now);
   const selected = visible.filter((order) => selection[order.id] === true);
   const detailOrder = orders.find((order) => order.id === detailId);
-  const filtered = globalFilter !== '' || columnFilters.length > 0 || tagFilter.tagId !== null;
+  const filtered = query !== '' || statusFilter !== null || tagFilter.tagId !== null;
 
   const runStatusChange = (targets: readonly Order[], status: OrderStatus) => {
     if (ready === undefined) {
@@ -141,7 +149,7 @@ const OrdersPageContent = () => {
           <StatCard
             hint={t(key('stats.openHint'))}
             label={t(key('stats.open'))}
-            value={stats === undefined ? '—' : formatMoney(stats.openValueMinor)}
+            value={stats === undefined ? '—' : formatKc(stats.openValueMinor)}
           />
           <StatCard
             label={t(key('stats.shippedThisMonth'))}
@@ -153,8 +161,30 @@ const OrdersPageContent = () => {
           />
         </StatRow>
 
-        <div className="flex flex-wrap items-end gap-200">
-          <div className="min-w-56">
+        <div className="flex flex-wrap items-end gap-150">
+          <Input
+            aria-label={t(key('table.searchLabel'))}
+            className="w-64"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t(key('table.searchPlaceholder'))}
+            size="sm"
+            type="search"
+            value={search}
+          />
+          <div className="w-48">
+            <SelectTemplate
+              items={statusItems}
+              label={t(key('filters.status'))}
+              name="statusFilter"
+              onValueChange={(details) => {
+                const [next] = details.value;
+                setStatusFilter(orderStatuses.find((candidate) => candidate === next) ?? null);
+              }}
+              size="sm"
+              value={[statusFilter ?? ALL_STATUSES]}
+            />
+          </div>
+          <div className="w-48">
             <TagFilter kind="order" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
           </div>
         </div>
@@ -194,24 +224,18 @@ const OrdersPageContent = () => {
         )}
 
         <DataTable
-          columnFilters={columnFilters}
           columnPinning={{ end: [], start: ['number'] }}
-          columns={ordersColumns(t, language, directory, orderTags.tagsOf)}
+          columns={ordersColumns(t, directory, orderTags.tagsOf)}
           data={visible}
-          enableColumnFilters
           enableColumnPinning
-          enableGlobalFilter
           enablePagination
           enableRowSelection
           enableSorting
           getRowId={(row) => row.id}
           getRowLabel={(row) => row.original.number}
-          globalFilter={globalFilter}
           loading={state.kind === 'loading'}
           loadingRowCount={12}
           maxHeight="calc(100dvh - 15rem)"
-          onColumnFiltersChange={setColumnFilters}
-          onGlobalFilterChange={setGlobalFilter}
           onRowClick={(row) => setDetailId(row.original.id)}
           onRowSelectionChange={setSelection}
           pageSizeOptions={[50, 100, 200]}
@@ -238,8 +262,8 @@ const OrdersPageContent = () => {
                   action={
                     <Button
                       onClick={() => {
-                        setGlobalFilter('');
-                        setColumnFilters([]);
+                        setSearch('');
+                        setStatusFilter(null);
                         tagFilter.setTagId(null);
                       }}
                       size="sm"
