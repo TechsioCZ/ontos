@@ -7,7 +7,6 @@ import {
 import type { TagId } from '@app/tagging/contracts/records';
 import { TagFilter } from '@app/tagging/components/tag-controls';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
@@ -22,10 +21,13 @@ import {
   opportunityStages,
 } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
+import { PickerCombobox } from './pipeline-combobox.tsx';
 import type { CustomerOption, EmployeeOption, LoadState } from './pipeline-references.ts';
 
 const K = 'sales-pipeline.pages.records';
 const ALL = '__all__';
+/** ui-kit's Select label takes no size, so it is set here to match the small search and customer labels. */
+const filterLabelProps = { className: 'text-label-sm' } as const;
 
 type PartyId = typeof PartyIdSchema.Type;
 
@@ -164,8 +166,7 @@ export const PipelineFilters = ({
         />
       </div>
       <div className="w-48">
-        <Combobox
-          clearable
+        <PickerCombobox
           filterBehavior="external"
           items={shownCustomerItems}
           label={t(`${K}.filters.customer`)}
@@ -174,7 +175,7 @@ export const PipelineFilters = ({
           name="customer"
           noResultsMessage={t(`${K}.create.noCustomerMatch`)}
           onChange={(values) => onCustomer(customerFilterOf(firstValue(values)))}
-          // Deleting the typed text does not fire onChange in Combobox, so an emptied field clears the filter here.
+          // Deleting the typed text clears the filter. Combobox does not fire onChange for it, so it happens here.
           onInputValueChange={(text) => {
             setCustomerQuery(text);
             if (text === '') {
@@ -190,6 +191,7 @@ export const PipelineFilters = ({
         <SelectTemplate
           items={stageItems}
           label={t(`${K}.filters.stage`)}
+          labelProps={filterLabelProps}
           name="stage"
           onValueChange={({ value: [next] }) => {
             onStage(isOpportunityStage(next) ? next : '');
@@ -203,6 +205,7 @@ export const PipelineFilters = ({
         <SelectTemplate
           items={ownerItems}
           label={t(`${K}.filters.owner`)}
+          labelProps={filterLabelProps}
           name="owner"
           onValueChange={({ value: [next] }) => onOwner(ownerFilterOf(next))}
           placeholder={t('sales-pipeline.selectPlaceholder')}

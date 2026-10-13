@@ -3,12 +3,12 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { useRef, useState } from 'react';
 import { opportunityAmountMinor } from '../../../../../shared/model/opportunity.ts';
 import type { OpportunityLine } from '../../../../../shared/model/opportunity.ts';
-import { MAX_LINE_QUANTITY, firstValue, isValidQuantity } from './pipeline-model.ts';
+import { PickerCombobox } from './pipeline-combobox.tsx';
+import { MAX_LINE_QUANTITY, filterItemsByQuery, firstValue, isValidQuantity } from './pipeline-model.ts';
 import type { LoadState, ProductOption } from './pipeline-references.ts';
 
 const K = 'sales-pipeline.pages.records';
@@ -114,6 +114,7 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
   const { t } = useModernI18n();
   const [pick, setPick] = useState<PickState>(emptyPick);
   const [lineError, setLineError] = useState<string>();
+  const [productQuery, setProductQuery] = useState('');
   /** Local React keys for draft lines; never sent to the server. */
   const keySequence = useRef(0);
 
@@ -124,13 +125,23 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
     label: `${product.sku} – ${product.name}`,
     value: product.id,
   }));
+  // The list filters on the typed text here, not inside Combobox, so it always follows the input.
+  const shownProductItems = filterItemsByQuery(
+    productItems,
+    productQuery,
+    productItems.find((item) => item.value === pick.productId)?.label,
+  );
   const total = opportunityAmountMinor(lines.map((entry) => entry.line));
   // The typed quantity is kept as entered so an invalid value is reported, not silently replaced.
   const quantityValid = isValidQuantity(pick.quantity);
 
+  /** Adds the picked product. A missing product says so here; an invalid quantity is already reported on its field. */
   const addLine = () => {
     if (pickedProduct === undefined) {
       setLineError(t(`${K}.create.errors.productRequired`));
+      return;
+    }
+    if (!quantityValid) {
       return;
     }
     setLineError(undefined);
@@ -147,6 +158,7 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
     };
     onChange([...lines, entry]);
     setPick(emptyPick);
+    setProductQuery('');
   };
 
   /**
@@ -178,9 +190,10 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
 
       <div className="grid grid-cols-[minmax(0,1fr)_7rem] items-end gap-150">
         <div className="min-w-0">
-          <Combobox
+          <PickerCombobox
             error={products.status === 'error' ? t(`${K}.create.productsFailed`) : undefined}
-            items={productItems}
+            filterBehavior="external"
+            items={shownProductItems}
             label={t(`${K}.create.fields.product`)}
             loading={products.status === 'loading'}
             loadingMessage={t('sales-pipeline.loading')}
@@ -189,6 +202,7 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
               setLineError(undefined);
               setPick((current) => ({ ...current, productId: firstValue(values) ?? null }));
             }}
+            onInputValueChange={setProductQuery}
             placeholder={t(`${K}.create.productPlaceholder`)}
             value={pick.productId === null ? [] : [pick.productId]}
           />
@@ -218,7 +232,16 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
             value={pick.quantity}
           >
             <NumericInput.Control>
-              <NumericInput.Input />
+              {/* Enter here adds the line rather than submitting the whole opportunity. The capture handler
+                  leaves zag's own key handling (arrows, Home, End) on the field in place. */}
+              <NumericInput.Input
+                onKeyDownCapture={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addLine();
+                  }
+                }}
+              />
             </NumericInput.Control>
           </FormNumericInput>
         </div>
@@ -231,15 +254,8 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
               vat: pickedProduct.vatRate,
             })}
         </p>
-        <Button
-          disabled={pick.productId === null || !quantityValid}
-          icon="icon-[mdi--plus]"
-          onClick={addLine}
-          size="sm"
-          theme="outlined"
-          type="button"
-          variant="secondary"
-        >
+        {/* Never disabled: a click without a product explains what is missing instead of doing nothing. */}
+        <Button icon="icon-[mdi--plus]" onClick={addLine} size="sm" theme="outlined" type="button" variant="secondary">
           {t(`${K}.create.addLine`)}
         </Button>
       </div>

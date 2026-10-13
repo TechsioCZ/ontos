@@ -1,4 +1,4 @@
-import { BulkActionBar, foldSearchText, PageHeader } from '@app/admin-ui';
+import { BulkActionBar, foldSearchText, PageHeader, toasterLabels } from '@app/admin-ui';
 import { useTagsFor } from '@app/tagging/components/tag-controls';
 import type { TagId } from '@app/tagging/contracts/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -400,7 +400,7 @@ const RecordsPageContent = () => {
       }
       toaster.create({
         description: skippedText(skipTally(requestedCount(target), result)),
-        title: t(`${K}.toasts.ownerAssigned`),
+        title: owner === null ? t(`${K}.toasts.ownerRemoved`) : t(`${K}.toasts.ownerAssigned`),
         type: 'success',
       });
     });
@@ -430,7 +430,7 @@ const RecordsPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <Toaster />
+      <Toaster {...toasterLabels} />
       <PageHeader
         actions={
           canWrite ? (

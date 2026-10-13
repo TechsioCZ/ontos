@@ -3,13 +3,12 @@ import { SidePanel, formatNumber, statusPresentation } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Option, Schema } from 'effect';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { OpportunityNoteSchema, OpportunityTitleSchema } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import {
@@ -25,6 +24,7 @@ import {
   opportunityStages,
 } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
+import { PickerCombobox } from './pipeline-combobox.tsx';
 import { LinesEditor } from './pipeline-line-editor.tsx';
 import type { LineEntry } from './pipeline-line-editor.tsx';
 import type { CustomerOption, EmployeeOption, LoadState, ProductOption } from './pipeline-references.ts';
@@ -43,6 +43,9 @@ export type FormCommand = CreateCommand | UpdateCommand;
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
 const statusOf = (message: string | undefined) => (message === undefined ? 'default' : 'error');
+
+/** ui-kit's Select label takes no size, so it is set here to match the FormInput and Combobox labels. */
+const formLabelProps = { className: 'text-label-md' } as const;
 
 interface FormDraft {
   readonly customerId: string | null;
@@ -127,6 +130,7 @@ export const OpportunityFormDialog = ({
   /** Bumped on a rejected submit, so the first invalid field takes focus. */
   const [invalidAttempt, setInvalidAttempt] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
+  const formId = useId();
 
   const errors = formErrors(draft, closeText, t);
   const visible = (message: string | undefined) => (submitted ? message : undefined);
@@ -180,6 +184,10 @@ export const OpportunityFormDialog = ({
   ];
 
   const submit = () => {
+    // Enter in a field submits the form even while the save button shows its spinner.
+    if (busy) {
+      return;
+    }
     setSubmitted(true);
     const partyOption =
       draft.customerId === null ? Option.none() : Schema.decodeOption(PartyIdSchema)(draft.customerId);
@@ -223,7 +231,14 @@ export const OpportunityFormDialog = ({
             <Button onClick={() => requestClose(false)} theme="outlined" type="button" variant="secondary">
               {t(`${K}.create.cancel`)}
             </Button>
-            <Button isLoading={busy} loadingText={t(`${K}.create.submitting`)} onClick={submit} variant="primary">
+            {/* Submits the form below, so Enter in a text field saves the opportunity too. */}
+            <Button
+              form={formId}
+              isLoading={busy}
+              loadingText={t(`${K}.create.submitting`)}
+              type="submit"
+              variant="primary"
+            >
               {isEdit ? t(`${K}.edit.submit`) : t(`${K}.create.submit`)}
             </Button>
           </>
@@ -241,6 +256,8 @@ export const OpportunityFormDialog = ({
             The small inline padding keeps focus rings from being clipped by the scroll edge. */}
         <form
           className="-mx-100 flex min-h-0 flex-1 flex-col gap-200 overflow-y-auto px-100 py-200"
+          id={formId}
+          noValidate
           onSubmit={(event) => {
             event.preventDefault();
             submit();
@@ -252,7 +269,7 @@ export const OpportunityFormDialog = ({
               {serverError}
             </StatusText>
           )}
-          <Combobox
+          <PickerCombobox
             error={customers.status === 'error' ? t(`${K}.create.customersFailed`) : undefined}
             filterBehavior="external"
             helpText={visible(errors.customer) ?? ''}
@@ -289,6 +306,7 @@ export const OpportunityFormDialog = ({
               disabled={isEdit}
               items={ownerItems}
               label={t(`${K}.create.fields.assignee`)}
+              labelProps={formLabelProps}
               name="ownerEmployeeId"
               onValueChange={({ value: [next] }) => {
                 patch({ ownerId: next === undefined || next === NONE ? null : next });
@@ -375,6 +393,7 @@ export const StageDialog = ({
   const [stage, setStage] = useState<OpportunityStage | ''>('');
   const [note, setNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const formId = useId();
   const items = opportunityStages.flatMap((candidate) =>
     candidate === currentStage ? [] : [{ label: statusPresentation('opportunity', candidate).label, value: candidate }],
   );
@@ -382,6 +401,9 @@ export const StageDialog = ({
   const noteError = isValidNote(noteText) ? undefined : t(`${K}.create.errors.noteTooLong`);
 
   const submit = () => {
+    if (busy) {
+      return;
+    }
     setSubmitted(true);
     if (stage === '' || noteError !== undefined) {
       return;
@@ -396,7 +418,13 @@ export const StageDialog = ({
           <Button onClick={() => onOpenChange(false)} theme="outlined" type="button" variant="secondary">
             {t(`${K}.stageDialog.cancel`)}
           </Button>
-          <Button isLoading={busy} loadingText={t(`${K}.stageDialog.submitting`)} onClick={submit} variant="primary">
+          <Button
+            form={formId}
+            isLoading={busy}
+            loadingText={t(`${K}.stageDialog.submitting`)}
+            type="submit"
+            variant="primary"
+          >
             {t(`${K}.stageDialog.submit`)}
           </Button>
         </>
@@ -405,11 +433,13 @@ export const StageDialog = ({
       description={description}
       onOpenChange={onOpenChange}
       open
-      size="md"
+      size="lg"
       title={t(`${K}.stageDialog.title`)}
     >
       <form
         className="flex flex-col gap-200 py-200"
+        id={formId}
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
           submit();
@@ -423,6 +453,7 @@ export const StageDialog = ({
         <SelectTemplate
           items={items}
           label={t(`${K}.stageDialog.stage`)}
+          labelProps={formLabelProps}
           name="stage"
           onValueChange={(details) => {
             const [next] = details.value;
@@ -483,11 +514,15 @@ export const OwnerDialog = ({
 }: OwnerDialogProps) => {
   const { t } = useModernI18n();
   const [owner, setOwner] = useState<string>(currentOwner ?? NONE);
+  const formId = useId();
   const items = [
     { label: t(`${K}.owner.none`), value: NONE },
     ...employees.map((employee) => ({ label: employee.fullName, value: employee.id })),
   ];
   const submit = () => {
+    if (busy) {
+      return;
+    }
     if (owner === NONE) {
       onSubmit(null);
       return;
@@ -502,7 +537,13 @@ export const OwnerDialog = ({
           <Button onClick={() => onOpenChange(false)} theme="outlined" type="button" variant="secondary">
             {t(`${K}.owner.cancel`)}
           </Button>
-          <Button isLoading={busy} loadingText={t(`${K}.owner.submitting`)} onClick={submit} variant="primary">
+          <Button
+            form={formId}
+            isLoading={busy}
+            loadingText={t(`${K}.owner.submitting`)}
+            type="submit"
+            variant="primary"
+          >
             {t(`${K}.owner.submit`)}
           </Button>
         </>
@@ -511,10 +552,18 @@ export const OwnerDialog = ({
       description={description}
       onOpenChange={onOpenChange}
       open
-      size="md"
+      size="lg"
       title={t(`${K}.owner.title`)}
     >
-      <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+      <form
+        className="flex flex-col gap-200 py-200"
+        id={formId}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
         {serverError !== undefined && (
           <StatusText showIcon status="error">
             {serverError}
@@ -523,6 +572,7 @@ export const OwnerDialog = ({
         <SelectTemplate
           items={items}
           label={t(`${K}.owner.label`)}
+          labelProps={formLabelProps}
           name="owner"
           onValueChange={(details) => {
             const [next] = details.value;

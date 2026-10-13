@@ -46,6 +46,8 @@
         "previous": "Previous page",
         "root": "Pagination"
       },
+      "rangeEmpty": "No records",
+      "rangeLabel": "{{start}}–{{end}} of {{total}}",
       "reorderLabel": "Change row order",
       "requiredLabel": "Required",
       "searchButtonLabel": "Search",
@@ -177,6 +179,7 @@
         "toasts": {
           "created": "Opportunity created",
           "ownerAssigned": "Owner assigned",
+          "ownerRemoved": "Owner removed",
           "skipReasons": {
             "closed": "closed: {{total}}",
             "invalidTransition": "change not allowed: {{total}}",

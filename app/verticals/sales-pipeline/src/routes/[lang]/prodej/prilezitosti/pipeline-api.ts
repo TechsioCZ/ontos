@@ -19,15 +19,32 @@ export const loadPipeline = Effect.fn('SalesPipeline.loadPipeline')(function* lo
   return yield* executeRecords(filters, correlation);
 });
 
-/** Single command endpoint. Every call carries the revision the screen was built from. */
-export const applyPipelineCommand = Effect.fn('SalesPipeline.applyCommand')(function* applyPipelineCommand(
+const sendPipelineCommand = Effect.fn('SalesPipeline.sendCommand')(function* sendPipelineCommand(
   command: PipelineCommand,
   expectedRevision: number,
 ) {
+  // A retry is a new invocation, so every send gets its own idempotency key.
   const nonce = yield* Random.nextInt;
   const idempotencyKey = `sales-pipeline:apply:${nonce}`;
   return yield* executeApplyCommand({ command, expectedRevision }, idempotencyKey, { idempotencyKey });
 });
+
+/**
+ * Single command endpoint. The first call carries the revision the screen was built from. The revision covers the
+ * whole pipeline, so an unrelated edit elsewhere also bumps it: on `sales_pipeline_revision_conflict` the command is
+ * sent once more against a freshly read revision. A second conflict reaches the caller.
+ */
+export const applyPipelineCommand = (command: PipelineCommand, expectedRevision: number) =>
+  sendPipelineCommand(command, expectedRevision).pipe(
+    Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
+      conflict.code === 'sales_pipeline_revision_conflict'
+        ? Random.nextInt.pipe(
+            Effect.flatMap((nonce) => executeRecords({}, `sales-pipeline:revision:${nonce}`)),
+            Effect.flatMap(({ revision }) => sendPipelineCommand(command, revision)),
+          )
+        : Effect.fail(conflict),
+    ),
+  );
 
 export interface PipelineFilterValues {
   readonly customer: typeof PartyIdSchema.Type | '';

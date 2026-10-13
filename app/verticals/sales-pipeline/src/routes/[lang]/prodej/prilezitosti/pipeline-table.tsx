@@ -1,4 +1,13 @@
-import { EmptyState, formatDate, formatDateTime, formatPercent, StatusBadge, statusPresentation } from '@app/admin-ui';
+import {
+  EmptyState,
+  formatDate,
+  formatDateTime,
+  formatNumber,
+  formatPercent,
+  StatusBadge,
+  statusPresentation,
+  dataTableRowLabels,
+} from '@app/admin-ui';
 import type { Tag } from '@app/tagging/contracts/records';
 import { TagCell } from '@app/tagging/components/tag-controls';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -132,6 +141,7 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
 export const defaultColumnVisibility = { probability: false, updatedAt: false } satisfies Record<string, boolean>;
 
 export const buildTableTranslations = (t: Translate): DataTableTranslations => ({
+  ...dataTableRowLabels,
   actionsLabel: t('sales-pipeline.table.actionsLabel'),
   clearSearchLabel: t('sales-pipeline.table.clearSearchLabel'),
   columnsLabel: t('sales-pipeline.table.columnsLabel'),
@@ -141,7 +151,15 @@ export const buildTableTranslations = (t: Translate): DataTableTranslations => (
   filtersLabel: t('sales-pipeline.table.filtersLabel'),
   loadingLabel: t('sales-pipeline.table.loadingLabel'),
   pageSizeLabel: t('sales-pipeline.table.pageSizeLabel'),
-  rangeLabel: ({ end, start, total }) => `${start}–${end} z ${total}`,
+  // An empty list says so instead of `0–0 z 0`.
+  rangeLabel: ({ end, start, total }) =>
+    total === 0
+      ? t('sales-pipeline.table.rangeEmpty')
+      : t('sales-pipeline.table.rangeLabel', {
+          end: formatNumber(end),
+          start: formatNumber(start),
+          total: formatNumber(total),
+        }),
   reorderLabel: t('sales-pipeline.table.reorderLabel'),
   requiredLabel: t('sales-pipeline.table.requiredLabel'),
   searchButtonLabel: t('sales-pipeline.table.searchButtonLabel'),

@@ -46,6 +46,8 @@
         "previous": "Předchozí stránka",
         "root": "Stránkování"
       },
+      "rangeEmpty": "Žádné záznamy",
+      "rangeLabel": "{{start}}–{{end}} z {{total}}",
       "reorderLabel": "Změnit pořadí řádků",
       "requiredLabel": "Povinné",
       "searchButtonLabel": "Hledat",
@@ -177,6 +179,7 @@
         "toasts": {
           "created": "Příležitost vytvořena",
           "ownerAssigned": "Obchodník přiřazen",
+          "ownerRemoved": "Obchodník odebrán",
           "skipReasons": {
             "closed": "uzavřené: {{total}}",
             "invalidTransition": "nepovolená změna: {{total}}",

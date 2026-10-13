@@ -121,6 +121,7 @@ export const PipelineDialogHost = ({
         onDone={onBulkTagsDone}
         onOpenChange={close}
         open
+        size="lg"
         subjectIds={toSubjectIds(dialog.ids)}
       />
     );
