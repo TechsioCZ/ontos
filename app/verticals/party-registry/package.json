@@ -57,6 +57,7 @@
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/tagging": "workspace:*",
     "@effect/opentelemetry": "4.0.0-rc.117",
     "@modern-js/plugin-bff": "catalog:ultramodern",
     "@modern-js/plugin-i18n": "catalog:ultramodern",
