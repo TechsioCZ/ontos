@@ -1,0 +1,45 @@
+{
+  "projects": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "projects",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Projects Vertical",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "createProject": {
+        "title": "Create Project",
+        "description": "Create a tenant-owned Project with an eligible Owner.",
+        "name": "Name",
+        "prefixHelp": "2–5 English letters. The Prefix cannot be changed later.",
+        "shortText": "Short text",
+        "ownerQuery": "Find an Owner",
+        "findOwners": "Find eligible users",
+        "owner": "Owner",
+        "submit": "Create Project",
+        "loading": "Checking eligible users…",
+        "saving": "Creating…",
+        "empty": "No eligible users are available for this Project.",
+        "unavailable": "This operation is unavailable. Please try again.",
+        "forbidden": "You are not permitted to perform this operation.",
+        "invalid": "Check the fields and select an eligible Owner.",
+        "conflict": "The Project could not be created because its state or Prefix conflicts.",
+        "success": "Project created.",
+        "idle": "Select one eligible user from the results.",
+        "uncertain": "The creation result is uncertain. Verify the Project before trying again.",
+        "prefixLabel": "Prefix"
+      }
+    }
+  }
+}

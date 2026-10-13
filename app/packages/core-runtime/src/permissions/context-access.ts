@@ -403,6 +403,13 @@ export interface ContextAccessService {
     readonly resources: readonly ResourceAccessTarget[];
     readonly tenantId: string;
   }) => Effect.Effect<readonly ContextAccessResult[]>;
+  /** Exact Tenant-owned resource permissions; no implicit Legal Entity or tenant-access grant. */
+  readonly tenantResources?: (input: {
+    readonly permission: 'assign' | 'read' | 'write';
+    readonly principalId: string;
+    readonly resources: readonly ResourceAccessTarget[];
+    readonly tenantId: string;
+  }) => Effect.Effect<readonly ContextAccessResult[]>;
   readonly tenants: (input: {
     readonly permission: TenantPermissionKey;
     readonly principalId: string;
@@ -465,6 +472,9 @@ export const toResourceAccessObjectId = (
   resource: ResourceAccessTarget,
 ): string | undefined =>
   encodeObjectId([tenantId, legalEntityId, resource.moduleId, resource.resourceType, resource.resourceId]);
+
+export const toTenantResourceAccessObjectId = (tenantId: string, resource: ResourceAccessTarget): string | undefined =>
+  encodeObjectId([tenantId, resource.moduleId, resource.resourceType, resource.resourceId]);
 
 const businessTargetParts = (target: BusinessAccessTarget): readonly string[] => {
   if (target.kind === 'retail_profile') {
@@ -962,6 +972,16 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
         })),
         principalId,
       ),
+    tenantResources: ({ permission, principalId, resources, tenantId }) =>
+      checkBatch(
+        resources.map((resource) => ({
+          key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+          permission,
+          resourceId: toTenantResourceAccessObjectId(tenantId, resource) ?? '',
+          resourceType: 'tenant_resource',
+        })),
+        principalId,
+      ),
     tenants: ({ permission, principalId, tenantIds }) =>
       checkBatch(
         tenantIds.map((tenantId) => ({
@@ -989,6 +1009,12 @@ const unavailableContextAccess = (): ContextAccessService => {
       Effect.succeed(
         unavailable(
           resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
+        ),
+      ),
+    tenantResources: ({ resources }) =>
+      Effect.succeed(
+        unavailable(
+          resources.map((resource) => `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`),
         ),
       ),
     tenants: ({ tenantIds }) => Effect.succeed(unavailable(tenantIds)),

@@ -35,6 +35,9 @@
     },
     {
       "appId": "privacy"
+    },
+    {
+      "appId": "projects"
     }
   ]
 }

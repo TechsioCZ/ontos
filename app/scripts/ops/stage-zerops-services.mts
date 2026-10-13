@@ -83,6 +83,7 @@ export const RETIRED_STAGE_SERVICES = [
   { hostname: 'availability', setup: 'availability' },
   { hostname: 'tax', setup: 'tax' },
   { hostname: 'privacy', setup: 'privacy' },
+  { hostname: 'projects', setup: 'projects' },
 ] as const;
 
 const EnvironmentKeySchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsEnvironmentKey'));

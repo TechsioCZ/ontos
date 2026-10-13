@@ -896,3 +896,9 @@ export type {
 
 // <generated-global-policy-exports>
 // </generated-global-policy-exports>
+
+export {
+  humanPrincipalCandidatesForTransaction,
+  PrincipalCandidatesUnavailable,
+} from './permissions/human-principal-candidates.ts';
+export { toTenantResourceAccessObjectId } from './permissions/context-access.ts';

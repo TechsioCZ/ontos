@@ -52,6 +52,18 @@ schema: |-
     permission write = writer & module->access
   }
 
+  // Tenant-owned references remain independent of a selected Legal Entity.
+  // Assignment eligibility is an explicit target grant, never mere membership.
+  definition tenant_resource {
+    relation tenant: tenant
+    relation reader: principal
+    relation writer: principal
+    relation assignee: principal
+    permission read = reader & tenant->access
+    permission write = writer & tenant->access
+    permission assign = assignee & tenant->access
+  }
+
   // Each object ID encodes the stable permission code and exact tenant/business scope.
   // Tenant-only Pricing targets use tenant access; existing Retail and Counterparty targets use Legal Entity access.
   // A Price Group may inherit the same permission from its exact containing catalog through an explicit relation.

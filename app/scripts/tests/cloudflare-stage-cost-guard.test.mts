@@ -58,6 +58,7 @@ const HOSTNAMES = [
   'ontos-stage-inventory.stage.example.com',
   'ontos-stage-tax.stage.example.com',
   'ontos-stage-privacy.stage.example.com',
+  'ontos-stage-projects.stage.example.com',
   SHELL_HOSTNAME,
 ];
 

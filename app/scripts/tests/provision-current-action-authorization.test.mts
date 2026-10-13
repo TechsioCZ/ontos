@@ -88,6 +88,11 @@ const currentActionKeys = [
 const addedVerticalActionKeys = [
   'commerce.customer-context.execute-privacy-measure',
   'party.registry.execute-privacy-measure',
+  'projects.core.archive-project',
+  'projects.core.create-project',
+  'projects.core.move-project',
+  'projects.core.unarchive-project',
+  'projects.core.update-project',
   'privacy.core.add-processing-purpose-version',
   'privacy.core.assign-dsr-resolver',
   'privacy.core.assign-legal-basis',
