@@ -73,7 +73,10 @@
           "search": "Search by title",
           "searchLabel": "Search",
           "stage": "Stage",
-          "unassignedOnly": "Unassigned only"
+          "unassignedOnly": "Unassigned only",
+          "customer": "Customer",
+          "allCustomers": "All customers",
+          "tagFailed": "The tag filter could not be loaded."
         },
         "columns": {
           "amount": "Value",
@@ -88,33 +91,53 @@
         },
         "actions": {
           "assignOwner": "Assign owner",
-          "changeStage": "Change stage"
+          "changeStage": "Change stage",
+          "edit": "Edit"
         },
         "bulk": {
-          "clear": "Clear selection",
           "owner": "Assign owner",
           "selected": "Selected: {{total}}",
-          "stage": "Change stage"
+          "stage": "Change stage",
+          "tags": "Tags"
         },
         "create": {
           "cancel": "Cancel",
-          "customerHint": "Enter the customer ID for now. Picking from the customer list comes later.",
-          "description": "The opportunity starts without product lines, in the Lead stage.",
+          "submit": "Create opportunity",
+          "submitting": "Saving…",
+          "title": "New opportunity",
+          "description": "The opportunity starts in the Lead stage. Products are priced at the current price.",
+          "customerPlaceholder": "Search for a customer…",
+          "noCustomerMatch": "No customer matches the search.",
+          "unknownCustomer": "Unknown customer",
+          "customersFailed": "Customers could not be loaded.",
+          "ownerEditHint": "Change the owner with the Assign owner action.",
+          "productPlaceholder": "Search for a product…",
+          "noProductMatch": "No product matches the search.",
+          "productsFailed": "Products could not be loaded.",
+          "currentPrice": "Current price: {{price}}, VAT {{vat}} %",
+          "addLine": "Add line",
+          "removeLine": "Remove line",
+          "noLines": "No lines yet.",
+          "priceFixedHint": "Price fixed when added.",
+          "lineMeta": "{{price}} per unit, VAT {{vat}} %",
+          "total": "Total excl. VAT",
           "errors": {
-            "customerInvalid": "Enter a valid customer ID.",
+            "customerRequired": "Choose a customer.",
             "dateRequired": "Choose the expected close date.",
             "noteTooLong": "The note can have at most 2000 characters.",
-            "titleRequired": "Enter the opportunity title."
+            "productRequired": "Choose a product.",
+            "titleRequired": "Enter the opportunity name."
           },
           "fields": {
-            "customer": "Customer (ID)",
+            "title": "Name",
+            "customer": "Customer",
+            "assignee": "Owner",
             "expectedClose": "Expected close",
             "note": "Note",
-            "title": "Title"
-          },
-          "submit": "Create opportunity",
-          "submitting": "Creating…",
-          "title": "New opportunity"
+            "lines": "Lines",
+            "product": "Product",
+            "quantity": "Quantity"
+          }
         },
         "stageDialog": {
           "cancel": "Cancel",
@@ -138,13 +161,49 @@
           "created": "Opportunity created",
           "ownerAssigned": "Owner assigned",
           "skipped": "Skipped: {{total}}",
-          "stageChanged": "Stage changed"
+          "stageChanged": "Stage changed",
+          "updated": "Opportunity saved",
+          "bulkChanged": "Changed {{changed}}, skipped {{skipped}}"
         },
         "errors": {
           "conflict": "Someone else changed the record in the meantime. Reload it and repeat your change.",
           "forbidden": "You are not allowed to do this.",
           "generic": "The change could not be saved. Try again."
-        }
+        },
+        "bulkByTag": {
+          "title": "Bulk by tag",
+          "description": "The change applies to open opportunities that match the chosen tag.",
+          "kind": "Tag type",
+          "kinds": {
+            "customer": "Customer",
+            "opportunity": "Opportunity"
+          },
+          "preview": "Affected opportunities",
+          "chooseTag": "Choose a tag to see the opportunities the change touches.",
+          "previewEmpty": "No open opportunity matches the tag.",
+          "loading": "Loading opportunities…",
+          "tagsFailed": "Tags could not be loaded.",
+          "loadFailed": "Opportunities could not be loaded. Close the dialog and try again.",
+          "conflict": "Someone else changed the opportunities. Close the dialog and repeat the change.",
+          "action": "Action",
+          "actions": {
+            "stage": "Change stage",
+            "owner": "Assign owner"
+          },
+          "stage": "New stage",
+          "owner": "Owner",
+          "valueRequired": "Choose a new stage or owner.",
+          "tooMany": "At most {{limit}} opportunities can change at once. Narrow the selection with a tag.",
+          "submit": "Apply change",
+          "submitting": "Saving…",
+          "cancel": "Cancel"
+        },
+        "edit": {
+          "title": "Edit opportunity",
+          "description": "Change the owner with the Assign owner action. Lines keep the prices fixed when they were added.",
+          "submit": "Save changes"
+        },
+        "unknownOwner": "Unknown owner"
       }
     }
   }

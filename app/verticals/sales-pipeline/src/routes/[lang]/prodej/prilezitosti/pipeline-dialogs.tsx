@@ -1,90 +1,171 @@
+import { CalendarDateSchema } from '@app/shared-contracts';
+import { statusPresentation } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { CalendarDateSchema } from '@app/shared-contracts';
 import { Option, Schema } from 'effect';
 import { useState } from 'react';
 import { OpportunityNoteSchema, OpportunityTitleSchema } from '../../../../../shared/model/opportunity.ts';
-import { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
+import {
+  EmployeeIdSchema,
+  PartyIdSchema,
+} from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
+import { firstValue, isOpportunityStage, opportunityStages } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
-import { employeeOptions, findEmployee, isOpportunityStage, opportunityStages } from './pipeline-model.ts';
+import { LinesEditor } from './pipeline-line-editor.tsx';
+import type { LineEntry } from './pipeline-line-editor.tsx';
+import type { CustomerOption, EmployeeOption, LoadState, ProductOption } from './pipeline-references.ts';
 
+const K = 'sales-pipeline.pages.records';
 const NONE = '__none__';
 const isValidTitle = Schema.is(OpportunityTitleSchema);
 const isValidNote = Schema.is(OpportunityNoteSchema);
 
 export type CreateCommand = Extract<PipelineCommand, { _tag: 'CreateOpportunity' }>;
+export type UpdateCommand = Extract<PipelineCommand, { _tag: 'UpdateOpportunity' }>;
+export type FormCommand = CreateCommand | UpdateCommand;
 
-type Translate = (key: string) => string;
-
-/** Raw form text; each field is validated by the schema that owns its domain type. */
-const CreateDraftSchema = Schema.Struct({
-  closeInput: Schema.String,
-  note: Schema.String,
-  partyInput: Schema.String,
-  title: Schema.String,
-});
-type CreateDraft = typeof CreateDraftSchema.Type;
-
-const createErrors = (draft: CreateDraft, t: Translate) => ({
-  closeInput: Option.isNone(Schema.decodeOption(CalendarDateSchema)(draft.closeInput))
-    ? t('sales-pipeline.pages.records.create.errors.dateRequired')
-    : undefined,
-  note: isValidNote(draft.note.trim()) ? undefined : t('sales-pipeline.pages.records.create.errors.noteTooLong'),
-  partyInput: Option.isNone(Schema.decodeOption(PartyIdSchema)(draft.partyInput.trim()))
-    ? t('sales-pipeline.pages.records.create.errors.customerInvalid')
-    : undefined,
-  title: isValidTitle(draft.title.trim()) ? undefined : t('sales-pipeline.pages.records.create.errors.titleRequired'),
-});
+type Translate = ReturnType<typeof useModernI18n>['t'];
 
 const statusOf = (message: string | undefined) => (message === undefined ? 'default' : 'error');
 
-interface CreateDialogProps {
-  busy: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSubmit: (command: CreateCommand) => void;
-  serverError?: string | undefined;
+interface FormDraft {
+  readonly customerId: string | null;
+  readonly lines: readonly LineEntry[];
+  readonly note: string;
+  readonly ownerId: string | null;
+  readonly title: string;
 }
 
-/** Create opportunity. Lines stay empty until the product-line editor exists. */
-export const CreateOpportunityDialog = ({ busy, onOpenChange, onSubmit, serverError }: CreateDialogProps) => {
+interface FormErrors {
+  readonly close: string | undefined;
+  readonly customer: string | undefined;
+  readonly note: string | undefined;
+  readonly title: string | undefined;
+}
+
+const formErrors = (draft: FormDraft, closeText: string, t: Translate): FormErrors => ({
+  close: Option.isNone(Schema.decodeOption(CalendarDateSchema)(closeText))
+    ? t(`${K}.create.errors.dateRequired`)
+    : undefined,
+  customer:
+    draft.customerId === null || Option.isNone(Schema.decodeOption(PartyIdSchema)(draft.customerId))
+      ? t(`${K}.create.errors.customerRequired`)
+      : undefined,
+  note: isValidNote(draft.note.trim()) ? undefined : t(`${K}.create.errors.noteTooLong`),
+  title: isValidTitle(draft.title.trim()) ? undefined : t(`${K}.create.errors.titleRequired`),
+});
+
+const emptyDraft: FormDraft = { customerId: null, lines: [], note: '', ownerId: null, title: '' };
+
+const draftFrom = (opportunity: Opportunity): FormDraft => ({
+  customerId: opportunity.partyId,
+  lines: opportunity.lines.map((line, index) => ({ key: `init-${index}`, line })),
+  note: opportunity.note ?? '',
+  ownerId: opportunity.ownerEmployeeId ?? null,
+  title: opportunity.title,
+});
+
+const customerLabel = (customer: CustomerOption, unknownName: string): string => {
+  const name = customer.name ?? unknownName;
+  return customer.companyId === null ? name : `${name} (IČO ${customer.companyId})`;
+};
+
+interface OpportunityFormDialogProps {
+  readonly busy: boolean;
+  readonly customers: LoadState<readonly CustomerOption[]>;
+  readonly employees: LoadState<readonly EmployeeOption[]>;
+  /** Present for edit; absent for create. */
+  readonly initial?: Opportunity | undefined;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onSubmit: (command: FormCommand) => void;
+  readonly products: LoadState<readonly ProductOption[]>;
+  readonly serverError?: string | undefined;
+}
+
+/** Create or edit an opportunity. The owner is set on create; on edit it changes through the owner action. */
+export const OpportunityFormDialog = ({
+  busy,
+  customers,
+  employees,
+  initial,
+  onOpenChange,
+  onSubmit,
+  products,
+  serverError,
+}: OpportunityFormDialogProps) => {
   const { t } = useModernI18n();
-  const [draft, setDraft] = useState<CreateDraft>({ closeInput: '', note: '', partyInput: '', title: '' });
+  const isEdit = initial !== undefined;
+  const [draft, setDraft] = useState<FormDraft>(() => (initial === undefined ? emptyDraft : draftFrom(initial)));
+  /** Calendar date as typed; decoded to a CalendarDate only on submit. */
+  const [closeText, setCloseText] = useState<string>(() => initial?.expectedCloseDate ?? '');
   const [submitted, setSubmitted] = useState(false);
-  const errors = createErrors(draft, t);
+
+  const errors = formErrors(draft, closeText, t);
   const visible = (message: string | undefined) => (submitted ? message : undefined);
-  const shown = {
-    closeInput: visible(errors.closeInput),
-    note: visible(errors.note),
-    partyInput: visible(errors.partyInput),
-    title: visible(errors.title),
-  };
-  const patch = (next: Partial<CreateDraft>) => setDraft((current) => ({ ...current, ...next }));
+  const patch = (next: Partial<FormDraft>) => setDraft((current) => ({ ...current, ...next }));
+  const unknownCustomer = t(`${K}.create.unknownCustomer`);
+  const unknownOwner = t(`${K}.unknownOwner`);
+
+  const customerItems =
+    customers.status === 'ready'
+      ? customers.items.flatMap((customer) =>
+          customer.archived && customer.id !== draft.customerId
+            ? []
+            : [{ id: customer.id, label: customerLabel(customer, unknownCustomer), value: customer.id }],
+        )
+      : [];
+
+  const ownerItems = [
+    { label: t(`${K}.owner.none`), value: NONE },
+    ...(employees.status === 'ready'
+      ? employees.items.flatMap((employee) =>
+          employee.active || employee.id === draft.ownerId
+            ? [{ label: employee.fullName || unknownOwner, value: employee.id }]
+            : [],
+        )
+      : []),
+  ];
 
   const submit = () => {
     setSubmitted(true);
-    const partyOption = Schema.decodeOption(PartyIdSchema)(draft.partyInput.trim());
-    const dateOption = Schema.decodeOption(CalendarDateSchema)(draft.closeInput);
+    const partyOption =
+      draft.customerId === null ? Option.none() : Schema.decodeOption(PartyIdSchema)(draft.customerId);
+    const dateOption = Schema.decodeOption(CalendarDateSchema)(closeText);
     if (Object.values(errors).some((error) => error !== undefined)) {
       return;
     }
     if (Option.isNone(partyOption) || Option.isNone(dateOption)) {
       return;
     }
-    const noteText = draft.note.trim();
+    const title = draft.title.trim();
+    const note = draft.note.trim();
+    const lines = draft.lines.map((entry) => entry.line);
+    if (initial !== undefined) {
+      onSubmit({
+        _tag: 'UpdateOpportunity',
+        id: initial.id,
+        patch: { expectedCloseDate: dateOption.value, lines, note, partyId: partyOption.value, title },
+      });
+      return;
+    }
     const base: CreateCommand = {
       _tag: 'CreateOpportunity',
       expectedCloseDate: dateOption.value,
-      lines: [],
+      lines,
+      note,
       partyId: partyOption.value,
-      title: draft.title.trim(),
+      title,
     };
-    onSubmit(noteText === '' ? base : { ...base, note: noteText });
+    const owner = draft.ownerId === null ? Option.none() : Schema.decodeOption(EmployeeIdSchema)(draft.ownerId);
+    onSubmit(Option.isSome(owner) ? { ...base, ownerEmployeeId: owner.value } : base);
   };
 
   return (
@@ -92,25 +173,20 @@ export const CreateOpportunityDialog = ({ busy, onOpenChange, onSubmit, serverEr
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
-            {t('sales-pipeline.pages.records.create.cancel')}
+            {t(`${K}.create.cancel`)}
           </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t('sales-pipeline.pages.records.create.submitting')}
-            onClick={submit}
-            variant="primary"
-          >
-            {t('sales-pipeline.pages.records.create.submit')}
+          <Button isLoading={busy} loadingText={t(`${K}.create.submitting`)} onClick={submit} variant="primary">
+            {isEdit ? t(`${K}.edit.submit`) : t(`${K}.create.submit`)}
           </Button>
         </>
       }
       customTrigger
-      description={t('sales-pipeline.pages.records.create.description')}
+      description={isEdit ? t(`${K}.edit.description`) : t(`${K}.create.description`)}
       onOpenChange={(details) => onOpenChange(details.open)}
       open
       placement="right"
-      size="md"
-      title={t('sales-pipeline.pages.records.create.title')}
+      size="lg"
+      title={isEdit ? t(`${K}.edit.title`) : t(`${K}.create.title`)}
     >
       <form
         className="flex flex-col gap-200 py-200"
@@ -124,60 +200,80 @@ export const CreateOpportunityDialog = ({ busy, onOpenChange, onSubmit, serverEr
             {serverError}
           </StatusText>
         )}
+        <Combobox
+          error={customers.status === 'error' ? t(`${K}.create.customersFailed`) : undefined}
+          helpText={visible(errors.customer) ?? ''}
+          items={customerItems}
+          label={t(`${K}.create.fields.customer`)}
+          loading={customers.status === 'loading'}
+          name="partyId"
+          noResultsMessage={t(`${K}.create.noCustomerMatch`)}
+          onChange={(values) => {
+            const next = firstValue(values);
+            patch({ customerId: next === undefined || next === '' ? null : next });
+          }}
+          placeholder={t(`${K}.create.customerPlaceholder`)}
+          required
+          validateStatus={statusOf(visible(errors.customer))}
+          value={draft.customerId === null ? [] : [draft.customerId]}
+        />
         <FormInput
-          helpText={shown.title}
+          helpText={visible(errors.title)}
           id="opportunity-title"
-          label={t('sales-pipeline.pages.records.create.fields.title')}
+          label={t(`${K}.create.fields.title`)}
           name="title"
           onChange={(event) => patch({ title: event.target.value })}
           required
-          validateStatus={statusOf(shown.title)}
+          validateStatus={statusOf(visible(errors.title))}
           value={draft.title}
         />
-        <FormInput
-          helpText={shown.partyInput ?? t('sales-pipeline.pages.records.create.customerHint')}
-          id="opportunity-customer"
-          label={t('sales-pipeline.pages.records.create.fields.customer')}
-          name="partyId"
-          onChange={(event) => patch({ partyInput: event.target.value })}
-          required
-          validateStatus={statusOf(shown.partyInput)}
-          value={draft.partyInput}
+        <Combobox
+          disabled={isEdit}
+          helpText={isEdit ? t(`${K}.create.ownerEditHint`) : ''}
+          items={ownerItems}
+          label={t(`${K}.create.fields.assignee`)}
+          name="ownerEmployeeId"
+          onChange={(values) => {
+            const next = firstValue(values);
+            patch({ ownerId: next === undefined || next === NONE ? null : next });
+          }}
+          value={[draft.ownerId ?? NONE]}
         />
         <FormInput
-          helpText={shown.closeInput}
+          helpText={visible(errors.close)}
           id="opportunity-close-date"
-          label={t('sales-pipeline.pages.records.create.fields.expectedClose')}
+          label={t(`${K}.create.fields.expectedClose`)}
           name="expectedCloseDate"
-          onChange={(event) => patch({ closeInput: event.target.value })}
+          onChange={(event) => setCloseText(event.target.value)}
           required
           type="date"
-          validateStatus={statusOf(shown.closeInput)}
-          value={draft.closeInput}
+          validateStatus={statusOf(visible(errors.close))}
+          value={closeText}
         />
         <FormTextarea
-          helpText={shown.note}
+          helpText={visible(errors.note)}
           id="opportunity-note"
-          label={t('sales-pipeline.pages.records.create.fields.note')}
+          label={t(`${K}.create.fields.note`)}
           name="note"
           onChange={(event) => patch({ note: event.target.value })}
-          rows={4}
-          validateStatus={statusOf(shown.note)}
+          rows={3}
+          validateStatus={statusOf(visible(errors.note))}
           value={draft.note}
         />
+        <LinesEditor lines={draft.lines} onChange={(lines) => patch({ lines })} products={products} />
       </form>
     </Dialog>
   );
 };
 
 interface StageDialogProps {
-  busy: boolean;
-  currentStage?: OpportunityStage | undefined;
-  description: string;
-  onOpenChange: (open: boolean) => void;
-  onSubmit: (stage: OpportunityStage, note: string | undefined) => void;
-  serverError?: string | undefined;
-  showNote: boolean;
+  readonly busy: boolean;
+  readonly currentStage?: OpportunityStage | undefined;
+  readonly description: string;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onSubmit: (stage: OpportunityStage, note: string | undefined) => void;
+  readonly serverError?: string | undefined;
+  readonly showNote: boolean;
 }
 
 /** Change stage for one opportunity (with note) or for a bulk selection (stage only). */
@@ -195,12 +291,10 @@ export const StageDialog = ({
   const [note, setNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const items = opportunityStages.flatMap((candidate) =>
-    candidate === currentStage
-      ? []
-      : [{ label: t(`sales-pipeline.status.opportunity.${candidate}`), value: candidate }],
+    candidate === currentStage ? [] : [{ label: statusPresentation('opportunity', candidate).label, value: candidate }],
   );
   const noteText = note.trim();
-  const noteError = isValidNote(noteText) ? undefined : t('sales-pipeline.pages.records.create.errors.noteTooLong');
+  const noteError = isValidNote(noteText) ? undefined : t(`${K}.create.errors.noteTooLong`);
 
   const submit = () => {
     setSubmitted(true);
@@ -215,15 +309,10 @@ export const StageDialog = ({
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
-            {t('sales-pipeline.pages.records.stageDialog.cancel')}
+            {t(`${K}.stageDialog.cancel`)}
           </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t('sales-pipeline.pages.records.stageDialog.submitting')}
-            onClick={submit}
-            variant="primary"
-          >
-            {t('sales-pipeline.pages.records.stageDialog.submit')}
+          <Button isLoading={busy} loadingText={t(`${K}.stageDialog.submitting`)} onClick={submit} variant="primary">
+            {t(`${K}.stageDialog.submit`)}
           </Button>
         </>
       }
@@ -233,7 +322,7 @@ export const StageDialog = ({
       open
       placement="right"
       size="md"
-      title={t('sales-pipeline.pages.records.stageDialog.title')}
+      title={t(`${K}.stageDialog.title`)}
     >
       <form
         className="flex flex-col gap-200 py-200"
@@ -249,7 +338,7 @@ export const StageDialog = ({
         )}
         <SelectTemplate
           items={items}
-          label={t('sales-pipeline.pages.records.stageDialog.stage')}
+          label={t(`${K}.stageDialog.stage`)}
           name="stage"
           onValueChange={(details) => {
             const [next] = details.value;
@@ -260,19 +349,19 @@ export const StageDialog = ({
         />
         {submitted && stage === '' && (
           <StatusText showIcon status="error">
-            {t('sales-pipeline.pages.records.stageDialog.stageRequired')}
+            {t(`${K}.stageDialog.stageRequired`)}
           </StatusText>
         )}
         {stage === 'WON' && (
           <StatusText showIcon status="warning">
-            {t('sales-pipeline.pages.records.stageDialog.wonWarning')}
+            {t(`${K}.stageDialog.wonWarning`)}
           </StatusText>
         )}
         {showNote && (
           <FormTextarea
             helpText={submitted ? noteError : undefined}
             id="stage-note"
-            label={t('sales-pipeline.pages.records.stageDialog.note')}
+            label={t(`${K}.stageDialog.note`)}
             name="note"
             onChange={(event) => setNote(event.target.value)}
             rows={3}
@@ -286,12 +375,14 @@ export const StageDialog = ({
 };
 
 interface OwnerDialogProps {
-  busy: boolean;
-  currentOwner?: EmployeeId | undefined;
-  description: string;
-  onOpenChange: (open: boolean) => void;
-  onSubmit: (owner: EmployeeId | null) => void;
-  serverError?: string | undefined;
+  readonly busy: boolean;
+  readonly currentOwner?: EmployeeId | undefined;
+  readonly description: string;
+  /** Active employees only. */
+  readonly employees: readonly EmployeeOption[];
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onSubmit: (owner: EmployeeId | null) => void;
+  readonly serverError?: string | undefined;
 }
 
 /** Assign or clear the owner (`Nepřiřazeno` clears it). */
@@ -299,6 +390,7 @@ export const OwnerDialog = ({
   busy,
   currentOwner,
   description,
+  employees,
   onOpenChange,
   onSubmit,
   serverError,
@@ -306,24 +398,26 @@ export const OwnerDialog = ({
   const { t } = useModernI18n();
   const [owner, setOwner] = useState<string>(currentOwner ?? NONE);
   const items = [
-    { label: t('sales-pipeline.pages.records.owner.none'), value: NONE },
-    ...employeeOptions().map((employee) => ({ label: employee.fullName, value: employee.id })),
+    { label: t(`${K}.owner.none`), value: NONE },
+    ...employees.map((employee) => ({ label: employee.fullName, value: employee.id })),
   ];
+  const submit = () => {
+    if (owner === NONE) {
+      onSubmit(null);
+      return;
+    }
+    onSubmit(employees.find((item) => item.id === owner)?.id ?? null);
+  };
 
   return (
     <Dialog
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
-            {t('sales-pipeline.pages.records.owner.cancel')}
+            {t(`${K}.owner.cancel`)}
           </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t('sales-pipeline.pages.records.owner.submitting')}
-            onClick={() => onSubmit(owner === NONE ? null : findEmployee(owner))}
-            variant="primary"
-          >
-            {t('sales-pipeline.pages.records.owner.submit')}
+          <Button isLoading={busy} loadingText={t(`${K}.owner.submitting`)} onClick={submit} variant="primary">
+            {t(`${K}.owner.submit`)}
           </Button>
         </>
       }
@@ -333,7 +427,7 @@ export const OwnerDialog = ({
       open
       placement="right"
       size="md"
-      title={t('sales-pipeline.pages.records.owner.title')}
+      title={t(`${K}.owner.title`)}
     >
       <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
         {serverError !== undefined && (
@@ -343,7 +437,7 @@ export const OwnerDialog = ({
         )}
         <SelectTemplate
           items={items}
-          label={t('sales-pipeline.pages.records.owner.label')}
+          label={t(`${K}.owner.label`)}
           name="owner"
           onValueChange={(details) => {
             const [next] = details.value;
