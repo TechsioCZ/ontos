@@ -32,7 +32,10 @@ const key = 'party-registry.pages.customers';
 const pageSizeOptions = [50, 100, 200];
 /** The row-selection column stays first, ahead of the pinned name. */
 const pinning = { end: [], start: ['__select', 'displayName'] };
-/** Phone, DIČ and Stav stay in the column menu; the segment column is visible until its lookup fails. */
+/**
+ * Phone, DIČ and Stav stay in the column menu. Segment has no entry here: it shows by default and starts
+ * hidden when its lookup fails, and an explicit toggle in the column menu always wins.
+ */
 const defaultColumnVisibility = { phone: false, status: false, vatId: false } satisfies ColumnVisibility;
 const allSegments = 'all';
 
@@ -94,6 +97,7 @@ interface CustomerFilterRowProps {
   readonly segmentFilter: string | null;
   readonly tagFilter: TagId | null;
   readonly tagFilterFailed: boolean;
+  readonly tagFilterLoading: boolean;
 }
 
 /** The one filter row: search, tag and segment, all size sm at fixed widths. */
@@ -105,6 +109,7 @@ const CustomerFilterRow = ({
   segmentFilter,
   tagFilter,
   tagFilterFailed,
+  tagFilterLoading,
 }: CustomerFilterRowProps) => {
   const { t } = useModernI18n();
   const segmentItems = [
@@ -141,6 +146,7 @@ const CustomerFilterRow = ({
           </div>
         )}
       </div>
+      {tagFilterLoading && <p className="text-fg-secondary text-sm">{t(`${key}.tags.filtering`)}</p>}
       {tagFilterFailed && <StatusText status="error">{t(`${key}.tags.filterFailed`)}</StatusText>}
     </>
   );
@@ -186,15 +192,15 @@ const CustomersContent = () => {
   const selectedItems = items.filter((item) => selection[item.counterpartyId] === true);
   const selectedSubjectIds = selectedItems.map((item) => subjectIdOf(item.partyId));
   const statusLabel = (item: CustomerListItem) => t(`${key}.status.${item.status}`);
-  // Segment lookup is best effort: when permissions are missing the column hides without an error banner.
-  const effectiveVisibility = enrichment.segmentsFailed ? { ...columnVisibility, segment: false } : columnVisibility;
-
+  // Segment lookup is best effort: a failed lookup hides the column by default and shows no error banner.
+  // A user toggle stores an explicit segment entry, which overrides that default.
+  const effectiveVisibility = { segment: !enrichment.segmentsFailed, ...columnVisibility };
   const segmentCell = (info: CellContext<CustomerListItem>) => {
     const segment = segments?.get(info.row.original.partyId);
     if (segment !== undefined) {
       return segment.name;
     }
-    return segments === null ? '…' : '—';
+    return segments === null && !enrichment.segmentsFailed ? '…' : '—';
   };
   const tagsCell = (info: CellContext<CustomerListItem>) => {
     if (tagStatus === 'error') {
@@ -346,6 +352,7 @@ const CustomersContent = () => {
           segmentFilter={segmentsShown ? segmentFilter : null}
           tagFilter={tagFilter}
           tagFilterFailed={enrichment.tagFilterFailed}
+          tagFilterLoading={enrichment.tagFilterLoading}
         />
 
         <BulkActionBar onClear={() => setSelection({})} selectedCount={selectedItems.length}>

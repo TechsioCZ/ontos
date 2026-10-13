@@ -115,7 +115,14 @@ export interface CreateDraft {
   readonly vatId: string;
 }
 
+/**
+ * Longest name the create form accepts. A customer without an IČO uses its name as the subject key, and the
+ * owner caps subject keys at 200 characters.
+ */
+export const customerNameMaxLength = 200;
+
 export const CreateValidationKeySchema = Schema.Literals([
+  'addressIncomplete',
   'emailInvalid',
   'icoInvalid',
   'nameRequired',
@@ -152,6 +159,12 @@ export const validateCreateDraft = (draft: CreateDraft): CreateDraftErrors => {
   }
   if (email.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
     errors.email = 'emailInvalid';
+  }
+  // The owner (domain rule and database check) keeps an address only with two parts; the client drops a lone one.
+  const addressFields = (['street', 'city', 'postalCode'] as const).filter((field) => draft[field].trim().length > 0);
+  const [onlyAddressField] = addressFields;
+  if (addressFields.length === 1 && onlyAddressField !== undefined) {
+    errors[onlyAddressField] = 'addressIncomplete';
   }
   return errors;
 };

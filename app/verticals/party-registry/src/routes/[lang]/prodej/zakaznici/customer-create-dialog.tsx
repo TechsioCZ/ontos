@@ -1,6 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -10,7 +10,7 @@ import { SidePanel } from '@app/admin-ui';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CreatedCustomer } from '../../../../api/customers-client.ts';
 import { aresFailureKey, createCustomerFromDraft, createFailureKey, lookupAres } from './customers-data.ts';
-import { prefillFromAres, validateCreateDraft } from './customers-model.ts';
+import { customerNameMaxLength, prefillFromAres, validateCreateDraft } from './customers-model.ts';
 import type { AresPrefill, CreateDraft } from './customers-model.ts';
 
 const KEY = 'party-registry.pages.customers.create';
@@ -40,6 +40,7 @@ export interface CustomerCreateDialogProps {
 export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: CustomerCreateDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
+  const formId = useId();
   const [draft, setDraft] = useState<CreateDraft>(EMPTY_DRAFT);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -110,6 +111,9 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
   };
 
   const submit = () => {
+    if (busy) {
+      return;
+    }
     setSubmitted(true);
     if (Object.keys(errors).length > 0) {
       return;
@@ -134,7 +138,8 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
           <Button onClick={() => close(false)} theme="outlined" variant="secondary">
             {t(`${KEY}.cancel`)}
           </Button>
-          <Button isLoading={busy} loadingText={t(`${KEY}.saving`)} onClick={submit} variant="primary">
+          {/* Submits the form below, so Enter in any field saves the customer too. */}
+          <Button form={formId} isLoading={busy} loadingText={t(`${KEY}.saving`)} type="submit" variant="primary">
             {t(`${KEY}.submit`)}
           </Button>
         </>
@@ -147,6 +152,8 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
     >
       <form
         className="flex flex-col gap-200 py-200"
+        id={formId}
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
           submit();
@@ -171,12 +178,14 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
               {...fieldProps('ico', t(`${KEY}.icoHelp`))}
             />
           </div>
+          {/* ui-kit Button sets no type, so inside the form it would be the submit button Enter clicks. */}
           <Button
             isLoading={aresBusy}
             loadingText={t(`${KEY}.aresLoading`)}
             onClick={loadFromAres}
             size="sm"
             theme="outlined"
+            type="button"
             variant="secondary"
           >
             {t(`${KEY}.aresLoad`)}
@@ -186,6 +195,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
           autoComplete="off"
           id="customer-name"
           label={t(`${KEY}.name`)}
+          maxLength={customerNameMaxLength}
           name="name"
           onChange={(event) => set({ name: event.target.value })}
           required
@@ -229,6 +239,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
           name="street"
           onChange={(event) => set({ street: event.target.value })}
           value={draft.street}
+          {...fieldProps('street')}
         />
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
           <FormInput
@@ -238,6 +249,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
             name="city"
             onChange={(event) => set({ city: event.target.value })}
             value={draft.city}
+            {...fieldProps('city')}
           />
           <FormInput
             autoComplete="off"
@@ -246,6 +258,7 @@ export const CustomerCreateDialog = ({ onCreated, onOpenChange, open }: Customer
             name="postalCode"
             onChange={(event) => set({ postalCode: event.target.value })}
             value={draft.postalCode}
+            {...fieldProps('postalCode')}
           />
         </div>
       </form>

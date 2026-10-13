@@ -127,7 +127,7 @@ export const CustomerBulkEditDialog = ({
     <SidePanel
       actions={
         <>
-          <Button disabled={busy} onClick={() => close()} theme="outlined" variant="secondary">
+          <Button disabled={busy} onClick={() => close()} size="sm" theme="outlined" variant="secondary">
             {t(`${KEY}.cancel`)}
           </Button>
           <Button
@@ -135,6 +135,7 @@ export const CustomerBulkEditDialog = ({
             isLoading={busy}
             loadingText={t(`${KEY}.busy`)}
             onClick={() => submit()}
+            size="sm"
             variant="primary"
           >
             {action === 'archive' ? t(`${KEY}.submit`) : t(`${KEY}.continue`)}
@@ -152,7 +153,7 @@ export const CustomerBulkEditDialog = ({
       title={t(`${KEY}.title`)}
     >
       <div className="flex flex-col gap-200 py-200">
-        <RadioGroup onValueChange={(next) => setAction(parseAction(next))} value={action}>
+        <RadioGroup onValueChange={(next) => setAction(parseAction(next))} size="sm" value={action}>
           <RadioGroup.Label>{t(`${KEY}.actionLabel`)}</RadioGroup.Label>
           <RadioGroup.ItemGroup>
             <RadioGroup.Item value="tag-add">

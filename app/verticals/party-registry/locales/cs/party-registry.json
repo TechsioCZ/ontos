@@ -65,6 +65,7 @@
           "toastCreated": "Zákazník vytvořen",
           "toastMatched": "Zákazník už v evidenci existoval, záznam byl propojen.",
           "validation": {
+            "addressIncomplete": "Adresa potřebuje alespoň dva údaje z ulice, města a PSČ.",
             "emailInvalid": "E-mail zadejte ve tvaru jmeno@firma.cz.",
             "icoInvalid": "IČO má 8 číslic.",
             "nameRequired": "Vyplňte název zákazníka.",
@@ -134,7 +135,8 @@
         },
         "tags": {
           "failed": "Štítky nelze načíst.",
-          "filterFailed": "Filtr podle štítku se nepodařilo načíst."
+          "filterFailed": "Filtr podle štítku se nepodařilo načíst.",
+          "filtering": "Filtruji zákazníky podle štítku…"
         },
         "title": "Zákazníci"
       }

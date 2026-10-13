@@ -65,6 +65,7 @@
           "toastCreated": "Customer created",
           "toastMatched": "The customer already existed and the record was linked.",
           "validation": {
+            "addressIncomplete": "An address needs at least two of street, city and postal code.",
             "emailInvalid": "Enter the e-mail as name@company.cz.",
             "icoInvalid": "The company ID has 8 digits.",
             "nameRequired": "Enter the customer name.",
@@ -134,7 +135,8 @@
         },
         "tags": {
           "failed": "Tags could not be loaded.",
-          "filterFailed": "The tag filter could not be loaded."
+          "filterFailed": "The tag filter could not be loaded.",
+          "filtering": "Filtering customers by tag…"
         },
         "title": "Customers"
       }

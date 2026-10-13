@@ -1,6 +1,6 @@
 import { subjectsWithTag } from '@app/tagging/clients/records';
 import { useTagsFor } from '@app/tagging/components/tag-controls';
-import type { SubjectId, TagId } from '@app/tagging/contracts/records';
+import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { Cause } from 'effect';
 import { Duration, Effect, Option, Result, Schema } from 'effect';
@@ -21,12 +21,20 @@ const TAG_LOOKUP_TIMEOUT = Duration.seconds(10);
 export const subjectIdOf = (partyId: string): SubjectId =>
   Result.getOrThrow(Schema.decodeResult(SubjectIdSchema)(partyId));
 
+/** Subject ids carrying the tag, read from the assignments loaded for the tag column. */
+const subjectsTaggedWith = (tagsBySubject: ReadonlyMap<SubjectId, readonly Tag[]>, tagId: TagId): ReadonlySet<string> =>
+  new Set(
+    [...tagsBySubject].filter(([, tags]) => tags.some((tag) => tag.id === tagId)).map(([subjectId]) => subjectId),
+  );
+
 /**
  * Segment and tag data for the customers list. Both lookups are best effort: a failed segment lookup hides
  * the column, and a failed or stalled tag lookup clears the filter with a message instead of reading as
  * "no results". Any failure counts, defects and timeouts included, so neither lookup can stay pending.
  * A failed segment lookup is not repeated while the page stays open: the owner would refuse again, and each
  * refusal is a failed request in the browser console.
+ * The tag filter reads the assignments already loaded for the tag column, so it answers at once; it asks the
+ * tagging owner only while those assignments are loading or failed.
  */
 export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
   const [segments, setSegments] = useState<ReadonlyMap<string, CustomerSegment> | null>(null);
@@ -68,8 +76,10 @@ export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
     };
   }, [data, segmentsFailed]);
 
+  const localTaggedIds =
+    tagFilter !== null && tags.status === 'ready' ? subjectsTaggedWith(tags.tagsBySubject, tagFilter) : null;
   // The key ties a lookup result to one tag and one tagging revision, so a stale result never filters rows.
-  const lookupKey = tagFilter === null ? null : `${tagFilter}:${tagRevision}`;
+  const lookupKey = tagFilter === null || tags.status === 'ready' ? null : `${tagFilter}:${tagRevision}`;
   useEffect(() => {
     let active = true;
     if (tagFilter !== null && lookupKey !== null) {
@@ -97,7 +107,8 @@ export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
     };
   }, [lookupKey, tagFilter]);
 
-  const taggedIds = lookupKey !== null && tagResult?.key === lookupKey ? tagResult.ids : null;
+  const remoteTaggedIds = lookupKey !== null && tagResult?.key === lookupKey ? tagResult.ids : null;
+  const taggedIds = localTaggedIds ?? remoteTaggedIds;
 
   const handleTagFilterChange = (next: TagId | null) => {
     setTagFailure(Option.none());
