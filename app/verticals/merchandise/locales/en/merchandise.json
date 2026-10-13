@@ -197,16 +197,20 @@
         "description": "Products, prices and stock movements.",
         "detail": {
           "active": "Active product",
+          "discardAction": "Discard changes",
+          "discardDescription": "Unsaved changes in this form will be lost.",
+          "discardKeep": "Keep editing",
+          "discardTitle": "Discard unsaved changes to {{name}}?",
           "tab": "Detail"
         },
         "fields": {
           "category": "Category",
-          "lowStock": "Minimum stock (pcs)",
+          "lowStock": "Minimum stock",
           "name": "Name",
           "note": "Note",
           "price": "Price (CZK)",
           "product": "Product",
-          "quantity": "Quantity (pcs)",
+          "quantity": "Quantity",
           "sku": "SKU",
           "unit": "Unit",
           "vat": "VAT (%)"

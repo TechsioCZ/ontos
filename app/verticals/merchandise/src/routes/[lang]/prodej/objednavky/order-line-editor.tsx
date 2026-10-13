@@ -6,7 +6,7 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { formatMoney, formatNumber, comboboxTranslations } from '@app/admin-ui';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
-import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { NO_ARIA_MAX, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 
 export interface DraftLine {
   readonly key: string;
@@ -69,7 +69,7 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
             value={line.quantity}
           >
             <NumericInput.Control>
-              <NumericInput.Input />
+              <NumericInput.Input {...NO_ARIA_MAX} />
             </NumericInput.Control>
           </FormNumericInput>
         </div>

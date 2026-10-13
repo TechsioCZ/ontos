@@ -10,7 +10,7 @@ import { SidePanel, comboboxTranslations } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
-import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { MONEY_FORMAT, NO_ARIA_MAX, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { FailureReason } from './products-api.ts';
 
@@ -65,6 +65,17 @@ export const lowStockErrorKey = (lowStock: number): string | undefined =>
 export const fieldError = (submitted: boolean, message: string | undefined) =>
   submitted && message !== undefined ? { helpText: message, validateStatus: 'error' as const } : {};
 
+/**
+ * After a refused submit, moves focus to the first invalid field so keyboard and screen-reader users land on
+ * the problem. Each entry is the field's DOM id and whether it is invalid, in form order.
+ */
+export const focusFirstInvalid = (fields: readonly (readonly [string, boolean])[]): void => {
+  const first = fields.find(([, invalid]) => invalid);
+  if (first !== undefined) {
+    globalThis.document.querySelector<HTMLElement>(`[id="${first[0]}"]`)?.focus();
+  }
+};
+
 const DialogActions = ({
   busy,
   onCancel,
@@ -105,8 +116,10 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   const [category, setCategory] = useState('');
   const [unit, setUnit] = useState<ProductUnit>('ks');
   const [vatRate, setVatRate] = useState<VatRate>(21);
-  // NaN until typed: an empty price is refused by priceErrorKey instead of starting at 0.
+  // NaN until typed: an empty price is refused by priceErrorKey instead of starting at 0. The text is what the
+  // input shows; a string value keeps the two-decimal format from rewriting it on every keystroke.
   const [priceCzk, setPriceCzk] = useState(Number.NaN);
+  const [priceText, setPriceText] = useState('');
   const [lowStock, setLowStock] = useState(0);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -126,6 +139,13 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   const submit = () => {
     setSubmitted(true);
     if (hasErrors) {
+      focusFirstInvalid([
+        ['product-sku', skuError !== undefined],
+        ['product-name', nameError !== undefined],
+        ['product-category', categoryError !== undefined],
+        ['product-price', priceError !== undefined],
+        ['product-low-stock', lowStockError !== undefined],
+      ]);
       return;
     }
     setBusy(true);
@@ -153,6 +173,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
         setName('');
         setCategory('');
         setPriceCzk(Number.NaN);
+        setPriceText('');
         setLowStock(0);
         setSubmitted(false);
         onOpenChange(false);
@@ -241,27 +262,32 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
         </div>
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
           <FormNumericInput
+            formatOptions={MONEY_FORMAT}
             id="product-price"
             label={k('fields.price')}
             locale="cs-CZ"
             min={0}
             name="price"
-            onChange={setPriceCzk}
-            precision={2}
+            onValueChange={(details) => {
+              setPriceCzk(details.valueAsNumber);
+              setPriceText(details.value);
+            }}
             required
             step={1}
-            value={Number.isNaN(priceCzk) ? '' : priceCzk}
+            value={priceText}
             {...fieldError(submitted, priceError)}
           >
             <NumericInput.Control>
-              <NumericInput.Input />
+              <NumericInput.Input {...NO_ARIA_MAX} />
             </NumericInput.Control>
           </FormNumericInput>
           <FormNumericInput
+            clampValueOnBlur={false}
             formatOptions={WHOLE_NUMBER_FORMAT}
             id="product-low-stock"
             label={k('fields.lowStock')}
             locale="cs-CZ"
+            min={0}
             name="lowStock"
             onChange={setLowStock}
             step={1}
@@ -269,7 +295,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
             {...fieldError(submitted, lowStockError)}
           >
             <NumericInput.Control>
-              <NumericInput.Input />
+              <NumericInput.Input {...NO_ARIA_MAX} />
             </NumericInput.Control>
           </FormNumericInput>
         </div>
@@ -302,6 +328,11 @@ export const ReceiptDialog = ({
   const submit = () => {
     setSubmitted(true);
     if (productId === null || quantityError !== undefined) {
+      // The combobox puts its id on the input as `${id}-input`.
+      focusFirstInvalid([
+        ['receipt-product-input', productId === null],
+        ['receipt-quantity', quantityError !== undefined],
+      ]);
       return;
     }
     setBusy(true);
@@ -355,6 +386,7 @@ export const ReceiptDialog = ({
         {/* Not clearable: ui-kit names the clear control "Clear value" in English; picking another product replaces it. */}
         <Combobox
           clearable={false}
+          id="receipt-product"
           items={products.map((product) => ({
             id: product.id,
             label: `${product.name} (${product.sku})`,
@@ -373,10 +405,12 @@ export const ReceiptDialog = ({
           {...fieldError(submitted, productError)}
         />
         <FormNumericInput
+          clampValueOnBlur={false}
           formatOptions={WHOLE_NUMBER_FORMAT}
           id="receipt-quantity"
           label={k('fields.quantity')}
           locale="cs-CZ"
+          min={1}
           name="quantity"
           onChange={setQuantity}
           step={1}
@@ -384,7 +418,7 @@ export const ReceiptDialog = ({
           {...fieldError(submitted, quantityError)}
         >
           <NumericInput.Control>
-            <NumericInput.Input />
+            <NumericInput.Input {...NO_ARIA_MAX} />
           </NumericInput.Control>
         </FormNumericInput>
         <FormInput
@@ -399,6 +433,9 @@ export const ReceiptDialog = ({
     </SidePanel>
   );
 };
+
+const PERCENT_MIN = -90;
+const PERCENT_MAX = 1000;
 
 /** Bulk price change by a whole percent. Sends BulkUpdateProducts with priceChangePercent. */
 export const PriceChangeDialog = ({
@@ -417,10 +454,11 @@ export const PriceChangeDialog = ({
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const valid = Number.isInteger(percent) && percent >= -90 && percent <= 1000 && percent !== 0;
+  const valid = Number.isInteger(percent) && percent >= PERCENT_MIN && percent <= PERCENT_MAX && percent !== 0;
   const submit = () => {
     setSubmitted(true);
     if (!valid || ids.length === 0) {
+      focusFirstInvalid([['price-percent', !valid]]);
       return;
     }
     setBusy(true);
@@ -469,11 +507,15 @@ export const PriceChangeDialog = ({
         <p className="text-fg-secondary text-sm tabular-nums">
           {t('merchandise.pages.products.priceDialog.affected', { total: ids.length })}
         </p>
+        {/* The real -90..1000 range for ARIA, without clamping on blur, so validation still sees an out-of-range value. */}
         <FormNumericInput
+          clampValueOnBlur={false}
           formatOptions={WHOLE_NUMBER_FORMAT}
           id="price-percent"
           label={k('priceDialog.field')}
           locale="cs-CZ"
+          max={PERCENT_MAX}
+          min={PERCENT_MIN}
           name="priceChangePercent"
           onChange={setPercent}
           step={1}
@@ -512,6 +554,7 @@ export const CategoryDialog = ({
   const submit = () => {
     setSubmitted(true);
     if (empty || ids.length === 0) {
+      focusFirstInvalid([['bulk-category', empty]]);
       return;
     }
     setBusy(true);

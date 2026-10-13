@@ -197,16 +197,20 @@
         "description": "Produkty, ceny a skladové pohyby.",
         "detail": {
           "active": "Aktivní produkt",
+          "discardAction": "Zahodit změny",
+          "discardDescription": "Neuložené změny v tomto formuláři se ztratí.",
+          "discardKeep": "Pokračovat v úpravách",
+          "discardTitle": "Zahodit neuložené změny u produktu {{name}}?",
           "tab": "Detail"
         },
         "fields": {
           "category": "Kategorie",
-          "lowStock": "Minimum skladu (ks)",
+          "lowStock": "Minimum skladu",
           "name": "Název",
           "note": "Poznámka",
           "price": "Cena (Kč)",
           "product": "Produkt",
-          "quantity": "Množství (ks)",
+          "quantity": "Množství",
           "sku": "SKU",
           "unit": "Jednotka",
           "vat": "DPH (%)"

@@ -2,7 +2,7 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { DataTableProps } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
@@ -14,7 +14,7 @@ import {
   StatCard,
   StatRow,
   statusPresentation,
-  toasterLabels,
+  Toaster,
 } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect } from 'effect';
@@ -342,7 +342,7 @@ const OrdersPageContent = () => {
           open={tagsOpen}
           subjectIds={toSubjectIds(selected.map((order) => order.id))}
         />
-        <Toaster {...toasterLabels} />
+        <Toaster />
       </section>
     </>
   );

@@ -10,14 +10,19 @@ export const productColumns = (
   label: (path: string) => string,
   tagsOf: (id: string) => readonly Tag[],
 ): ColumnDef<ProductRecord>[] => [
-  { accessorKey: 'sku', header: label('columns.sku'), meta: { type: 'string', width: 100 } },
-  { accessorKey: 'name', header: label('columns.name'), meta: { type: 'string', width: 220 } },
-  { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 130 } },
+  {
+    accessorKey: 'sku',
+    cell: (info) => <span className="whitespace-nowrap">{info.getValue<string>()}</span>,
+    header: label('columns.sku'),
+    meta: { type: 'string', width: 120 },
+  },
+  { accessorKey: 'name', header: label('columns.name'), meta: { type: 'string', width: 180 } },
+  { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
   {
     accessorKey: 'currentPriceMinor',
     cell: (info) => <span className="tabular-nums">{formatMoney(info.getValue<number>())}</span>,
     header: label('columns.price'),
-    meta: { align: 'end', type: 'number', width: 110 },
+    meta: { align: 'end', type: 'number', width: 100 },
   },
   {
     accessorKey: 'stockOnHand',
@@ -32,19 +37,19 @@ export const productColumns = (
       </span>
     ),
     header: label('columns.onHand'),
-    meta: { align: 'end', type: 'number', width: 150 },
+    meta: { align: 'end', type: 'number', width: 140 },
   },
   {
     accessorKey: 'stockValueMinor',
     cell: (info) => <span className="tabular-nums">{formatKc(info.getValue<number>())}</span>,
     header: label('columns.stockValue'),
-    meta: { align: 'end', type: 'number', width: 140 },
+    meta: { align: 'end', type: 'number', width: 110 },
   },
   {
     cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,
     enableSorting: false,
     header: label('columns.tags'),
     id: 'tags',
-    meta: { width: 190 },
+    meta: { width: 150 },
   },
 ];

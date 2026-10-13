@@ -11,10 +11,10 @@ import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { StockMovementReason } from '../../../../../shared/domain/merchandise-model.ts';
-import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { NO_ARIA_MAX, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { formatDelta } from './products-format.ts';
-import { fieldError, useCommandFailure, useProductLabel } from './product-forms.tsx';
+import { fieldError, focusFirstInvalid, useCommandFailure, useProductLabel } from './product-forms.tsx';
 
 type ManualReason = Exclude<StockMovementReason, 'ORDER'>;
 const MANUAL_REASONS: readonly ManualReason[] = ['RECEIPT', 'ISSUE', 'ADJUSTMENT'];
@@ -122,6 +122,7 @@ export const MovementForm = ({
   const submit = () => {
     setSubmitted(true);
     if (errorKey !== undefined) {
+      focusFirstInvalid([['movement-quantity', true]]);
       return;
     }
     setBusy(true);
@@ -187,7 +188,7 @@ export const MovementForm = ({
           {...fieldError(submitted, errorKey === undefined ? undefined : k(errorKey))}
         >
           <NumericInput.Control>
-            <NumericInput.Input />
+            <NumericInput.Input {...NO_ARIA_MAX} />
           </NumericInput.Control>
         </FormNumericInput>
       </div>

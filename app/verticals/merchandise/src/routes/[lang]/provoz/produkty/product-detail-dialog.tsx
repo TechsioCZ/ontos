@@ -1,25 +1,28 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { formatDate, formatMoney, SidePanel } from '@app/admin-ui';
+import { dialogCloseLabel, formatDate, formatMoney, SidePanel } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
-import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { MONEY_FORMAT, NO_ARIA_MAX, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { CommandOutcome, FailureReason } from './products-api.ts';
 import {
   UNITS,
   VAT_RATES,
   fieldError,
+  focusFirstInvalid,
   lowStockErrorKey,
   priceErrorKey,
   useCommandFailure,
@@ -80,10 +83,46 @@ const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   );
 };
 
+/** Editable product fields as typed. The panel owns the draft, so Esc and outside clicks can see unsaved edits. */
+interface DetailDraft {
+  readonly active: boolean;
+  readonly category: string;
+  readonly lowStock: number;
+  readonly name: string;
+  readonly priceCzk: number;
+  /** The price input's text, kept as typed so the two-decimal display never fights the keyboard. */
+  readonly priceText: string;
+  readonly unit: ProductUnit;
+  readonly vatRate: VatRate;
+}
+
+const draftOf = (product: ProductRecord): DetailDraft => ({
+  active: product.active,
+  category: product.category,
+  lowStock: product.lowStockThreshold,
+  name: product.name,
+  priceCzk: product.currentPriceMinor / 100,
+  priceText: moneyInputText(product.currentPriceMinor / 100),
+  unit: product.unit,
+  vatRate: product.vatRate,
+});
+
+/** True when Save would send something: a changed field or a changed price. */
+const isDraftDirty = (draft: DetailDraft, product: ProductRecord): boolean =>
+  draft.name.trim() !== product.name ||
+  draft.category.trim() !== product.category ||
+  draft.unit !== product.unit ||
+  draft.vatRate !== product.vatRate ||
+  draft.lowStock !== product.lowStockThreshold ||
+  Math.round(draft.priceCzk * 100) !== product.currentPriceMinor ||
+  draft.active !== product.active;
+
 /** Editable product fields. Changed fields go to UpdateProduct; a changed price follows as ChangePrice. */
 const DetailForm = ({
   canWrite,
+  draft,
   onCommitted,
+  onDraftChange,
   onOpenChange,
   onReload,
   product,
@@ -91,7 +130,9 @@ const DetailForm = ({
   setBusy,
 }: {
   readonly canWrite: boolean;
+  readonly draft: DetailDraft;
   readonly onCommitted: (message: string) => void;
+  readonly onDraftChange: (patch: Partial<DetailDraft>) => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly onReload: () => void;
   readonly product: ProductRecord;
@@ -100,13 +141,25 @@ const DetailForm = ({
 }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
-  const [name, setName] = useState(product.name);
-  const [category, setCategory] = useState(product.category);
-  const [unit, setUnit] = useState<ProductUnit>(product.unit);
-  const [vatRate, setVatRate] = useState<VatRate>(product.vatRate);
-  const [lowStock, setLowStock] = useState(product.lowStockThreshold);
-  const [priceCzk, setPriceCzk] = useState(product.currentPriceMinor / 100);
-  const [active, setActive] = useState(product.active);
+  const { active, category, lowStock, name, priceCzk, priceText, unit, vatRate } = draft;
+  const setActive = (value: boolean) => {
+    onDraftChange({ active: value });
+  };
+  const setCategory = (value: string) => {
+    onDraftChange({ category: value });
+  };
+  const setLowStock = (value: number) => {
+    onDraftChange({ lowStock: value });
+  };
+  const setName = (value: string) => {
+    onDraftChange({ name: value });
+  };
+  const setUnit = (value: ProductUnit) => {
+    onDraftChange({ unit: value });
+  };
+  const setVatRate = (value: VatRate) => {
+    onDraftChange({ vatRate: value });
+  };
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
@@ -116,6 +169,7 @@ const DetailForm = ({
   const priceError = priceKey === undefined ? undefined : k(priceKey);
   const lowStockKey = lowStockErrorKey(lowStock);
   const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
+  const priceMinor = Math.round(priceCzk * 100);
 
   const finish = (reason: FailureReason | null) => {
     setBusy(false);
@@ -130,6 +184,12 @@ const DetailForm = ({
   const save = () => {
     setSubmitted(true);
     if ([nameError, categoryError, priceError, lowStockError].some((message) => message !== undefined)) {
+      focusFirstInvalid([
+        ['detail-name', nameError !== undefined],
+        ['detail-category', categoryError !== undefined],
+        ['detail-price', priceError !== undefined],
+        ['detail-low-stock', lowStockError !== undefined],
+      ]);
       return;
     }
     const patch: PatchDraft = {};
@@ -152,7 +212,6 @@ const DetailForm = ({
       patch.active = active;
     }
     const hasPatch = Object.keys(patch).length > 0;
-    const priceMinor = Math.round(priceCzk * 100);
     const priceChanged = priceMinor !== product.currentPriceMinor;
     if (!hasPatch && !priceChanged) {
       onOpenChange(false);
@@ -255,27 +314,32 @@ const DetailForm = ({
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
         <FormNumericInput
           disabled={!canWrite}
+          formatOptions={MONEY_FORMAT}
           id="detail-price"
           label={k('fields.price')}
           locale="cs-CZ"
           min={0}
           name="price"
-          onChange={setPriceCzk}
-          precision={2}
+          onValueChange={(details) => {
+            onDraftChange({ priceCzk: details.valueAsNumber, priceText: details.value });
+          }}
+          required
           step={1}
-          value={priceCzk}
+          value={priceText}
           {...fieldError(submitted, priceError)}
         >
           <NumericInput.Control>
-            <NumericInput.Input />
+            <NumericInput.Input {...NO_ARIA_MAX} />
           </NumericInput.Control>
         </FormNumericInput>
         <FormNumericInput
+          clampValueOnBlur={false}
           disabled={!canWrite}
           formatOptions={WHOLE_NUMBER_FORMAT}
           id="detail-low-stock"
           label={k('fields.lowStock')}
           locale="cs-CZ"
+          min={0}
           name="lowStock"
           onChange={setLowStock}
           step={1}
@@ -283,7 +347,7 @@ const DetailForm = ({
           {...fieldError(submitted, lowStockError)}
         >
           <NumericInput.Control>
-            <NumericInput.Input />
+            <NumericInput.Input {...NO_ARIA_MAX} />
           </NumericInput.Control>
         </FormNumericInput>
       </div>
@@ -295,8 +359,8 @@ const DetailForm = ({
 };
 
 /**
- * Product drawer. The parent remounts it (key = product id + updatedAt) after each save,
- * so the draft always starts from the stored values.
+ * Product drawer. The parent keys it by product id only, so a stock movement or a conflict reload keeps the
+ * open tab and the unsaved draft; a save closes the drawer, and the next open starts from the stored values.
  */
 export const ProductDetailDialog = ({
   canWrite,
@@ -309,70 +373,124 @@ export const ProductDetailDialog = ({
   revision,
 }: ProductDetailDialogProps) => {
   const k = useProductLabel();
+  const { t } = useModernI18n();
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState(() => draftOf(product));
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [tab, setTab] = useState('detail');
+  const dirty = isDraftDirty(draft, product);
+  const updateDraft = (patch: Partial<DetailDraft>) => {
+    setDraft((current) => ({ ...current, ...patch }));
+  };
+
+  // A draft with unsaved edits is never dropped silently: Esc, the close button and Zrušit ask first.
+  const requestClose = (next: boolean) => {
+    if (next) {
+      return;
+    }
+    if (dirty) {
+      setDiscardOpen(true);
+      return;
+    }
+    onOpenChange(false);
+  };
 
   return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
-            {k('common.close')}
-          </Button>
-          {canWrite && (
-            <Button
-              form={DETAIL_FORM_ID}
-              isLoading={busy}
-              loadingText={k('common.save')}
-              onClick={() => setTab('detail')}
-              type="submit"
-              variant="primary"
-            >
-              {k('common.save')}
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={() => requestClose(false)} theme="outlined" variant="secondary">
+              {k('common.cancel')}
             </Button>
-          )}
-        </>
-      }
-      description={`${product.sku} · ${formatMoney(product.currentPriceMinor)}`}
-      onOpenChange={onOpenChange}
-      open={open}
-      size="md"
-      title={product.name}
-    >
-      <Tabs onValueChange={setTab} value={tab} variant="line">
-        <Tabs.List>
-          <Tabs.Trigger value="detail">{k('detail.tab')}</Tabs.Trigger>
-          <Tabs.Trigger value="prices">{k('prices.tab')}</Tabs.Trigger>
-          <Tabs.Trigger value="movements">{k('movements.tab')}</Tabs.Trigger>
-          <Tabs.Indicator />
-        </Tabs.List>
-        <Tabs.Content className="py-200" value="detail">
-          <DetailForm
-            canWrite={canWrite}
-            onCommitted={onCommitted}
-            onOpenChange={onOpenChange}
-            onReload={onReload}
-            product={product}
-            revision={revision}
-            setBusy={setBusy}
-          />
-        </Tabs.Content>
-        <Tabs.Content className="py-200" value="prices">
-          <PriceHistory product={product} />
-        </Tabs.Content>
-        <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
-          <MovementsTable movements={movements} />
-          {canWrite && (
-            <MovementForm
+            {canWrite && (
+              <Button
+                form={DETAIL_FORM_ID}
+                isLoading={busy}
+                loadingText={k('common.save')}
+                onClick={() => setTab('detail')}
+                type="submit"
+                variant="primary"
+              >
+                {k('common.save')}
+              </Button>
+            )}
+          </>
+        }
+        closeOnInteractOutside={!dirty}
+        description={`${product.sku} · ${formatMoney(product.currentPriceMinor)}`}
+        onOpenChange={requestClose}
+        open={open}
+        size="md"
+        title={product.name}
+      >
+        <Tabs onValueChange={setTab} value={tab} variant="line">
+          <Tabs.List>
+            <Tabs.Trigger value="detail">{k('detail.tab')}</Tabs.Trigger>
+            <Tabs.Trigger value="prices">{k('prices.tab')}</Tabs.Trigger>
+            <Tabs.Trigger value="movements">{k('movements.tab')}</Tabs.Trigger>
+            <Tabs.Indicator />
+          </Tabs.List>
+          <Tabs.Content className="py-200" value="detail">
+            <DetailForm
+              canWrite={canWrite}
+              draft={draft}
               onCommitted={onCommitted}
+              onDraftChange={updateDraft}
+              onOpenChange={onOpenChange}
               onReload={onReload}
-              productId={product.id}
+              product={product}
               revision={revision}
-              stockOnHand={product.stockOnHand}
+              setBusy={setBusy}
             />
-          )}
-        </Tabs.Content>
-      </Tabs>
-    </SidePanel>
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="prices">
+            <PriceHistory product={product} />
+          </Tabs.Content>
+          <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
+            <MovementsTable movements={movements} />
+            {canWrite && (
+              <MovementForm
+                onCommitted={onCommitted}
+                onReload={onReload}
+                productId={product.id}
+                revision={revision}
+                stockOnHand={product.stockOnHand}
+              />
+            )}
+          </Tabs.Content>
+        </Tabs>
+      </SidePanel>
+      <Dialog
+        actions={
+          <>
+            <Button onClick={() => setDiscardOpen(false)} theme="outlined" variant="secondary">
+              {k('detail.discardKeep')}
+            </Button>
+            <Button
+              onClick={() => {
+                setDiscardOpen(false);
+                onOpenChange(false);
+              }}
+              variant="danger"
+            >
+              {k('detail.discardAction')}
+            </Button>
+          </>
+        }
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description={k('detail.discardDescription')}
+        onOpenChange={({ open: next }) => {
+          if (!next) {
+            setDiscardOpen(false);
+          }
+        }}
+        open={discardOpen}
+        role="alertdialog"
+        size="sm"
+        title={t('merchandise.pages.products.detail.discardTitle', { name: product.name })}
+      />
+    </>
   );
 };

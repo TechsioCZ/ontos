@@ -4,11 +4,11 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { PageHeader, StatCard, StatRow, foldSearchText, formatNumber, toasterLabels } from '@app/admin-ui';
+import { PageHeader, StatCard, StatRow, foldSearchText, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
-import { DateTime, Schema } from 'effect';
+import { Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
@@ -34,6 +34,8 @@ const merchandiseI18nResources = {
 
 const ALL_CATEGORIES = '__all__';
 const DialogKind = Schema.Literals(['create', 'receipt', 'price', 'category', 'tags']);
+/** The category filter keeps its label for assistive tech only, so it lines up with the other filter controls. */
+const srOnlyLabelProps = { className: 'sr-only' };
 
 type LoadState =
   | { readonly reason: FailureReason; readonly status: 'error' }
@@ -179,6 +181,15 @@ const RecordsPageContent = () => {
     });
   };
 
+  // Toasts sit bottom-right, where a panel keeps its primary action; a panel opening clears the earlier ones.
+  const openDialog = (kind: typeof DialogKind.Type) => {
+    toaster.dismiss();
+    setDialog(kind);
+  };
+  const openDetail = (id: ProductRecord['id']) => {
+    toaster.dismiss();
+    setDetailId(id);
+  };
   const closeDialog = (open: boolean) => {
     if (!open) {
       setDialog(null);
@@ -199,14 +210,14 @@ const RecordsPageContent = () => {
               <div className="flex flex-wrap items-center gap-100">
                 <Button
                   icon="icon-[mdi--package-down]"
-                  onClick={() => setDialog('receipt')}
+                  onClick={() => openDialog('receipt')}
                   size="sm"
                   theme="outlined"
                   variant="secondary"
                 >
                   {k('actions.receipt')}
                 </Button>
-                <Button icon="icon-[mdi--plus]" onClick={() => setDialog('create')} size="sm" variant="primary">
+                <Button icon="icon-[mdi--plus]" onClick={() => openDialog('create')} size="sm" variant="primary">
                   {k('actions.newProduct')}
                 </Button>
               </div>
@@ -235,6 +246,7 @@ const RecordsPageContent = () => {
                 ...categories.map((value) => ({ label: value, value })),
               ]}
               label={k('filters.category')}
+              labelProps={srOnlyLabelProps}
               name="category"
               onValueChange={(details) => {
                 const [next] = details.value;
@@ -262,11 +274,11 @@ const RecordsPageContent = () => {
           busy={bulkBusy}
           canWrite={canWrite}
           count={selectedIds.length}
-          onChangeCategory={() => setDialog('category')}
-          onChangePrice={() => setDialog('price')}
+          onChangeCategory={() => openDialog('category')}
+          onChangePrice={() => openDialog('price')}
           onClear={() => setSelection({})}
           onSetActive={(active) => runBulk({ active }, k('messages.bulkUpdated'))}
-          onTags={() => setDialog('tags')}
+          onTags={() => openDialog('tags')}
         />
 
         {state.status === 'error' && state.reason === 'forbidden' && (
@@ -279,8 +291,8 @@ const RecordsPageContent = () => {
           canWrite={canWrite}
           filtersActive={filtersActive}
           onClearFilters={clearFilters}
-          onCreate={() => setDialog('create')}
-          onOpen={setDetailId}
+          onCreate={() => openDialog('create')}
+          onOpen={openDetail}
           onRetry={() => {
             reload();
             productTags.refetch();
@@ -340,7 +352,7 @@ const RecordsPageContent = () => {
         {ready !== undefined && detail !== undefined && (
           <ProductDetailDialog
             canWrite={canWrite}
-            key={`${detail.id}:${DateTime.toEpochMillis(detail.updatedAt)}`}
+            key={detail.id}
             movements={ready.movements.filter((movement) => movement.productId === detail.id)}
             onCommitted={onCommitted}
             onOpenChange={(open) => {
@@ -354,7 +366,7 @@ const RecordsPageContent = () => {
             revision={revision}
           />
         )}
-        <Toaster {...toasterLabels} />
+        <Toaster />
       </div>
     </>
   );
