@@ -77,9 +77,23 @@ export const ApplyCommandPayloadSchema = Schema.Struct({
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
 
-/** Affected opportunities: one item for single-record commands, every touched item for bulk updates. */
+/** Bulk ids are applied independently; a skipped id is reported with the reason it could not change. */
+export const BulkSkipReasonSchema = Schema.Literals(['closed', 'invalid_transition', 'not_found']);
+export type BulkSkipReason = typeof BulkSkipReasonSchema.Type;
+export const BulkOpportunityResultSchema = Schema.Struct({
+  id: OpportunityIdSchema,
+  outcome: Schema.Literals(['changed', 'skipped']),
+  reason: Schema.optionalKey(BulkSkipReasonSchema),
+});
+export type BulkOpportunityResult = typeof BulkOpportunityResultSchema.Type;
+
+/**
+ * Affected opportunities: one item for single-record commands, every changed item for bulk updates.
+ * `results` is present only for bulk updates and lists every requested id in command order.
+ */
 export const ApplyCommandResultSchema = Schema.Struct({
   opportunities: Schema.Array(OpportunitySchema),
+  results: Schema.optionalKey(Schema.Array(BulkOpportunityResultSchema)),
   revision: Schema.Int,
 });
 export const SalesPipelineErrorSchema = Schema.Union([

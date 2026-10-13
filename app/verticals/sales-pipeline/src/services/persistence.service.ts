@@ -2,17 +2,24 @@
 import { ContextAccess, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Result, Schema, Struct } from 'effect';
 
 import {
-  SalesPipelineNotImplemented,
+  SalesPipelineLifecycleConflict,
+  SalesPipelineNotFound,
   SalesPipelinePermissionDenied,
   SalesPipelinePersistenceUnavailable,
   SalesPipelineReferenceUnavailable,
   SalesPipelineRevisionConflict,
   SalesPipelineScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
-import type { SalesPipelineCommand } from '../../shared/actions/apply-command.ts';
+import type {
+  BulkOpportunityPatch,
+  BulkOpportunityResult,
+  BulkSkipReason,
+  OpportunityPatch,
+  SalesPipelineCommand,
+} from '../../shared/actions/apply-command.ts';
 import { SalesPipelineStateSchema } from '../../shared/apis/records.ts';
 import type {
   OpportunityIndicators,
@@ -20,9 +27,12 @@ import type {
   RecordsResponse,
   SalesPipelineState,
 } from '../../shared/apis/records.ts';
-import { isOpenStage } from '../../shared/model/opportunity.ts';
-import type { Opportunity } from '../../shared/model/opportunity.ts';
-import { OpportunityStageSchema } from '../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import { defaultProbabilityByStage, isOpenStage, opportunityAmountMinor } from '../../shared/model/opportunity.ts';
+import type { Opportunity, OpportunityStage } from '../../shared/model/opportunity.ts';
+import {
+  OpportunityIdSchema,
+  OpportunityStageSchema,
+} from '../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { salesPipelineStates } from '../database/schema.ts';
 
 const unavailable = (cause?: unknown) =>
@@ -94,27 +104,273 @@ export const opportunityIndicators = (opportunities: readonly Opportunity[]): Op
   };
 };
 
+type CommandOf<Tag extends SalesPipelineCommand['_tag']> = Extract<SalesPipelineCommand, { readonly _tag: Tag }>;
+type EmployeeId = NonNullable<Opportunity['ownerEmployeeId']>;
+type OpportunityId = Opportunity['id'];
+
+interface EvolveInput {
+  readonly invocationId: string;
+  readonly now: DateTime.Utc;
+}
+
+/** One stage transition. `fromStage` is none when the opportunity was created directly in `opportunity.stage`. */
+export interface StageChange {
+  readonly fromStage: Option.Option<OpportunityStage>;
+  readonly opportunity: Opportunity;
+}
+
 export interface EvolvedOpportunities {
-  /** Opportunities the command touched, in command order. */
+  /** Opportunities the command created or changed, in command order, each listed once. */
   readonly affected: readonly Opportunity[];
+  /** Per-id outcome; present only for BulkUpdateOpportunities. */
+  readonly results?: readonly BulkOpportunityResult[];
+  /** Stage transitions the command performed, creation included. Input for the outbox message. */
+  readonly stageChanges: readonly StageChange[];
   readonly state: SalesPipelineState;
 }
 
-/**
- * Stub: Create/Update/Assign/ChangeStage/BulkUpdate are implemented in the next task. Until then every
- * mutation fails with a typed not-implemented error after the permission and revision checks pass.
- */
-export const evolveOpportunityState = (
-  _state: SalesPipelineState,
-  command: SalesPipelineCommand,
-  _input: { readonly invocationId: string },
-): Effect.Effect<EvolvedOpportunities, SalesPipelineNotImplemented> =>
-  Effect.fail(
-    new SalesPipelineNotImplemented({
-      code: 'sales_pipeline_not_implemented',
-      reason: `${command._tag} is not implemented yet`,
+const notFound = () =>
+  new SalesPipelineNotFound({
+    code: 'sales_pipeline_not_found',
+    reason: 'Opportunity does not exist in the authorized scope',
+  });
+
+const closedOpportunity = () =>
+  new SalesPipelineLifecycleConflict({
+    code: 'sales_pipeline_lifecycle_conflict',
+    reason: 'A closed Opportunity cannot change',
+  });
+
+const transitionNotAllowed = () =>
+  new SalesPipelineLifecycleConflict({
+    code: 'sales_pipeline_lifecycle_conflict',
+    reason: 'The requested Opportunity transition is not allowed',
+  });
+
+const identityInUse = () =>
+  new SalesPipelineRevisionConflict({
+    code: 'sales_pipeline_revision_conflict',
+    reason: 'Opportunity identity is already in use',
+  });
+
+const invalidOpportunityIdentity = (cause: unknown) =>
+  Object.defineProperty(
+    new SalesPipelineScopeMismatch({
+      code: 'sales_pipeline_scope_mismatch',
+      reason: 'Opportunity identity must be valid',
     }),
+    'cause',
+    { enumerable: false, value: cause },
   );
+
+/** Open stages move to any other stage, WON and LOST included. WON and LOST are terminal. */
+const canMoveTo = (from: OpportunityStage, to: OpportunityStage) => isOpenStage(from) && to !== from;
+
+const moveToStage = (opportunity: Opportunity, toStage: OpportunityStage, now: DateTime.Utc): Opportunity => {
+  const moved: Opportunity = {
+    ...opportunity,
+    probability: defaultProbabilityByStage[toStage],
+    stage: toStage,
+    stageHistory: [...opportunity.stageHistory, { at: now, stage: toStage }],
+    updatedAt: now,
+  };
+  return isOpenStage(toStage) ? moved : { ...moved, closedAt: now };
+};
+
+const withOwner = (opportunity: Opportunity, owner: Option.Option<EmployeeId>, now: DateTime.Utc): Opportunity => {
+  const base = { ...Struct.omit(opportunity, ['ownerEmployeeId']), updatedAt: now };
+  return Option.match(owner, {
+    onNone: () => base,
+    onSome: (ownerEmployeeId) => ({ ...base, ownerEmployeeId }),
+  });
+};
+
+const withPatch = (opportunity: Opportunity, patch: OpportunityPatch, now: DateTime.Utc): Opportunity => {
+  const next = { ...opportunity, ...patch, updatedAt: now };
+  return patch.lines === undefined ? next : { ...next, amountMinor: opportunityAmountMinor(patch.lines) };
+};
+
+const newOpportunity = (value: CommandOf<'CreateOpportunity'>, id: OpportunityId, now: DateTime.Utc): Opportunity => {
+  const stage = value.stage ?? 'LEAD';
+  const base: Opportunity = {
+    amountMinor: opportunityAmountMinor(value.lines),
+    createdAt: now,
+    currency: 'CZK',
+    expectedCloseDate: value.expectedCloseDate,
+    id,
+    lines: value.lines,
+    partyId: value.partyId,
+    probability: value.probability ?? defaultProbabilityByStage[stage],
+    stage,
+    stageHistory: [{ at: now, stage }],
+    title: value.title,
+    updatedAt: now,
+  };
+  const closed = isOpenStage(stage) ? base : { ...base, closedAt: now };
+  const withNote = value.note === undefined ? closed : { ...closed, note: value.note };
+  return value.ownerEmployeeId === undefined ? withNote : { ...withNote, ownerEmployeeId: value.ownerEmployeeId };
+};
+
+const findOpportunity = Effect.fn('SalesPipeline.findOpportunity')(function* findOpportunity(
+  state: SalesPipelineState,
+  id: OpportunityId,
+) {
+  const found = state.opportunities.find((entry) => entry.id === id);
+  if (found === undefined) {
+    return yield* notFound();
+  }
+  return found;
+});
+
+const replaceOpportunity = (state: SalesPipelineState, next: Opportunity): SalesPipelineState => ({
+  ...state,
+  opportunities: state.opportunities.map((entry) => (entry.id === next.id ? next : entry)),
+});
+
+const singleResult = (
+  state: SalesPipelineState,
+  next: Opportunity,
+  stageChanges: readonly StageChange[],
+): EvolvedOpportunities => ({
+  affected: [next],
+  stageChanges,
+  state: replaceOpportunity(state, next),
+});
+
+/** One id of a bulk command: the changed opportunity, or the reason it was skipped. */
+const bulkStep = (
+  opportunity: Opportunity,
+  patch: BulkOpportunityPatch,
+  now: DateTime.Utc,
+): Result.Result<Opportunity, BulkSkipReason> => {
+  if (!isOpenStage(opportunity.stage)) {
+    return Result.fail('closed' as const);
+  }
+  const { ownerEmployeeId, stage } = patch;
+  if (stage !== undefined && !canMoveTo(opportunity.stage, stage)) {
+    return Result.fail('invalid_transition' as const);
+  }
+  const moved = stage === undefined ? opportunity : moveToStage(opportunity, stage, now);
+  const ownerUnchanged =
+    ownerEmployeeId === undefined || Option.getOrUndefined(ownerEmployeeId) === opportunity.ownerEmployeeId;
+  return Result.succeed(ownerUnchanged ? moved : withOwner(moved, ownerEmployeeId, now));
+};
+
+/** Applies a bulk command per id. Missing, closed or invalid ids are skipped with a reason; nothing throws per id. */
+const evolveBulkOpportunityState = (
+  state: SalesPipelineState,
+  command: CommandOf<'BulkUpdateOpportunities'>,
+  now: DateTime.Utc,
+): EvolvedOpportunities => {
+  const current = new Map(state.opportunities.map((entry) => [entry.id, entry] as const));
+  const affected = new Map<OpportunityId, Opportunity>();
+  const stageChanges: StageChange[] = [];
+  const results = command.ids.map((id): BulkOpportunityResult => {
+    const existing = current.get(id);
+    if (existing === undefined) {
+      return { id, outcome: 'skipped', reason: 'not_found' };
+    }
+    const step = bulkStep(existing, command.patch, now);
+    if (Result.isFailure(step)) {
+      return { id, outcome: 'skipped', reason: step.failure };
+    }
+    if (step.success === existing) {
+      return { id, outcome: 'skipped' };
+    }
+    current.set(id, step.success);
+    affected.set(id, step.success);
+    if (step.success.stage !== existing.stage) {
+      stageChanges.push({ fromStage: Option.some(existing.stage), opportunity: step.success });
+    }
+    return { id, outcome: 'changed' };
+  });
+  return {
+    affected: [...affected.values()],
+    results,
+    stageChanges,
+    state: { ...state, opportunities: state.opportunities.map((entry) => current.get(entry.id) ?? entry) },
+  };
+};
+
+const createOpportunity = Effect.fn('SalesPipeline.createOpportunity')(function* createOpportunity(
+  context: EvolveInput & { readonly state: SalesPipelineState },
+  value: CommandOf<'CreateOpportunity'>,
+) {
+  const { invocationId, now, state } = context;
+  // The opportunity id is the action invocation id, so a retried invocation resolves to the same identity.
+  const id = yield* Schema.decodeEffect(OpportunityIdSchema)(invocationId).pipe(
+    Effect.mapError(invalidOpportunityIdentity),
+  );
+  if (state.opportunities.some((entry) => entry.id === id)) {
+    return yield* identityInUse();
+  }
+  const created = newOpportunity(value, id, now);
+  const change: EvolvedOpportunities = {
+    affected: [created],
+    stageChanges: [{ fromStage: Option.none(), opportunity: created }],
+    state: { ...state, opportunities: [...state.opportunities, created] },
+  };
+  return change;
+});
+
+const updateOpportunity = Effect.fn('SalesPipeline.updateOpportunity')(function* updateOpportunity(
+  state: SalesPipelineState,
+  command: CommandOf<'UpdateOpportunity'>,
+  now: DateTime.Utc,
+) {
+  const existing = yield* findOpportunity(state, command.id);
+  if (!isOpenStage(existing.stage)) {
+    return yield* closedOpportunity();
+  }
+  return singleResult(state, withPatch(existing, command.patch, now), []);
+});
+
+const assignOpportunity = Effect.fn('SalesPipeline.assignOpportunity')(function* assignOpportunity(
+  state: SalesPipelineState,
+  command: CommandOf<'AssignOpportunity'>,
+  now: DateTime.Utc,
+) {
+  const existing = yield* findOpportunity(state, command.id);
+  if (!isOpenStage(existing.stage)) {
+    return yield* closedOpportunity();
+  }
+  return singleResult(state, withOwner(existing, command.ownerEmployeeId, now), []);
+});
+
+const changeOpportunityStage = Effect.fn('SalesPipeline.changeOpportunityStage')(function* changeOpportunityStage(
+  state: SalesPipelineState,
+  command: CommandOf<'ChangeOpportunityStage'>,
+  now: DateTime.Utc,
+) {
+  const existing = yield* findOpportunity(state, command.id);
+  if (!isOpenStage(existing.stage)) {
+    return yield* closedOpportunity();
+  }
+  if (!canMoveTo(existing.stage, command.toStage)) {
+    return yield* transitionNotAllowed();
+  }
+  const moved = moveToStage(existing, command.toStage, now);
+  return singleResult(state, moved, [{ fromStage: Option.some(existing.stage), opportunity: moved }]);
+});
+
+/**
+ * Pure state machine for every opportunity command. Single-record commands fail the whole command on the first
+ * violation; BulkUpdateOpportunities reports per-id outcomes instead.
+ */
+export const evolveOpportunityState = Effect.fn('SalesPipeline.evolveState')(function* evolveOpportunityState(
+  state: SalesPipelineState,
+  command: SalesPipelineCommand,
+  input: EvolveInput,
+) {
+  return yield* Match.value(command).pipe(
+    Match.tag('BulkUpdateOpportunities', (bulk) => Effect.succeed(evolveBulkOpportunityState(state, bulk, input.now))),
+    Match.tag('CreateOpportunity', (value) => createOpportunity({ ...input, state }, value)),
+    Match.tag('UpdateOpportunity', (value) => updateOpportunity(state, value, input.now)),
+    Match.tag('AssignOpportunity', (value) => assignOpportunity(state, value, input.now)),
+    Match.tag('ChangeOpportunityStage', (value) => changeOpportunityStage(state, value, input.now)),
+    Match.exhaustive,
+  );
+});
 
 const contextGrant = Effect.fn('SalesPipeline.contextGrant')(function* contextGrant(
   scope: OperationalScope,
@@ -261,9 +517,15 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
           reason: 'SalesPipeline changed; refresh before another operation',
         });
       }
-      const change = yield* evolveOpportunityState(snapshot.state, command, { invocationId });
+      const now = yield* DateTime.now;
+      const change = yield* evolveOpportunityState(snapshot.state, command, { invocationId, now });
+      const results = change.results === undefined ? {} : { results: [...change.results] };
+      // A bulk command that changed nothing is not persisted and keeps the current revision.
+      if (change.affected.length === 0) {
+        return { opportunities: [], revision: expectedRevision, ...results };
+      }
       const revision = yield* save(expectedRevision, change.state);
-      return { opportunities: [...change.affected], revision };
+      return { opportunities: [...change.affected], revision, ...results };
     });
     const records = Effect.fn('SalesPipeline.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();
