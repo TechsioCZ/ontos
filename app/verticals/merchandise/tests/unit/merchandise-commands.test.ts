@@ -79,6 +79,8 @@ it.effect('CreateProduct rejects a duplicate SKU', () =>
     const first = yield* addProduct(empty, 'product-1', 'KAB-1', 19_900);
     const error = yield* addProduct(first.state, 'product-2', 'KAB-1', 5000).pipe(Effect.flip);
     expect(isConflict(error)).toBe(true);
+    const lowercase = yield* addProduct(first.state, 'product-3', 'kab-1', 5000).pipe(Effect.flip);
+    expect(isConflict(lowercase)).toBe(true);
   }),
 );
 

@@ -98,10 +98,12 @@ const quantityErrorKey = (reason: ManualReason, quantity: number, stockOnHand: n
 export interface MovementDraft {
   readonly note: string;
   readonly quantity: number;
+  /** The quantity input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
+  readonly quantityText: string;
   readonly reason: ManualReason;
 }
 
-export const EMPTY_MOVEMENT_DRAFT: MovementDraft = { note: '', quantity: 1, reason: 'RECEIPT' };
+export const EMPTY_MOVEMENT_DRAFT: MovementDraft = { note: '', quantity: 1, quantityText: '1', reason: 'RECEIPT' };
 
 /** True when the movement form holds something the user typed or picked beyond the empty defaults. */
 export const isMovementDraftDirty = (draft: MovementDraft): boolean =>
@@ -133,12 +135,9 @@ export const MovementForm = ({
 }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
-  const { note, quantity, reason } = draft;
+  const { note, quantity, quantityText, reason } = draft;
   const setReason = (value: ManualReason) => {
     onDraftChange({ reason: value });
-  };
-  const setQuantity = (value: number) => {
-    onDraftChange({ quantity: value });
   };
   const setNote = (value: string) => {
     onDraftChange({ note: value });
@@ -221,9 +220,11 @@ export const MovementForm = ({
           locale="cs-CZ"
           min={isAdjustment ? -stockOnHand : 1}
           name="movementQuantity"
-          onChange={setQuantity}
+          onValueChange={(details) => {
+            onDraftChange({ quantity: details.valueAsNumber, quantityText: details.value });
+          }}
           step={1}
-          value={quantity}
+          value={quantityText}
           {...fieldError(submitted, errorKey === undefined ? undefined : k(errorKey))}
         >
           <NumericInput.Control>

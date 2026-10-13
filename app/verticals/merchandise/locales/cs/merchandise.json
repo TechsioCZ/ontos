@@ -191,6 +191,7 @@
           "save": "Uložit změny"
         },
         "create": {
+          "discardTitle": "Zahodit neuložené změny?",
           "submit": "Vytvořit produkt",
           "title": "Nový produkt"
         },
@@ -261,6 +262,7 @@
         },
         "receipt": {
           "description": "Zaznamenejte příjem na sklad. Stav se přepočítá z pohybů.",
+          "discardTitle": "Zahodit neuložené změny?",
           "submit": "Zaznamenat příjem",
           "title": "Příjem zboží"
         },

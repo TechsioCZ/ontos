@@ -12,9 +12,11 @@ export interface DraftLine {
   readonly key: string;
   readonly productId: ProductId | null;
   readonly quantity: number;
+  /** The quantity input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
+  readonly quantityText: string;
 }
 
-export type DraftLinePatch = Partial<Pick<DraftLine, 'productId' | 'quantity'>>;
+export type DraftLinePatch = Partial<Pick<DraftLine, 'productId' | 'quantity' | 'quantityText'>>;
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
 
@@ -64,9 +66,9 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
             locale="cs-CZ"
             min={1}
             name="quantity"
-            onChange={(value) => onChange({ quantity: value })}
+            onValueChange={(details) => onChange({ quantity: details.valueAsNumber, quantityText: details.value })}
             step={1}
-            value={line.quantity}
+            value={line.quantityText}
           >
             <NumericInput.Control>
               <NumericInput.Input {...NO_ARIA_MAX} />

@@ -47,12 +47,12 @@ export const OrderCreateDialog = ({
   const lineSequence = useRef(1);
   const newLine = (): DraftLine => {
     lineSequence.current += 1;
-    return { key: `line-${lineSequence.current}`, productId: null, quantity: 1 };
+    return { key: `line-${lineSequence.current}`, productId: null, quantity: 1, quantityText: '1' };
   };
   const emptyDraft = (): Draft => ({ lines: [newLine()], partyId: '' });
 
   const [draft, setDraft] = useState<Draft>(() => ({
-    lines: [{ key: 'line-1', productId: null, quantity: 1 }],
+    lines: [{ key: 'line-1', productId: null, quantity: 1, quantityText: '1' }],
     partyId: '',
   }));
   const [submitted, setSubmitted] = useState(false);

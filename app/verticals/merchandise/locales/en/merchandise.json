@@ -191,6 +191,7 @@
           "save": "Save changes"
         },
         "create": {
+          "discardTitle": "Discard unsaved changes?",
           "submit": "Create product",
           "title": "New product"
         },
@@ -261,6 +262,7 @@
         },
         "receipt": {
           "description": "Record stock received. On-hand stock is recalculated from movements.",
+          "discardTitle": "Discard unsaved changes?",
           "submit": "Record receipt",
           "title": "Goods receipt"
         },

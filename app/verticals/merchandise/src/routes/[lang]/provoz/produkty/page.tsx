@@ -86,6 +86,12 @@ const ProductStats = ({ indicators, label }: ProductStatsProps) => (
   </StatRow>
 );
 
+/**
+ * Success toasts stay 5 s instead of zag's 2 s default. Most of them fire as a side panel closes, and the closing
+ * modal still hides the rest of the page for part of that time, so a 2 s toast was easy to miss.
+ */
+const SUCCESS_TOAST_MS = 5000;
+
 /** Toast text for a refused bulk command: stale data, a refused business rule, or a generic failure. */
 const bulkFailureKey = (reason: FailureReason): string => {
   if (reason === 'conflict') {
@@ -152,7 +158,7 @@ const RecordsPageContent = () => {
   const detail = products.find((product) => product.id === detailId);
 
   const onCommitted = (message: string) => {
-    toaster.create({ title: message, type: 'success' });
+    toaster.create({ duration: SUCCESS_TOAST_MS, title: message, type: 'success' });
     reload();
   };
   const clearFilters = () => {

@@ -59,6 +59,10 @@ export const ProductSchema = Schema.Struct({
 });
 export type Product = typeof ProductSchema.Type;
 
+/** SKUs match case-insensitively and ignore surrounding spaces, so "ms-ergo" and "MS-ERGO" are one product. */
+export const sameSku = (left: string, right: string): boolean =>
+  left.trim().toLowerCase() === right.trim().toLowerCase();
+
 /** Product plus values derived from the stock ledger and current price at read time. */
 export const ProductRecordSchema = Schema.Struct({
   ...ProductSchema.fields,

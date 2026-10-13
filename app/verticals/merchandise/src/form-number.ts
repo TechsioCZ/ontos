@@ -3,11 +3,13 @@ import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
 /**
- * Whole-number inputs (quantities, thresholds, percent). With format options the kit parses the
- * cs-CZ text and refuses a decimal comma while typing; without them it falls back to parseFloat,
- * which turns "2,5" into 2 silently.
+ * Whole-number inputs (quantities, thresholds, percent). The format allows decimals on purpose: with
+ * `maximumFractionDigits: 0` the kit drops the cs-CZ decimal comma, so "2,5" silently becomes 25. Here "2,5"
+ * reads as 2.5 and the field's whole-number check refuses it. Pair it with a string `value` (the text as typed)
+ * and keep the number from `valueAsNumber`: a numeric value is re-formatted on every keystroke, which eats a
+ * trailing comma and prints "NaN" for an emptied field.
  */
-export const WHOLE_NUMBER_FORMAT: Intl.NumberFormatOptions = { maximumFractionDigits: 0 };
+export const WHOLE_NUMBER_FORMAT: Intl.NumberFormatOptions = { maximumFractionDigits: 2 };
 
 /**
  * Kč amounts show two decimals, so a stored 490.50 reads back as 490,50 and not 490,5. Pair it with a string

@@ -91,6 +91,8 @@ interface DetailDraft {
   readonly active: boolean;
   readonly category: string;
   readonly lowStock: number;
+  /** The minimum-stock input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
+  readonly lowStockText: string;
   readonly name: string;
   readonly priceCzk: number;
   /** The price input's text, kept as typed so the two-decimal display never fights the keyboard. */
@@ -103,6 +105,7 @@ const draftOf = (product: ProductRecord): DetailDraft => ({
   active: product.active,
   category: product.category,
   lowStock: product.lowStockThreshold,
+  lowStockText: String(product.lowStockThreshold),
   name: product.name,
   priceCzk: product.currentPriceMinor / 100,
   priceText: moneyInputText(product.currentPriceMinor / 100),
@@ -155,15 +158,12 @@ const DetailForm = ({
   const k = useProductLabel();
   const failure = useCommandFailure();
   const toaster = useToast();
-  const { active, category, lowStock, name, priceCzk, priceText, unit, vatRate } = draft;
+  const { active, category, lowStock, lowStockText, name, priceCzk, priceText, unit, vatRate } = draft;
   const setActive = (value: boolean) => {
     onDraftChange({ active: value });
   };
   const setCategory = (value: string) => {
     onDraftChange({ category: value });
-  };
-  const setLowStock = (value: number) => {
-    onDraftChange({ lowStock: value });
   };
   const setName = (value: string) => {
     onDraftChange({ name: value });
@@ -364,9 +364,11 @@ const DetailForm = ({
           locale="cs-CZ"
           min={0}
           name="lowStock"
-          onChange={setLowStock}
+          onValueChange={(details) => {
+            onDraftChange({ lowStock: details.valueAsNumber, lowStockText: details.value });
+          }}
           step={1}
-          value={lowStock}
+          value={lowStockText}
           {...fieldError(submitted, lowStockError)}
         >
           <NumericInput.Control>

@@ -17,7 +17,12 @@ import {
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState, RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
-import { EntityIdSchema, ProductIdSchema, StockMovementIdSchema } from '../../shared/domain/merchandise-model.ts';
+import {
+  EntityIdSchema,
+  ProductIdSchema,
+  StockMovementIdSchema,
+  sameSku,
+} from '../../shared/domain/merchandise-model.ts';
 import type {
   EntityId,
   Order,
@@ -161,7 +166,7 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   if (state.products.some((entry) => entry.id === id)) {
     return yield* conflict('Product id already exists');
   }
-  if (state.products.some((entry) => entry.sku === value.sku)) {
+  if (state.products.some((entry) => sameSku(entry.sku, value.sku))) {
     return yield* conflict('A product with this SKU already exists');
   }
   const product: Product = {
