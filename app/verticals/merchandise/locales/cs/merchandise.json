@@ -19,8 +19,128 @@
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
       "orders": {
+        "actions": {
+          "cancel": "Zrušit",
+          "confirm": "Potvrdit",
+          "deliver": "Doručeno",
+          "ship": "Odeslat"
+        },
+        "bulk": {
+          "changeStatus": "Změnit stav",
+          "partial": "Některé objednávky se nepodařilo změnit.",
+          "result": "Změněno: {{changed}}, nepodařilo se: {{failed}}",
+          "statusPlaceholder": "Změnit stav…",
+          "success": "Stav objednávek změněn"
+        },
+        "columns": {
+          "createdAt": "Vytvořeno",
+          "customer": "Zákazník",
+          "lines": "Položek",
+          "number": "Číslo",
+          "source": "Zdroj",
+          "status": "Stav",
+          "tags": "Štítky",
+          "total": "Celkem s DPH"
+        },
+        "confirm": {
+          "back": "Zpět",
+          "cancelAction": "Zrušit objednávku",
+          "cancelBulkAction": "Zrušit objednávky",
+          "cancelBulkTitle": "Zrušit vybrané objednávky?",
+          "cancelTitle": "Zrušit objednávku {{number}}?",
+          "description": "Objednávka se přepne do stavu Zrušená."
+        },
+        "create": {
+          "addLine": "Přidat položku",
+          "cancel": "Zrušit",
+          "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
+          "customer": "Zákazník",
+          "customerHelp": "Zadejte ID zákazníka z evidence partnerů.",
+          "description": "Vyberte zákazníka a položky. Objednávka se uloží se snímkem cen.",
+          "errorCustomer": "Zadejte zákazníka.",
+          "errorLines": "Přidejte alespoň jednu položku.",
+          "errorProduct": "Vyberte produkt.",
+          "errorQuantity": "Zadejte množství alespoň 1 ks.",
+          "failed": "Objednávku se nepodařilo vytvořit. Zkuste to znovu.",
+          "lines": "Položky",
+          "noMatch": "Žádný produkt neodpovídá.",
+          "noProducts": "Žádné produkty k výběru.",
+          "priceNote": "Ceny se při vytvoření objednávky zafixují.",
+          "product": "Produkt",
+          "productMeta": "Cena {{price}}, skladem {{stock}} ks",
+          "quantity": "Množství (ks)",
+          "removeLine": "Odebrat položku",
+          "submit": "Vytvořit objednávku",
+          "submitting": "Vytvářím…",
+          "title": "Nová objednávka"
+        },
         "description": "Objednávky zákazníků se snímkem cen.",
-        "title": "Objednávky"
+        "detail": {
+          "close": "Zavřít",
+          "createdAt": "Vytvořeno",
+          "customer": "Zákazník",
+          "grossTotal": "Celkem s DPH",
+          "lineName": "Název",
+          "lineQuantity": "Množství",
+          "lineSku": "SKU",
+          "lineTotal": "Celkem",
+          "lineUnitPrice": "Cena/j",
+          "lineVat": "DPH",
+          "lines": "Položky",
+          "netTotal": "Celkem bez DPH",
+          "source": "Zdroj",
+          "title": "Objednávka {{number}}",
+          "updatedAt": "Naposledy změněno",
+          "vatTotal": "DPH"
+        },
+        "source": {
+          "manual": "Ručně",
+          "opportunity": "Příležitost"
+        },
+        "stats": {
+          "cancelled": "Zrušeno",
+          "open": "Otevřené",
+          "openHint": "Nové a potvrzené",
+          "shippedThisMonth": "Odesláno tento měsíc",
+          "total": "Objednávky celkem"
+        },
+        "states": {
+          "clearFilters": "Zrušit filtry",
+          "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
+          "errorTitle": "Data se nepodařilo načíst.",
+          "filteredTitle": "Filtrům neodpovídá žádná objednávka.",
+          "firstDescription": "Založte první objednávku a sledujte ji až do doručení.",
+          "firstTitle": "Zatím tu nejsou žádné objednávky.",
+          "forbiddenTitle": "K této sekci nemáte oprávnění.",
+          "retry": "Zkusit znovu"
+        },
+        "table": {
+          "actionsLabel": "Akce",
+          "clearSearchLabel": "Vymazat hledání",
+          "columnsLabel": "Nastavení sloupců",
+          "editingLabel": "Upravujete řádek, ostatní ovládání tabulky je zamčené",
+          "emptyDescription": "Nejsou k dispozici žádná data.",
+          "emptyTitle": "Žádné objednávky",
+          "filtersLabel": "Filtry sloupců",
+          "loadingLabel": "Načítání objednávek",
+          "pageSizeLabel": "Řádků na stránku",
+          "range": "{{start}}–{{end}} z {{total}}",
+          "requiredLabel": "Povinné",
+          "searchButtonLabel": "Hledat",
+          "searchLabel": "Hledat",
+          "searchPlaceholder": "Hledat podle čísla objednávky…",
+          "selectAllLabel": "Vybrat všechny řádky",
+          "selectionLabel": "Vybrat řádek"
+        },
+        "title": "Objednávky",
+        "toast": {
+          "cancelled": "Objednávka zrušena",
+          "confirmed": "Objednávka potvrzena",
+          "created": "Objednávka vytvořena",
+          "delivered": "Objednávka doručena",
+          "shipped": "Objednávka odeslána",
+          "statusFailed": "Stav se nepodařilo změnit."
+        }
       },
       "products": {
         "title": "Produkty",
