@@ -24,8 +24,17 @@ pnpm --ignore-workspace typecheck
 pnpm --ignore-workspace start      # stdio server; no output on stdout until a client connects
 ```
 
-Tools: `whoami` (shell URL and whether a `siampark-work` assertion can be obtained) and
+Core tools: `whoami` (shell URL and whether a `siampark-work` assertion can be obtained) and
 `raw_read` (vertical, readName, query: a records read through the shell).
+
+Sales tools (src/tools): reads `list_customers`, `list_employees`, `list_opportunities`, `list_orders`,
+`list_products`, `list_invoices`, `list_tasks`, `list_tags`, `list_metrics`, `get_metrics`; writes `create_task`,
+`update_task`, `create_opportunity`, `update_opportunity`, `assign_tags`, `unassign_tags`. Writes read the current
+`expectedRevision` first and retry once on a revision conflict. Amounts are CZK numbers. A 403 answers
+"Agent nemá oprávnění: …" with the HTTP status and problem code.
+
+`get_metrics` imports the pure engine at `app/verticals/sales-insights/shared/metrics.ts` by relative path, so this
+package works only inside the OntOS checkout. Unit tests: `pnpm --ignore-workspace test` (mocked fetch, no shell).
 
 ## Claude Code
 
