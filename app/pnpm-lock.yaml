@@ -2461,18 +2461,42 @@ importers:
 
   verticals/sales-insights:
     dependencies:
+      '@app/admin-ui':
+        specifier: workspace:*
+        version: link:../../packages/admin-ui
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
+      '@app/merchandise':
+        specifier: workspace:*
+        version: link:../merchandise
+      '@app/party-registry':
+        specifier: workspace:*
+        version: link:../party-registry
+      '@app/sales-pipeline':
+        specifier: workspace:*
+        version: link:../sales-pipeline
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
+      '@app/siampark-billing-finance':
+        specifier: workspace:*
+        version: link:../siampark-billing-finance
+      '@app/siampark-work':
+        specifier: workspace:*
+        version: link:../siampark-work
+      '@app/tagging':
+        specifier: workspace:*
+        version: link:../tagging
+      '@app/workforce':
+        specifier: workspace:*
+        version: link:../workforce
       '@effect/opentelemetry':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117)
@@ -2482,6 +2506,9 @@ importers:
       '@effect/sql-pg':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(effect@4.0.0-rc.117)
+      '@internationalized/date':
+        specifier: 3.12.4
+        version: 3.12.4
       '@modern-js/bff-effect':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@effect/opentelemetry@4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117))(core-js@3.50.0)(effect@4.0.0-rc.117)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.6.5)'

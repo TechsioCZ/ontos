@@ -26,6 +26,60 @@
         "count": "Počet záznamů: {{total}}",
         "unavailable": "Data se nepodařilo načíst.",
         "forbidden": "K této operaci nemáte oprávnění."
+      },
+      "statistics": {
+        "chart": {
+          "area": "Plošný",
+          "bar": "Sloupcový",
+          "bar-horizontal": "Vodorovné sloupce",
+          "line": "Čárový",
+          "pie": "Koláč"
+        },
+        "chartDescription": "Období {{from}} – {{to}}",
+        "chartLabel": "{{metric}}, {{from}} až {{to}}",
+        "chartType": "Typ grafu",
+        "controls": "Nastavení",
+        "description": "Vyberte ukazatel, typ grafu, období a seskupení",
+        "empty": "Za zvolené období nejsou žádná data.",
+        "grouping": "Seskupit podle",
+        "groupingLabel": {
+          "customer": "Zákazník",
+          "day": "Den",
+          "employee": "Obchodník",
+          "month": "Měsíc",
+          "product": "Produkt",
+          "stage": "Fáze",
+          "tag": "Štítek",
+          "week": "Týden"
+        },
+        "metric": "Ukazatel",
+        "other": "Ostatní",
+        "period": "Období",
+        "pieTimeWarning": "Koláč ukazuje podíly na celku. Pro časovou řadu zvolte sloupcový nebo čárový graf.",
+        "presets": {
+          "12m": "12 měsíců",
+          "30d": "30 dní",
+          "quarter": "Toto čtvrtletí",
+          "ytd": "Letos"
+        },
+        "sourceError": "Některá data se nepodařilo načíst: {{sources}}.",
+        "sources": {
+          "customers": "zákazníci",
+          "employees": "obchodníci",
+          "invoices": "faktury",
+          "movements": "pohyby skladu",
+          "opportunities": "příležitosti",
+          "orders": "objednávky",
+          "products": "produkty",
+          "tags": "štítky",
+          "tasks": "úkoly"
+        },
+        "table": {
+          "group": "Skupina",
+          "value": "Hodnota"
+        },
+        "title": "Statistiky",
+        "total": "Celkem: {{value}}"
       }
     }
   }

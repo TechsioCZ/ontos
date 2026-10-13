@@ -26,6 +26,60 @@
         "count": "Records: {{total}}",
         "unavailable": "Data could not be loaded.",
         "forbidden": "You are not allowed to do this."
+      },
+      "statistics": {
+        "chart": {
+          "area": "Area",
+          "bar": "Column",
+          "bar-horizontal": "Horizontal bars",
+          "line": "Line",
+          "pie": "Pie"
+        },
+        "chartDescription": "Period {{from}} – {{to}}",
+        "chartLabel": "{{metric}}, {{from}} to {{to}}",
+        "chartType": "Chart type",
+        "controls": "Settings",
+        "description": "Choose a metric, chart type, period and grouping",
+        "empty": "No data for the selected period.",
+        "grouping": "Group by",
+        "groupingLabel": {
+          "customer": "Customer",
+          "day": "Day",
+          "employee": "Salesperson",
+          "month": "Month",
+          "product": "Product",
+          "stage": "Stage",
+          "tag": "Tag",
+          "week": "Week"
+        },
+        "metric": "Metric",
+        "other": "Other",
+        "period": "Period",
+        "pieTimeWarning": "A pie shows parts of a whole. For a time series, pick a column or line chart.",
+        "presets": {
+          "12m": "12 months",
+          "30d": "30 days",
+          "quarter": "This quarter",
+          "ytd": "Year to date"
+        },
+        "sourceError": "Some data could not be loaded: {{sources}}.",
+        "sources": {
+          "customers": "customers",
+          "employees": "salespeople",
+          "invoices": "invoices",
+          "movements": "stock movements",
+          "opportunities": "opportunities",
+          "orders": "orders",
+          "products": "products",
+          "tags": "tags",
+          "tasks": "tasks"
+        },
+        "table": {
+          "group": "Group",
+          "value": "Value"
+        },
+        "title": "Statistics",
+        "total": "Total: {{value}}"
       }
     }
   }
