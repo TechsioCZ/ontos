@@ -8,6 +8,7 @@ import {
   datePickerTranslations,
 } from '@app/admin-ui';
 import { CalendarDate as IntlCalendarDate } from '@internationalized/date';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
@@ -53,6 +54,8 @@ interface Draft {
   readonly issueDate: CalendarDate;
   readonly lines: readonly DraftLine[];
   readonly paymentDays: PaymentTermDays;
+  /** Set when Escape or the close button hid this draft after it was edited; the reopened panel says so. */
+  readonly resumed: boolean;
 }
 
 const CUSTOMER_COMBOBOX_ID = 'invoice-customer';
@@ -62,7 +65,23 @@ const emptyDraft = (): Draft => ({
   issueDate: DateTime.formatIsoDateUtc(DateTime.nowUnsafe()),
   lines: [newDraftLine('line-1', 'product')],
   paymentDays: 14,
+  resumed: false,
 });
+
+/** True once the form holds input a fresh draft would not have, so closing it keeps something worth resuming. */
+const isLineEdited = (line: DraftLine): boolean =>
+  line.kind !== 'product' || line.productId !== null || line.description !== '' || line.quantity !== 1;
+
+const isDraftEdited = (draft: Draft): boolean => {
+  const fresh = emptyDraft();
+  return (
+    draft.customerId !== fresh.customerId ||
+    draft.issueDate !== fresh.issueDate ||
+    draft.paymentDays !== fresh.paymentDays ||
+    draft.lines.length !== fresh.lines.length ||
+    draft.lines.some(isLineEdited)
+  );
+};
 
 /** An empty date is flagged after submit; a complete date with an implausible year is flagged as soon as it is typed. */
 const issueDateProblem = (issueDate: string, submitted: boolean): 'missing' | 'year' | undefined => {
@@ -136,6 +155,62 @@ const IssueDateField = ({ error, label, onChange, value }: IssueDateFieldProps) 
   </div>
 );
 
+/** Shown when the panel reopens with a draft that Escape or the close button kept; Začít znovu starts over. */
+const ResumedDraftNotice = ({ onRestart }: { readonly onRestart: () => void }) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="flex items-center justify-between gap-150 rounded-md border border-border-primary p-150">
+      <StatusText icon="icon-[mdi--history]" showIcon size="sm">
+        {t(`${ns}.form.draftKept`)}
+      </StatusText>
+      <Button onClick={onRestart} size="sm" theme="outlined" variant="secondary">
+        {t(`${ns}.form.draftRestart`)}
+      </Button>
+    </div>
+  );
+};
+
+interface DraftTotalsSummaryProps {
+  /** Undefined when the sum passes the money range. */
+  readonly totals: ReturnType<typeof draftTotals>;
+  readonly zeroPriceWarning: boolean;
+}
+
+/** Subtotal, VAT and total of the valid lines, with the out-of-range and 0 Kč messages under them. */
+const DraftTotalsSummary = ({ totals, zeroPriceWarning }: DraftTotalsSummaryProps) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      <DetailList
+        items={[
+          {
+            label: t(`${ns}.subtotal`),
+            value: <span className="tabular-nums">{optionalMoney(totals?.subtotalMinor)}</span>,
+          },
+          {
+            label: t(`${ns}.vatTotal`),
+            value: <span className="tabular-nums">{optionalMoney(totals?.vatMinor)}</span>,
+          },
+          {
+            label: t(`${ns}.total`),
+            value: <span className="font-semibold tabular-nums">{optionalMoney(totals?.totalMinor)}</span>,
+          },
+        ]}
+      />
+      {totals === undefined && (
+        <StatusText showIcon size="sm" status="error">
+          {t(`${ns}.form.errorTotal`)}
+        </StatusText>
+      )}
+      {zeroPriceWarning && (
+        <StatusText showIcon size="sm" status="warning">
+          {t(`${ns}.form.zeroPriceConfirm`)}
+        </StatusText>
+      )}
+    </>
+  );
+};
+
 export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogProps) => {
   const { confirmInvoice, createDraft, references, t } = vm;
   const toaster = useToast();
@@ -143,7 +218,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<{ readonly message: string; readonly reason?: string } | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
   const [customerQuery, setCustomerQuery] = useState('');
   /** Set by the first submit that finds a 0 Kč line; the next submit creates the draft anyway. */
   const [zeroPriceAcknowledged, setZeroPriceAcknowledged] = useState(false);
@@ -189,31 +264,44 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   const addLine = () => {
     lineSequence.current += 1;
     const key = `line-${lineSequence.current}`;
-    setLines((lines) => [...lines, newDraftLine(key, 'free')]);
+    // A new line starts as a product line like the first one, so it has its own Produkt picker right away.
+    setLines((lines) => [...lines, newDraftLine(key, 'product')]);
   };
 
-  const removeLine = (lineKey: string) => setLines((lines) => lines.filter((line) => line.key !== lineKey));
+  const removeLine = (lineKey: string) => {
+    setLines((lines) => lines.filter((line) => line.key !== lineKey));
+    // The removed line's buttons unmount with it, so focus moves to the add-line button that stays in the dialog.
+    document.querySelector<HTMLElement>(`[id="${ADD_LINE_BUTTON_ID}"]`)?.focus();
+  };
 
-  /** Discards the draft. Used by Zrušit and after a successful create; Escape and the close button keep it. */
-  const discardAndClose = () => {
+  /** Starts a fresh draft. Used by Začít znovu, Zrušit and after a successful create. */
+  const resetDraft = () => {
     setDraft(emptyDraft());
     setSubmitted(false);
     setServerError(null);
     setZeroPriceAcknowledged(false);
+  };
+
+  /** Zrušit discards the draft; Escape and the close button keep it (see `handleOpenChange`). */
+  const discardAndClose = () => {
+    resetDraft();
     onOpenChange(false);
+  };
+
+  /** Escape and the close button hide the panel but keep an edited draft for the next open. */
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
+      setDraft((current) => ({ ...current, resumed: isDraftEdited(current) }));
+    }
+    onOpenChange(next);
   };
 
   const handleOutcome = (outcome: DraftInvoiceOutcome) => {
     setBusy(false);
     if (!outcome.ok) {
       const message = t(`siampark-billing-finance.demo.feedback.${outcome.feedback}`);
-      const reason = outcome.reason === null ? undefined : t(`${ns}.form.failureReason`, { reason: outcome.reason });
-      setServerError(reason === undefined ? { message } : { message, reason });
-      toaster.create({
-        description: reason === undefined ? message : `${message} ${reason}`,
-        title: t(`${ns}.form.createFailed`),
-        type: 'error',
-      });
+      setServerError(message);
+      toaster.create({ description: message, title: t(`${ns}.form.createFailed`), type: 'error' });
       return;
     }
     const { invoice } = outcome;
@@ -300,9 +388,9 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
       }
       // The form holds unsaved input, and the date field opens a picker outside the drawer. A stray pointer or
       // focus move outside must not discard the draft. Escape and the close button only hide the panel, so the
-      // draft is still there when it reopens; Zrušit discards it.
+      // draft is still there when it reopens, with a notice and Začít znovu; Zrušit discards it.
       closeOnInteractOutside={false}
-      onOpenChange={onOpenChange}
+      onOpenChange={handleOpenChange}
       open={open}
       // xl leaves the line's Typ select room for "Volná položka" at the form's text size.
       size="xl"
@@ -315,15 +403,11 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           submit();
         }}
       >
+        {draft.resumed && <ResumedDraftNotice onRestart={resetDraft} />}
         {serverError !== null && (
-          <div className="flex flex-col gap-50">
-            <StatusText showIcon size="sm" status="error">
-              {serverError.message}
-            </StatusText>
-            {serverError.reason !== undefined && (
-              <p className="break-words text-fg-secondary text-xs">{serverError.reason}</p>
-            )}
-          </div>
+          <StatusText showIcon size="sm" status="error">
+            {serverError}
+          </StatusText>
         )}
         <div className="flex flex-col gap-50">
           <Combobox
@@ -373,13 +457,16 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
             value={[String(draft.paymentDays)]}
           />
         </div>
-        {dueDate !== undefined && issueProblem === undefined && (
-          <p className="text-fg-secondary text-xs">{t(`${ns}.form.dueHint`, { date: formatDate(dueDate) })}</p>
-        )}
+        {/* A due date counted from an incomplete or implausible issue date is meaningless, so the line says why. */}
+        <p className="text-fg-secondary text-xs">
+          {dueDate !== undefined && issueProblem === undefined
+            ? t(`${ns}.form.dueHint`, { date: formatDate(dueDate) })
+            : t(`${ns}.form.dueHintPending`)}
+        </p>
 
         <div className="flex flex-col gap-150">
           <span className="font-medium text-sm">{t(`${ns}.form.lines`)}</span>
-          {draft.lines.map((line) => (
+          {draft.lines.map((line, index) => (
             <InvoiceLineEditor
               canRemove={draft.lines.length > 1}
               // A mistyped number is flagged as soon as it is typed; a missing product or description only on submit.
@@ -388,6 +475,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
               line={line}
               onChange={(next) => updateLine(line.key, next)}
               onRemove={() => removeLine(line.key)}
+              position={index + 1}
               products={products}
             />
           ))}
@@ -406,32 +494,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           <p className="text-fg-secondary text-xs">{t(`${ns}.form.priceNote`)}</p>
         </div>
 
-        <DetailList
-          items={[
-            {
-              label: t(`${ns}.subtotal`),
-              value: <span className="tabular-nums">{optionalMoney(totals?.subtotalMinor)}</span>,
-            },
-            {
-              label: t(`${ns}.vatTotal`),
-              value: <span className="tabular-nums">{optionalMoney(totals?.vatMinor)}</span>,
-            },
-            {
-              label: t(`${ns}.total`),
-              value: <span className="font-semibold tabular-nums">{optionalMoney(totals?.totalMinor)}</span>,
-            },
-          ]}
-        />
-        {totals === undefined && (
-          <StatusText showIcon size="sm" status="error">
-            {t(`${ns}.form.errorTotal`)}
-          </StatusText>
-        )}
-        {zeroPriceWarning && (
-          <StatusText showIcon size="sm" status="warning">
-            {t(`${ns}.form.zeroPriceConfirm`)}
-          </StatusText>
-        )}
+        <DraftTotalsSummary totals={totals} zeroPriceWarning={zeroPriceWarning} />
       </form>
     </SidePanel>
   );

@@ -23,6 +23,9 @@ export const invoiceCustomerId = (invoice: Invoice): string => invoice.partyId ?
 export const customerOf = (customers: CustomerIndex, invoice: Invoice): CustomerListItem | undefined =>
   customers.get(invoiceCustomerId(invoice));
 
+/** Shown in place of a customer name while the customer list is still loading. */
+export const customerLoadingLabel = '…';
+
 /** Party name, or the muted fallback label when the registry does not know the customer. */
 export const customerDisplayName = (customer: CustomerListItem | undefined, unknownLabel: string): string =>
   customer?.displayName ?? unknownLabel;
@@ -30,6 +33,17 @@ export const customerDisplayName = (customer: CustomerListItem | undefined, unkn
 /** Title of the source opportunity; undefined for manual invoices and unknown opportunities. */
 export const opportunityTitle = (titles: ReadonlyMap<string, string>, invoice: Invoice): string | undefined =>
   invoice.opportunityId === undefined ? undefined : titles.get(invoice.opportunityId);
+
+/**
+ * Mirrors the owner's VoidInvoice rule: a draft, or a confirmed invoice with nothing paid that has not been sent
+ * to accounting (sync not pending or done). Other invoices would be refused, so no Stornovat is offered.
+ */
+export const isVoidable = (invoice: Invoice): boolean =>
+  invoice.businessState === 'DRAFT' ||
+  (invoice.businessState === 'CONFIRMED' &&
+    invoice.paidMinor === 0 &&
+    invoice.accountingSyncState !== 'PENDING' &&
+    invoice.accountingSyncState !== 'SYNCED');
 
 /** Overdue is derived from the reference date, never stored. */
 export const isOverdue = (invoice: Invoice, referenceDate: string): boolean =>

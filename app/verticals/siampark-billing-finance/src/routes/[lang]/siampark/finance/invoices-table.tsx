@@ -3,12 +3,20 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
+import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { Row } from '@techsio/ui-kit/organisms/data-table';
 import type { Invoice } from '../../../../../shared/apis/records.ts';
-import { customerDisplayName, customerOf, invoiceStatusBadge, opportunityTitle } from './invoice-view.ts';
+import {
+  customerDisplayName,
+  customerLoadingLabel,
+  customerOf,
+  invoiceStatusBadge,
+  isVoidable,
+  opportunityTitle,
+} from './invoice-view.ts';
 import type { InvoiceColumn } from './invoice-table-types.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 
@@ -46,7 +54,7 @@ const tableTranslations = (t: Translate) => ({
  */
 const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
   const { referenceDate, references } = vm;
-  const unknownCustomer = t(`${ns}.unknownCustomer`);
+  const unknownCustomer = references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`);
   return [
     {
       accessorFn: (row) => row.number ?? row.documentNumber,
@@ -158,7 +166,7 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
   const [status, setStatus] = useState<string>(ALL);
   const loadFailed = snapshot === undefined && feedback !== 'loading';
   const filterActive = search.trim() !== '' || status !== ALL;
-  const unknownCustomer = t(`${ns}.unknownCustomer`);
+  const unknownCustomer = references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`);
 
   const visibleInvoices = invoices.filter((invoice) => {
     if (status !== ALL && invoiceStatusBadge(invoice, referenceDate).value !== status) {
@@ -167,12 +175,39 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
     if (search.trim() === '') {
       return true;
     }
-    const customerName = customerDisplayName(customerOf(references.customerById, invoice), unknownCustomer);
-    return [invoice.number ?? invoice.documentNumber, customerName].some((value) => matchesSearch(value, search));
+    const customer = customerOf(references.customerById, invoice);
+    // The row shows the customer's IČO under the name, so the search matches it too.
+    const searched = [
+      invoice.number ?? invoice.documentNumber,
+      customerDisplayName(customer, unknownCustomer),
+      customer?.companyId ?? '',
+    ];
+    return searched.some((value) => matchesSearch(value, search));
   });
 
+  // Drafts offer confirm and void; a confirmed invoice the owner would still void offers only void.
+  const rowMenuItems = (invoice: Invoice): MenuItem[] => {
+    const voidItem: MenuItem = {
+      disabled: busy,
+      icon: 'icon-[mdi--cancel]',
+      label: t(`${ns}.void`),
+      type: 'action',
+      value: 'void',
+    };
+    if (invoice.businessState !== 'DRAFT') {
+      return [voidItem];
+    }
+    const confirmItem: MenuItem = {
+      disabled: busy,
+      icon: 'icon-[mdi--check-circle-outline]',
+      label: t(`${ns}.confirm`),
+      type: 'action',
+      value: 'confirm',
+    };
+    return [confirmItem, voidItem];
+  };
   const rowMenu = (invoice: Invoice) =>
-    invoice.businessState === 'DRAFT' ? (
+    isVoidable(invoice) ? (
       <div
         aria-label={t(`${ns}.table.rowMenu`)}
         onClick={stopRowInteraction}
@@ -192,22 +227,7 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
               variant="secondary"
             />
           }
-          items={[
-            {
-              disabled: busy,
-              icon: 'icon-[mdi--check-circle-outline]',
-              label: t(`${ns}.confirm`),
-              type: 'action',
-              value: 'confirm',
-            },
-            {
-              disabled: busy,
-              icon: 'icon-[mdi--cancel]',
-              label: t(`${ns}.void`),
-              type: 'action',
-              value: 'void',
-            },
-          ]}
+          items={rowMenuItems(invoice)}
           onSelect={({ value }) => {
             if (value === 'confirm') {
               confirmInvoice(invoice);

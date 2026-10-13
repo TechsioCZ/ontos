@@ -8,7 +8,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { FinanceCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { CalendarDateSchema, Invoice, InvoiceLine, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { nextInvoiceNumber } from '../../../../../shared/domain/invoice-totals.ts';
-import { formatProblemReason, isProblemReason } from '../../../../../shared/domain/problem-reason.ts';
 import { commandReferenceAudiences } from '../../../../../shared/domain/reference-audiences.ts';
 import { InvoiceRefSchema } from '../../../../../shared/resources/invoice.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
@@ -27,7 +26,7 @@ export interface DraftInvoiceInput {
 }
 
 export type DraftInvoiceOutcome =
-  | { readonly feedback: Feedback; readonly ok: false; readonly reason: string | null }
+  | { readonly feedback: Feedback; readonly ok: false }
   | { readonly invoice: Invoice; readonly ok: true };
 
 const searchSchema = Schema.Struct({
@@ -59,10 +58,6 @@ export const financeFailureFeedback = (error: UiFailure): Feedback =>
     Match.when(invalid, () => 'validation' as const),
     Match.orElse(() => 'unavailable' as const),
   );
-/** The problem detail the server answered with; transport failures that never got a response have none. */
-const financeFailureReason = (error: UiFailure): string | null =>
-  isProblemReason(error) ? formatProblemReason(error) : null;
-
 const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submitFinanceCommand(
   snapshot: RecordsResponse,
   command: FinanceCommand,
@@ -132,7 +127,7 @@ export const useFinanceRecords = () => {
    */
   const createDraft = (input: DraftInvoiceInput): Effect.Effect<DraftInvoiceOutcome> => {
     if (snapshot === undefined || !canWrite) {
-      return Effect.succeed({ feedback: 'unavailable', ok: false, reason: null });
+      return Effect.succeed({ feedback: 'unavailable', ok: false });
     }
     const command: FinanceCommand = {
       _tag: 'CreateInvoiceDraft',
@@ -147,12 +142,12 @@ export const useFinanceRecords = () => {
     };
     return submitFinanceCommand(snapshot, command).pipe(
       Effect.tap(() => load().pipe(Effect.ignore)),
+      // A 409 means the snapshot revision is stale (another write landed first); reload it so the next try can succeed.
+      Effect.tapError((cause) =>
+        financeFailureFeedback(cause) === 'conflict' ? load().pipe(Effect.ignore) : Effect.void,
+      ),
       Effect.match({
-        onFailure: (error): DraftInvoiceOutcome => ({
-          feedback: financeFailureFeedback(error),
-          ok: false,
-          reason: financeFailureReason(error),
-        }),
+        onFailure: (error): DraftInvoiceOutcome => ({ feedback: financeFailureFeedback(error), ok: false }),
         onSuccess: (result): DraftInvoiceOutcome => ({ invoice: result.invoice, ok: true }),
       }),
     );
@@ -211,9 +206,7 @@ export const useFinanceRecords = () => {
             const failure = financeFailureFeedback(error);
             setFeedback(failure);
             // The detail panel covers the page's status line, so a rejected confirm or void also raises a toast.
-            const reason = financeFailureReason(error);
-            const toast = { title: t(`siampark-billing-finance.demo.feedback.${failure}`), type: 'error' as const };
-            toaster.create(reason === null ? toast : { ...toast, description: reason });
+            toaster.create({ title: t(`siampark-billing-finance.demo.feedback.${failure}`), type: 'error' });
           },
           onSuccess: (result) => {
             setFeedback('ready');

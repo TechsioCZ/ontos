@@ -27,6 +27,8 @@ export const useFinanceReferences = () => {
   const [products, setProducts] = useState<readonly ProductRecord[]>([]);
   const [failures, setFailures] = useState<readonly ReferenceFailure[]>([]);
   const [opportunitiesForbidden, setOpportunitiesForbidden] = useState(false);
+  /** True until the customer list answers, so rows do not read "Neznámý zákazník" while names are on the way. */
+  const [customersLoading, setCustomersLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -45,6 +47,13 @@ export const useFinanceReferences = () => {
             }
           },
         }),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (active) {
+              setCustomersLoading(false);
+            }
+          }),
+        ),
       ),
     );
     void financeBrowserRuntime.runPromise(
@@ -87,6 +96,7 @@ export const useFinanceReferences = () => {
   return {
     customerById: customerIndex(customers),
     customers,
+    customersLoading,
     opportunitiesForbidden,
     opportunityTitles,
     products,

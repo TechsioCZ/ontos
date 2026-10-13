@@ -12,7 +12,15 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { Invoice } from '../../../../../shared/apis/records.ts';
-import { customerDisplayName, customerOf, invoiceStatusBadge, isOverdue, opportunityTitle } from './invoice-view.ts';
+import {
+  customerDisplayName,
+  customerLoadingLabel,
+  customerOf,
+  invoiceStatusBadge,
+  isOverdue,
+  isVoidable,
+  opportunityTitle,
+} from './invoice-view.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 
 type FinanceViewModel = ReturnType<typeof useFinanceRecords>;
@@ -78,7 +86,10 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                 items={[
                   {
                     label: t(`${ns}.columns.customer`),
-                    value: customerDisplayName(customer, t(`${ns}.unknownCustomer`)),
+                    value: customerDisplayName(
+                      customer,
+                      references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`),
+                    ),
                   },
                   { label: t(`${ns}.companyId`), value: customer?.companyId ?? '—' },
                   { label: t(`${ns}.vatId`), value: customer?.vatId ?? '—' },
@@ -199,7 +210,7 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
             >
               {t(`${ns}.print`)}
             </Button>
-            {canWrite && isDraft && (
+            {canWrite && isVoidable(invoice) && (
               <Button
                 className="whitespace-nowrap"
                 disabled={busy}

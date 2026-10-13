@@ -26,6 +26,8 @@ interface InvoiceLineEditorProps {
   readonly line: DraftLine;
   readonly onChange: (next: DraftLine) => void;
   readonly onRemove: () => void;
+  /** 1-based line number; names the line group and its remove button, so each line is told apart. */
+  readonly position: number;
   /** Active products only; the caller filters them. */
   readonly products: readonly ProductRecord[];
 }
@@ -36,7 +38,15 @@ const priceFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2,
 const quantityFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 3, minimumFractionDigits: 0 };
 
 /** One invoice line: a product (snapshot on pick) or free text, then quantity, and price and VAT for free text. */
-export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, products }: InvoiceLineEditorProps) => {
+export const InvoiceLineEditor = ({
+  canRemove,
+  issue,
+  line,
+  onChange,
+  onRemove,
+  position,
+  products,
+}: InvoiceLineEditorProps) => {
   const { t } = useModernI18n();
   const [productQuery, setProductQuery] = useState('');
   const productComboboxId = `invoice-line-product-${line.key}`;
@@ -61,7 +71,12 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
   }));
 
   return (
-    <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
+    // A named fieldset per line, so the line's inputs and its remove button read as "Položka 2" and not as a
+    // copy of the first line.
+    <fieldset
+      aria-label={t(`${ns}.form.lineGroup`, { position })}
+      className="m-0 flex min-w-0 flex-col gap-100 rounded-md border border-border-primary p-150"
+    >
       <div className="grid grid-cols-[12rem_minmax(0,1fr)_auto] items-end gap-150">
         <div className="min-w-0">
           <SelectTemplate
@@ -112,7 +127,7 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
           )}
         </div>
         <Button
-          aria-label={t(`${ns}.form.removeLine`)}
+          aria-label={t(`${ns}.form.removeLine`, { position })}
           disabled={!canRemove}
           icon="icon-[mdi--delete-outline]"
           onClick={onRemove}
@@ -205,6 +220,6 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
           {t(`${ns}.form.zeroPriceWarning`)}
         </StatusText>
       )}
-    </div>
+    </fieldset>
   );
 };
