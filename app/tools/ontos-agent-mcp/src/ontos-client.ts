@@ -19,6 +19,9 @@
  *    prefix at verticals/siampark-work/src/api/records-client.ts:26). Query fields go in the JSON body.
  * - Headers: Authorization: Bearer <assertion> (packages/shared-contracts/src/operation-gateway.ts:51),
  *   x-ontos-composition-revision (packages/shared-contracts/src/client-runtime.ts:130), x-correlation-id.
+ *   Actions also need `idempotency-key` (packages/shared-contracts/src/client-runtime.ts:128); without it the
+ *   vertical answers 428. Each send is a new invocation, so a retry after a revision conflict uses a new key.
+ * - Assertions are single-use, so every call issues a fresh one (see gateway.ts).
  */
 import { randomUUID } from 'node:crypto';
 import { getConfig } from './config.ts';
@@ -64,7 +67,12 @@ function parseBody(text: string): unknown {
   }
 }
 
-async function postJson(context: GatewayContext, path: string, body: unknown): Promise<unknown> {
+async function postJson(
+  context: GatewayContext,
+  path: string,
+  body: unknown,
+  headers: Readonly<Record<string, string>> = {},
+): Promise<unknown> {
   const { shellUrl } = getConfig();
   const response = await fetch(`${shellUrl}${context.apiBaseUrl}${path}`, {
     body: JSON.stringify(body),
@@ -73,6 +81,7 @@ async function postJson(context: GatewayContext, path: string, body: unknown): P
       'content-type': 'application/json',
       'x-correlation-id': randomUUID(),
       'x-ontos-composition-revision': context.compositionRevision,
+      ...headers,
     },
     method: 'POST',
   });
@@ -87,7 +96,9 @@ async function postJson(context: GatewayContext, path: string, body: unknown): P
 /** Invokes a vertical action. The audience is the vertical ID. */
 export async function callAction(vertical: string, actionSlug: string, payload: unknown): Promise<unknown> {
   const context = await getGatewayContext(vertical);
-  return postJson(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload);
+  return postJson(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, {
+    'idempotency-key': randomUUID(),
+  });
 }
 
 /** Reads a vertical's records endpoint. `readName` "records" maps to POST .../reads/records. */

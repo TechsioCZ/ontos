@@ -6,12 +6,15 @@ export interface AgentConfig {
   readonly legalEntityId: string | undefined;
   /** Live release revision (64 lowercase hex). The shell rejects gateway requests that do not match its catalog. */
   readonly compositionRevision: string | undefined;
+  /** Composition publisher endpoint; its `composition.revision` replaces a missing or stale revision. */
+  readonly compositionUrl: string;
 }
 
 /** app/.env.demo.local, resolved from this file: src -> ontos-agent-mcp -> tools -> app. */
 const DEMO_ENV_FILE = new URL('../../../.env.demo.local', import.meta.url);
 
 export const DEFAULT_SHELL_URL = 'http://localhost:3020';
+export const DEFAULT_COMPOSITION_URL = 'http://127.0.0.1:3041/active';
 
 /** Minimal KEY=VALUE parser: comments, blank lines, optional `export `, optional single/double quotes. */
 export function parseEnvFile(text: string): Record<string, string> {
@@ -60,6 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   return {
     apiKey,
     compositionRevision: read('ONTOS_COMPOSITION_REVISION'),
+    compositionUrl: read('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL') ?? DEFAULT_COMPOSITION_URL,
     legalEntityId: read('ONTOS_LEGAL_ENTITY_ID'),
     shellUrl: (read('ONTOS_SHELL_URL') ?? DEFAULT_SHELL_URL).replace(/\/+$/u, ''),
   };

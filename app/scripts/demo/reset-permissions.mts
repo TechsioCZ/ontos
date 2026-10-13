@@ -14,11 +14,15 @@
  * 4. When the shell answers, signs in as obchod@demo.ontos and issues a managed API key for the bot through
  *    `/auth/identity/api-keys/managed`, unless the key in `app/.env.demo.local` still works. Writes
  *    ONTOS_AGENT_API_KEY, ONTOS_SHELL_URL, ONTOS_COMPOSITION_REVISION and ONTOS_LEGAL_ENTITY_ID there.
+ * 5. Lifts the Better Auth per-key rate limit of the agent-bot keys (plugin default: 10 verifications per 24 h).
+ *    Gateway assertions are single-use, so the agent exchanges its key on every tool call and would be locked
+ *    out after ten calls a day.
  */
 import { randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
 import { hashPassword } from 'better-auth/crypto';
+import { eq } from 'drizzle-orm';
 import {
   Config,
   ConfigProvider,
@@ -40,7 +44,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
-import { account, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
+import { account, apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
@@ -111,6 +115,20 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
         .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
     }),
   );
+});
+
+/**
+ * Better Auth's apiKey plugin stores `rateLimitMax: 10` per `rateLimitTimeWindow: 24 h` on every key it creates.
+ * Every MCP tool call exchanges the key for a single-use gateway assertion, so the demo bot keys run unlimited.
+ */
+const liftBotKeyRateLimit = Effect.gen(function* liftBotKeyRateLimit() {
+  const { executor } = yield* AuthDatabase;
+  const lifted = yield* executor
+    .update(apikey)
+    .set({ rateLimitEnabled: false, requestCount: 0 })
+    .where(eq(apikey.name, agentBotPrincipal.displayName))
+    .returning({ id: apikey.id });
+  return yield* Console.log(`sales-demo permissions: rate limit lifted on ${lifted.length} agent-bot API key(s)`);
 });
 
 const Text = Schema.String;
@@ -362,7 +380,9 @@ const main = (skipBot: boolean) =>
     yield* upsertIdentityRows;
     yield* runBootstrapPort(root, environment);
     if (!skipBot) {
+      yield* liftBotKeyRateLimit;
       yield* ensureBotKey(root);
+      yield* liftBotKeyRateLimit;
     }
   });
 

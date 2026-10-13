@@ -11,10 +11,10 @@ import { getConfig } from './config.ts';
  *   - request body: GatewayContextRequestSchema, gateway-context.ts:128-133
  *   - response: GatewayContextResponseSchema, gateway-context.ts:135-144
  * Audience format: stable topology app ID, gateway-context.ts:29-33 (e.g. "siampark-work").
- * Assertion lifetime is 300 s (gateway-context.ts:20); cached here until 30 s before expiry.
+ * Assertions are single-use: each vertical records the redeemed `jti` (gateway_assertion_redemptions), so a second
+ * request with the same token answers 401. Every vertical call therefore exchanges the key for a fresh assertion.
  */
 const GATEWAY_CONTEXT_PATH = '/shell-super-app-api/auth/api-key/gateway-context';
-const REFRESH_MARGIN_MS = 30_000;
 
 const AudienceSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u);
 const CompositionRevisionSchema = z.string().regex(/^[\da-f]{64}$/u);
@@ -46,30 +46,34 @@ export interface GatewayContext {
   readonly expiresAt: number;
 }
 
-const cache = new Map<string, GatewayContext>();
+const CompositionSchema = z.object({ composition: z.object({ revision: CompositionRevisionSchema }) });
 
-function isFresh(context: GatewayContext, nowMs: number): boolean {
-  return context.expiresAt * 1000 - REFRESH_MARGIN_MS > nowMs;
+/** Revision learned from the composition publisher; replaces a missing or stale ONTOS_COMPOSITION_REVISION. */
+let liveRevision: string | undefined;
+
+async function fetchActiveRevision(): Promise<string | undefined> {
+  const { compositionUrl } = getConfig();
+  try {
+    const response = await fetch(compositionUrl);
+    if (!response.ok) {
+      return undefined;
+    }
+    liveRevision = CompositionSchema.parse(await response.json()).composition.revision;
+    console.error(`composition revision ${liveRevision.slice(0, 12)}… from ${compositionUrl}`);
+    return liveRevision;
+  } catch {
+    return undefined;
+  }
 }
 
-export async function getGatewayContext(audience: string): Promise<GatewayContext> {
-  const cached = cache.get(audience);
-  if (cached !== undefined && isFresh(cached, Date.now())) {
-    return cached;
-  }
-
+async function requestGatewayContext(audience: string, compositionRevision: string): Promise<Response> {
   const config = getConfig();
-  if (config.compositionRevision === undefined) {
-    throw new Error('ONTOS_COMPOSITION_REVISION is required to request a gateway assertion (live release revision).');
-  }
-
   const body = GatewayContextRequestSchema.parse({
     audience,
-    compositionRevision: config.compositionRevision,
+    compositionRevision,
     ...(config.legalEntityId === undefined ? {} : { legalEntityId: config.legalEntityId }),
   });
-
-  const response = await fetch(`${config.shellUrl}${GATEWAY_CONTEXT_PATH}`, {
+  return fetch(`${config.shellUrl}${GATEWAY_CONTEXT_PATH}`, {
     body: JSON.stringify(body),
     headers: {
       'content-type': 'application/json',
@@ -78,15 +82,36 @@ export async function getGatewayContext(audience: string): Promise<GatewayContex
     },
     method: 'POST',
   });
+}
+
+/**
+ * Issues a fresh single-use assertion for one vertical call. Never cache the result.
+ * The revision comes from ONTOS_COMPOSITION_REVISION, else from the composition publisher. When the shell answers
+ * 409 (reload required: the stack was rebuilt), the live revision is fetched once and the request retried.
+ */
+export async function getGatewayContext(audience: string): Promise<GatewayContext> {
+  const config = getConfig();
+  const revision = liveRevision ?? config.compositionRevision ?? (await fetchActiveRevision());
+  if (revision === undefined) {
+    throw new Error(
+      `No composition revision: set ONTOS_COMPOSITION_REVISION or start the composition publisher (${config.compositionUrl}).`,
+    );
+  }
+
+  let response = await requestGatewayContext(audience, revision);
+  if (response.status === 409) {
+    const refreshed = await fetchActiveRevision();
+    if (refreshed !== undefined && refreshed !== revision) {
+      response = await requestGatewayContext(audience, refreshed);
+    }
+  }
 
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Gateway assertion for "${audience}" failed: HTTP ${response.status} ${text}`);
   }
 
-  const parsed = GatewayContextResponseSchema.parse(await response.json());
-  const context: GatewayContext = parsed;
-  cache.set(audience, context);
+  const context: GatewayContext = GatewayContextResponseSchema.parse(await response.json());
   return context;
 }
 
