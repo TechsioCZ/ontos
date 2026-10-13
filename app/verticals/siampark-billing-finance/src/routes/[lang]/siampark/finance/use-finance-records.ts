@@ -67,7 +67,7 @@ const fetchRecords = () => executeRecords({}, 'siampark-finance.records');
 export const useFinanceRecords = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const search = Schema.decodeUnknownOption(searchSchema)(useRouterState().location.search);
+  const search = Schema.decodeOption(searchSchema)(useRouterState().location.search);
   const requestedId = Option.getOrUndefined(search)?.resourceId;
   const [snapshot, setSnapshot] = useState<RecordsResponse>();
   const [feedback, setFeedback] = useState<Feedback>('loading');
