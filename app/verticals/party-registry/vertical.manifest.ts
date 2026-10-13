@@ -55,6 +55,7 @@ import { counterpartyRoleAddAction } from './src/actions/counterparty-role-add.a
 import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.action.ts';
 import { createPartyAction } from './src/actions/create-party.action.ts';
 import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
+import { CustomerListApi } from './shared/apis/customer-list.ts';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
@@ -143,6 +144,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'ares-lookup': AresLookupApi,
       'counterparty-read': CounterpartyReadApi,
       'counterparty-role-history': CounterpartyRoleHistoryApi,
+      'customer-list': CustomerListApi,
       'duplicate-candidate-detail': DuplicateCandidateDetailApi,
       'guest-party-resolution': GuestPartyResolutionApi,
       'organization-engagement-profile': OrganizationEngagementProfileApi,

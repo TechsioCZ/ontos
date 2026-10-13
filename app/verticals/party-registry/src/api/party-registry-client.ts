@@ -56,6 +56,8 @@ export * from './ares-lookup-client.ts';
 export * from './counterparties-search-client.ts';
 export * from './counterparty-read-client.ts';
 export * from './counterparty-role-history-client.ts';
+export * from './customer-list-client.ts';
+export * from './customers-client.ts';
 export * from './duplicate-candidate-detail-client.ts';
 export * from './engagement-profile-client.ts';
 export * from './guest-party-resolution-client.ts';
