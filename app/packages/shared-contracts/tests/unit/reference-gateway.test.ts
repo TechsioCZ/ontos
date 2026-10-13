@@ -35,59 +35,55 @@ afterEach(() => {
   }
 });
 
-it.effect(
-  'acquires a fresh bounded provider assertion for each attempt, including repeated audiences, and redacts the transport bundle',
-  () =>
-    Effect.gen(function* acquireFreshReferences() {
-      yield* pinDocumentCompositionRevision(compositionRevision);
-      const requests: Request[] = [];
-      const transport: typeof fetch = (input, init) => {
-        requests.push(new Request(input, init));
-        return Promise.resolve(
-          Response.json({
-            apiBaseUrl: '/shell-super-app-api/module-api/party-registry/provider-build/party-registry-api',
-            compositionRevision,
-            expiresAt: 1_700_000_300,
-            token: `fresh-attempt-${requests.length}`,
-          }),
-        );
-      };
-      const acquisition = makeReferenceGatewayCredentials(['party-registry', 'party-registry', 'billing']).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, transport),
+it.effect('reuses a still-valid browser assertion per audience and redacts the transport bundle', () =>
+  Effect.gen(function* acquireFreshReferences() {
+    yield* pinDocumentCompositionRevision(compositionRevision);
+    const requests: Request[] = [];
+    const transport: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(
+        Response.json({
+          apiBaseUrl: '/shell-super-app-api/module-api/party-registry/provider-build/party-registry-api',
+          compositionRevision,
+          expiresAt: 1_700_000_300,
+          token: `fresh-attempt-${requests.length}`,
+        }),
       );
-      const bundle = yield* acquisition;
-      expect(Redacted.isRedacted(bundle)).toBe(true);
-      expect(Inspectable.toStringUnknown(bundle)).not.toContain('fresh-attempt');
-      const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(ReferenceGatewayCredentialsSchema))(
-        Redacted.value(bundle),
-      );
-      expect(
-        decoded.map((entry) => ({ audience: entry.audience, authorization: Redacted.value(entry.authorization) })),
-      ).toEqual([
-        { audience: 'party-registry', authorization: 'Bearer fresh-attempt-1' },
-        { audience: 'party-registry', authorization: 'Bearer fresh-attempt-2' },
-        { audience: 'billing', authorization: 'Bearer fresh-attempt-3' },
-      ]);
-      const calls = yield* Effect.forEach(
-        requests,
-        (request) =>
-          Effect.promise(() => request.json()).pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(GatewayContextRequestSchema)),
-          ),
-        { concurrency: 1 },
-      );
-      expect(
-        requests.every(
-          (request) => request.url === 'https://shell.example.test/shell-super-app-api/auth/gateway-context',
+    };
+    const acquisition = makeReferenceGatewayCredentials(['party-registry', 'party-registry', 'billing']).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, transport),
+    );
+    const bundle = yield* acquisition;
+    expect(Redacted.isRedacted(bundle)).toBe(true);
+    expect(Inspectable.toStringUnknown(bundle)).not.toContain('fresh-attempt');
+    const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(ReferenceGatewayCredentialsSchema))(
+      Redacted.value(bundle),
+    );
+    expect(
+      decoded.map((entry) => ({ audience: entry.audience, authorization: Redacted.value(entry.authorization) })),
+    ).toEqual([
+      { audience: 'party-registry', authorization: 'Bearer fresh-attempt-1' },
+      { audience: 'party-registry', authorization: 'Bearer fresh-attempt-1' },
+      { audience: 'billing', authorization: 'Bearer fresh-attempt-2' },
+    ]);
+    const calls = yield* Effect.forEach(
+      requests,
+      (request) =>
+        Effect.promise(() => request.json()).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(GatewayContextRequestSchema)),
         ),
-      ).toBe(true);
-      expect(calls).toEqual(
-        ['party-registry', 'party-registry', 'billing'].map((audience) => ({ audience, compositionRevision })),
-      );
-      const second = yield* acquisition;
-      expect(Redacted.value(second)).not.toBe(Redacted.value(bundle));
-      expect(requests.length).toBe(6);
-    }),
+      { concurrency: 1 },
+    );
+    expect(
+      requests.every(
+        (request) => request.url === 'https://shell.example.test/shell-super-app-api/auth/gateway-context',
+      ),
+    ).toBe(true);
+    expect(calls).toEqual(['party-registry', 'billing'].map((audience) => ({ audience, compositionRevision })));
+    const second = yield* acquisition;
+    expect(Redacted.value(second)).toBe(Redacted.value(bundle));
+    expect(requests.length).toBe(2);
+  }),
 );
 
 it.effect('rejects malformed and oversized credential bundles at the public wire contract', () =>

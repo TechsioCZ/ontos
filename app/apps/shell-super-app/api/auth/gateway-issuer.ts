@@ -16,8 +16,11 @@ import {
   Crypto,
   Duration,
   Effect,
+  Equal,
   Exit,
+  HashMap,
   Layer,
+  Option,
   PlatformError,
   Predicate,
   Ref,
@@ -32,6 +35,10 @@ import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
 import type { GatewayIssuerConfigError, GatewayIssuerConfigValue } from './gateway-issuer-config.ts';
 
 const SIGNING_CONFIGURATION_REFRESH = Duration.seconds(30);
+// An issued assertion is handed out again until this many seconds before it expires, so a reused
+// token always leaves the caller time to reach its module.
+const ASSERTION_REUSE_MARGIN_SECONDS = 15;
+const MAX_REUSABLE_ASSERTIONS = 1024;
 
 const GatewayIssuerFailureCauseSchema = Schema.Defect();
 type GatewayIssuerFailureCause = Schema.Schema.Type<typeof GatewayIssuerFailureCauseSchema>;
@@ -73,10 +80,50 @@ interface GatewaySigningMaterial {
 }
 
 interface GatewayIssuerService {
+  /** Drops every reusable assertion issued for one authentication context, e.g. on sign-out. */
+  readonly forgetAuthContext: (authContextRef: string) => Effect.Effect<void>;
   readonly issue: <Principal>(
     input: IssueGatewayAssertionInput<Principal>,
   ) => Effect.Effect<GatewayContextResponse, GatewayIssuerError>;
 }
+
+// Structurally compared, so two principals, contexts, audiences, releases or signing keys never
+// share an entry.
+interface ReusableAssertionKey {
+  readonly audience: string;
+  readonly compositionRevision: string;
+  readonly issuer: string;
+  readonly kid: string;
+  readonly principal: GatewayTrustedPrincipalContext;
+  readonly publicKey: string;
+  readonly targetBuildMarker: string;
+}
+
+type ReusableAssertions = HashMap.HashMap<ReusableAssertionKey, GatewayContextResponse>;
+
+const isReusable = (issuedAt: number, response: GatewayContextResponse) =>
+  issuedAt + ASSERTION_REUSE_MARGIN_SECONDS < response.expiresAt;
+
+const rememberAssertion = (
+  entries: ReusableAssertions,
+  issuedAt: number,
+  key: ReusableAssertionKey,
+  response: GatewayContextResponse,
+): ReusableAssertions => {
+  // A new composition revision retires every earlier assertion. The same authentication context
+  // under a different principal context (tenant or legal-entity switch) retires its old entries.
+  const retained = entries.pipe(
+    HashMap.filter(
+      (entry: GatewayContextResponse, entryKey: ReusableAssertionKey) =>
+        isReusable(issuedAt, entry) &&
+        entryKey.compositionRevision === key.compositionRevision &&
+        (key.principal.authContextRef === undefined ||
+          entryKey.principal.authContextRef !== key.principal.authContextRef ||
+          Equal.equals(entryKey.principal, key.principal)),
+    ),
+  );
+  return HashMap.set(HashMap.size(retained) < MAX_REUSABLE_ASSERTIONS ? retained : HashMap.empty(), key, response);
+};
 
 export class GatewayIssuer extends Context.Service<GatewayIssuer, GatewayIssuerService>()(
   '@app/shell-super-app/api/auth/gateway-issuer/GatewayIssuer',
@@ -156,6 +203,9 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     readonly key: CryptoKey;
   } | null>(null);
   const gate = yield* Semaphore.make(1);
+  // Product-approved trade-off: one signed assertion per principal context, audience, release and
+  // signing key is reused within its validity window instead of minting one per module call.
+  const reusable = yield* Ref.make<ReusableAssertions>(HashMap.empty());
 
   const loadSigningKey = (
     privateJwk: GatewayIssuerConfigValue['privateJwk'],
@@ -218,6 +268,19 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     if (!Number.isSafeInteger(issuedAt) || issuedAt < 0) {
       return yield* unavailable('clock');
     }
+    const cacheKey: ReusableAssertionKey = {
+      audience: input.audience,
+      compositionRevision: admission.revision,
+      issuer: configuration.issuer,
+      kid: configuration.privateJwk.kid,
+      principal,
+      publicKey: configuration.privateJwk.x,
+      targetBuildMarker,
+    };
+    const reused = HashMap.get(yield* Ref.get(reusable), cacheKey);
+    if (Option.isSome(reused) && isReusable(issuedAt, reused.value)) {
+      return reused.value;
+    }
     const expiresAt = issuedAt + GATEWAY_ASSERTION_TTL_SECONDS;
     const jti = yield* options.generateJti;
     const preparedSigningMaterial: GatewaySigningMaterial = {
@@ -252,7 +315,7 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       () => unavailable('signing', 'Assertion signing timed out'),
     );
 
-    return {
+    const response: GatewayContextResponse = {
       apiBaseUrl:
         input.audience === 'shell-super-app'
           ? '/shell-super-app-api'
@@ -261,9 +324,20 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       expiresAt,
       token,
     };
+    yield* Ref.update(reusable, (entries) => rememberAssertion(entries, issuedAt, cacheKey, response));
+    return response;
   });
 
+  const forgetAuthContext = (authContextRef: string) =>
+    Ref.update(
+      reusable,
+      HashMap.filter(
+        (_: GatewayContextResponse, key: ReusableAssertionKey) => key.principal.authContextRef !== authContextRef,
+      ),
+    );
+
   return {
+    forgetAuthContext,
     issue,
   } satisfies GatewayIssuerService;
 });

@@ -20,6 +20,7 @@ import {
 
 import {
   ActionPrincipalConfigurationErrorSchema,
+  ActionPrincipalExpiredErrorSchema,
   ActionPrincipalInvalidErrorSchema,
   ActionPrincipalScopeErrorSchema,
   ActionPrincipalUnavailableErrorSchema,
@@ -498,29 +499,93 @@ it.effect('empty and malformed audience bindings fail closed as configuration er
   }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
-it.effect('redemption failures remain sanitized and distinguish replay from unavailability', () =>
-  Effect.gen(function* verifyRedemptionFailures() {
+it.effect('reuses a redeemed assertion within its validity window with one durable redemption', () =>
+  Effect.gen(function* reuseRedeemedAssertion() {
     const fixture = yield* makeFixture('party-registry');
     const verifier = bindGatewayPrincipalVerifier('party-registry', {
       appId: 'party-registry',
       buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
     });
-    const verify = (redemption: Parameters<typeof verifier.verifyAndRedeem>[1]['redemption']) =>
+    let redemptions = 0;
+    const redeemAt = (seconds: number) =>
       verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+        currentTimeSeconds: Effect.succeed(seconds),
+        environment: fixture.environment,
+        redemption: {
+          consume: () =>
+            Effect.sync(() => {
+              redemptions += 1;
+            }),
+        },
+      });
+
+    const reused = yield* Effect.all([redeemAt(currentTimeSeconds), redeemAt(1_700_000_200), redeemAt(1_700_000_320)]);
+    expect(reused).toEqual([principal, principal, principal]);
+    expect(redemptions).toBe(1);
+
+    // Expiry stays enforced for a reused assertion: past exp plus clock skew it is refused.
+    const expired = yield* Effect.flip(redeemAt(1_700_000_331));
+    expect(Schema.is(ActionPrincipalExpiredErrorSchema)(expired)).toBe(true);
+    expect(redemptions).toBe(1);
+
+    // A different audience binding still rejects the assertion before any redemption.
+    const otherAudience = yield* Effect.flip(
+      bindGatewayPrincipalVerifier('billing', {
+        appId: 'billing',
+        buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+      }).verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
         currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+        environment: fixture.environment,
+        redemption: {
+          consume: () =>
+            Effect.sync(() => {
+              redemptions += 1;
+            }),
+        },
+      }),
+    );
+    expect(isScopeError(otherAudience)).toBe(true);
+    expect(redemptions).toBe(1);
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+it.effect('redemption failures remain sanitized and replay is accepted only while the assertion is valid', () =>
+  Effect.gen(function* verifyRedemptionFailures() {
+    const fixture = yield* makeFixture('party-registry');
+    const verify = (
+      redemption: Parameters<ReturnType<typeof bindGatewayPrincipalVerifier>['verifyAndRedeem']>[1]['redemption'],
+      currentTime: Effect.Effect<number> = Effect.succeed(currentTimeSeconds),
+    ) =>
+      bindGatewayPrincipalVerifier('party-registry', {
+        appId: 'party-registry',
+        buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+      }).verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+        currentTimeSeconds: currentTime,
         environment: fixture.environment,
         redemption,
       });
+    const durableReplay = {
+      consume: () =>
+        Effect.fail(
+          new GatewayAssertionReplayError({
+            reason: 'fixture replay details must be discarded',
+          }),
+        ),
+    };
 
+    // Another verifier instance already recorded this (issuer, audience, jti): reuse is permitted.
+    expect(yield* verify(durableReplay)).toEqual(principal);
+
+    // Verification passed, but the assertion expired before its durable replay was evaluated.
+    let clockReads = 0;
     const replayFailure = yield* Effect.flip(
-      verify({
-        consume: () =>
-          Effect.fail(
-            new GatewayAssertionReplayError({
-              reason: 'fixture replay details must be discarded',
-            }),
-          ),
-      }),
+      verify(
+        durableReplay,
+        Effect.sync(() => {
+          clockReads += 1;
+          return clockReads <= 2 ? currentTimeSeconds : 1_700_000_331;
+        }),
+      ),
     );
     expect(isInvalidError(replayFailure)).toBe(true);
     expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(replayFailure)).not.toMatch(

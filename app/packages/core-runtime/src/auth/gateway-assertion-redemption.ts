@@ -17,6 +17,11 @@ export interface GatewayAssertionRedemptionInput {
 export type GatewayAssertionRedemptionError = GatewayAssertionReplayError | GatewayAssertionRedemptionUnavailableError;
 
 export interface GatewayAssertionRedemption {
+  /**
+   * Records an assertion's first redemption, keyed by (issuer, audience, jti). A replay result means
+   * that key was already recorded or has expired; the gateway verifier treats an already-recorded key
+   * as a permitted reuse until the assertion expires.
+   */
   readonly consume: (input: GatewayAssertionRedemptionInput) => Effect.Effect<void, GatewayAssertionRedemptionError>;
 }
 

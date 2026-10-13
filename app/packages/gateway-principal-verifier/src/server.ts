@@ -1,6 +1,9 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
-import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import type {
+  GatewayAssertionRedemption,
+  GatewayAssertionRedemptionInput,
+} from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
@@ -27,6 +30,7 @@ import {
   DateTime,
   Duration,
   Effect,
+  HashSet,
   Layer,
   Option,
   Redacted,
@@ -119,7 +123,6 @@ const unavailableError = (): ActionPrincipalUnavailableError =>
     reason: 'Action identity verification is unavailable',
   });
 const mapRedemptionUnavailable = () => Effect.fail(unavailableError());
-const mapRedemptionReplay = () => Effect.fail(invalidError());
 const mapConfigurationFailure = () => Effect.fail(configurationError());
 
 const PublicVerificationKeySchema = Schema.Struct({
@@ -174,6 +177,10 @@ const gatewayVerificationEnvironment = Config.all({
   ONTOS_GATEWAY_PUBLIC_JWKS: Config.String('ONTOS_GATEWAY_PUBLIC_JWKS'),
 });
 const VERIFY_ASSERTION_TIMEOUT = Duration.seconds(2);
+
+const currentEpochSeconds = (options: GatewayPrincipalVerificationOptions) =>
+  options.currentTimeSeconds ??
+  Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)));
 
 interface VerificationConfiguration {
   readonly issuer: string;
@@ -340,10 +347,7 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
         Effect.catchTag('SchemaError', mapConfigurationFailure),
       );
       const configuration = yield* verifier.configuration;
-      const now = yield* (
-        options.currentTimeSeconds ??
-          Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)))
-      );
+      const now = yield* currentEpochSeconds(options);
       if (!Number.isSafeInteger(now) || now < 0) {
         return yield* Effect.fail(configurationError());
       }
@@ -449,6 +453,48 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
   },
 );
 
+const MAX_REDEEMED_ASSERTIONS = 4096;
+
+const usableAt = (now: number, expiresAtEpochSeconds: number) =>
+  now < expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS;
+
+/**
+ * Redemption is idempotent for an identical (issuer, audience, jti) until the assertion expires:
+ * the Shell reuses one assertion per principal context and audience within its validity window.
+ * The first presentation is recorded durably; later ones within the window skip the durable write,
+ * and a durable replay of the same key is accepted unless the assertion has expired meanwhile.
+ */
+const redeemReusableAssertion = Effect.fn('GatewayPrincipalVerifier.redeemReusableAssertion')(
+  function* redeemReusableAssertionEffect(
+    redeemed: Ref.Ref<HashSet.HashSet<GatewayAssertionRedemptionInput>>,
+    redemption: GatewayAssertionRedemption,
+    input: GatewayAssertionRedemptionInput,
+    options: GatewayPrincipalVerificationOptions,
+  ): Effect.fn.Return<void, ActionPrincipalError> {
+    const now = yield* currentEpochSeconds(options);
+    if (HashSet.has(yield* Ref.get(redeemed), input) && usableAt(now, input.expiresAtEpochSeconds)) {
+      return;
+    }
+    yield* redemption.consume(input).pipe(
+      Effect.catchTags({
+        GatewayAssertionRedemptionUnavailableError: mapRedemptionUnavailable,
+        GatewayAssertionReplayError: () =>
+          currentEpochSeconds(options).pipe(
+            Effect.flatMap((replayedAt) =>
+              usableAt(replayedAt, input.expiresAtEpochSeconds) ? Effect.void : Effect.fail(invalidError()),
+            ),
+          ),
+      }),
+    );
+    yield* Ref.update(redeemed, (entries) => {
+      const retained = entries.pipe(
+        HashSet.filter((entry: GatewayAssertionRedemptionInput) => usableAt(now, entry.expiresAtEpochSeconds)),
+      );
+      return HashSet.add(HashSet.size(retained) < MAX_REDEEMED_ASSERTIONS ? retained : HashSet.empty(), input);
+    });
+  },
+);
+
 const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(
   function* verifyWithRuntimeServices(
     expectedAudience: string,
@@ -466,6 +512,8 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
   expectedDeployment: ReceivingGatewayDeployment,
 ) => {
   const receivingDeployment = Object.freeze({ ...expectedDeployment });
+  // Assertions this audience binding already redeemed, by (issuer, audience, jti), with their expiry.
+  const redeemedAssertions = Ref.makeUnsafe(HashSet.empty<GatewayAssertionRedemptionInput>());
   function verifyPrincipal(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationEnvironmentOptions,
@@ -546,19 +594,12 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
   > {
     return verifyPrincipal(authorization, options).pipe(
       Effect.tap(({ expiresAtEpochSeconds, issuer, jti }) =>
-        options.redemption
-          .consume({
-            audience: expectedAudience,
-            expiresAtEpochSeconds,
-            issuer,
-            jti,
-          })
-          .pipe(
-            Effect.catchTags({
-              GatewayAssertionRedemptionUnavailableError: mapRedemptionUnavailable,
-              GatewayAssertionReplayError: mapRedemptionReplay,
-            }),
-          ),
+        redeemReusableAssertion(
+          redeemedAssertions,
+          options.redemption,
+          { audience: expectedAudience, expiresAtEpochSeconds, issuer, jti },
+          options,
+        ),
       ),
       Effect.map(({ compositionRevision, principal }) =>
         trustVerifiedGatewayPrincipalContext(principal, compositionRevision),
