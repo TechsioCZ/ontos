@@ -16,6 +16,7 @@ type ResolvedPageModel = Extract<ModuleTargetPageModel, { readonly state: 'resol
 const {
   getInstanceMock,
   loadRemotePageMock,
+  navigateMock,
   registerRemotesMock,
   reloadRequiredMock,
   remotePropsMock,
@@ -23,6 +24,7 @@ const {
 } = rstest.hoisted(() => ({
   getInstanceMock: rstest.fn(),
   loadRemotePageMock: rstest.fn(),
+  navigateMock: rstest.fn(),
   registerRemotesMock: rstest.fn(),
   reloadRequiredMock: rstest.fn(),
   remotePropsMock: rstest.fn(),
@@ -30,11 +32,12 @@ const {
 }));
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ t: (key: string) => key }),
+  useModernI18n: () => ({ language: 'en', t: (key: string) => key }),
 }));
 
 rstest.mock('@tanstack/react-router', () => ({
   useLoaderData: useLoaderDataMock,
+  useNavigate: () => navigateMock,
 }));
 
 rstest.mock('@techsio/ui-kit/atoms/status-text', () => ({
@@ -184,6 +187,22 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   rstest.clearAllMocks();
+});
+
+it('sends an anonymous visitor of a protected module to sign-in and back', () => {
+  window.history.replaceState(null, '', '/en/prehledy/statistiky?group=month');
+  useLoaderDataMock.mockReturnValue({
+    shell: { state: 'anonymous' },
+    state: 'selection_required',
+  } satisfies ModuleTargetPageModel);
+  render(<ModuleTargetPage />);
+  expect(navigateMock).toHaveBeenCalledWith({
+    href: '/en/login?returnTo=%2Fen%2Fprehledy%2Fstatistiky%3Fgroup%3Dmonth',
+    replace: true,
+  });
+  expect(screen.getByText('shell.moduleTarget.sign_in_required')).toBeTruthy();
+  expect(screen.queryByText('shell.moduleTarget.selection_required')).toBeNull();
+  window.history.replaceState(null, '', '/');
 });
 
 it.each(['selection_required', 'forbidden', 'not_found', 'reload_required', 'unavailable'] as const)(

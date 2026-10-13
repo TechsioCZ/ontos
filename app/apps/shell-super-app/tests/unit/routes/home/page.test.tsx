@@ -254,7 +254,9 @@ it('authenticated home renders server-composed navigation and selected legal con
   render(<HomeView initialModel={authenticatedModel()} />);
   expect(screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')).toBe('/en/modules/inventory.stock');
   expect(screen.getByText('Read only')).toBeTruthy();
-  expect(screen.getByText(legalEntityId1)).toBeTruthy();
+  expect(screen.getAllByText('Alpha company').length).toBeGreaterThan(0);
+  expect(screen.queryByText(legalEntityId1)).toBeNull();
+  expect(screen.queryByText(tenantId1)).toBeNull();
   expect(screen.queryByText('inventory.stock')).toBeNull();
 });
 

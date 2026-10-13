@@ -12,6 +12,7 @@ import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { signInReturnPath } from '../../sign-in-return.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 interface LoginValidation {
@@ -108,6 +109,8 @@ const LoginPage = () => {
       return;
     }
 
+    // A sign-in attempt supersedes the feedback of earlier attempts, so stale validation toasts go away.
+    toaster.dismiss();
     setSubmitting(true);
     void browserRuntime.runPromise(
       signIn(credentials.value, { locale: language }).pipe(
@@ -124,7 +127,17 @@ const LoginPage = () => {
             }),
           onSuccess: () =>
             Effect.tryPromise(() => router.invalidate({ sync: true })).pipe(
-              Effect.andThen(Effect.tryPromise(() => navigate({ to: `/${language}/` }))),
+              Effect.andThen(
+                Effect.tryPromise(() => {
+                  // Cached pages hold anonymous loader data; an invalidated cached page would render that stale
+                  // data while it reloads in the background, so the signed-in user would briefly see the
+                  // logged-out view. Without a cache entry the next page loads before it renders.
+                  router.clearCache();
+                  // A protected deep link sent the visitor here; return there instead of the home page.
+                  const returnPath = signInReturnPath(window.location.href, language);
+                  return navigate(returnPath === undefined ? { to: `/${language}/` } : { href: returnPath });
+                }),
+              ),
               Effect.timeout('10 seconds'),
               Effect.matchEffect({
                 onFailure: handleNavigationFailure,
@@ -189,7 +202,11 @@ const LoginPage = () => {
           </div>
         </section>
       </main>
-      <Toaster />
+      <Toaster
+        closeLabel={t('shell.login.toaster.close')}
+        label={t('shell.login.toaster.label')}
+        loadingLabel={t('shell.login.toaster.loading')}
+      />
     </>
   );
 };

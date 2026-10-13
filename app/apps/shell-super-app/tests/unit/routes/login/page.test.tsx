@@ -11,18 +11,26 @@ import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.t
 import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
-const { browserRunPromiseMock, invalidateMock, languageState, localizedLinkCalls, navigateMock, signInMock } =
-  rstest.hoisted(() => {
-    const recordedLinkCalls: LocalizedLinkCall[] = [];
-    return {
-      browserRunPromiseMock: rstest.fn(),
-      invalidateMock: rstest.fn(),
-      languageState: { current: 'en' },
-      localizedLinkCalls: recordedLinkCalls,
-      navigateMock: rstest.fn(),
-      signInMock: rstest.fn(),
-    };
-  });
+const {
+  browserRunPromiseMock,
+  clearCacheMock,
+  invalidateMock,
+  languageState,
+  localizedLinkCalls,
+  navigateMock,
+  signInMock,
+} = rstest.hoisted(() => {
+  const recordedLinkCalls: LocalizedLinkCall[] = [];
+  return {
+    browserRunPromiseMock: rstest.fn(),
+    clearCacheMock: rstest.fn(),
+    invalidateMock: rstest.fn(),
+    languageState: { current: 'en' },
+    localizedLinkCalls: recordedLinkCalls,
+    navigateMock: rstest.fn(),
+    signInMock: rstest.fn(),
+  };
+});
 
 beforeEach(() => {
   invalidateMock.mockImplementation(() => Promise.resolve());
@@ -75,7 +83,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useNavigate: () => navigateMock,
-  useRouter: () => ({ invalidate: invalidateMock }),
+  useRouter: () => ({ clearCache: clearCacheMock, invalidate: invalidateMock }),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
@@ -97,6 +105,7 @@ afterEach(() => {
   languageState.current = 'en';
   localizedLinkCalls.length = 0;
   toaster.remove();
+  window.history.replaceState(null, '', '/');
   rstest.unstubAllGlobals();
   rstest.clearAllMocks();
 });
@@ -282,6 +291,33 @@ it.effect('submits valid values through the Shell authentication client and navi
         expect(getSubmit().hasAttribute('disabled')).toBe(false);
         expect(screen.queryByText('shell.login.error.internal')).toBeNull();
         expect(screen.queryByText('Login details are incomplete')).toBeNull();
+      }),
+    );
+  }),
+);
+
+it.effect('returns to the protected page that sent the visitor to sign-in, with a fresh page cache', () =>
+  Effect.gen(function* returnsToProtectedPage() {
+    window.history.replaceState(null, '', '/en/login?returnTo=%2Fen%2Fprehledy%2Fstatistiky%3Fgroup%3Dmonth');
+    yield* submitLogin('admin', 'secret');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(clearCacheMock).toHaveBeenCalledTimes(1);
+        expect(navigateMock).toHaveBeenCalledWith({ href: '/en/prehledy/statistiky?group=month' });
+      }),
+    );
+  }),
+);
+
+it.effect('ignores a return target outside the application and goes home', () =>
+  Effect.gen(function* ignoresForeignReturnTarget() {
+    window.history.replaceState(null, '', '/en/login?returnTo=%2F%2Fevil.example%2Fen%2F');
+    yield* submitLogin('admin', 'secret');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
       }),
     );
   }),

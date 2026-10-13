@@ -769,6 +769,7 @@ test('hides the previous page and marks the destination while the next page load
     location: { pathname: '/en/contacts' },
     resolvedLocation: { pathname: '/en/prodej/zamestnanci' },
   };
+  const employeesOverviewTitle = 'Employees overview';
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
@@ -778,7 +779,7 @@ test('hides the previous page and marks the destination while the next page load
       logoutPending={false}
       navigation={customersAndContacts}
       onLogout={noopLogout}
-      title="Employees overview"
+      title={employeesOverviewTitle}
     >
       <section>Employee list</section>
     </AuthenticatedDashboardLayout>,
@@ -786,7 +787,7 @@ test('hides the previous page and marks the destination while the next page load
 
   expect(screen.getByText('Loading page…')).toBeTruthy();
   expect(screen.getByText('Employee list').closest('.hidden')).not.toBeNull();
-  expect(screen.getByRole('heading', { level: 1, name: 'Employees overview' }).closest('.hidden')).not.toBeNull();
+  expect(screen.getByRole('heading', { level: 1, name: employeesOverviewTitle }).closest('.hidden')).not.toBeNull();
   expect(currentLinkNames()).toEqual(['Contacts']);
   expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('Other modulesContacts');
 });

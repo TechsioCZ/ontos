@@ -47,6 +47,18 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     );
   }
 
+  // Show the names the user recognises; raw ids only appear when the name list failed to load, so show a dash.
+  const tenants: readonly { readonly name: string; readonly tenantId: string }[] = model.tenants.items;
+  const tenantName =
+    model.tenants.state === 'available'
+      ? tenants.find((tenant) => tenant.tenantId === model.identity.tenantId)?.name
+      : undefined;
+  const legalEntities: readonly { readonly legalEntityId: string; readonly legalName: string }[] =
+    model.legalEntities.items;
+  const legalEntityName = legalEntities.find(
+    (entity) => entity.legalEntityId === model.selectedLegalEntityId,
+  )?.legalName;
+
   return (
     <>
       <UltramodernRouteHead />
@@ -86,17 +98,13 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
               <dd>{model.identity.email}</dd>
             </div>
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.principal')}</dt>
-              <dd>{model.identity.principalId}</dd>
-            </div>
-            <div>
               <dt className="shell:font-semibold">{t('shell.auth.identity.tenant')}</dt>
-              <dd>{model.identity.tenantId}</dd>
+              <dd>{tenantName ?? '—'}</dd>
             </div>
             {model.contextState === 'authenticated' ? (
               <div>
                 <dt className="shell:font-semibold">{t('shell.auth.identity.legalEntity')}</dt>
-                <dd>{model.selectedLegalEntityId}</dd>
+                <dd>{legalEntityName ?? '—'}</dd>
               </div>
             ) : null}
           </dl>

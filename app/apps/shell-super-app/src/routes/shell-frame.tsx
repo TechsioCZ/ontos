@@ -13,7 +13,8 @@ import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
-import { useEffect, useState } from 'react';
+import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
@@ -860,6 +861,30 @@ const GroupedSidebarPanel = ({
   );
 };
 
+const sidebarStorageKey = 'ontos.shell.sidebar';
+const sidebarChoiceEvent = 'ontos:shell-sidebar-choice';
+const expandedSidesByDefault: readonly SidebarSide[] = ['start'];
+const collapsedSides: readonly SidebarSide[] = [];
+
+// Same-tab writes notify through a window event; other tabs arrive through the native storage event.
+const subscribeSidebarChoice = (listener: () => void) => {
+  window.addEventListener(sidebarChoiceEvent, listener);
+  window.addEventListener('storage', listener);
+  return () => {
+    window.removeEventListener(sidebarChoiceEvent, listener);
+    window.removeEventListener('storage', listener);
+  };
+};
+const readSidebarCollapsed = () => window.localStorage.getItem(sidebarStorageKey) === 'collapsed';
+const serverSidebarCollapsed = () => false;
+const writeSidebarCollapsed = (next: boolean) => {
+  window.localStorage.setItem(sidebarStorageKey, next ? 'collapsed' : 'expanded');
+  window.dispatchEvent(new Event(sidebarChoiceEvent));
+};
+const handleSidebarExpandedChange = ({ expanded }: SidebarExpandedChangeDetails) => {
+  writeSidebarCollapsed(!expanded.includes('start'));
+};
+
 type SidebarOffsetStyle = CSSProperties & {
   '--height-sidebar-viewport'?: string;
   '--spacing-sidebar-offset'?: string;
@@ -892,6 +917,10 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
     }
   }, [tenantSwitchFailed]);
 
+  // The server renders expanded; the saved choice is read on the client without an effect-driven state copy.
+  const collapsed = useSyncExternalStore(subscribeSidebarChoice, readSidebarCollapsed, serverSidebarCollapsed);
+  const expandedSides = collapsed ? collapsedSides : expandedSidesByDefault;
+
   return (
     <>
       {props.compositionRevision === undefined ? null : (
@@ -900,7 +929,8 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
       <Sidebar
         className="min-h-dvh flex-col overflow-x-clip bg-base text-fg-primary"
         collapsible={{ start: 'icon' }}
-        defaultExpanded={['start']}
+        expanded={expandedSides}
+        onExpandedChange={handleSidebarExpandedChange}
         style={topBarOffsetStyle}
       >
         <Header

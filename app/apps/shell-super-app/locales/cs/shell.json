@@ -5,7 +5,7 @@
         "displayName": "Jméno",
         "email": "E-mail",
         "legalEntity": "Právní subjekt",
-        "principal": "Principal",
+        "principal": "Účet",
         "tenant": "Tenant",
         "title": "Přihlášená identita"
       },
@@ -134,6 +134,11 @@
       "toast": {
         "description": "Vyplňte obě povinná pole.",
         "title": "Přihlašovací údaje nejsou úplné"
+      },
+      "toaster": {
+        "close": "Zavřít oznámení",
+        "label": "Oznámení",
+        "loading": "Probíhá…"
       }
     },
     "modules": {
@@ -164,6 +169,7 @@
       "reload_required": "Je dostupná nová verze aplikace. Pro pokračování obnovte stránku.",
       "selection_required": "Před otevřením modulu vyberte právní subjekt.",
       "seoDescription": "Autorizované pracovní prostředí modulu OntOS.",
+      "sign_in_required": "Pro otevření modulu se přihlaste. Přesměrování na přihlášení…",
       "title": "Modul",
       "timeout": "Vypršel časový limit vstupního bodu modulu. Zkuste to znovu.",
       "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."

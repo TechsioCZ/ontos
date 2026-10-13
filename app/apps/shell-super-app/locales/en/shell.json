@@ -134,6 +134,11 @@
       "toast": {
         "description": "Fill in both required fields.",
         "title": "Login details are incomplete"
+      },
+      "toaster": {
+        "close": "Close notification",
+        "label": "Notifications",
+        "loading": "Working…"
       }
     },
     "modules": {
@@ -164,6 +169,7 @@
       "reload_required": "A new application release is available. Reload this page to continue.",
       "selection_required": "Select a legal entity before opening a module.",
       "seoDescription": "An authorized OntOS module workspace.",
+      "sign_in_required": "Sign in to open this module. Redirecting to sign-in…",
       "title": "Module",
       "timeout": "The module entrypoint timed out. Try again.",
       "unavailable": "The module is temporarily unavailable. Try again."

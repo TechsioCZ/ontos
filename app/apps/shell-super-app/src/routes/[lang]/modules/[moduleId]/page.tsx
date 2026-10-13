@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Predicate } from 'effect';
 import { useEffect, useState } from 'react';
@@ -9,6 +9,7 @@ import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from '../../../module-entrypoint-loader.ts';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
+import { signInHref } from '../../../sign-in-return.ts';
 import { useShellControls } from '../../../use-shell-controls.ts';
 import type { ModuleTargetPageModel } from './module-page-model.ts';
 
@@ -133,12 +134,25 @@ interface ModuleTargetViewProps {
 }
 
 export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const navigate = useNavigate();
   const model = initialModel;
+  const anonymous = model.shell.state === 'anonymous';
+  // A protected module opened without a session goes to sign-in rather than a dead end, and sign-in returns here.
+  useEffect(() => {
+    if (anonymous) {
+      void navigate({
+        href: signInHref(language, `${window.location.pathname}${window.location.search}`),
+        replace: true,
+      });
+    }
+  }, [anonymous, language, navigate]);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.shell.state !== 'authenticated') {
     let message = 'shell.moduleTarget.selection_required';
-    if (model.shell.state === 'reload_required') {
+    if (anonymous) {
+      message = 'shell.moduleTarget.sign_in_required';
+    } else if (model.shell.state === 'reload_required') {
       message = 'shell.moduleTarget.reload_required';
     } else if (model.shell.state === 'unavailable') {
       message = 'shell.dashboard.unavailable';
