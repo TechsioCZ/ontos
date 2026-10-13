@@ -20,27 +20,85 @@
     "pages": {
       "records": {
         "title": "Tasks",
-        "refresh": "Load tasks",
-        "taskTitle": "Title",
-        "state": "State",
-        "dueDate": "Due date",
-        "detail": "Detail",
-        "filter": "Filter by title",
-        "description": "Description",
-        "owner": "Owner",
-        "priority": "Priority",
-        "unassigned": "Unassigned",
-        "create": "New Task",
-        "edit": "Edit Task",
-        "save": "Save",
-        "new": "New Task",
-        "assignMe": "Assign to me",
-        "indicators": "Open: {{open}} · Overdue: {{overdue}} · Reference date: {{date}}",
+        "description": "Tasks assigned to employees, their due dates and state.",
+        "newTask": "New task",
+        "create": "New task",
+        "edit": "Edit task",
         "saved": "Task saved.",
-        "unavailable": "Tasks could not be loaded.",
-        "forbidden": "You do not have permission for this operation.",
-        "conflict": "Data changed. Reload tasks.",
-        "invalid": "The operation could not be completed. Check the input and Task state.",
+        "created": "Task created.",
+        "cancel": "Cancel",
+        "saving": "Saving…",
+        "submitCreate": "Create task",
+        "submitEdit": "Save changes",
+        "taskTitle": "Title",
+        "description": "Description",
+        "assignee": "Assignee",
+        "dueDate": "Due date",
+        "priority": "Priority",
+        "party": "Customer (ID)",
+        "opportunity": "Opportunity (ID)",
+        "unassigned": "Unassigned",
+        "tabs": {
+          "mine": "My tasks",
+          "all": "All"
+        },
+        "stats": {
+          "open": "Open",
+          "overdue": "Overdue",
+          "doneThisWeek": "Done this week",
+          "unassigned": "Unassigned"
+        },
+        "filters": {
+          "search": "Search tasks",
+          "assignee": "Assignee",
+          "allAssignees": "All assignees",
+          "state": "State",
+          "priority": "Priority",
+          "all": "All",
+          "clear": "Clear filters"
+        },
+        "columns": {
+          "title": "Title",
+          "assignee": "Assignee",
+          "party": "Customer",
+          "opportunity": "Opportunity",
+          "dueDate": "Due date",
+          "priority": "Priority",
+          "state": "State",
+          "labels": "Tags"
+        },
+        "bulk": {
+          "selected": "Selected: {{selected}}",
+          "clear": "Clear selection",
+          "changeState": "Change state",
+          "assign": "Assign assignee",
+          "changed": "Changed {{changed}}, skipped {{skipped}}",
+          "assigned": "Assigned {{changed}}, skipped {{skipped}}"
+        },
+        "table": {
+          "actions": "Actions",
+          "loading": "Loading data",
+          "pageSize": "Rows per page",
+          "range": "{{start}}–{{end}} of {{total}}",
+          "selectAll": "Select all rows",
+          "selection": "Select row"
+        },
+        "errors": {
+          "title": "Enter a task title.",
+          "id": "Enter a valid ID.",
+          "clear": "This value cannot be removed while editing."
+        },
+        "empty": "No tasks yet.",
+        "emptyDescription": "Create the first task and assign it to an employee.",
+        "emptyMine": "No tasks are assigned to you.",
+        "noResults": "No task matches the filters.",
+        "unavailable": "Data could not be loaded.",
+        "errorDescription": "Check the connection and try again.",
+        "retry": "Try again",
+        "forbidden": "You do not have permission for this section.",
+        "employeesUnavailable": "The employee list could not be loaded.",
+        "conflict": "Someone else changed the record. Reload the tasks and repeat the change.",
+        "invalid": "The operation could not be completed. Check the input and task state.",
         "states": {
           "NEW": "New",
           "IN_PROGRESS": "In progress",
@@ -52,13 +110,7 @@
           "LOW": "Low",
           "NORMAL": "Normal",
           "HIGH": "High"
-        },
-        "loadUnits": "Load units",
-        "unit": "Unit (optional)",
-        "createdAt": "Created",
-        "updatedAt": "Last updated",
-        "selectUnit": "Select a unit",
-        "empty": "No tasks match this filter."
+        }
       }
     }
   }

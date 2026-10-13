@@ -1,559 +1,551 @@
-import { TaskRefSchema } from '../../../../../shared/resources/task.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
+import { listEmployees } from '@app/workforce/clients/records';
+import type { Employee } from '@app/workforce/contracts/records';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import { executeRecords as executePropertyRecords } from '@app/siampark-property/clients/records';
-import { Table } from '@techsio/ui-kit/organisms/table';
-import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Tabs } from '@techsio/ui-kit/molecules/tabs';
+import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { DataTable } from '@techsio/ui-kit/organisms/data-table';
+import { Effect, Match, Option, Random, Schema } from 'effect';
 import type { Types } from 'effect';
-import { useState } from 'react';
+import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useEffect, useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import type { WorkCommand } from '../../../../../shared/actions/apply-command.ts';
+import { EmployeeIdSchema } from '../../../../../shared/apis/records.ts';
 import type { RecordsResponse, Task } from '../../../../../shared/apis/records.ts';
-import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import { buildTaskColumns } from './tasks-columns.tsx';
+import { TaskBulkBar, TaskFilterBar } from './tasks-filters.tsx';
+import { TaskFormDialog } from './task-form-dialog.tsx';
+import type { TaskFormSubmission } from './task-form-dialog.tsx';
+import { EmptyState, PageHeader, StatCard, StatRow } from './tasks-ui.tsx';
+import {
+  TaskTabSchema,
+  doneThisWeek,
+  filterTasks,
+  initialTaskFilters,
+  unassignedOpenCount,
+  viewerOf,
+} from './tasks-model.ts';
+import type { TaskFilters, TaskTab } from './tasks-model.ts';
 import csResource from '../../../../../locales/cs/siampark-work.json';
 import enResource from '../../../../../locales/en/siampark-work.json';
 import '../../../index.css';
 
-const searchSchema = Schema.Struct({
-  resourceId: Schema.optional(TaskRefSchema.fields.resourceId.check(Schema.isUUID())),
-});
 const siamparkWorkI18nResources = {
   cs: { 'siampark-work': csResource },
   en: { 'siampark-work': enResource },
 } as const;
 
+const key = 'siampark-work.pages.records';
+const NONE = 'none';
+const ALL = 'all';
+const count = new Intl.NumberFormat('cs-CZ');
+const decodeEmployeeId = Schema.decodeUnknownOption(EmployeeIdSchema);
+
 type EditFields = Types.Mutable<
-  Pick<Extract<WorkCommand, { readonly _tag: 'CreateTask' }>, 'title' | 'description' | 'priority' | 'dueDate'>
+  Pick<
+    Extract<WorkCommand, { readonly _tag: 'CreateTask' }>,
+    'assigneeEmployeeId' | 'description' | 'dueDate' | 'opportunityId' | 'partyId' | 'priority' | 'title'
+  >
 >;
-type Units = Effect.Success<ReturnType<typeof executePropertyRecords>>['units'];
-const useWorkRecords = () => {
-  const { language, t } = useModernI18n();
-  const search = Schema.decodeUnknownOption(searchSchema)(useRouterState().location.search);
-  const resourceId = Option.getOrUndefined(search)?.resourceId;
-  const [records, setRecords] = useState<RecordsResponse>();
-  const [selected, setSelected] = useState<Task>();
-  const [title, setTitle] = useState('');
-  const [dueDate, setDueDate] = useState('');
-  const [description, setDescription] = useState('');
-  const [units, setUnits] = useState<Units>([]);
-  const [unitId, setUnitId] = useState<string[]>([]);
-  const [priority, setPriority] = useState<Task['priority']>('NORMAL');
-  const [filter, setFilter] = useState('');
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState('');
-  const key = 'siampark-work.pages.records';
-  const requestId = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
-    Effect.map(([first, second]) => `siampark-work:${first}:${second}`),
-  );
-  const refresh = () => {
-    setPending(true);
-    void browserRuntime.runPromise(
-      requestId.pipe(
-        Effect.flatMap((id) => executeRecords(resourceId === undefined ? {} : { resourceId }, id)),
-        Effect.match({
-          onFailure: (error) => {
-            setRecords(undefined);
-            setSelected(undefined);
-            setUnits([]);
-            setUnitId([]);
-            setTitle('');
-            setDescription('');
-            setDueDate('');
-            setFilter('');
-            setPriority('NORMAL');
-            setMessage(
-              Match.value(error).pipe(
-                Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
-            );
-            setPending(false);
-          },
-          onSuccess: (result) => {
-            setRecords(result);
-            setSelected(result.items.find((task) => task.ref.resourceId === resourceId));
-            setMessage('');
-            setPending(false);
-          },
-        }),
-      ),
-    );
-  };
-  const mutate = (command: WorkCommand) => {
-    if (records === undefined) {
-      return;
-    }
-    setPending(true);
-    void browserRuntime.runPromise(
-      Effect.all(
-        {
-          id: requestId,
-          referenceCredentials: makeReferenceGatewayCredentials(
-            Match.value(command).pipe(
-              Match.tag('CreateTask', ({ contextRefs = [] }) => contextRefs.map(() => 'siampark-property')),
-              Match.tag(
-                'UpdateTask',
-                'AssignTask',
-                'ChangeTaskState',
-                'BulkChangeTaskState',
-                'BulkAssignTasks',
-                () => [],
-              ),
-              Match.exhaustive,
+const LoadStateSchema = Schema.Literals(['loading', 'ready', 'error', 'forbidden']);
+type LoadState = typeof LoadStateSchema.Type;
+type Editor = { readonly mode: 'create' } | { readonly mode: 'edit'; readonly task: Task };
+type CommandOutcome =
+  | { readonly ok: true; readonly results: readonly { readonly outcome: 'changed' | 'skipped' }[] }
+  | { readonly message: string; readonly ok: false };
+
+const requestId = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+  Effect.map(([first, second]) => `siampark-work:${first}:${second}`),
+);
+
+const formatCount = (value: number | undefined) => (value === undefined ? '—' : count.format(value));
+
+interface RecordsSetters {
+  readonly setLoadState: (state: LoadState) => void;
+  readonly setRecords: (records: RecordsResponse) => void;
+}
+
+interface EmployeeSetters {
+  readonly setEmployees: (employees: readonly Employee[]) => void;
+  readonly setEmployeesFailed: (failed: boolean) => void;
+}
+
+// Module-scope loaders take the state setters as arguments, so the mount effect needs no dependencies.
+const loadRecords = ({ setLoadState, setRecords }: RecordsSetters) => {
+  browserRuntime.runFork(
+    requestId.pipe(
+      Effect.flatMap((id) => executeRecords({}, id)),
+      Effect.match({
+        onFailure: (error) =>
+          setLoadState(
+            Match.value(error).pipe(
+              Match.tag('RecordsForbiddenProblem', () => 'forbidden' as const),
+              Match.orElse(() => 'error' as const),
             ),
           ),
+        onSuccess: (result) => {
+          setRecords(result);
+          setLoadState('ready');
         },
-        { concurrency: 1 },
-      ).pipe(
+      }),
+    ),
+  );
+};
+
+const loadEmployees = ({ setEmployees, setEmployeesFailed }: EmployeeSetters) => {
+  browserRuntime.runFork(
+    listEmployees().pipe(
+      Effect.matchEffect({
+        onFailure: (error) =>
+          Effect.logWarning('Employee list unavailable.', error).pipe(
+            Effect.andThen(Effect.sync(() => setEmployeesFailed(true))),
+          ),
+        onSuccess: (items) =>
+          Effect.sync(() => {
+            setEmployees(items);
+            setEmployeesFailed(false);
+          }),
+      }),
+    ),
+  );
+};
+
+const EmptyActionButton = ({ label, onClick }: { readonly label: string; readonly onClick: () => void }) => (
+  <Button onClick={onClick} size="sm" theme="outlined" variant="secondary">
+    {label}
+  </Button>
+);
+
+const TaskEmptyState = ({
+  canWrite,
+  filtersActive,
+  hasRecords,
+  loadState,
+  onClear,
+  onCreate,
+  onRetry,
+  tab,
+}: {
+  readonly canWrite: boolean;
+  readonly filtersActive: boolean;
+  readonly hasRecords: boolean;
+  readonly loadState: LoadState;
+  readonly onClear: () => void;
+  readonly onCreate: () => void;
+  readonly onRetry: () => void;
+  readonly tab: TaskTab;
+}) => {
+  const { t } = useModernI18n();
+  if (loadState === 'forbidden') {
+    return <EmptyState title={t(`${key}.forbidden`)} />;
+  }
+  if (loadState === 'error' && !hasRecords) {
+    return (
+      <EmptyState
+        action={<EmptyActionButton label={t(`${key}.retry`)} onClick={onRetry} />}
+        description={t(`${key}.errorDescription`)}
+        title={t(`${key}.unavailable`)}
+      />
+    );
+  }
+  if (filtersActive) {
+    return (
+      <EmptyState
+        action={<EmptyActionButton label={t(`${key}.filters.clear`)} onClick={onClear} />}
+        title={t(`${key}.noResults`)}
+      />
+    );
+  }
+  if (tab === 'mine') {
+    return <EmptyState title={t(`${key}.emptyMine`)} />;
+  }
+  return (
+    <EmptyState
+      action={canWrite ? <EmptyActionButton label={t(`${key}.newTask`)} onClick={onCreate} /> : undefined}
+      description={t(`${key}.emptyDescription`)}
+      title={t(`${key}.empty`)}
+    />
+  );
+};
+
+const useTasksPage = () => {
+  const { t } = useModernI18n();
+  const toaster = useToast();
+  const [records, setRecords] = useState<RecordsResponse>();
+  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [employees, setEmployees] = useState<readonly Employee[]>([]);
+  const [employeesFailed, setEmployeesFailed] = useState(false);
+  const [tab, setTab] = useState<TaskTab>('mine');
+  const [filters, setFilters] = useState<TaskFilters>(initialTaskFilters);
+  const [selection, setSelection] = useState<Record<string, true>>({});
+  const [editor, setEditor] = useState<Editor>();
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string>();
+  const [actionError, setActionError] = useState<string>();
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  useEffect(() => {
+    loadRecords({ setLoadState, setRecords });
+    loadEmployees({ setEmployees, setEmployeesFailed });
+  }, []);
+
+  const employeeNames = new Map<string, string>(employees.map((employee) => [employee.id, employee.fullName]));
+  const referenceDate = records?.referenceDate ?? '';
+  const canWrite = records?.canWrite === true;
+  const visibleTasks =
+    records === undefined
+      ? []
+      : filterTasks(records.items, {
+          filters,
+          tab,
+          viewer: viewerOf(records.actorPrincipalRef.principalId, employees),
+        });
+  const selectedIds = visibleTasks.flatMap((task) =>
+    selection[task.ref.resourceId] === true ? [task.ref.resourceId] : [],
+  );
+  const filtersActive =
+    filters.search !== '' || filters.assignee !== ALL || filters.priority !== ALL || filters.state !== ALL;
+
+  // Runs one command against the revision the user saw, then reloads the list. Failures become messages.
+  const runCommand = (command: WorkCommand, revision: number, onDone: (outcome: CommandOutcome) => void) =>
+    browserRuntime.runFork(
+      Effect.all({ id: requestId, referenceCredentials: makeReferenceGatewayCredentials([]) }, { concurrency: 1 }).pipe(
         Effect.flatMap(({ id, referenceCredentials }) =>
-          executeApplyCommand({ command, expectedRevision: records.revision }, id, {
+          executeApplyCommand({ command, expectedRevision: revision }, id, {
             idempotencyKey: id,
             referenceCredentials,
           }),
         ),
         Effect.flatMap((outcome) =>
           requestId.pipe(
-            Effect.flatMap((id) => executeRecords(resourceId === undefined ? {} : { resourceId }, id)),
-            Effect.map((freshRecords) => ({ changedTaskRef: outcome.task?.ref, freshRecords })),
+            Effect.flatMap((id) => executeRecords({}, id)),
+            Effect.map((fresh) => ({ fresh, outcome })),
           ),
         ),
         Effect.match({
-          onFailure: (error) => {
-            setUnits([]);
-            setUnitId([]);
-            if (Schema.is(Schema.Struct({ status: Schema.Literal(403) }))(error)) {
-              setRecords(undefined);
-              setSelected(undefined);
-            }
-            setPending(false);
-            setMessage(
-              Match.value(error).pipe(
-                Match.tag('ApplyCommandActionConflictProblem', () => t(`${key}.conflict`)),
-                Match.tag('ApplyCommandActionForbiddenProblem', 'RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.invalid`)),
-              ),
-            );
-          },
-          onSuccess: ({ changedTaskRef, freshRecords }) => {
-            const task = freshRecords.items.find((item) => item.ref.resourceId === changedTaskRef?.resourceId);
-            setRecords(freshRecords);
-            setSelected(task);
-            setTitle(task?.title ?? '');
-            setDueDate(task?.dueDate ?? '');
-            setDescription(task?.description ?? '');
-            setPriority(task?.priority ?? 'NORMAL');
-            setMessage(t(`${key}.saved`));
-            setPending(false);
+          onFailure: (error): CommandOutcome => ({
+            message: Match.value(error).pipe(
+              Match.tag('ApplyCommandActionConflictProblem', () => t(`${key}.conflict`)),
+              Match.tag('ApplyCommandActionForbiddenProblem', 'RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
+              Match.orElse(() => t(`${key}.invalid`)),
+            ),
+            ok: false,
+          }),
+          onSuccess: ({ fresh, outcome }): CommandOutcome => {
+            setRecords(fresh);
+            return { ok: true, results: outcome.results ?? [] };
           },
         }),
+        Effect.map(onDone),
       ),
     );
-  };
-  const loadUnits = () => {
-    setPending(true);
-    void browserRuntime.runPromise(
-      requestId.pipe(
-        Effect.flatMap((id) => executePropertyRecords({}, id)),
-        Effect.match({
-          onFailure: (error) => {
-            setUnits([]);
-            setUnitId([]);
-            setMessage(
-              Match.value(error).pipe(
-                Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
-            );
-            setPending(false);
-          },
-          onSuccess: (result) => {
-            setUnits(result.units);
-            setPending(false);
-          },
-        }),
-      ),
-    );
-  };
-  const choose = (task: Task) => {
-    setSelected(task);
-    setTitle(task.title);
-    setDueDate(task.dueDate ?? '');
-    setDescription(task.description ?? '');
-    setPriority(task.priority);
-  };
-  const editable = records?.canWrite === true && selected?.state !== 'DONE' && selected?.state !== 'CANCELLED';
-  const save = () => {
-    const fields: EditFields = {
-      description,
-      priority,
-      title,
-    };
-    if (dueDate !== '') {
-      fields.dueDate = dueDate;
+
+  const save = (submission: TaskFormSubmission) => {
+    if (records === undefined || editor === undefined) {
+      return;
     }
-    const unit = units.find((item) => item.unitRef.resourceId === unitId[0]);
-    mutate(
-      selected === undefined
-        ? { _tag: 'CreateTask', ...fields, contextRefs: unit === undefined ? [] : [unit.unitRef] }
-        : { _tag: 'UpdateTask', ...fields, taskRef: selected.ref },
+    const fields: EditFields = {
+      description: submission.description,
+      priority: submission.priority,
+      title: submission.title,
+    };
+    if (submission.assigneeEmployeeId !== undefined) {
+      fields.assigneeEmployeeId = submission.assigneeEmployeeId;
+    }
+    if (submission.dueDate !== undefined) {
+      fields.dueDate = submission.dueDate;
+    }
+    if (submission.opportunityId !== undefined) {
+      fields.opportunityId = submission.opportunityId;
+    }
+    if (submission.partyId !== undefined) {
+      fields.partyId = submission.partyId;
+    }
+    const command: WorkCommand =
+      editor.mode === 'create'
+        ? { _tag: 'CreateTask', ...fields }
+        : { _tag: 'UpdateTask', ...fields, taskRef: editor.task.ref };
+    const successKey = editor.mode === 'create' ? `${key}.created` : `${key}.saved`;
+    setSaving(true);
+    setFormError(undefined);
+    runCommand(command, records.revision, (result) => {
+      setSaving(false);
+      if (result.ok) {
+        setEditor(undefined);
+        setActionError(undefined);
+        toaster.create({ title: t(successKey), type: 'success' });
+      } else {
+        setFormError(result.message);
+      }
+    });
+  };
+
+  const finishBulk = (outcome: CommandOutcome, summaryKey: 'assigned' | 'changed') => {
+    setBulkBusy(false);
+    if (outcome.ok) {
+      const changed = outcome.results.filter((item) => item.outcome === 'changed').length;
+      setSelection({});
+      toaster.create({
+        title: t(`${key}.bulk.${summaryKey}`, { changed, skipped: outcome.results.length - changed }),
+        type: 'success',
+      });
+    } else {
+      setActionError(outcome.message);
+    }
+  };
+
+  const handleBulkChangeState = (toState: Task['state']) => {
+    if (records === undefined || selectedIds.length === 0) {
+      return;
+    }
+    setBulkBusy(true);
+    setActionError(undefined);
+    runCommand({ _tag: 'BulkChangeTaskState', ids: selectedIds, toState }, records.revision, (outcome) =>
+      finishBulk(outcome, 'changed'),
     );
   };
-  const nextStates =
-    selected === undefined
-      ? []
-      : Match.value(selected.state).pipe(
-          Match.when('NEW', () => ['IN_PROGRESS', 'CANCELLED'] as const),
-          Match.when('IN_PROGRESS', () => ['WAITING', 'DONE', 'CANCELLED'] as const),
-          Match.when('WAITING', () => ['IN_PROGRESS', 'DONE', 'CANCELLED'] as const),
-          Match.whenOr('DONE', 'CANCELLED', () => []),
-          Match.exhaustive,
-        );
+
+  const handleBulkAssign = (value: string) => {
+    if (records === undefined || selectedIds.length === 0) {
+      return;
+    }
+    // Wire `null` (Option none) clears the assignee; any other value must decode as an employee id.
+    const assigneeEmployeeId = value === NONE ? Option.none() : decodeEmployeeId(value);
+    if (value !== NONE && Option.isNone(assigneeEmployeeId)) {
+      setActionError(t(`${key}.invalid`));
+      return;
+    }
+    setBulkBusy(true);
+    setActionError(undefined);
+    runCommand({ _tag: 'BulkAssignTasks', assigneeEmployeeId, ids: selectedIds }, records.revision, (outcome) =>
+      finishBulk(outcome, 'assigned'),
+    );
+  };
+
+  const handleChangeTab = (value: string) => {
+    if (Schema.is(TaskTabSchema)(value)) {
+      setTab(value);
+      setSelection({});
+    }
+  };
+
+  const handleReload = () => {
+    setLoadState('loading');
+    loadRecords({ setLoadState, setRecords });
+  };
+
+  const handleOpenCreate = () => {
+    setFormError(undefined);
+    setEditor({ mode: 'create' });
+  };
+
+  const handleOpenEdit = (task: Task) => {
+    setFormError(undefined);
+    setEditor({ mode: 'edit', task });
+  };
+
+  const handleCloseEditor = () => {
+    setEditor(undefined);
+    setFormError(undefined);
+  };
+
   return {
-    choose,
-    description,
-    dueDate,
-    editable,
-    filter,
-    key,
-    language,
-    loadUnits,
-    message,
-    mutate,
-    nextStates,
-    pending,
-    priority,
+    actionError,
+    bulkBusy,
+    canWrite,
+    editor,
+    employeeNames,
+    employees,
+    employeesFailed,
+    filters,
+    filtersActive,
+    formError,
+    handleBulkAssign,
+    handleBulkChangeState,
+    handleChangeTab,
+    handleClearFilters: () => setFilters(initialTaskFilters),
+    handleCloseEditor,
+    handleFiltersChange: setFilters,
+    handleOpenCreate,
+    handleOpenEdit,
+    handleReload,
+    handleSave: save,
+    handleSelectionChange: setSelection,
+    loadState,
     records,
-    refresh,
-    save,
-    selected,
-    setDescription,
-    setDueDate,
-    setFilter,
-    setPriority,
-    setSelected,
-    setTitle,
-    setUnitId,
+    referenceDate,
+    saving,
+    selectedIds,
+    selection,
     t,
-    title,
-    unitId,
-    units,
+    tab,
+    visibleTasks,
   };
 };
 
-const RecordsPageContent = () => {
-  const model = useWorkRecords();
-  const { key, language, loadUnits: handleLoadUnits, records, refresh: handleRefresh, selected, t } = model;
-  const formatDateTime = (timestamp: DateTime.Utc) =>
-    DateTime.format(timestamp, {
-      day: '2-digit',
-      fractionalSecondDigits: 3,
-      hour: '2-digit',
-      locale: language,
-      minute: '2-digit',
-      month: '2-digit',
-      second: '2-digit',
-      timeZone: 'Europe/Prague',
-      timeZoneName: 'short',
-      year: 'numeric',
-    });
+const TasksPageContent = () => {
+  const model = useTasksPage();
+  const { t } = model;
+  const { records } = model;
+  const columns = buildTaskColumns({
+    employeeNames: model.employeeNames,
+    referenceDate: model.referenceDate,
+    t,
+  });
+  const selectedCount = model.selectedIds.length;
+
   return (
     <>
       <UltramodernRouteHead />
-      <section
-        aria-labelledby="records-heading"
-        className="siamparkwork:w-full siamparkwork:min-w-0 siamparkwork:max-w-none siamparkwork:p-0 siamparkwork:space-y-6 siamparkwork:text-(--color-page-fg)"
-      >
-        <header className="siamparkwork:flex siamparkwork:flex-wrap siamparkwork:items-center siamparkwork:justify-between siamparkwork:gap-4">
-          <h1 className="siamparkwork:text-3xl siamparkwork:font-semibold" id="records-heading">
-            {t(`${key}.title`)}
-          </h1>
-          <Button disabled={model.pending} onClick={handleRefresh} size="sm" theme="outlined" variant="secondary">
-            {t(`${key}.refresh`)}
-          </Button>
-        </header>
-        <output aria-live="polite" className="siamparkwork:block siamparkwork:text-sm">
-          {model.message}
-        </output>
-        {records !== undefined && (
-          <>
-            <p className="siamparkwork:rounded-lg siamparkwork:border siamparkwork:border-(--color-border-muted) siamparkwork:bg-(--color-surface-subtle) siamparkwork:p-4 siamparkwork:text-sm siamparkwork:text-(--color-fg-secondary)">
-              {t(`${key}.indicators`, {
-                date: records.referenceDate,
-                open: records.indicators.open,
-                overdue: records.indicators.overdue,
-              })}
-            </p>
-            <FormInput
-              id="task-filter"
-              label={t(`${key}.filter`)}
-              onChange={(event) => model.setFilter(event.target.value)}
-              value={model.filter}
-            />
-            <div className="siamparkwork:overflow-x-auto siamparkwork:rounded-lg siamparkwork:border siamparkwork:border-(--color-border-muted) siamparkwork:bg-(--color-surface)">
-              <Table size="sm" variant="outline">
-                <Table.Caption>{records.collection.title}</Table.Caption>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>{t(`${key}.taskTitle`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader>{t(`${key}.state`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader>{t(`${key}.dueDate`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader>{t(`${key}.detail`)}</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {records.items.map((task) =>
-                    task.title.toLocaleLowerCase().includes(model.filter.toLocaleLowerCase()) ? (
-                      <Table.Row key={task.ref.resourceId} selected={selected?.ref.resourceId === task.ref.resourceId}>
-                        <Table.Cell className="siamparkwork:font-medium">{task.title}</Table.Cell>
-                        <Table.Cell>
-                          <Badge
-                            size="sm"
-                            variant={
-                              (
-                                {
-                                  CANCELLED: 'outline',
-                                  DONE: 'success',
-                                  IN_PROGRESS: 'primary',
-                                  NEW: 'info',
-                                  WAITING: 'warning',
-                                } as const
-                              )[task.state]
-                            }
-                          >
-                            {t(`${key}.states.${task.state}`)}
-                          </Badge>
-                        </Table.Cell>
-                        <Table.Cell>{task.dueDate ?? '—'}</Table.Cell>
-                        <Table.Cell>
-                          <Button onClick={() => model.choose(task)} size="sm" theme="borderless" variant="secondary">
-                            {t(`${key}.detail`)}
-                          </Button>
-                        </Table.Cell>
-                      </Table.Row>
-                    ) : null,
-                  )}
-                  {!records.items.some((task) =>
-                    task.title.toLocaleLowerCase().includes(model.filter.toLocaleLowerCase()),
-                  ) && (
-                    <Table.Row>
-                      <Table.Cell
-                        className="siamparkwork:py-8 siamparkwork:text-center siamparkwork:text-(--color-fg-secondary)"
-                        colSpan={4}
-                      >
-                        {t(`${key}.empty`)}
-                      </Table.Cell>
-                    </Table.Row>
-                  )}
-                </Table.Body>
-              </Table>
-            </div>
-            {selected !== undefined && (
-              <article className="siamparkwork:space-y-4 siamparkwork:rounded-lg siamparkwork:border siamparkwork:border-(--color-border-muted) siamparkwork:bg-(--color-surface) siamparkwork:p-5 siamparkwork:text-sm">
-                <h2 className="siamparkwork:text-xl siamparkwork:font-semibold">{selected.title}</h2>
-                <p className="siamparkwork:text-(--color-fg-secondary)">{selected.description}</p>
-                <p>
-                  {t(`${key}.createdAt`)}:{' '}
-                  <time dateTime={DateTime.formatIso(selected.createdAt)}>{formatDateTime(selected.createdAt)}</time>
-                </p>
-                <p>
-                  {t(`${key}.updatedAt`)}:{' '}
-                  <time dateTime={DateTime.formatIso(selected.updatedAt)}>{formatDateTime(selected.updatedAt)}</time>
-                </p>
-                <p>
-                  {t(`${key}.priority`)}:{' '}
-                  <Badge
-                    size="sm"
-                    variant={({ HIGH: 'danger', LOW: 'outline', NORMAL: 'secondary' } as const)[selected.priority]}
-                  >
-                    {t(`${key}.priorities.${selected.priority}`)}
-                  </Badge>
-                </p>
-                <p>
-                  {t(`${key}.owner`)}: {selected.ownerPrincipalRef?.principalId ?? t(`${key}.unassigned`)}
-                </p>
-                <ul className="siamparkwork:space-y-2 siamparkwork:break-all siamparkwork:text-(--color-fg-secondary)">
-                  {selected.contextRefs.map((ref) => (
-                    <li key={`${ref.resourceType}:${ref.resourceId}`}>
-                      {ref.resourceType}: {ref.resourceId}
-                    </li>
-                  ))}
-                </ul>
-              </article>
-            )}
-            {records.canWrite && (
-              <form
-                className="siamparkwork:grid siamparkwork:gap-4 siamparkwork:rounded-lg siamparkwork:border siamparkwork:border-(--color-border-muted) siamparkwork:bg-(--color-surface) siamparkwork:p-5 siamparkwork:md:grid-cols-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  model.save();
-                }}
-              >
-                <h2 className="siamparkwork:text-xl siamparkwork:font-semibold siamparkwork:md:col-span-2">
-                  {t(selected === undefined ? `${key}.create` : `${key}.edit`)}
-                </h2>
-                <FormInput
-                  disabled={!model.editable || model.pending}
-                  id="task-title"
-                  label={t(`${key}.taskTitle`)}
-                  maxLength={200}
-                  onChange={(event) => model.setTitle(event.target.value)}
-                  required
-                  value={model.title}
-                />
-                <FormInput
-                  disabled={!model.editable || model.pending}
-                  id="task-description"
-                  label={t(`${key}.description`)}
-                  maxLength={2000}
-                  onChange={(event) => model.setDescription(event.target.value)}
-                  value={model.description}
-                />
-                <FormInput
-                  disabled={!model.editable || model.pending}
-                  id="task-due"
-                  label={t(`${key}.dueDate`)}
-                  onChange={(event) => model.setDueDate(event.target.value)}
-                  type="date"
-                  value={model.dueDate}
-                />
-                <div className="siamparkwork:flex siamparkwork:flex-wrap siamparkwork:items-end siamparkwork:gap-2">
-                  {(['LOW', 'NORMAL', 'HIGH'] as const).map((value) => (
-                    <Button
-                      aria-pressed={model.priority === value}
-                      disabled={!model.editable || model.pending}
-                      key={value}
-                      onClick={() => model.setPriority(value)}
-                      size="sm"
-                      theme="outlined"
-                      type="button"
-                      variant="secondary"
-                    >
-                      {t(`${key}.priorities.${value}`)}
-                    </Button>
-                  ))}
-                </div>
-                {selected === undefined && (
-                  <>
-                    <Button
-                      disabled={model.pending}
-                      onClick={handleLoadUnits}
-                      size="sm"
-                      theme="outlined"
-                      type="button"
-                      variant="secondary"
-                    >
-                      {t(`${key}.loadUnits`)}
-                    </Button>
-                    <Select
-                      items={model.units.map((unit) => ({ label: unit.code, value: unit.unitRef.resourceId }))}
-                      onValueChange={({ value }) => model.setUnitId(value)}
-                      value={model.unitId}
-                    >
-                      <Select.Label>{t(`${key}.unit`)}</Select.Label>
-                      <Select.Control>
-                        <Select.Trigger>
-                          <Select.ValueText placeholder={t(`${key}.selectUnit`)} />
-                        </Select.Trigger>
-                      </Select.Control>
-                      <Select.Positioner>
-                        <Select.Content>
-                          {model.units.map((unit) => (
-                            <Select.Item
-                              item={{ label: unit.code, value: unit.unitRef.resourceId }}
-                              key={unit.unitRef.resourceId}
-                            >
-                              <Select.ItemText>
-                                {unit.code} · {unit.name}
-                              </Select.ItemText>
-                            </Select.Item>
-                          ))}
-                        </Select.Content>
-                      </Select.Positioner>
-                    </Select>
-                  </>
-                )}
-                <Button
-                  disabled={!model.editable || model.pending || model.title.trim() === ''}
-                  size="sm"
-                  type="submit"
-                  variant="warning"
-                >
-                  {t(`${key}.save`)}
-                </Button>
-                <Button
-                  onClick={() => {
-                    model.setSelected(undefined);
-                    model.setTitle('');
-                    model.setDueDate('');
-                    model.setDescription('');
-                  }}
-                  size="sm"
-                  type="button"
-                  variant="warning"
-                >
-                  {t(`${key}.new`)}
-                </Button>
-                {selected !== undefined && model.editable && (
-                  <>
-                    <Button
-                      disabled={model.pending}
-                      onClick={() =>
-                        model.mutate({
-                          _tag: 'AssignTask',
-                          ownerPrincipalRef: records.actorPrincipalRef,
-                          taskRef: selected.ref,
-                        })
-                      }
-                      size="sm"
-                      theme="outlined"
-                      type="button"
-                      variant="secondary"
-                    >
-                      {t(`${key}.assignMe`)}
-                    </Button>
-                    {model.nextStates.map((state) => (
-                      <Button
-                        disabled={model.pending}
-                        key={state}
-                        onClick={() => model.mutate({ _tag: 'ChangeTaskState', state, taskRef: selected.ref })}
-                        size="sm"
-                        theme="outlined"
-                        type="button"
-                        variant="secondary"
-                      >
-                        {t(`${key}.states.${state}`)}
-                      </Button>
-                    ))}
-                  </>
-                )}
-              </form>
-            )}
-          </>
+      <Toaster />
+      <PageHeader
+        actions={
+          model.canWrite ? (
+            <Button onClick={model.handleOpenCreate} size="sm" variant="primary">
+              {t(`${key}.newTask`)}
+            </Button>
+          ) : undefined
+        }
+        title={t(`${key}.title`)}
+      />
+
+      <StatRow>
+        <StatCard label={t(`${key}.stats.open`)} value={formatCount(records?.indicators.open)} />
+        <StatCard label={t(`${key}.stats.overdue`)} value={formatCount(records?.indicators.overdue)} />
+        <StatCard
+          label={t(`${key}.stats.doneThisWeek`)}
+          value={formatCount(records === undefined ? undefined : doneThisWeek(records.items, records.referenceDate))}
+        />
+        <StatCard
+          label={t(`${key}.stats.unassigned`)}
+          value={formatCount(records === undefined ? undefined : unassignedOpenCount(records.items))}
+        />
+      </StatRow>
+
+      <Tabs onValueChange={model.handleChangeTab} value={model.tab} variant="line">
+        <Tabs.List>
+          <Tabs.Trigger value="mine">{t(`${key}.tabs.mine`)}</Tabs.Trigger>
+          <Tabs.Trigger value="all">{t(`${key}.tabs.all`)}</Tabs.Trigger>
+          <Tabs.Indicator />
+        </Tabs.List>
+      </Tabs>
+
+      <TaskFilterBar employees={model.employees} filters={model.filters} onChange={model.handleFiltersChange} />
+
+      {model.canWrite && (
+        <TaskBulkBar
+          busy={model.bulkBusy}
+          count={selectedCount}
+          employees={model.employees}
+          onAssign={model.handleBulkAssign}
+          onChangeState={model.handleBulkChangeState}
+          onClear={() => model.handleSelectionChange({})}
+        />
+      )}
+
+      {model.loadState === 'error' && records !== undefined && (
+        <StatusText showIcon status="error">
+          {t(`${key}.unavailable`)}
+        </StatusText>
+      )}
+      {model.employeesFailed && (
+        <StatusText showIcon status="error">
+          {t(`${key}.employeesUnavailable`)}
+        </StatusText>
+      )}
+      {model.actionError !== undefined && (
+        <StatusText showIcon status="error">
+          {model.actionError}
+        </StatusText>
+      )}
+
+      <DataTable
+        columnPinning={{ end: [], start: ['title'] }}
+        columns={columns}
+        data={model.visibleTasks}
+        enableColumnPinning
+        enablePagination
+        enableRowSelection
+        enableSorting
+        getRowId={(row) => row.ref.resourceId}
+        getRowLabel={(row) => row.original.title}
+        loading={model.loadState === 'loading' && records === undefined}
+        loadingRowCount={8}
+        maxHeight="calc(100dvh - 15rem)"
+        onRowClick={(row) => {
+          if (model.canWrite) {
+            model.handleOpenEdit(row.original);
+          }
+        }}
+        onRowSelectionChange={model.handleSelectionChange}
+        pageSizeOptions={[50, 100, 200]}
+        renderEmpty={() => (
+          <TaskEmptyState
+            canWrite={model.canWrite}
+            filtersActive={model.filtersActive}
+            hasRecords={records !== undefined}
+            loadState={model.loadState}
+            onClear={model.handleClearFilters}
+            onCreate={model.handleOpenCreate}
+            onRetry={model.handleReload}
+            tab={model.tab}
+          />
         )}
-      </section>
+        rowActions={
+          model.canWrite
+            ? [
+                {
+                  icon: 'icon-[mdi--pencil-outline]',
+                  id: 'edit',
+                  label: t(`${key}.edit`),
+                  onAction: (row) => model.handleOpenEdit(row.original),
+                },
+              ]
+            : []
+        }
+        rowSelection={model.selection}
+        size="sm"
+        stickyHeader
+        tableLayout="fixed"
+        translations={{
+          actionsLabel: t(`${key}.table.actions`),
+          loadingLabel: t(`${key}.table.loading`),
+          pageSizeLabel: t(`${key}.table.pageSize`),
+          rangeLabel: ({ end, start, total }: { end: number; start: number; total: number }) =>
+            t(`${key}.table.range`, { end, start, total }),
+          selectAllLabel: t(`${key}.table.selectAll`),
+          selectionLabel: t(`${key}.table.selection`),
+        }}
+      />
+
+      {model.editor !== undefined && (
+        <TaskFormDialog
+          busy={model.saving}
+          employees={model.employees}
+          error={model.formError}
+          onClose={model.handleCloseEditor}
+          onSubmit={model.handleSave}
+          task={model.editor.mode === 'edit' ? model.editor.task : undefined}
+        />
+      )}
     </>
   );
 };
 
-export const RecordsPage = () => {
-  const location = useRouterState({ select: (state) => state.location.href });
-  return (
-    <FederatedI18nBoundary
-      defaultNamespace="siampark-work"
-      fallbackLanguage="en"
-      resources={siamparkWorkI18nResources}
-      supportedLanguages={['en', 'cs']}
-    >
-      <RecordsPageContent key={location} />
-    </FederatedI18nBoundary>
-  );
-};
+export const RecordsPage = () => (
+  <FederatedI18nBoundary
+    defaultNamespace="siampark-work"
+    fallbackLanguage="en"
+    resources={siamparkWorkI18nResources}
+    supportedLanguages={['en', 'cs']}
+  >
+    <TasksPageContent />
+  </FederatedI18nBoundary>
+);
 
 export default RecordsPage;
