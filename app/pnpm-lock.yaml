@@ -2869,6 +2869,9 @@ importers:
 
   verticals/siampark-billing-finance:
     dependencies:
+      '@app/admin-ui':
+        specifier: workspace:*
+        version: link:../../packages/admin-ui
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
