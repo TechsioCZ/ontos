@@ -5,6 +5,7 @@ import { outboxWorkerEntry as commerceCustomerContextOutboxWorkerEntry } from '@
 import { outboxWorkerEntry as priceGroupCatalogOutboxWorkerEntry } from '@app/price-group-catalog/outbox-worker-host';
 import { outboxWorkerEntry as inventoryOutboxWorkerEntry } from '@app/inventory/outbox-worker-host';
 import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outbox-worker-host';
+import { outboxWorkerEntry as siamparkBillingFinanceOutboxWorkerEntry } from '@app/siampark-billing-finance/outbox-worker-host';
 
 startOutboxWorkerHost({
   entries: [
@@ -13,6 +14,7 @@ startOutboxWorkerHost({
     priceGroupCatalogOutboxWorkerEntry,
     inventoryOutboxWorkerEntry,
     privacyOutboxWorkerEntry,
+    siamparkBillingFinanceOutboxWorkerEntry,
   ],
   health: true,
 });

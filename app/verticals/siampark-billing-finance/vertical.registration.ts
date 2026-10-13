@@ -5,6 +5,7 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { siamparkBillingFinanceManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { draftInvoiceFromWonOpportunityWorker } from './src/workers/draft-invoice-from-won-opportunity.worker.ts';
 // </generated-module-registration-imports>
 
 export const siamparkBillingFinanceRegistration = defineVerticalRuntimeRegistration({
@@ -40,6 +41,7 @@ export const siamparkBillingFinanceRegistration = defineVerticalRuntimeRegistrat
   manifest: siamparkBillingFinanceManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    draftInvoiceFromWonOpportunityWorker,
     // </generated-module-registration-workers>
   ],
 });
