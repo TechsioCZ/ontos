@@ -9,6 +9,8 @@ import { GroupingSchema, MetricIdSchema, metricCatalog } from '../../shared/metr
 import type { StatisticsQuery } from './statistics-query.ts';
 import { activePreset, ChartKindSchema, chartKinds, presetRange, presets } from './statistics-query.ts';
 
+const SELECT_PLACEHOLDER = 'sales-insights.selectPlaceholder';
+
 const key = 'sales-insights.pages.statistics';
 
 const toCalendarDate = (day: CalendarDay): CalendarDate =>
@@ -46,6 +48,7 @@ export const StatisticsControls = ({ onChange, query, today }: StatisticsControl
               onChange({ metric: next });
             }
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="sm"
           value={[query.metric]}
         />
@@ -61,6 +64,7 @@ export const StatisticsControls = ({ onChange, query, today }: StatisticsControl
               onChange({ chart: next });
             }
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="sm"
           value={[query.chart]}
         />
@@ -123,6 +127,7 @@ export const StatisticsControls = ({ onChange, query, today }: StatisticsControl
               onChange({ groupBy: next });
             }
           }}
+          placeholder={t(SELECT_PLACEHOLDER)}
           size="sm"
           value={[query.groupBy]}
         />

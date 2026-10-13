@@ -309,8 +309,11 @@
           "positive": "Zadejte částku větší než 0 Kč.",
           "quantity": "Zadejte množství větší než 0.",
           "required": "Vyplňte toto pole."
-        }
+        },
+        "selectPlaceholder": "Vyberte…"
       }
-    }
+    },
+    "selectPlaceholder": "Vyberte…",
+    "loading": "Načítám…"
   }
 }

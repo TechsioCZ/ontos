@@ -125,6 +125,7 @@
           "title": "Permissions"
         }
       }
-    }
+    },
+    "selectPlaceholder": "Select…"
   }
 }

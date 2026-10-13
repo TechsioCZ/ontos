@@ -109,7 +109,9 @@
         "range": "{{start}}–{{end}} of {{total}}",
         "search": "Search tags…"
       },
-      "updated": "Tag updated"
+      "updated": "Tag updated",
+      "selectPlaceholder": "Select…",
+      "loading": "Loading…"
     }
   }
 }

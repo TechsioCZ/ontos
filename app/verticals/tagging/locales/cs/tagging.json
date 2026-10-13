@@ -109,7 +109,9 @@
         "range": "{{start}}–{{end}} z {{total}}",
         "search": "Hledat štítky…"
       },
-      "updated": "Štítek upraven"
+      "updated": "Štítek upraven",
+      "selectPlaceholder": "Vyberte…",
+      "loading": "Načítám…"
     }
   }
 }

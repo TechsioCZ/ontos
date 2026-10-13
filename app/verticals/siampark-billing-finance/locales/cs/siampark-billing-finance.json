@@ -241,6 +241,7 @@
         "SUPPLIER": "Dodavatel"
       },
       "newInvoice": "Přejít k nové faktuře"
-    }
+    },
+    "selectPlaceholder": "Vyberte…"
   }
 }

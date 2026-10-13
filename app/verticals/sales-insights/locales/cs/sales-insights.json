@@ -81,6 +81,8 @@
         "title": "Statistiky",
         "total": "Celkem: {{value}}"
       }
-    }
+    },
+    "selectPlaceholder": "Vyberte…",
+    "loading": "Načítám…"
   }
 }

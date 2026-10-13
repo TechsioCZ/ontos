@@ -69,27 +69,27 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     accessorKey: 'title',
     cell: (info) => <span className="block truncate font-medium">{info.row.original.title}</span>,
     header: t(`${K}.columns.title`),
-    meta: { type: 'string' },
+    meta: { type: 'string', width: 190 },
   },
   {
     accessorFn: (row) => customerSortKey(lookups, row.partyId),
     cell: (info) => customerCell(lookups, t, info.row.original.partyId),
     header: t(`${K}.columns.customer`),
     id: 'customer',
-    meta: { type: 'string', width: 220 },
+    meta: { type: 'string', width: 170 },
   },
   {
     accessorFn: (row) => ownerSortKey(lookups, row.ownerEmployeeId),
     cell: (info) => ownerCell(lookups, t, info.row.original.ownerEmployeeId),
     header: t(`${K}.columns.owner`),
     id: 'owner',
-    meta: { type: 'string', width: 160 },
+    meta: { type: 'string', width: 130 },
   },
   {
     accessorKey: 'stage',
     cell: (info) => <StatusBadge kind="opportunity" value={info.row.original.stage} />,
     header: t(`${K}.columns.stage`),
-    meta: { options: stageOptions(), type: 'enum', width: 140 },
+    meta: { options: stageOptions(), type: 'enum', width: 120 },
   },
   {
     accessorKey: 'probability',
@@ -102,13 +102,13 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     accessorKey: 'amountMinor',
     cell: (info) => <span className="tabular-nums">{formatWholeKc(info.getValue<number>())}</span>,
     header: t(`${K}.columns.amount`),
-    meta: { align: 'end', type: 'number', width: 130 },
+    meta: { align: 'end', type: 'number', width: 110 },
   },
   {
     accessorKey: 'expectedCloseDate',
     cell: (info) => formatDate(info.getValue<string>()),
     header: t(`${K}.columns.expectedClose`),
-    meta: { type: 'date', width: 130 },
+    meta: { type: 'date', width: 100 },
   },
   {
     accessorFn: (row) => DateTime.toEpochMillis(row.updatedAt),
@@ -122,7 +122,7 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     enableSorting: false,
     header: t(`${K}.columns.tags`),
     id: 'tags',
-    meta: { type: 'string', width: 200 },
+    meta: { type: 'string', width: 110 },
   },
 ];
 

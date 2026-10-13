@@ -20,7 +20,7 @@
     "pages": {
       "records": {
         "title": "Tasks",
-        "description": "Sales team tasks and their due dates.",
+        "pageDescription": "Sales team tasks and their due dates.",
         "newTask": "New task",
         "create": "New task",
         "edit": "Edit task",
@@ -119,6 +119,7 @@
           "HIGH": "High"
         }
       }
-    }
+    },
+    "selectPlaceholder": "Select…"
   }
 }

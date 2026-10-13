@@ -2,7 +2,7 @@ import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoin
 
 const routeMeta = {
   canonicalPath: '/siampark/work',
-  descriptionKey: 'siampark-work.pages.records.description',
+  descriptionKey: 'siampark-work.pages.records.pageDescription',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
     authorization: { kind: 'context_permission', permission: 'module.access' },

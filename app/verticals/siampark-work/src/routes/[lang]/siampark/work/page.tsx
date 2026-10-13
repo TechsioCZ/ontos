@@ -468,7 +468,7 @@ const TasksPageContent = () => {
             </Button>
           ) : undefined
         }
-        description={t(`${key}.description`)}
+        description={t(`${key}.pageDescription`)}
         title={t(`${key}.title`)}
       />
 
@@ -533,7 +533,8 @@ const TasksPageContent = () => {
       )}
 
       <DataTable
-        columnPinning={{ end: [], start: ['title'] }}
+        // The row-selection column must stay first, so it is pinned ahead of the title.
+        columnPinning={{ end: [], start: ['__select', 'title'] }}
         columns={columns}
         data={model.visibleTasks}
         enableColumnPinning

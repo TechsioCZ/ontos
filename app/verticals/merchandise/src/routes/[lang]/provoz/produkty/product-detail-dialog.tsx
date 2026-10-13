@@ -207,6 +207,7 @@ const DetailForm = ({
               setUnit(picked);
             }
           }}
+          placeholder={k('selectPlaceholder')}
           value={[unit]}
         />
         <SelectTemplate
@@ -221,6 +222,7 @@ const DetailForm = ({
               setVatRate(picked);
             }
           }}
+          placeholder={k('selectPlaceholder')}
           value={[String(vatRate)]}
         />
       </div>

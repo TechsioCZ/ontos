@@ -236,6 +236,7 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
                 setStatus(next);
               }
             }}
+            placeholder={t('siampark-billing-finance.selectPlaceholder')}
             size="sm"
             value={[status]}
           />
