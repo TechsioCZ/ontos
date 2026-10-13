@@ -1,4 +1,4 @@
-import { SidePanel } from '@app/admin-ui';
+import { SidePanel, dialogCloseLabel } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -43,8 +43,12 @@ const commitErrorKey = (outcome: CommitOutcome): string => {
   return `${key}.errors.save`;
 };
 
+/** `displayValue` feeds the hidden native option, which otherwise shows the raw role code to assistive tech and innerText. */
 const roleItemsOf = (translate: (key: string) => string) =>
-  employeeRoles.map((role) => ({ label: translate(`${key}.roles.${role}`), value: role }));
+  employeeRoles.map((role) => {
+    const label = translate(`${key}.roles.${role}`);
+    return { displayValue: label, label, value: role };
+  });
 
 /** Select labels inherit the surrounding font size; FormInput labels use the `md` label token. Match them. */
 const roleLabelProps = { className: 'text-label-md' };
@@ -57,7 +61,10 @@ const closeWhenDismissed =
     }
   };
 
-/** Create (employee is null) or edit one Employee in a right-hand dialog. */
+/**
+ * Create (employee is null) or edit one Employee in a right-hand dialog. Every dialog on this page holds a draft,
+ * so an outside click keeps it open; Escape, the close button and Zrušit close it.
+ */
 export const EmployeeFormDialog = ({
   commit,
   employee,
@@ -74,12 +81,17 @@ export const EmployeeFormDialog = ({
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  /** Set when the server reports that another Employee already uses the typed e-mail. */
+  const [emailTaken, setEmailTaken] = useState(false);
   const errors = draftErrors(draft);
   const set = (patch: Partial<EmployeeDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const fieldStatus = (field: DraftField) =>
     submitted && errors.includes(field)
       ? { helpText: t(`${key}.errors.${field}`), validateStatus: 'error' as const }
       : {};
+  const emailStatus = emailTaken
+    ? { helpText: t(`${key}.errors.emailTaken`), validateStatus: 'error' as const }
+    : fieldStatus('email');
   const roleItems = roleItemsOf(t);
 
   const submit = () => {
@@ -100,6 +112,8 @@ export const EmployeeFormDialog = ({
             setBusy(false);
             if (outcome === 'saved') {
               onClose();
+            } else if (outcome === 'duplicateEmail') {
+              setEmailTaken(true);
             } else {
               setServerError(t(commitErrorKey(outcome)));
             }
@@ -121,6 +135,7 @@ export const EmployeeFormDialog = ({
           </Button>
         </>
       }
+      closeOnInteractOutside={false}
       onOpenChange={(next) => {
         if (!next) {
           onClose();
@@ -157,11 +172,14 @@ export const EmployeeFormDialog = ({
           id="employee-email"
           label={t(`${key}.form.email`)}
           name="email"
-          onChange={(event) => set({ email: event.target.value })}
+          onChange={(event) => {
+            setEmailTaken(false);
+            set({ email: event.target.value });
+          }}
           required
           type="email"
           value={draft.email}
-          {...fieldStatus('email')}
+          {...emailStatus}
         />
         <FormInput
           autoComplete="tel"
@@ -260,6 +278,8 @@ export const BulkDepartmentDialog = ({
           </Button>
         </>
       }
+      closeLabel={dialogCloseLabel}
+      closeOnInteractOutside={false}
       customTrigger
       description={t(`${key}.bulk.description`, { total: ids.length })}
       onOpenChange={closeWhenDismissed(onClose)}
@@ -342,6 +362,8 @@ export const BulkRoleDialog = ({
           </Button>
         </>
       }
+      closeLabel={dialogCloseLabel}
+      closeOnInteractOutside={false}
       customTrigger
       description={t(`${key}.bulk.description`, { total: ids.length })}
       onOpenChange={closeWhenDismissed(onClose)}

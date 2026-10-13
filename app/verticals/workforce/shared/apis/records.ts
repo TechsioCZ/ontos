@@ -17,7 +17,12 @@ export const EmployeeEmailSchema = Schema.Trim.check(
   Schema.isMaxLength(320),
   Schema.isPattern(/^[^\s@]+@[^\s@]+$/u),
 );
+/** A stored phone. Lenient, so rows saved before the input format rule still decode. */
 export const EmployeePhoneSchema = Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(40));
+/** A phone a caller enters: at least six digits, optional leading +, and only digits, spaces and ( ) . / - separators. */
+export const EmployeePhoneInputSchema = EmployeePhoneSchema.check(
+  Schema.isPattern(/^(?=(?:\D*\d){6})\+?[\d\s()./-]+$/u),
+);
 export const EmployeeDepartmentSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120));
 
 export const EmployeeSchema = Schema.Struct({

@@ -47,7 +47,7 @@ export const ApplyCommandActionConflictProblemSchema = makeProblemDetailsSchema(
 export const ApplyCommandActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'ApplyCommandActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'workforce_reference_ineligible']) },
+  { code: Schema.Literals(['action_policy_denied', 'workforce_duplicate_email', 'workforce_reference_ineligible']) },
 );
 export const ApplyCommandActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'ApplyCommandActionPreconditionProblem',

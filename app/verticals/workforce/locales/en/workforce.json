@@ -93,11 +93,12 @@
           "conflict": "Someone else changed this record in the meantime. Reload it and repeat your change.",
           "department": "Enter a department.",
           "email": "Enter an e-mail like name@company.cz.",
+          "emailTaken": "Another employee already uses this e-mail.",
           "forbidden": "You are not allowed to do this.",
           "fullName": "Enter a full name.",
           "load": "Data could not be loaded.",
           "loadDescription": "Check your connection and try again.",
-          "phone": "The phone number needs at least 3 characters.",
+          "phone": "Enter a phone number, e.g. +420 777 123 456.",
           "retry": "Try again",
           "save": "The employee could not be saved. Try again."
         },

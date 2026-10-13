@@ -1,8 +1,18 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { BulkActionBar, EmptyState, PageHeader, StatCard, StatRow, formatNumber } from '@app/admin-ui';
-import { subjectsWithTag } from '@app/tagging/clients/records';
-import { BulkTagDialog, TagCell, TagFilter, runTagEffect, useTagsFor } from '@app/tagging/components/tag-controls';
+import {
+  BulkActionBar,
+  EmptyState,
+  PageHeader,
+  StatCard,
+  StatRow,
+  formatNumber,
+  toasterLabels,
+  dataTableRowLabels,
+  paginationTranslations,
+} from '@app/admin-ui';
+import { BulkTagDialog, TagCell, TagFilter, useTagsFor } from '@app/tagging/components/tag-controls';
+import type { TagsStatus } from '@app/tagging/components/tag-controls';
 import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -16,7 +26,7 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Effect, Match, Option, Schema } from 'effect';
-import { useEffect, useState } from 'react';
+import { createContext, use, useEffect, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -113,67 +123,44 @@ const subjectIdsOf = (ids: readonly string[]): SubjectId[] =>
     }),
   );
 
-/** The Štítky cell. The value is null while the tags still load, so an empty cell never reads as "no tags". */
-const tagsCell = (info: CellContext<Employee>) => {
-  const tags = info.getValue<readonly Tag[] | null>();
-  return <TagCell loading={tags === null} tags={tags ?? []} />;
+type TagsBySubject = ReadonlyMap<SubjectId, readonly Tag[]>;
+
+/** Tags of the listed employees and their load status, shared with the Štítky cells. */
+const EmployeeTagsContext = createContext<TagsBySubject>(new Map());
+const EmployeeTagStatusContext = createContext<TagsStatus>('loading');
+
+const tagsOf = (tagsBySubject: TagsBySubject, id: string): readonly Tag[] =>
+  Option.match(subjectIdOf(id), {
+    onNone: (): readonly Tag[] => [],
+    onSome: (subject): readonly Tag[] => tagsBySubject.get(subject) ?? [],
+  });
+
+/**
+ * The Štítky cell reads the tags from context, not from a column accessor. The table caches accessor values per row
+ * until its rows rebuild, so a cached "still loading" value would outlive the tags read and a bulk tag change.
+ */
+const EmployeeTagsCell = ({ row }: CellContext<Employee>) => {
+  const status = use(EmployeeTagStatusContext);
+  const tagsBySubject = use(EmployeeTagsContext);
+  return <TagCell loading={status === 'loading'} tags={tagsOf(tagsBySubject, row.original.id)} />;
 };
 
-/** Employees carrying the selected tag, with the tag they were loaded for so a stale answer never applies. */
-interface TaggedEmployees {
-  readonly failed: boolean;
-  readonly ids: ReadonlySet<string>;
-  readonly tagId: TagId;
-}
+/** Maps a failed apply-command call to the outcome the forms show. A duplicate e-mail stays on the field. */
+const outcomeOfFailure = (error: Effect.Error<ReturnType<typeof executeApplyCommand>>): CommitOutcome =>
+  Match.value(error).pipe(
+    Match.tag('ApplyCommandActionConflictProblem', (problem): CommitOutcome =>
+      problem.code === 'workforce_revision_conflict' ? 'conflict' : 'failed',
+    ),
+    Match.tag('ApplyCommandActionIneligibleProblem', (problem): CommitOutcome =>
+      problem.code === 'workforce_duplicate_email' ? 'duplicateEmail' : 'failed',
+    ),
+    Match.tag('ApplyCommandActionForbiddenProblem', (): CommitOutcome => 'forbidden'),
+    Match.orElse((): CommitOutcome => 'failed'),
+  );
 
-/** Rows that carry the selected tag. Rows stay hidden until the tag's subject list has loaded for that tag. */
-const rowsWithTag = (rows: readonly Employee[], tagId: TagId | null, tagged: TaggedEmployees | null): Employee[] => {
-  if (tagId === null) {
-    return [...rows];
-  }
-  if (tagged === null || tagged.tagId !== tagId) {
-    return [];
-  }
-  return rows.filter((row) => tagged.ids.has(row.id));
-};
-
-/** The list's tag filter: the picked tag, the employees that carry it, and a reload after bulk tag changes. */
-const useEmployeeTagFilter = () => {
-  const [request, setRequest] = useState<{ readonly tagId: TagId } | null>(null);
-  const [tagged, setTagged] = useState<TaggedEmployees | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    if (request !== null) {
-      runTagEffect(subjectsWithTag('employee', request.tagId), {
-        onFailure: () => {
-          if (active) {
-            setTagged({ failed: true, ids: new Set(), tagId: request.tagId });
-          }
-        },
-        onSuccess: (ids) => {
-          if (active) {
-            setTagged({ failed: false, ids: new Set(ids), tagId: request.tagId });
-          }
-        },
-      });
-    }
-    return () => {
-      active = false;
-    };
-  }, [request]);
-
-  const tagId = request?.tagId ?? null;
-  return {
-    failed: tagId !== null && tagged?.tagId === tagId && tagged.failed,
-    // Until the picked tag's subject list arrives, the rows are hidden, so the table must read as loading, not empty.
-    loading: tagId !== null && tagged?.tagId !== tagId,
-    reload: () => setRequest((current) => (current === null ? null : { ...current })),
-    rows: (rows: readonly Employee[]) => rowsWithTag(rows, tagId, tagged),
-    select: (next: TagId | null) => setRequest(next === null ? null : { tagId: next }),
-    tagId,
-  };
-};
+/** Rows that carry the selected tag, read from the tags the list already loaded. No tag selected keeps every row. */
+const rowsWithTag = (rows: readonly Employee[], tagId: TagId | null, tagsBySubject: TagsBySubject): Employee[] =>
+  tagId === null ? [...rows] : rows.filter((row) => tagsOf(tagsBySubject, row.id).some((tag) => tag.id === tagId));
 
 /** Static role matrix from app/scripts/demo/permissions.mts. Read-only, for the demo audience. */
 const accessRows = [
@@ -272,12 +259,15 @@ const EmployeeFilterBar = ({
 }) => {
   const { t } = useModernI18n();
   const roleItems = [
-    { label: t(`${key}.filters.allRoles`), value: allOption },
-    ...employeeRoles.map((role) => ({ label: t(`${key}.roles.${role}`), value: role })),
+    { displayValue: t(`${key}.filters.allRoles`), label: t(`${key}.filters.allRoles`), value: allOption },
+    ...employeeRoles.map((role) => {
+      const label = t(`${key}.roles.${role}`);
+      return { displayValue: label, label, value: role };
+    }),
   ];
   const departmentItems = [
-    { label: t(`${key}.filters.allDepartments`), value: allOption },
-    ...departments.map((department) => ({ label: department, value: department })),
+    { displayValue: t(`${key}.filters.allDepartments`), label: t(`${key}.filters.allDepartments`), value: allOption },
+    ...departments.map((department) => ({ displayValue: department, label: department, value: department })),
   ];
   return (
     <div className="flex flex-wrap items-end gap-150">
@@ -384,7 +374,7 @@ const EmployeesPageContent = () => {
   const [form, setForm] = useState<{ readonly employee: Employee | null } | null>(null);
   const [bulk, setBulk] = useState<BulkDialogKind | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const tags = useEmployeeTagFilter();
+  const [tagFilter, setTagFilter] = useState<TagId | null>(null);
   const [tagDialogOpen, setTagDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -410,14 +400,7 @@ const EmployeesPageContent = () => {
         ),
       ),
       Effect.match({
-        onFailure: (error): CommitOutcome =>
-          Match.value(error).pipe(
-            Match.tag('ApplyCommandActionConflictProblem', (problem): CommitOutcome =>
-              problem.code === 'workforce_revision_conflict' ? 'conflict' : 'failed',
-            ),
-            Match.tag('ApplyCommandActionForbiddenProblem', (): CommitOutcome => 'forbidden'),
-            Match.orElse((): CommitOutcome => 'failed'),
-          ),
+        onFailure: outcomeOfFailure,
         onSuccess: (): CommitOutcome => 'saved',
       }),
       Effect.tap((outcome) =>
@@ -441,12 +424,10 @@ const EmployeesPageContent = () => {
     status: tagStatus,
     tagsBySubject,
   } = useTagsFor('employee', subjectIdsOf(items.map((employee) => employee.id)));
-  const tagsOf = (id: string): Tag[] =>
-    Option.match(subjectIdOf(id), {
-      onNone: (): Tag[] => [],
-      onSome: (subject): Tag[] => tagsBySubject.get(subject) ?? [],
-    });
-  const visible = tags.rows(filterEmployees(sortEmployees(items), filters));
+  // The tag filter works on the tags already loaded for the list, so picking a tag never waits for another read.
+  const tagFilterLoading = tagFilter !== null && tagStatus === 'loading';
+  const tagFilterFailed = tagFilter !== null && tagStatus === 'error';
+  const visible = rowsWithTag(filterEmployees(sortEmployees(items), filters), tagFilter, tagsBySubject);
   const selectedIds = items.flatMap((employee) => (selection[employee.id] === true ? [employee.id] : []));
 
   /** Any filter change clears the selection so a bulk action never reaches rows the user cannot see. */
@@ -456,19 +437,13 @@ const EmployeesPageContent = () => {
   };
 
   const changeTagFilter = (tagId: TagId | null) => {
-    tags.select(tagId);
+    setTagFilter(tagId);
     setSelection({});
   };
 
   const clearFilters = () => {
     updateFilters(noFilters);
-    tags.select(null);
-  };
-
-  /** After a bulk tag change the tag columns and the tag filter both reload. */
-  const afterBulkTag = () => {
-    refetchTags();
-    tags.reload();
+    setTagFilter(null);
   };
 
   const bulkSetActive = (active: boolean) => {
@@ -496,6 +471,13 @@ const EmployeesPageContent = () => {
 
   const columns: ColumnDef<Employee>[] = [
     { accessorKey: 'fullName', cell: nameCell, header: t(`${key}.columns.name`), meta: { width: 200 } },
+    {
+      cell: EmployeeTagsCell,
+      enableSorting: false,
+      header: t(`${key}.columns.tags`),
+      id: 'tags',
+      meta: { width: 180 },
+    },
     { accessorKey: 'email', cell: emailCell, header: t(`${key}.columns.email`), meta: { width: 240 } },
     {
       accessorFn: (row) => t(`${key}.roles.${row.role}`),
@@ -518,17 +500,10 @@ const EmployeesPageContent = () => {
       id: 'account',
       meta: { width: 110 },
     },
-    {
-      accessorFn: (row) => (tagStatus === 'loading' ? null : tagsOf(row.id)),
-      cell: tagsCell,
-      enableSorting: false,
-      header: t(`${key}.columns.tags`),
-      id: 'tags',
-      meta: { width: 180 },
-    },
   ];
 
   const translations: DataTableTranslations = {
+    ...dataTableRowLabels,
     actionsLabel: t(`${key}.table.actions`),
     filtersLabel: t(`${key}.table.filters`),
     loadingLabel: t(`${key}.table.loading`),
@@ -557,10 +532,10 @@ const EmployeesPageContent = () => {
     if (state.status === 'forbidden') {
       return <EmptyState title={t(`${key}.empty.forbidden`)} />;
     }
-    if (tags.failed) {
+    if (tagFilterFailed) {
       return <EmptyState description={t(`${key}.errors.loadDescription`)} title={t(`${key}.errors.load`)} />;
     }
-    if (hasActiveFilters(filters) || tags.tagId !== null) {
+    if (hasActiveFilters(filters) || tagFilter !== null) {
       return (
         <EmptyState
           action={
@@ -590,7 +565,7 @@ const EmployeesPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <Toaster />
+      <Toaster {...toasterLabels} />
       <div className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
@@ -611,7 +586,7 @@ const EmployeesPageContent = () => {
           filters={filters}
           onChange={updateFilters}
           onTagChange={changeTagFilter}
-          tagValue={tags.tagId}
+          tagValue={tagFilter}
         />
 
         {canWrite && (
@@ -626,31 +601,36 @@ const EmployeesPageContent = () => {
           />
         )}
 
-        <DataTable
-          columnPinning={pinning}
-          columns={columns}
-          data={visible}
-          enableColumnPinning
-          enablePagination
-          enableRowSelection={canWrite}
-          enableSorting
-          getRowId={(row) => row.id}
-          getRowLabel={(row) => row.original.fullName}
-          loading={state.status === 'loading' || tags.loading}
-          loadingRowCount={10}
-          maxHeight="calc(100dvh - 15rem)"
-          {...(canWrite
-            ? { onRowClick: (row: { readonly original: Employee }) => setForm({ employee: row.original }) }
-            : {})}
-          onRowSelectionChange={setSelection}
-          pageSizeOptions={pageSizeOptions}
-          renderEmpty={renderEmpty}
-          rowSelection={selection}
-          size="sm"
-          stickyHeader
-          tableLayout="fixed"
-          translations={translations}
-        />
+        <EmployeeTagStatusContext value={tagStatus}>
+          <EmployeeTagsContext value={tagsBySubject}>
+            <DataTable
+              columnPinning={pinning}
+              columns={columns}
+              data={visible}
+              enableColumnPinning
+              enablePagination
+              enableRowSelection={canWrite}
+              enableSorting
+              getRowId={(row) => row.id}
+              getRowLabel={(row) => row.original.fullName}
+              loading={state.status === 'loading' || tagFilterLoading}
+              loadingRowCount={10}
+              maxHeight="calc(100dvh - 15rem)"
+              paginationProps={{ translations: paginationTranslations }}
+              {...(canWrite
+                ? { onRowClick: (row: { readonly original: Employee }) => setForm({ employee: row.original }) }
+                : {})}
+              onRowSelectionChange={setSelection}
+              pageSizeOptions={pageSizeOptions}
+              renderEmpty={renderEmpty}
+              rowSelection={selection}
+              size="sm"
+              stickyHeader
+              tableLayout="fixed"
+              translations={translations}
+            />
+          </EmployeeTagsContext>
+        </EmployeeTagStatusContext>
 
         <PermissionsCard />
       </div>
@@ -658,7 +638,7 @@ const EmployeesPageContent = () => {
       {form !== null && <EmployeeFormDialog commit={commit} employee={form.employee} onClose={() => setForm(null)} />}
       <BulkTagDialog
         kind="employee"
-        onDone={afterBulkTag}
+        onDone={refetchTags}
         onOpenChange={setTagDialogOpen}
         open={tagDialogOpen}
         subjectIds={subjectIdsOf(selectedIds)}

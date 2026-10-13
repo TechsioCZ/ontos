@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Predicate, Schema, Struct } from 'effect';
 
 import {
+  WorkforceDuplicateEmail,
   WorkforceNotFound,
   WorkforcePermissionDenied,
   WorkforcePersistenceUnavailable,
@@ -89,11 +90,40 @@ const employeeNotFound = () =>
     reason: 'Employee does not exist in the authorized scope',
   });
 
+const duplicateEmail = () =>
+  new WorkforceDuplicateEmail({
+    code: 'workforce_duplicate_email',
+    reason: 'Another Employee already uses this e-mail address',
+  });
+
+const sameEmail = (left: string, right: string): boolean => left.trim().toLowerCase() === right.trim().toLowerCase();
+
+/** Employees are unique by e-mail, compared case-insensitively. `exceptIds` are the rows being changed. */
+const emailTaken = (
+  employees: readonly Employee[],
+  email: string,
+  exceptIds: ReadonlySet<EmployeeId> = new Set(),
+): boolean => employees.some((entry) => !exceptIds.has(entry.id) && sameEmail(entry.email, email));
+
+/**
+ * A patch is checked only when it changes an e-mail. Saving a row with its current e-mail always works, so rows
+ * that already share an e-mail (stored before this rule) stay editable.
+ */
+const patchTakesEmail = (
+  employees: readonly Employee[],
+  found: readonly Employee[],
+  patch: EmployeePatch,
+  targets: ReadonlySet<EmployeeId>,
+): boolean =>
+  patch.email !== undefined &&
+  found.some((entry) => !sameEmail(entry.email, patch.email ?? entry.email)) &&
+  emailTaken(employees, patch.email, targets);
+
 const createEmployee = (input: {
   readonly command: Extract<WorkforceCommand, { readonly _tag: 'CreateEmployee' }>;
   readonly now: DateTime.Utc;
   readonly state: WorkforceState;
-}): Effect.Effect<EmployeeChange, WorkforceRevisionConflict> => {
+}): Effect.Effect<EmployeeChange, WorkforceRevisionConflict | WorkforceDuplicateEmail> => {
   const { command, now, state } = input;
   if (state.employees.some((entry) => entry.id === command.id)) {
     return Effect.fail(
@@ -102,6 +132,9 @@ const createEmployee = (input: {
         reason: 'Employee identity is already in use',
       }),
     );
+  }
+  if (emailTaken(state.employees, command.email)) {
+    return Effect.fail(duplicateEmail());
   }
   const employee: Employee = {
     active: command.active,
@@ -123,12 +156,15 @@ const patchEmployees = (input: {
   readonly now: DateTime.Utc;
   readonly patch: EmployeePatch;
   readonly state: WorkforceState;
-}): Effect.Effect<EmployeeChange, WorkforceNotFound> => {
+}): Effect.Effect<EmployeeChange, WorkforceNotFound | WorkforceDuplicateEmail> => {
   const { ids, now, patch, state } = input;
   const targets = new Set(ids);
   const found = state.employees.filter((entry) => targets.has(entry.id));
   if (found.length !== targets.size) {
     return Effect.fail(employeeNotFound());
+  }
+  if (patchTakesEmail(state.employees, found, patch, targets)) {
+    return Effect.fail(duplicateEmail());
   }
   const employees = found.map((entry) => ({ ...entry, ...patch, updatedAt: now }));
   const replaced = new Map(employees.map((entry) => [entry.id, entry]));

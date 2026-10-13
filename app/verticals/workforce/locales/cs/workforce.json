@@ -93,11 +93,12 @@
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "department": "Vyplňte oddělení.",
           "email": "Zadejte e-mail ve tvaru jmeno@firma.cz.",
+          "emailTaken": "Tento e-mail už používá jiný zaměstnanec.",
           "forbidden": "K této operaci nemáte oprávnění.",
           "fullName": "Vyplňte jméno a příjmení.",
           "load": "Data se nepodařilo načíst.",
           "loadDescription": "Zkontrolujte připojení a zkuste to znovu.",
-          "phone": "Telefon má mít alespoň 3 znaky.",
+          "phone": "Zadejte telefon jako číslo, např. +420 777 123 456.",
           "retry": "Zkusit znovu",
           "save": "Zaměstnance se nepodařilo uložit. Zkuste to znovu."
         },

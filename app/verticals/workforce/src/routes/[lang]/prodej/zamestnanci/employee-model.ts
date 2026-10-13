@@ -4,7 +4,7 @@ import {
   EmployeeEmailSchema,
   EmployeeFullNameSchema,
   EmployeeIdSchema,
-  EmployeePhoneSchema,
+  EmployeePhoneInputSchema,
 } from '../../../../../shared/apis/records.ts';
 import type { Employee, EmployeeId, EmployeeRole } from '../../../../../shared/apis/records.ts';
 import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -88,7 +88,7 @@ export const isDepartmentName = (value: string): boolean =>
 
 const isFullName = (value: string): boolean => Option.isSome(Schema.decodeOption(EmployeeFullNameSchema)(value));
 const isEmail = (value: string): boolean => Option.isSome(Schema.decodeOption(EmployeeEmailSchema)(value));
-const isPhone = (value: string): boolean => Option.isSome(Schema.decodeOption(EmployeePhoneSchema)(value));
+const isPhone = (value: string): boolean => Option.isSome(Schema.decodeOption(EmployeePhoneInputSchema)(value));
 
 /** Field-level problems of a draft, checked against the same schemas the server uses. */
 export const draftErrors = (draft: EmployeeDraft): DraftField[] => {
@@ -165,5 +165,5 @@ export const newEmployeeId: Effect.Effect<EmployeeId> = Effect.all(
   Effect.orDie,
 );
 
-export const CommitOutcomeSchema = Schema.Literals(['saved', 'conflict', 'forbidden', 'failed']);
+export const CommitOutcomeSchema = Schema.Literals(['saved', 'conflict', 'duplicateEmail', 'forbidden', 'failed']);
 export type CommitOutcome = typeof CommitOutcomeSchema.Type;

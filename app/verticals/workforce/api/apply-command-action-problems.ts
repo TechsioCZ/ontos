@@ -126,6 +126,7 @@ export const applyCommandActionProblem = {
 const mapDomainProblem = (error: DomainError): ApplyCommandActionProblem =>
   Match.value(error).pipe(
     Match.tags({
+      WorkforceDuplicateEmail: () => applyCommandActionProblem.ineligible('workforce_duplicate_email'),
       WorkforceLifecycleConflict: () => applyCommandActionProblem.conflict('workforce_lifecycle_conflict'),
       WorkforceNotFound: () => applyCommandActionProblem.notFound('workforce_not_found'),
       WorkforcePermissionDenied: () => applyCommandActionProblem.forbidden('workforce_permission_denied'),

@@ -8,12 +8,13 @@ import { WorkforcePersistenceUnavailable } from '../errors/workforce-persistence
 import { WorkforceReferenceUnavailable } from '../errors/workforce-reference-unavailable.ts';
 import { WorkforceReferenceIneligible } from '../errors/workforce-reference-ineligible.ts';
 import { WorkforcePermissionDenied } from '../errors/workforce-permission-denied.ts';
+import { WorkforceDuplicateEmail } from '../errors/workforce-duplicate-email.ts';
 import {
   EmployeeDepartmentSchema,
   EmployeeEmailSchema,
   EmployeeFullNameSchema,
   EmployeeIdSchema,
-  EmployeePhoneSchema,
+  EmployeePhoneInputSchema,
   EmployeeRoleSchema,
   EmployeeSchema,
 } from '../apis/records.ts';
@@ -23,7 +24,7 @@ const employeeFields = {
   department: EmployeeDepartmentSchema,
   email: EmployeeEmailSchema,
   fullName: EmployeeFullNameSchema,
-  phone: Schema.optionalKey(EmployeePhoneSchema),
+  phone: Schema.optionalKey(EmployeePhoneInputSchema),
   principalRef: Schema.optionalKey(PrincipalRefSchema),
   role: EmployeeRoleSchema,
 };
@@ -34,7 +35,7 @@ const employeePatchFields = {
   department: Schema.optionalKey(EmployeeDepartmentSchema),
   email: Schema.optionalKey(EmployeeEmailSchema),
   fullName: Schema.optionalKey(EmployeeFullNameSchema),
-  phone: Schema.optionalKey(EmployeePhoneSchema),
+  phone: Schema.optionalKey(EmployeePhoneInputSchema),
   principalRef: Schema.optionalKey(PrincipalRefSchema),
   role: Schema.optionalKey(EmployeeRoleSchema),
 };
@@ -81,6 +82,7 @@ export const WorkforceErrorSchema = Schema.Union([
   WorkforceReferenceUnavailable,
   WorkforceReferenceIneligible,
   WorkforcePermissionDenied,
+  WorkforceDuplicateEmail,
 ]);
 export type WorkforceError = typeof WorkforceErrorSchema.Type;
 export { WorkforceScopeMismatch } from '../errors/workforce-scope-mismatch.ts';
@@ -91,3 +93,4 @@ export { WorkforcePersistenceUnavailable } from '../errors/workforce-persistence
 export { WorkforceReferenceUnavailable } from '../errors/workforce-reference-unavailable.ts';
 export { WorkforceReferenceIneligible } from '../errors/workforce-reference-ineligible.ts';
 export { WorkforcePermissionDenied } from '../errors/workforce-permission-denied.ts';
+export { WorkforceDuplicateEmail } from '../errors/workforce-duplicate-email.ts';
