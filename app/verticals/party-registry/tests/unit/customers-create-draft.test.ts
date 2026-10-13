@@ -2,6 +2,9 @@ import { expect, it } from 'effect-rstest';
 
 import {
   customerNameMaxLength,
+  czechCollator,
+  formatPostalCode,
+  normalizedCustomerName,
   validateCreateDraft,
 } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
 import type { CreateDraft } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
@@ -35,4 +38,22 @@ it('checks the IČO format first and the mod-11 checksum second', () => {
 
 it('keeps the name length limit that the owner subject key enforces', () => {
   expect(customerNameMaxLength).toBe(200);
+});
+
+it('writes a Czech postal code with the space, and leaves other codes as they are', () => {
+  expect(formatPostalCode('17000')).toBe('170 00');
+  expect(formatPostalCode('170 00')).toBe('170 00');
+  expect(formatPostalCode('')).toBe('');
+});
+
+it('treats names that differ only by case or spacing as the same customer name', () => {
+  expect(normalizedCustomerName('  Ústí   Servis s.r.o. ')).toBe(normalizedCustomerName('ústí servis s.r.o.'));
+  expect(normalizedCustomerName('Ústí servis')).not.toBe(normalizedCustomerName('Ustí servis'));
+});
+
+it('sorts names by Czech collation, so č follows c and š follows s', () => {
+  const sorted = ['Šprynar', 'Zeman', 'Čermák', 'Hora', 'Dvořák'].toSorted((left, right) =>
+    czechCollator.compare(left, right),
+  );
+  expect(sorted).toEqual(['Čermák', 'Dvořák', 'Hora', 'Šprynar', 'Zeman']);
 });

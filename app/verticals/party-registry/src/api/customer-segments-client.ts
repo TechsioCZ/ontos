@@ -20,7 +20,20 @@
 import { makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { DateTime, Duration, Effect, Exit, Option, Random, Redacted, Schedule, Schema, SchemaGetter } from 'effect';
+import {
+  DateTime,
+  Duration,
+  Effect,
+  Encoding,
+  Exit,
+  Option,
+  Random,
+  Redacted,
+  Result,
+  Schedule,
+  Schema,
+  SchemaGetter,
+} from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
@@ -203,11 +216,58 @@ export class CustomerSegmentsError extends Schema.TaggedError<CustomerSegmentsEr
 const ProblemDetailSchema = Schema.Struct({ detail: Schema.String });
 const isRetryableProblem = Schema.is(Schema.Struct({ retryable: Schema.Literal(true) }));
 const isForbiddenProblem = Schema.is(Schema.Struct({ status: Schema.Literal(403) }));
+const isSegmentsError = Schema.is(CustomerSegmentsError);
 const toSegmentsError = (cause: unknown) =>
-  new CustomerSegmentsError({
-    forbidden: isForbiddenProblem(cause),
-    reason: Schema.is(ProblemDetailSchema)(cause) ? cause.detail : String(cause),
-    retryable: isRetryableProblem(cause),
+  isSegmentsError(cause)
+    ? cause
+    : new CustomerSegmentsError({
+        forbidden: isForbiddenProblem(cause),
+        reason: Schema.is(ProblemDetailSchema)(cause) ? cause.detail : String(cause),
+        retryable: isRetryableProblem(cause),
+      });
+
+/**
+ * A role without the create permission gets a 403 for create-customer-group on every full page load, because the
+ * module cache below starts empty each time. The refusal is therefore also kept in sessionStorage, keyed by the
+ * principal and tenant named in the gateway assertion, and a later load with the same identity skips the request.
+ * Another account or tenant in the same tab has a different key, so it still asks the owner.
+ */
+const refusedCreateStorageKey = (principalKey: string) => `party-registry.segments.create-refused:${principalKey}`;
+const AssertionClaimsSchema = Schema.fromJsonString(
+  Schema.Struct({ principal: Schema.Struct({ principalId: Schema.String, tenantId: Schema.String }) }),
+);
+const decodeAssertionClaims = Schema.decodeUnknownOption(AssertionClaimsSchema);
+/** `principalId:tenantId` read from the unverified payload of a `Bearer <jwt>` credential, if it has one. */
+const principalKeyOf = (credential: Redacted.Redacted): string | undefined => {
+  const [, payload] = Redacted.value(credential)
+    .replace(/^Bearer /u, '')
+    .split('.');
+  const json = payload === undefined ? undefined : Result.getOrUndefined(Encoding.decodeBase64UrlString(payload));
+  const claims = json === undefined ? Option.none() : decodeAssertionClaims(json);
+  return Option.isSome(claims) ? `${claims.value.principal.principalId}:${claims.value.principal.tenantId}` : undefined;
+};
+const sessionStorageOrUndefined = (): Storage | undefined =>
+  'sessionStorage' in globalThis ? globalThis.sessionStorage : undefined;
+const createWasRefused = (principalKey: string | undefined): boolean => {
+  if (principalKey === undefined) {
+    return false;
+  }
+  try {
+    return sessionStorageOrUndefined()?.getItem(refusedCreateStorageKey(principalKey)) === '1';
+  } catch {
+    return false;
+  }
+};
+const rememberCreateRefusal = (principalKey: string | undefined) =>
+  Effect.sync(() => {
+    if (principalKey === undefined) {
+      return;
+    }
+    try {
+      sessionStorageOrUndefined()?.setItem(refusedCreateStorageKey(principalKey), '1');
+    } catch {
+      // Storage is full or blocked: the next full page load asks the owner again.
+    }
   });
 
 const correlation = (operation: string) =>
@@ -280,8 +340,19 @@ interface SegmentGroup {
 }
 
 const resolveSegment = (definition: CustomerSegmentDefinition & { readonly businessCode: CustomerSegmentCode }) =>
-  viaOwner('segment', 'action', ({ config, options }) =>
-    makeGovernedEffectBffClient({ api: CreateGroupApi, ...config }, options).pipe(
+  viaOwner('segment', 'action', ({ config, options }) => {
+    const principalKey = principalKeyOf(config.credential);
+    const refusedEarlier: Effect.Effect<void, CustomerSegmentsError> = createWasRefused(principalKey)
+      ? Effect.fail(
+          new CustomerSegmentsError({
+            forbidden: true,
+            reason: 'create-customer-group was refused earlier in this browser session',
+            retryable: false,
+          }),
+        )
+      : Effect.void;
+    return refusedEarlier.pipe(
+      Effect.andThen(makeGovernedEffectBffClient({ api: CreateGroupApi, ...config }, options)),
       Effect.flatMap((client) =>
         client.CreateCustomerGroupAction.execute({
           payload: {
@@ -296,8 +367,9 @@ const resolveSegment = (definition: CustomerSegmentDefinition & { readonly busin
           },
         }),
       ),
-    ),
-  ).pipe(
+      Effect.tapError((cause) => (isForbiddenProblem(cause) ? rememberCreateRefusal(principalKey) : Effect.void)),
+    );
+  }).pipe(
     Effect.map(({ group }): SegmentGroup | undefined =>
       group.currentState === 'ACTIVE'
         ? {

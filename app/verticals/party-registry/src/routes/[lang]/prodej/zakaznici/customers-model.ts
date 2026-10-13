@@ -13,6 +13,9 @@ const epochMillisOf = (iso: string): Option.Option<number> =>
 /** Missing or empty text renders as an em dash. */
 export const orDash = (value: string | null): string => (value === null || value.length === 0 ? '—' : value);
 
+/** Czech alphabetical order, so diacritics sort as Czech letters (č after c, š after s). */
+export const czechCollator = new Intl.Collator('cs-CZ');
+
 /** Reason stored on every party archived from the bulk-edit dialog. */
 export const bulkArchiveReason = 'Hromadná archivace ze seznamu zákazníků';
 
@@ -23,7 +26,10 @@ export interface CustomerStats {
   readonly withEmail: number;
 }
 
-/** Total, new, e-mail and archived counts. Active customers only, except the archived count. */
+/**
+ * Total, new, e-mail and archived counts. The total counts every listed customer, archived included, because the
+ * table shows archived rows by default and the header must match its row count. New and e-mail counts stay active only.
+ */
 export const computeCustomerStats = (items: readonly CustomerListItem[], nowMillis: number): CustomerStats => {
   const active = items.filter((item) => item.status === 'ACTIVE');
   const threshold = nowMillis - NEW_CUSTOMER_WINDOW_MS;
@@ -35,7 +41,7 @@ export const computeCustomerStats = (items: readonly CustomerListItem[], nowMill
         onSome: (created) => created >= threshold,
       }),
     ).length,
-    total: active.length,
+    total: items.length,
     withEmail: active.filter((item) => item.email !== null && item.email.length > 0).length,
   };
 };
@@ -72,6 +78,14 @@ export interface AresPrefill {
 
 const textOf = (value: Option.Option<string>): string | undefined => Option.getOrUndefined(value);
 
+/** Czech postal codes are written as `170 00`; ARES returns five bare digits. */
+export const formatPostalCode = (value: string): string =>
+  /^\d{5}$/u.test(value) ? `${value.slice(0, 3)} ${value.slice(3)}` : value;
+
+/** Name key for duplicate checks: whitespace collapsed and case folded the way Czech text compares. */
+export const normalizedCustomerName = (value: string): string =>
+  value.trim().replaceAll(/\s+/gu, ' ').toLocaleLowerCase('cs-CZ');
+
 /** Maps an ARES subject onto the create form. Missing provider fields stay undefined. */
 export const prefillFromAres = (evidence: AresSubjectEvidence): AresPrefill => {
   const address = Option.getOrUndefined(evidence.subject.registeredAddress);
@@ -99,7 +113,7 @@ export const prefillFromAres = (evidence: AresSubjectEvidence): AresPrefill => {
       prefill.city = city;
     }
     if (postalCode !== undefined) {
-      prefill.postalCode = postalCode;
+      prefill.postalCode = formatPostalCode(postalCode);
     }
   }
   return prefill;

@@ -33,9 +33,15 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { CustomerBulkEditDialog } from './customer-bulk-edit-dialog.tsx';
 import { CustomerCreateDialog } from './customer-create-dialog.tsx';
 import { CustomerDetailDialog } from './customer-detail-dialog.tsx';
-import { loadCustomers } from './customers-data.ts';
+import { customerWritesRefused, loadCustomers, rememberCustomerWriteRefusal } from './customers-data.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
-import { buildCustomersCsv, computeCustomerStats, matchesCustomerSearch, orDash } from './customers-model.ts';
+import {
+  buildCustomersCsv,
+  computeCustomerStats,
+  czechCollator,
+  matchesCustomerSearch,
+  orDash,
+} from './customers-model.ts';
 import { subjectIdOf, useCustomerEnrichment } from './use-customer-enrichment.ts';
 
 const key = 'party-registry.pages.customers';
@@ -43,8 +49,8 @@ const pageSizeOptions = [50, 100, 200];
 /** The row-selection column stays first, ahead of the pinned name. */
 const pinning = { end: [], start: ['__select', 'displayName'] };
 /**
- * Phone, DIČ and Stav stay in the column menu. Segment has no entry here: it shows by default and starts
- * hidden when its lookup fails, and an explicit toggle in the column menu always wins.
+ * Phone, DIČ and Stav stay in the column menu. Segment shows by default; when its lookup fails the column is
+ * left out entirely, so the column menu never offers a column of dashes.
  */
 const defaultColumnVisibility = { phone: false, status: false, vatId: false } satisfies ColumnVisibility;
 const allSegments = 'all';
@@ -162,6 +168,40 @@ const CustomerFilterRow = ({
   );
 };
 
+interface CustomerBulkBarProps {
+  readonly onClear: () => void;
+  /** Absent without customer write: the only bulk edit left is tags, which the Štítky button already offers. */
+  readonly onEdit: (() => void) | undefined;
+  readonly onExport: () => void;
+  readonly onTags: () => void;
+  readonly selectedCount: number;
+}
+
+const CustomerBulkBar = ({ onClear, onEdit, onExport, onTags, selectedCount }: CustomerBulkBarProps) => {
+  const { t } = useModernI18n();
+  return (
+    <BulkActionBar onClear={onClear} selectedCount={selectedCount}>
+      <Button icon="icon-[mdi--tag-multiple-outline]" onClick={onTags} size="sm" theme="outlined" variant="secondary">
+        {t(`${key}.bulk.tags`)}
+      </Button>
+      {onEdit !== undefined && (
+        <Button icon="icon-[mdi--square-edit-outline]" onClick={onEdit} size="sm" theme="outlined" variant="secondary">
+          {t(`${key}.bulk.edit`)}
+        </Button>
+      )}
+      <Button
+        icon="icon-[mdi--file-delimited-outline]"
+        onClick={onExport}
+        size="sm"
+        theme="outlined"
+        variant="secondary"
+      >
+        {t(`${key}.bulk.exportCsv`)}
+      </Button>
+    </BulkActionBar>
+  );
+};
+
 const CustomersContent = () => {
   const { t } = useModernI18n();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -173,6 +213,12 @@ const CustomersContent = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
   const [segmentFilter, setSegmentFilter] = useState<string>(allSegments);
+  /** The owner refused a customer write for this role, so create and archive actions are hidden. */
+  const [writesRefused, setWritesRefused] = useState(customerWritesRefused);
+  const refuseWrites = () => {
+    rememberCustomerWriteRefusal();
+    setWritesRefused(true);
+  };
 
   useEffect(() => {
     loadCustomersInto(setState);
@@ -202,16 +248,25 @@ const CustomersContent = () => {
   const selectedItems = items.filter((item) => selection[item.counterpartyId] === true);
   const selectedSubjectIds = selectedItems.map((item) => subjectIdOf(item.partyId));
   const statusLabel = (item: CustomerListItem) => t(`${key}.status.${item.status}`);
-  // Segment lookup is best effort: a failed lookup hides the column by default and shows no error banner.
-  // A user toggle stores an explicit segment entry, which overrides that default.
-  const effectiveVisibility = { segment: !enrichment.segmentsFailed, ...columnVisibility };
   const segmentCell = (info: CellContext<CustomerListItem>) => {
     const segment = segments?.get(info.row.original.partyId);
     if (segment !== undefined) {
       return segment.name;
     }
-    return segments === null && !enrichment.segmentsFailed ? '…' : '—';
+    return segments === null ? '…' : '—';
   };
+  // Segment lookup is best effort: a failed lookup drops the column and shows no error banner.
+  const segmentColumns: ColumnDef<CustomerListItem>[] = enrichment.segmentsFailed
+    ? []
+    : [
+        {
+          cell: segmentCell,
+          enableSorting: false,
+          header: t(`${key}.columns.segment`),
+          id: 'segment',
+          meta: { width: 120 },
+        },
+      ];
   const tagsCell = (info: CellContext<CustomerListItem>) => {
     if (tagStatus === 'error') {
       return <span className="text-sm">{t(`${key}.tags.failed`)}</span>;
@@ -221,17 +276,21 @@ const CustomersContent = () => {
 
   // Seven visible columns at 1440px; phone, DIČ and Stav live in the column menu.
   const columns: ColumnDef<CustomerListItem>[] = [
-    { accessorKey: 'displayName', cell: nameCell, header: t(`${key}.columns.name`), meta: { width: 220 } },
+    {
+      accessorKey: 'displayName',
+      cell: nameCell,
+      header: t(`${key}.columns.name`),
+      meta: { width: 220 },
+      sortFn: (rowA, rowB, columnId) =>
+        czechCollator.compare(
+          rowA.getValue<string | null>(columnId) ?? '',
+          rowB.getValue<string | null>(columnId) ?? '',
+        ),
+    },
     { accessorKey: 'companyId', cell: textCell, header: t(`${key}.columns.companyId`), meta: { width: 100 } },
     { accessorKey: 'city', cell: textCell, header: t(`${key}.columns.city`), meta: { width: 130 } },
     { accessorKey: 'email', cell: textCell, header: t(`${key}.columns.email`), meta: { width: 210 } },
-    {
-      cell: segmentCell,
-      enableSorting: false,
-      header: t(`${key}.columns.segment`),
-      id: 'segment',
-      meta: { width: 120 },
-    },
+    ...segmentColumns,
     {
       accessorKey: 'createdAt',
       cell: dateCell,
@@ -322,9 +381,11 @@ const CustomersContent = () => {
     return (
       <EmptyState
         action={
-          <Button onClick={openCreate} size="sm" theme="outlined" variant="secondary">
-            {t(`${key}.newCustomer`)}
-          </Button>
+          writesRefused ? undefined : (
+            <Button onClick={openCreate} size="sm" theme="outlined" variant="secondary">
+              {t(`${key}.newCustomer`)}
+            </Button>
+          )
         }
         description={t(`${key}.state.emptyDescription`)}
         title={t(`${key}.state.emptyTitle`)}
@@ -340,9 +401,11 @@ const CustomersContent = () => {
       <div className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
-            <Button icon="icon-[mdi--plus]" onClick={openCreate} size="sm" variant="primary">
-              {t(`${key}.newCustomer`)}
-            </Button>
+            writesRefused ? undefined : (
+              <Button icon="icon-[mdi--plus]" onClick={openCreate} size="sm" variant="primary">
+                {t(`${key}.newCustomer`)}
+              </Button>
+            )
           }
           description={t(`${key}.description`)}
           title={t(`${key}.title`)}
@@ -366,40 +429,18 @@ const CustomersContent = () => {
           tagFilterLoading={enrichment.tagFilterLoading}
         />
 
-        <BulkActionBar onClear={() => setSelection({})} selectedCount={selectedItems.length}>
-          <Button
-            icon="icon-[mdi--tag-multiple-outline]"
-            onClick={() => setTagOpen(true)}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            {t(`${key}.bulk.tags`)}
-          </Button>
-          <Button
-            icon="icon-[mdi--square-edit-outline]"
-            onClick={() => setEditOpen(true)}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            {t(`${key}.bulk.edit`)}
-          </Button>
-          <Button
-            icon="icon-[mdi--file-delimited-outline]"
-            onClick={exportSelected}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            {t(`${key}.bulk.exportCsv`)}
-          </Button>
-        </BulkActionBar>
+        <CustomerBulkBar
+          onClear={() => setSelection({})}
+          onEdit={writesRefused ? undefined : () => setEditOpen(true)}
+          onExport={exportSelected}
+          onTags={() => setTagOpen(true)}
+          selectedCount={selectedItems.length}
+        />
 
         <DataTable
           columnPinning={pinning}
           columns={columns}
-          columnVisibility={effectiveVisibility}
+          columnVisibility={columnVisibility}
           data={visible}
           enableColumnPinning
           enableColumnVisibility
@@ -425,13 +466,20 @@ const CustomersContent = () => {
         />
       </div>
 
-      <CustomerCreateDialog onCreated={reload} onOpenChange={setCreateOpen} open={createOpen} />
+      <CustomerCreateDialog
+        existing={items}
+        onCreated={reload}
+        onOpenChange={setCreateOpen}
+        onWriteRefused={refuseWrites}
+        open={createOpen}
+      />
       <CustomerDetailDialog customer={detail} onOpenChange={closeDetail} onRenamed={reload} />
       <CustomerBulkEditDialog
         items={selectedItems}
         onArchived={reload}
         onChooseTag={() => setTagOpen(true)}
         onOpenChange={setEditOpen}
+        onWriteRefused={refuseWrites}
         open={editOpen}
       />
       <BulkTagDialog

@@ -10,6 +10,7 @@ import { useState } from 'react';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { archiveCustomer } from '../../../../api/customers-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { isCustomerWriteForbidden } from './customers-data.ts';
 import { bulkArchiveReason } from './customers-model.ts';
 
 const KEY = 'party-registry.pages.customers.bulkEdit';
@@ -27,26 +28,45 @@ type ArchiveError = Effect.Error<ReturnType<typeof archiveCustomer>>;
 
 interface ArchiveOutcome {
   readonly customer: CustomerListItem;
+  /** `none` when archived, or when the batch stopped before this row because the owner refused the role. */
   readonly failure: Option.Option<ArchiveError>;
+  readonly skipped?: true;
 }
 
 const advanceCount = (count: number) => count + 1;
 
+/** Archives run a few at a time: each one waits for its own gateway assertion, so one by one took half a minute. */
+const ARCHIVE_CONCURRENCY = 4;
+
+interface ArchiveBatch {
+  /** Set by the first 403: every other row would be refused the same way, so the rest are not sent. */
+  forbidden: boolean;
+}
+
 /** Archives one customer. A failure is kept on its outcome so the batch keeps going and reports per row. */
-const archiveOne = (customer: CustomerListItem, onStep: () => void) =>
-  archiveCustomer(customer, bulkArchiveReason).pipe(
-    Effect.match({
-      onFailure: (failure): ArchiveOutcome => ({ customer, failure: Option.some(failure) }),
-      onSuccess: (): ArchiveOutcome => ({ customer, failure: Option.none() }),
-    }),
-    Effect.tap(() => Effect.sync(onStep)),
-  );
+const archiveOne = (customer: CustomerListItem, batch: ArchiveBatch, onStep: () => void) =>
+  batch.forbidden
+    ? Effect.succeed<ArchiveOutcome>({ customer, failure: Option.none(), skipped: true })
+    : archiveCustomer(customer, bulkArchiveReason).pipe(
+        Effect.match({
+          onFailure: (failure): ArchiveOutcome => {
+            if (isCustomerWriteForbidden(failure)) {
+              batch.forbidden = true;
+            }
+            return { customer, failure: Option.some(failure) };
+          },
+          onSuccess: (): ArchiveOutcome => ({ customer, failure: Option.none() }),
+        }),
+        Effect.tap(() => Effect.sync(onStep)),
+      );
 
 export interface CustomerBulkEditDialogProps {
   readonly items: readonly CustomerListItem[];
   readonly onArchived: () => void;
   readonly onChooseTag: () => void;
   readonly onOpenChange: (open: boolean) => void;
+  /** The owner refused an archive with 403: this role may not write customers. */
+  readonly onWriteRefused: () => void;
   readonly open: boolean;
 }
 
@@ -55,6 +75,7 @@ export const CustomerBulkEditDialog = ({
   onArchived,
   onChooseTag,
   onOpenChange,
+  onWriteRefused,
   open,
 }: CustomerBulkEditDialogProps) => {
   const { t } = useModernI18n();
@@ -74,10 +95,20 @@ export const CustomerBulkEditDialog = ({
     onOpenChange(false);
   };
 
-  const finish = (outcomes: readonly ArchiveOutcome[]) => {
+  const finish = (outcomes: readonly ArchiveOutcome[], batch: ArchiveBatch) => {
+    if (batch.forbidden) {
+      // A refused role archived nothing, so the reason replaces the per-row list.
+      setBusy(false);
+      setNotice(t(`${KEY}.archiveForbidden`));
+      onWriteRefused();
+      return;
+    }
     const failures: string[] = [];
     let archived = 0;
     for (const outcome of outcomes) {
+      if (outcome.skipped === true) {
+        continue;
+      }
       if (Option.isSome(outcome.failure)) {
         failures.push(outcome.customer.displayName ?? outcome.customer.counterpartyId);
       } else {
@@ -105,10 +136,11 @@ export const CustomerBulkEditDialog = ({
     setDone(0);
     setFailed([]);
     setNotice(null);
+    const batch: ArchiveBatch = { forbidden: false };
     void browserRuntime.runPromise(
-      Effect.forEach(activeItems, (customer) => archiveOne(customer, advance), { concurrency: 1 }).pipe(
-        Effect.map(finish),
-      ),
+      Effect.forEach(activeItems, (customer) => archiveOne(customer, batch, advance), {
+        concurrency: ARCHIVE_CONCURRENCY,
+      }).pipe(Effect.map((outcomes) => finish(outcomes, batch))),
     );
   };
 
@@ -147,7 +179,7 @@ export const CustomerBulkEditDialog = ({
         }
       }}
       open={open}
-      size="sm"
+      size="md"
       title={t(`${KEY}.title`)}
     >
       <div className="flex flex-col gap-200 py-200">
@@ -167,7 +199,7 @@ export const CustomerBulkEditDialog = ({
           </RadioGroup.ItemGroup>
         </RadioGroup>
         {action === 'archive' && !busy && failed.length === 0 && (
-          <p className="text-sm">{t(`${KEY}.archiveConfirm`, { total: activeItems.length })}</p>
+          <p className="text-sm">{t(`${KEY}.archiveConfirm`, { count: activeItems.length })}</p>
         )}
         {busy && <p className="text-sm">{t(`${KEY}.progress`, { done, total: activeItems.length })}</p>}
         {notice !== null && <StatusText status="error">{notice}</StatusText>}
