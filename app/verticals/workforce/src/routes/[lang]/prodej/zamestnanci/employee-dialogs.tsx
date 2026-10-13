@@ -72,8 +72,8 @@ export const selectLabelProps = { className: 'text-label-md' };
 
 const closeWhenDismissed =
   (onClose: () => void) =>
-  (details: { readonly open: boolean }): void => {
-    if (!details.open) {
+  (open: boolean): void => {
+    if (!open) {
       onClose();
     }
   };
@@ -344,7 +344,7 @@ export const BulkDepartmentDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={onClose} theme="outlined" variant="secondary">
@@ -355,12 +355,13 @@ export const BulkDepartmentDialog = ({
           </Button>
         </>
       }
-      closeLabel={dialogCloseLabel}
       closeOnInteractOutside={false}
-      customTrigger
       description={t(`${key}.bulk.description`, { total: ids.length })}
+      // The first field takes focus, not the close button the panel renders first.
+      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#bulk-department')}
       onOpenChange={closeWhenDismissed(onClose)}
       open
+      size="md"
       title={t(`${key}.bulk.departmentTitle`)}
     >
       <form
@@ -387,7 +388,7 @@ export const BulkDepartmentDialog = ({
           {...(invalid ? { helpText: t(`${key}.errors.department`), validateStatus: 'error' as const } : {})}
         />
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };
 
@@ -429,7 +430,7 @@ export const BulkRoleDialog = ({
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={onClose} theme="outlined" variant="secondary">
@@ -440,12 +441,13 @@ export const BulkRoleDialog = ({
           </Button>
         </>
       }
-      closeLabel={dialogCloseLabel}
       closeOnInteractOutside={false}
-      customTrigger
       description={t(`${key}.bulk.description`, { total: ids.length })}
+      // The first field takes focus. A Select trigger has the DOM id `select:<id>:trigger`.
+      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="select:bulk-role:trigger"]')}
       onOpenChange={closeWhenDismissed(onClose)}
       open
+      size="md"
       title={t(`${key}.bulk.roleTitle`)}
     >
       <div className="flex flex-col gap-200 py-200">
@@ -455,6 +457,7 @@ export const BulkRoleDialog = ({
           </StatusText>
         )}
         <SelectTemplate
+          id="bulk-role"
           items={roleItems}
           label={t(`${key}.form.role`)}
           labelProps={selectLabelProps}
@@ -469,6 +472,6 @@ export const BulkRoleDialog = ({
           value={[role]}
         />
       </div>
-    </Dialog>
+    </SidePanel>
   );
 };

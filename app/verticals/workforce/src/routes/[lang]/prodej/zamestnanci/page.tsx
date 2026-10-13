@@ -23,7 +23,7 @@ import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
+import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Effect, Match, Option, Schema } from 'effect';
 import { createContext, use, useEffect, useState } from 'react';
@@ -95,6 +95,10 @@ const loadEmployees = (onLoaded: (state: LoadState) => void): void => {
     ),
   );
 };
+
+/** Text columns sort in Czech collation. The default sort compares code points, so "Účetní" would land after "Vedoucí". */
+const czechSortFn = (left: Row<Employee>, right: Row<Employee>, columnId: string): number =>
+  left.getValue<string>(columnId).localeCompare(right.getValue<string>(columnId), 'cs');
 
 const nameCell = (info: CellContext<Employee>) => (
   <span className="block truncate font-medium">{info.row.original.fullName}</span>
@@ -398,6 +402,56 @@ const EmployeeBulkBar = ({
   );
 };
 
+/**
+ * Table columns. The text columns sort in Czech collation; the others keep the table's default sort. The widths plus the
+ * 44 px selection column add up to 1104 px, so at a 1440 px window (256 px sidebar, page padding) the table needs no
+ * horizontal scroll and the last column is not clipped. Wider windows share the spare width across the columns.
+ */
+const employeeColumns = (t: (key: string) => string): ColumnDef<Employee>[] => [
+  {
+    accessorKey: 'fullName',
+    cell: nameCell,
+    header: t(`${key}.columns.name`),
+    meta: { width: 190 },
+    sortFn: czechSortFn,
+  },
+  {
+    cell: EmployeeTagsCell,
+    enableSorting: false,
+    header: t(`${key}.columns.tags`),
+    id: 'tags',
+    meta: { width: 160 },
+  },
+  { accessorKey: 'email', cell: emailCell, header: t(`${key}.columns.email`), meta: { width: 220 } },
+  {
+    accessorFn: (row) => t(`${key}.roles.${row.role}`),
+    header: t(`${key}.columns.role`),
+    id: 'role',
+    meta: { width: 140 },
+    sortFn: czechSortFn,
+  },
+  {
+    accessorKey: 'department',
+    header: t(`${key}.columns.department`),
+    meta: { width: 150 },
+    sortFn: czechSortFn,
+  },
+  {
+    accessorFn: (row) => t(row.active ? `${key}.status.active` : `${key}.status.inactive`),
+    cell: statusCell,
+    header: t(`${key}.columns.status`),
+    id: 'status',
+    meta: { width: 100 },
+  },
+  {
+    accessorFn: (row) => t(row.principalRef === undefined ? `${key}.account.none` : `${key}.account.linked`),
+    cell: accountCell,
+    header: t(`${key}.columns.account`),
+    id: 'account',
+    meta: { width: 100 },
+  },
+];
+
 const EmployeesPageContent = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
@@ -508,38 +562,7 @@ const EmployeesPageContent = () => {
     setSelection({});
   };
 
-  const columns: ColumnDef<Employee>[] = [
-    { accessorKey: 'fullName', cell: nameCell, header: t(`${key}.columns.name`), meta: { width: 200 } },
-    {
-      cell: EmployeeTagsCell,
-      enableSorting: false,
-      header: t(`${key}.columns.tags`),
-      id: 'tags',
-      meta: { width: 180 },
-    },
-    { accessorKey: 'email', cell: emailCell, header: t(`${key}.columns.email`), meta: { width: 240 } },
-    {
-      accessorFn: (row) => t(`${key}.roles.${row.role}`),
-      header: t(`${key}.columns.role`),
-      id: 'role',
-      meta: { width: 150 },
-    },
-    { accessorKey: 'department', header: t(`${key}.columns.department`), meta: { width: 160 } },
-    {
-      accessorFn: (row) => t(row.active ? `${key}.status.active` : `${key}.status.inactive`),
-      cell: statusCell,
-      header: t(`${key}.columns.status`),
-      id: 'status',
-      meta: { width: 110 },
-    },
-    {
-      accessorFn: (row) => t(row.principalRef === undefined ? `${key}.account.none` : `${key}.account.linked`),
-      cell: accountCell,
-      header: t(`${key}.columns.account`),
-      id: 'account',
-      meta: { width: 110 },
-    },
-  ];
+  const columns = employeeColumns(t);
 
   const translations: DataTableTranslations = {
     ...dataTableRowLabels,
