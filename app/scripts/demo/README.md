@@ -19,12 +19,15 @@ Local only. Nothing here deploys. Run everything from `app/`.
    This starts `ontos-demo-db` (Postgres 18) and `ontos-demo-spicedb` (in-memory) in a separate
    project with its own `ontos_demo_postgres_data` volume.
 3. `pnpm db:migrate`, `pnpm local:initialize`, `pnpm demo:reset`, `pnpm db:verify`, and
-   `pnpm authorization:provision-current-actions` (see Known issues).
+   `node scripts/demo/provision-actions.mts` (development replacement for
+   `pnpm authorization:provision-current-actions`, see Known issues).
 4. Native builds of the shell and each selected vertical, run only when an app has no build or its
    sources (or `packages/`, or the lockfile) changed since its last build.
 5. Starts `modern serve` for the shell and each vertical. Then it starts the composition publisher
    (`scripts/siampark/development-composition.mts`) and the outbox worker host
    (`scripts/outbox-worker-host.generated.mts`).
+6. `node scripts/demo/reset-permissions.mts`: sales-demo accounts, role grants and the agent-bot API key
+   (see Sales demo permissions).
 
 Every step and server writes a log to `app/.scratch/demo-logs/<name>.log` (gitignored). PIDs go in
 `.scratch/demo-pids/` and build stamps in `.scratch/demo-build/`.
@@ -59,13 +62,36 @@ The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 
 Every account uses the password `password1234`. Sign in at http://localhost:3020/cs/login.
 
-| Login                      | Role                                                                              |
-| -------------------------- | --------------------------------------------------------------------------------- |
-| `management@siampark.demo` | Management: reads all Siampark modules                                            |
-| `operations@siampark.demo` | Operations: can write in the Siampark modules                                     |
-| `finance@siampark.demo`    | Finance: can write in billing/finance                                             |
-| `external@siampark.demo`   | External: sees only assigned records                                              |
-| `demo@test.com`            | Local Tenant from `local:initialize`. It has no Action grants (see Known issues). |
+| Login                      | Role                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `management@siampark.demo` | Management: reads all Siampark modules                                           |
+| `operations@siampark.demo` | Operations: can write in the Siampark modules                                    |
+| `finance@siampark.demo`    | Finance: can write in billing/finance                                            |
+| `external@siampark.demo`   | External: sees only assigned records                                             |
+| `demo@test.com`            | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only. |
+
+### Sales demo permissions
+
+`scripts/demo/permissions.mts` holds the role matrix; `scripts/demo/reset-permissions.mts` writes it. It runs
+at the end of `up.sh` and inside `pnpm demo:reset:sales` (after `workforce`). Re-run it alone at any
+time with `node --env-file=.env scripts/demo/reset-permissions.mts` (`--skip-bot` skips the API key).
+SpiceDB is in-memory, so re-run it after a container restart.
+
+| Login / principal      | Role            | Write                                                 | Read only                                 |
+| ---------------------- | --------------- | ----------------------------------------------------- | ----------------------------------------- |
+| `obchod@demo.ontos`    | Vedoucí obchodu | everything, plus identity admin (creates the bot key) |                                           |
+| `obchodnik@demo.ontos` | Obchodník       | customers, tagging, opportunities, tasks              | employees, products, statistics, invoices |
+| `ucetni@demo.ontos`    | Účetní          | invoices                                              | customers, statistics                     |
+| `sklad@demo.ontos`     | Skladník        | products, tasks                                       |                                           |
+| `agent-bot` (API key)  | service         | opportunities, tasks, tagging (no tag update/delete)  | all other demo modules                    |
+
+Each demo vertical also has `shared/actions/command-guard.ts`. One apply-command grant covers every
+command, so the guard rejects human-only commands for API-key and system principals: tag update/delete,
+price changes and bulk product edits, employee create/update/bulk edits, and every billing command.
+
+The bot's managed API key is issued through `/auth/identity/api-keys/managed` as `obchod@demo.ontos`. It is
+written with `ONTOS_SHELL_URL`, `ONTOS_COMPOSITION_REVISION` and `ONTOS_LEGAL_ENTITY_ID` to the gitignored
+`app/.env.demo.local` for `tools/ontos-agent-mcp`. A re-run keeps a key that still works.
 
 Pages: `/cs/siampark/work` (Úkoly) and `/cs/siampark/finance` (Faktury a finance). The business
 date is 2026-10-05.
@@ -80,10 +106,15 @@ emits a promotable release envelope, and `modern serve` only needs `dist/`.
 
 ## Known issues
 
-- `authorization:provision-current-actions` fails in development with
-  `action_authorization_input_invalid` whenever any Action uses explicit provisioning. `up.sh` logs a
-  warning and continues. The command only grants `demo@test.com`, and `demo:reset` writes the
-  Siampark grants itself.
+- `pnpm authorization:provision-current-actions` always fails in development with
+  `action_authorization_input_invalid: Each explicit Action requires unique recorded allowed and denied
+verification assertions`. Its development target passes no explicit assertions, but every Action with
+  `provisioning: 'explicit'` (all apply-commands, several core identity Actions) needs one. `up.sh` runs
+  `scripts/demo/provision-actions.mts` instead, which derives them and grants every explicit Action to
+  `demo@test.com`.
+- The shell signs sessions into `__Secure-better-auth.session_token`, but the API-key Better Auth instance
+  reads `better-auth.session_token` over plain http. Issuing an API key from a browser session on
+  `http://localhost` therefore returns 401. `reset-permissions.mts` sends the session under both names.
 - On the work and finance pages, the lists stay empty until you click **Načíst úkoly** or
   **Obnovit**. Data appears after that click.
 - Finance rows show the property as "Bez vazby" because `siampark-property` is not in the default set.
