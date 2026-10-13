@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { isClosedTaskState } from '../../shared/actions/task-transitions.ts';
 import {
@@ -7,7 +7,10 @@ import {
   filterTasks,
   formatDueDate,
   initialTaskFilters,
+  newerTaskList,
   opportunityOptionItems,
+  withBulkResult,
+  withSavedTask,
 } from '../../src/routes/[lang]/siampark/work/tasks-model.ts';
 import { EmployeeIdSchema, TaskSchema } from '../../shared/apis/records.ts';
 import type { TaskState } from '../../shared/apis/records.ts';
@@ -113,4 +116,57 @@ it("lists the chosen customer's opportunities by folded title and keeps the sele
   expect(values('', 'sitova')).toStrictEqual(['o1']);
   expect(values('', 'qqq')).toStrictEqual([]);
   expect(values('c1', '', 'o2')).toStrictEqual(['o1', 'o2', 'o3']);
+});
+
+it('puts a saved task in place or appends a new one, and keeps rows newer than a late reload', () => {
+  const saved = makeTask({ title: 'upraveno' });
+  const other = Schema.decodeUnknownSync(TaskSchema)({
+    ...Schema.encodeSync(TaskSchema)(makeTask({ title: 'jiný' })),
+    ref: { moduleId: 'siampark.work', resourceId: 'task-2', resourceType: 'siampark.work.task', tenantId },
+  });
+  const list = { items: [makeTask({}), other], revision: 4 };
+  const edited = withSavedTask(list, saved, 5);
+  expect(edited.revision).toBe(5);
+  expect(edited.items.map((task) => task.title)).toEqual(['upraveno', 'jiný']);
+  const created = withSavedTask({ items: [other], revision: 4 }, saved, 5);
+  expect(created.items.map((task) => task.title)).toEqual(['jiný', 'upraveno']);
+  expect(newerTaskList(edited, list)).toBe(edited);
+  expect(newerTaskList(list, edited)).toBe(edited);
+  expect(newerTaskList(undefined, list)).toBe(list);
+});
+
+it('applies only the changed rows of a bulk command, as the server did', () => {
+  const second = Schema.decodeUnknownSync(TaskSchema)({
+    ...Schema.encodeSync(TaskSchema)({ ...makeTask({ title: 'druhý' }), assigneeEmployeeId: employeeId }),
+    ref: { moduleId: 'siampark.work', resourceId: 'task-2', resourceType: 'siampark.work.task', tenantId },
+  });
+  const first = makeTask({});
+  const [firstId, secondId] = [first.ref.resourceId, second.ref.resourceId];
+  const list = { items: [first, second], revision: 3 };
+  const results = [
+    { outcome: 'changed', resourceId: firstId },
+    { outcome: 'skipped', reason: 'invalid_transition', resourceId: secondId },
+  ] as const;
+  const moved = withBulkResult(
+    list,
+    { _tag: 'BulkChangeTaskState', ids: [firstId, secondId], toState: 'IN_PROGRESS' },
+    results,
+    4,
+  );
+  expect(moved.revision).toBe(4);
+  expect(moved.items.map((task) => task.state)).toEqual(['IN_PROGRESS', 'NEW']);
+  const cleared = withBulkResult(
+    list,
+    { _tag: 'BulkAssignTasks', assigneeEmployeeId: Option.none(), ids: [secondId] },
+    [{ outcome: 'changed', resourceId: secondId }],
+    4,
+  );
+  expect(cleared.items[1]).not.toHaveProperty('assigneeEmployeeId');
+  const assigned = withBulkResult(
+    list,
+    { _tag: 'BulkAssignTasks', assigneeEmployeeId: Option.some(employeeId), ids: [firstId] },
+    [{ outcome: 'changed', resourceId: firstId }],
+    4,
+  );
+  expect(assigned.items[0]?.assigneeEmployeeId).toBe(employeeId);
 });

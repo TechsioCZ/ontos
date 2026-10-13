@@ -12,7 +12,7 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { FocusEvent, KeyboardEvent } from 'react';
 import {
   EmployeeIdSchema,
   OpportunityIdSchema,
@@ -67,7 +67,6 @@ type FieldError = typeof FieldErrorSchema.Type;
 
 interface FieldErrors {
   readonly assigneeId: FieldError | undefined;
-  readonly dueDate: FieldError | undefined;
   readonly opportunityId: FieldError | undefined;
   readonly partyId: FieldError | undefined;
   readonly title: FieldError | undefined;
@@ -88,7 +87,10 @@ const initialValues = (task: Task | undefined): FormValues => ({
 const decodeOptional = <A, I>(schema: Schema.Codec<A, I>, value: string) =>
   Option.getOrUndefined(Schema.decodeUnknownOption(schema)(value.trim()));
 
-/** An emptied field is rejected when the task already has a value: the update contract cannot clear it. */
+/**
+ * An emptied field is rejected when the task already has a value: the update contract cannot clear it. The due date
+ * is the exception (UpdateTask accepts null for it), so it has no such check.
+ */
 const clearedError = (hadValue: boolean, hasValue: boolean): FieldError | undefined =>
   hadValue && !hasValue ? 'clear' : undefined;
 
@@ -121,7 +123,6 @@ const validate = (
   opportunityOwner: string | undefined,
 ): FieldErrors => ({
   assigneeId: clearedError(task?.assigneeEmployeeId !== undefined, decoded.assigneeEmployeeId !== undefined),
-  dueDate: clearedError(task?.dueDate !== undefined, decoded.dueDate !== undefined),
   opportunityId:
     idError(values.opportunityId, task?.opportunityId !== undefined, decoded.opportunityId !== undefined) ??
     mismatchError(values, task, opportunityOwner),
@@ -141,6 +142,25 @@ const toCalendarDate = (isoDate: string | undefined) =>
  * it the opaque popup surface (the kit surface token resolves to a translucent overlay in this theme).
  */
 const datePickerContentClass = 'z-(--z-popup) bg-(--color-popup-bg)';
+
+/**
+ * Select and calendar lists are portalled to <body>. Choosing a value closes the list and focus falls to <body>, so
+ * the next Tab left the panel. Return it to the field's trigger once zag has finished closing.
+ */
+const returnFocusTo = (field: HTMLElement | null) => {
+  globalThis.requestAnimationFrame(() => {
+    const active = globalThis.document.activeElement;
+    if (field?.isConnected === true && (active === null || active === globalThis.document.body)) {
+      field.querySelector<HTMLElement>('[data-part="trigger"]')?.focus({ preventScroll: true });
+    }
+  });
+};
+
+/**
+ * Day and month keep two digits and the segments sit tight around the dots, so the field reads 24.09.2026 like the
+ * table's Termín column, not "24. 9 .2026" (the kit pads each segment and centres one digit in a two-digit cell).
+ */
+const dateSegmentsClass = '[&>[data-type]]:min-w-0 [&>[data-type]]:px-px';
 
 /** Combobox values are arrays; the form keeps one id, or '' for none. */
 const singleValue = (value: string) => (value === '' ? [] : [value]);
@@ -307,7 +327,7 @@ const ReferencePickers = ({
           value={singleValue(opportunityId)}
           {...invalidProps(opportunityMessage)}
         />
-      </div>{' '}
+      </div>
     </>
   );
 };
@@ -341,6 +361,16 @@ export const TaskFormDialog = ({
   const locked = task !== undefined && isClosedTaskState(task.state);
   const fieldsDisabled = busy || locked;
   const formRef = useRef<HTMLDivElement>(null);
+  // The Řešitel, Termín or Priorita field focused last (its list content too: React focus events cross portals).
+  const listField = useRef<HTMLElement | null>(null);
+  const rememberListField = (event: FocusEvent<HTMLElement>) => {
+    listField.current = event.currentTarget;
+  };
+  const onListOpenChange = ({ open }: { readonly open: boolean }) => {
+    if (!open) {
+      returnFocusTo(listField.current);
+    }
+  };
   // The field focused when closing was asked for (the Řešitel trigger after Escape); "keep editing" returns there.
   const closeRequester = useRef<HTMLElement | null>(null);
   const set = (patch: Partial<FormValues>) => setValues((current) => ({ ...current, ...patch }));
@@ -405,7 +435,6 @@ export const TaskFormDialog = ({
   ];
   const isEdit = task !== undefined;
   const assigneeMessage = message('assigneeId');
-  const dueMessage = message('dueDate');
 
   return (
     <>
@@ -473,13 +502,14 @@ export const TaskFormDialog = ({
             onChange={(event) => set({ description: event.target.value })}
             value={values.description}
           />
-          <div className="flex flex-col gap-50">
+          <div className="flex flex-col gap-50" onFocus={rememberListField}>
             <Select
               disabled={fieldsDisabled}
               items={assigneeItems}
               label={t(`${key}.assignee`)}
               labelProps={dialogLabelProps}
               name="assignee"
+              onOpenChange={onListOpenChange}
               onValueChange={({ value }) => {
                 const [next] = value;
                 set({ assigneeId: next === undefined || next === NONE ? '' : next });
@@ -490,40 +520,42 @@ export const TaskFormDialog = ({
             />
             {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
           </div>
-          <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-            <div className="flex flex-col gap-50">
-              <DatePicker.Root
-                defaultValue={toCalendarDate(values.dueDate)}
-                disabled={fieldsDisabled}
-                locale="cs-CZ"
-                onValueChange={(details) =>
-                  set({ dueDate: details.value === null ? undefined : details.valueAsString })
-                }
-                size="md"
-                translations={datePickerTranslations}
-              >
-                <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
-                <DatePicker.Control>
-                  <DatePicker.Segments />
-                  <DatePicker.IndicatorGroup>
-                    {!isEdit && <DatePicker.ClearTrigger />}
-                    <DatePicker.Trigger />
-                  </DatePicker.IndicatorGroup>
-                </DatePicker.Control>
-                <DatePicker.Positioner>
-                  <DatePicker.Content className={datePickerContentClass}>
-                    <DatePicker.Calendar />
-                  </DatePicker.Content>
-                </DatePicker.Positioner>
-              </DatePicker.Root>
-              {dueMessage !== undefined && <StatusText status="error">{dueMessage}</StatusText>}
-            </div>
+          {/* Termín takes the full width: beside Priorita its year segment was clipped. */}
+          <div onFocus={rememberListField}>
+            <DatePicker.Root
+              defaultValue={toCalendarDate(values.dueDate)}
+              disabled={fieldsDisabled}
+              locale="cs-CZ"
+              onOpenChange={onListOpenChange}
+              onValueChange={(details) => set({ dueDate: details.value === null ? undefined : details.valueAsString })}
+              shouldForceLeadingZeros
+              size="md"
+              translations={datePickerTranslations}
+            >
+              <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
+              <DatePicker.Control>
+                <DatePicker.Segments className={dateSegmentsClass} />
+                <DatePicker.IndicatorGroup>
+                  {/* An edit can remove the due date too, so the clear control shows in both modes. */}
+                  <DatePicker.ClearTrigger />
+                  <DatePicker.Trigger />
+                </DatePicker.IndicatorGroup>
+              </DatePicker.Control>
+              <DatePicker.Positioner>
+                <DatePicker.Content className={datePickerContentClass}>
+                  <DatePicker.Calendar />
+                </DatePicker.Content>
+              </DatePicker.Positioner>
+            </DatePicker.Root>
+          </div>
+          <div onFocus={rememberListField}>
             <Select
               disabled={fieldsDisabled}
               items={priorityItems}
               label={t(`${key}.priority`)}
               labelProps={dialogLabelProps}
               name="priority"
+              onOpenChange={onListOpenChange}
               onValueChange={({ value }) => {
                 const [next] = value;
                 if (Schema.is(TaskPrioritySchema)(next)) {

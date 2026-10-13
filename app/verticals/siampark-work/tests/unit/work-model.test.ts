@@ -150,3 +150,26 @@ it.effect('WAITING is in progress, overdue is derived, and resource filtering fa
     ).toBeInstanceOf(WorkReferenceUnavailable);
   }),
 );
+it.effect('UpdateTask keeps an absent due date, replaces a new one and removes it on wire null', () =>
+  Effect.gen(function* case4() {
+    const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      state,
+      { _tag: 'CreateTask', dueDate: '2026-10-04', title: 'Due' },
+      { now, resourceId: 'due', tenantId },
+    );
+    const update = (fields: { readonly dueDate?: string | null; readonly title?: string }) =>
+      Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
+        _tag: 'UpdateTask',
+        taskRef: created.task.ref,
+        ...fields,
+      }).pipe(
+        Effect.flatMap((command) => evolveWorkState(created.state, command, { now, resourceId: 'due', tenantId })),
+      );
+    expect((yield* update({ title: 'Renamed' })).task.dueDate).toBe('2026-10-04');
+    expect((yield* update({ dueDate: '2026-10-09' })).task.dueDate).toBe('2026-10-09');
+    const cleared = yield* update({ dueDate: null });
+    expect(cleared.task.dueDate).toBeUndefined();
+    expect(Object.keys(cleared.task)).not.toContain('dueDate');
+  }),
+);

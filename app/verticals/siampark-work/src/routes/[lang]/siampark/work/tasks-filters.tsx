@@ -162,6 +162,7 @@ export const TaskBulkBar = ({
   const targetSet = new Set<TaskState>(targets);
   return (
     <BulkActionBar onClear={onClear} selectedCount={count}>
+      {busy && <output className="text-fg-secondary text-sm">{t(`${key}.bulk.busy`)}</output>}
       <Select
         disabled={busy || targets.length === 0}
         items={TASK_STATE_ORDER.flatMap((value) =>

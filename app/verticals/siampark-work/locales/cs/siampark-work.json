@@ -96,6 +96,8 @@
         "bulk": {
           "changeState": "Změnit stav",
           "assign": "Přiřadit řešitele",
+          "busy": "Ukládám změny…",
+          "closedHint": "Dokončené a zrušené úkoly nelze vybrat pro hromadnou úpravu.",
           "changed": "Změněno {{changed}}, přeskočeno {{skipped}}",
           "assigned": "Přiřazeno {{changed}}, přeskočeno {{skipped}}",
           "skipped": {

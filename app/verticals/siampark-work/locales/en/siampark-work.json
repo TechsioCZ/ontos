@@ -96,6 +96,8 @@
         "bulk": {
           "changeState": "Change state",
           "assign": "Assign assignee",
+          "busy": "Saving changes…",
+          "closedHint": "Completed and cancelled tasks cannot be selected for bulk edits.",
           "changed": "Changed {{changed}}, skipped {{skipped}}",
           "assigned": "Assigned {{changed}}, skipped {{skipped}}",
           "skipped": {

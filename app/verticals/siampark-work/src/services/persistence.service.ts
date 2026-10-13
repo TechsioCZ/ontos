@@ -250,10 +250,19 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
                   }),
                 ),
           ),
-          Match.tag('UpdateTask', ({ _tag, taskRef, ...changes }) => {
+          Match.tag('UpdateTask', ({ _tag, dueDate, taskRef, ...changes }) => {
             void _tag;
             void taskRef;
-            return Effect.succeed({ ...existing, ...changes, updatedAt: input.now });
+            const updated = { ...existing, ...changes, updatedAt: input.now };
+            // An absent due date keeps the saved one; None removes the key, Some replaces it.
+            return Effect.succeed(
+              dueDate === undefined
+                ? updated
+                : Option.match(dueDate, {
+                    onNone: (): Task => Struct.omit(updated, ['dueDate']),
+                    onSome: (date) => ({ ...updated, dueDate: date }),
+                  }),
+            );
           }),
           Match.exhaustive,
         );

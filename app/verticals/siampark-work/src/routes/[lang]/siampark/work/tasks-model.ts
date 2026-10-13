@@ -1,6 +1,7 @@
 import { foldSearchText } from '@app/admin-ui';
-import { DateTime, Match, Option, Result, Schema } from 'effect';
+import { DateTime, Match, Option, Result, Schema, Struct } from 'effect';
 import type { Employee } from '@app/workforce/contracts/records';
+import type { BulkTaskResult, BulkWorkCommand } from '../../../../../shared/actions/apply-command.ts';
 import { canTransition } from '../../../../../shared/actions/task-transitions.ts';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../../shared/apis/records.ts';
 import type { Task, TaskState } from '../../../../../shared/apis/records.ts';
@@ -281,3 +282,51 @@ export const writeStoredTaskView = (view: StoredTaskView) => {
     // Storage is full or blocked: the view is simply not kept across a reload.
   }
 };
+
+interface TaskList {
+  readonly items: readonly Task[];
+  readonly revision: number;
+}
+
+/** The list with one saved task in place (appended when it is new), at the revision its command returned. */
+export const withSavedTask = <List extends TaskList>(list: List, task: Task, revision: number): List => {
+  const isSaved = (item: Task) => item.ref.resourceId === task.ref.resourceId;
+  return {
+    ...list,
+    items: list.items.some(isSaved) ? list.items.map((item) => (isSaved(item) ? task : item)) : [...list.items, task],
+    revision,
+  };
+};
+
+/**
+ * The list with a bulk command's changed rows applied, as the server applied them, at the revision it returned. The
+ * selection clears when the command answers, so the rows change with it instead of after the reload.
+ */
+export const withBulkResult = <List extends TaskList>(
+  list: List,
+  command: BulkWorkCommand,
+  results: readonly BulkTaskResult[],
+  revision: number,
+): List => {
+  const changed = new Set(results.flatMap((item) => (item.outcome === 'changed' ? [item.resourceId] : [])));
+  const apply = (task: Task): Task =>
+    Match.value(command).pipe(
+      Match.tag('BulkChangeTaskState', ({ toState }): Task => ({ ...task, state: toState })),
+      Match.tag('BulkAssignTasks', ({ assigneeEmployeeId }) =>
+        Option.match(assigneeEmployeeId, {
+          onNone: (): Task => Struct.omit(task, ['assigneeEmployeeId']),
+          onSome: (employeeId): Task => ({ ...task, assigneeEmployeeId: employeeId }),
+        }),
+      ),
+      Match.exhaustive,
+    );
+  return {
+    ...list,
+    items: list.items.map((item) => (changed.has(item.ref.resourceId) ? apply(item) : item)),
+    revision,
+  };
+};
+
+/** A reload answered before a newer command never replaces the rows that command already saved. */
+export const newerTaskList = <List extends TaskList>(current: List | undefined, fresh: List): List =>
+  current !== undefined && current.revision > fresh.revision ? current : fresh;

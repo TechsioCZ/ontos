@@ -12,11 +12,16 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Random, Schema } from 'effect';
 import type { Types } from 'effect';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import type { BulkSkipReason, WorkCommand } from '../../../../../shared/actions/apply-command.ts';
+import { BulkWorkCommandSchema } from '../../../../../shared/actions/apply-command.ts';
+import type {
+  ApplyCommandResultSchema,
+  BulkSkipReason,
+  WorkCommand,
+} from '../../../../../shared/actions/apply-command.ts';
 import { canTransition, isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
 import { EmployeeIdSchema } from '../../../../../shared/apis/records.ts';
 import type { RecordsResponse, Task, TaskState } from '../../../../../shared/apis/records.ts';
@@ -33,10 +38,13 @@ import {
   employeeIdOf,
   filterTasks,
   initialTaskFilters,
+  newerTaskList,
   overdueCount,
   readStoredTaskView,
   todayIsoDate,
   unassignedOpenCount,
+  withBulkResult,
+  withSavedTask,
   writeStoredTaskView,
 } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption, TaskFilters, TaskTab } from './tasks-model.ts';
@@ -67,6 +75,7 @@ type EditFields = Types.Mutable<
 const LoadStateSchema = Schema.Literals(['loading', 'ready', 'error', 'forbidden']);
 type LoadState = typeof LoadStateSchema.Type;
 type Editor = { readonly mode: 'create' } | { readonly mode: 'edit'; readonly task: Task };
+type ApplyCommandOutcome = typeof ApplyCommandResultSchema.Type;
 type CommandOutcome =
   | {
       readonly ok: true;
@@ -80,6 +89,22 @@ type CommandOutcome =
 const requestId = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
   Effect.map(([first, second]) => `siampark-work:${first}:${second}`),
 );
+
+// On a phone the pinned Název and the sticky Akce column are wider than the table, so no other column could scroll
+// into view between them. Below this width both scroll with the rest of the row.
+const narrowViewportQuery = '(max-width: 39.99rem)';
+const subscribeNarrowViewport = (onChange: () => void) => {
+  const query = globalThis.matchMedia(narrowViewportQuery);
+  query.addEventListener('change', onChange);
+  return () => query.removeEventListener('change', onChange);
+};
+const useNarrowViewport = () =>
+  useSyncExternalStore(
+    subscribeNarrowViewport,
+    () => globalThis.matchMedia(narrowViewportQuery).matches,
+    // The server render keeps the desktop pinning; the first client render corrects it.
+    () => false,
+  );
 
 const formatCount = (value: number | undefined) => (value === undefined ? '—' : count.format(value));
 
@@ -253,6 +278,12 @@ const TaskEmptyState = ({
   );
 };
 
+// Completed and cancelled rows show a disabled checkbox; this line says why, once any of them is listed.
+const ClosedRowsHint = ({ visible }: { readonly visible: boolean }) => {
+  const { t } = useModernI18n();
+  return visible ? <p className="text-fg-secondary text-sm">{t(`${key}.bulk.closedHint`)}</p> : null;
+};
+
 const useTasksPage = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
@@ -274,6 +305,9 @@ const useTasksPage = () => {
   const [formError, setFormError] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [bulkBusy, setBulkBusy] = useState(false);
+  // A start or complete command has not answered yet. Commands are checked against one list revision, so a second
+  // row action waits instead of failing as a conflict.
+  const [rowBusy, setRowBusy] = useState(false);
   // The control that opened the task panel. The panel unmounts on close, so focus goes back there explicitly.
   const panelOpener = useRef<HTMLElement | null>(null);
 
@@ -341,6 +375,7 @@ const useTasksPage = () => {
   );
   const selectedIds = selectedTasks.map((task) => task.ref.resourceId);
   const stateTargets = commonTransitionTargets(selectedTasks);
+  const closedRowsShown = canWrite && visibleTasks.some((task) => isClosedTaskState(task.state));
   const filtersActive =
     filters.search !== '' ||
     filters.assignee !== ALL ||
@@ -348,7 +383,46 @@ const useTasksPage = () => {
     filters.priority !== ALL ||
     filters.state !== ALL;
 
-  // Runs one command against the revision the user saw, then reloads the list. Failures become messages.
+  const showFreshRecords = (fresh: RecordsResponse) => setRecords((current) => newerTaskList(current, fresh));
+  const showSavedTask = (saved: Task, revision: number) =>
+    setRecords((current) => (current === undefined ? current : withSavedTask(current, saved, revision)));
+  const reloadRecords = requestId.pipe(
+    Effect.flatMap((id) => executeRecords({}, id)),
+    Effect.tap((fresh) => Effect.sync(() => showFreshRecords(fresh))),
+  );
+
+  // The list reloads behind a result that is already shown. A failed reload leaves the rows stale, so it is reported.
+  const refreshInBackground = () =>
+    browserRuntime.runFork(
+      reloadRecords.pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.logWarning('Task list reload failed.', error).pipe(
+              Effect.andThen(Effect.sync(() => setActionError(t(`${key}.unavailable`)))),
+            ),
+          onSuccess: () => Effect.void,
+        }),
+      ),
+    );
+
+  // A single command returns the saved task, so its row updates in place. A bulk command returns which ids changed,
+  // so those rows take the change it applied. Either way the next command is checked against the returned revision.
+  const showCommandResult = (command: WorkCommand, outcome: ApplyCommandOutcome) => {
+    const { results, revision, task } = outcome;
+    if (task !== undefined) {
+      showSavedTask(task, revision);
+    } else if (Schema.is(BulkWorkCommandSchema)(command)) {
+      setRecords((current) =>
+        current === undefined ? current : withBulkResult(current, command, results ?? [], revision),
+      );
+    } else {
+      setRecords((current) => (current === undefined ? current : { ...current, revision }));
+    }
+    refreshInBackground();
+  };
+
+  // Runs one command against the revision the user saw. The result shows as soon as the command answers, and the
+  // list reloads behind it, since each reload costs a gateway round trip. Failures become messages.
   const runCommand = (command: WorkCommand, revision: number, onDone: (outcome: CommandOutcome) => void) =>
     browserRuntime.runFork(
       Effect.all({ id: requestId, referenceCredentials: makeReferenceGatewayCredentials([]) }, { concurrency: 1 }).pipe(
@@ -358,12 +432,7 @@ const useTasksPage = () => {
             referenceCredentials,
           }),
         ),
-        Effect.flatMap((outcome) =>
-          requestId.pipe(
-            Effect.flatMap((id) => executeRecords({}, id)),
-            Effect.map((fresh) => ({ fresh, outcome })),
-          ),
-        ),
+        Effect.tap((outcome) => Effect.sync(() => showCommandResult(command, outcome))),
         Effect.match({
           onFailure: (error): CommandOutcome => ({
             message: Match.value(error).pipe(
@@ -371,15 +440,12 @@ const useTasksPage = () => {
               Match.tag('ApplyCommandActionConflictProblem', (conflict) =>
                 t(conflict.code === 'work_lifecycle_conflict' ? `${key}.closedTask` : `${key}.conflict`),
               ),
-              Match.tag('ApplyCommandActionForbiddenProblem', 'RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
+              Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
               Match.orElse(() => t(`${key}.invalid`)),
             ),
             ok: false,
           }),
-          onSuccess: ({ fresh, outcome }): CommandOutcome => {
-            setRecords(fresh);
-            return { ok: true, results: outcome.results ?? [] };
-          },
+          onSuccess: (outcome): CommandOutcome => ({ ok: true, results: outcome.results ?? [] }),
         }),
         Effect.map(onDone),
       ),
@@ -409,7 +475,13 @@ const useTasksPage = () => {
     const command: WorkCommand =
       editor.mode === 'create'
         ? { _tag: 'CreateTask', ...fields }
-        : { _tag: 'UpdateTask', ...fields, taskRef: editor.task.ref };
+        : {
+            _tag: 'UpdateTask',
+            ...fields,
+            // An edit always sends the due date, replacing the create-shaped one: None removes a saved date.
+            dueDate: Option.fromUndefinedOr(submission.dueDate),
+            taskRef: editor.task.ref,
+          };
     const successKey = editor.mode === 'create' ? `${key}.created` : `${key}.saved`;
     setSaving(true);
     setFormError(undefined);
@@ -485,13 +557,20 @@ const useTasksPage = () => {
     );
   };
 
-  // Row start and complete. Only transitions the table allows are offered, so the server accepts them.
+  // Row start and complete. Only transitions the table allows are offered, so the server accepts them. The status
+  // cell changes at once; the saved task replaces it when the command answers, and a failure puts the old one back.
+  // Start and complete wait for the answer, so a second click cannot race the first against the same revision.
   const handleChangeRowState = (task: Task, toState: TaskState) => {
     if (records === undefined) {
       return;
     }
+    const putRow = (row: Task) =>
+      setRecords((current) => (current === undefined ? current : withSavedTask(current, row, current.revision)));
     setActionError(undefined);
+    setRowBusy(true);
+    putRow({ ...task, state: toState });
     runCommand({ _tag: 'ChangeTaskState', state: toState, taskRef: task.ref }, records.revision, (outcome) => {
+      setRowBusy(false);
       if (outcome.ok) {
         toaster.create({
           duration: SUCCESS_TOAST_DURATION_MS,
@@ -499,6 +578,7 @@ const useTasksPage = () => {
           type: 'success',
         });
       } else {
+        putRow(task);
         setActionError(outcome.message);
       }
     });
@@ -539,6 +619,7 @@ const useTasksPage = () => {
     actionError,
     bulkBusy,
     canWrite,
+    closedRowsShown,
     customerNames,
     customers,
     editor,
@@ -570,6 +651,7 @@ const useTasksPage = () => {
     opportunityTitles,
     records,
     referenceFailed,
+    rowBusy,
     saving,
     selectedIds,
     selection,
@@ -595,6 +677,7 @@ const TasksPageContent = () => {
     today: model.today,
   });
   const selectedCount = model.selectedIds.length;
+  const narrow = useNarrowViewport();
 
   return (
     <>
@@ -682,11 +765,13 @@ const TasksPageContent = () => {
         </StatusText>
       )}
 
+      <ClosedRowsHint visible={model.closedRowsShown} />
+
       <DataTable
         // Completed and cancelled tasks cannot be reassigned or moved, so they are not offered for selection.
         canSelectRow={(row) => !isClosedTaskState(row.original.state)}
         // The row-selection column must stay first, so it is pinned ahead of the title.
-        columnPinning={{ end: [], start: ['__select', 'title'] }}
+        columnPinning={{ end: [], start: narrow ? ['__select'] : ['__select', 'title'] }}
         columns={columns}
         data={model.visibleTasks}
         enableColumnPinning
@@ -732,6 +817,7 @@ const TasksPageContent = () => {
           model.canWrite
             ? [
                 {
+                  disabled: () => model.rowBusy,
                   hidden: (row) => !canTransition(row.original.state, 'IN_PROGRESS'),
                   icon: 'icon-[mdi--play-outline]',
                   id: 'start',
@@ -739,6 +825,7 @@ const TasksPageContent = () => {
                   onAction: (row) => model.handleChangeRowState(row.original, 'IN_PROGRESS'),
                 },
                 {
+                  disabled: () => model.rowBusy,
                   hidden: (row) => !canTransition(row.original.state, 'DONE'),
                   icon: 'icon-[mdi--check-circle-outline]',
                   id: 'complete',
@@ -757,6 +844,7 @@ const TasksPageContent = () => {
         rowSelection={model.selection}
         size="sm"
         sorting={model.sorting}
+        stickyActions={!narrow}
         stickyHeader
         tableLayout="fixed"
         translations={{

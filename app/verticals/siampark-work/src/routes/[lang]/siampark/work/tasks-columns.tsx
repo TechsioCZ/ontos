@@ -53,6 +53,8 @@ export const buildTaskColumns = ({
   readonly t: Translate;
   readonly today: string;
 }): ColumnDef<Task>[] => [
+  // The widths total 760px: with the selection and sticky Akce columns they fit the 1280px layout, so Akce never
+  // covers Stav.
   {
     accessorKey: 'title',
     cell: (info) => {
@@ -70,7 +72,7 @@ export const buildTaskColumns = ({
       );
     },
     header: t(`${key}.columns.title`),
-    meta: { width: 230 },
+    meta: { width: 190 },
     sortFn: (rowA, rowB, columnId) => compareText(rowA.getValue<string>(columnId), rowB.getValue<string>(columnId)),
   },
   {
@@ -88,7 +90,7 @@ export const buildTaskColumns = ({
     },
     header: t(`${key}.columns.assignee`),
     id: 'assignee',
-    meta: { width: 140 },
+    meta: { width: 125 },
     sortFn: (rowA, rowB, columnId) => compareText(rowA.getValue<string>(columnId), rowB.getValue<string>(columnId)),
   },
   {
@@ -97,7 +99,7 @@ export const buildTaskColumns = ({
       nameCell(info.row.original.partyId, customerNames, lookups.customers, t, t(`${key}.unknownCustomer`)),
     header: t(`${key}.columns.party`),
     id: 'party',
-    meta: { width: 150 },
+    meta: { width: 130 },
     sortFn: (rowA, rowB, columnId) => compareText(rowA.getValue<string>(columnId), rowB.getValue<string>(columnId)),
   },
   {
@@ -115,7 +117,7 @@ export const buildTaskColumns = ({
       );
     },
     header: t(`${key}.columns.dueDate`),
-    meta: { width: 110 },
+    meta: { width: 100 },
     // Tasks without a date sort last in both directions.
     sortUndefined: 'last',
   },
