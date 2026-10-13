@@ -2,7 +2,7 @@ import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoin
 
 const routeMeta = {
   canonicalPath: '/prodej/zamestnanci',
-  descriptionKey: 'workforce.pages.records.description',
+  descriptionKey: 'workforce.pages.employees.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
     authorization: { kind: 'context_permission', permission: 'module.access' },
@@ -22,7 +22,7 @@ const routeMeta = {
   ownerAppId: 'workforce',
   public: false,
   publicSurface: 'private-app-screen',
-  titleKey: 'workforce.pages.records.title',
+  titleKey: 'workforce.pages.employees.title',
 } as const;
 
 export default routeMeta;

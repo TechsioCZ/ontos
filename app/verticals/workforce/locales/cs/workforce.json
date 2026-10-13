@@ -18,14 +18,106 @@
     "title": "Zaměstnanci",
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
-      "records": {
+      "employees": {
         "title": "Zaměstnanci",
-        "description": "Přehled zaměstnanců obchodního týmu.",
-        "refresh": "Načíst",
-        "empty": "Zatím žádní zaměstnanci.",
-        "count": "Počet záznamů: {{total}}",
-        "unavailable": "Data se nepodařilo načíst.",
-        "forbidden": "K této operaci nemáte oprávnění."
+        "description": "Lidé v obchodním týmu, jejich role a oddělení.",
+        "create": "Nový zaměstnanec",
+        "stats": {
+          "active": "Aktivní",
+          "departments": "Oddělení",
+          "sales": "Obchodníci",
+          "total": "Celkem"
+        },
+        "filters": {
+          "activeOnly": "Jen aktivní",
+          "allDepartments": "Všechna oddělení",
+          "allRoles": "Všechny role",
+          "clear": "Zrušit filtry",
+          "department": "Oddělení",
+          "role": "Role",
+          "search": "Hledat jméno nebo e-mail…",
+          "searchLabel": "Hledat"
+        },
+        "columns": {
+          "account": "Účet",
+          "department": "Oddělení",
+          "email": "E-mail",
+          "name": "Jméno",
+          "role": "Role",
+          "status": "Stav",
+          "tags": "Štítky"
+        },
+        "status": {
+          "active": "Aktivní",
+          "inactive": "Neaktivní"
+        },
+        "account": {
+          "linked": "Propojeno",
+          "none": "Bez účtu"
+        },
+        "table": {
+          "actions": "Akce",
+          "filters": "Filtry sloupců",
+          "loading": "Načítání zaměstnanců",
+          "pageSize": "Řádků na stránku",
+          "range": "{{start}}–{{end}} z {{total}}",
+          "selectAll": "Vybrat všechny zaměstnance",
+          "selectRow": "Vybrat zaměstnance"
+        },
+        "form": {
+          "active": "Aktivní",
+          "cancel": "Zrušit",
+          "create": "Vytvořit zaměstnance",
+          "createTitle": "Nový zaměstnanec",
+          "department": "Oddělení",
+          "editTitle": "Upravit zaměstnance",
+          "email": "E-mail",
+          "fullName": "Jméno a příjmení",
+          "phone": "Telefon",
+          "role": "Role",
+          "save": "Uložit změny",
+          "saving": "Ukládám…"
+        },
+        "bulk": {
+          "activate": "Aktivovat",
+          "apply": "Uložit",
+          "deactivate": "Deaktivovat",
+          "department": "Změnit oddělení",
+          "departmentTitle": "Změnit oddělení",
+          "description": "Změna se použije u {{total}} vybraných zaměstnanců.",
+          "role": "Změnit roli",
+          "roleTitle": "Změnit roli"
+        },
+        "errors": {
+          "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
+          "department": "Vyplňte oddělení.",
+          "email": "Zadejte e-mail ve tvaru jmeno@firma.cz.",
+          "forbidden": "K této operaci nemáte oprávnění.",
+          "fullName": "Vyplňte jméno a příjmení.",
+          "load": "Data se nepodařilo načíst.",
+          "loadDescription": "Zkontrolujte připojení a zkuste to znovu.",
+          "phone": "Telefon má mít alespoň 3 znaky.",
+          "retry": "Zkusit znovu",
+          "save": "Zaměstnance se nepodařilo uložit. Zkuste to znovu."
+        },
+        "empty": {
+          "first": "Zatím tu nejsou žádní zaměstnanci.",
+          "firstDescription": "Přidejte prvního zaměstnance obchodního týmu.",
+          "forbidden": "K této sekci nemáte oprávnění.",
+          "noResults": "Filtrům neodpovídá žádný zaměstnanec."
+        },
+        "toast": {
+          "bulkSaved": "Zaměstnanci uloženi",
+          "error": "Operaci se nepodařilo dokončit. Zkuste to znovu.",
+          "saved": "Zaměstnanec uložen"
+        },
+        "roles": {
+          "ACCOUNTANT": "Účetní",
+          "SALES_HEAD": "Vedoucí obchodu",
+          "SALES_REP": "Obchodník",
+          "SUPPORT": "Podpora",
+          "WAREHOUSE": "Skladník"
+        }
       }
     }
   }

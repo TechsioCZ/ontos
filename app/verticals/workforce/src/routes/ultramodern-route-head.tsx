@@ -5,7 +5,7 @@ export const UltramodernRouteHead = () => {
   const { language, t } = useModernI18n();
   return (
     <Helmet htmlAttributes={{ lang: language ?? 'en' }}>
-      <title>{t('workforce.pages.records.title')}</title>
+      <title>{t('workforce.pages.employees.title')}</title>
       <meta content="noindex, nofollow" name="robots" />
     </Helmet>
   );
