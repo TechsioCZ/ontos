@@ -3,6 +3,7 @@ import {
   addCalendarDays,
   czkToMinor,
   draftTotals,
+  isPlausibleIssueDate,
   lineIssue,
   newDraftLine,
   toInvoiceLine,
@@ -87,6 +88,13 @@ describe('Invoice create form lines', () => {
     // A native date input passes through a 5-digit year while the user types it.
     expect(addCalendarDays('10000-10-05', 14)).toBeUndefined();
     expect(addCalendarDays('20261-10-05', 14)).toBeUndefined();
+  });
+
+  it('accepts only real issue dates in the business years, so a mistyped year is rejected', () => {
+    expect(isPlausibleIssueDate('2026-10-05')).toBe(true);
+    expect(isPlausibleIssueDate('0001-01-15')).toBe(false);
+    expect(isPlausibleIssueDate('2101-01-01')).toBe(false);
+    expect(isPlausibleIssueDate('')).toBe(false);
   });
 
   it('no longer offers the 10 % VAT rate, obsolete since 1. 1. 2024', () => {

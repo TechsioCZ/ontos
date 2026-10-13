@@ -1,5 +1,6 @@
-import { EmptyState, formatDate, formatMoney, matchesSearch, StatusBadge } from '@app/admin-ui';
+import { EmptyState, formatDate, formatMoney, matchesSearch, StatusBadge, paginationTranslations } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
@@ -112,7 +113,11 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
         return (
           <span className="flex min-w-0 flex-col">
             <span className="truncate">{t(`${ns}.sourceOpportunity`)}</span>
-            {title !== '' && <span className="truncate text-fg-secondary text-xs">{title}</span>}
+            {title !== '' && (
+              <Tooltip content={title}>
+                <span className="truncate text-fg-secondary text-xs">{title}</span>
+              </Tooltip>
+            )}
             {hiddenTitle && (
               <span className="truncate text-fg-secondary text-xs">{t(`${ns}.opportunityForbidden`)}</span>
             )}
@@ -231,10 +236,15 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
         <div className="w-48 min-w-0">
           <Select
             items={[
-              { label: t(`${ns}.filters.all`), value: ALL },
-              ...STATUS_FILTERS.map((value) => ({ label: t(`${ns}.filters.states.${value}`), value })),
+              // `displayValue` names the hidden native option too; without it the option reads ALL, DRAFT, UNPAID.
+              { displayValue: t(`${ns}.filters.all`), label: t(`${ns}.filters.all`), value: ALL },
+              ...STATUS_FILTERS.map((value) => {
+                const label = t(`${ns}.filters.states.${value}`);
+                return { displayValue: label, label, value };
+              }),
             ]}
             label={t(`${ns}.filters.status`)}
+            labelProps={{ className: 'font-label text-label-sm' }}
             onValueChange={({ value }) => {
               const [next] = value;
               if (next !== undefined) {
@@ -260,6 +270,7 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
         maxHeight="calc(100dvh - 24rem)"
         onRowClick={(row) => openDetail(row.original.ref.resourceId)}
         pageSizeOptions={[50, 100, 200]}
+        paginationProps={{ translations: paginationTranslations }}
         renderEmpty={() => {
           if (loadFailed) {
             return (

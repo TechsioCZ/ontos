@@ -4,7 +4,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Schema } from 'effect';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FinanceCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { CalendarDateSchema, Invoice, InvoiceLine, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { nextInvoiceNumber } from '../../../../../shared/domain/invoice-totals.ts';
@@ -80,6 +80,32 @@ const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submit
 
 const fetchRecords = () => executeRecords({}, 'siampark-finance.records');
 
+/** TanStack history numbers its entries in `history.state`; only the index is read here. */
+const TanstackHistoryStateSchema = Schema.Struct({ __TSR_index: Schema.Int });
+
+const detailUrl = (id?: string) => {
+  const url = new URL(window.location.href);
+  if (id === undefined) {
+    url.searchParams.delete('resourceId');
+  } else {
+    url.searchParams.set('resourceId', id);
+  }
+  return url;
+};
+
+/**
+ * Opens an invoice as a new history entry (`?resourceId=`), so browser Back returns to the list. The entry gets the
+ * next TanStack index and its own key, so the router reads Back as one step back instead of a jump.
+ */
+const pushDetailUrl = (id: string) => {
+  const index = Option.match(Schema.decodeUnknownOption(TanstackHistoryStateSchema)(window.history.state), {
+    onNone: () => 0,
+    onSome: (state) => state.__TSR_index,
+  });
+  const key = `invoice-${id}`;
+  window.history.pushState({ __TSR_index: index + 1, __TSR_key: key, key }, '', detailUrl(id));
+};
+
 /** Invoice list and detail state. Loads once on mount; commands reload the list after they succeed. */
 export const useFinanceRecords = () => {
   const { t } = useModernI18n();
@@ -88,9 +114,10 @@ export const useFinanceRecords = () => {
   const requestedId = Option.getOrUndefined(search)?.resourceId;
   const [snapshot, setSnapshot] = useState<RecordsResponse>();
   const [feedback, setFeedback] = useState<Feedback>('loading');
-  const [detailId, setDetailId] = useState<string | undefined>(requestedId);
   const [voidTarget, setVoidTarget] = useState<Invoice>();
-  const selected = snapshot?.state.invoices.find((record) => record.ref.resourceId === detailId);
+  /** True while the open detail is a history entry this page pushed, so closing it can step back instead. */
+  const detailPushed = useRef(false);
+  const selected = snapshot?.state.invoices.find((record) => record.ref.resourceId === requestedId);
   const busy = feedback === 'loading' || feedback === 'saving';
   const canWrite = snapshot?.canWrite === true;
   const references = useFinanceReferences();
@@ -203,7 +230,16 @@ export const useFinanceRecords = () => {
     busy,
     cancelVoid: () => setVoidTarget(undefined),
     canWrite,
-    closeDetail: () => setDetailId(undefined),
+    closeDetail: () => {
+      // Back to the entry the list was on, so the list is not left twice in the history. A detail opened from a
+      // deep link has no such entry, so its URL is replaced instead.
+      if (detailPushed.current) {
+        detailPushed.current = false;
+        window.history.back();
+        return;
+      }
+      window.history.replaceState(window.history.state, '', detailUrl());
+    },
     confirmInvoice: (invoice: Invoice) =>
       runCommand({ _tag: 'ConfirmInvoice', invoiceRef: invoice.ref }, t('siampark-billing-finance.faktury.confirmed')),
     confirmVoid: () => {
@@ -216,7 +252,10 @@ export const useFinanceRecords = () => {
     feedback,
     indicators: snapshot?.indicators,
     invoices: [...(snapshot?.state.invoices ?? [])],
-    openDetail: (id: string) => setDetailId(id),
+    openDetail: (id: string) => {
+      detailPushed.current = true;
+      pushDetailUrl(id);
+    },
     referenceDate: snapshot?.referenceDate ?? '',
     references,
     reload,

@@ -1,5 +1,13 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
-import { formatMoney, formatNumber, PageHeader, StatCard, StatRow } from '@app/admin-ui';
+import {
+  formatMoney,
+  formatNumber,
+  PageHeader,
+  StatCard,
+  StatRow,
+  toasterLabels,
+  dialogCloseLabel,
+} from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -34,7 +42,7 @@ const RecordsPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <Toaster />
+      <Toaster {...toasterLabels} />
       <section className="flex min-w-0 flex-col gap-250 text-fg-primary">
         {selected === undefined ? (
           <>
@@ -95,6 +103,7 @@ const RecordsPageContent = () => {
             </Button>
           </>
         }
+        closeLabel={dialogCloseLabel}
         customTrigger
         description={t(`${ns}.voidDescription`)}
         onOpenChange={(details) => {

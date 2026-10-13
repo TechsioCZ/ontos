@@ -1,5 +1,5 @@
 import type { ProductRecord } from '@app/merchandise/contracts/records';
-import { formatMoney, matchesSearch } from '@app/admin-ui';
+import { formatMoney, matchesSearch, comboboxTranslations } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -16,6 +16,7 @@ import {
   withProductSnapshot,
 } from '../../../../../shared/domain/invoice-draft.ts';
 import type { DraftLine, DraftLineIssue } from '../../../../../shared/domain/invoice-draft.ts';
+import { formLabelProps } from './invoice-view.ts';
 
 const ns = 'siampark-billing-finance.faktury';
 
@@ -35,6 +36,7 @@ const priceFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2,
 export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, products }: InvoiceLineEditorProps) => {
   const { t } = useModernI18n();
   const [productQuery, setProductQuery] = useState('');
+  const productComboboxId = `invoice-line-product-${line.key}`;
   const productItems = products.flatMap((item) => {
     const label = `${item.name} (${item.sku})`;
     return matchesSearch(label, productQuery) ? [{ id: item.id, label, value: item.id }] : [];
@@ -42,20 +44,27 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
   const product = products.find((item) => item.id === line.productId);
   const errorText = issue === undefined ? undefined : t(`${ns}.form.error.${issue}`);
   // Shown once the line is being filled in, so a freshly added line does not open with a warning.
-  const zeroPriceFreeLine = line.kind === 'free' && line.unitPriceMinor === 0 && line.description.trim() !== '';
+  const filledIn = line.kind === 'product' ? line.productId !== null : line.description.trim() !== '';
+  const zeroPriceLine = line.unitPriceMinor === 0 && filledIn;
+  // `displayValue` names the hidden native option too; without it the option reads as the raw value.
   const kindItems = [
-    { label: t(`${ns}.form.kindProduct`), value: 'product' },
-    { label: t(`${ns}.form.kindFree`), value: 'free' },
+    { displayValue: t(`${ns}.form.kindProduct`), label: t(`${ns}.form.kindProduct`), value: 'product' },
+    { displayValue: t(`${ns}.form.kindFree`), label: t(`${ns}.form.kindFree`), value: 'free' },
   ];
-  const vatItems = VAT_RATE_CHOICES.map((rate) => ({ label: `${rate} %`, value: String(rate) }));
+  const vatItems = VAT_RATE_CHOICES.map((rate) => ({
+    displayValue: `${rate} %`,
+    label: `${rate} %`,
+    value: String(rate),
+  }));
 
   return (
     <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
-      <div className="grid grid-cols-[8rem_minmax(0,1fr)_auto] items-end gap-150">
+      <div className="grid grid-cols-[12rem_minmax(0,1fr)_auto] items-end gap-150">
         <div className="min-w-0">
           <SelectTemplate
             items={kindItems}
             label={t(`${ns}.form.lineKind`)}
+            labelProps={formLabelProps}
             name={`invoice-line-kind-${line.key}`}
             onValueChange={({ value }) => {
               const kind = value[0] === 'free' ? 'free' : 'product';
@@ -71,6 +80,7 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
           {line.kind === 'product' ? (
             <Combobox
               filterBehavior="external"
+              id={productComboboxId}
               items={productItems}
               label={t(`${ns}.form.product`)}
               noResultsMessage={t(`${ns}.form.noProducts`)}
@@ -82,7 +92,9 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
               }}
               onInputValueChange={setProductQuery}
               onOpenChange={() => setProductQuery('')}
+              openOnClick
               placeholder={t(`${ns}.form.product`)}
+              translations={comboboxTranslations}
               value={line.productId === null ? [] : [line.productId]}
             />
           ) : (
@@ -109,6 +121,8 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
       <div className="grid grid-cols-[6rem_9rem_7rem] items-end gap-150">
         <div className="min-w-0">
           <FormNumericInput
+            // Blur must not clamp a typed 0,001 to 1; `lineIssue` rejects it with a message instead.
+            clampValueOnBlur={false}
             id={`invoice-line-quantity-${line.key}`}
             label={t(`${ns}.form.quantity`)}
             locale="cs-CZ"
@@ -128,6 +142,8 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
             <div className="min-w-0">
               <FormNumericInput
                 // Two decimals at most, so `1234,5` stays 1 234,50 Kč instead of being rounded to whole crowns.
+                // Blur must not clamp a typed -100 to 0; `lineIssue` rejects it with a message instead.
+                clampValueOnBlur={false}
                 formatOptions={priceFormatOptions}
                 id={`invoice-line-price-${line.key}`}
                 label={t(`${ns}.form.unitPrice`)}
@@ -151,6 +167,7 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
               <SelectTemplate
                 items={vatItems}
                 label={t(`${ns}.form.vat`)}
+                labelProps={formLabelProps}
                 name={`invoice-line-vat-${line.key}`}
                 onValueChange={({ value }) => {
                   const rate = VAT_RATE_CHOICES.find((item) => String(item) === value[0]);
@@ -179,7 +196,7 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
         </StatusText>
       )}
       {/* 0 Kč is a valid free line (e.g. a gift), so it warns instead of blocking the submit. */}
-      {errorText === undefined && zeroPriceFreeLine && (
+      {errorText === undefined && zeroPriceLine && (
         <StatusText showIcon size="sm" status="warning">
           {t(`${ns}.form.zeroPriceWarning`)}
         </StatusText>

@@ -1,8 +1,17 @@
-import { DetailList, formatDate, formatMoney, matchesSearch, SidePanel } from '@app/admin-ui';
+import {
+  DetailList,
+  formatDate,
+  formatMoney,
+  matchesSearch,
+  SidePanel,
+  comboboxTranslations,
+  datePickerTranslations,
+} from '@app/admin-ui';
+import { CalendarDate as IntlCalendarDate } from '@internationalized/date';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { DateTime, Effect } from 'effect';
@@ -10,19 +19,30 @@ import { useRef, useState } from 'react';
 import {
   addCalendarDays,
   draftTotals,
+  isPlausibleIssueDate,
   lineIssue,
   newDraftLine,
   PAYMENT_TERM_DAYS,
   toInvoiceLine,
 } from '../../../../../shared/domain/invoice-draft.ts';
-import type { DraftLine, PaymentTermDays } from '../../../../../shared/domain/invoice-draft.ts';
+import type { DraftLine, DraftLineIssue, PaymentTermDays } from '../../../../../shared/domain/invoice-draft.ts';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
 import { InvoiceLineEditor } from './invoice-line-editor.tsx';
+import { formLabelProps } from './invoice-view.ts';
 import type { CalendarDate, DraftInvoiceOutcome, useFinanceRecords } from './use-finance-records.ts';
 
 type FinanceViewModel = ReturnType<typeof useFinanceRecords>;
 
 const ns = 'siampark-billing-finance.faktury';
+
+/** Wraps the issue-date picker so a failed submit can find it and focus its first segment. */
+const ISSUE_DATE_FIELD_ID = 'invoice-issue-date';
+
+/** The draft keeps the issue date as an ISO `YYYY-MM-DD` string; anything else shows an empty picker. */
+const toIssueCalendarDate = (isoDate: string): IntlCalendarDate | null =>
+  /^\d{4}-\d{2}-\d{2}$/u.test(isoDate)
+    ? new IntlCalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)))
+    : null;
 
 interface Draft {
   readonly customerId: string;
@@ -32,6 +52,8 @@ interface Draft {
   readonly paymentDays: PaymentTermDays;
 }
 
+const CUSTOMER_COMBOBOX_ID = 'invoice-customer';
+
 const emptyDraft = (): Draft => ({
   customerId: '',
   issueDate: DateTime.formatIsoDateUtc(DateTime.nowUnsafe()),
@@ -39,11 +61,72 @@ const emptyDraft = (): Draft => ({
   paymentDays: 14,
 });
 
+/** An empty date is flagged after submit; a complete date with an implausible year is flagged as soon as it is typed. */
+const issueDateProblem = (issueDate: string, submitted: boolean): 'missing' | 'year' | undefined => {
+  if (issueDate === '') {
+    return submitted ? 'missing' : undefined;
+  }
+  return isPlausibleIssueDate(issueDate) ? undefined : 'year';
+};
+
+/** DOM id of the input that shows a line's problem, so a failed submit can move focus there. */
+const lineIssueFieldId = (line: DraftLine, issue: DraftLineIssue): string => {
+  if (issue === 'product') {
+    return `invoice-line-product-${line.key}-input`;
+  }
+  if (issue === 'description') {
+    return `invoice-line-description-${line.key}`;
+  }
+  return issue === 'quantity' ? `invoice-line-quantity-${line.key}` : `invoice-line-price-${line.key}`;
+};
+
 interface CreateInvoiceDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
   readonly vm: FinanceViewModel;
 }
+
+interface IssueDateFieldProps {
+  readonly error: string | undefined;
+  readonly label: string;
+  /** ISO `YYYY-MM-DD`, or '' while the date is incomplete. */
+  readonly onChange: (isoDate: string) => void;
+  readonly value: string;
+}
+
+/** Czech date picker for the issue date, plus its inline error. The wrapper id lets a failed submit focus it. */
+const IssueDateField = ({ error, label, onChange, value }: IssueDateFieldProps) => (
+  <div className="flex flex-col gap-50" id={ISSUE_DATE_FIELD_ID}>
+    <DatePicker.Root
+      invalid={error !== undefined}
+      locale="cs-CZ"
+      name="issueDate"
+      onValueChange={(details) => onChange(details.value === null ? '' : details.valueAsString)}
+      required
+      size="md"
+      translations={datePickerTranslations}
+      value={toIssueCalendarDate(value)}
+    >
+      <DatePicker.Label>{label}</DatePicker.Label>
+      <DatePicker.Control>
+        <DatePicker.Segments />
+        <DatePicker.IndicatorGroup>
+          <DatePicker.Trigger />
+        </DatePicker.IndicatorGroup>
+      </DatePicker.Control>
+      <DatePicker.Positioner>
+        <DatePicker.Content className="z-(--z-popup) bg-(--color-popup-bg)">
+          <DatePicker.Calendar />
+        </DatePicker.Content>
+      </DatePicker.Positioner>
+    </DatePicker.Root>
+    {error !== undefined && (
+      <StatusText showIcon size="sm" status="error">
+        {error}
+      </StatusText>
+    )}
+  </div>
+);
 
 export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogProps) => {
   const { confirmInvoice, createDraft, references, t } = vm;
@@ -54,6 +137,8 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<{ readonly message: string; readonly reason?: string } | null>(null);
   const [customerQuery, setCustomerQuery] = useState('');
+  /** Set by the first submit that finds a 0 Kč line; the next submit creates the draft anyway. */
+  const [zeroPriceAcknowledged, setZeroPriceAcknowledged] = useState(false);
 
   const { issueDate } = draft;
   const dueDate = issueDate === '' ? undefined : addCalendarDays(issueDate, draft.paymentDays);
@@ -61,8 +146,14 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   const customer = customers.find((item) => item.partyId === draft.customerId);
   const products = references.products.filter((product) => product.active);
   const totals = draftTotals(draft.lines);
+  const hasZeroPriceLine = draft.lines.some((line) => line.unitPriceMinor === 0);
+  const zeroPriceWarning = zeroPriceAcknowledged && hasZeroPriceLine;
   const customerError = submitted && customer === undefined ? t(`${ns}.form.errorCustomer`) : undefined;
-  const issueDateError = submitted && dueDate === undefined ? t(`${ns}.form.errorIssueDate`) : undefined;
+  const issueProblem = issueDateProblem(issueDate, submitted);
+  const issueDateError =
+    issueProblem === undefined
+      ? undefined
+      : t(`${ns}.form.${issueProblem === 'missing' ? 'errorIssueDate' : 'errorIssueDateYear'}`);
 
   const customerLabel = (item: (typeof customers)[number]) => {
     const name = item.displayName ?? item.partyId;
@@ -78,25 +169,29 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
     return matchesSearch(label, customerQuery) ? [{ id: item.partyId, label, value: item.partyId }] : [];
   });
 
+  // Any change to the lines asks again before a 0 Kč line is saved.
+  const setLines = (next: (lines: readonly DraftLine[]) => readonly DraftLine[]) => {
+    setZeroPriceAcknowledged(false);
+    setDraft((current) => ({ ...current, lines: next(current.lines) }));
+  };
+
   const updateLine = (lineKey: string, next: DraftLine) =>
-    setDraft((current) => ({
-      ...current,
-      lines: current.lines.map((line) => (line.key === lineKey ? next : line)),
-    }));
+    setLines((lines) => lines.map((line) => (line.key === lineKey ? next : line)));
 
   const addLine = () => {
     lineSequence.current += 1;
     const key = `line-${lineSequence.current}`;
-    setDraft((current) => ({ ...current, lines: [...current.lines, newDraftLine(key, 'free')] }));
+    setLines((lines) => [...lines, newDraftLine(key, 'free')]);
   };
 
-  const removeLine = (lineKey: string) =>
-    setDraft((current) => ({ ...current, lines: current.lines.filter((line) => line.key !== lineKey) }));
+  const removeLine = (lineKey: string) => setLines((lines) => lines.filter((line) => line.key !== lineKey));
 
-  const close = () => {
+  /** Discards the draft. Used by Zrušit and after a successful create; Escape and the close button keep it. */
+  const discardAndClose = () => {
     setDraft(emptyDraft());
     setSubmitted(false);
     setServerError(null);
+    setZeroPriceAcknowledged(false);
     onOpenChange(false);
   };
 
@@ -137,12 +232,37 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
       title: t(`${ns}.form.created`),
       type: 'success',
     });
-    close();
+    discardAndClose();
+  };
+
+  /** The first field that blocks the submit, in form order, as a DOM id. */
+  const firstInvalidFieldId = (): string | undefined => {
+    if (customer === undefined) {
+      return `${CUSTOMER_COMBOBOX_ID}-input`;
+    }
+    if (!isPlausibleIssueDate(issueDate)) {
+      return ISSUE_DATE_FIELD_ID;
+    }
+    const line = draft.lines.find((item) => lineIssue(item) !== undefined);
+    const issue = line === undefined ? undefined : lineIssue(line);
+    return line === undefined || issue === undefined ? undefined : lineIssueFieldId(line, issue);
   };
 
   const submit = () => {
     setSubmitted(true);
-    if (customer === undefined || dueDate === undefined || draft.lines.some((line) => lineIssue(line) !== undefined)) {
+    const invalidFieldId = firstInvalidFieldId();
+    if (invalidFieldId !== undefined) {
+      const field = document.querySelector<HTMLElement>(`[id="${invalidFieldId}"]`);
+      // A date picker's root is not focusable, so focus its first date segment instead.
+      (field?.querySelector<HTMLElement>('[role="spinbutton"]') ?? field)?.focus();
+      return;
+    }
+    if (customer === undefined || dueDate === undefined) {
+      return;
+    }
+    // A 0 Kč line can be a gift, so it is not an error, but it is never saved without a second, deliberate click.
+    if (hasZeroPriceLine && !zeroPriceAcknowledged) {
+      setZeroPriceAcknowledged(true);
       return;
     }
     setBusy(true);
@@ -158,24 +278,22 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
     <SidePanel
       actions={
         <>
-          <Button onClick={close} theme="outlined" variant="secondary">
+          <Button onClick={discardAndClose} theme="outlined" variant="secondary">
             {t(`${ns}.cancel`)}
           </Button>
           <Button isLoading={busy} loadingText={t(`${ns}.form.submitting`)} onClick={submit} variant="primary">
-            {t(`${ns}.form.submit`)}
+            {t(`${ns}.form.${zeroPriceWarning ? 'submitAnyway' : 'submit'}`)}
           </Button>
         </>
       }
       // The form holds unsaved input, and the date field opens a picker outside the drawer. A stray pointer or
-      // focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
+      // focus move outside must not discard the draft. Escape and the close button only hide the panel, so the
+      // draft is still there when it reopens; Zrušit discards it.
       closeOnInteractOutside={false}
-      onOpenChange={(next) => {
-        if (!next) {
-          close();
-        }
-      }}
+      onOpenChange={onOpenChange}
       open={open}
-      size="lg"
+      // xl leaves the line's Typ select room for "Volná položka" at the form's text size.
+      size="xl"
       title={t(`${ns}.newInvoice`)}
     >
       <form
@@ -198,14 +316,17 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
         <div className="flex flex-col gap-50">
           <Combobox
             filterBehavior="external"
+            id={CUSTOMER_COMBOBOX_ID}
             items={customerItems}
             label={t(`${ns}.form.customer`)}
             noResultsMessage={t(`${ns}.form.customerNoMatch`)}
             onChange={(values) => setDraft((current) => ({ ...current, customerId: values[0] ?? '' }))}
             onInputValueChange={setCustomerQuery}
             onOpenChange={() => setCustomerQuery('')}
+            openOnClick
             placeholder={t(`${ns}.form.customerPlaceholder`)}
             required
+            translations={comboboxTranslations}
             validateStatus={customerError === undefined ? 'default' : 'error'}
             value={draft.customerId === '' ? [] : [draft.customerId]}
           />
@@ -216,26 +337,19 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           )}
         </div>
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <div className="flex flex-col gap-50">
-            <FormInput
-              id="invoice-issue-date"
-              label={t(`${ns}.form.issueDate`)}
-              name="issueDate"
-              onChange={(event) => setDraft((current) => ({ ...current, issueDate: event.target.value }))}
-              required
-              type="date"
-              validateStatus={issueDateError === undefined ? 'default' : 'error'}
-              value={issueDate}
-            />
-            {issueDateError !== undefined && (
-              <StatusText showIcon size="sm" status="error">
-                {issueDateError}
-              </StatusText>
-            )}
-          </div>
+          <IssueDateField
+            error={issueDateError}
+            label={t(`${ns}.form.issueDate`)}
+            onChange={(next) => setDraft((current) => ({ ...current, issueDate: next }))}
+            value={issueDate}
+          />
           <SelectTemplate
-            items={PAYMENT_TERM_DAYS.map((days) => ({ label: t(`${ns}.form.term${days}`), value: String(days) }))}
+            items={PAYMENT_TERM_DAYS.map((days) => {
+              const label = t(`${ns}.form.term${days}`);
+              return { displayValue: label, label, value: String(days) };
+            })}
             label={t(`${ns}.form.paymentTerm`)}
+            labelProps={formLabelProps}
             name="paymentDays"
             onValueChange={({ value }) => {
               const next = PAYMENT_TERM_DAYS.find((days) => String(days) === value[0]);
@@ -247,7 +361,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
             value={[String(draft.paymentDays)]}
           />
         </div>
-        {dueDate !== undefined && (
+        {dueDate !== undefined && issueProblem === undefined && (
           <p className="text-fg-secondary text-xs">{t(`${ns}.form.dueHint`, { date: formatDate(dueDate) })}</p>
         )}
 
@@ -288,6 +402,11 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
             },
           ]}
         />
+        {zeroPriceWarning && (
+          <StatusText showIcon size="sm" status="warning">
+            {t(`${ns}.form.zeroPriceConfirm`)}
+          </StatusText>
+        )}
       </form>
     </SidePanel>
   );

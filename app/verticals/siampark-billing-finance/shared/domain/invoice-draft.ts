@@ -113,3 +113,12 @@ export const addCalendarDays = (isoDate: string, days: number): string | undefin
       DateTime.formatIsoDateUtc(DateTime.add(date, { days })),
     ),
   );
+
+/** Years an issue date may fall in; a mistyped year such as 0001 is rejected instead of producing a 1900s due date. */
+const ISSUE_DATE_YEARS = { max: 2100, min: 2000 } as const;
+
+/** A parseable calendar date in the accepted issue-date years. */
+export const isPlausibleIssueDate = (isoDate: string): boolean => {
+  const year = Number(isoDate.slice(0, 4));
+  return year >= ISSUE_DATE_YEARS.min && year <= ISSUE_DATE_YEARS.max && addCalendarDays(isoDate, 0) !== undefined;
+};

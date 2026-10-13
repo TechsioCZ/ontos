@@ -1,6 +1,9 @@
 import type { CustomerListItem } from '@app/party-registry/api/client';
 import type { Invoice } from '../../../../../shared/apis/records.ts';
 
+/** Select labels in the invoice dialog take the same label size as the FormInput, Combobox and numeric labels. */
+export const formLabelProps = { className: 'font-label text-label-md' } as const;
+
 /** Customers keyed by both party id and counterparty id, so an invoice resolves whichever one it stores. */
 export type CustomerIndex = ReadonlyMap<string, CustomerListItem>;
 
