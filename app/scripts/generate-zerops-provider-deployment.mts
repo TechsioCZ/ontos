@@ -235,6 +235,64 @@ export const generateZeropsProviderImports = (
       : `${source.slice(0, start)}${generated}${source.slice(stop + importsEnd.length)}`;
   });
 
+const migrationsBegin = '    // <generated-vertical-provider-migrations>';
+const migrationsEnd = '    // </generated-vertical-provider-migrations>';
+const migrationAnchor = "    yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');";
+
+/** Retains existing ordered migrations and adds new topology owners before the final grant refresh. */
+export const generateZeropsProviderMigrations = (source: string, ownerPaths: readonly string[]) =>
+  Effect.gen(function* generateProviderMigrations() {
+    if (
+      new Set(ownerPaths).size !== ownerPaths.length ||
+      ownerPaths.some((owner) => !/^verticals\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(owner))
+    ) {
+      return yield* invalid('Invalid or duplicate topology migration owner');
+    }
+    const start = source.indexOf(migrationsBegin);
+    const stop = source.indexOf(migrationsEnd);
+    if ((start === -1) !== (stop === -1) || (start !== -1 && stop < start)) {
+      return yield* invalid('Invalid generated provider migration markers');
+    }
+    const retained = start === -1 ? source : source.slice(0, start) + source.slice(stop + migrationsEnd.length + 1);
+    const existing = new Set(
+      [...retained.matchAll(/migrate\('(?<owner>[^']+)', 'drizzle\.config\.ts'\)/gu)].map(
+        (match) => match.groups?.owner,
+      ),
+    );
+    const missing = ownerPaths.filter((owner) => !existing.has(owner));
+    if (missing.length === 0 && start === -1) {
+      return source;
+    }
+    const anchor = retained.lastIndexOf(migrationAnchor);
+    if (anchor === -1) {
+      return yield* invalid('Migrator final grant refresh is missing');
+    }
+    const calls = missing.map((owner) => `    yield* migrate('${owner}', 'drizzle.config.ts');`).join('\n');
+    const generated = `${migrationsBegin}\n${calls}\n${migrationsEnd}\n`;
+    return retained.slice(0, anchor) + generated + retained.slice(anchor);
+  });
+
+/** Ships every topology migration owner in the assembled migrator artifact. */
+export const generateZeropsMigratorInventory = (source: string, ownerPaths: readonly string[]) =>
+  Effect.gen(function* generateMigratorInventory() {
+    if (
+      new Set(ownerPaths).size !== ownerPaths.length ||
+      ownerPaths.some((owner) => !/^verticals\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(owner))
+    ) {
+      return yield* invalid('Invalid or duplicate topology migration owner');
+    }
+    const start = source.indexOf("  - setup: 'migrator'\n");
+    const stop = source.indexOf('    deploy:\n', start);
+    const files = source.indexOf('      deployFiles:\n', start);
+    if (start === -1 || files < start || stop < files) {
+      return yield* invalid('Missing migrator deployFiles inventory');
+    }
+    const inventory = new Set(source.slice(files, stop).split('\n'));
+    const missing = ownerPaths.filter((owner) => !inventory.has(`        - 'app/${owner}'`));
+    const added = missing.map((owner) => `        - 'app/${owner}'\n`).join('');
+    return source.slice(0, stop) + added + source.slice(stop);
+  });
+
 const version = /^[0-9]+\.[0-9]+\.[0-9]+$/u;
 const PackageManifestSchema = Schema.fromJsonString(Schema.Struct({ packageManager: Schema.String }));
 
@@ -269,14 +327,27 @@ const runCommand = ({ write }: { readonly write: boolean }) =>
       yield* fs.readFileString(path.join(root, '.mise.toml')),
       yield* fs.readFileString(path.join(root, 'package.json')),
     );
-    const generated = yield* generateZeropsProviderDeployment(source, topology, toolchain);
+    const generatedProviders = yield* generateZeropsProviderDeployment(source, topology, toolchain);
     const importPath = path.join(root, 'zerops-import.yaml');
     const importSource = yield* fs.readFileString(importPath);
     const generatedImports = yield* generateZeropsProviderImports(importSource, topology);
+    const migratorPath = path.join(root, 'scripts/run-zerops-migrator.mjs');
+    const migratorSource = yield* fs.readFileString(migratorPath);
+    const migrationOwners = yield* Effect.all(
+      topology.verticals.map((vertical) =>
+        fs
+          .exists(path.join(root, vertical.path, 'drizzle.config.ts'))
+          .pipe(Effect.map((exists) => (exists ? [vertical.path] : []))),
+      ),
+      { concurrency: 4 },
+    );
+    const generated = yield* generateZeropsMigratorInventory(generatedProviders, migrationOwners.flat());
+    const generatedMigrations = yield* generateZeropsProviderMigrations(migratorSource, migrationOwners.flat());
     if (write) {
       yield* fs.writeFileString(sourcePath, generated);
       yield* fs.writeFileString(importPath, generatedImports);
-    } else if (generated !== source || generatedImports !== importSource) {
+      yield* fs.writeFileString(migratorPath, generatedMigrations);
+    } else if (generated !== source || generatedImports !== importSource || generatedMigrations !== migratorSource) {
       yield* invalid('Zerops provider deployment drift: run pnpm zerops:providers --write');
     }
   });

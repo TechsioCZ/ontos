@@ -2699,7 +2699,7 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         GOVERNED_HANDLER_LAYER_SLOT_START,
         GOVERNED_HANDLER_LAYER_SLOT_END,
         new RegExp(
-          `${escapedLayerValue}\\.pipe\\(\\s*GovernedReadLayer\\.provide\\(governedActionRuntimeLive\\),?\\s*\\),`,
+          `\\b${escapedLayerValue}\\.pipe\\(\\s*GovernedReadLayer\\.provide\\(governedActionRuntimeLive\\),?\\s*\\),`,
           'gu',
         ),
       ),
@@ -2708,13 +2708,13 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         input.manifest,
         '// <generated-module-manifest-actions>',
         '// </generated-module-manifest-actions>',
-        new RegExp(`${escapedActionValue},`, 'gu'),
+        new RegExp(`\\b${escapedActionValue},`, 'gu'),
       ),
       slotHasExactlyOneCodeMatch(
         input.registration,
         '// <generated-module-registration-actions>',
         '// </generated-module-registration-actions>',
-        new RegExp(`${escapedActionValue},`, 'gu'),
+        new RegExp(`\\b${escapedActionValue},`, 'gu'),
       ),
     ].every(Boolean);
   });

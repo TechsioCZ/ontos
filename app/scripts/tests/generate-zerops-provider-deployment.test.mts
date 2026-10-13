@@ -7,17 +7,22 @@ import { expect, it } from 'effect-rstest';
 import {
   generateZeropsProviderDeployment,
   generateZeropsProviderImports,
+  generateZeropsProviderMigrations,
+  generateZeropsMigratorInventory,
   readZeropsToolchain,
 } from '../generate-zerops-provider-deployment.mts';
 
 const root = path.resolve(import.meta.dirname, '../..');
+const invalidMigrationOwner = 'Invalid or duplicate topology migration owner';
 const toolchain = { node: '26.7.0', pnpm: '12.4.2' };
 const ledgerSource = "zerops:\n  - setup: 'ledger'\n\n  - setup: 'shellsuperapp'\n";
+const ledgerPath = 'verticals/ledger';
+const projectsPath = 'verticals/projects';
 const ledger = {
   id: 'ledger',
   moduleFederation: { manifestUrl: 'http://localhost:4140/mf-manifest.json' },
   package: '@app/ledger',
-  path: 'verticals/ledger',
+  path: ledgerPath,
 };
 
 const TopologySchema = Schema.fromJsonString(
@@ -183,5 +188,48 @@ it.effect('pins the build toolchain from .mise.toml and packageManager and ships
     expect(
       (yield* Effect.flip(readZeropsToolchain('node = "27.1.0"\n', '{"packageManager":"npm@11.0.0"}'))).reason,
     ).toBe('package.json#packageManager must pin pnpm@<major>.<minor>.<patch>');
+  }),
+);
+
+const migratorFixture =
+  "    yield* migrate('verticals/ledger', 'drizzle.config.ts');\n    yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');\n    yield* runAppScript('scripts/verify-application-db-schema.mts');\n";
+it.effect('adds new topology migrations once before grants and schema verification', () =>
+  Effect.gen(function* migrationOwnerGeneration() {
+    const owners = [ledgerPath, projectsPath];
+    const generated = yield* generateZeropsProviderMigrations(migratorFixture, owners);
+    expect(generated.indexOf("migrate('verticals/projects'")).toBeLessThan(
+      generated.indexOf("runAppScript('scripts/postgres/bootstrap-runtime-role"),
+    );
+    expect(generated.match(/migrate\('verticals\/ledger'/gu)).toHaveLength(1);
+    expect(yield* generateZeropsProviderMigrations(generated, owners)).toBe(generated);
+  }),
+);
+it.effect('retains existing migration order and rejects invalid or duplicate owners', () =>
+  Effect.gen(function* invalidMigrationOwners() {
+    expect(yield* generateZeropsProviderMigrations(migratorFixture, [ledgerPath])).toBe(migratorFixture);
+    const invalidOwner = yield* generateZeropsProviderMigrations(migratorFixture, ['../escape']).pipe(Effect.flip);
+    expect(invalidOwner.reason).toBe(invalidMigrationOwner);
+    const duplicateOwner = yield* generateZeropsProviderMigrations(migratorFixture, [projectsPath, projectsPath]).pipe(
+      Effect.flip,
+    );
+    expect(duplicateOwner.reason).toBe(invalidMigrationOwner);
+  }),
+);
+
+it.effect('ships missing migration owners without changing other deployment files', () =>
+  Effect.gen(function* migratorArtifactCoverage() {
+    const source =
+      "zerops:\n  - setup: 'migrator'\n    build:\n      deployFiles:\n        - 'app/packages'\n        - 'app/verticals/ledger'\n    deploy:\n      temporaryShutdown: false\n";
+    const generated = yield* generateZeropsMigratorInventory(source, [ledgerPath, projectsPath]);
+    expect(generated).toContain(
+      "        - 'app/packages'\n        - 'app/verticals/ledger'\n        - 'app/verticals/projects'\n    deploy:",
+    );
+    expect(yield* generateZeropsMigratorInventory(generated, [ledgerPath, projectsPath])).toBe(generated);
+    expect((yield* Effect.flip(generateZeropsMigratorInventory(source, ['../outside']))).reason).toBe(
+      invalidMigrationOwner,
+    );
+    expect((yield* Effect.flip(generateZeropsMigratorInventory('zerops:\n', [projectsPath]))).reason).toBe(
+      'Missing migrator deployFiles inventory',
+    );
   }),
 );

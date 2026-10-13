@@ -98,4 +98,7 @@ services:
   - hostname: privacy
     type: nodejs@24
     enableSubdomainAccess: true
+  - hostname: projects
+    type: nodejs@24
+    enableSubdomainAccess: true
   # </generated-vertical-provider-imports>

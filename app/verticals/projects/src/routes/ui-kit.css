@@ -1,0 +1,3 @@
+@import '@techsio/ui-kit/tokens-with-tailwind';
+@import '@techsio/ui-kit/theme.css';
+@source '../../node_modules/@techsio/ui-kit/dist';

@@ -17,7 +17,8 @@
     "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP": "https://ontos-stage.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY": "https://ontos-stage-storefront-registry.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_TAX": "https://ontos-stage-tax.bleeding.dev",
-    "ULTRAMODERN_PUBLIC_URL_PRIVACY": "https://ontos-stage-privacy.bleeding.dev"
+    "ULTRAMODERN_PUBLIC_URL_PRIVACY": "https://ontos-stage-privacy.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_PROJECTS": "https://ontos-stage-projects.bleeding.dev"
   },
   "retiredWorkers": [],
   "schemaVersion": 1,
@@ -35,6 +36,7 @@
     "inventory",
     "tax",
     "privacy",
+    "projects",
     "shell-super-app"
   ]
 }

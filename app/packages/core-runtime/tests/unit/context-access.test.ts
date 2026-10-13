@@ -1008,3 +1008,29 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
     ]);
   }),
 );
+
+it.effect('keeps Tenant resource assignment grants exact and independent of Legal Entity resources', () =>
+  Effect.gen(function* tenantResourceAssignments() {
+    const targets = [
+      { moduleId: 'projects.core', resourceId: 'ONE', resourceType: 'projects.project-owner-eligibility' },
+      { moduleId: 'projects.core', resourceId: 'TWO', resourceType: 'projects.project-owner-eligibility' },
+    ];
+    const access = makeContextAccess(
+      makeClient((request) => {
+        expect(request.items.map((item) => item.resource?.objectType)).toEqual(['tenant_resource', 'tenant_resource']);
+        expect(request.items.map((item) => item.permission)).toEqual(['assign', 'assign']);
+        expect(request.items[0]?.resource?.objectId).not.toBe(request.items[1]?.resource?.objectId);
+        return Effect.succeed(
+          responseFor(request, [
+            v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+            v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+          ]),
+        );
+      }),
+    );
+    const decisions = yield* access.tenantResources === undefined
+      ? Effect.die(new Error('Expected tenant resource adapter'))
+      : access.tenantResources({ permission: 'assign', principalId, resources: targets, tenantId });
+    expect(decisions.map(({ decision }) => decision)).toEqual(['allowed', 'denied']);
+  }),
+);
