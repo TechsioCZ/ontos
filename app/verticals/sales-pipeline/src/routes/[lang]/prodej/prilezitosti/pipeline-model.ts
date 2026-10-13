@@ -1,4 +1,4 @@
-import { formatNumber } from '@app/admin-ui';
+import { formatMoney, formatNumber } from '@app/admin-ui';
 import { Array as Arr, DateTime, Order, Schema } from 'effect';
 import type { ApplyCommandResult, BulkSkipReason } from '../../../../../shared/actions/apply-command.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
@@ -7,6 +7,9 @@ import type { EmployeeIdSchema } from '../../../../../shared/outbox/sales-pipeli
 
 export type OpportunityStage = typeof OpportunityStageSchema.Type;
 export type EmployeeId = typeof EmployeeIdSchema.Type;
+
+/** Whole Kč for tables and KPI tiles: `109325550` haléřů → `1 093 256 Kč`. */
+export const formatWholeKc = (minor: number): string => formatMoney(Math.round(minor / 100) * 100);
 
 export const opportunityStages = [
   'LEAD',

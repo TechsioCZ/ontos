@@ -81,7 +81,7 @@
         "columns": {
           "amount": "Hodnota",
           "customer": "Zákazník",
-          "expectedClose": "Očekávané uzavření",
+          "expectedClose": "Uzavření",
           "owner": "Obchodník",
           "probability": "Pravděpodobnost",
           "stage": "Fáze",

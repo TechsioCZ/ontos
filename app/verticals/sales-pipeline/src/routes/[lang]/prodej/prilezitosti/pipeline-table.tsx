@@ -1,12 +1,4 @@
-import {
-  EmptyState,
-  formatDate,
-  formatDateTime,
-  formatMoney,
-  formatPercent,
-  StatusBadge,
-  statusPresentation,
-} from '@app/admin-ui';
+import { EmptyState, formatDate, formatDateTime, formatPercent, StatusBadge, statusPresentation } from '@app/admin-ui';
 import type { Tag } from '@app/tagging/contracts/records';
 import { TagCell } from '@app/tagging/components/tag-controls';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -15,7 +7,7 @@ import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms
 import { DateTime } from 'effect';
 import type { ReactElement } from 'react';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
-import { opportunityStages } from './pipeline-model.ts';
+import { formatWholeKc, opportunityStages } from './pipeline-model.ts';
 import type { EmployeeId } from './pipeline-model.ts';
 import type { CustomerOption, EmployeeOption } from './pipeline-references.ts';
 
@@ -77,37 +69,38 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     accessorKey: 'title',
     cell: (info) => <span className="block truncate font-medium">{info.row.original.title}</span>,
     header: t(`${K}.columns.title`),
-    meta: { type: 'string', width: 220 },
+    meta: { type: 'string' },
   },
   {
     accessorFn: (row) => customerSortKey(lookups, row.partyId),
     cell: (info) => customerCell(lookups, t, info.row.original.partyId),
     header: t(`${K}.columns.customer`),
     id: 'customer',
-    meta: { type: 'string', width: 200 },
+    meta: { type: 'string', width: 220 },
   },
   {
     accessorFn: (row) => ownerSortKey(lookups, row.ownerEmployeeId),
     cell: (info) => ownerCell(lookups, t, info.row.original.ownerEmployeeId),
     header: t(`${K}.columns.owner`),
     id: 'owner',
-    meta: { type: 'string', width: 150 },
+    meta: { type: 'string', width: 160 },
   },
   {
     accessorKey: 'stage',
     cell: (info) => <StatusBadge kind="opportunity" value={info.row.original.stage} />,
     header: t(`${K}.columns.stage`),
-    meta: { options: stageOptions(), type: 'enum', width: 130 },
+    meta: { options: stageOptions(), type: 'enum', width: 140 },
   },
   {
     accessorKey: 'probability',
     cell: (info) => <span className="tabular-nums">{formatPercent(info.getValue<number>() / 100)}</span>,
     header: t(`${K}.columns.probability`),
-    meta: { align: 'end', type: 'number', width: 110 },
+    id: 'probability',
+    meta: { align: 'end', type: 'number', width: 120 },
   },
   {
     accessorKey: 'amountMinor',
-    cell: (info) => <span className="tabular-nums">{formatMoney(info.getValue<number>())}</span>,
+    cell: (info) => <span className="tabular-nums">{formatWholeKc(info.getValue<number>())}</span>,
     header: t(`${K}.columns.amount`),
     meta: { align: 'end', type: 'number', width: 130 },
   },
@@ -115,7 +108,7 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     accessorKey: 'expectedCloseDate',
     cell: (info) => formatDate(info.getValue<string>()),
     header: t(`${K}.columns.expectedClose`),
-    meta: { type: 'date', width: 140 },
+    meta: { type: 'date', width: 130 },
   },
   {
     accessorFn: (row) => DateTime.toEpochMillis(row.updatedAt),
@@ -129,9 +122,12 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     enableSorting: false,
     header: t(`${K}.columns.tags`),
     id: 'tags',
-    meta: { type: 'string', width: 180 },
+    meta: { type: 'string', width: 200 },
   },
 ];
+
+/** Probability and last-updated stay in the column menu; the default view keeps the table to seven data columns. */
+export const defaultColumnVisibility = { probability: false, updatedAt: false } satisfies Record<string, boolean>;
 
 export const buildTableTranslations = (t: Translate): DataTableTranslations => ({
   actionsLabel: t('sales-pipeline.table.actionsLabel'),

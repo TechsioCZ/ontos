@@ -27,7 +27,12 @@ import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
 import { skipTally, sortNewestFirst } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage, SkipTally } from './pipeline-model.ts';
-import { PipelineEmptyState, buildColumns, buildTableTranslations } from './pipeline-table.tsx';
+import {
+  PipelineEmptyState,
+  buildColumns,
+  buildTableTranslations,
+  defaultColumnVisibility,
+} from './pipeline-table.tsx';
 import type { PipelineLookups } from './pipeline-table.tsx';
 import { usePipelineRecords } from './pipeline-records.ts';
 import type { RecordsLoadError } from './pipeline-records.ts';
@@ -146,12 +151,16 @@ const PipelineTable = ({
   selection,
 }: PipelineTableProps) => {
   const { t } = useModernI18n();
+  const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(defaultColumnVisibility);
   return (
     <DataTable
       columnPinning={{ end: [], start: ['title'] }}
       columns={buildColumns(t, lookups)}
+      columnVisibility={columnVisibility}
       data={rows}
+      enableColumnFilters={false}
       enableColumnPinning
+      enableColumnVisibility
       enablePagination
       enableRowSelection={canWrite}
       enableSorting
@@ -160,6 +169,7 @@ const PipelineTable = ({
       loading={loading}
       loadingRowCount={10}
       maxHeight="calc(100dvh - 22rem)"
+      onColumnVisibilityChange={setColumnVisibility}
       onRowSelectionChange={onSelection}
       pageSizeOptions={[50, 100, 200]}
       renderEmpty={() => (
