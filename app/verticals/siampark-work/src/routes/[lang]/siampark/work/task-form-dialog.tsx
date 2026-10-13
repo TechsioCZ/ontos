@@ -1,7 +1,10 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { Employee } from '@app/workforce/contracts/records';
+import { CalendarDate } from '@internationalized/date';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
@@ -15,6 +18,7 @@ import {
   TaskPrioritySchema,
 } from '../../../../../shared/apis/records.ts';
 import type { Task } from '../../../../../shared/apis/records.ts';
+import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
 const NONE = 'none';
 const key = 'siampark-work.pages.records';
@@ -52,7 +56,7 @@ interface Decoded {
   readonly partyId: PartyId | undefined;
 }
 
-const FieldErrorSchema = Schema.Literals(['clear', 'id', 'title']);
+const FieldErrorSchema = Schema.Literals(['clear', 'id', 'mismatch', 'title']);
 type FieldError = typeof FieldErrorSchema.Type;
 
 interface FieldErrors {
@@ -89,13 +93,34 @@ const idError = (text: string, hadValue: boolean, isValid: boolean): FieldError 
   return clearedError(hadValue, isValid);
 };
 
-const validate = (values: FormValues, task: Task | undefined, decoded: Decoded): FieldErrors => ({
+/** An opportunity belongs to one customer, so a chosen customer that differs from its owner is inconsistent. */
+const mismatchError = (partyId: string, opportunityOwner: string | undefined): FieldError | undefined =>
+  partyId !== '' && opportunityOwner !== undefined && opportunityOwner !== partyId ? 'mismatch' : undefined;
+
+const validate = (
+  values: FormValues,
+  task: Task | undefined,
+  decoded: Decoded,
+  opportunityOwner: string | undefined,
+): FieldErrors => ({
   assigneeId: clearedError(task?.assigneeEmployeeId !== undefined, decoded.assigneeEmployeeId !== undefined),
   dueDate: clearedError(task?.dueDate !== undefined, decoded.dueDate !== undefined),
-  opportunityId: idError(values.opportunityId, task?.opportunityId !== undefined, decoded.opportunityId !== undefined),
+  opportunityId:
+    idError(values.opportunityId, task?.opportunityId !== undefined, decoded.opportunityId !== undefined) ??
+    mismatchError(values.partyId, opportunityOwner),
   partyId: idError(values.partyId, task?.partyId !== undefined, decoded.partyId !== undefined),
   title: values.title.trim() === '' ? 'title' : undefined,
 });
+
+/** Calendar value for the date picker. `YYYY-MM-DD` strings are the form's storage format. */
+const toCalendarDate = (isoDate: string | undefined) =>
+  isoDate === undefined
+    ? null
+    : new CalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)));
+
+/** Combobox values are arrays; the form keeps one id, or '' for none. */
+const singleValue = (value: string) => (value === '' ? [] : [value]);
+const firstValue = (next: string | string[]) => (Array.isArray(next) ? next[0] : next) ?? '';
 
 /** Field error props, spread so `validateStatus` is absent (not undefined) when the field is valid. */
 const invalidProps = (message: string | undefined) =>
@@ -103,17 +128,21 @@ const invalidProps = (message: string | undefined) =>
 
 export const TaskFormDialog = ({
   busy,
+  customers,
   employees,
   error,
   onClose,
   onSubmit,
+  opportunities,
   task,
 }: {
   readonly busy: boolean;
+  readonly customers: readonly CustomerOption[];
   readonly employees: readonly Employee[];
   readonly error: string | undefined;
   readonly onClose: () => void;
   readonly onSubmit: (submission: TaskFormSubmission) => void;
+  readonly opportunities: readonly OpportunityOption[];
   /** `undefined` creates a task. Mount this component only while it is open. */
   readonly task: Task | undefined;
 }) => {
@@ -128,7 +157,8 @@ export const TaskFormDialog = ({
     opportunityId: decodeOptional(OpportunityIdSchema, values.opportunityId),
     partyId: decodeOptional(PartyIdSchema, values.partyId),
   };
-  const errors = validate(values, task, decoded);
+  const opportunityOwner = opportunities.find((opportunity) => opportunity.id === values.opportunityId)?.partyId;
+  const errors = validate(values, task, decoded, opportunityOwner);
   const message = (field: FieldName) => {
     const code = errors[field];
     return submitted && code !== undefined ? t(`${key}.errors.${code}`) : undefined;
@@ -159,8 +189,20 @@ export const TaskFormDialog = ({
     { label: t(`${key}.unassigned`), value: NONE },
     ...employees.map((employee) => ({ label: employee.fullName, value: employee.id })),
   ];
+  // Customers without a display name cannot be told apart in a picker, so they are left out.
+  const customerItems = customers.flatMap((customer) =>
+    customer.displayName === null ? [] : [{ label: customer.displayName, value: customer.partyId }],
+  );
+  const companyIds = new Map(customers.map((customer) => [customer.partyId, customer.companyId] as const));
+  // With a customer chosen, only that customer's opportunities are offered.
+  const opportunityItems = opportunities.flatMap((opportunity) =>
+    values.partyId === '' || opportunity.partyId === values.partyId
+      ? [{ label: opportunity.title, value: opportunity.id }]
+      : [],
+  );
   const isEdit = task !== undefined;
   const assigneeMessage = message('assigneeId');
+  const dueMessage = message('dueDate');
 
   return (
     <Dialog
@@ -226,15 +268,29 @@ export const TaskFormDialog = ({
           {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
         </div>
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <FormInput
-            disabled={busy}
-            id="task-due"
-            label={t(`${key}.dueDate`)}
-            onChange={(event) => set({ dueDate: event.target.value === '' ? undefined : event.target.value })}
-            type="date"
-            value={values.dueDate ?? ''}
-            {...invalidProps(message('dueDate'))}
-          />
+          <div className="flex flex-col gap-50">
+            <DatePicker.Root
+              defaultValue={toCalendarDate(values.dueDate)}
+              locale="cs-CZ"
+              onValueChange={(details) => set({ dueDate: details.value === null ? undefined : details.valueAsString })}
+              size="md"
+            >
+              <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
+              <DatePicker.Control>
+                <DatePicker.Segments />
+                <DatePicker.IndicatorGroup>
+                  {!isEdit && <DatePicker.ClearTrigger />}
+                  <DatePicker.Trigger />
+                </DatePicker.IndicatorGroup>
+              </DatePicker.Control>
+              <DatePicker.Positioner>
+                <DatePicker.Content>
+                  <DatePicker.Calendar />
+                </DatePicker.Content>
+              </DatePicker.Positioner>
+            </DatePicker.Root>
+            {dueMessage !== undefined && <StatusText status="error">{dueMessage}</StatusText>}
+          </div>
           <Select
             disabled={busy}
             items={priorityItems}
@@ -250,20 +306,41 @@ export const TaskFormDialog = ({
             value={[values.priority]}
           />
         </div>
-        <FormInput
+        <Combobox
+          clearable={!isEdit}
           disabled={busy}
-          id="task-party"
+          items={customerItems}
           label={t(`${key}.party`)}
-          onChange={(event) => set({ partyId: event.target.value })}
-          value={values.partyId}
+          name="party"
+          noResultsMessage={t(`${key}.comboboxEmpty`)}
+          onChange={(next) => set({ partyId: firstValue(next) })}
+          placeholder={t(`${key}.pickCustomer`)}
+          renderItem={(item) => {
+            const companyId = companyIds.get(item.value) ?? '';
+            return (
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">{item.label}</span>
+                {companyId !== '' && (
+                  <span className="text-fg-secondary text-xs">{t(`${key}.companyId`, { id: companyId })}</span>
+                )}
+              </span>
+            );
+          }}
+          size="md"
+          value={singleValue(values.partyId)}
           {...invalidProps(message('partyId'))}
         />
-        <FormInput
+        <Combobox
+          clearable={!isEdit}
           disabled={busy}
-          id="task-opportunity"
+          items={opportunityItems}
           label={t(`${key}.opportunity`)}
-          onChange={(event) => set({ opportunityId: event.target.value })}
-          value={values.opportunityId}
+          name="opportunity"
+          noResultsMessage={t(`${key}.comboboxEmpty`)}
+          onChange={(next) => set({ opportunityId: firstValue(next) })}
+          placeholder={t(`${key}.pickOpportunity`)}
+          size="md"
+          value={singleValue(values.opportunityId)}
           {...invalidProps(message('opportunityId'))}
         />
       </div>

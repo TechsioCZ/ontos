@@ -16,16 +16,29 @@ const priorityVariant = { HIGH: 'danger', LOW: 'outline', NORMAL: 'outline' } as
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
-/** Customer and opportunity show the stored id until their name sources are wired into this page. */
-const idCell = (id: string | undefined) =>
-  id === undefined ? '—' : <span className="block truncate text-fg-secondary text-xs">{id}</span>;
+/** The loaded name, or a muted placeholder when the id has no name in the loaded list. */
+const nameCell = (id: string | undefined, names: ReadonlyMap<string, string>, unknownLabel: string) => {
+  if (id === undefined) {
+    return '—';
+  }
+  const name = names.get(id);
+  return name === undefined ? (
+    <span className="block truncate text-fg-secondary">{unknownLabel}</span>
+  ) : (
+    <span className="block truncate">{name}</span>
+  );
+};
 
 export const buildTaskColumns = ({
+  customerNames,
   employeeNames,
+  opportunityTitles,
   referenceDate,
   t,
 }: {
+  readonly customerNames: ReadonlyMap<string, string>;
   readonly employeeNames: ReadonlyMap<string, string>;
+  readonly opportunityTitles: ReadonlyMap<string, string>;
   readonly referenceDate: string;
   readonly t: Translate;
 }): ColumnDef<Task>[] => [
@@ -50,15 +63,17 @@ export const buildTaskColumns = ({
     meta: { width: 180 },
   },
   {
-    accessorKey: 'partyId',
-    cell: (info) => idCell(info.row.original.partyId),
+    accessorFn: (task) => (task.partyId === undefined ? '' : (customerNames.get(task.partyId) ?? '')),
+    cell: (info) => nameCell(info.row.original.partyId, customerNames, t(`${key}.unknownCustomer`)),
     header: t(`${key}.columns.party`),
+    id: 'party',
     meta: { width: 170 },
   },
   {
-    accessorKey: 'opportunityId',
-    cell: (info) => idCell(info.row.original.opportunityId),
+    accessorFn: (task) => (task.opportunityId === undefined ? '' : (opportunityTitles.get(task.opportunityId) ?? '')),
+    cell: (info) => nameCell(info.row.original.opportunityId, opportunityTitles, t(`${key}.unknownOpportunity`)),
     header: t(`${key}.columns.opportunity`),
+    id: 'opportunity',
     meta: { width: 170 },
   },
   {

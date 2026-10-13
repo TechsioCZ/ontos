@@ -35,9 +35,15 @@
         "assignee": "Assignee",
         "dueDate": "Due date",
         "priority": "Priority",
-        "party": "Customer (ID)",
-        "opportunity": "Opportunity (ID)",
+        "party": "Customer",
+        "opportunity": "Opportunity",
         "unassigned": "Unassigned",
+        "unknownCustomer": "Unknown customer",
+        "unknownOpportunity": "Unknown opportunity",
+        "pickCustomer": "Select customer",
+        "pickOpportunity": "Select opportunity",
+        "companyId": "Company ID {{id}}",
+        "comboboxEmpty": "Nothing found.",
         "tabs": {
           "mine": "My tasks",
           "all": "All"
@@ -68,8 +74,6 @@
           "labels": "Tags"
         },
         "bulk": {
-          "selected": "Selected: {{selected}}",
-          "clear": "Clear selection",
           "changeState": "Change state",
           "assign": "Assign assignee",
           "changed": "Changed {{changed}}, skipped {{skipped}}",
@@ -86,17 +90,20 @@
         "errors": {
           "title": "Enter a task title.",
           "id": "Enter a valid ID.",
-          "clear": "This value cannot be removed while editing."
+          "clear": "This value cannot be removed while editing.",
+          "mismatch": "The opportunity belongs to another customer."
         },
         "empty": "No tasks yet.",
         "emptyDescription": "Create the first task and assign it to an employee.",
         "emptyMine": "No tasks are assigned to you.",
+        "mineUnlinked": "Your account is not linked to an assignee, so all tasks are shown.",
         "noResults": "No task matches the filters.",
         "unavailable": "Data could not be loaded.",
         "errorDescription": "Check the connection and try again.",
         "retry": "Try again",
         "forbidden": "You do not have permission for this section.",
         "employeesUnavailable": "The employee list could not be loaded.",
+        "referencesUnavailable": "Customer or opportunity names could not be loaded.",
         "conflict": "Someone else changed the record. Reload the tasks and repeat the change.",
         "invalid": "The operation could not be completed. Check the input and task state.",
         "states": {

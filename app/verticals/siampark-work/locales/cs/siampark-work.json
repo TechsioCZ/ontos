@@ -35,9 +35,15 @@
         "assignee": "Řešitel",
         "dueDate": "Termín",
         "priority": "Priorita",
-        "party": "Zákazník (ID)",
-        "opportunity": "Příležitost (ID)",
+        "party": "Zákazník",
+        "opportunity": "Příležitost",
         "unassigned": "Nepřiřazeno",
+        "unknownCustomer": "Neznámý zákazník",
+        "unknownOpportunity": "Neznámá příležitost",
+        "pickCustomer": "Vyberte zákazníka",
+        "pickOpportunity": "Vyberte příležitost",
+        "companyId": "IČO {{id}}",
+        "comboboxEmpty": "Nic nenalezeno.",
         "tabs": {
           "mine": "Moje úkoly",
           "all": "Všechny"
@@ -68,8 +74,6 @@
           "labels": "Štítky"
         },
         "bulk": {
-          "selected": "Vybráno: {{selected}}",
-          "clear": "Zrušit výběr",
           "changeState": "Změnit stav",
           "assign": "Přiřadit řešitele",
           "changed": "Změněno {{changed}}, přeskočeno {{skipped}}",
@@ -86,17 +90,20 @@
         "errors": {
           "title": "Vyplňte název úkolu.",
           "id": "Zadejte platné ID.",
-          "clear": "Tuto hodnotu nelze v úpravě odebrat."
+          "clear": "Tuto hodnotu nelze v úpravě odebrat.",
+          "mismatch": "Příležitost patří jinému zákazníkovi."
         },
         "empty": "Zatím tu nejsou žádné úkoly.",
         "emptyDescription": "Založte první úkol a přiřaďte ho řešiteli.",
         "emptyMine": "Nemáte přiřazené žádné úkoly.",
+        "mineUnlinked": "Váš účet není propojen s řešitelem, proto se zobrazují všechny úkoly.",
         "noResults": "Filtrům neodpovídá žádný úkol.",
         "unavailable": "Data se nepodařilo načíst.",
         "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
         "retry": "Zkusit znovu",
         "forbidden": "K této sekci nemáte oprávnění.",
         "employeesUnavailable": "Seznam řešitelů se nepodařilo načíst.",
+        "referencesUnavailable": "Názvy zákazníků nebo příležitostí se nepodařilo načíst.",
         "conflict": "Záznam mezitím upravil někdo jiný. Načtěte úkoly znovu a změnu zopakujte.",
         "invalid": "Operaci nelze dokončit. Zkontrolujte vstup a stav úkolu.",
         "states": {

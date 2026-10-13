@@ -15,9 +15,17 @@ export interface TaskFilters {
 
 export const initialTaskFilters: TaskFilters = { assignee: 'all', priority: 'all', search: '', state: 'all' };
 
-export interface Viewer {
-  readonly employeeId: string | undefined;
-  readonly principalId: string;
+/** Reference rows the page loads for names and pickers. Structural, so other verticals' rows fit without their types. */
+export interface CustomerOption {
+  readonly companyId: string | null;
+  readonly displayName: string | null;
+  readonly partyId: string;
+}
+
+export interface OpportunityOption {
+  readonly id: string;
+  readonly partyId: string;
+  readonly title: string;
 }
 
 const DAY_MS = 86_400_000;
@@ -65,18 +73,11 @@ export const unassignedOpenCount = (tasks: readonly Task[]) =>
   tasks.filter((task) => isOpenTask(task) && task.assigneeEmployeeId === undefined).length;
 
 /**
- * "Moje úkoly": the employee whose principal is the current user. If no employee matches,
- * fall back to the task owner principal, as the page did before employees existed.
+ * "Moje úkoly": the employee bound to the signed-in principal. Undefined when no employee carries that
+ * principal, so "mine" cannot narrow the list and the page shows every task with a note instead.
  */
-export const viewerOf = (actorPrincipalId: string, employees: readonly Employee[]): Viewer => ({
-  employeeId: employees.find((employee) => employee.principalRef?.principalId === actorPrincipalId)?.id,
-  principalId: actorPrincipalId,
-});
-
-export const isMine = (task: Task, viewer: Viewer) =>
-  viewer.employeeId === undefined
-    ? task.ownerPrincipalRef?.principalId === viewer.principalId
-    : task.assigneeEmployeeId === viewer.employeeId;
+export const employeeIdOf = (actorPrincipalId: string, employees: readonly Employee[]) =>
+  employees.find((employee) => employee.principalRef?.principalId === actorPrincipalId)?.id;
 
 const matchesAssignee = (task: Task, assignee: string) => {
   if (assignee === 'all') {
@@ -87,12 +88,20 @@ const matchesAssignee = (task: Task, assignee: string) => {
 
 export const filterTasks = (
   tasks: readonly Task[],
-  { filters, tab, viewer }: { readonly filters: TaskFilters; readonly tab: TaskTab; readonly viewer: Viewer },
+  {
+    filters,
+    mineEmployeeId,
+    tab,
+  }: {
+    readonly filters: TaskFilters;
+    readonly mineEmployeeId: string | undefined;
+    readonly tab: TaskTab;
+  },
 ) => {
   const needle = filters.search.trim().toLocaleLowerCase('cs-CZ');
   return tasks.filter(
     (task) =>
-      (tab === 'all' || isMine(task, viewer)) &&
+      (tab === 'all' || mineEmployeeId === undefined || task.assigneeEmployeeId === mineEmployeeId) &&
       (needle === '' || task.title.toLocaleLowerCase('cs-CZ').includes(needle)) &&
       matchesAssignee(task, filters.assignee) &&
       (filters.priority === 'all' || task.priority === filters.priority) &&
