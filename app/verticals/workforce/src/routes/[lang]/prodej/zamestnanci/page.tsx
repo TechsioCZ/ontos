@@ -1,16 +1,20 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { BulkActionBar, EmptyState, PageHeader, StatCard, StatRow, formatNumber } from '@app/admin-ui';
+import { BulkActionBar, EmptyState, PageHeader, SectionCard, StatCard, StatRow, formatNumber } from '@app/admin-ui';
+import { subjectsWithTag } from '@app/tagging/clients/records';
+import { BulkTagDialog, TagCell, TagFilter, runTagEffect, useTagsFor } from '@app/tagging/components/tag-controls';
+import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
+import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
@@ -89,7 +93,119 @@ const statusCell = (info: CellContext<Employee>) => (
     {info.getValue<string>()}
   </Badge>
 );
-const noCell = () => null;
+const accountCell = (info: CellContext<Employee>) =>
+  info.row.original.principalRef === undefined ? (
+    <span className="block truncate">{info.getValue<string>()}</span>
+  ) : (
+    <Badge size="sm" variant="info">
+      {info.getValue<string>()}
+    </Badge>
+  );
+
+/** Tagging subject ids are the employee ids. An id that does not decode as a subject id is skipped, never thrown. */
+const subjectIdOf = (id: string): Option.Option<SubjectId> => Schema.decodeOption(SubjectIdSchema)(id);
+const subjectIdsOf = (ids: readonly string[]): SubjectId[] =>
+  ids.flatMap((id) =>
+    Option.match(subjectIdOf(id), {
+      onNone: (): SubjectId[] => [],
+      onSome: (subject): SubjectId[] => [subject],
+    }),
+  );
+
+const tagsCell = (info: CellContext<Employee>) => <TagCell tags={info.getValue<readonly Tag[]>()} />;
+
+/** Employees carrying the selected tag, with the tag they were loaded for so a stale answer never applies. */
+interface TaggedEmployees {
+  readonly failed: boolean;
+  readonly ids: ReadonlySet<string>;
+  readonly tagId: TagId;
+}
+
+/** Rows that carry the selected tag. Rows stay hidden until the tag's subject list has loaded for that tag. */
+const rowsWithTag = (rows: readonly Employee[], tagId: TagId | null, tagged: TaggedEmployees | null): Employee[] => {
+  if (tagId === null) {
+    return [...rows];
+  }
+  if (tagged === null || tagged.tagId !== tagId) {
+    return [];
+  }
+  return rows.filter((row) => tagged.ids.has(row.id));
+};
+
+/** The list's tag filter: the picked tag, the employees that carry it, and a reload after bulk tag changes. */
+const useEmployeeTagFilter = () => {
+  const [request, setRequest] = useState<{ readonly tagId: TagId } | null>(null);
+  const [tagged, setTagged] = useState<TaggedEmployees | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (request !== null) {
+      runTagEffect(subjectsWithTag('employee', request.tagId), {
+        onFailure: () => {
+          if (active) {
+            setTagged({ failed: true, ids: new Set(), tagId: request.tagId });
+          }
+        },
+        onSuccess: (ids) => {
+          if (active) {
+            setTagged({ failed: false, ids: new Set(ids), tagId: request.tagId });
+          }
+        },
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [request]);
+
+  const tagId = request?.tagId ?? null;
+  return {
+    failed: tagId !== null && tagged?.tagId === tagId && tagged.failed,
+    reload: () => setRequest((current) => (current === null ? null : { ...current })),
+    rows: (rows: readonly Employee[]) => rowsWithTag(rows, tagId, tagged),
+    select: (next: TagId | null) => setRequest(next === null ? null : { tagId: next }),
+    tagId,
+  };
+};
+
+/** Static role matrix from app/scripts/demo/permissions.mts. Read-only, for the demo audience. */
+const accessRows = [
+  { access: 'vše', role: 'Vedoucí obchodu' },
+  { access: 'zákazníci, příležitosti, úkoly, štítky; faktury jen čtení', role: 'Obchodník' },
+  { access: 'faktury, zákazníci (čtení), statistiky', role: 'Účetní' },
+  { access: 'produkty a sklad, úkoly', role: 'Skladník' },
+  {
+    access: 'čtení všeho; zápis jen úkoly, příležitosti, štítky; bez cen, faktur a mazání štítků',
+    role: 'Agent (bot)',
+  },
+] as const;
+
+/** Read-only overview of who may do what in the demo. Static copy; the matrix lives in the demo permissions script. */
+const PermissionsCard = () => {
+  const { t } = useModernI18n();
+  return (
+    <SectionCard flush title={t(`${key}.permissions.title`)}>
+      <div className="overflow-x-auto p-250 pt-150">
+        <table className="w-full table-fixed border-collapse text-left text-sm">
+          <thead>
+            <tr className="border-border-primary border-b">
+              <th className="w-56 py-100 pr-150 font-medium">{t(`${key}.permissions.role`)}</th>
+              <th className="py-100 font-medium">{t(`${key}.permissions.access`)}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accessRows.map((row) => (
+              <tr className="border-border-primary border-b last:border-b-0" key={row.role}>
+                <td className="py-100 pr-150 align-top font-medium">{row.role}</td>
+                <td className="py-100 align-top">{row.access}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  );
+};
 
 const format = (count: number | undefined) => (count === undefined ? '—' : formatNumber(count));
 
@@ -130,10 +246,14 @@ const EmployeeFilterBar = ({
   departments,
   filters,
   onChange,
+  onTagChange,
+  tagValue,
 }: {
   readonly departments: readonly string[];
   readonly filters: EmployeeFilters;
   readonly onChange: (patch: Partial<EmployeeFilters>) => void;
+  readonly onTagChange: (tagId: TagId | null) => void;
+  readonly tagValue: TagId | null;
 }) => {
   const { t } = useModernI18n();
   const roleItems = [
@@ -171,6 +291,7 @@ const EmployeeFilterBar = ({
         size="sm"
         value={[filters.department ?? allOption]}
       />
+      <TagFilter kind="employee" onChange={onTagChange} value={tagValue} />
       <Switch checked={filters.activeOnly} onCheckedChange={(checked) => onChange({ activeOnly: checked })}>
         {t(`${key}.filters.activeOnly`)}
       </Switch>
@@ -185,6 +306,7 @@ const EmployeeBulkBar = ({
   onDepartment,
   onRole,
   onSetActive,
+  onTags,
 }: {
   readonly busy: boolean;
   readonly count: number;
@@ -192,6 +314,7 @@ const EmployeeBulkBar = ({
   readonly onDepartment: () => void;
   readonly onRole: () => void;
   readonly onSetActive: (active: boolean) => void;
+  readonly onTags: () => void;
 }) => {
   const { t } = useModernI18n();
   return (
@@ -201,6 +324,9 @@ const EmployeeBulkBar = ({
       </Button>
       <Button disabled={busy} onClick={onRole} size="sm" theme="outlined" variant="secondary">
         {t(`${key}.bulk.role`)}
+      </Button>
+      <Button disabled={busy} onClick={onTags} size="sm" theme="outlined" variant="secondary">
+        {t(`${key}.bulk.tags`)}
       </Button>
       <Button
         disabled={busy}
@@ -237,6 +363,8 @@ const EmployeesPageContent = () => {
   const [form, setForm] = useState<{ readonly employee: Employee | null } | null>(null);
   const [bulk, setBulk] = useState<BulkDialogKind | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const tags = useEmployeeTagFilter();
+  const [tagDialogOpen, setTagDialogOpen] = useState(false);
 
   useEffect(() => {
     loadEmployees(setState);
@@ -287,13 +415,38 @@ const EmployeesPageContent = () => {
   const data = state.status === 'ready' ? state.data : undefined;
   const items = data?.items ?? [];
   const canWrite = data?.canWrite === true;
-  const visible = filterEmployees(sortEmployees(items), filters);
+  const { refetch: refetchTags, tagsBySubject } = useTagsFor(
+    'employee',
+    subjectIdsOf(items.map((employee) => employee.id)),
+  );
+  const tagsOf = (id: string): Tag[] =>
+    Option.match(subjectIdOf(id), {
+      onNone: (): Tag[] => [],
+      onSome: (subject): Tag[] => tagsBySubject.get(subject) ?? [],
+    });
+  const visible = tags.rows(filterEmployees(sortEmployees(items), filters));
   const selectedIds = items.flatMap((employee) => (selection[employee.id] === true ? [employee.id] : []));
 
   /** Any filter change clears the selection so a bulk action never reaches rows the user cannot see. */
   const updateFilters = (patch: Partial<EmployeeFilters>) => {
     setFilters((current) => ({ ...current, ...patch }));
     setSelection({});
+  };
+
+  const changeTagFilter = (tagId: TagId | null) => {
+    tags.select(tagId);
+    setSelection({});
+  };
+
+  const clearFilters = () => {
+    updateFilters(noFilters);
+    tags.select(null);
+  };
+
+  /** After a bulk tag change the tag columns and the tag filter both reload. */
+  const afterBulkTag = () => {
+    refetchTags();
+    tags.reload();
   };
 
   const bulkSetActive = (active: boolean) => {
@@ -337,12 +490,20 @@ const EmployeesPageContent = () => {
       meta: { width: 130 },
     },
     {
-      accessorFn: (row) => t(row.principalRef === undefined ? `${key}.account.none` : `${key}.account.linked`),
+      accessorFn: (row) => t(row.principalRef === undefined ? `${key}.account.none` : `${key}.roles.${row.role}`),
+      cell: accountCell,
       header: t(`${key}.columns.account`),
       id: 'account',
-      meta: { width: 140 },
+      meta: { width: 170 },
     },
-    { cell: noCell, enableSorting: false, header: t(`${key}.columns.tags`), id: 'tags', meta: { width: 200 } },
+    {
+      accessorFn: (row) => tagsOf(row.id),
+      cell: tagsCell,
+      enableSorting: false,
+      header: t(`${key}.columns.tags`),
+      id: 'tags',
+      meta: { width: 200 },
+    },
   ];
 
   const translations: DataTableTranslations = {
@@ -374,11 +535,14 @@ const EmployeesPageContent = () => {
     if (state.status === 'forbidden') {
       return <EmptyState title={t(`${key}.empty.forbidden`)} />;
     }
-    if (hasActiveFilters(filters)) {
+    if (tags.failed) {
+      return <EmptyState description={t(`${key}.errors.loadDescription`)} title={t(`${key}.errors.load`)} />;
+    }
+    if (hasActiveFilters(filters) || tags.tagId !== null) {
       return (
         <EmptyState
           action={
-            <Button onClick={() => updateFilters(noFilters)} size="sm" theme="outlined" variant="secondary">
+            <Button onClick={clearFilters} size="sm" theme="outlined" variant="secondary">
               {t(`${key}.filters.clear`)}
             </Button>
           }
@@ -404,6 +568,7 @@ const EmployeesPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
+      <Toaster />
       <div className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
@@ -419,7 +584,13 @@ const EmployeesPageContent = () => {
 
         <EmployeeStats data={data} loading={state.status === 'loading'} />
 
-        <EmployeeFilterBar departments={departmentsOf(items)} filters={filters} onChange={updateFilters} />
+        <EmployeeFilterBar
+          departments={departmentsOf(items)}
+          filters={filters}
+          onChange={updateFilters}
+          onTagChange={changeTagFilter}
+          tagValue={tags.tagId}
+        />
 
         {canWrite && (
           <EmployeeBulkBar
@@ -429,6 +600,7 @@ const EmployeesPageContent = () => {
             onDepartment={() => setBulk('department')}
             onRole={() => setBulk('role')}
             onSetActive={bulkSetActive}
+            onTags={() => setTagDialogOpen(true)}
           />
         )}
 
@@ -457,9 +629,18 @@ const EmployeesPageContent = () => {
           tableLayout="fixed"
           translations={translations}
         />
+
+        <PermissionsCard />
       </div>
 
       {form !== null && <EmployeeFormDialog commit={commit} employee={form.employee} onClose={() => setForm(null)} />}
+      <BulkTagDialog
+        kind="employee"
+        onDone={afterBulkTag}
+        onOpenChange={setTagDialogOpen}
+        open={tagDialogOpen}
+        subjectIds={subjectIdsOf(selectedIds)}
+      />
       {bulk === 'department' && (
         <BulkDepartmentDialog commit={commit} ids={selectedIds} onClose={() => setBulk(null)} onSaved={afterBulkSave} />
       )}
