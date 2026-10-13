@@ -119,7 +119,7 @@ export const buildColumns = (t: Translate, lookups: PipelineLookups): ColumnDef<
     accessorKey: 'expectedCloseDate',
     cell: (info) => formatDate(info.getValue<string>()),
     header: t(`${K}.columns.expectedClose`),
-    meta: { type: 'date', width: 100 },
+    meta: { type: 'date', width: 120 },
   },
   {
     accessorFn: (row) => DateTime.toEpochMillis(row.updatedAt),

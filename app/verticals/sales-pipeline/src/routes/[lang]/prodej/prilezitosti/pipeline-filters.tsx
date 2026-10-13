@@ -165,7 +165,8 @@ export const PipelineFilters = ({
           value={search}
         />
       </div>
-      <div className="w-48">
+      {/* ui-kit's Combobox always sets its label to text-label-md, whatever its size, so the filter labels are set here. */}
+      <div className="w-48 [&_label]:text-label-sm">
         <PickerCombobox
           filterBehavior="external"
           items={shownCustomerItems}
@@ -213,8 +214,8 @@ export const PipelineFilters = ({
           value={[owner === '' ? ALL : owner]}
         />
       </div>
-      <div className="w-48">
-        <TagFilter kind="opportunity" onChange={onTag} value={tag} />
+      <div className="[&_label]:text-label-sm">
+        <TagFilter kind="opportunity" label={t(`${K}.filters.tag`)} onChange={onTag} value={tag} />
       </div>
       <div className="pb-100">
         <Switch checked={unassignedOnly} onCheckedChange={onUnassignedOnly}>

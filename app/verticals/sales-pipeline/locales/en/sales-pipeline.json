@@ -85,6 +85,7 @@
           "search": "Search by title",
           "searchLabel": "Search",
           "stage": "Stage",
+          "tag": "Tag",
           "unassignedOnly": "Unassigned only",
           "customer": "Customer",
           "allCustomers": "All customers",
