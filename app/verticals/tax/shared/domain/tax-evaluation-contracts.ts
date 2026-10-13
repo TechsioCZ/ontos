@@ -1,3 +1,4 @@
+import { OntosModuleIdSchema } from '@app/core-runtime';
 import { Schema } from 'effect';
 
 import {
@@ -12,7 +13,9 @@ import {
 import { ShippingSourceObservationSchema } from './tax-kernel/shipping-allocation.ts';
 import { TaxClassificationInputSchema } from './tax-kernel/tax-classification.ts';
 import { TaxDecisionIdSchema } from './tax-kernel/tax-decision.ts';
-import { distinctBy } from './tax-kernel/tax-domain-primitives.ts';
+import { BoundedIdentifierSchema, distinctBy } from './tax-kernel/tax-domain-primitives.ts';
+import { RequiredTaxRegimeSchema } from './tax-kernel/launch-coverage.ts';
+import { TaxTreatmentCategorySchema } from './tax-kernel/tax-treatment.ts';
 import { TaxJurisdictionInputSchema } from './tax-kernel/tax-jurisdiction.ts';
 import { TaxOutcomeSchema } from './tax-kernel/tax-outcome.ts';
 import { TaxEvaluationTimeSchema, TaxRelevantTimeSchema } from './tax-kernel/tax-time.ts';
@@ -52,13 +55,54 @@ const ShippingEvaluationInputSchema = Schema.Struct({
 });
 
 /**
+ * TAX's receiving contract for a purchase-scoped owner handoff, independent of rate classification. The declared
+ * source and authority contract are provenance claims, not authenticated issuer proof. Until the owner integration
+ * is activated this observation is CALLER_SUPPLIED_UNVERIFIED, like the other foreign evidence (#907 A1, #892).
+ * A reference alone never establishes ordinary scope: purpose, exact purchase, time and complete predicate meaning
+ * must also be present. This contract does not assign whole-purchase Tax authority to Catalog or Commerce.
+ */
+const eligibilitySubject = {
+  authorityContractRef: BoundedIdentifierSchema,
+  contract: Schema.Literal('TAX_LAUNCH_ELIGIBILITY_V1'),
+  evidencePurpose: Schema.Literal('TAX'),
+  ownerEvidenceRef: BoundedIdentifierSchema,
+  ownerEvidenceRevisionRef: BoundedIdentifierSchema,
+  purchase: TaxPurchaseBindingSchema,
+  sourceOwner: OntosModuleIdSchema,
+  taxRelevantTime: TaxRelevantTimeSchema,
+};
+
+export const TaxSupportedCaseEligibilitySchema = Schema.Union([
+  Schema.TaggedStruct('CURRENT', {
+    ...eligibilitySubject,
+    materialEvidenceCompleteness: Schema.Union([
+      Schema.TaggedStruct('OWNER_QUALIFIED_COMPLETE', { ownerEvidenceRef: BoundedIdentifierSchema }),
+      Schema.TaggedStruct('NOT_ESTABLISHED', {}),
+    ]),
+    requiredTaxRegimes: Schema.NonEmptyArray(RequiredTaxRegimeSchema).check(
+      distinctBy((regime: string) => regime, 'Each required regime appears once'),
+    ),
+    requiredTaxTreatments: Schema.NonEmptyArray(TaxTreatmentCategorySchema).check(
+      distinctBy((treatment: string) => treatment, 'Each required treatment appears once'),
+    ),
+  }),
+  Schema.TaggedStruct('NOT_USABLE', {
+    ...eligibilitySubject,
+    state: Schema.Literals(['STALE', 'UNAVAILABLE', 'CONFLICTING', 'UNVERIFIABLE']),
+  }),
+]);
+export type TaxSupportedCaseEligibility = typeof TaxSupportedCaseEligibilitySchema.Type;
+
+/**
  * Prospective Tax evaluation request for one exact purchase at a caller-declared Tax-Relevant Time (#941 F6). Foreign
  * owner facts (Pricing, Catalog, Shipping, places) arrive as owner-issued evidence the server-side caller holds;
  * Tenant and Selling Legal Entity are checked against the trusted Operational Scope, never trusted from here.
  */
 export const TaxEvaluationRequestSchema = Schema.Struct({
-  catalog: Schema.NonEmptyArray(OccurrenceCatalogEvidenceSchema).check(distinctOccurrenceIds),
+  catalog: Schema.optionalKey(Schema.Array(OccurrenceCatalogEvidenceSchema).check(distinctOccurrenceIds)),
   decompositionNeed: CustomerSafeTaxDecompositionNeedSchema,
+  // Omission stays decodable for durable pre-contract retries; a new evaluation treats it as indeterminate.
+  eligibility: Schema.optionalKey(TaxSupportedCaseEligibilitySchema),
   places: TaxJurisdictionInputSchema,
   pricing: Schema.Struct({
     pricingResultRef: PricingResultRefSchema,
@@ -182,6 +226,13 @@ export const TaxEvaluationEvidenceSchema = Schema.Struct({
   attempts: AttemptSchema,
   discarded: Schema.Array(
     Schema.Struct({ attempt: AttemptSchema, discardedBecause: TaxEvaluationDiscardReasonSchema }),
+  ),
+  // Historical finals truthfully retain absent proof. Every new evaluation records its observation or its absence.
+  eligibility: Schema.optionalKey(
+    Schema.Struct({
+      foreignEvidenceOrigin: TaxForeignEvidenceOriginSchema,
+      observation: Schema.Union([TaxSupportedCaseEligibilitySchema, Schema.TaggedStruct('NOT_ESTABLISHED', {})]),
+    }),
   ),
   exhausted: Schema.optionalKey(Schema.Literal('EVALUATION_RACE_UNRESOLVED')),
   foreignEvidenceOrigin: TaxForeignEvidenceOriginSchema,

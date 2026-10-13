@@ -268,6 +268,7 @@ const finalizeOrderForSellerA = (runtime: CoreTestDatabase) =>
     yield* createLaunchRule(runtime, scopeA, 'cz.reduced.privacy-finalization', 'cz-reduced-food', '12');
     const { taxRelevantTime: _taxRelevantTime, ...candidate } = evaluationRequestInput({
       purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: sellerA, tenantId }),
+      taxRelevantTime: '2026-06-01T10:00:00.000Z',
     });
     const payload = yield* Schema.decodeEffect(FinalizeOrderTaxPayloadSchema)({
       candidate,
