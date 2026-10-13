@@ -3,7 +3,7 @@
 // @ontos-action-slug apply-command
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import type { Effect } from 'effect';
+import { Effect } from 'effect';
 import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
@@ -12,16 +12,31 @@ import {
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { persistenceService } from '../services/persistence.service.ts';
+import {
+  opportunityStageChangedDomainEvents,
+  opportunityStageChangedPayloads,
+  publishOpportunityStageChanged,
+} from './opportunity-stage-changed-events.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
-const handleApplyCommand = (
+
+/** Applies the command, then publishes one stage-changed Outbox Message per transition in the same transaction. */
+const handleApplyCommand = Effect.fn('SalesPipeline.applyCommandAction')(function* handleApplyCommand(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-): Effect.Effect<
-  Effect.Success<ReturnType<Services['apply']>>,
-  Effect.Error<ReturnType<Services['apply']>>,
-  Effect.Services<ReturnType<typeof persistenceService>>
-> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+  context: ActionHandlerContext<typeof opportunityStageChangedDomainEvents, Services>,
+) {
+  const applied = yield* context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+  const messages = opportunityStageChangedPayloads({
+    changedAt: applied.changedAt,
+    revision: applied.result.revision,
+    stageChanges: applied.stageChanges,
+  });
+  yield* Effect.forEach(messages, (message) => publishOpportunityStageChanged(context, message), {
+    concurrency: 1,
+    discard: true,
+  });
+  return applied.result;
+});
 
 export const applyCommandAction = defineAction(
   {
@@ -32,7 +47,7 @@ export const applyCommandAction = defineAction(
     actionKey: 'demo.sales-pipeline.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: SalesPipelineErrorSchema,
-    domainEvents: {},
+    domainEvents: opportunityStageChangedDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },

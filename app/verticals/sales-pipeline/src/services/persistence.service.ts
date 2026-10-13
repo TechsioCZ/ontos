@@ -14,6 +14,7 @@ import {
   SalesPipelineScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
 import type {
+  ApplyCommandResult,
   BulkOpportunityPatch,
   BulkOpportunityResult,
   BulkSkipReason,
@@ -127,6 +128,14 @@ export interface EvolvedOpportunities {
   /** Stage transitions the command performed, creation included. Input for the outbox message. */
   readonly stageChanges: readonly StageChange[];
   readonly state: SalesPipelineState;
+}
+
+/** A persisted command: the action result plus the committed stage transitions the action publishes. */
+export interface AppliedCommand {
+  readonly changedAt: DateTime.Utc;
+  readonly result: ApplyCommandResult;
+  /** Empty when nothing was persisted. */
+  readonly stageChanges: readonly StageChange[];
 }
 
 const notFound = () =>
@@ -522,10 +531,20 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       const results = change.results === undefined ? {} : { results: [...change.results] };
       // A bulk command that changed nothing is not persisted and keeps the current revision.
       if (change.affected.length === 0) {
-        return { opportunities: [], revision: expectedRevision, ...results };
+        const unchanged: AppliedCommand = {
+          changedAt: now,
+          result: { opportunities: [], revision: expectedRevision, ...results },
+          stageChanges: [],
+        };
+        return unchanged;
       }
       const revision = yield* save(expectedRevision, change.state);
-      return { opportunities: [...change.affected], revision, ...results };
+      const applied: AppliedCommand = {
+        changedAt: now,
+        result: { opportunities: [...change.affected], revision, ...results },
+        stageChanges: change.stageChanges,
+      };
+      return applied;
     });
     const records = Effect.fn('SalesPipeline.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();
