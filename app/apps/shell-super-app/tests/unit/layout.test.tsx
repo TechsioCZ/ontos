@@ -58,6 +58,7 @@ rstest.mock('@modern-js/runtime/head', () => ({
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   Outlet: () => <main>Current route</main>,
+  useNavigate: () => () => Promise.resolve(),
   useRouterState: ({ select }: { readonly select: (state: RouterStateDouble) => string | undefined }) =>
     select(routerState.current ?? settledRouterState),
 }));

@@ -1,5 +1,5 @@
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
@@ -959,12 +959,16 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const model = buildShellNavigation({ ...props, pendingHref }, t);
 
   // Back after sign-out or a tenant switch can restore this page from the back/forward cache with the old session's
-  // navigation on screen. Hide it before the browser paints and load the page again, so the server decides.
+  // navigation on screen. Hide it before the browser paints and load the document again, so the server decides.
+  const navigate = useNavigate();
+  const reloadDocument = useEffectEvent(() => {
+    void navigate({ reloadDocument: true, to: '.' });
+  });
   useEffect(() => {
     const reloadRestoredPage = (event: PageTransitionEvent) => {
       if (event.persisted) {
         document.documentElement.style.visibility = 'hidden';
-        window.location.reload();
+        reloadDocument();
       }
     };
     window.addEventListener('pageshow', reloadRestoredPage);
