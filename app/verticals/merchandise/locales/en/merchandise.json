@@ -19,8 +19,128 @@
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
       "orders": {
+        "actions": {
+          "cancel": "Cancel",
+          "confirm": "Confirm",
+          "deliver": "Delivered",
+          "ship": "Ship"
+        },
+        "bulk": {
+          "changeStatus": "Change status",
+          "partial": "Some orders could not be changed.",
+          "result": "Changed: {{changed}}, failed: {{failed}}",
+          "statusPlaceholder": "Change status…",
+          "success": "Order status changed"
+        },
+        "columns": {
+          "createdAt": "Created",
+          "customer": "Customer",
+          "lines": "Items",
+          "number": "Number",
+          "source": "Source",
+          "status": "Status",
+          "tags": "Tags",
+          "total": "Total incl. VAT"
+        },
+        "confirm": {
+          "back": "Back",
+          "cancelAction": "Cancel order",
+          "cancelBulkAction": "Cancel orders",
+          "cancelBulkTitle": "Cancel the selected orders?",
+          "cancelTitle": "Cancel order {{number}}?",
+          "description": "The order will move to Cancelled."
+        },
+        "create": {
+          "addLine": "Add item",
+          "cancel": "Cancel",
+          "conflict": "Someone else changed this record in the meantime. Reload it and repeat your change.",
+          "customer": "Customer",
+          "customerHelp": "Enter the customer ID from the party registry.",
+          "description": "Choose a customer and items. The order is saved with a price snapshot.",
+          "errorCustomer": "Enter a customer.",
+          "errorLines": "Add at least one item.",
+          "errorProduct": "Choose a product.",
+          "errorQuantity": "Enter a quantity of at least 1.",
+          "failed": "The order could not be created. Try again.",
+          "lines": "Items",
+          "noMatch": "No product matches.",
+          "noProducts": "No products to choose from.",
+          "priceNote": "Prices are fixed when the order is created.",
+          "product": "Product",
+          "productMeta": "Price {{price}}, on hand {{stock}} pcs",
+          "quantity": "Quantity (pcs)",
+          "removeLine": "Remove item",
+          "submit": "Create order",
+          "submitting": "Creating…",
+          "title": "New order"
+        },
         "description": "Customer orders with price snapshots.",
-        "title": "Orders"
+        "detail": {
+          "close": "Close",
+          "createdAt": "Created",
+          "customer": "Customer",
+          "grossTotal": "Total incl. VAT",
+          "lineName": "Name",
+          "lineQuantity": "Quantity",
+          "lineSku": "SKU",
+          "lineTotal": "Total",
+          "lineUnitPrice": "Unit price",
+          "lineVat": "VAT",
+          "lines": "Items",
+          "netTotal": "Total excl. VAT",
+          "source": "Source",
+          "title": "Order {{number}}",
+          "updatedAt": "Last changed",
+          "vatTotal": "VAT"
+        },
+        "source": {
+          "manual": "Manual",
+          "opportunity": "Opportunity"
+        },
+        "stats": {
+          "cancelled": "Cancelled",
+          "open": "Open",
+          "openHint": "New and confirmed",
+          "shippedThisMonth": "Shipped this month",
+          "total": "Orders total"
+        },
+        "states": {
+          "clearFilters": "Clear filters",
+          "errorDescription": "Check the connection and try again.",
+          "errorTitle": "Data could not be loaded.",
+          "filteredTitle": "No order matches the filters.",
+          "firstDescription": "Create the first order and follow it through delivery.",
+          "firstTitle": "There are no orders yet.",
+          "forbiddenTitle": "You do not have access to this section.",
+          "retry": "Try again"
+        },
+        "table": {
+          "actionsLabel": "Actions",
+          "clearSearchLabel": "Clear search",
+          "columnsLabel": "Column settings",
+          "editingLabel": "Editing a row, other table controls are locked",
+          "emptyDescription": "No data available.",
+          "emptyTitle": "No orders",
+          "filtersLabel": "Column filters",
+          "loadingLabel": "Loading orders",
+          "pageSizeLabel": "Rows per page",
+          "range": "{{start}}–{{end}} of {{total}}",
+          "requiredLabel": "Required",
+          "searchButtonLabel": "Search",
+          "searchLabel": "Search",
+          "searchPlaceholder": "Search by order number…",
+          "selectAllLabel": "Select all rows",
+          "selectionLabel": "Select row"
+        },
+        "title": "Orders",
+        "toast": {
+          "cancelled": "Order cancelled",
+          "confirmed": "Order confirmed",
+          "created": "Order created",
+          "delivered": "Order delivered",
+          "shipped": "Order shipped",
+          "statusFailed": "The status could not be changed."
+        }
       },
       "products": {
         "actions": {
