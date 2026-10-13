@@ -4,20 +4,26 @@
  * - `listCustomers` reads the tenant- and Legal-Entity-scoped `customer-list` read.
  * - `createCustomer` composes the existing Actions (no single Action creates a Party and its
  *   CUSTOMER context): `create-party` -> `counterparty-customer-onboard` -> `add-contact-point` (each
- *   supplied channel).
+ *   supplied channel). A current customer with the same IČO is reused instead. A Candidate without a
+ *   strong identifier comes back AMBIGUOUS; when its Duplicate Candidate Case lists no candidate Party,
+ *   the explicit create request resolves it through `resolve-duplicate-candidate-create`.
  * - `updateCustomer` renames the canonical Party through `update-party` with optimistic revision.
  */
 import { DateTime, Effect, Option, Random, Schema } from 'effect';
 
 import type { CustomerListItem, CustomerListRequest } from '../../shared/apis/customer-list.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
+import type { DuplicateCandidateCaseRefSchema } from '../../shared/resources/duplicate-candidate-case.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
+import { decideAmbiguousCustomerCreate, existingCustomerWithCompanyId } from './customer-create-decision.ts';
 import { executeCustomerList } from './customer-list-client.ts';
+import { executeDuplicateCandidateDetail } from './duplicate-candidate-detail-client.ts';
 import {
   addContactPoint,
   archiveParty,
   counterpartyCustomerOnboard,
   createParty,
+  resolveDuplicateCandidateCreate,
   updateParty,
 } from './party-command-client.ts';
 
@@ -135,6 +141,38 @@ const contactPointInputs = (input: CreateCustomerInput) => [
 ];
 
 /**
+ * Resolves the Duplicate Candidate Case of an explicit customer create as CREATE_NEW when it lists no
+ * candidate Party. Any candidate (same exact name or IČO) stays open for an Identity Reviewer.
+ */
+const createNewForAmbiguousCase = Effect.fn('CustomersClient.createNewForAmbiguousCase')(function* resolveCase(
+  caseRef: typeof DuplicateCandidateCaseRefSchema.Type,
+  id: string,
+) {
+  const detail = yield* executeDuplicateCandidateDetail({ caseRef }, yield* requestId('customer-case'));
+  if (decideAmbiguousCustomerCreate(detail) === 'NEEDS_REVIEW') {
+    return yield* new CustomerCreateAmbiguous({
+      caseId: caseRef.resourceId,
+      reason: 'The customer matches several existing Parties; resolve the duplicate case first',
+    });
+  }
+  const resolved = yield* resolveDuplicateCandidateCreate(
+    {
+      caseRef,
+      expectedRevision: detail.revision,
+      reason: 'Customer explicitly created from the customer list; the case lists no candidate Party',
+    },
+    { correlationId: id, idempotencyKey: `${id}:resolve-create` },
+  );
+  if (resolved.partyRef === null) {
+    return yield* new CustomerCreateAmbiguous({
+      caseId: caseRef.resourceId,
+      reason: 'The duplicate case did not create a Party',
+    });
+  }
+  return resolved.partyRef;
+});
+
+/**
  * Creates (or matches) an ORGANIZATION Party, onboards it as a CUSTOMER of the selected Legal Entity,
  * then records the supplied e-mail, phone and address. Steps run sequentially; a failure after the
  * Party exists surfaces the owner's typed error so the caller can retry the remaining step.
@@ -146,6 +184,14 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
   const now = yield* DateTime.now;
   const evidenceReference = Option.getOrElse(nonEmpty(input.evidenceReference), () => `customer-form:${id}`);
   const displayName = input.displayName.trim();
+  const existing = existingCustomerWithCompanyId(yield* listCustomers(), input.companyId);
+  if (Option.isSome(existing)) {
+    return {
+      counterpartyRef: existing.value.counterpartyRef,
+      matchedExistingParty: true,
+      partyRef: existing.value.partyRef,
+    } satisfies CreatedCustomer;
+  }
   const created = yield* createParty(
     {
       candidate: {
@@ -169,12 +215,8 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
     },
     { correlationId: id, idempotencyKey: `${id}:party` },
   );
-  if (created.outcome === 'AMBIGUOUS') {
-    return yield* new CustomerCreateAmbiguous({
-      caseId: created.caseRef.resourceId,
-      reason: 'The customer matches several existing Parties; resolve the duplicate case first',
-    });
-  }
+  const partyRef: PartyRef =
+    created.outcome === 'AMBIGUOUS' ? yield* createNewForAmbiguousCase(created.caseRef, id) : created.partyRef;
   const onboarded = yield* counterpartyCustomerOnboard(
     {
       counterpartyProvenance: {
@@ -189,7 +231,7 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
         reason: 'Customer created from the customer list',
         source: CUSTOMER_PROVENANCE_SOURCE,
       },
-      partyRef: created.partyRef,
+      partyRef,
       validFrom: DateTime.formatIso(now),
     },
     { correlationId: id, idempotencyKey: `${id}:onboard` },
@@ -200,7 +242,7 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
       addContactPoint(
         {
           contactPoint,
-          partyRef: created.partyRef,
+          partyRef,
           privacyClassification: 'BUSINESS_SENSITIVE',
           provenance: {
             authoritative: false,
@@ -218,7 +260,7 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
   return {
     counterpartyRef: onboarded.counterpartyRef,
     matchedExistingParty: created.outcome === 'MATCHED_EXISTING',
-    partyRef: created.partyRef,
+    partyRef,
   } satisfies CreatedCustomer;
 });
 

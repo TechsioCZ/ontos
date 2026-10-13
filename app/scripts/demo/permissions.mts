@@ -164,7 +164,14 @@ const partyRelations = (access: ModuleAccess) =>
   access === 'write'
     ? {
         legalEntity: ['counterparty_manager', 'counterparty_reader'],
-        tenant: ['party_identity_manager', 'party_identity_reader', 'party_relationship_manager'],
+        // party_identity_reviewer: the customer form resolves its own no-candidate Duplicate Candidate Case
+        // as CREATE_NEW (a Candidate without a VERIFIED IČO is always AMBIGUOUS on create-party).
+        tenant: [
+          'party_identity_manager',
+          'party_identity_reader',
+          'party_identity_reviewer',
+          'party_relationship_manager',
+        ],
       }
     : { legalEntity: ['counterparty_reader'], tenant: ['party_identity_reader'] };
 

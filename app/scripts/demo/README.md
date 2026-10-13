@@ -85,6 +85,10 @@ SpiceDB is in-memory, so re-run it after a container restart.
 | `sklad@demo.ontos`     | Skladník        | products, tasks                                       |                                           |
 | `agent-bot` (API key)  | service         | opportunities, tasks, tagging (no tag update/delete)  | all other demo modules                    |
 
+Customer writers (`obchod`, `obchodnik`) also hold `party_identity_reviewer`: `create-party` returns AMBIGUOUS for
+every customer without a VERIFIED IČO, and the customer form resolves that case as CREATE_NEW when it lists no
+candidate Party.
+
 Each demo vertical also has `shared/actions/command-guard.ts`. One apply-command grant covers every
 command, so the guard rejects human-only commands for API-key and system principals: tag update/delete,
 price changes and bulk product edits, employee create/update/bulk edits, and every billing command.
