@@ -1,10 +1,10 @@
+import { BulkActionBar } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { Employee } from '@app/workforce/contracts/records';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { Schema } from 'effect';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../../shared/apis/records.ts';
-import { BulkActionBar } from './tasks-ui.tsx';
 import type { TaskFilters } from './tasks-model.ts';
 
 const key = 'siampark-work.pages.records';
@@ -105,12 +105,7 @@ export const TaskBulkBar = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <BulkActionBar
-      clearLabel={t(`${key}.bulk.clear`)}
-      onClear={onClear}
-      selectedCount={count}
-      selectedLabel={t(`${key}.bulk.selected`, { selected: count })}
-    >
+    <BulkActionBar onClear={onClear} selectedCount={count}>
       <Select
         disabled={busy}
         items={STATE_OPTIONS.map((value) => ({ label: t(`${key}.states.${value}`), value }))}

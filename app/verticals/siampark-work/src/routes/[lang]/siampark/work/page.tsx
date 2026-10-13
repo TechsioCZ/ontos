@@ -1,3 +1,6 @@
+import { EmptyState, PageHeader, StatCard, StatRow } from '@app/admin-ui';
+import { listCustomers } from '@app/party-registry/api/client';
+import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { listEmployees } from '@app/workforce/clients/records';
 import type { Employee } from '@app/workforce/contracts/records';
@@ -21,16 +24,15 @@ import { buildTaskColumns } from './tasks-columns.tsx';
 import { TaskBulkBar, TaskFilterBar } from './tasks-filters.tsx';
 import { TaskFormDialog } from './task-form-dialog.tsx';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
-import { EmptyState, PageHeader, StatCard, StatRow } from './tasks-ui.tsx';
 import {
   TaskTabSchema,
   doneThisWeek,
+  employeeIdOf,
   filterTasks,
   initialTaskFilters,
   unassignedOpenCount,
-  viewerOf,
 } from './tasks-model.ts';
-import type { TaskFilters, TaskTab } from './tasks-model.ts';
+import type { CustomerOption, OpportunityOption, TaskFilters, TaskTab } from './tasks-model.ts';
 import csResource from '../../../../../locales/cs/siampark-work.json';
 import enResource from '../../../../../locales/en/siampark-work.json';
 import '../../../index.css';
@@ -115,6 +117,42 @@ const loadEmployees = ({ setEmployees, setEmployeesFailed }: EmployeeSetters) =>
   );
 };
 
+interface ReferenceSetters {
+  readonly setCustomers: (customers: readonly CustomerOption[]) => void;
+  readonly setOpportunities: (opportunities: readonly OpportunityOption[]) => void;
+  readonly setReferenceFailed: (failed: boolean) => void;
+}
+
+// Names for the table and the pickers. A failed load leaves the ids visible as muted placeholders.
+const loadCustomerNames = ({ setCustomers, setReferenceFailed }: ReferenceSetters) => {
+  browserRuntime.runFork(
+    listCustomers().pipe(
+      Effect.matchEffect({
+        onFailure: (error) =>
+          Effect.logWarning('Customer list unavailable.', error).pipe(
+            Effect.andThen(Effect.sync(() => setReferenceFailed(true))),
+          ),
+        onSuccess: (items) => Effect.sync(() => setCustomers(items)),
+      }),
+    ),
+  );
+};
+
+const loadOpportunityNames = ({ setOpportunities, setReferenceFailed }: ReferenceSetters) => {
+  browserRuntime.runFork(
+    requestId.pipe(
+      Effect.flatMap((id) => listOpportunities({}, id)),
+      Effect.matchEffect({
+        onFailure: (error) =>
+          Effect.logWarning('Opportunity list unavailable.', error).pipe(
+            Effect.andThen(Effect.sync(() => setReferenceFailed(true))),
+          ),
+        onSuccess: (result) => Effect.sync(() => setOpportunities(result.items)),
+      }),
+    ),
+  );
+};
+
 const EmptyActionButton = ({ label, onClick }: { readonly label: string; readonly onClick: () => void }) => (
   <Button onClick={onClick} size="sm" theme="outlined" variant="secondary">
     {label}
@@ -180,6 +218,9 @@ const useTasksPage = () => {
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [employees, setEmployees] = useState<readonly Employee[]>([]);
   const [employeesFailed, setEmployeesFailed] = useState(false);
+  const [customers, setCustomers] = useState<readonly CustomerOption[]>([]);
+  const [opportunities, setOpportunities] = useState<readonly OpportunityOption[]>([]);
+  const [referenceFailed, setReferenceFailed] = useState(false);
   const [tab, setTab] = useState<TaskTab>('mine');
   const [filters, setFilters] = useState<TaskFilters>(initialTaskFilters);
   const [selection, setSelection] = useState<Record<string, true>>({});
@@ -192,19 +233,26 @@ const useTasksPage = () => {
   useEffect(() => {
     loadRecords({ setLoadState, setRecords });
     loadEmployees({ setEmployees, setEmployeesFailed });
+    loadCustomerNames({ setCustomers, setOpportunities, setReferenceFailed });
+    loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed });
   }, []);
 
   const employeeNames = new Map<string, string>(employees.map((employee) => [employee.id, employee.fullName]));
+  const customerNames = new Map<string, string>(
+    customers.flatMap((customer) =>
+      customer.displayName === null ? [] : [[customer.partyId, customer.displayName] as const],
+    ),
+  );
+  const opportunityTitles = new Map<string, string>(
+    opportunities.map((opportunity) => [opportunity.id, opportunity.title] as const),
+  );
   const referenceDate = records?.referenceDate ?? '';
   const canWrite = records?.canWrite === true;
-  const visibleTasks =
-    records === undefined
-      ? []
-      : filterTasks(records.items, {
-          filters,
-          tab,
-          viewer: viewerOf(records.actorPrincipalRef.principalId, employees),
-        });
+  const mineEmployeeId =
+    records === undefined ? undefined : employeeIdOf(records.actorPrincipalRef.principalId, employees);
+  const visibleTasks = records === undefined ? [] : filterTasks(records.items, { filters, mineEmployeeId, tab });
+  // Without an employee bound to this login, "mine" cannot narrow the list, so the page says so.
+  const mineUnlinked = tab === 'mine' && records !== undefined && mineEmployeeId === undefined && employees.length > 0;
   const selectedIds = visibleTasks.flatMap((task) =>
     selection[task.ref.resourceId] === true ? [task.ref.resourceId] : [],
   );
@@ -358,6 +406,8 @@ const useTasksPage = () => {
     actionError,
     bulkBusy,
     canWrite,
+    customerNames,
+    customers,
     editor,
     employeeNames,
     employees,
@@ -377,8 +427,12 @@ const useTasksPage = () => {
     handleSave: save,
     handleSelectionChange: setSelection,
     loadState,
+    mineUnlinked,
+    opportunities,
+    opportunityTitles,
     records,
     referenceDate,
+    referenceFailed,
     saving,
     selectedIds,
     selection,
@@ -393,7 +447,9 @@ const TasksPageContent = () => {
   const { t } = model;
   const { records } = model;
   const columns = buildTaskColumns({
+    customerNames: model.customerNames,
     employeeNames: model.employeeNames,
+    opportunityTitles: model.opportunityTitles,
     referenceDate: model.referenceDate,
     t,
   });
@@ -402,7 +458,6 @@ const TasksPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <Toaster />
       <PageHeader
         actions={
           model.canWrite ? (
@@ -435,6 +490,8 @@ const TasksPageContent = () => {
         </Tabs.List>
       </Tabs>
 
+      {model.mineUnlinked && <p className="text-fg-secondary text-sm">{t(`${key}.mineUnlinked`)}</p>}
+
       <TaskFilterBar employees={model.employees} filters={model.filters} onChange={model.handleFiltersChange} />
 
       {model.canWrite && (
@@ -456,6 +513,11 @@ const TasksPageContent = () => {
       {model.employeesFailed && (
         <StatusText showIcon status="error">
           {t(`${key}.employeesUnavailable`)}
+        </StatusText>
+      )}
+      {model.referenceFailed && (
+        <StatusText showIcon status="error">
+          {t(`${key}.referencesUnavailable`)}
         </StatusText>
       )}
       {model.actionError !== undefined && (
@@ -526,10 +588,12 @@ const TasksPageContent = () => {
       {model.editor !== undefined && (
         <TaskFormDialog
           busy={model.saving}
+          customers={model.customers}
           employees={model.employees}
           error={model.formError}
           onClose={model.handleCloseEditor}
           onSubmit={model.handleSave}
+          opportunities={model.opportunities}
           task={model.editor.mode === 'edit' ? model.editor.task : undefined}
         />
       )}
@@ -537,6 +601,7 @@ const TasksPageContent = () => {
   );
 };
 
+// One Toaster for the whole page tree: the shell mounts none, and ui-kit's toast store is per remote.
 export const RecordsPage = () => (
   <FederatedI18nBoundary
     defaultNamespace="siampark-work"
@@ -544,6 +609,7 @@ export const RecordsPage = () => (
     resources={siamparkWorkI18nResources}
     supportedLanguages={['en', 'cs']}
   >
+    <Toaster />
     <TasksPageContent />
   </FederatedI18nBoundary>
 );
