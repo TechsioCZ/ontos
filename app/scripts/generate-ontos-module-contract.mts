@@ -136,6 +136,8 @@ const repositoryEsbuildPath = (): string => {
   });
 };
 
+const sourceOnlyReactPackages = [{ entry: 'packages/admin-ui/src/index.ts', name: '@app/admin-ui' }] as const;
+
 const assertPlainTarget = (value: string, label: string, pattern: RegExp) =>
   pattern.test(value) ? Effect.succeed(value) : Effect.fail(failure(`${label} must be one safe generated identifier`));
 
@@ -228,6 +230,12 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
               '--format=esm',
               '--platform=node',
               '--packages=external',
+              // Source-only React workspace packages ship `.tsx`, which Node's ESM loader cannot import, so
+              // they are bundled into the owner bundle instead of being left as external package imports.
+              ...sourceOnlyReactPackages.map(
+                (sourcePackage) =>
+                  `--alias:${sourcePackage.name}=${platformPath.join(workspaceRoot, sourcePackage.entry)}`,
+              ),
               `--outfile=${bundlePath}`,
             ],
             { cwd: workspaceRoot },

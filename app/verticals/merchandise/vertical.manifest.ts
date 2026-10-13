@@ -132,7 +132,7 @@ export const merchandiseManifest = defineOntosModuleManifest({
           routePath: '/prodej/objednavky',
         }),
         pageContribution({
-          componentKey: 'demo.merchandise.page.products',
+          componentKey: 'demo.merchandise.page-products',
           contributionKey: recordsPageKey,
           entrypoint: {
             access: 'read',
