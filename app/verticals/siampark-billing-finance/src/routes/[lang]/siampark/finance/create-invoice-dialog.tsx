@@ -160,6 +160,9 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           </Button>
         </>
       }
+      // The form holds unsaved input, and the date field opens a picker outside the drawer. A stray pointer or
+      // focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
+      closeOnInteractOutside={false}
       customTrigger
       onOpenChange={({ open: next }) => {
         if (!next) {

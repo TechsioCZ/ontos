@@ -10,6 +10,7 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
 import { useState } from 'react';
+import type { ApplyCommandResult } from '../../../../../shared/actions/apply-command.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import type { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import csResource from '../../../../../locales/cs/sales-pipeline.json';
@@ -24,7 +25,8 @@ import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from '
 import { PipelineFilters, PipelineStats } from './pipeline-filters.tsx';
 import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
+import { skipTally, sortNewestFirst } from './pipeline-model.ts';
+import type { EmployeeId, OpportunityStage, SkipTally } from './pipeline-model.ts';
 import { PipelineEmptyState, buildColumns, buildTableTranslations } from './pipeline-table.tsx';
 import type { PipelineLookups } from './pipeline-table.tsx';
 import { usePipelineRecords } from './pipeline-records.ts';
@@ -48,7 +50,10 @@ const formToastKey = (command: FormCommand): string =>
     Match.orElse(() => `${K}.toasts.updated`),
   );
 
-/** Rows that pass search, the unassigned toggle and the tag set (`undefined` when no tag filter is set). */
+/**
+ * Rows that pass search, the unassigned toggle and the tag set (`undefined` when no tag filter is set),
+ * newest first.
+ */
 const filterRows = (
   items: readonly Opportunity[],
   search: string,
@@ -56,11 +61,13 @@ const filterRows = (
   tagMembers: ReadonlySet<string> | undefined,
 ) => {
   const query = search.trim().toLocaleLowerCase('cs-CZ');
-  return items.filter(
-    (item) =>
-      (query === '' || item.title.toLocaleLowerCase('cs-CZ').includes(query)) &&
-      (!unassignedOnly || item.ownerEmployeeId === undefined) &&
-      (tagMembers === undefined || tagMembers.has(item.id)),
+  return sortNewestFirst(
+    items.filter(
+      (item) =>
+        (query === '' || item.title.toLocaleLowerCase('cs-CZ').includes(query)) &&
+        (!unassignedOnly || item.ownerEmployeeId === undefined) &&
+        (tagMembers === undefined || tagMembers.has(item.id)),
+    ),
   );
 };
 
@@ -300,7 +307,7 @@ const RecordsPageContent = () => {
     setDialog(undefined);
   };
 
-  const runCommand = (command: PipelineCommand, onDone: (touched: number) => void) => {
+  const runCommand = (command: PipelineCommand, onDone: (result: ApplyCommandResult) => void) => {
     setBusy(true);
     setDialogError(undefined);
     void browserRuntime.runPromise(
@@ -319,7 +326,7 @@ const RecordsPageContent = () => {
           },
           onSuccess: (result) => {
             setBusy(false);
-            onDone(result.opportunities.length);
+            onDone(result);
             reload();
           },
         }),
@@ -327,8 +334,19 @@ const RecordsPageContent = () => {
     );
   };
 
-  const skippedText = (requested: number, touched: number) =>
-    requested > touched ? t(`${K}.toasts.skipped`, { total: requested - touched }) : undefined;
+  /** `Přeskočeno: 2 (uzavřené: 1, beze změny: 1)`, or nothing when every requested id changed. */
+  const skippedText = (tally: SkipTally): string | undefined => {
+    const reasons = [
+      ['closed', tally.closed],
+      ['invalidTransition', tally.invalidTransition],
+      ['notFound', tally.notFound],
+      ['other', tally.other],
+    ] as const;
+    const parts = reasons.flatMap(([reason, total]) =>
+      total > 0 ? [t(`${K}.toasts.skipReasons.${reason}`, { total })] : [],
+    );
+    return tally.total === 0 ? undefined : t(`${K}.toasts.skipped`, { reasons: parts.join(', '), total: tally.total });
+  };
 
   const submitForm = (command: FormCommand) =>
     runCommand(command, () => {
@@ -341,13 +359,13 @@ const RecordsPageContent = () => {
       return;
     }
     const { target } = dialog;
-    runCommand(stageCommand(target, stage, note), (touched) => {
+    runCommand(stageCommand(target, stage, note), (result) => {
       closeDialog();
       if (target.mode === 'bulk') {
         setSelection({});
       }
       toaster.create({
-        description: skippedText(requestedCount(target), touched),
+        description: skippedText(skipTally(requestedCount(target), result)),
         title: t(`${K}.toasts.stageChanged`),
         type: 'success',
       });
@@ -359,13 +377,13 @@ const RecordsPageContent = () => {
       return;
     }
     const { target } = dialog;
-    runCommand(ownerCommand(target, owner), (touched) => {
+    runCommand(ownerCommand(target, owner), (result) => {
       closeDialog();
       if (target.mode === 'bulk') {
         setSelection({});
       }
       toaster.create({
-        description: skippedText(requestedCount(target), touched),
+        description: skippedText(skipTally(requestedCount(target), result)),
         title: t(`${K}.toasts.ownerAssigned`),
         type: 'success',
       });
@@ -377,7 +395,8 @@ const RecordsPageContent = () => {
     setSelection({});
     reload();
     toaster.create({
-      title: t(`${K}.toasts.bulkChanged`, { changed: result.changed, skipped: result.skipped }),
+      description: skippedText(result.skipped),
+      title: t(`${K}.toasts.bulkChanged`, { changed: result.changed, skipped: result.skipped.total }),
       type: 'success',
     });
   };
