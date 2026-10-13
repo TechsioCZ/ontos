@@ -12,7 +12,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { Invoice } from '../../../../../shared/apis/records.ts';
-import { customerDisplayName, customerOf, isOverdue, opportunityTitle, paymentKind } from './invoice-view.ts';
+import { customerDisplayName, customerOf, invoiceStatusBadge, isOverdue, opportunityTitle } from './invoice-view.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 
 type FinanceViewModel = ReturnType<typeof useFinanceRecords>;
@@ -39,62 +39,27 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
     invoice.opportunityId === undefined
       ? t(`${ns}.sourceManual`)
       : [t(`${ns}.sourceOpportunity`), title].filter((part) => part !== undefined && part !== '').join(' · ');
+  const status = invoiceStatusBadge(invoice, referenceDate);
 
   return (
     <>
       <div className="print:hidden">
-        <Button icon="icon-[mdi--arrow-left]" onClick={closeDetail} size="sm" theme="borderless" variant="secondary">
+        <Button
+          className="whitespace-nowrap"
+          icon="icon-[mdi--arrow-left]"
+          onClick={closeDetail}
+          size="sm"
+          theme="borderless"
+          variant="secondary"
+        >
           {t(`${ns}.back`)}
         </Button>
       </div>
       <PageHeader
-        actions={
-          <div className="flex flex-wrap items-center gap-100 print:hidden">
-            <Button
-              icon="icon-[mdi--printer-outline]"
-              onClick={() => window.print()}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              {t(`${ns}.print`)}
-            </Button>
-            {canWrite && isDraft && (
-              <Button
-                disabled={busy}
-                onClick={() => requestVoid(invoice)}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {t(`${ns}.void`)}
-              </Button>
-            )}
-            {canWrite && isDraft && (
-              <Button
-                disabled={busy}
-                icon="icon-[mdi--check-circle-outline]"
-                isLoading={busy}
-                loadingText={t(`${ns}.confirming`)}
-                onClick={() => confirmInvoice(invoice)}
-                size="sm"
-                variant="primary"
-              >
-                {t(`${ns}.confirm`)}
-              </Button>
-            )}
-          </div>
-        }
         description={t(`${ns}.issuedDue`, {
           due: formatDate(invoice.dueDate),
           issued: formatDate(invoice.issueDate),
         })}
-        meta={
-          <>
-            <StatusBadge kind="invoice" value={invoice.businessState} />
-            <StatusBadge kind="payment" value={paymentKind(invoice, referenceDate)} />
-          </>
-        }
         title={number}
       />
       {isOverdue(invoice, referenceDate) && (
@@ -102,8 +67,27 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
           {t(`${ns}.overdueNotice`)}
         </StatusText>
       )}
-      <div className="grid grid-cols-1 items-start gap-250 xl:grid-cols-3">
-        <div className="flex min-w-0 flex-col gap-250 xl:col-span-2">
+      <div className="grid grid-cols-1 items-start gap-250 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="flex min-w-0 flex-col gap-250">
+          <div className="grid grid-cols-1 gap-250 md:grid-cols-2">
+            <SectionCard title={t(`${ns}.supplier`)}>
+              <p className="text-sm">{t(`${ns}.supplierName`)}</p>
+            </SectionCard>
+            <SectionCard title={t(`${ns}.customer`)}>
+              <DetailList
+                items={[
+                  {
+                    label: t(`${ns}.columns.customer`),
+                    value: customerDisplayName(customer, t(`${ns}.unknownCustomer`)),
+                  },
+                  { label: t(`${ns}.companyId`), value: customer?.companyId ?? '—' },
+                  { label: t(`${ns}.vatId`), value: customer?.vatId ?? '—' },
+                  { label: t(`${ns}.city`), value: customer?.city ?? '—' },
+                  { label: t(`${ns}.source`), value: sourceLabel },
+                ]}
+              />
+            </SectionCard>
+          </div>
           <SectionCard flush title={t(`${ns}.lines`)}>
             {lines.length === 0 ? (
               <p className="px-250 pb-250 text-fg-secondary text-sm">{t(`${ns}.noLines`)}</p>
@@ -140,77 +124,108 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
               </Table>
             )}
           </SectionCard>
-          <SectionCard flush title={t(`${ns}.vatRecap`)}>
-            {vatRecap.length === 0 ? (
-              <p className="px-250 pb-250 text-fg-secondary text-sm">—</p>
-            ) : (
-              <Table size="sm" variant="line">
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader align="end">{t(`${ns}.vatRate`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader align="end">{t(`${ns}.vatBase`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader align="end">{t(`${ns}.vatAmount`)}</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {vatRecap.map((entry) => (
-                    <Table.Row key={entry.rate}>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {formatPercent(entry.rate / 100)}
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {formatMoney(entry.baseMinor)}
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {formatMoney(entry.vatMinor)}
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table>
-            )}
-          </SectionCard>
         </div>
-        <div className="flex min-w-0 flex-col gap-250">
-          <SectionCard title={t(`${ns}.supplier`)}>
-            <p className="text-sm">{t(`${ns}.supplierName`)}</p>
-          </SectionCard>
-          <SectionCard title={t(`${ns}.customer`)}>
-            <DetailList
-              items={[
-                {
-                  label: t(`${ns}.columns.customer`),
-                  value: customerDisplayName(customer, t(`${ns}.unknownCustomer`)),
-                },
-                { label: t(`${ns}.companyId`), value: customer?.companyId ?? '—' },
-                { label: t(`${ns}.vatId`), value: customer?.vatId ?? '—' },
-                { label: t(`${ns}.city`), value: customer?.city ?? '—' },
-                { label: t(`${ns}.source`), value: sourceLabel },
-              ]}
-            />
-          </SectionCard>
+        <div className="flex min-w-0 flex-col gap-250 xl:sticky xl:top-[5rem]">
           <SectionCard title={t(`${ns}.totals`)}>
-            <DetailList
-              items={[
-                {
-                  label: t(`${ns}.subtotal`),
-                  value: <span className="tabular-nums">{optionalMoney(invoice.subtotalMinor)}</span>,
-                },
-                {
-                  label: t(`${ns}.vatTotal`),
-                  value: <span className="tabular-nums">{optionalMoney(invoice.vatMinor)}</span>,
-                },
-                {
-                  label: t(`${ns}.total`),
-                  value: <span className="font-semibold tabular-nums">{formatMoney(invoice.totalMinor)}</span>,
-                },
-                {
-                  label: t(`${ns}.paid`),
-                  value: <span className="tabular-nums">{formatMoney(invoice.paidMinor)}</span>,
-                },
-              ]}
-            />
+            <div className="flex flex-col gap-200">
+              <DetailList
+                items={[
+                  {
+                    label: t(`${ns}.subtotal`),
+                    value: <span className="tabular-nums">{optionalMoney(invoice.subtotalMinor)}</span>,
+                  },
+                ]}
+              />
+              <div className="flex flex-col gap-100">
+                <span className="text-fg-secondary text-sm">{t(`${ns}.vatRecap`)}</span>
+                {vatRecap.length === 0 ? (
+                  <p className="text-fg-secondary text-sm">—</p>
+                ) : (
+                  <Table size="sm" variant="line">
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.ColumnHeader align="end">{t(`${ns}.vatRate`)}</Table.ColumnHeader>
+                        <Table.ColumnHeader align="end">{t(`${ns}.vatBase`)}</Table.ColumnHeader>
+                        <Table.ColumnHeader align="end">{t(`${ns}.vatAmount`)}</Table.ColumnHeader>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {vatRecap.map((entry) => (
+                        <Table.Row key={entry.rate}>
+                          <Table.Cell align="end" className="tabular-nums">
+                            {formatPercent(entry.rate / 100)}
+                          </Table.Cell>
+                          <Table.Cell align="end" className="tabular-nums">
+                            {formatMoney(entry.baseMinor)}
+                          </Table.Cell>
+                          <Table.Cell align="end" className="tabular-nums">
+                            {formatMoney(entry.vatMinor)}
+                          </Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </Table>
+                )}
+              </div>
+              <DetailList
+                items={[
+                  {
+                    label: t(`${ns}.vatTotal`),
+                    value: <span className="tabular-nums">{optionalMoney(invoice.vatMinor)}</span>,
+                  },
+                  {
+                    label: t(`${ns}.total`),
+                    value: <span className="font-semibold tabular-nums">{formatMoney(invoice.totalMinor)}</span>,
+                  },
+                  {
+                    label: t(`${ns}.paid`),
+                    value: <span className="tabular-nums">{formatMoney(invoice.paidMinor)}</span>,
+                  },
+                ]}
+              />
+            </div>
           </SectionCard>
+          <SectionCard title={t(`${ns}.columns.status`)}>
+            <StatusBadge kind={status.kind} value={status.value} />
+          </SectionCard>
+          <div className="flex flex-wrap items-center gap-100 print:hidden">
+            <Button
+              className="whitespace-nowrap"
+              icon="icon-[mdi--printer-outline]"
+              onClick={() => window.print()}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {t(`${ns}.print`)}
+            </Button>
+            {canWrite && isDraft && (
+              <Button
+                className="whitespace-nowrap"
+                disabled={busy}
+                onClick={() => requestVoid(invoice)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                {t(`${ns}.void`)}
+              </Button>
+            )}
+            {canWrite && isDraft && (
+              <Button
+                className="whitespace-nowrap"
+                disabled={busy}
+                icon="icon-[mdi--check-circle-outline]"
+                isLoading={busy}
+                loadingText={t(`${ns}.confirming`)}
+                onClick={() => confirmInvoice(invoice)}
+                size="sm"
+                variant="primary"
+              >
+                {t(`${ns}.confirm`)}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </>

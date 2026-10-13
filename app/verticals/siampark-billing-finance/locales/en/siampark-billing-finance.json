@@ -83,7 +83,6 @@
         "due": "Due date",
         "total": "Total",
         "status": "Status",
-        "payment": "Payment",
         "source": "Source"
       },
       "sourceOpportunity": "Opportunity",
@@ -94,6 +93,20 @@
       "loadErrorDescription": "Check your connection and try again.",
       "emptyFirstTitle": "No invoices yet.",
       "emptyFirstDescription": "Invoices appear when an opportunity is won.",
+      "noMatches": "No invoices match the filter.",
+      "noMatchesDescription": "Try a different search or status.",
+      "filters": {
+        "status": "Status",
+        "all": "All statuses",
+        "states": {
+          "DRAFT": "Draft",
+          "UNPAID": "Unpaid",
+          "PARTIAL": "Partially paid",
+          "PAID": "Paid",
+          "OVERDUE": "Overdue",
+          "VOIDED": "Voided"
+        }
+      },
       "confirm": "Confirm",
       "confirmed": "Invoice confirmed",
       "confirming": "Confirming…",
@@ -118,15 +131,16 @@
       "vatBase": "Base",
       "vatAmount": "VAT",
       "supplier": "Supplier",
-      "supplierName": "Techsio s.r.o.",
+      "supplierName": "Siampark DEMO s.r.o.",
       "customer": "Customer",
-      "totals": "Totals",
+      "totals": "Summary",
       "subtotal": "Subtotal",
       "vatTotal": "VAT total",
       "total": "Total due",
       "paid": "Paid",
       "table": {
         "actions": "Actions",
+        "rowMenu": "Invoice actions",
         "clearSearch": "Clear search",
         "columns": "Column settings",
         "emptyDescription": "No data available.",

@@ -1,7 +1,13 @@
 import { EmptyState, formatDate, formatMoney, StatusBadge } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Menu } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { customerDisplayName, customerOf, opportunityTitle, paymentKind } from './invoice-view.ts';
+import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { useState } from 'react';
+import type { Row } from '@techsio/ui-kit/organisms/data-table';
+import type { Invoice } from '../../../../../shared/apis/records.ts';
+import { customerDisplayName, customerOf, invoiceStatusBadge, opportunityTitle } from './invoice-view.ts';
 import type { InvoiceColumn } from './invoice-table-types.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 
@@ -9,9 +15,11 @@ type FinanceViewModel = ReturnType<typeof useFinanceRecords>;
 type Translate = FinanceViewModel['t'];
 
 const ns = 'siampark-billing-finance.faktury';
+const ALL = 'ALL';
+const STATUS_FILTERS = ['DRAFT', 'UNPAID', 'PARTIAL', 'PAID', 'OVERDUE', 'VOIDED'] as const;
 
 const tableTranslations = (t: Translate) => ({
-  actionsLabel: t(`${ns}.table.actions`),
+  actionsLabel: '',
   clearSearchLabel: t(`${ns}.table.clearSearch`),
   columnsLabel: t(`${ns}.table.columns`),
   editingLabel: t(`${ns}.table.editing`),
@@ -40,7 +48,7 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       cell: (info) => <span className="font-medium whitespace-nowrap">{info.getValue<string>()}</span>,
       header: t(`${ns}.columns.number`),
       id: 'number',
-      meta: { width: 150 },
+      meta: { width: 130 },
     },
     {
       accessorFn: (row) => customerDisplayName(customerOf(references.customerById, row), unknownCustomer),
@@ -62,19 +70,19 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       },
       header: t(`${ns}.columns.customer`),
       id: 'customer',
-      meta: { width: 240 },
+      meta: { width: 220 },
     },
     {
       accessorKey: 'issueDate',
       cell: (info) => formatDate(info.getValue<string>()),
       header: t(`${ns}.columns.issued`),
-      meta: { width: 120 },
+      meta: { width: 110 },
     },
     {
       accessorKey: 'dueDate',
       cell: (info) => formatDate(info.getValue<string>()),
       header: t(`${ns}.columns.due`),
-      meta: { width: 120 },
+      meta: { width: 110 },
     },
     {
       accessorKey: 'totalMinor',
@@ -83,17 +91,11 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       meta: { align: 'end', type: 'number', width: 130 },
     },
     {
-      accessorKey: 'businessState',
-      cell: (info) => <StatusBadge kind="invoice" value={info.getValue<string>()} />,
+      accessorFn: (row) => invoiceStatusBadge(row, referenceDate).value,
+      cell: (info) => <StatusBadge {...invoiceStatusBadge(info.row.original, referenceDate)} />,
       header: t(`${ns}.columns.status`),
-      meta: { width: 130 },
-    },
-    {
-      accessorFn: (row) => paymentKind(row, referenceDate),
-      cell: (info) => <StatusBadge kind="payment" value={info.getValue<string>()} />,
-      header: t(`${ns}.columns.payment`),
-      id: 'payment',
-      meta: { width: 170 },
+      id: 'status',
+      meta: { width: 180 },
     },
     {
       accessorFn: (row) => opportunityTitle(references.opportunityTitles, row) ?? '',
@@ -112,75 +114,171 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       enableSorting: false,
       header: t(`${ns}.columns.source`),
       id: 'source',
-      meta: { width: 200 },
+      meta: { width: 180 },
     },
   ];
 };
+
+/** Menu clicks and keys stop at the row menu so they do not open the invoice detail. */
+const stopRowInteraction = (event: { stopPropagation: () => void }) => event.stopPropagation();
 
 interface FinanceInvoiceTableProps {
   readonly vm: FinanceViewModel;
 }
 
 export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
-  const { busy, canWrite, confirmInvoice, feedback, invoices, openDetail, reload, requestVoid, snapshot, t } = vm;
+  const {
+    busy,
+    canWrite,
+    confirmInvoice,
+    feedback,
+    invoices,
+    openDetail,
+    referenceDate,
+    references,
+    reload,
+    requestVoid,
+    snapshot,
+    t,
+  } = vm;
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<string>(ALL);
   const loadFailed = snapshot === undefined && feedback !== 'loading';
+  const filterActive = search.trim() !== '' || status !== ALL;
+  const unknownCustomer = t(`${ns}.unknownCustomer`);
+
+  const query = search.trim().toLowerCase();
+  const visibleInvoices = invoices.filter((invoice) => {
+    if (status !== ALL && invoiceStatusBadge(invoice, referenceDate).value !== status) {
+      return false;
+    }
+    if (query === '') {
+      return true;
+    }
+    const customerName = customerDisplayName(customerOf(references.customerById, invoice), unknownCustomer);
+    return [invoice.number ?? invoice.documentNumber, customerName].some((value) =>
+      value.toLowerCase().includes(query),
+    );
+  });
+
+  const rowMenu = (invoice: Invoice) =>
+    invoice.businessState === 'DRAFT' ? (
+      <div
+        aria-label={t(`${ns}.table.rowMenu`)}
+        onClick={stopRowInteraction}
+        onKeyDown={stopRowInteraction}
+        role="toolbar"
+        tabIndex={-1}
+      >
+        <Menu
+          aria-label={t(`${ns}.table.rowMenu`)}
+          customTrigger={
+            <Button
+              aria-label={t(`${ns}.table.rowMenu`)}
+              disabled={busy}
+              icon="icon-[mdi--dots-vertical]"
+              size="sm"
+              theme="borderless"
+              variant="secondary"
+            />
+          }
+          items={[
+            {
+              disabled: busy,
+              icon: 'icon-[mdi--check-circle-outline]',
+              label: t(`${ns}.confirm`),
+              type: 'action',
+              value: 'confirm',
+            },
+            {
+              disabled: busy,
+              icon: 'icon-[mdi--cancel]',
+              label: t(`${ns}.void`),
+              type: 'action',
+              value: 'void',
+            },
+          ]}
+          onSelect={({ value }) => {
+            if (value === 'confirm') {
+              confirmInvoice(invoice);
+            } else if (value === 'void') {
+              requestVoid(invoice);
+            }
+          }}
+          size="sm"
+        />
+      </div>
+    ) : null;
 
   return (
-    <DataTable
-      columns={buildColumns(t, vm)}
-      data={invoices}
-      enableGlobalFilter
-      enablePagination
-      enableSorting
-      getRowId={(row) => row.ref.resourceId}
-      getRowLabel={(row) => row.original.number ?? row.original.documentNumber}
-      loading={snapshot === undefined && feedback === 'loading'}
-      loadingRowCount={12}
-      maxHeight="calc(100dvh - 22rem)"
-      onRowClick={(row) => openDetail(row.original.ref.resourceId)}
-      pageSizeOptions={[50, 100, 200]}
-      renderEmpty={() =>
-        loadFailed ? (
-          <EmptyState
-            action={
-              <Button onClick={reload} size="sm" theme="outlined" variant="secondary">
-                {t(`${ns}.retry`)}
-              </Button>
-            }
-            description={t(`${ns}.loadErrorDescription`)}
-            title={t(`${ns}.loadError`)}
+    <>
+      <div className="flex flex-wrap items-end gap-150">
+        <div className="w-64 min-w-0">
+          <FormInput
+            id="invoice-search"
+            label={t(`${ns}.table.search`)}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t(`${ns}.table.searchPlaceholder`)}
+            size="sm"
+            value={search}
           />
-        ) : (
-          <EmptyState description={t(`${ns}.emptyFirstDescription`)} title={t(`${ns}.emptyFirstTitle`)} />
-        )
-      }
-      rowActions={
-        canWrite
-          ? [
-              {
-                disabled: () => busy,
-                hidden: (row) => row.original.businessState !== 'DRAFT',
-                icon: 'icon-[mdi--check-circle-outline]',
-                id: 'confirm',
-                label: t(`${ns}.confirm`),
-                onAction: (row) => confirmInvoice(row.original),
-              },
-              {
-                disabled: () => busy,
-                hidden: (row) => row.original.businessState !== 'DRAFT',
-                icon: 'icon-[mdi--cancel]',
-                id: 'void',
-                label: t(`${ns}.void`),
-                onAction: (row) => requestVoid(row.original),
-                tone: 'danger',
-              },
-            ]
-          : []
-      }
-      size="sm"
-      stickyHeader
-      tableLayout="fixed"
-      translations={tableTranslations(t)}
-    />
+        </div>
+        <div className="w-48 min-w-0">
+          <Select
+            items={[
+              { label: t(`${ns}.filters.all`), value: ALL },
+              ...STATUS_FILTERS.map((value) => ({ label: t(`${ns}.filters.states.${value}`), value })),
+            ]}
+            label={t(`${ns}.filters.status`)}
+            onValueChange={({ value }) => {
+              const [next] = value;
+              if (next !== undefined) {
+                setStatus(next);
+              }
+            }}
+            size="sm"
+            value={[status]}
+          />
+        </div>
+      </div>
+      <DataTable
+        columns={buildColumns(t, vm)}
+        data={visibleInvoices}
+        enableColumnFilters={false}
+        enablePagination
+        enableSorting
+        getRowId={(row) => row.ref.resourceId}
+        getRowLabel={(row) => row.original.number ?? row.original.documentNumber}
+        loading={snapshot === undefined && feedback === 'loading'}
+        loadingRowCount={12}
+        maxHeight="calc(100dvh - 24rem)"
+        onRowClick={(row) => openDetail(row.original.ref.resourceId)}
+        pageSizeOptions={[50, 100, 200]}
+        renderEmpty={() => {
+          if (loadFailed) {
+            return (
+              <EmptyState
+                action={
+                  <Button className="whitespace-nowrap" onClick={reload} size="sm" theme="outlined" variant="secondary">
+                    {t(`${ns}.retry`)}
+                  </Button>
+                }
+                description={t(`${ns}.loadErrorDescription`)}
+                title={t(`${ns}.loadError`)}
+              />
+            );
+          }
+          if (filterActive) {
+            return <EmptyState description={t(`${ns}.noMatchesDescription`)} title={t(`${ns}.noMatches`)} />;
+          }
+          return <EmptyState description={t(`${ns}.emptyFirstDescription`)} title={t(`${ns}.emptyFirstTitle`)} />;
+        }}
+        {...(canWrite ? { renderRowActions: (row: Row<Invoice>) => rowMenu(row.original) } : {})}
+        size="sm"
+        stickyHeader
+        tableLayout="fixed"
+        translations={tableTranslations(t)}
+      />
+    </>
   );
 };

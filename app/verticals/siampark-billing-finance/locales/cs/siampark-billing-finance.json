@@ -83,7 +83,6 @@
         "due": "Splatnost",
         "total": "Celkem",
         "status": "Stav",
-        "payment": "Platba",
         "source": "Zdroj"
       },
       "sourceOpportunity": "Příležitost",
@@ -94,6 +93,20 @@
       "loadErrorDescription": "Zkontrolujte připojení a zkuste to znovu.",
       "emptyFirstTitle": "Zatím tu nejsou žádné faktury.",
       "emptyFirstDescription": "Faktury se objeví po výhře příležitosti.",
+      "noMatches": "Žádné faktury neodpovídají filtru.",
+      "noMatchesDescription": "Zkuste upravit hledání nebo stav.",
+      "filters": {
+        "status": "Stav",
+        "all": "Všechny stavy",
+        "states": {
+          "DRAFT": "Koncept",
+          "UNPAID": "Neuhrazená",
+          "PARTIAL": "Částečně uhrazená",
+          "PAID": "Uhrazená",
+          "OVERDUE": "Po splatnosti",
+          "VOIDED": "Stornovaná"
+        }
+      },
       "confirm": "Potvrdit",
       "confirmed": "Faktura potvrzena",
       "confirming": "Potvrzuji…",
@@ -118,15 +131,16 @@
       "vatBase": "Základ",
       "vatAmount": "DPH",
       "supplier": "Dodavatel",
-      "supplierName": "Techsio s.r.o.",
+      "supplierName": "Siampark DEMO s.r.o.",
       "customer": "Odběratel",
-      "totals": "Součty",
+      "totals": "Souhrn",
       "subtotal": "Základ celkem",
       "vatTotal": "DPH celkem",
       "total": "Celkem k úhradě",
       "paid": "Uhrazeno",
       "table": {
         "actions": "Akce",
+        "rowMenu": "Akce faktury",
         "clearSearch": "Vymazat hledání",
         "columns": "Nastavení sloupců",
         "emptyDescription": "Nejsou k dispozici žádná data.",
