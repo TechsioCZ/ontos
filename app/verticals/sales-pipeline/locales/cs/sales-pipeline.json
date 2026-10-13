@@ -73,7 +73,10 @@
           "search": "Hledat podle názvu",
           "searchLabel": "Hledat",
           "stage": "Fáze",
-          "unassignedOnly": "Jen nepřiřazené"
+          "unassignedOnly": "Jen nepřiřazené",
+          "customer": "Zákazník",
+          "allCustomers": "Všichni zákazníci",
+          "tagFailed": "Filtr podle štítku se nepodařilo načíst."
         },
         "columns": {
           "amount": "Hodnota",
@@ -88,33 +91,53 @@
         },
         "actions": {
           "assignOwner": "Přiřadit obchodníka",
-          "changeStage": "Změnit fázi"
+          "changeStage": "Změnit fázi",
+          "edit": "Upravit"
         },
         "bulk": {
-          "clear": "Zrušit výběr",
           "owner": "Přiřadit obchodníka",
           "selected": "Vybráno: {{total}}",
-          "stage": "Změnit fázi"
+          "stage": "Změnit fázi",
+          "tags": "Štítky"
         },
         "create": {
           "cancel": "Zrušit",
-          "customerHint": "Dočasně zadejte ID zákazníka. Výběr přijde s evidencí zákazníků.",
-          "description": "Příležitost se založí bez řádků produktů ve fázi Lead.",
+          "submit": "Vytvořit příležitost",
+          "submitting": "Ukládám…",
+          "title": "Nová příležitost",
+          "description": "Příležitost se založí ve fázi Lead. Produkty se oceňují aktuální cenou.",
+          "customerPlaceholder": "Vyhledejte zákazníka…",
+          "noCustomerMatch": "Žádný zákazník neodpovídá hledání.",
+          "unknownCustomer": "Neznámý zákazník",
+          "customersFailed": "Zákazníky se nepodařilo načíst.",
+          "ownerEditHint": "Obchodníka změníte akcí Přiřadit obchodníka.",
+          "productPlaceholder": "Vyhledejte produkt…",
+          "noProductMatch": "Žádný produkt neodpovídá hledání.",
+          "productsFailed": "Produkty se nepodařilo načíst.",
+          "currentPrice": "Aktuální cena: {{price}}, DPH {{vat}} %",
+          "addLine": "Přidat položku",
+          "removeLine": "Odebrat položku",
+          "noLines": "Zatím bez položek.",
+          "priceFixedHint": "Cena zafixována při přidání.",
+          "lineMeta": "{{price}} za kus, DPH {{vat}} %",
+          "total": "Celkem bez DPH",
           "errors": {
-            "customerInvalid": "Zadejte platné ID zákazníka.",
+            "customerRequired": "Vyberte zákazníka.",
             "dateRequired": "Vyberte očekávané datum uzavření.",
             "noteTooLong": "Poznámka může mít nejvýše 2000 znaků.",
+            "productRequired": "Vyberte produkt.",
             "titleRequired": "Vyplňte název příležitosti."
           },
           "fields": {
-            "customer": "Zákazník (ID)",
+            "title": "Název",
+            "customer": "Zákazník",
+            "assignee": "Obchodník",
             "expectedClose": "Očekávané uzavření",
             "note": "Poznámka",
-            "title": "Název"
-          },
-          "submit": "Vytvořit příležitost",
-          "submitting": "Vytvářím…",
-          "title": "Nová příležitost"
+            "lines": "Položky",
+            "product": "Produkt",
+            "quantity": "Množství"
+          }
         },
         "stageDialog": {
           "cancel": "Zrušit",
@@ -138,13 +161,49 @@
           "created": "Příležitost vytvořena",
           "ownerAssigned": "Obchodník přiřazen",
           "skipped": "Přeskočeno: {{total}}",
-          "stageChanged": "Fáze změněna"
+          "stageChanged": "Fáze změněna",
+          "updated": "Příležitost uložena",
+          "bulkChanged": "Změněno {{changed}}, přeskočeno {{skipped}}"
         },
         "errors": {
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "forbidden": "K této operaci nemáte oprávnění.",
           "generic": "Změnu se nepodařilo uložit. Zkuste to znovu."
-        }
+        },
+        "bulkByTag": {
+          "title": "Hromadně podle štítku",
+          "description": "Změna se použije na otevřené příležitosti, které odpovídají vybranému štítku.",
+          "kind": "Typ štítku",
+          "kinds": {
+            "customer": "Zákazník",
+            "opportunity": "Příležitost"
+          },
+          "preview": "Ovlivněné příležitosti",
+          "chooseTag": "Vyberte štítek. Zobrazí se příležitosti, kterých se změna dotkne.",
+          "previewEmpty": "Štítku neodpovídá žádná otevřená příležitost.",
+          "loading": "Načítání příležitostí…",
+          "tagsFailed": "Štítky se nepodařilo načíst.",
+          "loadFailed": "Příležitosti se nepodařilo načíst. Zavřete dialog a zkuste to znovu.",
+          "conflict": "Příležitosti mezitím upravil někdo jiný. Zavřete dialog a změnu zopakujte.",
+          "action": "Akce",
+          "actions": {
+            "stage": "Změnit fázi",
+            "owner": "Přiřadit obchodníka"
+          },
+          "stage": "Nová fáze",
+          "owner": "Obchodník",
+          "valueRequired": "Vyberte novou fázi nebo obchodníka.",
+          "tooMany": "Najednou lze změnit nejvýše {{limit}} příležitostí. Zúžte výběr štítkem.",
+          "submit": "Provést změnu",
+          "submitting": "Ukládám…",
+          "cancel": "Zrušit"
+        },
+        "edit": {
+          "title": "Upravit příležitost",
+          "description": "Obchodníka měňte akcí Přiřadit obchodníka. Položky si zachovají ceny zafixované při přidání.",
+          "submit": "Uložit změny"
+        },
+        "unknownOwner": "Neznámý obchodník"
       }
     }
   }
