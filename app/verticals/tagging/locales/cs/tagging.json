@@ -78,7 +78,8 @@
       "filter": {
         "all": "Všechny štítky",
         "noResults": "Žádný štítek neodpovídá.",
-        "placeholder": "Štítek"
+        "placeholder": "Štítek",
+        "toggle": "Zobrazit štítky"
       },
       "form": {
         "cancel": "Zrušit",

@@ -78,7 +78,8 @@
       "filter": {
         "all": "All tags",
         "noResults": "No tag matches.",
-        "placeholder": "Tag"
+        "placeholder": "Tag",
+        "toggle": "Show tags"
       },
       "form": {
         "cancel": "Cancel",

@@ -1,4 +1,12 @@
-import { EmptyState, PageHeader, SidePanel, TagBadge } from '@app/admin-ui';
+import {
+  EmptyState,
+  PageHeader,
+  SidePanel,
+  TagBadge,
+  toasterLabels,
+  dialogCloseLabel,
+  paginationTranslations,
+} from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -301,6 +309,7 @@ const DeleteTagDialog = ({
           </Button>
         </>
       }
+      closeLabel={dialogCloseLabel}
       customTrigger
       description={t('tagging.tags.delete.description')}
       onOpenChange={(details) => {
@@ -554,6 +563,7 @@ const TagsPageContent = () => {
         onGlobalFilterChange={(next) => setGlobalFilter(next)}
         onRowClick={(row) => setInspecting(row.original)}
         pageSizeOptions={[50, 100, 200]}
+        paginationProps={{ translations: paginationTranslations }}
         renderEmpty={() => {
           if (state.status === 'error') {
             return (
@@ -631,7 +641,7 @@ const TagsPageContent = () => {
         <DeleteTagDialog onClose={() => setRemoving(null)} onDeleted={() => reload()} tag={removing} />
       )}
       {inspecting !== null && <TagAssignmentsDialog onClose={() => setInspecting(null)} tag={inspecting} />}
-      <Toaster />
+      <Toaster {...toasterLabels} />
     </>
   );
 };

@@ -76,6 +76,52 @@ export const assignmentsFor = (kind: SubjectKind, ids: readonly string[]) =>
         Effect.map((records) => records.assignments),
       );
 
+/** `SubjectIdsQuerySchema` caps one records query at this many characters. */
+const subjectIdsQueryLimit = 8000;
+
+/** Comma-joined id lists, each within the records query limit. */
+const subjectIdQueries = (ids: readonly string[]): string[] => {
+  const queries: string[] = [];
+  let current = '';
+  for (const id of ids) {
+    if (current !== '' && current.length + 1 + id.length > subjectIdsQueryLimit) {
+      queries.push(current);
+      current = id;
+    } else {
+      current = current === '' ? id : `${current},${id}`;
+    }
+  }
+  if (current !== '') {
+    queries.push(current);
+  }
+  return queries;
+};
+
+/**
+ * Assignments of subjects of several kinds, across all tags. One records operation covers every kind; a list longer
+ * than the query limit takes one more operation per extra chunk. Only assignments of the requested (kind, id) pairs
+ * are returned, so an id shared by two kinds never leaks the other kind's tags.
+ */
+export const assignmentsForSubjects = (subjects: readonly { readonly id: string; readonly kind: SubjectKind }[]) => {
+  const wanted = new Set(subjects.map((subject) => `${subject.kind}:${subject.id}`));
+  const ids = [...new Set(subjects.map((subject) => subject.id))];
+  return ids.length === 0
+    ? Effect.succeed([])
+    : Effect.forEach(
+        subjectIdQueries(ids),
+        (subjectIds) => freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectIds }, id))),
+        { concurrency: 1 },
+      ).pipe(
+        Effect.map((pages) =>
+          pages.flatMap((records) =>
+            records.assignments.filter((assignment) =>
+              wanted.has(`${assignment.subject.kind}:${assignment.subject.id}`),
+            ),
+          ),
+        ),
+      );
+};
+
 /** Tags and the assignments of the given subject ids in one operation. Callers skip the call for an empty list. */
 export const recordsFor = (kind: SubjectKind, ids: readonly string[]) =>
   freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectIds: ids.join(','), subjectKind: kind }, id)));

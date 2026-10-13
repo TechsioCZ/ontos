@@ -14,7 +14,8 @@
  *   subjects. Confirms with a toast, so the host page must render one `<Toaster />` from
  *   `@techsio/ui-kit/molecules/toast`.
  */
-import { matchesSearch, SidePanel, TagBadge } from '@app/admin-ui';
+import { matchesSearch, SidePanel, TagBadge, comboboxTranslations } from '@app/admin-ui';
+import type { SidePanelSize } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -23,7 +24,7 @@ import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect, Schema } from 'effect';
-import type { MouseEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { assignTag, listTags, recordsFor, unassignTag } from '../api/records-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
@@ -173,39 +174,34 @@ const TagPickerField = ({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const items = tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null);
-  // ui-kit does not forward zag's `openOnClick`, so a click into the input opens the list here.
-  // Keyboard users keep ArrowDown and typing; clicks elsewhere (chevron, options) keep zag's own handling.
-  const openOnInputClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (!open && event.target === event.currentTarget.querySelector('input')) {
-      setOpen(true);
-    }
-  };
   return (
-    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer-only shortcut; the input inside keeps full keyboard access
-    <div className="contents" onClick={openOnInputClick}>
-      <Combobox
-        clearable={clearable}
-        error={catalog.status === 'error' ? t('tagging.tags.loadFailed') : undefined}
-        // ui-kit's local filter matches accents exactly, so the picker filters the options itself.
-        filterBehavior="external"
-        helpText={helpText}
-        items={visibleTagItems(items, query)}
-        {...(labelKey === undefined ? {} : { label: t(labelKey) })}
-        loading={catalog.status === 'loading'}
-        loadingMessage={t('tagging.tags.loading')}
-        noResultsMessage={t('tagging.tags.filter.noResults')}
-        onChange={(next) => onChange(pickTagId(catalog.tags, next))}
-        onInputValueChange={setQuery}
-        onOpenChange={setOpen}
-        onRetry={() => onRetry()}
-        open={open}
-        placeholder={t('tagging.tags.filter.placeholder')}
-        retryLabel={t('tagging.tags.retry')}
-        size="sm"
-        validateStatus={invalid ? 'error' : 'default'}
-        value={value === null ? [] : [value]}
-      />
-    </div>
+    <Combobox
+      clearable={clearable}
+      error={catalog.status === 'error' ? t('tagging.tags.loadFailed') : undefined}
+      // ui-kit's local filter matches accents exactly, so the picker filters the options itself.
+      filterBehavior="external"
+      helpText={helpText}
+      items={visibleTagItems(items, query)}
+      {...(labelKey === undefined ? {} : { label: t(labelKey) })}
+      loading={catalog.status === 'loading'}
+      loadingMessage={t('tagging.tags.loading')}
+      noResultsMessage={t('tagging.tags.filter.noResults')}
+      onChange={(next) => onChange(pickTagId(catalog.tags, next))}
+      onInputValueChange={setQuery}
+      onOpenChange={setOpen}
+      onRetry={() => onRetry()}
+      open={open}
+      openOnClick
+      placeholder={t('tagging.tags.filter.placeholder')}
+      retryLabel={t('tagging.tags.retry')}
+      size="sm"
+      translations={{
+        clearTriggerLabel: comboboxTranslations.clearTriggerLabel,
+        triggerLabel: t('tagging.tags.filter.toggle'),
+      }}
+      validateStatus={invalid ? 'error' : 'default'}
+      value={value === null ? [] : [value]}
+    />
   );
 };
 
@@ -228,7 +224,7 @@ export interface TagFilterProps {
 /** Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. */
 export const TagFilter = ({ kind, onChange, value }: TagFilterProps) => (
   <div className="w-48">
-    {/* The "all tags" option clears the filter. ui-kit's clear button would carry zag's English "Clear value" label. */}
+    {/* The "all tags" option clears the filter, so the picker needs no clear button. */}
     <TagPicker
       clearable={false}
       compact
@@ -302,10 +298,12 @@ export interface BulkTagDialogProps {
   onDone: () => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  /** Panel width; defaults to `md`. Pages whose other panels are wider pass their size. */
+  size?: SidePanelSize;
   subjectIds: readonly SubjectId[];
 }
 
-const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, subjectIds }: BulkTagDialogProps) => {
+const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', subjectIds }: BulkTagDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const [tagId, setTagId] = useState<TagId | null>(null);
@@ -371,6 +369,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, subjectIds }: 
           </Button>
         </>
       }
+      // The picked tag and mode are a draft; Escape, the close button and Zrušit close the panel.
       closeOnInteractOutside={false}
       description={t('tagging.tags.bulk.description', { total: subjectIds.length })}
       onOpenChange={(next) => {
@@ -379,7 +378,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, subjectIds }: 
         }
       }}
       open={open}
-      size="sm"
+      size={size}
       title={t('tagging.tags.bulk.title')}
     >
       <div className="flex flex-col gap-200 py-200">
