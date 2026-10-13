@@ -25,6 +25,7 @@
     "drizzle.config.ts",
     "rstest.config.ts"
   ],
+  "exclude": ["scripts/reset-demo.mts"],
   "references": [
     {
       "path": "../../packages/shared-contracts"
