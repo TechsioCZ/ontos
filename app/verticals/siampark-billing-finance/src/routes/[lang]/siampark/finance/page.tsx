@@ -21,6 +21,9 @@ const resources = {
 
 const ns = 'siampark-billing-finance.faktury';
 
+/** KPI tiles show whole Kč; the table keeps exact amounts. */
+const wholeKc = (minor: number) => formatMoney(Math.round(minor / 100) * 100);
+
 const RecordsPageContent = () => {
   const vm = useFinanceRecords();
   const { busy, cancelVoid, canWrite, confirmVoid, feedback, indicators, references, selected, t, voidTarget } = vm;
@@ -38,7 +41,13 @@ const RecordsPageContent = () => {
             <PageHeader
               actions={
                 canWrite ? (
-                  <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
+                  <Button
+                    className="whitespace-nowrap"
+                    icon="icon-[mdi--plus]"
+                    onClick={() => setCreateOpen(true)}
+                    size="sm"
+                    variant="primary"
+                  >
                     {t(`${ns}.newInvoice`)}
                   </Button>
                 ) : undefined
@@ -47,10 +56,10 @@ const RecordsPageContent = () => {
               title={t(`${ns}.title`)}
             />
             <StatRow>
-              <StatCard label={t(`${ns}.kpi.revenue`)} value={kpi((source) => formatMoney(source.revenueMinor))} />
+              <StatCard label={t(`${ns}.kpi.revenue`)} value={kpi((source) => wholeKc(source.revenueMinor))} />
               <StatCard
                 label={t(`${ns}.kpi.outstanding`)}
-                value={kpi((source) => formatMoney(source.grossOutstandingMinor))}
+                value={kpi((source) => wholeKc(source.grossOutstandingMinor))}
               />
               <StatCard label={t(`${ns}.kpi.overdue`)} value={kpi((source) => formatNumber(source.overdueInvoices))} />
               <StatCard label={t(`${ns}.kpi.drafts`)} value={kpi((source) => formatNumber(source.draftCount))} />

@@ -40,3 +40,9 @@ export const paymentKind = (invoice: Invoice, referenceDate: string): string => 
   const stored: string = invoice.paymentState;
   return stored === 'PARTIALLY_PAID' ? 'PARTIAL' : stored;
 };
+
+/** One status per invoice: the business state while draft or void, the payment state once confirmed. */
+export const invoiceStatusBadge = (invoice: Invoice, referenceDate: string) =>
+  invoice.businessState === 'CONFIRMED'
+    ? ({ kind: 'payment', value: paymentKind(invoice, referenceDate) } as const)
+    : ({ kind: 'invoice', value: invoice.businessState } as const);
