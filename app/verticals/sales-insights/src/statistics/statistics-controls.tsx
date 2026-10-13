@@ -1,4 +1,4 @@
-import { datePickerTranslations } from '@app/admin-ui';
+import { datePickerSegmentsClassName, datePickerTranslations } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -230,7 +230,11 @@ export const StatisticsControls = ({ invertedRange, isForbidden, onChange, query
         >
           <DatePicker.Label>{t(`${key}.period`)}</DatePicker.Label>
           <DatePicker.Control>
-            <DatePicker.Segments endLabel={t(`${key}.rangeEnd`)} startLabel={t(`${key}.rangeStart`)} />
+            <DatePicker.Segments
+              className={datePickerSegmentsClassName}
+              endLabel={t(`${key}.rangeEnd`)}
+              startLabel={t(`${key}.rangeStart`)}
+            />
             <DatePicker.IndicatorGroup>
               <DatePicker.Trigger />
             </DatePicker.IndicatorGroup>

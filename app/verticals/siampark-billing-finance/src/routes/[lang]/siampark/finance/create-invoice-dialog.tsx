@@ -5,6 +5,7 @@ import {
   matchesSearch,
   SidePanel,
   comboboxTranslations,
+  datePickerSegmentsClassName,
   datePickerTranslations,
 } from '@app/admin-ui';
 import { CalendarDate as IntlCalendarDate } from '@internationalized/date';
@@ -136,7 +137,7 @@ const IssueDateField = ({ error, label, onChange, value }: IssueDateFieldProps) 
     >
       <DatePicker.Label>{label}</DatePicker.Label>
       <DatePicker.Control>
-        <DatePicker.Segments />
+        <DatePicker.Segments className={datePickerSegmentsClassName} />
         <DatePicker.IndicatorGroup>
           <DatePicker.Trigger />
         </DatePicker.IndicatorGroup>
