@@ -76,7 +76,9 @@
     "@modern-js/plugin-bff-extensions": "catalog:ultramodern",
     "@modern-js/i18n-integration": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
-    "@modern-js/runtime-renderer-extensions": "catalog:ultramodern"
+    "@modern-js/runtime-renderer-extensions": "catalog:ultramodern",
+    "@app/admin-ui": "workspace:*",
+    "@techsio/ui-kit": "0.56.0"
   },
   "devDependencies": {
     "@effect/tsgo": "0.41.0",

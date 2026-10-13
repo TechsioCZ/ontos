@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "start": "node --experimental-strip-types src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "effect": "4.0.0-rc.117",
     "zod": "^3.25.76"
   },
   "devDependencies": {

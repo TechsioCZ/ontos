@@ -56,6 +56,7 @@ import { counterpartyRoleEndAction } from './src/actions/counterparty-role-end.a
 import { createPartyAction } from './src/actions/create-party.action.ts';
 import { createPartyRelationshipAction } from './src/actions/create-party-relationship.action.ts';
 import { CustomerListApi } from './shared/apis/customer-list.ts';
+import { CustomersPage } from './src/routes/[lang]/prodej/zakaznici/page.tsx';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
@@ -165,6 +166,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-contacts': ContactsPage,
+      'page-customers': CustomersPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -229,6 +231,20 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           order: 100,
           pageKey: 'party.registry.page.contacts',
         }),
+        navigationContribution({
+          contributionKey: 'party.registry.navigation.customers',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'party.registry.page.customers',
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          groupKey: 'shell.navigation.modules',
+          order: 90,
+          pageKey: 'party.registry.page.customers',
+        }),
         // </generated-module-shell-navigation>
       ],
       pages: [
@@ -249,6 +265,20 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           },
           expose: './PageContacts',
           routePath: '/contacts',
+        }),
+        pageContribution({
+          componentKey: 'party.registry.page-customers',
+          contributionKey: 'party.registry.page.customers',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'party.registry.page.customers',
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageCustomers',
+          routePath: '/prodej/zakaznici',
         }),
         // </generated-module-shell-pages>
       ],

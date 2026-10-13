@@ -4,6 +4,112 @@
       "contacts": {
         "description": "Party Registry uchovává kanonické strany, protistrany a jejich profily zapojení v jednom modulu.",
         "title": "Kontakty"
+      },
+      "customers": {
+        "bulk": {
+          "exportCsv": "Exportovat CSV"
+        },
+        "columns": {
+          "city": "Město",
+          "companyId": "IČO",
+          "createdAt": "Vytvořeno",
+          "email": "E-mail",
+          "name": "Název",
+          "phone": "Telefon",
+          "segment": "Segment",
+          "status": "Stav",
+          "tags": "Štítky",
+          "vatId": "DIČ"
+        },
+        "create": {
+          "aresDone": "Údaje načteny z ARES.",
+          "aresLoad": "Načíst z ARES",
+          "aresLoading": "Načítám z ARES…",
+          "aresNotFound": "Subjekt s tímto IČO v ARES nebyl nalezen.",
+          "aresUnavailable": "ARES není dostupný. Vyplňte údaje ručně.",
+          "cancel": "Zrušit",
+          "city": "Město",
+          "description": "IČO můžete načíst z ARES a údaje se doplní automaticky.",
+          "email": "E-mail",
+          "errorAmbiguous": "Zákazník odpovídá více existujícím záznamům. Nejdřív je sloučte v modulu duplicit.",
+          "errorGeneric": "Zákazníka se nepodařilo vytvořit. Zkuste to znovu.",
+          "ico": "IČO",
+          "icoHelp": "Osm číslic bez mezer.",
+          "name": "Název",
+          "phone": "Telefon",
+          "postalCode": "PSČ",
+          "saving": "Ukládám…",
+          "street": "Ulice",
+          "submit": "Vytvořit zákazníka",
+          "title": "Nový zákazník",
+          "toastCreated": "Zákazník vytvořen",
+          "toastMatched": "Zákazník už v evidenci existoval, záznam byl propojen.",
+          "validation": {
+            "emailInvalid": "E-mail zadejte ve tvaru jmeno@firma.cz.",
+            "icoInvalid": "IČO má 8 číslic.",
+            "nameRequired": "Vyplňte název zákazníka.",
+            "vatIdInvalid": "DIČ zadejte ve tvaru CZ12345678."
+          },
+          "vatId": "DIČ"
+        },
+        "description": "Zákazníci s IČO, DIČ a kontakty. Založte nového zákazníka nebo načtěte údaje z ARES.",
+        "detail": {
+          "cancel": "Zavřít",
+          "city": "Město",
+          "companyId": "IČO",
+          "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
+          "createdAt": "Vytvořeno",
+          "email": "E-mail",
+          "errorRename": "Změny se nepodařilo uložit. Zkuste to znovu.",
+          "name": "Název",
+          "nameRequired": "Vyplňte název zákazníka.",
+          "phone": "Telefon",
+          "rename": "Název zákazníka",
+          "save": "Uložit změny",
+          "saving": "Ukládám…",
+          "status": "Stav",
+          "title": "Zákazník",
+          "toastRenamed": "Změny uloženy",
+          "vatId": "DIČ"
+        },
+        "newCustomer": "Nový zákazník",
+        "search": {
+          "placeholder": "Hledat název, IČO, e-mail nebo město…"
+        },
+        "state": {
+          "clearFilters": "Zrušit hledání",
+          "emptyDescription": "Vytvořte prvního zákazníka a začněte evidovat obchody.",
+          "emptyTitle": "Zatím tu nejsou žádní zákazníci.",
+          "forbidden": "K této sekci nemáte oprávnění.",
+          "loadError": "Data se nepodařilo načíst.",
+          "loadErrorDescription": "Zkontrolujte připojení a zkuste to znovu.",
+          "noResults": "Hledání neodpovídá žádnému zákazníkovi.",
+          "retry": "Zkusit znovu"
+        },
+        "stats": {
+          "archived": "Archivovaní",
+          "newLast30Days": "Noví za 30 dní",
+          "total": "Zákazníci celkem",
+          "withEmail": "S e-mailem"
+        },
+        "status": {
+          "ACTIVE": "Aktivní",
+          "ARCHIVED": "Archivovaný"
+        },
+        "table": {
+          "clearSearchLabel": "Vymazat hledání",
+          "columnsLabel": "Sloupce",
+          "emptyDescription": "Nejsou k dispozici žádná data.",
+          "emptyTitle": "Žádné záznamy",
+          "loadingLabel": "Načítání dat",
+          "pageSizeLabel": "Řádků na stránku",
+          "rangeLabel": "{{start}}–{{end}} z {{total}}",
+          "searchButtonLabel": "Hledat",
+          "searchLabel": "Hledat",
+          "selectAllLabel": "Vybrat všechny řádky",
+          "selectionLabel": "Vybrat řádek"
+        },
+        "title": "Zákazníci"
       }
     }
   }

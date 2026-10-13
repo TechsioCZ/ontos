@@ -32,6 +32,38 @@ function segment(value: string): string {
   return encodeURIComponent(value);
 }
 
+/** A non-2xx answer from the shell or a vertical. `code`, `title` and `detail` come from the RFC 9457 body. */
+export class OntosRequestError extends Error {
+  readonly status: number;
+  readonly code: string | undefined;
+  readonly title: string | undefined;
+  readonly detail: string | undefined;
+
+  constructor(path: string, status: number, body: unknown) {
+    const problem = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
+    const asString = (value: unknown) => (typeof value === 'string' && value.length > 0 ? value : undefined);
+    const code = asString(problem.code);
+    const detail = asString(problem.detail);
+    super(`OntOS request ${path} failed: HTTP ${status}${code === undefined ? '' : ` ${code}`}`);
+    this.name = 'OntosRequestError';
+    this.status = status;
+    this.code = code;
+    this.title = asString(problem.title);
+    this.detail = detail;
+  }
+}
+
+function parseBody(text: string): unknown {
+  if (text === '') {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
 async function postJson(context: GatewayContext, path: string, body: unknown): Promise<unknown> {
   const { shellUrl } = getConfig();
   const response = await fetch(`${shellUrl}${context.apiBaseUrl}${path}`, {
@@ -45,11 +77,11 @@ async function postJson(context: GatewayContext, path: string, body: unknown): P
     method: 'POST',
   });
 
-  const text = await response.text();
+  const parsed = parseBody(await response.text());
   if (!response.ok) {
-    throw new Error(`OntOS request ${path} failed: HTTP ${response.status} ${text}`);
+    throw new OntosRequestError(path, response.status, parsed);
   }
-  return text === '' ? null : (JSON.parse(text) as unknown);
+  return parsed;
 }
 
 /** Invokes a vertical action. The audience is the vertical ID. */
@@ -59,7 +91,11 @@ export async function callAction(vertical: string, actionSlug: string, payload: 
 }
 
 /** Reads a vertical's records endpoint. `readName` "records" maps to POST .../reads/records. */
-export async function readRecords(vertical: string, readName: string, query: Record<string, string>): Promise<unknown> {
+export async function readRecords(
+  vertical: string,
+  readName: string,
+  query: Readonly<Record<string, unknown>>,
+): Promise<unknown> {
   const context = await getGatewayContext(vertical);
   return postJson(context, `/reads/${segment(readName)}`, query);
 }

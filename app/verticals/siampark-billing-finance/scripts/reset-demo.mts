@@ -1,3 +1,4 @@
+/// <reference lib="es2023" />
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -17,9 +18,15 @@ import {
 } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { Command, Flag } from 'effect/unstable/cli';
-import { FinanceStateSchema } from '../shared/apis/records.ts';
+import { FinanceStateSchema, InvoiceLinesSchema } from '../shared/apis/records.ts';
+import type { FinanceState } from '../shared/apis/records.ts';
+import { computeInvoiceTotals, INVOICE_NUMBER_PREFIX } from '../shared/domain/invoice-totals.ts';
 import { derivePaymentState } from '../src/services/persistence.service.ts';
 import { financeStates, financeRelations } from '../src/database/schema.ts';
+import { demoId, demoLegalEntityId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
+import { invoices as plannedInvoices, productByKey, snapshotPriceMinor } from '../../../scripts/demo/sales-plan.mts';
+import type { PlannedInvoice } from '../../../scripts/demo/sales-plan.mts';
+import { salesDemoCustomerCounterpartyId, salesDemoCustomers } from '../../party-registry/scripts/demo-customers.mts';
 
 const FixtureSchema = Schema.Struct({
   legalEntityId: Schema.Literal('71000000-0000-4000-8000-000000000020'),
@@ -112,16 +119,164 @@ const reset = Effect.fn('Finance.resetDemo')(function* resetDemo(fixturePath: st
     Effect.scoped,
   );
 });
-// `--sales-demo` (scripts/demo/reset-demo.mts): the billing lane replaces this no-op with its seed.
+// --- Sales demo (`--sales-demo`, called by app/scripts/demo/reset-demo.mts) -----------------------------------
+// Deterministic: the same 30 invoices from the shared sales plan on every run, so a re-run replaces the row at revision 0.
+// "Today" is the demo calendar date the siampark-work seed also anchors on; issue dates count back from it.
+const salesDemoAnchorDay = DateTime.makeUnsafe('2026-10-13T12:00:00.000Z');
+const salesDemoModuleId = 'siampark.billing-finance';
+const salesDemoInvoiceResourceType = 'siampark.billing-finance.invoice';
+const salesDemoPaymentTermDays = 14;
+// Observations for paid amounts are dated a week after issue, capped at the anchor so nothing lands in the future.
+const salesDemoPaymentDelayDays = 7;
+
+/** Day `offsetDays` from the anchor (negative = past), at noon UTC so every formatter yields the same calendar date. */
+const salesDemoDay = (offsetDays: number) => DateTime.add(salesDemoAnchorDay, { days: offsetDays });
+
+/** IČO of the customer behind a plan key `cNN`, from the party-registry demo customer list. */
+const salesDemoCustomerIco = (customerKey: string) => salesDemoCustomers[Number(customerKey.slice(1)) - 1]?.ico;
+
+const salesDemoPaidMinor = (payment: PlannedInvoice['payment'], totalMinor: number): number => {
+  if (payment === 'PAID') {
+    return totalMinor;
+  }
+  return payment === 'PARTIALLY_PAID' ? Math.floor(totalMinor / 2) : 0;
+};
+
+const salesDemoInvoice = Effect.fn('ResetDemo.salesDemoInvoice')(function* salesDemoInvoice(
+  planned: PlannedInvoice,
+  documentNumber: string,
+) {
+  const ico = salesDemoCustomerIco(planned.customerKey);
+  if (ico === undefined) {
+    return yield* new ResetInputError({ reason: `Unknown demo customer ${planned.customerKey}` });
+  }
+  // Snapshot lines: price and VAT are frozen at the invoice's issue date and never re-read from the catalog.
+  const lines = yield* Schema.decodeEffect(InvoiceLinesSchema)(
+    planned.lines.map((line) => {
+      const product = productByKey(line.productKey);
+      return {
+        description: product.name,
+        productId: demoId('product', line.productKey),
+        quantity: line.quantity,
+        unitPriceMinor: snapshotPriceMinor(line.productKey, planned.issueDaysAgo),
+        vatRate: product.vatRate,
+      };
+    }),
+  );
+  const totals = computeInvoiceTotals(lines);
+  if (totals === undefined) {
+    return yield* new ResetInputError({ reason: `Invoice ${planned.key} totals leave the bounded money range` });
+  }
+  const paidMinor = salesDemoPaidMinor(planned.payment, totals.totalMinor);
+  if (derivePaymentState(paidMinor, totals.totalMinor) !== planned.payment) {
+    return yield* new ResetInputError({ reason: `Invoice ${planned.key} payment does not match its paid amount` });
+  }
+  const issueDay = salesDemoDay(-planned.issueDaysAgo);
+  // Only WON-linked invoices carry the opportunity; standalone invoices omit the key entirely.
+  const opportunityFields =
+    planned.opportunityKey === null ? undefined : { opportunityId: demoId('opportunity', planned.opportunityKey) };
+  const paidAt = salesDemoDay(Math.min(-planned.issueDaysAgo + salesDemoPaymentDelayDays, 0));
+  const resourceId = demoId('invoice', planned.key);
+  const ref = {
+    moduleId: salesDemoModuleId,
+    resourceId,
+    resourceType: salesDemoInvoiceResourceType,
+    tenantId: demoTenantId,
+  };
+  const invoice = {
+    accountingCorrelation: `demo-accounting:${resourceId}`,
+    accountingSyncState: 'NOT_SYNCED',
+    businessState: planned.state,
+    counterpartyRef: {
+      moduleId: 'party.registry',
+      resourceId: salesDemoCustomerCounterpartyId(ico),
+      resourceType: 'party.registry.counterparty',
+      tenantId: demoTenantId,
+    },
+    createdAt: DateTime.formatIso(issueDay),
+    currency: 'CZK',
+    direction: 'OUTGOING',
+    documentNumber,
+    dueDate: DateTime.formatIsoDateUtc(salesDemoDay(-planned.issueDaysAgo + salesDemoPaymentTermDays)),
+    issueDate: DateTime.formatIsoDateUtc(issueDay),
+    lines,
+    number: documentNumber,
+    ...opportunityFields,
+    paidMinor,
+    partyId: demoId('customer', planned.customerKey),
+    paymentState: planned.payment,
+    ref,
+    subtotalMinor: totals.subtotalMinor,
+    totalMinor: totals.totalMinor,
+    updatedAt: DateTime.formatIso(paidMinor > 0 ? paidAt : issueDay),
+    vatMinor: totals.vatMinor,
+    vatRecap: totals.vatRecap,
+  };
+  const observation =
+    paidMinor > 0
+      ? {
+          confirmedPaidMinor: paidMinor,
+          correlation: `demo-payment:${resourceId}`,
+          currency: 'CZK',
+          invoiceRef: ref,
+          mode: 'SIMULATED',
+          observedAt: DateTime.formatIso(paidAt),
+          resultId: demoId('billing.payment-result', planned.key),
+        }
+      : undefined;
+  return { invoice, observation };
+});
+
+const summarizeSalesDemo = (state: FinanceState) => {
+  const confirmed = state.invoices.filter((invoice) => invoice.businessState === 'CONFIRMED');
+  const countPayment = (paymentState: FinanceState['invoices'][number]['paymentState']) =>
+    confirmed.filter((invoice) => invoice.paymentState === paymentState).length;
+  const drafts = state.invoices.length - confirmed.length;
+  const grossMinor = confirmed.reduce((sum, invoice) => sum + invoice.totalMinor, 0);
+  const netMinor = confirmed.reduce((sum, invoice) => sum + (invoice.subtotalMinor ?? 0), 0);
+  return `${state.invoices.length} invoices (confirmed ${confirmed.length}: paid ${countPayment('PAID')}, partially paid ${countPayment('PARTIALLY_PAID')}, unpaid ${countPayment('UNPAID')}; draft ${drafts}); confirmed revenue ${grossMinor / 100} CZK gross, ${netMinor / 100} CZK net`;
+};
+
+const seedSalesDemo = Effect.fn('ResetDemo.seedSalesDemo')(function* seedSalesDemo(validateOnly: boolean) {
+  // Oldest first, so FV-2026-0001 is the earliest issue date.
+  const ordered = plannedInvoices.toSorted(
+    (left, right) => right.issueDaysAgo - left.issueDaysAgo || left.key.localeCompare(right.key),
+  );
+  const built = yield* Effect.all(
+    ordered.map((planned, index) =>
+      salesDemoInvoice(planned, `${INVOICE_NUMBER_PREFIX}${String(index + 1).padStart(4, '0')}`),
+    ),
+  );
+  const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)({
+    accountingObservations: [],
+    financialPlanEntries: [],
+    invoices: built.map((entry) => entry.invoice),
+    paymentObservations: built.flatMap((entry) => (entry.observation === undefined ? [] : [entry.observation])),
+  });
+  const summary = summarizeSalesDemo(state);
+  if (validateOnly) {
+    return yield* Console.log(`siampark-billing-finance sales-demo validated: ${summary}; no data changed.`);
+  }
+  yield* Layer.build(
+    Layer.effectDiscard(writeState({ legalEntityId: demoLegalEntityId, state, tenantId: demoTenantId })).pipe(
+      Layer.provide(AdminDatabaseLive),
+    ),
+  ).pipe(Effect.scoped);
+  return yield* Console.log(`siampark-billing-finance sales-demo seeded: ${summary}`);
+});
+
+// `--sales-demo` seeds the invoices; `--validate-only` builds and checks them without writing.
+// DATABASE_ADMIN_URL must be configured because the admin database layer is read when the database is opened.
 const command = Command.make(
   'siampark-finance-reset',
   {
     fixture: Flag.String('fixture').pipe(Flag.optional),
     salesDemo: Flag.Boolean('sales-demo').pipe(Flag.withDefault(false)),
+    validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)),
   },
-  ({ fixture, salesDemo }) =>
+  ({ fixture, salesDemo, validateOnly }) =>
     salesDemo
-      ? Console.log('siampark-billing-finance: no sales-demo seed yet')
+      ? seedSalesDemo(validateOnly)
       : Option.match(fixture, {
           onNone: () => Effect.fail(new ResetInputError({ reason: '--fixture is required' })),
           onSome: reset,
