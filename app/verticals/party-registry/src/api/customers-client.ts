@@ -13,7 +13,13 @@ import type { CustomerListItem, CustomerListRequest } from '../../shared/apis/cu
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import { executeCustomerList } from './customer-list-client.ts';
-import { addContactPoint, counterpartyCustomerOnboard, createParty, updateParty } from './party-command-client.ts';
+import {
+  addContactPoint,
+  archiveParty,
+  counterpartyCustomerOnboard,
+  createParty,
+  updateParty,
+} from './party-command-client.ts';
 
 export type { CustomerListItem, CustomerListRequest } from '../../shared/apis/customer-list.ts';
 
@@ -240,5 +246,17 @@ export const updateCustomer = Effect.fn('CustomersClient.updateCustomer')(functi
       validFrom: now,
     },
     { correlationId: id, idempotencyKey: `${id}:update` },
+  );
+});
+
+/** Archives the customer's canonical Party through `archive-party` with optimistic revision. */
+export const archiveCustomer = Effect.fn('CustomersClient.archiveCustomer')(function* archiveCustomerEffect(
+  customer: Pick<CustomerListItem, 'partyRef' | 'partyRevision'>,
+  reason: string,
+) {
+  const id = yield* requestId('customer-archive');
+  return yield* archiveParty(
+    { expectedRevision: customer.partyRevision, partyRef: customer.partyRef, reason },
+    { correlationId: id, idempotencyKey: `${id}:archive` },
   );
 });

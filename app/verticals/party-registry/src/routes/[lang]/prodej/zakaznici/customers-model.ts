@@ -12,6 +12,9 @@ const epochMillisOf = (iso: string): Option.Option<number> =>
 /** Missing or empty text renders as an em dash. */
 export const orDash = (value: string | null): string => (value === null || value.length === 0 ? '—' : value);
 
+/** Reason stored on every party archived from the bulk-edit dialog. */
+export const bulkArchiveReason = 'Hromadná archivace ze seznamu zákazníků';
+
 export interface CustomerStats {
   readonly archived: number;
   readonly newLast30Days: number;
