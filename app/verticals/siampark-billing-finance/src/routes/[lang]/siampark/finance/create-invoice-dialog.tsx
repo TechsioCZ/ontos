@@ -1,8 +1,7 @@
-import { DetailList, formatDate, formatMoney } from '@app/admin-ui';
+import { DetailList, formatDate, formatMoney, SidePanel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
@@ -149,7 +148,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   };
 
   return (
-    <Dialog
+    <SidePanel
       actions={
         <>
           <Button onClick={close} theme="outlined" variant="secondary">
@@ -163,14 +162,12 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
       // The form holds unsaved input, and the date field opens a picker outside the drawer. A stray pointer or
       // focus move outside must not discard the draft; Escape, the close button and Zrušit still close.
       closeOnInteractOutside={false}
-      customTrigger
-      onOpenChange={({ open: next }) => {
+      onOpenChange={(next) => {
         if (!next) {
           close();
         }
       }}
       open={open}
-      placement="right"
       size="lg"
       title={t(`${ns}.newInvoice`)}
     >
@@ -267,6 +264,6 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           ]}
         />
       </form>
-    </Dialog>
+    </SidePanel>
   );
 };

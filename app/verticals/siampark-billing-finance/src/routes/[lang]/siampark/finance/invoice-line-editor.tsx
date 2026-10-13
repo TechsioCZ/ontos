@@ -74,6 +74,7 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
             />
           ) : (
             <FormInput
+              autoComplete="off"
               id={`invoice-line-description-${line.key}`}
               label={t(`${ns}.form.description`)}
               name="description"

@@ -85,6 +85,7 @@
         "status": "Status",
         "source": "Source"
       },
+      "opportunityForbidden": "No access to opportunities",
       "sourceOpportunity": "Opportunity",
       "sourceManual": "Manual",
       "source": "Source",

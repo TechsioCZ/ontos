@@ -3,7 +3,7 @@ import { listProducts } from '@app/merchandise/clients/records';
 import type { CustomerListItem } from '@app/party-registry/api/client';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
 import { customerIndex } from './invoice-view.ts';
@@ -18,13 +18,15 @@ interface ReferenceFailure {
 
 /**
  * Names that the invoice list, detail and create form show instead of opaque ids. Each list loads on its own,
- * so one failing read leaves the others usable and sets `referencesFailed`.
+ * so one failing read leaves the others usable and sets `referencesFailed`. A role without access to the sales
+ * pipeline (the accountant) is not a failure: `opportunitiesForbidden` lets the list mark those cells instead.
  */
 export const useFinanceReferences = () => {
   const [customers, setCustomers] = useState<readonly CustomerListItem[]>([]);
   const [opportunityTitles, setOpportunityTitles] = useState<ReadonlyMap<string, string>>(new Map());
   const [products, setProducts] = useState<readonly ProductRecord[]>([]);
   const [failures, setFailures] = useState<readonly ReferenceFailure[]>([]);
+  const [opportunitiesForbidden, setOpportunitiesForbidden] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -48,7 +50,13 @@ export const useFinanceReferences = () => {
     void financeBrowserRuntime.runPromise(
       listOpportunities({}, 'siampark-finance.opportunities').pipe(
         Effect.match({
-          onFailure: (cause) => recordFailure('opportunities', cause),
+          onFailure: (cause) => {
+            if (!Predicate.isTagged(cause, 'RecordsForbiddenProblem')) {
+              recordFailure('opportunities', cause);
+            } else if (active) {
+              setOpportunitiesForbidden(true);
+            }
+          },
           onSuccess: (response) => {
             if (active) {
               setOpportunityTitles(
@@ -79,6 +87,7 @@ export const useFinanceReferences = () => {
   return {
     customerById: customerIndex(customers),
     customers,
+    opportunitiesForbidden,
     opportunityTitles,
     products,
     referencesFailed: failures.length > 0,

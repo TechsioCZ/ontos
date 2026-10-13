@@ -85,6 +85,7 @@
         "status": "Stav",
         "source": "Zdroj"
       },
+      "opportunityForbidden": "Bez přístupu k příležitostem",
       "sourceOpportunity": "Příležitost",
       "sourceManual": "Ručně",
       "source": "Zdroj",

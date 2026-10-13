@@ -104,10 +104,14 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
           return '—';
         }
         const title = info.getValue<string>();
+        const hiddenTitle = title === '' && references.opportunitiesForbidden;
         return (
           <span className="flex min-w-0 flex-col">
             <span>{t(`${ns}.sourceOpportunity`)}</span>
             {title !== '' && <span className="truncate text-fg-secondary text-xs">{title}</span>}
+            {hiddenTitle && (
+              <span className="truncate text-fg-secondary text-xs">{t(`${ns}.opportunityForbidden`)}</span>
+            )}
           </span>
         );
       },
