@@ -4,6 +4,112 @@
       "contacts": {
         "description": "Party Registry keeps canonical Parties, Counterparties, and their engagement profiles in one module.",
         "title": "Contacts"
+      },
+      "customers": {
+        "bulk": {
+          "exportCsv": "Export CSV"
+        },
+        "columns": {
+          "city": "City",
+          "companyId": "IČO",
+          "createdAt": "Created",
+          "email": "E-mail",
+          "name": "Name",
+          "phone": "Phone",
+          "segment": "Segment",
+          "status": "Status",
+          "tags": "Tags",
+          "vatId": "DIČ"
+        },
+        "create": {
+          "aresDone": "Details loaded from ARES.",
+          "aresLoad": "Load from ARES",
+          "aresLoading": "Loading from ARES…",
+          "aresNotFound": "No subject with this company ID was found in ARES.",
+          "aresUnavailable": "ARES is unavailable. Enter the details manually.",
+          "cancel": "Cancel",
+          "city": "City",
+          "description": "Load the company ID from ARES to fill in the details automatically.",
+          "email": "E-mail",
+          "errorAmbiguous": "The customer matches several existing records. Merge them in the duplicates module first.",
+          "errorGeneric": "The customer could not be created. Try again.",
+          "ico": "Company ID (IČO)",
+          "icoHelp": "Eight digits, no spaces.",
+          "name": "Name",
+          "phone": "Phone",
+          "postalCode": "Postal code",
+          "saving": "Saving…",
+          "street": "Street",
+          "submit": "Create customer",
+          "title": "New customer",
+          "toastCreated": "Customer created",
+          "toastMatched": "The customer already existed and the record was linked.",
+          "validation": {
+            "emailInvalid": "Enter the e-mail as name@company.cz.",
+            "icoInvalid": "The company ID has 8 digits.",
+            "nameRequired": "Enter the customer name.",
+            "vatIdInvalid": "Enter the VAT ID as CZ12345678."
+          },
+          "vatId": "VAT ID (DIČ)"
+        },
+        "description": "Customers with company ID, VAT ID and contacts. Create a new customer or load details from ARES.",
+        "detail": {
+          "cancel": "Close",
+          "city": "City",
+          "companyId": "IČO",
+          "conflict": "Someone else changed this record in the meantime. Reload it and repeat the change.",
+          "createdAt": "Created",
+          "email": "E-mail",
+          "errorRename": "The changes could not be saved. Try again.",
+          "name": "Name",
+          "nameRequired": "Enter the customer name.",
+          "phone": "Phone",
+          "rename": "Customer name",
+          "save": "Save changes",
+          "saving": "Saving…",
+          "status": "Status",
+          "title": "Customer",
+          "toastRenamed": "Changes saved",
+          "vatId": "DIČ"
+        },
+        "newCustomer": "New customer",
+        "search": {
+          "placeholder": "Search name, IČO, e-mail or city…"
+        },
+        "state": {
+          "clearFilters": "Clear search",
+          "emptyDescription": "Create the first customer and start tracking deals.",
+          "emptyTitle": "There are no customers yet.",
+          "forbidden": "You do not have permission to view this section.",
+          "loadError": "Data could not be loaded.",
+          "loadErrorDescription": "Check the connection and try again.",
+          "noResults": "No customer matches the search.",
+          "retry": "Try again"
+        },
+        "stats": {
+          "archived": "Archived",
+          "newLast30Days": "New in last 30 days",
+          "total": "Customers total",
+          "withEmail": "With e-mail"
+        },
+        "status": {
+          "ACTIVE": "Active",
+          "ARCHIVED": "Archived"
+        },
+        "table": {
+          "clearSearchLabel": "Clear search",
+          "columnsLabel": "Columns",
+          "emptyDescription": "No data available.",
+          "emptyTitle": "No records",
+          "loadingLabel": "Loading data",
+          "pageSizeLabel": "Rows per page",
+          "rangeLabel": "{{start}}–{{end}} of {{total}}",
+          "searchButtonLabel": "Search",
+          "searchLabel": "Search",
+          "selectAllLabel": "Select all rows",
+          "selectionLabel": "Select row"
+        },
+        "title": "Customers"
       }
     }
   }
