@@ -14,7 +14,7 @@
  *   subjects. Confirms with a toast, so the host page must render one `<Toaster />` from
  *   `@techsio/ui-kit/molecules/toast`.
  */
-import { SidePanel, TagBadge } from '@app/admin-ui';
+import { matchesSearch, SidePanel, TagBadge } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -134,6 +134,13 @@ const tagItems = (tags: readonly Tag[], allLabel: string | null) => [
   ...tags.map((tag) => ({ id: tag.id, label: tag.name, value: tag.id })),
 ];
 
+/**
+ * Options for the typed text, ignoring case and diacritics (`velka` finds `Velká zakázka`). After a pick the input
+ * shows that option's label, so text equal to a label lists every option again instead of only the picked one.
+ */
+const visibleTagItems = <T extends { readonly label: string }>(items: readonly T[], query: string): T[] =>
+  items.some((item) => item.label === query) ? [...items] : items.filter((item) => matchesSearch(item.label, query));
+
 interface TagPickerFieldProps {
   readonly clearable: boolean;
   /** Filter mode: small control, no visible label, and a leading "all tags" option. */
@@ -164,6 +171,8 @@ const TagPickerField = ({
   const { t } = useModernI18n();
   const catalog = useTagCatalog(kind, enabled);
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const items = tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null);
   // ui-kit does not forward zag's `openOnClick`, so a click into the input opens the list here.
   // Keyboard users keep ArrowDown and typing; clicks elsewhere (chevron, options) keep zag's own handling.
   const openOnInputClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -177,13 +186,16 @@ const TagPickerField = ({
       <Combobox
         clearable={clearable}
         error={catalog.status === 'error' ? t('tagging.tags.loadFailed') : undefined}
+        // ui-kit's local filter matches accents exactly, so the picker filters the options itself.
+        filterBehavior="external"
         helpText={helpText}
-        items={tagItems(catalog.tags, compact ? t('tagging.tags.filter.all') : null)}
+        items={visibleTagItems(items, query)}
         {...(labelKey === undefined ? {} : { label: t(labelKey) })}
         loading={catalog.status === 'loading'}
         loadingMessage={t('tagging.tags.loading')}
         noResultsMessage={t('tagging.tags.filter.noResults')}
         onChange={(next) => onChange(pickTagId(catalog.tags, next))}
+        onInputValueChange={setQuery}
         onOpenChange={setOpen}
         onRetry={() => onRetry()}
         open={open}
@@ -216,7 +228,17 @@ export interface TagFilterProps {
 /** Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. */
 export const TagFilter = ({ kind, onChange, value }: TagFilterProps) => (
   <div className="w-48">
-    <TagPicker clearable compact enabled helpText="" invalid={false} kind={kind} onChange={onChange} value={value} />
+    {/* The "all tags" option clears the filter. ui-kit's clear button would carry zag's English "Clear value" label. */}
+    <TagPicker
+      clearable={false}
+      compact
+      enabled
+      helpText=""
+      invalid={false}
+      kind={kind}
+      onChange={onChange}
+      value={value}
+    />
   </div>
 );
 
