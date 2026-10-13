@@ -75,7 +75,11 @@ export const demoRoles = {
     label: 'Účetní',
     modules: {
       'commerce.customer-context': 'read',
+      // Invoice lines pick products; without this read the create form's product list fails to load.
+      'demo.merchandise': 'read',
       'demo.sales-insights': 'read',
+      // Customer lists show Štítky; without this read every tag cell fails to load for the accountant.
+      'demo.tagging': 'read',
       'party.registry': 'read',
       'siampark.billing-finance': 'write',
     },
