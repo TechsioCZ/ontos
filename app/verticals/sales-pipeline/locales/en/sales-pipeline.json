@@ -17,15 +17,134 @@
     "routeSurface": "Route surface owned by this vertical.",
     "title": "Opportunities",
     "widgetBody": "Owns a vertical route surface.",
+    "status": {
+      "opportunity": {
+        "LEAD": "Lead",
+        "QUALIFIED": "Qualified",
+        "PROPOSAL": "Proposal",
+        "NEGOTIATION": "Negotiation",
+        "WON": "Won",
+        "LOST": "Lost"
+      }
+    },
+    "table": {
+      "actionsLabel": "Actions",
+      "clearSearchLabel": "Clear search",
+      "columnsLabel": "Column settings",
+      "editingLabel": "You are editing a row, other table controls are locked",
+      "emptyDescription": "No data available.",
+      "emptyTitle": "No records",
+      "filtersLabel": "Column filters",
+      "loadingLabel": "Loading data",
+      "pageSizeLabel": "Rows per page",
+      "reorderLabel": "Change row order",
+      "requiredLabel": "Required",
+      "searchButtonLabel": "Search",
+      "searchLabel": "Search",
+      "searchPlaceholder": "Search opportunities…",
+      "selectAllLabel": "Select all rows",
+      "selectionLabel": "Select rows"
+    },
     "pages": {
       "records": {
         "title": "Opportunities",
-        "description": "Sales opportunities and their stages.",
-        "refresh": "Load",
-        "empty": "No opportunities yet.",
-        "count": "Records: {{total}}",
+        "description": "Sales opportunities across customers. Winning one automatically issues an invoice.",
+        "newOpportunity": "New opportunity",
         "unavailable": "Data could not be loaded.",
-        "forbidden": "You are not allowed to do this."
+        "forbidden": "You do not have access to this section.",
+        "retry": "Try again",
+        "retryDescription": "Check your connection and try again.",
+        "emptyTitle": "No opportunities yet.",
+        "emptyDescription": "Create the first opportunity and follow it through to a win.",
+        "noResults": "No opportunities match the filters.",
+        "clearFilters": "Clear filters",
+        "stats": {
+          "open": "Open",
+          "weighted": "Weighted value",
+          "won": "Won",
+          "winRate": "Win rate"
+        },
+        "filters": {
+          "allOpportunities": "All opportunities",
+          "allOwners": "All owners",
+          "allStages": "All stages",
+          "assignment": "Assignment",
+          "owner": "Owner",
+          "search": "Search by title",
+          "searchLabel": "Search",
+          "stage": "Stage",
+          "unassignedOnly": "Unassigned only"
+        },
+        "columns": {
+          "amount": "Value",
+          "customer": "Customer",
+          "expectedClose": "Expected close",
+          "owner": "Owner",
+          "probability": "Probability",
+          "stage": "Stage",
+          "tags": "Tags",
+          "title": "Title",
+          "updatedAt": "Updated"
+        },
+        "actions": {
+          "assignOwner": "Assign owner",
+          "changeStage": "Change stage"
+        },
+        "bulk": {
+          "clear": "Clear selection",
+          "owner": "Assign owner",
+          "selected": "Selected: {{total}}",
+          "stage": "Change stage"
+        },
+        "create": {
+          "cancel": "Cancel",
+          "customerHint": "Enter the customer ID for now. Picking from the customer list comes later.",
+          "description": "The opportunity starts without product lines, in the Lead stage.",
+          "errors": {
+            "customerInvalid": "Enter a valid customer ID.",
+            "dateRequired": "Choose the expected close date.",
+            "noteTooLong": "The note can have at most 2000 characters.",
+            "titleRequired": "Enter the opportunity title."
+          },
+          "fields": {
+            "customer": "Customer (ID)",
+            "expectedClose": "Expected close",
+            "note": "Note",
+            "title": "Title"
+          },
+          "submit": "Create opportunity",
+          "submitting": "Creating…",
+          "title": "New opportunity"
+        },
+        "stageDialog": {
+          "cancel": "Cancel",
+          "note": "Note",
+          "stage": "New stage",
+          "stageRequired": "Choose the new stage.",
+          "submit": "Change stage",
+          "submitting": "Saving…",
+          "title": "Change stage",
+          "wonWarning": "Winning the opportunity automatically creates an invoice draft."
+        },
+        "owner": {
+          "cancel": "Cancel",
+          "label": "Owner",
+          "none": "Unassigned",
+          "submit": "Assign owner",
+          "submitting": "Saving…",
+          "title": "Assign owner"
+        },
+        "toasts": {
+          "created": "Opportunity created",
+          "ownerAssigned": "Owner assigned",
+          "skipped": "Skipped: {{total}}",
+          "stageChanged": "Stage changed"
+        },
+        "errors": {
+          "conflict": "Someone else changed the record in the meantime. Reload it and repeat your change.",
+          "forbidden": "You are not allowed to do this.",
+          "generic": "The change could not be saved. Try again."
+        }
       }
     }
   }

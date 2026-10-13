@@ -17,15 +17,134 @@
     "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
     "title": "Obchodní příležitosti",
     "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "status": {
+      "opportunity": {
+        "LEAD": "Lead",
+        "QUALIFIED": "Kvalifikovaná",
+        "PROPOSAL": "Nabídka",
+        "NEGOTIATION": "Vyjednávání",
+        "WON": "Vyhraná",
+        "LOST": "Prohraná"
+      }
+    },
+    "table": {
+      "actionsLabel": "Akce",
+      "clearSearchLabel": "Vymazat hledání",
+      "columnsLabel": "Nastavení sloupců",
+      "editingLabel": "Upravujete řádek, ostatní ovládání tabulky je zamčené",
+      "emptyDescription": "Nejsou k dispozici žádná data.",
+      "emptyTitle": "Žádné záznamy",
+      "filtersLabel": "Filtry sloupců",
+      "loadingLabel": "Načítání dat",
+      "pageSizeLabel": "Řádků na stránku",
+      "reorderLabel": "Změnit pořadí řádků",
+      "requiredLabel": "Povinné",
+      "searchButtonLabel": "Hledat",
+      "searchLabel": "Hledat",
+      "searchPlaceholder": "Hledat příležitosti…",
+      "selectAllLabel": "Vybrat všechny řádky",
+      "selectionLabel": "Vybrat řádky"
+    },
     "pages": {
       "records": {
-        "title": "Obchodní příležitosti",
-        "description": "Obchodní příležitosti a jejich fáze.",
-        "refresh": "Načíst",
-        "empty": "Zatím žádné příležitosti.",
-        "count": "Počet záznamů: {{total}}",
+        "title": "Příležitosti",
+        "description": "Obchodní případy napříč zákazníky. Výhra automaticky vystaví fakturu.",
+        "newOpportunity": "Nová příležitost",
         "unavailable": "Data se nepodařilo načíst.",
-        "forbidden": "K této operaci nemáte oprávnění."
+        "forbidden": "K této sekci nemáte oprávnění.",
+        "retry": "Zkusit znovu",
+        "retryDescription": "Zkontrolujte připojení a zkuste to znovu.",
+        "emptyTitle": "Zatím tu nejsou žádné příležitosti.",
+        "emptyDescription": "Založte první příležitost a sledujte ji až do výhry.",
+        "noResults": "Filtrům neodpovídá žádná příležitost.",
+        "clearFilters": "Zrušit filtry",
+        "stats": {
+          "open": "Otevřené",
+          "weighted": "Vážená hodnota",
+          "won": "Vyhráno",
+          "winRate": "Úspěšnost"
+        },
+        "filters": {
+          "allOpportunities": "Všechny příležitosti",
+          "allOwners": "Všichni obchodníci",
+          "allStages": "Všechny fáze",
+          "assignment": "Přiřazení",
+          "owner": "Obchodník",
+          "search": "Hledat podle názvu",
+          "searchLabel": "Hledat",
+          "stage": "Fáze",
+          "unassignedOnly": "Jen nepřiřazené"
+        },
+        "columns": {
+          "amount": "Hodnota",
+          "customer": "Zákazník",
+          "expectedClose": "Očekávané uzavření",
+          "owner": "Obchodník",
+          "probability": "Pravděpodobnost",
+          "stage": "Fáze",
+          "tags": "Štítky",
+          "title": "Název",
+          "updatedAt": "Upraveno"
+        },
+        "actions": {
+          "assignOwner": "Přiřadit obchodníka",
+          "changeStage": "Změnit fázi"
+        },
+        "bulk": {
+          "clear": "Zrušit výběr",
+          "owner": "Přiřadit obchodníka",
+          "selected": "Vybráno: {{total}}",
+          "stage": "Změnit fázi"
+        },
+        "create": {
+          "cancel": "Zrušit",
+          "customerHint": "Dočasně zadejte ID zákazníka. Výběr přijde s evidencí zákazníků.",
+          "description": "Příležitost se založí bez řádků produktů ve fázi Lead.",
+          "errors": {
+            "customerInvalid": "Zadejte platné ID zákazníka.",
+            "dateRequired": "Vyberte očekávané datum uzavření.",
+            "noteTooLong": "Poznámka může mít nejvýše 2000 znaků.",
+            "titleRequired": "Vyplňte název příležitosti."
+          },
+          "fields": {
+            "customer": "Zákazník (ID)",
+            "expectedClose": "Očekávané uzavření",
+            "note": "Poznámka",
+            "title": "Název"
+          },
+          "submit": "Vytvořit příležitost",
+          "submitting": "Vytvářím…",
+          "title": "Nová příležitost"
+        },
+        "stageDialog": {
+          "cancel": "Zrušit",
+          "note": "Poznámka",
+          "stage": "Nová fáze",
+          "stageRequired": "Vyberte novou fázi.",
+          "submit": "Změnit fázi",
+          "submitting": "Ukládám…",
+          "title": "Změnit fázi",
+          "wonWarning": "Vyhráním příležitosti se automaticky vytvoří koncept faktury."
+        },
+        "owner": {
+          "cancel": "Zrušit",
+          "label": "Obchodník",
+          "none": "Nepřiřazeno",
+          "submit": "Přiřadit obchodníka",
+          "submitting": "Ukládám…",
+          "title": "Přiřadit obchodníka"
+        },
+        "toasts": {
+          "created": "Příležitost vytvořena",
+          "ownerAssigned": "Obchodník přiřazen",
+          "skipped": "Přeskočeno: {{total}}",
+          "stageChanged": "Fáze změněna"
+        },
+        "errors": {
+          "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
+          "forbidden": "K této operaci nemáte oprávnění.",
+          "generic": "Změnu se nepodařilo uložit. Zkuste to znovu."
+        }
       }
     }
   }
