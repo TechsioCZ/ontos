@@ -15,6 +15,7 @@ import {
   coerceGrouping,
   defaultQuery,
   parseStatisticsQuery,
+  resolveChartKind,
   serializeStatisticsQuery,
 } from '../../../../statistics/statistics-query.ts';
 import { useStatisticsInputs } from '../../../../statistics/use-statistics-inputs.ts';
@@ -69,8 +70,11 @@ const StatisticsPageContent = () => {
     data.status === 'ready'
       ? computeMetric(query.metric, data.inputs, { from: query.from, groupBy: query.groupBy, to: query.to, today })
       : undefined;
+  // The StatRow takes only the period and the loaded inputs, so metric, chart and grouping changes cannot move it.
   const kpis =
     data.status === 'ready' ? computeKpis(data.inputs, { from: query.from, to: query.to, today }) : undefined;
+  const series = result?.series ?? [];
+  const shownQuery: StatisticsQuery = { ...query, chart: resolveChartKind(query.chart, query.groupBy, series.length) };
   const failedText =
     data.status === 'ready' && data.failed.length > 0
       ? data.failed.map((source) => t(`${key}.sources.${source}`)).join(', ')
@@ -87,9 +91,9 @@ const StatisticsPageContent = () => {
           </StatusText>
         )}
         <SectionCard>
-          <StatisticsControls onChange={onChange} query={query} today={today} />
+          <StatisticsControls onChange={onChange} query={shownQuery} today={today} />
         </SectionCard>
-        <StatisticsResults kpis={kpis} loading={!ready} metric={metric} query={query} result={result} />
+        <StatisticsResults kpis={kpis} loading={!ready} metric={metric} query={shownQuery} result={result} />
       </section>
     </>
   );

@@ -61,6 +61,7 @@
           "quarter": "Toto čtvrtletí",
           "ytd": "Letos"
         },
+        "presetsLabel": "Rychlý výběr období",
         "sourceError": "Některá data se nepodařilo načíst: {{sources}}.",
         "sources": {
           "customers": "zákazníci",

@@ -593,13 +593,12 @@ const METRIC_ORDER: readonly MetricId[] = [
   'tasks_done',
 ];
 
-const KPI_METRIC_IDS: readonly MetricId[] = [
-  'revenue_invoiced',
-  'pipeline_open_value',
-  'win_rate',
-  'units_sold',
-  'unpaid_amount',
-  'tasks_overdue',
+/** The four StatRow tiles. Their values depend on the period only, never on the selected metric or grouping. */
+const KPI_TILES: readonly { readonly id: MetricId; readonly label: string }[] = [
+  { id: 'revenue_invoiced', label: 'Tržby (potvrzené)' },
+  { id: 'pipeline_open_value', label: 'Otevřená pipeline' },
+  { id: 'opportunities_won', label: 'Vyhráno' },
+  { id: 'win_rate', label: 'Úspěšnost' },
 ];
 
 /** Catalog for the statistics page builder and the MCP get_metrics tool. */
@@ -668,7 +667,7 @@ const bucketsOf = (row: Contribution, groupBy: Grouping, names: Names): readonly
     Match.whenOr('day', 'week', 'month', (grouping) =>
       row.date === undefined ? [] : [timeBucket(row.date, grouping)],
     ),
-    Match.when('employee', () => [namedBucket(row.employeeId, names.employees, 'Bez obchodníka')]),
+    Match.when('employee', () => [namedBucket(row.employeeId, names.employees, 'Nepřiřazeno')]),
     Match.when('customer', () => [namedBucket(row.partyId, names.customers, 'Bez zákazníka')]),
     Match.when('product', () => [namedBucket(row.productId, names.products, 'Bez produktu')]),
     Match.when('stage', () => [stageBucket(row.stage)]),
@@ -758,13 +757,13 @@ export const computeMetric = (id: MetricId, inputs: MetricInputs, query: MetricQ
   return { series, supported: true, total: valueFor(sumOf(rows), definition.ratio) };
 };
 
-/** Headline numbers for the StatRow over one range (totals only, no grouping). */
+/** Headline numbers for the StatRow over one range (totals only). Takes no metric, chart or grouping input. */
 export const computeKpis = (inputs: MetricInputs, range: MetricRange): readonly KpiValue[] =>
-  KPI_METRIC_IDS.map((id) => {
-    const definition: MetricDefinition = METRIC_DEFINITIONS[id];
+  KPI_TILES.map((tile) => {
+    const definition: MetricDefinition = METRIC_DEFINITIONS[tile.id];
     return {
-      id,
-      label: definition.label,
+      id: tile.id,
+      label: tile.label,
       unit: definition.unit,
       value: valueFor(sumOf(collectRows(definition, inputs, range)), definition.ratio),
     };

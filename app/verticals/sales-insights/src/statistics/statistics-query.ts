@@ -4,9 +4,10 @@ import { DateTime, Option, Schema } from 'effect';
 import type { CalendarDay, Grouping, MetricId, MetricPoint, MetricUnit } from '../../shared/metrics.ts';
 import { GroupingSchema, MetricIdSchema, metricCatalog } from '../../shared/metrics.ts';
 
-export const ChartKindSchema = Schema.Literals(['line', 'area', 'bar', 'bar-horizontal', 'pie']);
+const HORIZONTAL_BAR = 'bar-horizontal' as const;
+export const ChartKindSchema = Schema.Literals(['line', 'area', 'bar', HORIZONTAL_BAR, 'pie']);
 export type ChartKind = typeof ChartKindSchema.Type;
-export const chartKinds: readonly ChartKind[] = ['line', 'area', 'bar', 'bar-horizontal', 'pie'];
+export const chartKinds: readonly ChartKind[] = ['line', 'area', 'bar', HORIZONTAL_BAR, 'pie'];
 
 export const PresetSchema = Schema.Literals(['30d', 'quarter', 'ytd', '12m']);
 export type Preset = typeof PresetSchema.Type;
@@ -87,6 +88,13 @@ export const coerceGrouping = (metric: MetricId, groupBy: Grouping): Grouping =>
 
 export const isTimeGrouping = (groupBy: Grouping): boolean =>
   groupBy === 'day' || groupBy === 'week' || groupBy === 'month';
+
+/**
+ * A pie only fits a time series with at most PIE_SLICE_LIMIT slices. Categorical groupings and longer
+ * series show as a sorted horizontal bar instead, so the rendered kind can differ from the requested one.
+ */
+export const resolveChartKind = (chart: ChartKind, groupBy: Grouping, sliceCount: number): ChartKind =>
+  chart === 'pie' && (!isTimeGrouping(groupBy) || sliceCount > PIE_SLICE_LIMIT) ? HORIZONTAL_BAR : chart;
 
 /** Reads the query from URL search params. Anything invalid falls back to the default for that field. */
 export const parseStatisticsQuery = (search: string, fallback: StatisticsQuery): StatisticsQuery => {
