@@ -5,7 +5,8 @@
   "description": "Akros back-office helpers (PageHeader, SectionCard, StatCard, StatusBadge, cs-CZ formatters) built on @techsio/ui-kit.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./side-panel": "./src/side-panel.tsx"
   },
   "scripts": {
     "test:unit": "rstest --project unit",
