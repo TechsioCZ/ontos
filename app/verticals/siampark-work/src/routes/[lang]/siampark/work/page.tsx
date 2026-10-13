@@ -863,11 +863,13 @@ const TasksPageContent = () => {
         <TaskFormDialog
           busy={model.saving}
           customers={model.customers}
+          customersLoading={!model.lookups.customers}
           employees={model.employees}
           error={model.formError}
           onClose={model.handleCloseEditor}
           onSubmit={model.handleSave}
           opportunities={model.opportunities}
+          opportunitiesLoading={!model.lookups.opportunities}
           task={model.editor.mode === 'edit' ? model.editor.task : undefined}
         />
       )}

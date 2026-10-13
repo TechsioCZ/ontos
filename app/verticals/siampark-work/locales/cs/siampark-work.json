@@ -37,6 +37,7 @@
         "submitCreate": "Vytvořit úkol",
         "submitEdit": "Uložit změny",
         "taskTitle": "Název",
+        "titleLength": "{{length}} z {{max}} znaků",
         "description": "Popis",
         "assignee": "Řešitel",
         "dueDate": "Termín",
@@ -50,6 +51,8 @@
         "pickOpportunity": "Vyberte příležitost",
         "companyId": "IČO {{id}}",
         "comboboxEmpty": "Nic nenalezeno.",
+        "noOpportunities": "Žádné příležitosti k výběru.",
+        "noCustomerOpportunities": "Vybraný zákazník nemá žádné příležitosti.",
         "tabs": {
           "mine": "Moje úkoly",
           "mineNamed": "Moje úkoly ({{name}})",

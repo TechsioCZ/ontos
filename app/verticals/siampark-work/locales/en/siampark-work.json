@@ -37,6 +37,7 @@
         "submitCreate": "Create task",
         "submitEdit": "Save changes",
         "taskTitle": "Title",
+        "titleLength": "{{length}} of {{max}} characters",
         "description": "Description",
         "assignee": "Assignee",
         "dueDate": "Due date",
@@ -50,6 +51,8 @@
         "pickOpportunity": "Select opportunity",
         "companyId": "Company ID {{id}}",
         "comboboxEmpty": "Nothing found.",
+        "noOpportunities": "No opportunities to choose from.",
+        "noCustomerOpportunities": "The chosen customer has no opportunities.",
         "tabs": {
           "mine": "My tasks",
           "mineNamed": "My tasks ({{name}})",

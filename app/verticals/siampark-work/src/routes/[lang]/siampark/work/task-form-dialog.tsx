@@ -25,6 +25,7 @@ import { customerOptionItems, opportunityOptionItems, selectOption } from './tas
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
 const NONE = 'none';
+const titleMaxLength = 200;
 // Select labels take the dialog's label size, the same size FormInput, Combobox and DatePicker labels use.
 const dialogLabelProps = { className: 'font-label text-label-md' };
 const key = 'siampark-work.pages.records';
@@ -234,20 +235,24 @@ const DiscardDialog = ({
 /** Zákazník and Příležitost pickers. Each keeps its typed query and its open state. */
 const ReferencePickers = ({
   customers,
+  customersLoading,
   disabled,
   isEdit,
   onChange,
   opportunities,
+  opportunitiesLoading,
   opportunityId,
   opportunityMessage,
   partyId,
   partyMessage,
 }: {
   readonly customers: readonly CustomerOption[];
+  readonly customersLoading: boolean;
   readonly disabled: boolean;
   readonly isEdit: boolean;
   readonly onChange: (patch: Partial<FormValues>) => void;
   readonly opportunities: readonly OpportunityOption[];
+  readonly opportunitiesLoading: boolean;
   readonly opportunityId: string;
   readonly opportunityMessage: string | undefined;
   readonly partyId: string;
@@ -267,11 +272,18 @@ const ReferencePickers = ({
   // With a customer chosen, only that customer's opportunities are offered. Filtered here like customers: the kit's
   // local filter is reset when typing opens the list, so a no-match query used to list every opportunity.
   const selectedOpportunityTitle = opportunities.find((opportunity) => opportunity.id === opportunityId)?.title;
+  const opportunityNeedle = opportunityQuery === selectedOpportunityTitle ? '' : opportunityQuery;
   const opportunityItems = opportunityOptionItems(opportunities, {
     partyId,
-    query: opportunityQuery === selectedOpportunityTitle ? '' : opportunityQuery,
+    query: opportunityNeedle,
     selectedId: opportunityId,
   });
+  // The kit shows its empty message only for typed text, so an empty list opened by focus looked like a dead field.
+  // The footer says why nothing is offered: the chosen customer has no opportunity, or there is none at all.
+  const opportunityFooter =
+    !opportunitiesLoading && opportunityItems.length === 0 && opportunityNeedle.trim() === ''
+      ? t(partyId === '' ? `${key}.noOpportunities` : `${key}.noCustomerOpportunities`)
+      : undefined;
   return (
     <>
       {/* Focus or click opens the list: the kit only opens it on typing, so an empty field looked dead. */}
@@ -282,6 +294,9 @@ const ReferencePickers = ({
           filterBehavior="external"
           items={customerItems}
           label={t(`${key}.party`)}
+          // The lists load with the page; a panel opened before they settle says so instead of an empty popup.
+          loading={customersLoading}
+          loadingMessage={t(`${key}.loadingNames`)}
           name="party"
           noResultsMessage={t(`${key}.comboboxEmpty`)}
           onChange={(next) => onChange({ partyId: firstValue(next) })}
@@ -313,8 +328,11 @@ const ReferencePickers = ({
           clearable={!isEdit}
           disabled={disabled}
           filterBehavior="external"
+          footer={opportunityFooter}
           items={opportunityItems}
           label={t(`${key}.opportunity`)}
+          loading={opportunitiesLoading}
+          loadingMessage={t(`${key}.loadingNames`)}
           name="opportunity"
           noResultsMessage={t(`${key}.comboboxEmpty`)}
           onChange={(next) => onChange({ opportunityId: firstValue(next) })}
@@ -335,20 +353,24 @@ const ReferencePickers = ({
 export const TaskFormDialog = ({
   busy,
   customers,
+  customersLoading,
   employees,
   error,
   onClose,
   onSubmit,
   opportunities,
+  opportunitiesLoading,
   task,
 }: {
   readonly busy: boolean;
   readonly customers: readonly CustomerOption[];
+  readonly customersLoading: boolean;
   readonly employees: readonly Employee[];
   readonly error: string | undefined;
   readonly onClose: () => void;
   readonly onSubmit: (submission: TaskFormSubmission) => void;
   readonly opportunities: readonly OpportunityOption[];
+  readonly opportunitiesLoading: boolean;
   /** `undefined` creates a task. Mount this component only while it is open. */
   readonly task: Task | undefined;
 }) => {
@@ -435,6 +457,7 @@ export const TaskFormDialog = ({
   ];
   const isEdit = task !== undefined;
   const assigneeMessage = message('assigneeId');
+  const titleMessage = message('title');
 
   return (
     <>
@@ -478,9 +501,11 @@ export const TaskFormDialog = ({
           <FormInput
             autoComplete="off"
             disabled={fieldsDisabled}
+            // The length hint sits where the error would go; a field error replaces it, as invalidProps does.
+            helpText={titleMessage ?? t(`${key}.titleLength`, { length: values.title.length, max: titleMaxLength })}
             id="task-title"
             label={t(`${key}.taskTitle`)}
-            maxLength={200}
+            maxLength={titleMaxLength}
             onChange={(event) => set({ title: event.target.value })}
             // Enter submits, so an empty title gets the same field message as the button.
             onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
@@ -490,8 +515,8 @@ export const TaskFormDialog = ({
               }
             }}
             required
+            validateStatus={titleMessage === undefined ? 'default' : 'error'}
             value={values.title}
-            {...invalidProps(message('title'))}
           />
           <FormTextarea
             autoComplete="off"
@@ -501,6 +526,21 @@ export const TaskFormDialog = ({
             maxLength={2000}
             onChange={(event) => set({ description: event.target.value })}
             value={values.description}
+          />
+          {/* The pickers sit high in the panel so their long lists open downward. Placed last, the list flipped up
+              over Řešitel, Termín and Priorita. */}
+          <ReferencePickers
+            customers={customers}
+            customersLoading={customersLoading}
+            disabled={fieldsDisabled}
+            isEdit={isEdit}
+            onChange={set}
+            opportunities={opportunities}
+            opportunitiesLoading={opportunitiesLoading}
+            opportunityId={values.opportunityId}
+            opportunityMessage={message('opportunityId')}
+            partyId={values.partyId}
+            partyMessage={message('partyId')}
           />
           <div className="flex flex-col gap-50" onFocus={rememberListField}>
             <Select
@@ -567,17 +607,6 @@ export const TaskFormDialog = ({
               value={[values.priority]}
             />
           </div>
-          <ReferencePickers
-            customers={customers}
-            disabled={fieldsDisabled}
-            isEdit={isEdit}
-            onChange={set}
-            opportunities={opportunities}
-            opportunityId={values.opportunityId}
-            opportunityMessage={message('opportunityId')}
-            partyId={values.partyId}
-            partyMessage={message('partyId')}
-          />
         </div>
       </SidePanel>
       <DiscardDialog
