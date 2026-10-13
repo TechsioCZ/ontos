@@ -9,6 +9,7 @@
     "./clients/records": "./src/api/records-client.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
+    "./metrics": "./shared/metrics.ts",
     "./permissions/demo.sales_insights.read_all": "./shared/permissions/sales-insights-read-all.ts",
     "./permissions/demo.sales_insights.write_all": "./shared/permissions/sales-insights-write-all.ts",
     "./resources/metric": "./shared/resources/metric.ts",
