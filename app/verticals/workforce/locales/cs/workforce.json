@@ -86,7 +86,8 @@
           "departmentTitle": "Změnit oddělení",
           "description": "Změna se použije u {{total}} vybraných zaměstnanců.",
           "role": "Změnit roli",
-          "roleTitle": "Změnit roli"
+          "roleTitle": "Změnit roli",
+          "tags": "Štítky"
         },
         "errors": {
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
@@ -117,6 +118,11 @@
           "SALES_REP": "Obchodník",
           "SUPPORT": "Podpora",
           "WAREHOUSE": "Skladník"
+        },
+        "permissions": {
+          "access": "Přístup",
+          "role": "Role",
+          "title": "Oprávnění"
         }
       }
     }

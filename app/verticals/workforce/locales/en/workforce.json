@@ -86,7 +86,8 @@
           "departmentTitle": "Change department",
           "description": "The change applies to {{total}} selected employees.",
           "role": "Change role",
-          "roleTitle": "Change role"
+          "roleTitle": "Change role",
+          "tags": "Tags"
         },
         "errors": {
           "conflict": "Someone else changed this record in the meantime. Reload it and repeat your change.",
@@ -117,6 +118,11 @@
           "SALES_REP": "Sales representative",
           "SUPPORT": "Support",
           "WAREHOUSE": "Warehouse"
+        },
+        "permissions": {
+          "access": "Access",
+          "role": "Role",
+          "title": "Permissions"
         }
       }
     }
