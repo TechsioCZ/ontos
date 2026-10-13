@@ -24,7 +24,7 @@ interface DemoEmployee {
 const SEED_INSTANT = '2026-10-13T08:00:00Z';
 const B2B_DEPARTMENT = 'Obchod B2B';
 
-/** Keys feed demoId('workforce.employee', key); never change them once seeds exist. */
+/** Keys feed demoId('employee', key); never change them once seeds exist. */
 const DEMO_EMPLOYEES: readonly DemoEmployee[] = [
   {
     active: true,
@@ -143,7 +143,7 @@ const buildDemoState = Effect.fn('Workforce.buildDemoState')(function* buildDemo
   const instant = DateTime.makeUnsafe(SEED_INSTANT);
   const employees = yield* Effect.all(
     DEMO_EMPLOYEES.map((entry) =>
-      Schema.decodeUnknownEffect(EmployeeIdSchema)(demoId('workforce.employee', entry.key)).pipe(
+      Schema.decodeUnknownEffect(EmployeeIdSchema)(demoId('employee', entry.key)).pipe(
         Effect.map((id) => ({
           active: entry.active,
           createdAt: instant,
