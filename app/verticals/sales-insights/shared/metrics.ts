@@ -202,6 +202,11 @@ interface MetricDefinition extends MetricCatalogEntry {
   readonly collect: (inputs: MetricInputs, range: MetricRange) => readonly Contribution[];
   /** Ratio metrics report num / den as a percent; sum metrics report num. */
   readonly ratio: boolean;
+  /**
+   * Snapshot metrics describe the current state (e.g. every open opportunity) and ignore the selected
+   * range. Their rows may still carry a date, which only places them in time buckets.
+   */
+  readonly snapshot?: boolean;
 }
 
 interface Names {
@@ -436,7 +441,8 @@ const METRIC_DEFINITIONS = {
     id: 'pipeline_open_value',
     label: 'Pipeline (otevřené)',
     ratio: false,
-    source: SOURCE_OPPORTUNITIES,
+    snapshot: true,
+    source: `${SOURCE_OPPORTUNITIES} (open stages, current snapshot; dated by expectedCloseDate)`,
     unit: 'CZK',
   },
   pipeline_weighted_value: {
@@ -445,7 +451,8 @@ const METRIC_DEFINITIONS = {
     id: 'pipeline_weighted_value',
     label: 'Vážená pipeline',
     ratio: false,
-    source: SOURCE_OPPORTUNITIES,
+    snapshot: true,
+    source: `${SOURCE_OPPORTUNITIES} (amount × probability, current snapshot; dated by expectedCloseDate)`,
     unit: 'CZK',
   },
   revenue_invoiced: {
@@ -710,8 +717,14 @@ const categoricalSeries = (cells: readonly Cell[], ratio: boolean): readonly Met
   return [...head, { key: OTHER_KEY, label: 'Ostatní', value: valueFor(sumOf(rest), ratio) }];
 };
 
-const collectRows = (definition: MetricDefinition, inputs: MetricInputs, range: MetricRange): readonly Contribution[] =>
-  definition.collect(inputs, range).filter((row) => inRange(row.date, range));
+const collectRows = (
+  definition: MetricDefinition,
+  inputs: MetricInputs,
+  range: MetricRange,
+): readonly Contribution[] => {
+  const rows = definition.collect(inputs, range);
+  return definition.snapshot === true ? rows : rows.filter((row) => inRange(row.date, range));
+};
 
 /**
  * Compute one metric as a series grouped by `query.groupBy`. Time groupings are sorted ascending by period;

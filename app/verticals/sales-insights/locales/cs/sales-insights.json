@@ -38,7 +38,6 @@
         "chartDescription": "Období {{from}} – {{to}}",
         "chartLabel": "{{metric}}, {{from}} až {{to}}",
         "chartType": "Typ grafu",
-        "controls": "Nastavení",
         "description": "Vyberte ukazatel, typ grafu, období a seskupení",
         "empty": "Za zvolené období nejsou žádná data.",
         "grouping": "Seskupit podle",

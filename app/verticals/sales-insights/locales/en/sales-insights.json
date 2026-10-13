@@ -38,7 +38,6 @@
         "chartDescription": "Period {{from}} – {{to}}",
         "chartLabel": "{{metric}}, {{from}} to {{to}}",
         "chartType": "Chart type",
-        "controls": "Settings",
         "description": "Choose a metric, chart type, period and grouping",
         "empty": "No data for the selected period.",
         "grouping": "Group by",
