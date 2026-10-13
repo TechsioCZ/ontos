@@ -5,6 +5,7 @@ import {
   draftTotals,
   isPlausibleIssueDate,
   lineIssue,
+  lineValueIssue,
   newDraftLine,
   toInvoiceLine,
   VAT_RATE_CHOICES,
@@ -45,6 +46,9 @@ describe('Invoice create form lines', () => {
 
     expect(lineIssue(newDraftLine('line-6', 'free'))).toBe('description');
     expect(lineIssue({ ...free, quantity: 0 })).toBe('quantity');
+    expect(lineIssue({ ...free, quantity: 2.25 })).toBe('quantity');
+    expect(lineIssue({ ...free, quantity: 1_000_000 })).toBeUndefined();
+    expect(lineIssue({ ...free, quantity: 999_999_999 })).toBe('quantity');
     expect(lineIssue({ ...free, unitPriceMinor: -1 })).toBe('price');
     expect(toInvoiceLine(free)).toEqual({
       description: 'Školení',
@@ -77,6 +81,33 @@ describe('Invoice create form lines', () => {
     };
     // Base 370 350; VAT 77 773,5 rounds half-up to 77 774.
     expect(draftTotals([free])).toEqual({ subtotalMinor: 370_350, totalMinor: 448_124, vatMinor: 77_774 });
+  });
+
+  it('flags a line amount or invoice sum past the money range instead of totalling it as 0 Kč', () => {
+    // 1 000 000 × 10 000 000 Kč is a valid quantity and price, but the line base is far past 10 miliard Kč.
+    const huge = {
+      ...newDraftLine('line-9', 'free'),
+      description: 'Stavba',
+      quantity: 1_000_000,
+      unitPriceMinor: czkToMinor(10_000_000),
+    };
+    expect(lineIssue(huge)).toBe('amount');
+    expect(draftTotals([huge])).toEqual({ subtotalMinor: 0, totalMinor: 0, vatMinor: 0 });
+
+    // 8 miliard Kč per line fits, but two such lines with VAT pass the range together.
+    const large = { ...huge, quantity: 1, unitPriceMinor: czkToMinor(8_000_000_000) };
+    expect(lineIssue(large)).toBeUndefined();
+    expect(draftTotals([large])).toBeDefined();
+    expect(draftTotals([large, { ...large, key: 'line-10' }])).toBeUndefined();
+  });
+
+  it('reports mistyped numbers on a fresh line, but not the missing product or description', () => {
+    const fresh = newDraftLine('line-11', 'product');
+    expect(lineIssue(fresh)).toBe('product');
+    expect(lineValueIssue(fresh)).toBeUndefined();
+    expect(lineValueIssue({ ...fresh, quantity: 2.25 })).toBe('quantity');
+    expect(lineValueIssue({ ...fresh, quantity: Number.NaN })).toBe('quantity');
+    expect(lineValueIssue({ ...newDraftLine('line-12', 'free'), unitPriceMinor: Number.NaN })).toBe('price');
   });
 
   it('adds payment terms to the issue date like the backend does', () => {

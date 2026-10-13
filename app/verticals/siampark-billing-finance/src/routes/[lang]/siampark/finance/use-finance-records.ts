@@ -115,6 +115,8 @@ export const useFinanceRecords = () => {
   const [snapshot, setSnapshot] = useState<RecordsResponse>();
   const [feedback, setFeedback] = useState<Feedback>('loading');
   const [voidTarget, setVoidTarget] = useState<Invoice>();
+  /** Confirming numbers the invoice and locks it, so every entry point asks first. */
+  const [confirmTarget, setConfirmTarget] = useState<Invoice>();
   /** True while the open detail is a history entry this page pushed, so closing it can step back instead. */
   const detailPushed = useRef(false);
   const selected = snapshot?.state.invoices.find((record) => record.ref.resourceId === requestedId);
@@ -228,6 +230,7 @@ export const useFinanceRecords = () => {
 
   return {
     busy,
+    cancelConfirm: () => setConfirmTarget(undefined),
     cancelVoid: () => setVoidTarget(undefined),
     canWrite,
     closeDetail: () => {
@@ -240,8 +243,18 @@ export const useFinanceRecords = () => {
       }
       window.history.replaceState(window.history.state, '', detailUrl());
     },
-    confirmInvoice: (invoice: Invoice) =>
-      runCommand({ _tag: 'ConfirmInvoice', invoiceRef: invoice.ref }, t('siampark-billing-finance.faktury.confirmed')),
+    /** Asks before confirming; `confirmPending` runs the command once the user agrees. */
+    confirmInvoice: (invoice: Invoice) => setConfirmTarget(invoice),
+    confirmPending: () => {
+      if (confirmTarget !== undefined) {
+        runCommand(
+          { _tag: 'ConfirmInvoice', invoiceRef: confirmTarget.ref },
+          t('siampark-billing-finance.faktury.confirmed'),
+        );
+      }
+      setConfirmTarget(undefined);
+    },
+    confirmTarget,
     confirmVoid: () => {
       if (voidTarget !== undefined) {
         runCommand({ _tag: 'VoidInvoice', invoiceRef: voidTarget.ref }, t('siampark-billing-finance.faktury.voided'));

@@ -67,11 +67,13 @@
         "errorCustomer": "Choose a customer.",
         "errorIssueDate": "Enter an issue date.",
         "errorIssueDateYear": "Check the issue date year (2000 to 2100).",
+        "errorTotal": "The invoice total with VAT can be at most CZK 10,000,000,000. Lower the line quantities or prices.",
         "error": {
           "product": "Choose a product.",
           "description": "Enter a line description.",
-          "quantity": "Enter a whole quantity from 1.",
-          "price": "Enter a price of 0 or more."
+          "quantity": "Enter a whole quantity from 1 to 1,000,000.",
+          "price": "Enter a price of 0 or more.",
+          "amount": "Lower the quantity or price: a line total with VAT can be at most CZK 10,000,000,000."
         }
       },
       "cancel": "Cancel",
@@ -116,6 +118,9 @@
       "confirm": "Confirm",
       "confirmed": "Invoice confirmed",
       "confirming": "Confirming…",
+      "confirmTitle": "Confirm invoice {{number}}?",
+      "confirmDescription": "A confirmed invoice can no longer be edited, only voided.",
+      "confirmAction": "Confirm invoice",
       "void": "Void",
       "voided": "Invoice voided",
       "voidTitle": "Void invoice {{number}}?",

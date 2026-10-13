@@ -25,8 +25,11 @@ export interface DraftLine {
   readonly vatRate: VatRate;
 }
 
-export const DraftLineIssueSchema = Schema.Literals(['description', 'price', 'product', 'quantity']);
+export const DraftLineIssueSchema = Schema.Literals(['amount', 'description', 'price', 'product', 'quantity']);
 export type DraftLineIssue = typeof DraftLineIssueSchema.Type;
+
+/** Largest quantity the stored invoice line accepts (`InvoiceLineSchema`). */
+export const MAX_LINE_QUANTITY = 1_000_000;
 
 export const newDraftLine = (key: string, kind: DraftLineKind): DraftLine => ({
   description: '',
@@ -58,22 +61,6 @@ export const withProductSnapshot = (
 /** Form amounts are entered in CZK and stored in minor units (haléře). */
 export const czkToMinor = (czk: number): number => Math.round(czk * 100);
 
-export const lineIssue = (line: DraftLine): DraftLineIssue | undefined => {
-  if (line.kind === 'product' && line.productId === null) {
-    return 'product';
-  }
-  if (line.kind === 'free' && line.description.trim() === '') {
-    return 'description';
-  }
-  if (!Number.isInteger(line.quantity) || line.quantity < 1) {
-    return 'quantity';
-  }
-  if (!Number.isSafeInteger(line.unitPriceMinor) || line.unitPriceMinor < 0) {
-    return 'price';
-  }
-  return undefined;
-};
-
 export const toInvoiceLine = (line: DraftLine): InvoiceLine => {
   const invoiceLine: InvoiceLine = {
     description: line.description.trim(),
@@ -87,20 +74,46 @@ export const toInvoiceLine = (line: DraftLine): InvoiceLine => {
   return invoiceLine;
 };
 
+/**
+ * A problem with a typed number on the line: quantity, price, or a line amount past the money range. Unlike a
+ * missing product or description, it is never the state of a fresh line, so the form shows it while typing.
+ */
+export const lineValueIssue = (line: DraftLine): DraftLineIssue | undefined => {
+  if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > MAX_LINE_QUANTITY) {
+    return 'quantity';
+  }
+  if (!Number.isSafeInteger(line.unitPriceMinor) || line.unitPriceMinor < 0) {
+    return 'price';
+  }
+  // A valid quantity times a large price can pass the stored money range, which would total as 0 Kč.
+  return computeInvoiceTotals([toInvoiceLine(line)]) === undefined ? 'amount' : undefined;
+};
+
+export const lineIssue = (line: DraftLine): DraftLineIssue | undefined => {
+  if (line.kind === 'product' && line.productId === null) {
+    return 'product';
+  }
+  if (line.kind === 'free' && line.description.trim() === '') {
+    return 'description';
+  }
+  return lineValueIssue(line);
+};
+
 export interface DraftTotals {
   readonly subtotalMinor: number;
   readonly totalMinor: number;
   readonly vatMinor: number;
 }
 
-/** Totals of the complete lines, using the same arithmetic the backend stores on create. */
-export const draftTotals = (lines: readonly DraftLine[]): DraftTotals => {
+/**
+ * Totals of the complete lines, using the same arithmetic the backend stores on create. Returns `undefined` when
+ * the lines together pass the money range, so the form flags the sum instead of showing 0 Kč.
+ */
+export const draftTotals = (lines: readonly DraftLine[]): DraftTotals | undefined => {
   const totals = computeInvoiceTotals(lines.filter((line) => lineIssue(line) === undefined).map(toInvoiceLine));
-  return {
-    subtotalMinor: totals?.subtotalMinor ?? 0,
-    totalMinor: totals?.totalMinor ?? 0,
-    vatMinor: totals?.vatMinor ?? 0,
-  };
+  return totals === undefined
+    ? undefined
+    : { subtotalMinor: totals.subtotalMinor, totalMinor: totals.totalMinor, vatMinor: totals.vatMinor };
 };
 
 /**

@@ -1,17 +1,8 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
-import {
-  formatMoney,
-  formatNumber,
-  PageHeader,
-  StatCard,
-  StatRow,
-  toasterLabels,
-  dialogCloseLabel,
-} from '@app/admin-ui';
+import { formatMoney, formatNumber, PageHeader, StatCard, StatRow, Toaster, dialogCloseLabel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import csResource from '../../../../../locales/cs/siampark-billing-finance.json';
 import enResource from '../../../../../locales/en/siampark-billing-finance.json';
@@ -34,7 +25,21 @@ const wholeKc = (minor: number) => formatMoney(Math.round(minor / 100) * 100);
 
 const RecordsPageContent = () => {
   const vm = useFinanceRecords();
-  const { busy, cancelVoid, canWrite, confirmVoid, feedback, indicators, references, selected, t, voidTarget } = vm;
+  const {
+    busy,
+    cancelConfirm,
+    cancelVoid,
+    canWrite,
+    confirmPending,
+    confirmTarget,
+    confirmVoid,
+    feedback,
+    indicators,
+    references,
+    selected,
+    t,
+    voidTarget,
+  } = vm;
   const [createOpen, setCreateOpen] = useState(false);
   const kpi = (value: (source: NonNullable<typeof indicators>) => string) =>
     indicators === undefined ? '—' : value(indicators);
@@ -42,7 +47,7 @@ const RecordsPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <Toaster {...toasterLabels} />
+      <Toaster />
       <section className="flex min-w-0 flex-col gap-250 text-fg-primary">
         {selected === undefined ? (
           <>
@@ -92,6 +97,31 @@ const RecordsPageContent = () => {
         )}
       </section>
       <CreateInvoiceDialog onOpenChange={setCreateOpen} open={createOpen} vm={vm} />
+      <Dialog
+        actions={
+          <>
+            <Button onClick={cancelConfirm} theme="outlined" variant="secondary">
+              {t(`${ns}.cancel`)}
+            </Button>
+            <Button disabled={busy} onClick={confirmPending} variant="primary">
+              {t(`${ns}.confirmAction`)}
+            </Button>
+          </>
+        }
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description={t(`${ns}.confirmDescription`)}
+        onOpenChange={(details) => {
+          if (!details.open) {
+            cancelConfirm();
+          }
+        }}
+        open={confirmTarget !== undefined}
+        placement="center"
+        role="alertdialog"
+        size="sm"
+        title={t(`${ns}.confirmTitle`, { number: confirmTarget?.number ?? confirmTarget?.documentNumber ?? '' })}
+      />
       <Dialog
         actions={
           <>

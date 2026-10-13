@@ -67,11 +67,13 @@
         "errorCustomer": "Vyberte zákazníka.",
         "errorIssueDate": "Zadejte datum vystavení.",
         "errorIssueDateYear": "Zkontrolujte rok data vystavení (2000 až 2100).",
+        "errorTotal": "Součet faktury s DPH může být nejvýše 10 000 000 000 Kč. Snižte množství nebo ceny položek.",
         "error": {
           "product": "Vyberte produkt.",
           "description": "Zadejte popis položky.",
-          "quantity": "Zadejte celé množství od 1.",
-          "price": "Zadejte cenu 0 Kč nebo vyšší."
+          "quantity": "Zadejte celé množství od 1 do 1 000 000.",
+          "price": "Zadejte cenu 0 Kč nebo vyšší.",
+          "amount": "Snižte množství nebo cenu: částka položky s DPH může být nejvýše 10 000 000 000 Kč."
         }
       },
       "cancel": "Zrušit",
@@ -116,6 +118,9 @@
       "confirm": "Potvrdit",
       "confirmed": "Faktura potvrzena",
       "confirming": "Potvrzuji…",
+      "confirmTitle": "Potvrdit fakturu {{number}}?",
+      "confirmDescription": "Potvrzenou fakturu už nelze upravit, jen stornovat.",
+      "confirmAction": "Potvrdit fakturu",
       "void": "Stornovat",
       "voided": "Faktura stornována",
       "voidTitle": "Stornovat fakturu {{number}}?",

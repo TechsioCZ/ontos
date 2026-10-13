@@ -31,6 +31,9 @@ interface InvoiceLineEditorProps {
 }
 
 const priceFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2, minimumFractionDigits: 0 };
+// Without a format the input parses with parseFloat, which stops at the decimal comma: `2,25` became 2.
+// Three digits keep a typed fraction visible so `lineIssue` can reject it with a message.
+const quantityFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 3, minimumFractionDigits: 0 };
 
 /** One invoice line: a product (snapshot on pick) or free text, then quantity, and price and VAT for free text. */
 export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, products }: InvoiceLineEditorProps) => {
@@ -123,6 +126,7 @@ export const InvoiceLineEditor = ({ canRemove, issue, line, onChange, onRemove, 
           <FormNumericInput
             // Blur must not clamp a typed 0,001 to 1; `lineIssue` rejects it with a message instead.
             clampValueOnBlur={false}
+            formatOptions={quantityFormatOptions}
             id={`invoice-line-quantity-${line.key}`}
             label={t(`${ns}.form.quantity`)}
             locale="cs-CZ"

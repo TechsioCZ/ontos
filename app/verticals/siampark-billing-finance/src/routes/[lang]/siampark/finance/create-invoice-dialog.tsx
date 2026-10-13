@@ -21,6 +21,7 @@ import {
   draftTotals,
   isPlausibleIssueDate,
   lineIssue,
+  lineValueIssue,
   newDraftLine,
   PAYMENT_TERM_DAYS,
   toInvoiceLine,
@@ -37,6 +38,8 @@ const ns = 'siampark-billing-finance.faktury';
 
 /** Wraps the issue-date picker so a failed submit can find it and focus its first segment. */
 const ISSUE_DATE_FIELD_ID = 'invoice-issue-date';
+/** Focus target when the lines are valid one by one but their sum passes the money range. */
+const ADD_LINE_BUTTON_ID = 'invoice-add-line';
 
 /** The draft keeps the issue date as an ISO `YYYY-MM-DD` string; anything else shows an empty picker. */
 const toIssueCalendarDate = (isoDate: string): IntlCalendarDate | null =>
@@ -69,6 +72,9 @@ const issueDateProblem = (issueDate: string, submitted: boolean): 'missing' | 'y
   return isPlausibleIssueDate(issueDate) ? undefined : 'year';
 };
 
+/** A sum past the money range shows a dash and an error instead of 0 Kč. */
+const optionalMoney = (minor: number | undefined) => (minor === undefined ? '—' : formatMoney(minor));
+
 /** DOM id of the input that shows a line's problem, so a failed submit can move focus there. */
 const lineIssueFieldId = (line: DraftLine, issue: DraftLineIssue): string => {
   if (issue === 'product') {
@@ -77,7 +83,9 @@ const lineIssueFieldId = (line: DraftLine, issue: DraftLineIssue): string => {
   if (issue === 'description') {
     return `invoice-line-description-${line.key}`;
   }
-  return issue === 'quantity' ? `invoice-line-quantity-${line.key}` : `invoice-line-price-${line.key}`;
+  // A product line has no price field, so its out-of-range amount is fixed through the quantity.
+  const atQuantity = issue === 'quantity' || (issue === 'amount' && line.kind === 'product');
+  return atQuantity ? `invoice-line-quantity-${line.key}` : `invoice-line-price-${line.key}`;
 };
 
 interface CreateInvoiceDialogProps {
@@ -245,7 +253,11 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
     }
     const line = draft.lines.find((item) => lineIssue(item) !== undefined);
     const issue = line === undefined ? undefined : lineIssue(line);
-    return line === undefined || issue === undefined ? undefined : lineIssueFieldId(line, issue);
+    if (line !== undefined && issue !== undefined) {
+      return lineIssueFieldId(line, issue);
+    }
+    // Every line is valid on its own but together they pass the money range; the add-line button sits by the lines.
+    return totals === undefined ? ADD_LINE_BUTTON_ID : undefined;
   };
 
   const submit = () => {
@@ -370,7 +382,8 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           {draft.lines.map((line) => (
             <InvoiceLineEditor
               canRemove={draft.lines.length > 1}
-              issue={submitted ? lineIssue(line) : undefined}
+              // A mistyped number is flagged as soon as it is typed; a missing product or description only on submit.
+              issue={submitted ? lineIssue(line) : lineValueIssue(line)}
               key={line.key}
               line={line}
               onChange={(next) => updateLine(line.key, next)}
@@ -379,7 +392,14 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
             />
           ))}
           <div>
-            <Button icon="icon-[mdi--plus]" onClick={addLine} size="sm" theme="outlined" variant="secondary">
+            <Button
+              icon="icon-[mdi--plus]"
+              id={ADD_LINE_BUTTON_ID}
+              onClick={addLine}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
               {t(`${ns}.form.addLine`)}
             </Button>
           </div>
@@ -390,18 +410,23 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           items={[
             {
               label: t(`${ns}.subtotal`),
-              value: <span className="tabular-nums">{formatMoney(totals.subtotalMinor)}</span>,
+              value: <span className="tabular-nums">{optionalMoney(totals?.subtotalMinor)}</span>,
             },
             {
               label: t(`${ns}.vatTotal`),
-              value: <span className="tabular-nums">{formatMoney(totals.vatMinor)}</span>,
+              value: <span className="tabular-nums">{optionalMoney(totals?.vatMinor)}</span>,
             },
             {
               label: t(`${ns}.total`),
-              value: <span className="font-semibold tabular-nums">{formatMoney(totals.totalMinor)}</span>,
+              value: <span className="font-semibold tabular-nums">{optionalMoney(totals?.totalMinor)}</span>,
             },
           ]}
         />
+        {totals === undefined && (
+          <StatusText showIcon size="sm" status="error">
+            {t(`${ns}.form.errorTotal`)}
+          </StatusText>
+        )}
         {zeroPriceWarning && (
           <StatusText showIcon size="sm" status="warning">
             {t(`${ns}.form.zeroPriceConfirm`)}
