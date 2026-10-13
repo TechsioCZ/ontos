@@ -1,0 +1,409 @@
+#!/usr/bin/env node
+/**
+ * Sales-demo accounts, grants and agent bot (plan 22). LOCAL ONLY, idempotent.
+ *
+ *   node scripts/demo/reset-permissions.mts            # accounts + grants, then the bot key when the shell is up
+ *   node scripts/demo/reset-permissions.mts --skip-bot # accounts + grants only
+ *
+ * 1. Upserts the Better Auth users of the four @demo.ontos accounts (password `password1234`).
+ * 2. Inserts the `agent-bot` service principal row (the row `core.identity.create-non-human-principal`
+ *    inserts, but with a stable ID so grants survive a reset).
+ * 3. Runs the core development bootstrap port with the accounts and the role matrix from `permissions.mts`.
+ *    It writes principals, auth bindings and SpiceDB relationships. SpiceDB is in-memory, so rerun after a
+ *    container restart. The Siampark accounts are not touched.
+ * 4. When the shell answers, signs in as obchod@demo.ontos and issues a managed API key for the bot through
+ *    `/auth/identity/api-keys/managed`, unless the key in `app/.env.demo.local` still works. Writes
+ *    ONTOS_AGENT_API_KEY, ONTOS_SHELL_URL, ONTOS_COMPOSITION_REVISION and ONTOS_LEGAL_ENTITY_ID there.
+ */
+import { randomUUID } from 'node:crypto';
+
+import { NodeServices } from '@effect/platform-node';
+import { hashPassword } from 'better-auth/crypto';
+import {
+  Config,
+  ConfigProvider,
+  Console,
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+} from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
+import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+
+import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
+import { principals } from '../../packages/core-runtime/src/db/schema.ts';
+import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import { account, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
+import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
+import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
+import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
+import { demoLegalEntityId, demoTenantId } from './fixture-ids.mts';
+import { agentBotPrincipal, demoHumanAccounts, demoPermissionRelationships } from './permissions.mts';
+
+class DemoPermissionsError extends Schema.TaggedError<DemoPermissionsError>()('DemoPermissionsError', {
+  reason: Schema.String,
+}) {}
+const fail = (reason: string) => new DemoPermissionsError({ reason });
+
+// oxlint-disable-next-line sonarjs/no-hardcoded-passwords -- documented local demo credential (README, brief).
+const DEMO_PASSWORD = 'password1234';
+const ENV_FILE = '.env.demo.local';
+const BOT_KEY_AUDIENCE = 'siampark-work';
+// oxlint-disable-next-line effect-native/no-manual-cookie-serialization -- reads the shell's existing cookie name; builds no cookie.
+const SECURE_COOKIE_PREFIX = '__Secure-';
+const [headOfSales] = demoHumanAccounts;
+
+const workspaceRoot = new URL('../..', import.meta.url);
+
+const demoAgentConfig = Config.all({
+  compositionUrl: Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL').pipe(
+    Config.withDefault('http://127.0.0.1:3041/active'),
+  ),
+  shellUrl: Config.String('ONTOS_SHELL_URL').pipe(Config.withDefault('http://localhost:3020')),
+});
+
+/** Better Auth users + the bot principal row, through the admin connection. */
+const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
+  const { executor } = yield* AuthDatabase;
+  const now = yield* DateTime.nowAsDate;
+  const password = yield* Effect.tryPromise({
+    catch: () => fail('Unable to hash the demo password'),
+    try: async () => await hashPassword(DEMO_PASSWORD),
+  });
+  yield* executor.transaction((transaction) =>
+    Effect.gen(function* writeIdentityRows() {
+      for (const row of demoHumanAccounts) {
+        yield* transaction
+          .insert(user)
+          .values({ banned: false, email: row.email, emailVerified: true, id: row.authUserId, name: row.displayName })
+          .onConflictDoUpdate({
+            set: { banned: false, email: row.email, name: row.displayName, updatedAt: now },
+            target: user.id,
+          });
+        yield* transaction
+          .insert(account)
+          .values({
+            accountId: row.authUserId,
+            id: `${row.authUserId}-credential`,
+            password,
+            providerId: 'credential',
+            updatedAt: now,
+            userId: row.authUserId,
+          })
+          .onConflictDoUpdate({ set: { password, updatedAt: now }, target: account.id });
+      }
+      yield* transaction
+        .insert(principals)
+        .values({
+          displayName: agentBotPrincipal.displayName,
+          kind: agentBotPrincipal.kind,
+          principalId: agentBotPrincipal.principalId,
+          status: 'active',
+          tenantId: demoTenantId,
+        })
+        .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
+    }),
+  );
+});
+
+const Text = Schema.String;
+const PrincipalIdSchema = Schema.toEncoded(Text.pipe(Schema.brand('DemoPrincipalId')));
+const TenantIdSchema = Schema.toEncoded(Text.pipe(Schema.brand('DemoTenantId')));
+const LegalEntityIdSchema = Schema.toEncoded(Text.pipe(Schema.brand('DemoLegalEntityId')));
+/** Wire contract of `packages/core-runtime/scripts/bootstrap-development-context.mts --fixture`. */
+const ContextFixtureSchema = Schema.Struct({
+  accounts: Schema.Array(
+    Schema.Struct({
+      authBindingId: Schema.toEncoded(Text.pipe(Schema.brand('DemoAuthBindingId'))),
+      authUserId: Schema.toEncoded(Text.pipe(Schema.brand('DemoAuthUserId'))),
+      displayName: Text,
+      principalId: PrincipalIdSchema,
+    }),
+  ),
+  legalEntity: Schema.Struct({
+    legalEntityId: LegalEntityIdSchema,
+    legalName: Text,
+    registrationCountry: Text,
+    registrationNumber: Text,
+  }),
+  modules: Schema.Array(
+    Schema.Struct({
+      moduleId: Schema.toEncoded(Text.pipe(Schema.brand('DemoModuleId'))),
+      stateId: Schema.toEncoded(Text.pipe(Schema.brand('DemoStateId'))),
+    }),
+  ),
+  relationships: Schema.Array(
+    Schema.Struct({
+      relation: Text,
+      resourceId: Schema.toEncoded(Text.pipe(Schema.brand('DemoResourceId'))),
+      resourceType: Text,
+      subjectId: Schema.toEncoded(Text.pipe(Schema.brand('DemoSubjectId'))),
+      subjectType: Text,
+    }),
+  ),
+  tenant: Schema.Struct({ defaultLocale: Text, displayName: Text, slug: Text, tenantId: TenantIdSchema }),
+});
+
+/** Principals, auth bindings and SpiceDB relationships through the core development bootstrap port. */
+const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBootstrapPort(
+  root: string,
+  environment: DemoResetChildEnvironment,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const actions = yield* discoverCurrentActions(root);
+  const relationships = demoPermissionRelationships(actions);
+  const fixture = yield* Schema.encodeEffect(Schema.fromJsonString(ContextFixtureSchema))({
+    accounts: demoHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({
+      authBindingId,
+      authUserId,
+      displayName,
+      principalId,
+    })),
+    legalEntity: {
+      legalEntityId: demoLegalEntityId,
+      legalName: 'Siampark DEMO s.r.o.',
+      registrationCountry: 'CZ',
+      registrationNumber: 'DEMO-SIAMPARK',
+    },
+    modules: [],
+    relationships,
+    tenant: { defaultLocale: 'cs', displayName: 'Siampark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
+  });
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'sales-demo-permissions-' });
+  const file = path.join(directory, 'context.json');
+  yield* fs.writeFileString(file, fixture);
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const code = yield* spawner.exitCode(
+    ChildProcess.make(
+      process.execPath,
+      [path.join(root, 'packages/core-runtime/scripts/bootstrap-development-context.mts'), '--fixture', file],
+      {
+        cwd: root,
+        env: { ...environment, MISE_ARGV0: '' },
+        stderr: 'inherit',
+        stdin: 'ignore',
+        stdout: 'inherit',
+      },
+    ),
+  );
+  if (code !== ChildProcessSpawner.ExitCode(0)) {
+    return yield* fail('Core development bootstrap port failed');
+  }
+  return yield* Console.log(
+    `sales-demo permissions: ${demoHumanAccounts.length} accounts + agent-bot, ${relationships.length} relationships over ${actions.length} Actions`,
+  );
+});
+
+// Bot API key through the running shell.
+
+const SignInBodySchema = Schema.Struct({ email: Schema.String, password: Schema.Redacted(Schema.String) });
+const IssueKeyBodySchema = Schema.Struct({ name: Schema.String, principalId: PrincipalIdSchema });
+const GatewayBodySchema = Schema.Struct({
+  audience: Schema.String,
+  compositionRevision: Schema.String,
+  legalEntityId: LegalEntityIdSchema,
+});
+const CompositionSchema = Schema.Struct({ composition: Schema.Struct({ revision: Schema.String }) });
+const IssuedKeySchema = Schema.Struct({ secret: Schema.Redacted(Schema.String.check(Schema.isMinLength(1))) });
+
+const postJson = <S extends Schema.Top>(
+  url: string,
+  schema: S,
+  body: S['Type'],
+  headers: Readonly<Record<string, string>>,
+) =>
+  Effect.gen(function* postJsonRequest() {
+    const client = yield* HttpClient.HttpClient;
+    const request = yield* HttpClientRequest.schemaBodyJson(schema)(
+      HttpClientRequest.post(url).pipe(HttpClientRequest.setHeaders({ 'x-correlation-id': randomUUID(), ...headers })),
+      body,
+    );
+    return yield* client.execute(request);
+  }).pipe(Effect.timeout('20 seconds'));
+
+const compositionRevision = (url: string) =>
+  Effect.gen(function* readCompositionRevision() {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.get(url).pipe(Effect.timeout('10 seconds'));
+    const { composition } = yield* HttpClientResponse.schemaBodyJson(CompositionSchema)(response);
+    return composition.revision;
+  }).pipe(Effect.option);
+
+const keyWorks = (shellUrl: string, apiKey: Redacted.Redacted, revision: string) =>
+  postJson(
+    `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,
+    GatewayBodySchema,
+    { audience: BOT_KEY_AUDIENCE, compositionRevision: revision, legalEntityId: demoLegalEntityId },
+    { 'x-api-key': Redacted.value(apiKey) },
+  ).pipe(
+    Effect.map(({ status }) => status === 200),
+    Effect.orElseSucceed(() => false),
+  );
+
+/**
+ * The shell signs sessions into `__Secure-better-auth.session_token`, but the API-key Better Auth instance
+ * (`apps/shell-super-app/api/auth/api-key-service.ts`) is built from the plain http base URL and reads
+ * `better-auth.session_token`. On the local http stack the same signed value is sent under both names.
+ */
+const sessionCookieHeader = (cookies: Cookies.Cookies) => {
+  const aliases = Object.entries(Cookies.toRecord(cookies)).flatMap(([name, value]) =>
+    name.startsWith(SECURE_COOKIE_PREFIX) ? [[name.slice(SECURE_COOKIE_PREFIX.length), value] as const] : [],
+  );
+  return Cookies.toCookieHeader(Cookies.setAllUnsafe(cookies, aliases));
+};
+
+const issueBotKey = Effect.fn('DemoPermissions.issueBotKey')(function* issueBotKey(shellUrl: string) {
+  const signIn = yield* postJson(
+    `${shellUrl}/shell-super-app-api/auth/sign-in`,
+    SignInBodySchema,
+    { email: headOfSales.email, password: Redacted.make(DEMO_PASSWORD) },
+    { origin: shellUrl },
+  );
+  if (signIn.status !== 200) {
+    return yield* fail(`Sign-in as ${headOfSales.email} failed with HTTP ${signIn.status}`);
+  }
+  const issued = yield* postJson(
+    `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
+    IssueKeyBodySchema,
+    { name: 'agent-bot', principalId: agentBotPrincipal.principalId },
+    {
+      cookie: sessionCookieHeader(signIn.cookies),
+      'idempotency-key': `sales-demo-agent-bot-${randomUUID()}`,
+      origin: shellUrl,
+    },
+  );
+  if (issued.status !== 200) {
+    const detail = yield* issued.text;
+    return yield* fail(`Managed API key issuance failed with HTTP ${issued.status}: ${detail.slice(0, 300)}`);
+  }
+  const { secret } = yield* HttpClientResponse.schemaBodyJson(IssuedKeySchema)(issued);
+  return secret;
+});
+
+const envLinePattern = /^(?<key>[A-Z][A-Z0-9_]*)=(?<value>.*)$/u;
+const readEnvFile = (text: string): ReadonlyMap<string, string> =>
+  new Map(
+    text.split('\n').flatMap((line) => {
+      const groups = envLinePattern.exec(line.trim())?.groups;
+      const key = groups?.key;
+      return key === undefined ? [] : [[key, groups?.value ?? ''] as const];
+    }),
+  );
+
+const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureBotKey(root: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const client = yield* HttpClient.HttpClient;
+  const { compositionUrl, shellUrl } = yield* demoAgentConfig;
+  const envFile = path.join(root, ENV_FILE);
+  const existing = (yield* fs.exists(envFile))
+    ? readEnvFile(yield* fs.readFileString(envFile))
+    : new Map<string, string>();
+  const shellUp = yield* client.get(`${shellUrl}/.well-known/ontos-shell-runtime.json`).pipe(
+    Effect.timeout('10 seconds'),
+    Effect.map(({ status }) => status === 200),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!shellUp) {
+    return yield* Console.log(
+      `sales-demo permissions: shell ${shellUrl} is not running; bot API key skipped (rerun once it is up)`,
+    );
+  }
+  const revision = yield* compositionRevision(compositionUrl);
+  const previous = Option.fromNullishOr(existing.get('ONTOS_AGENT_API_KEY')).pipe(
+    Option.filter((value) => value.length > 0),
+    Option.map((value) => Redacted.make(value)),
+  );
+  const reusable = yield* Option.match(Option.all([previous, revision]), {
+    onNone: () => Effect.succeed(Option.none<Redacted.Redacted>()),
+    onSome: ([key, current]) =>
+      keyWorks(shellUrl, key, current).pipe(Effect.map((works) => (works ? Option.some(key) : Option.none()))),
+  });
+  const apiKey = yield* Option.match(reusable, { onNone: () => issueBotKey(shellUrl), onSome: Effect.succeed });
+  const values = new Map([
+    ...existing,
+    ['ONTOS_AGENT_API_KEY', Redacted.value(apiKey)],
+    ['ONTOS_SHELL_URL', shellUrl],
+    ['ONTOS_LEGAL_ENTITY_ID', demoLegalEntityId],
+    ...Option.toArray(revision).map((current) => ['ONTOS_COMPOSITION_REVISION', current] as const),
+  ]);
+  const text = [
+    '# Sales demo agent (scripts/demo/reset-permissions.mts). Local secrets; gitignored. Never commit.',
+    ...[...values.entries()].map(([key, value]) => `${key}=${value}`),
+    '',
+  ].join('\n');
+  yield* fs.writeFileString(envFile, text, { mode: 0o600 });
+  yield* fs.chmod(envFile, 0o600);
+  const verified = yield* Option.match(revision, {
+    onNone: () => Effect.succeed('no composition revision'),
+    onSome: (current) =>
+      keyWorks(shellUrl, apiKey, current).pipe(
+        Effect.map((works) => `gateway assertion for ${BOT_KEY_AUDIENCE}: ${works ? 'ok' : 'FAILED'}`),
+      ),
+  });
+  const outcome = Option.match(reusable, { onNone: () => 'issued', onSome: () => 'reused' });
+  return yield* Console.log(`sales-demo permissions: agent-bot API key ${outcome} -> app/${ENV_FILE} (${verified})`);
+});
+
+const main = (skipBot: boolean) =>
+  Effect.gen(function* resetSalesDemoPermissions() {
+    const path = yield* Path.Path;
+    const root = yield* path.fromFileUrl(workspaceRoot);
+    const environment = resetChildEnvironment(yield* resetEnvironment);
+    yield* validateResetEnvironment(environment);
+    yield* upsertIdentityRows;
+    yield* runBootstrapPort(root, environment);
+    if (!skipBot) {
+      yield* ensureBotKey(root);
+    }
+  });
+
+const environmentLive = ConfigProvider.layer(
+  Effect.gen(function* loadOperatorConfiguration() {
+    const path = yield* Path.Path;
+    const root = yield* path.fromFileUrl(workspaceRoot);
+    const file = yield* ConfigProvider.fromDotEnv({ path: path.join(root, '.env') });
+    return ConfigProvider.orElse(ConfigProvider.fromEnv(), file);
+  }),
+);
+const adminDatabaseConfigLive = Layer.effect(
+  DatabaseConfig,
+  Config.Redacted('DATABASE_ADMIN_URL').pipe(
+    Effect.flatMap((url) => parseDatabaseConfig({ DATABASE_URL: Redacted.value(url) })),
+  ),
+);
+const servicesLive = Layer.mergeAll(
+  AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive)),
+  FetchHttpClient.layer,
+);
+
+const command = Command.make(
+  'sales-demo-permissions',
+  { skipBot: Flag.Boolean('skip-bot').pipe(Flag.withDefault(false)) },
+  ({ skipBot }) =>
+    Layer.build(Layer.effectDiscard(main(skipBot).pipe(Effect.scoped)).pipe(Layer.provide(servicesLive))).pipe(
+      Effect.scoped,
+      Effect.asVoid,
+      Effect.tapError((failure) =>
+        Console.error(
+          Schema.is(DemoPermissionsError)(failure)
+            ? `Sales demo permissions failed: ${failure.reason}`
+            : `Sales demo permissions failed (${failure._tag})`,
+        ),
+      ),
+    ),
+);
+const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
+  Layer.provide(environmentLive),
+  Layer.provide(NodeServices.layer),
+);
+const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
+process.exitCode = Exit.isFailure(exit) ? 1 : 0;

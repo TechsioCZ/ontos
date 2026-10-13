@@ -121,11 +121,9 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-reset pnpm_ demo:reset
 fi
 step db-verify pnpm_ db:verify
-# Known: fails in development while any Action uses explicit provisioning (no recorded assertions);
-# it only grants demo@test.com, so the Siampark accounts are unaffected.
-if ! pnpm_ authorization:provision-current-actions >"$LOG_DIR/authorization-provision.log" 2>&1; then
-  say "WARN authorization:provision-current-actions failed (known on this branch): $(tail -2 "$LOG_DIR/authorization-provision.log" | head -1)"
-fi
+# `pnpm authorization:provision-current-actions` always fails in development: it records no assertions for
+# explicit Actions (every apply-command is explicit). The demo wrapper derives them for demo@test.com.
+step authorization-provision "${WITH_ENV[@]}" node scripts/demo/provision-actions.mts
 
 # 4. Native development builds, only when missing, stale, or forced.
 needs_build() {
@@ -208,10 +206,14 @@ kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid")" 2>/dev/null ||
   say "WARN outbox worker host exited; see $LOG_DIR/outbox-worker-host.log"
 
 curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WARN shell root did not answer 2xx"
+
+# 6. Sales-demo accounts, role grants and the agent-bot API key (needs the running shell; idempotent).
+step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
 cat <<EOF
 
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs/siampark/work   (composition :$COMPOSITION_PORT)
 [demo] Verticals: ${VERTICALS[*]}
 [demo] Login: management@siampark.demo / password1234  (also operations@, finance@, external@)
+[demo] Sales demo: obchod@ / obchodnik@ / ucetni@ / sklad@demo.ontos, password1234; bot key in app/.env.demo.local
 [demo] Logs: $LOG_DIR   Stop: scripts/demo/down.sh [--containers]
 EOF
