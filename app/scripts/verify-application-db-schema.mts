@@ -111,7 +111,10 @@ const applicationCatalogExpectation = (
   const commerceUsesPrimaryDatabase =
     Option.isSome(commerceConfiguration) && sameDatabaseTarget(primaryDatabase, commerceConfiguration.value.admin);
   if (!commerceUsesPrimaryDatabase) {
-    return { journals: EXPECTED_MIGRATION_JOURNALS, schemas: EXPECTED_APPLICATION_SCHEMAS };
+    return {
+      journals: EffectArray.sort(EXPECTED_MIGRATION_JOURNALS, Order.String),
+      schemas: EffectArray.sort(EXPECTED_APPLICATION_SCHEMAS, Order.String),
+    };
   }
   return {
     journals: EffectArray.sort([...EXPECTED_MIGRATION_JOURNALS, COMMERCE_PORTAL_AUTH_MIGRATION_JOURNAL], Order.String),
