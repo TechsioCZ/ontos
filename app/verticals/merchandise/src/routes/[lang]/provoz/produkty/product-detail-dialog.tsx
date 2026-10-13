@@ -8,6 +8,7 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { formatDate, formatMoney } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
@@ -15,7 +16,6 @@ import type { ProductRecord, StockMovement } from '../../../../../shared/apis/re
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { runCommand } from './products-api.ts';
 import type { CommandOutcome, FailureReason } from './products-api.ts';
-import { useProductFormat } from './products-format.ts';
 import { UNITS, VAT_RATES, fieldError, useCommandFailure, useProductLabel } from './product-forms.tsx';
 import { MovementForm, MovementsTable } from './product-movements.tsx';
 
@@ -35,7 +35,6 @@ type PatchDraft = { -readonly [Key in keyof ProductPatch]?: ProductPatch[Key] };
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const k = useProductLabel();
-  const fmt = useProductFormat();
   const rows = product.priceHistory.toSorted(
     (left, right) => DateTime.toEpochMillis(right.effectiveFrom) - DateTime.toEpochMillis(left.effectiveFrom),
   );
@@ -55,9 +54,9 @@ const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
         {rows.map((entry) => (
           <Table.Row key={DateTime.toEpochMillis(entry.effectiveFrom)}>
             <Table.Cell align="end" className="tabular-nums">
-              {fmt.money(entry.priceMinor)}
+              {formatMoney(entry.priceMinor)}
             </Table.Cell>
-            <Table.Cell>{fmt.date(entry.effectiveFrom)}</Table.Cell>
+            <Table.Cell>{formatDate(DateTime.formatIso(entry.effectiveFrom))}</Table.Cell>
           </Table.Row>
         ))}
       </Table.Body>
@@ -287,12 +286,11 @@ export const ProductDetailDialog = ({
   revision,
 }: ProductDetailDialogProps) => {
   const k = useProductLabel();
-  const fmt = useProductFormat();
 
   return (
     <Dialog
       customTrigger
-      description={`${product.sku} · ${fmt.money(product.currentPriceMinor)}`}
+      description={`${product.sku} · ${formatMoney(product.currentPriceMinor)}`}
       onOpenChange={(details) => onOpenChange(details.open)}
       open={open}
       placement="right"

@@ -2,9 +2,12 @@ import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import { formatDate, formatMoney, formatNumber, StatusBadge, statusPresentation } from '@app/admin-ui';
+import { TagCell } from '@app/tagging/components/tag-controls';
+import type { Tag } from '@app/tagging/contracts/records';
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
-import { customerName, orderStatuses } from './orders-model.ts';
+import type { CustomerDirectory } from './customers-directory.ts';
+import { orderStatuses } from './orders-model.ts';
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
@@ -12,7 +15,12 @@ const key = (path: string) => `merchandise.pages.orders.${path}`;
 
 const statusOptions = orderStatuses.map((value) => ({ label: statusPresentation('order', value).label, value }));
 
-export const ordersColumns = (t: Translate, language: string): ColumnDef<Order>[] => [
+export const ordersColumns = (
+  t: Translate,
+  language: string,
+  customers: CustomerDirectory,
+  tagsOf: (id: string) => readonly Tag[],
+): ColumnDef<Order>[] => [
   {
     accessorKey: 'number',
     cell: (info) => <span className="font-medium">{info.getValue<string>()}</span>,
@@ -20,9 +28,17 @@ export const ordersColumns = (t: Translate, language: string): ColumnDef<Order>[
     meta: { type: 'string', width: 150 },
   },
   {
-    accessorKey: 'partyId',
-    cell: (info) => customerName(info.getValue<string>()),
+    accessorFn: (order) => customers.nameOf(order.partyId) ?? '',
+    cell: (info) => {
+      const name = info.getValue<string>();
+      return name === '' ? (
+        <span className="text-fg-secondary">{t(key('customers.unknown'))}</span>
+      ) : (
+        <span className="truncate">{name}</span>
+      );
+    },
     header: t(key('columns.customer')),
+    id: 'customer',
     meta: { type: 'string', width: 240 },
   },
   {
@@ -69,7 +85,7 @@ export const ordersColumns = (t: Translate, language: string): ColumnDef<Order>[
     meta: { type: 'string', width: 140 },
   },
   {
-    cell: () => null,
+    cell: (info) => <TagCell tags={tagsOf(info.row.original.id)} />,
     enableSorting: false,
     header: t(key('columns.tags')),
     id: 'tags',

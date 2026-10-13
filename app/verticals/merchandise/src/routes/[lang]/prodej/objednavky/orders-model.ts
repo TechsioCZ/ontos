@@ -21,9 +21,6 @@ const nextStatuses = {
 /** Statuses an order can move to. The forward step comes first; it is the primary action. */
 export const transitionsFrom = (status: OrderStatus): readonly OrderStatus[] => nextStatuses[status];
 
-/** Party names live in party-registry and are not joined here yet, so the partyId stands in. */
-export const customerName = (partyId: string): string => partyId;
-
 const actionLabelKeys = {
   CANCELLED: 'merchandise.pages.orders.actions.cancel',
   CONFIRMED: 'merchandise.pages.orders.actions.confirm',

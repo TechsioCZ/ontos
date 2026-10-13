@@ -1,31 +1,10 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
-import { DateTime } from 'effect';
 
-/** Money is stored as integer CZK minor units (haléře). The Intl locale follows the active UI language. */
-export const makeProductFormat = (locale: string) => {
-  const czk = new Intl.NumberFormat(locale, { currency: 'CZK', maximumFractionDigits: 0, style: 'currency' });
-  const count = new Intl.NumberFormat(locale);
-  const signed = new Intl.NumberFormat(locale, { signDisplay: 'exceptZero' });
-  const percent = new Intl.NumberFormat(locale, { maximumFractionDigits: 0, style: 'percent' });
-  const date = new Intl.DateTimeFormat(locale, { dateStyle: 'medium' });
-  const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
-  return {
-    count: (value: number) => count.format(value),
-    date: (value: DateTime.Utc) => date.format(DateTime.toDateUtc(value)),
-    dateTime: (value: DateTime.Utc) => dateTime.format(DateTime.toDateUtc(value)),
-    money: (minor: number) => czk.format(minor / 100),
-    signed: (value: number) => signed.format(value),
-    vat: (rate: number) => percent.format(rate / 100),
-  };
-};
+const signed = new Intl.NumberFormat('cs-CZ', { signDisplay: 'exceptZero' });
 
-export type ProductFormat = ReturnType<typeof makeProductFormat>;
-
-export const useProductFormat = (): ProductFormat => {
-  const { language } = useModernI18n();
-  return makeProductFormat(language);
-};
+/** Stock movement quantity with an explicit sign: `+5`, `-2`. Money, counts and dates use `@app/admin-ui`. */
+export const formatDelta = (value: number): string => signed.format(value);
 
 /** DataTable strings from the vertical locale, so no kit English default reaches the screen. */
 export const useTableTranslations = (): DataTableTranslations => {

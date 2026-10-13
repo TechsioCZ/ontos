@@ -6,12 +6,13 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { formatDateTime } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { StockMovementReason } from '../../../../../shared/domain/merchandise-model.ts';
 import { runCommand } from './products-api.ts';
-import { useProductFormat } from './products-format.ts';
+import { formatDelta } from './products-format.ts';
 import { fieldError, useCommandFailure, useProductLabel } from './product-forms.tsx';
 
 type ManualReason = Exclude<StockMovementReason, 'ORDER'>;
@@ -39,7 +40,6 @@ const signedDelta = (reason: ManualReason, quantity: number): number => {
 /** Stock ledger rows for one product, newest first. */
 export const MovementsTable = ({ movements }: { readonly movements: readonly StockMovement[] }) => {
   const k = useProductLabel();
-  const fmt = useProductFormat();
   const rows = movements.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
 
   if (rows.length === 0) {
@@ -58,14 +58,14 @@ export const MovementsTable = ({ movements }: { readonly movements: readonly Sto
       <Table.Body>
         {rows.map((movement) => (
           <Table.Row key={movement.id}>
-            <Table.Cell>{fmt.dateTime(movement.at)}</Table.Cell>
+            <Table.Cell>{formatDateTime(DateTime.formatIso(movement.at))}</Table.Cell>
             <Table.Cell>
               <Badge size="sm" variant={movementVariant[movement.reason]}>
                 {k(`movementType.${movement.reason}`)}
               </Badge>
             </Table.Cell>
             <Table.Cell align="end" className="tabular-nums">
-              {fmt.signed(movement.delta)}
+              {formatDelta(movement.delta)}
             </Table.Cell>
             <Table.Cell>{movement.note ?? '—'}</Table.Cell>
           </Table.Row>

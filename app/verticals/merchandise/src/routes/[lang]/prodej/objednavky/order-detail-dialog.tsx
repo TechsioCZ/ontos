@@ -7,18 +7,20 @@ import { DetailList, formatDateTime, formatMoney, SectionCard, StatusBadge } fro
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
-import { actionLabelKey, customerName, lineAmounts, transitionsFrom } from './orders-model.ts';
+import type { CustomerDirectory } from './customers-directory.ts';
+import { actionLabelKey, lineAmounts, transitionsFrom } from './orders-model.ts';
 
 interface OrderDetailDialogProps {
   readonly busy: boolean;
   readonly canWrite: boolean;
+  readonly customers: CustomerDirectory;
   readonly onClose: () => void;
   readonly onStatus: (order: Order, status: OrderStatus) => void;
   readonly order: Order | undefined;
 }
 
 /** Read-only snapshot of one order with its status actions. Lines show what was fixed at creation. */
-export const OrderDetailDialog = ({ busy, canWrite, onClose, onStatus, order }: OrderDetailDialogProps) => {
+export const OrderDetailDialog = ({ busy, canWrite, customers, onClose, onStatus, order }: OrderDetailDialogProps) => {
   const { language, t } = useModernI18n();
   if (order === undefined) {
     return null;
@@ -75,7 +77,10 @@ export const OrderDetailDialog = ({ busy, canWrite, onClose, onStatus, order }: 
         </div>
         <DetailList
           items={[
-            { label: t('merchandise.pages.orders.detail.customer'), value: customerName(order.partyId) },
+            {
+              label: t('merchandise.pages.orders.detail.customer'),
+              value: customers.nameOf(order.partyId) ?? t('merchandise.pages.orders.customers.unknown'),
+            },
             {
               label: t('merchandise.pages.orders.detail.source'),
               value:
