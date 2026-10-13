@@ -243,7 +243,7 @@ index 6681008502fd8d24452bd44e550c015a05af9de8..78cd1dbbd3c24362f6d351eaa4120212
                  }, toast.id))
          })
 diff --git a/dist/organisms/data-table.fields.js b/dist/organisms/data-table.fields.js
-index 57bef4a7df1775110dbb9cd897ff34885ef72ae3..913bc61f5467712a2e37c5a63cb7aa6ac4946bf9 100644
+index 57bef4a7df1775110dbb9cd897ff34885ef72ae3..1e20718 100644
 --- a/dist/organisms/data-table.fields.js
 +++ b/dist/organisms/data-table.fields.js
 @@ -130,6 +130,9 @@ function FieldSelect({ items, value, ariaLabel, placeholder, disabled, size = "s
@@ -256,6 +256,17 @@ index 57bef4a7df1775110dbb9cd897ff34885ef72ae3..913bc61f5467712a2e37c5a63cb7aa6a
                          children: /*#__PURE__*/ jsx(Select.ValueText, {
                              placeholder: placeholder
                          })
+@@ -137,6 +140,10 @@ function FieldSelect({ items, value, ariaLabel, placeholder, disabled, size = "s
+                 }),
+                 /*#__PURE__*/ jsx(Select.Positioner, {
+                     children: /*#__PURE__*/ jsx(Select.Content, {
++                        "aria-label": ariaLabel,
++                        ...ariaLabel ? {
++                            "aria-labelledby": void 0
++                        } : {},
+                         children: items.map((item)=>/*#__PURE__*/ jsxs(Select.Item, {
+                                 item: item,
+                                 children: [
 diff --git a/dist/organisms/data-table.js b/dist/organisms/data-table.js
 index 763d1aead36d0d195eb66a1656dc504372fa73e6..805dfcd6a98d4ea8015935e36e2f2e2db8243929 100644
 --- a/dist/organisms/data-table.js
