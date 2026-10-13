@@ -15,7 +15,7 @@ import type {
   MetricResult,
   MetricUnit,
 } from '../../shared/metrics.ts';
-import { formatMetricValue, formatPeriodDay } from './format-metric.ts';
+import { formatAxisValue, formatMetricValue, formatPeriodDay } from './format-metric.ts';
 import { chartScale, isTimeGrouping, PIE_SLICE_LIMIT, pieSlices, roundSeriesToTotal } from './statistics-query.ts';
 import type { ChartKind, StatisticsQuery } from './statistics-query.ts';
 
@@ -152,7 +152,7 @@ const ChartBody = ({
         <Chart
           ariaLabel={ariaLabel}
           data={points.map((point) => ({ key: point.key, label: point.label, value: point.value / scale }))}
-          formatValue={(value) => formatMetricValue(value * scale, unit)}
+          formatValue={(value) => formatAxisValue(value * scale, unit)}
           height={280}
           points={chart === 'line'}
           type={chart}

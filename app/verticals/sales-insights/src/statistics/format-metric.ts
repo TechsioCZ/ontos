@@ -20,8 +20,15 @@ export const formatMetricValue = (value: number | null, unit: MetricUnit): strin
   );
 };
 
-/** `2025-11-01` → `1.11.2025`: the compact day form the period line uses, without spaces around the dots. */
+/**
+ * Value-axis tick label. Counts and pieces are whole numbers, but the chart picks half steps for small ranges
+ * (0,5 / 1,5), so a fractional tick of such a unit gets no label; its grid line stays.
+ */
+export const formatAxisValue = (value: number, unit: MetricUnit): string =>
+  (unit === 'count' || unit === 'pieces') && !Number.isInteger(value) ? '' : formatMetricValue(value, unit);
+
+/** `2025-11-01` → `1. 11. 2025`: the Czech day form the period line uses, with a space after each dot. */
 export const formatPeriodDay = (day: CalendarDay): string => {
   const [year = '', month = '', date = ''] = day.split('-');
-  return `${Number(date)}.${Number(month)}.${year}`;
+  return `${Number(date)}. ${Number(month)}. ${year}`;
 };

@@ -18,6 +18,7 @@ import {
   requestedGroupingOf,
   serializeStatisticsQuery,
 } from '../../../../statistics/statistics-query.ts';
+import { useUnreadableSources } from '../../../../statistics/readable-sources.ts';
 import { useStatisticsInputs } from '../../../../statistics/use-statistics-inputs.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
@@ -46,6 +47,7 @@ const StatisticsPageContent = () => {
   const search = useRouterState({ select: (state) => state.location.searchStr });
   const query = parseStatisticsQuery(search, defaultQuery(today));
   const data = useStatisticsInputs(statisticsSourcesFor(query.metric, query.groupBy));
+  const unreadable = useUnreadableSources();
 
   // The query holds the grouping the metric can show; the URL keeps the one the user asked for, so a metric switch
   // that drops it can restore it. Parsing applies the same fallback again.
@@ -65,7 +67,9 @@ const StatisticsPageContent = () => {
   const kpis =
     data.status === 'ready' ? computeKpis(data.inputs, { from: query.from, to: query.to, today }) : undefined;
   const forbidden = data.status === 'ready' ? data.forbidden : [];
-  const forbiddenSet = new Set(forbidden);
+  // Sources the role cannot read at all are known before they are requested, so the metric picker leaves out every
+  // metric that needs one (task metrics for the accountant) and never sends a read the producer would refuse.
+  const forbiddenSet = new Set([...forbidden, ...unreadable]);
   const forbiddenText =
     forbidden.length > 0 ? forbidden.map((source) => t(`${key}.sources.${source}`)).join(', ') : undefined;
   const failedText =

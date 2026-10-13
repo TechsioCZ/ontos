@@ -20,6 +20,7 @@ import type {
   TaskInput,
 } from '../../shared/metrics.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { unreadableSources } from './readable-sources.ts';
 
 export const StatisticsSourceSchema = Schema.Literals([
   'customers',
@@ -84,14 +85,16 @@ const withSource =
 
 /**
  * One failing producer read must not blank the page: it becomes an empty list plus a warning. A 403 becomes an
- * empty list plus a permission state, and later loads skip that read.
+ * empty list plus a permission state, and later loads skip that read. A source whose module the shell composition
+ * leaves out gets the same permission state without being read.
  */
 const sourced =
   <A>(source: StatisticsSource, fallback: A) =>
   <E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<Sourced<A>, never, R> =>
-    Ref.get(refusedSources).pipe(
-      Effect.flatMap((refused) =>
-        refused.has(source)
+    Effect.all([Ref.get(refusedSources), unreadableSources], { concurrency: 1 }).pipe(
+      Effect.flatMap(([refused, unreadable]) =>
+        // A module the role cannot access is refused without a read, so its producer never answers 403.
+        refused.has(source) || unreadable.has(source)
           ? Effect.succeed<Sourced<A>>({ forbidden: source, value: fallback })
           : effect.pipe(
               Effect.matchEffect({
