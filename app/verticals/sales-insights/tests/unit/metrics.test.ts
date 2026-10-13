@@ -1,0 +1,327 @@
+import { DateTime } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { computeKpis, computeMetric, metricCatalog } from '../../shared/metrics.ts';
+import type { MetricInputs } from '../../shared/metrics.ts';
+
+const at = (iso: string) => DateTime.makeUnsafe(iso);
+
+const range = { from: '2026-09-01', to: '2026-10-31' };
+
+const fixture: MetricInputs = {
+  customers: [
+    { id: 'c1', name: 'Alfa' },
+    { id: 'c2', name: 'Beta' },
+  ],
+  employees: [
+    { fullName: 'Obchodník A', id: 'emp-a' },
+    { fullName: 'Obchodník B', id: 'emp-b' },
+  ],
+  invoices: [
+    // In range, CONFIRMED, OUTGOING: counted.
+    {
+      businessState: 'CONFIRMED',
+      direction: 'OUTGOING',
+      issueDate: '2026-09-15',
+      opportunityId: 'opp-won-a',
+      paidMinor: 0,
+      partyId: 'c1',
+      paymentState: 'UNPAID',
+      totalMinor: 100_000,
+    },
+    {
+      businessState: 'CONFIRMED',
+      direction: 'OUTGOING',
+      issueDate: '2026-09-20',
+      paidMinor: 50_000,
+      partyId: 'c2',
+      paymentState: 'PAID',
+      totalMinor: 50_000,
+    },
+    {
+      businessState: 'CONFIRMED',
+      direction: 'OUTGOING',
+      issueDate: '2026-10-02',
+      opportunityId: 'opp-won-b',
+      paidMinor: 50_000,
+      partyId: 'c1',
+      paymentState: 'PARTIALLY_PAID',
+      totalMinor: 200_000,
+    },
+    // Excluded: draft, voided, incoming (supplier) invoice, and out of range.
+    {
+      businessState: 'DRAFT',
+      direction: 'OUTGOING',
+      issueDate: '2026-10-03',
+      paidMinor: 0,
+      partyId: 'c1',
+      paymentState: 'UNPAID',
+      totalMinor: 999,
+    },
+    {
+      businessState: 'VOIDED',
+      direction: 'OUTGOING',
+      issueDate: '2026-10-04',
+      paidMinor: 0,
+      partyId: 'c1',
+      paymentState: 'UNPAID',
+      totalMinor: 888,
+    },
+    {
+      businessState: 'CONFIRMED',
+      direction: 'INCOMING',
+      issueDate: '2026-10-05',
+      paidMinor: 0,
+      partyId: 'c1',
+      paymentState: 'UNPAID',
+      totalMinor: 7777,
+    },
+    {
+      businessState: 'CONFIRMED',
+      direction: 'OUTGOING',
+      issueDate: '2026-11-01',
+      paidMinor: 0,
+      partyId: 'c1',
+      paymentState: 'UNPAID',
+      totalMinor: 5,
+    },
+  ],
+  movements: [
+    { delta: 20, productId: 'p1' },
+    { delta: -5, productId: 'p1' },
+    { delta: 10, productId: 'p2' },
+  ],
+  opportunities: [
+    {
+      amountMinor: 300_000,
+      closedAt: at('2026-09-10T09:00:00.000Z'),
+      expectedCloseDate: '2026-09-10',
+      id: 'opp-won-a',
+      ownerEmployeeId: 'emp-a',
+      partyId: 'c1',
+      probability: 100,
+      stage: 'WON',
+    },
+    {
+      amountMinor: 200_000,
+      closedAt: at('2026-10-02T10:00:00.000Z'),
+      expectedCloseDate: '2026-10-02',
+      id: 'opp-won-b',
+      ownerEmployeeId: 'emp-b',
+      partyId: 'c1',
+      probability: 100,
+      stage: 'WON',
+    },
+    {
+      amountMinor: 100_000,
+      closedAt: at('2026-10-03T10:00:00.000Z'),
+      expectedCloseDate: '2026-10-03',
+      id: 'opp-lost-a',
+      ownerEmployeeId: 'emp-a',
+      partyId: 'c2',
+      probability: 0,
+      stage: 'LOST',
+    },
+    {
+      amountMinor: 55_000,
+      closedAt: at('2026-08-01T10:00:00.000Z'),
+      expectedCloseDate: '2026-08-01',
+      id: 'opp-lost-old',
+      ownerEmployeeId: 'emp-a',
+      partyId: 'c2',
+      probability: 0,
+      stage: 'LOST',
+    },
+    {
+      amountMinor: 400_000,
+      expectedCloseDate: '2026-10-20',
+      id: 'opp-open',
+      ownerEmployeeId: 'emp-b',
+      partyId: 'c2',
+      probability: 75,
+      stage: 'NEGOTIATION',
+    },
+    {
+      amountMinor: 80_000,
+      expectedCloseDate: '2026-11-30',
+      id: 'opp-open-late',
+      partyId: 'c1',
+      probability: 10,
+      stage: 'LEAD',
+    },
+  ],
+  orders: [
+    {
+      createdAt: at('2026-10-01T08:00:00.000Z'),
+      id: 'o1',
+      lines: [
+        { productId: 'p1', quantity: 3 },
+        { productId: 'p2', quantity: 2 },
+      ],
+      opportunityId: 'opp-won-b',
+      partyId: 'c1',
+      status: 'CONFIRMED',
+    },
+    {
+      createdAt: at('2026-10-02T08:00:00.000Z'),
+      id: 'o2',
+      lines: [{ productId: 'p1', quantity: 100 }],
+      partyId: 'c1',
+      status: 'CANCELLED',
+    },
+    {
+      createdAt: at('2026-09-30T23:30:00.000Z'),
+      id: 'o3',
+      lines: [{ productId: 'p1', quantity: 5 }],
+      partyId: 'c2',
+      status: 'DELIVERED',
+    },
+  ],
+  products: [
+    { currentPriceMinor: 1000, id: 'p1', name: 'Šroub M6' },
+    { currentPriceMinor: 500, id: 'p2', name: 'Matice' },
+  ],
+  tagAssignments: [{ subject: { id: 'c1', kind: 'customer' }, tagId: 'vip' }],
+  tags: [{ id: 'vip', name: 'VIP' }],
+  tasks: [
+    { assigneeEmployeeId: 'emp-a', dueDate: '2026-10-10', state: 'NEW', updatedAt: at('2026-10-01T00:00:00.000Z') },
+    {
+      assigneeEmployeeId: 'emp-b',
+      dueDate: '2026-10-20',
+      state: 'IN_PROGRESS',
+      updatedAt: at('2026-10-01T00:00:00.000Z'),
+    },
+    { assigneeEmployeeId: 'emp-a', state: 'DONE', updatedAt: at('2026-10-05T12:00:00.000Z') },
+    { assigneeEmployeeId: 'emp-b', state: 'WAITING', updatedAt: at('2026-10-01T00:00:00.000Z') },
+    {
+      assigneeEmployeeId: 'emp-b',
+      dueDate: '2026-10-01',
+      state: 'CANCELLED',
+      updatedAt: at('2026-10-01T00:00:00.000Z'),
+    },
+  ],
+};
+
+it('groups invoiced revenue by month, ascending, with Czech month labels', () => {
+  const result = computeMetric('revenue_invoiced', fixture, { ...range, groupBy: 'month' });
+  expect(result.supported).toBe(true);
+  expect(result.series).toEqual([
+    { key: '2026-09', label: 'zář 2026', value: 150_000 },
+    { key: '2026-10', label: 'říj 2026', value: 200_000 },
+  ]);
+  expect(result.total).toBe(350_000);
+});
+
+it('counts only confirmed outgoing invoices inside the range', () => {
+  expect(computeMetric('invoice_count', fixture, { ...range, groupBy: 'month' }).total).toBe(3);
+  expect(computeMetric('unpaid_amount', fixture, { ...range, groupBy: 'month' }).total).toBe(100_000 + 150_000);
+});
+
+it('groups revenue by ISO week with Monday labels', () => {
+  const result = computeMetric('revenue_invoiced', fixture, { ...range, groupBy: 'week' });
+  expect(result.series).toEqual([
+    { key: '2026-09-14', label: 'Týden 14. 9.', value: 150_000 },
+    { key: '2026-09-28', label: 'Týden 28. 9.', value: 200_000 },
+  ]);
+});
+
+it('computes win rate as won over closed in range, overall and per employee', () => {
+  const total = computeMetric('win_rate', fixture, { ...range, groupBy: 'month' });
+  expect(total.total).toBe(66.7);
+  expect(total.series).toEqual([
+    { key: '2026-09', label: 'zář 2026', value: 100 },
+    { key: '2026-10', label: 'říj 2026', value: 50 },
+  ]);
+  const byEmployee = computeMetric('win_rate', fixture, { ...range, groupBy: 'employee' });
+  expect(byEmployee.series).toEqual([
+    { key: 'emp-b', label: 'Obchodník B', value: 100 },
+    { key: 'emp-a', label: 'Obchodník A', value: 50 },
+  ]);
+});
+
+it('sums won and lost opportunity values by closedAt', () => {
+  expect(computeMetric('opportunities_won', fixture, { ...range, groupBy: 'month' }).total).toBe(500_000);
+  expect(computeMetric('opportunities_lost', fixture, { ...range, groupBy: 'month' }).total).toBe(100_000);
+});
+
+it('excludes cancelled orders from units sold and groups by product', () => {
+  const total = computeMetric('units_sold', fixture, { ...range, groupBy: 'month' });
+  expect(total.total).toBe(10);
+  const byProduct = computeMetric('units_sold', fixture, { ...range, groupBy: 'product' });
+  expect(byProduct.series).toEqual([
+    { key: 'p1', label: 'Šroub M6', value: 8 },
+    { key: 'p2', label: 'Matice', value: 2 },
+  ]);
+});
+
+it('groups revenue by owning employee through the opportunity, with a none bucket', () => {
+  const result = computeMetric('revenue_invoiced', fixture, { ...range, groupBy: 'employee' });
+  expect(result.series).toEqual([
+    { key: 'emp-b', label: 'Obchodník B', value: 200_000 },
+    { key: 'emp-a', label: 'Obchodník A', value: 100_000 },
+    { key: 'none', label: 'Bez obchodníka', value: 50_000 },
+  ]);
+});
+
+it('counts a record under each of its tags and labels untagged records', () => {
+  const result = computeMetric('revenue_invoiced', fixture, { ...range, groupBy: 'tag' });
+  expect(result.series).toEqual([
+    { key: 'vip', label: 'VIP', value: 300_000 },
+    { key: 'none', label: 'Bez štítku', value: 50_000 },
+  ]);
+  expect(result.total).toBe(350_000);
+});
+
+it('reports unsupported groupings instead of guessing a series', () => {
+  const result = computeMetric('stock_value', fixture, { ...range, groupBy: 'month' });
+  expect(result).toEqual({ series: [], supported: false, total: 0 });
+});
+
+it('values stock from movements times the current price', () => {
+  const result = computeMetric('stock_value', fixture, { ...range, groupBy: 'product' });
+  expect(result.total).toBe(20_000);
+  expect(result.series[0]).toEqual({ key: 'p1', label: 'Šroub M6', value: 15_000 });
+});
+
+it('keeps the top twelve categories and folds the rest into Ostatní', () => {
+  const invoices = Array.from({ length: 13 }, (_, index) => ({
+    businessState: 'CONFIRMED' as const,
+    issueDate: '2026-09-01',
+    paidMinor: 0,
+    partyId: `customer-${String(index + 1).padStart(2, '0')}`,
+    paymentState: 'UNPAID' as const,
+    totalMinor: (index + 1) * 1000,
+  }));
+  const result = computeMetric('revenue_invoiced', { ...fixture, invoices }, { ...range, groupBy: 'customer' });
+  expect(result.series).toHaveLength(13);
+  expect(result.series[0]?.key).toBe('customer-13');
+  expect(result.series[12]).toEqual({ key: 'other', label: 'Ostatní', value: 1000 });
+});
+
+it('computes headline KPIs and resolves overdue tasks against the reference day', () => {
+  const kpis = computeKpis(fixture, { ...range, today: '2026-10-13' });
+  const byId = new Map(kpis.map((kpi) => [kpi.id, kpi.value]));
+  expect(byId.get('revenue_invoiced')).toBe(350_000);
+  expect(byId.get('pipeline_open_value')).toBe(400_000);
+  expect(byId.get('win_rate')).toBe(66.7);
+  expect(byId.get('units_sold')).toBe(10);
+  expect(byId.get('tasks_overdue')).toBe(1);
+  expect(computeKpis(fixture, { ...range, today: '2026-10-05' }).find((kpi) => kpi.id === 'tasks_overdue')?.value).toBe(
+    0,
+  );
+});
+
+it('counts open and done tasks by assignee', () => {
+  expect(computeMetric('tasks_open', fixture, { ...range, groupBy: 'employee' }).total).toBe(3);
+  expect(computeMetric('tasks_done', fixture, { ...range, groupBy: 'employee' }).series).toEqual([
+    { key: 'emp-a', label: 'Obchodník A', value: 1 },
+  ]);
+});
+
+it('exposes the full catalog with Czech labels and allowed groupings', () => {
+  expect(metricCatalog).toHaveLength(14);
+  const revenue = metricCatalog.find((entry) => entry.id === 'revenue_invoiced');
+  expect(revenue?.label).toBe('Tržby z faktur');
+  expect(revenue?.unit).toBe('CZK');
+  expect(revenue?.allowedGroupings).toContain('month');
+  expect(metricCatalog.find((entry) => entry.id === 'stock_value')?.allowedGroupings).toEqual(['product', 'tag']);
+});
