@@ -7,7 +7,26 @@
       },
       "customers": {
         "bulk": {
-          "exportCsv": "Export CSV"
+          "edit": "Bulk edit",
+          "exportCsv": "Export CSV",
+          "tags": "Tags"
+        },
+        "bulkEdit": {
+          "actionAddTag": "Add tag",
+          "actionArchive": "Archive",
+          "actionLabel": "Bulk action",
+          "actionRemoveTag": "Remove tag",
+          "archiveConfirm": "Archive {{total}} active customers? Already archived ones are skipped.",
+          "archiveFailed": "Archiving failed for: {{names}}",
+          "archiveNothing": "No active customers in the selection.",
+          "busy": "Archiving…",
+          "cancel": "Cancel",
+          "continue": "Continue",
+          "progress": "Processed {{done}} of {{total}}",
+          "selected": "Customers selected: {{total}}",
+          "submit": "Archive",
+          "title": "Bulk edit",
+          "toastArchived": "Customers archived: {{archived}}"
         },
         "columns": {
           "city": "City",
@@ -108,6 +127,10 @@
           "searchLabel": "Search",
           "selectAllLabel": "Select all rows",
           "selectionLabel": "Select row"
+        },
+        "tags": {
+          "failed": "Tags could not be loaded.",
+          "filterFailed": "The tag filter could not be loaded."
         },
         "title": "Customers"
       }

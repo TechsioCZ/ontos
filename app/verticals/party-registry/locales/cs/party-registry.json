@@ -7,7 +7,26 @@
       },
       "customers": {
         "bulk": {
-          "exportCsv": "Exportovat CSV"
+          "edit": "Upravit hromadně",
+          "exportCsv": "Exportovat CSV",
+          "tags": "Štítky"
+        },
+        "bulkEdit": {
+          "actionAddTag": "Přidat štítek",
+          "actionArchive": "Archivovat",
+          "actionLabel": "Hromadná akce",
+          "actionRemoveTag": "Odebrat štítek",
+          "archiveConfirm": "Archivovat {{total}} aktivních zákazníků? Už archivovaní se přeskočí.",
+          "archiveFailed": "Archivace se nepodařila u: {{names}}",
+          "archiveNothing": "Ve výběru nejsou žádní aktivní zákazníci.",
+          "busy": "Archivuji…",
+          "cancel": "Zrušit",
+          "continue": "Pokračovat",
+          "progress": "Zpracováno {{done}} z {{total}}",
+          "selected": "Vybráno zákazníků: {{total}}",
+          "submit": "Archivovat",
+          "title": "Upravit hromadně",
+          "toastArchived": "Archivováno zákazníků: {{archived}}"
         },
         "columns": {
           "city": "Město",
@@ -108,6 +127,10 @@
           "searchLabel": "Hledat",
           "selectAllLabel": "Vybrat všechny řádky",
           "selectionLabel": "Vybrat řádek"
+        },
+        "tags": {
+          "failed": "Štítky nelze načíst.",
+          "filterFailed": "Filtr podle štítku se nepodařilo načíst."
         },
         "title": "Zákazníci"
       }

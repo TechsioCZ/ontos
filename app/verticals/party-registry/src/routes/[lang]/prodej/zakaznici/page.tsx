@@ -5,6 +5,8 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect, Predicate } from 'effect';
 import { useEffect, useState } from 'react';
 
@@ -14,17 +16,19 @@ import { partyRegistryI18nResources } from '../../../../i18n/resources.ts';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import { CustomerBulkEditDialog } from './customer-bulk-edit-dialog.tsx';
 import { CustomerCreateDialog } from './customer-create-dialog.tsx';
 import { CustomerDetailDialog } from './customer-detail-dialog.tsx';
 import { loadCustomers } from './customers-data.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
 import { buildCustomersCsv, computeCustomerStats, matchesCustomerSearch, orDash } from './customers-model.ts';
+import { subjectIdOf, useCustomerEnrichment } from './use-customer-enrichment.ts';
 
 const key = 'party-registry.pages.customers';
 const pageSizeOptions = [50, 100, 200];
 const pinning = { end: [], start: ['displayName'] };
-/** Phone, DIČ and the segment slot stay in the column menu so the default view keeps seven columns. */
-const defaultColumnVisibility = { phone: false, segment: false, vatId: false } satisfies ColumnVisibility;
+/** Phone and DIČ stay in the column menu; the segment column is visible until its lookup fails. */
+const defaultColumnVisibility = { phone: false, vatId: false } satisfies ColumnVisibility;
 
 type LoadState =
   | { readonly status: 'loading' }
@@ -64,9 +68,6 @@ const statusCell = (info: CellContext<CustomerListItem>) => (
     {info.getValue<string>()}
   </Badge>
 );
-/** Segment and tag lanes have no data source yet. */
-const pendingCell = () => '—';
-
 const format = (count: number | undefined) => (count === undefined ? '—' : formatNumber(count));
 
 const downloadCsv = (csv: string) => {
@@ -86,6 +87,8 @@ const CustomersContent = () => {
   const [detail, setDetail] = useState<CustomerListItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(defaultColumnVisibility);
+  const [editOpen, setEditOpen] = useState(false);
+  const [tagOpen, setTagOpen] = useState(false);
 
   useEffect(() => {
     loadCustomersInto(setState);
@@ -100,10 +103,32 @@ const CustomersContent = () => {
 
   const data = state.status === 'ready' ? state.data : undefined;
   const items = data?.items ?? [];
-  const visible = items.filter((item) => matchesCustomerSearch(item, search));
+  const enrichment = useCustomerEnrichment(data);
+  const { segments, tagFilter, taggedIds, tagsBySubject, tagStatus } = enrichment;
+
+  const visible = items.filter(
+    (item) => matchesCustomerSearch(item, search) && (tagFilter === null || (taggedIds?.has(item.partyId) ?? false)),
+  );
   const stats = data === undefined ? undefined : computeCustomerStats(data.items, data.nowMillis);
   const selectedItems = items.filter((item) => selection[item.counterpartyId] === true);
+  const selectedSubjectIds = selectedItems.map((item) => subjectIdOf(item.partyId));
   const statusLabel = (item: CustomerListItem) => t(`${key}.status.${item.status}`);
+  // Segment lookup is best effort: when permissions are missing the column hides without an error banner.
+  const effectiveVisibility = enrichment.segmentsFailed ? { ...columnVisibility, segment: false } : columnVisibility;
+
+  const segmentCell = (info: CellContext<CustomerListItem>) => {
+    const segment = segments?.get(info.row.original.partyId);
+    if (segment !== undefined) {
+      return segment.name;
+    }
+    return segments === null ? '…' : '—';
+  };
+  const tagsCell = (info: CellContext<CustomerListItem>) => {
+    if (tagStatus === 'error') {
+      return <span className="text-sm">{t(`${key}.tags.failed`)}</span>;
+    }
+    return <TagCell tags={tagsBySubject.get(subjectIdOf(info.row.original.partyId)) ?? []} />;
+  };
 
   const columns: ColumnDef<CustomerListItem>[] = [
     { accessorKey: 'displayName', cell: nameCell, header: t(`${key}.columns.name`), meta: { width: 280 } },
@@ -126,13 +151,13 @@ const CustomersContent = () => {
       meta: { width: 120 },
     },
     {
-      cell: pendingCell,
+      cell: segmentCell,
       enableSorting: false,
       header: t(`${key}.columns.segment`),
       id: 'segment',
       meta: { width: 140 },
     },
-    { cell: pendingCell, enableSorting: false, header: t(`${key}.columns.tags`), id: 'tags', meta: { width: 160 } },
+    { cell: tagsCell, enableSorting: false, header: t(`${key}.columns.tags`), id: 'tags', meta: { width: 200 } },
   ];
 
   const translations: DataTableTranslations = {
@@ -239,7 +264,32 @@ const CustomersContent = () => {
           <StatCard label={t(`${key}.stats.archived`)} value={format(stats?.archived)} />
         </StatRow>
 
+        <div className="flex flex-wrap items-end gap-200">
+          <div className="w-72">
+            <TagFilter kind="customer" onChange={enrichment.handleTagFilterChange} value={tagFilter} />
+          </div>
+          {enrichment.tagFilterFailed && <StatusText status="error">{t(`${key}.tags.filterFailed`)}</StatusText>}
+        </div>
+
         <BulkActionBar onClear={() => setSelection({})} selectedCount={selectedItems.length}>
+          <Button
+            icon="icon-[mdi--tag-multiple-outline]"
+            onClick={() => setTagOpen(true)}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(`${key}.bulk.tags`)}
+          </Button>
+          <Button
+            icon="icon-[mdi--square-edit-outline]"
+            onClick={() => setEditOpen(true)}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(`${key}.bulk.edit`)}
+          </Button>
           <Button
             icon="icon-[mdi--file-delimited-outline]"
             onClick={exportSelected}
@@ -254,7 +304,7 @@ const CustomersContent = () => {
         <DataTable
           columnPinning={pinning}
           columns={columns}
-          columnVisibility={columnVisibility}
+          columnVisibility={effectiveVisibility}
           data={visible}
           enableColumnPinning
           enableColumnVisibility
@@ -265,7 +315,7 @@ const CustomersContent = () => {
           getRowId={(row) => row.counterpartyId}
           getRowLabel={(row) => row.original.displayName ?? row.original.counterpartyId}
           globalFilter={search}
-          loading={state.status === 'loading'}
+          loading={state.status === 'loading' || enrichment.tagFilterLoading}
           loadingRowCount={12}
           maxHeight="calc(100dvh - 15rem)"
           onColumnVisibilityChange={setColumnVisibility}
@@ -284,6 +334,20 @@ const CustomersContent = () => {
 
       <CustomerCreateDialog onCreated={reload} onOpenChange={setCreateOpen} open={createOpen} />
       <CustomerDetailDialog customer={detail} onOpenChange={closeDetail} onRenamed={reload} />
+      <CustomerBulkEditDialog
+        items={selectedItems}
+        onArchived={reload}
+        onChooseTag={() => setTagOpen(true)}
+        onOpenChange={setEditOpen}
+        open={editOpen}
+      />
+      <BulkTagDialog
+        kind="customer"
+        onDone={enrichment.handleTagsChanged}
+        onOpenChange={setTagOpen}
+        open={tagOpen}
+        subjectIds={selectedSubjectIds}
+      />
     </>
   );
 };

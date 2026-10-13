@@ -1,5 +1,6 @@
 import { Effect, Random } from 'effect';
 import type { ApplyCommandPayload } from '../../../../../shared/actions/apply-command.ts';
+import type { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import type { OpportunityListFilters } from '../../../../api/records-client.ts';
@@ -8,14 +9,14 @@ import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 export type PipelineCommand = ApplyCommandPayload['command'];
 
 /**
- * Records read. Stage and owner filters go to the server so the indicators match the visible set.
- * `requestKey` is the screen's reload counter, used as the request correlation id.
+ * Records read. Stage, owner and customer filters go to the server so the indicators match the visible set.
+ * `correlation` is the request correlation id; each caller passes a fresh one.
  */
 export const loadPipeline = Effect.fn('SalesPipeline.loadPipeline')(function* loadPipeline(
   filters: OpportunityListFilters,
-  requestKey: number,
+  correlation: string,
 ) {
-  return yield* executeRecords(filters, `sales-pipeline:records:${requestKey}`);
+  return yield* executeRecords(filters, correlation);
 });
 
 /** Single command endpoint. Every call carries the revision the screen was built from. */
@@ -28,15 +29,25 @@ export const applyPipelineCommand = Effect.fn('SalesPipeline.applyCommand')(func
   return yield* executeApplyCommand({ command, expectedRevision }, idempotencyKey, { idempotencyKey });
 });
 
-export const recordsFilters = (stage: OpportunityStage | '', owner: EmployeeId | ''): OpportunityListFilters => {
-  if (stage !== '' && owner !== '') {
-    return { ownerEmployeeId: owner, stage };
-  }
+export interface PipelineFilterValues {
+  readonly customer: typeof PartyIdSchema.Type | '';
+  readonly owner: EmployeeId | '';
+  readonly stage: OpportunityStage | '';
+}
+
+type MutableRecordsFilters = { -readonly [Key in keyof OpportunityListFilters]?: OpportunityListFilters[Key] };
+
+/** Only the filters that are set are sent; an unset filter matches the whole visible set. */
+export const recordsFilters = ({ customer, owner, stage }: PipelineFilterValues): OpportunityListFilters => {
+  const filters: MutableRecordsFilters = {};
   if (stage !== '') {
-    return { stage };
+    filters.stage = stage;
   }
   if (owner !== '') {
-    return { ownerEmployeeId: owner };
+    filters.ownerEmployeeId = owner;
   }
-  return {};
+  if (customer !== '') {
+    filters.partyId = customer;
+  }
+  return filters;
 };

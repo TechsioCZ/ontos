@@ -31,8 +31,11 @@
     "db:verify": "node scripts/verify-db-schema.mts"
   },
   "dependencies": {
+    "@app/admin-ui": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/party-registry": "workspace:*",
+    "@app/sales-pipeline": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@app/workforce": "workspace:*",
@@ -57,8 +60,10 @@
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "@techsio/ui-kit": "0.56.0",
     "@app/siampark-property": "workspace:*",
+    "@app/workforce": "workspace:*",
     "@effect/sql-pg": "4.0.0-rc.117",
-    "@effect/platform-node": "4.0.0-rc.117"
+    "@effect/platform-node": "4.0.0-rc.117",
+    "@internationalized/date": "^3.12.4"
   },
   "devDependencies": {
     "@effect/tsgo": "0.41.0",

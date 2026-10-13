@@ -5,6 +5,7 @@ import { Command, Flag } from 'effect/unstable/cli';
 import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { demoId, demoLegalEntityId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
+import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { EmployeeIdSchema } from '../shared/resources/employee.ts';
 import { WorkforceStateSchema } from '../shared/apis/records.ts';
 import type { EmployeeRole, WorkforceState } from '../shared/apis/records.ts';
@@ -138,13 +139,28 @@ const DEMO_EMPLOYEES: readonly DemoEmployee[] = [
 
 class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputError', { reason: Schema.String }) {}
 
-/** Builds the Workforce state with deterministic employee IDs and no principal bindings. */
+/** Employees bound to the demo sign-in accounts (principal IDs from `app/scripts/demo/permissions.mts`). */
+const ACCOUNT_KEYS: ReadonlySet<string> = new Set(['obchod', 'obchodnik', 'ucetni', 'sklad']);
+
+const principalRefFor = (key: string) =>
+  ACCOUNT_KEYS.has(key)
+    ? Schema.decodeUnknownEffect(PrincipalRefSchema)({
+        principalId: demoId('core.principal', key),
+        tenantId: demoTenantId,
+      }).pipe(Effect.map((principalRef) => ({ principalRef })))
+    : Effect.succeed({});
+
+/** Builds the Workforce state with deterministic employee IDs; account employees carry their principal binding. */
 const buildDemoState = Effect.fn('Workforce.buildDemoState')(function* buildDemoState() {
   const instant = DateTime.makeUnsafe(SEED_INSTANT);
   const employees = yield* Effect.all(
     DEMO_EMPLOYEES.map((entry) =>
-      Schema.decodeUnknownEffect(EmployeeIdSchema)(demoId('employee', entry.key)).pipe(
-        Effect.map((id) => ({
+      Effect.all([
+        Schema.decodeUnknownEffect(EmployeeIdSchema)(demoId('employee', entry.key)),
+        principalRefFor(entry.key),
+      ]).pipe(
+        Effect.map(([id, binding]) => ({
+          ...binding,
           active: entry.active,
           createdAt: instant,
           department: entry.department,

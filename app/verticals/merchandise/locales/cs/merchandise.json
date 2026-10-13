@@ -30,7 +30,8 @@
           "partial": "Některé objednávky se nepodařilo změnit.",
           "result": "Změněno: {{changed}}, nepodařilo se: {{failed}}",
           "statusPlaceholder": "Změnit stav…",
-          "success": "Stav objednávek změněn"
+          "success": "Stav objednávek změněn",
+          "tags": "Štítky"
         },
         "columns": {
           "createdAt": "Vytvořeno",
@@ -55,7 +56,7 @@
           "cancel": "Zrušit",
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "customer": "Zákazník",
-          "customerHelp": "Zadejte ID zákazníka z evidence partnerů.",
+          "customerHelp": "Vyberte zákazníka z evidence partnerů.",
           "description": "Vyberte zákazníka a položky. Objednávka se uloží se snímkem cen.",
           "errorCustomer": "Zadejte zákazníka.",
           "errorLines": "Přidejte alespoň jednu položku.",
@@ -72,7 +73,10 @@
           "removeLine": "Odebrat položku",
           "submit": "Vytvořit objednávku",
           "submitting": "Vytvářím…",
-          "title": "Nová objednávka"
+          "title": "Nová objednávka",
+          "customerPlaceholder": "Hledat zákazníka…",
+          "customersFailed": "Seznam zákazníků se nepodařilo načíst.",
+          "noCustomerMatch": "Žádný zákazník neodpovídá."
         },
         "description": "Objednávky zákazníků se snímkem cen.",
         "detail": {
@@ -112,7 +116,8 @@
           "firstDescription": "Založte první objednávku a sledujte ji až do doručení.",
           "firstTitle": "Zatím tu nejsou žádné objednávky.",
           "forbiddenTitle": "K této sekci nemáte oprávnění.",
-          "retry": "Zkusit znovu"
+          "retry": "Zkusit znovu",
+          "tagFilterFailed": "Štítky se nepodařilo načíst. Zkuste to znovu."
         },
         "table": {
           "actionsLabel": "Akce",
@@ -140,6 +145,9 @@
           "delivered": "Objednávka doručena",
           "shipped": "Objednávka odeslána",
           "statusFailed": "Stav se nepodařilo změnit."
+        },
+        "customers": {
+          "unknown": "Neznámý zákazník"
         }
       },
       "products": {
@@ -153,7 +161,8 @@
           "changePrice": "Změnit cenu o %",
           "clear": "Zrušit výběr",
           "deactivate": "Deaktivovat",
-          "selected": "Vybráno: {{total}}"
+          "selected": "Vybráno: {{total}}",
+          "tags": "Štítky"
         },
         "category": {
           "field": "Nová kategorie",
@@ -251,7 +260,8 @@
           "error": "Data se nepodařilo načíst.",
           "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
           "forbidden": "K této sekci nemáte oprávnění.",
-          "noResults": "Filtrům neodpovídá žádný produkt."
+          "noResults": "Filtrům neodpovídá žádný produkt.",
+          "tagFilterFailed": "Štítky se nepodařilo načíst. Zkuste to znovu."
         },
         "stats": {
           "lowStock": "Pod minimem",

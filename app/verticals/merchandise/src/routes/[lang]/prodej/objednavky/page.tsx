@@ -1,5 +1,6 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { DataTableProps } from '@techsio/ui-kit/organisms/data-table';
@@ -14,6 +15,7 @@ import {
   StatRow,
   statusPresentation,
 } from '@app/admin-ui';
+import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect } from 'effect';
 import { useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
@@ -21,8 +23,10 @@ import type { OrderStatus } from '../../../../../shared/domain/merchandise-model
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
+import { useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
@@ -54,14 +58,22 @@ const OrdersPageContent = () => {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const directory = useCustomerDirectory();
+  const tagFilter = useSubjectTagFilter('order');
 
   const ready = state.kind === 'ready' ? state : undefined;
   const orders = [...(ready?.records.orders ?? [])];
+  const orderTags = useSubjectTags(
+    'order',
+    orders.map((order) => order.id),
+  );
+  const visible = orders.filter((order) => tagFilter.matches(order.id));
   const canWrite = ready?.records.canWrite === true;
   const stats = ready === undefined ? undefined : orderStats(orders, ready.now);
-  const selected = orders.filter((order) => selection[order.id] === true);
+  const selected = visible.filter((order) => selection[order.id] === true);
   const detailOrder = orders.find((order) => order.id === detailId);
-  const filtered = globalFilter !== '' || columnFilters.length > 0;
+  const filtered = globalFilter !== '' || columnFilters.length > 0 || tagFilter.tagId !== null;
 
   const runStatusChange = (targets: readonly Order[], status: OrderStatus) => {
     if (ready === undefined) {
@@ -141,8 +153,28 @@ const OrdersPageContent = () => {
           />
         </StatRow>
 
+        <div className="flex flex-wrap items-end gap-200">
+          <div className="min-w-56">
+            <TagFilter kind="order" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
+          </div>
+        </div>
+        {tagFilter.status === 'error' && (
+          <StatusText showIcon status="error">
+            {t(key('states.tagFilterFailed'))}
+          </StatusText>
+        )}
+
         {canWrite && (
           <BulkActionBar onClear={() => setSelection({})} selectedCount={selected.length}>
+            <Button
+              icon="icon-[mdi--tag-multiple-outline]"
+              onClick={() => setTagsOpen(true)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {t(key('bulk.tags'))}
+            </Button>
             <SelectTemplate
               disabled={busy}
               items={bulkStatusItems}
@@ -164,8 +196,8 @@ const OrdersPageContent = () => {
         <DataTable
           columnFilters={columnFilters}
           columnPinning={{ end: [], start: ['number'] }}
-          columns={ordersColumns(t, language)}
-          data={orders}
+          columns={ordersColumns(t, language, directory, orderTags.tagsOf)}
+          data={visible}
           enableColumnFilters
           enableColumnPinning
           enableGlobalFilter
@@ -208,6 +240,7 @@ const OrdersPageContent = () => {
                       onClick={() => {
                         setGlobalFilter('');
                         setColumnFilters([]);
+                        tagFilter.setTagId(null);
                       }}
                       size="sm"
                       theme="outlined"
@@ -242,6 +275,7 @@ const OrdersPageContent = () => {
         />
 
         <OrderCreateDialog
+          customers={directory}
           onCreated={load}
           onOpenChange={setCreateOpen}
           open={createOpen}
@@ -252,6 +286,7 @@ const OrdersPageContent = () => {
         <OrderDetailDialog
           busy={busy}
           canWrite={canWrite}
+          customers={directory}
           onClose={() => setDetailId(null)}
           onStatus={(order, status) => requestStatus([order], status)}
           order={detailOrder}
@@ -262,6 +297,18 @@ const OrdersPageContent = () => {
           onConfirm={(targets) => runStatusChange(targets, 'CANCELLED')}
           onDismiss={() => setPendingCancel(null)}
           orders={pendingCancel}
+        />
+
+        <BulkTagDialog
+          kind="order"
+          onDone={() => {
+            setSelection({});
+            orderTags.refetch();
+            tagFilter.refresh();
+          }}
+          onOpenChange={setTagsOpen}
+          open={tagsOpen}
+          subjectIds={toSubjectIds(selected.map((order) => order.id))}
         />
         <Toaster />
       </section>

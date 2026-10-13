@@ -3,11 +3,13 @@ import { formatMoney, formatNumber, PageHeader, StatCard, StatRow } from '@app/a
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
+import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import csResource from '../../../../../locales/cs/siampark-billing-finance.json';
 import enResource from '../../../../../locales/en/siampark-billing-finance.json';
 import '../../../index.css';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import { CreateInvoiceDialog } from './create-invoice-dialog.tsx';
 import { FinanceInvoiceDetail } from './invoice-detail.tsx';
 import { FinanceInvoiceTable } from './invoices-table.tsx';
 import { useFinanceRecords } from './use-finance-records.ts';
@@ -21,7 +23,7 @@ const ns = 'siampark-billing-finance.faktury';
 
 const RecordsPageContent = () => {
   const vm = useFinanceRecords();
-  const { busy, cancelVoid, canWrite, confirmVoid, feedback, indicators, selected, t, voidTarget } = vm;
+  const { busy, cancelVoid, canWrite, confirmVoid, feedback, indicators, references, selected, t, voidTarget } = vm;
   const [createOpen, setCreateOpen] = useState(false);
   const kpi = (value: (source: NonNullable<typeof indicators>) => string) =>
     indicators === undefined ? '—' : value(indicators);
@@ -29,6 +31,7 @@ const RecordsPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
+      <Toaster />
       <section className="flex min-w-0 flex-col gap-250 text-fg-primary">
         {selected === undefined ? (
           <>
@@ -60,27 +63,18 @@ const RecordsPageContent = () => {
                 {t(`siampark-billing-finance.demo.feedback.${feedback}`)}
               </StatusText>
             )}
+            {references.referencesFailed && (
+              <StatusText showIcon status="error">
+                {t(`${ns}.referencesError`)}
+              </StatusText>
+            )}
             <FinanceInvoiceTable vm={vm} />
           </>
         ) : (
           <FinanceInvoiceDetail invoice={selected} vm={vm} />
         )}
       </section>
-      <Dialog
-        actions={
-          <Button onClick={() => setCreateOpen(false)} theme="outlined" variant="secondary">
-            {t(`${ns}.cancel`)}
-          </Button>
-        }
-        customTrigger
-        onOpenChange={(details) => setCreateOpen(details.open)}
-        open={createOpen}
-        placement="right"
-        size="md"
-        title={t(`${ns}.newInvoice`)}
-      >
-        <p className="py-200 text-fg-secondary text-sm">{t(`${ns}.formTodo`)}</p>
-      </Dialog>
+      <CreateInvoiceDialog onOpenChange={setCreateOpen} open={createOpen} vm={vm} />
       <Dialog
         actions={
           <>

@@ -1,0 +1,86 @@
+import type { ProductRecord } from '@app/merchandise/contracts/records';
+import { listProducts } from '@app/merchandise/clients/records';
+import type { CustomerListItem } from '@app/party-registry/api/client';
+import { listCustomers } from '@app/party-registry/api/client';
+import { listOpportunities } from '@app/sales-pipeline/clients/records';
+import { Effect, Schema } from 'effect';
+import { useEffect, useState } from 'react';
+import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
+import { customerIndex } from './invoice-view.ts';
+
+const ReferenceSourceSchema = Schema.Literals(['customers', 'opportunities', 'products']);
+type ReferenceSource = typeof ReferenceSourceSchema.Type;
+
+interface ReferenceFailure {
+  readonly cause: unknown;
+  readonly source: ReferenceSource;
+}
+
+/**
+ * Names that the invoice list, detail and create form show instead of opaque ids. Each list loads on its own,
+ * so one failing read leaves the others usable and sets `referencesFailed`.
+ */
+export const useFinanceReferences = () => {
+  const [customers, setCustomers] = useState<readonly CustomerListItem[]>([]);
+  const [opportunityTitles, setOpportunityTitles] = useState<ReadonlyMap<string, string>>(new Map());
+  const [products, setProducts] = useState<readonly ProductRecord[]>([]);
+  const [failures, setFailures] = useState<readonly ReferenceFailure[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    const recordFailure = (source: ReferenceSource, cause: unknown) => {
+      if (active) {
+        setFailures((current) => [...current, { cause, source }]);
+      }
+    };
+    void financeBrowserRuntime.runPromise(
+      listCustomers({ includeArchived: true }).pipe(
+        Effect.match({
+          onFailure: (cause) => recordFailure('customers', cause),
+          onSuccess: (items) => {
+            if (active) {
+              setCustomers(items);
+            }
+          },
+        }),
+      ),
+    );
+    void financeBrowserRuntime.runPromise(
+      listOpportunities({}, 'siampark-finance.opportunities').pipe(
+        Effect.match({
+          onFailure: (cause) => recordFailure('opportunities', cause),
+          onSuccess: (response) => {
+            if (active) {
+              setOpportunityTitles(
+                new Map<string, string>(response.items.map((item) => [item.id, item.title] as const)),
+              );
+            }
+          },
+        }),
+      ),
+    );
+    void financeBrowserRuntime.runPromise(
+      listProducts('siampark-finance.products').pipe(
+        Effect.match({
+          onFailure: (cause) => recordFailure('products', cause),
+          onSuccess: (items) => {
+            if (active) {
+              setProducts(items);
+            }
+          },
+        }),
+      ),
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return {
+    customerById: customerIndex(customers),
+    customers,
+    opportunityTitles,
+    products,
+    referencesFailed: failures.length > 0,
+  };
+};

@@ -13,6 +13,7 @@
  *   subjects. Confirms with a toast, so the host page must render one `<Toaster />` from
  *   `@techsio/ui-kit/molecules/toast`.
  */
+import { TagBadge } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -73,18 +74,6 @@ export const runTagEffect = <A, E>(
   void browserRuntime.runPromise(effect.pipe(Effect.match(handlers)));
 };
 
-/** Tag chip with the stored colour dot. Tags are not statuses, so the chip never takes a status variant. */
-export const TagChip = ({ color, name }: { color?: string; name: string }) => (
-  <span className="inline-flex min-w-0 items-center gap-50">
-    {color !== undefined && (
-      <span aria-hidden className="size-100 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-    )}
-    <Badge size="sm" variant="outline">
-      {name}
-    </Badge>
-  </span>
-);
-
 /** The tags of one row: three chips, then a `+N` badge for the rest. */
 export const TagCell = ({ tags }: { tags: readonly Tag[] }) => {
   const visible = tags.slice(0, 3);
@@ -92,7 +81,7 @@ export const TagCell = ({ tags }: { tags: readonly Tag[] }) => {
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-50">
       {visible.map((tag) => (
-        <TagChip color={tagColorValue[tag.color]} key={tag.id} name={tag.name} />
+        <TagBadge color={tagColorValue[tag.color]} key={tag.id} name={tag.name} />
       ))}
       {hiddenCount > 0 && <Badge size="sm" variant="outline">{`+${hiddenCount}`}</Badge>}
     </span>
