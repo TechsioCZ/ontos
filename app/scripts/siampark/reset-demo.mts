@@ -50,6 +50,9 @@ const moduleIds = [
   financeModuleId,
   relationshipsModuleId,
   ...salesDemoModuleIds,
+  // Customer segments (commerce customer groups). Kept last: module state ids derive from the index, and it has no
+  // read_all/write_all context permissions, so it stays out of `salesDemoModuleIds`.
+  'commerce.customer-context',
 ] as const;
 type AddRelationship = (
   resourceType: string,
