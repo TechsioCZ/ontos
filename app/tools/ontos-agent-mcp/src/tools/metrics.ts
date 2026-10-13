@@ -195,7 +195,8 @@ export async function getMetrics(input: {
     referenceDate,
     series: result.series.map((point) => ({ key: point.key, label: point.label, value: scale(point.value) })),
     to: input.to,
-    total: scale(result.total),
+    // A ratio with no denominator (e.g. win rate with nothing closed) has no total.
+    total: result.total === null ? null : scale(result.total),
     unit: entry.unit,
   };
 }

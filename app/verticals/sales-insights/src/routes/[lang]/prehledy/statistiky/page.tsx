@@ -5,7 +5,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime } from 'effect';
 import csResource from '../../../../../locales/cs/sales-insights.json';
 import enResource from '../../../../../locales/en/sales-insights.json';
-import { computeKpis, computeMetric, metricCatalog } from '../../../../../shared/metrics.ts';
+import { computeKpis, computeMetric, computePipelineSummary, metricCatalog } from '../../../../../shared/metrics.ts';
 import type { CalendarDay } from '../../../../../shared/metrics.ts';
 import { isMetricForbidden, statisticsSourcesFor } from '../../../../statistics/statistics-access.ts';
 import { StatisticsControls } from '../../../../statistics/statistics-controls.tsx';
@@ -66,6 +66,10 @@ const StatisticsPageContent = () => {
   // The StatRow takes only the period and the loaded inputs, so metric, chart and grouping changes cannot move it.
   const kpis =
     data.status === 'ready' ? computeKpis(data.inputs, { from: query.from, to: query.to, today }) : undefined;
+  const pipeline =
+    data.status === 'ready'
+      ? computePipelineSummary(data.inputs, { from: query.from, to: query.to, today })
+      : undefined;
   const forbidden = data.status === 'ready' ? data.forbidden : [];
   // Sources the role cannot read at all are known before they are requested, so the metric picker leaves out every
   // metric that needs one (task metrics for the accountant) and never sends a read the producer would refuse.
@@ -106,6 +110,7 @@ const StatisticsPageContent = () => {
           kpis={kpis}
           loading={!ready}
           metric={metric}
+          pipeline={pipeline}
           query={query}
           result={result}
         />

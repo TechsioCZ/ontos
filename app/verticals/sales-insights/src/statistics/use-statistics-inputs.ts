@@ -118,6 +118,7 @@ const requestId = (operation: string) =>
 const toOpportunity = (item: {
   readonly amountMinor: number;
   readonly closedAt?: OpportunityInput['closedAt'];
+  readonly createdAt: OpportunityInput['createdAt'];
   readonly expectedCloseDate: OpportunityInput['expectedCloseDate'];
   readonly id: string;
   readonly ownerEmployeeId?: string | undefined;
@@ -127,6 +128,7 @@ const toOpportunity = (item: {
 }): OpportunityInput => ({
   amountMinor: item.amountMinor,
   closedAt: item.closedAt,
+  createdAt: item.createdAt,
   expectedCloseDate: item.expectedCloseDate,
   id: item.id,
   ownerEmployeeId: item.ownerEmployeeId,

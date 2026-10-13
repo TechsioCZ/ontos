@@ -63,6 +63,8 @@ export type SubjectKind = typeof SubjectKindSchema.Type;
 export interface OpportunityInput {
   readonly amountMinor: number;
   readonly closedAt?: Instant | undefined;
+  /** Absent when a caller does not pass it; such an opportunity never counts as opened in a period. */
+  readonly createdAt?: Instant | undefined;
   readonly expectedCloseDate: CalendarDay;
   readonly id: string;
   readonly ownerEmployeeId?: string | undefined;
@@ -786,3 +788,71 @@ export const computeKpis = (inputs: MetricInputs, range: MetricRange): readonly 
       value: totalOf(collectRows(definition, inputs, range), definition.ratio),
     };
   });
+
+// ---------------------------------------------------------------------------------------------------------
+// Pipeline summary
+// ---------------------------------------------------------------------------------------------------------
+
+export interface PipelineTally {
+  readonly count: number;
+  /** Sum of `amountMinor`, in haléře. */
+  readonly valueMinor: number;
+}
+
+export interface PipelineStageTally extends PipelineTally {
+  readonly label: string;
+  readonly stage: OpportunityStage;
+}
+
+export interface PipelineSummary {
+  /** Won plus lost in the range. */
+  readonly closed: PipelineTally;
+  /** Closed as lost in the range, by `closedAt`. */
+  readonly lost: PipelineTally;
+  /** Every currently open opportunity, whatever the range. Stages in funnel order, empty stages included. */
+  readonly open: PipelineTally & { readonly byStage: readonly PipelineStageTally[] };
+  /** Created in the range, by `createdAt`, whatever their stage is now. */
+  readonly opened: PipelineTally;
+  /** Won over won + lost by count, the same rate as the `win_rate` KPI. `null` when nothing closed in the range. */
+  readonly winRate: number | null;
+  /** Closed as won in the range, by `closedAt`. */
+  readonly won: PipelineTally;
+}
+
+const OPEN_STAGE_ORDER: readonly OpportunityStage[] = ['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION'];
+
+const tallyOf = (opportunities: readonly OpportunityInput[]): PipelineTally => ({
+  count: opportunities.length,
+  valueMinor: opportunities.reduce((sum, o) => sum + o.amountMinor, 0),
+});
+
+/** Unlike `inRange`, a missing instant is outside every range: an undated record cannot belong to a period. */
+const instantInRange = (instant: Instant | undefined, range: MetricRange): boolean =>
+  instant !== undefined && inRange(dateOf(instant), range);
+
+/**
+ * The pipeline card: the open pipeline as of today next to the flow of the selected range (opened, won, lost).
+ * Range days are inclusive UTC calendar days, as for every other metric.
+ */
+export const computePipelineSummary = (inputs: MetricInputs, range: MetricRange): PipelineSummary => {
+  const open = inputs.opportunities.filter((o) => isOpenStage(o.stage));
+  const closedIn = (stage: OpportunityStage) =>
+    inputs.opportunities.filter((o) => o.stage === stage && instantInRange(o.closedAt, range));
+  const won = tallyOf(closedIn('WON'));
+  const lost = tallyOf(closedIn('LOST'));
+  return {
+    closed: { count: won.count + lost.count, valueMinor: won.valueMinor + lost.valueMinor },
+    lost,
+    open: {
+      ...tallyOf(open),
+      byStage: OPEN_STAGE_ORDER.map((stage) => ({
+        ...tallyOf(open.filter((o) => o.stage === stage)),
+        label: STAGE_LABELS[stage],
+        stage,
+      })),
+    },
+    opened: tallyOf(inputs.opportunities.filter((o) => instantInRange(o.createdAt, range))),
+    winRate: totalOf([{ den: won.count + lost.count, num: won.count }], true),
+    won,
+  };
+};

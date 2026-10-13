@@ -1,7 +1,7 @@
 import { DateTime } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { computeKpis, computeMetric, metricCatalog } from '../../shared/metrics.ts';
-import type { MetricInputs } from '../../shared/metrics.ts';
+import { computeKpis, computeMetric, computePipelineSummary, metricCatalog } from '../../shared/metrics.ts';
+import type { MetricInputs, OpportunityInput } from '../../shared/metrics.ts';
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -94,6 +94,7 @@ const fixture: MetricInputs = {
     {
       amountMinor: 300_000,
       closedAt: at('2026-09-10T09:00:00.000Z'),
+      createdAt: at('2026-08-15T09:00:00.000Z'),
       expectedCloseDate: '2026-09-10',
       id: 'opp-won-a',
       ownerEmployeeId: 'emp-a',
@@ -104,6 +105,7 @@ const fixture: MetricInputs = {
     {
       amountMinor: 200_000,
       closedAt: at('2026-10-02T10:00:00.000Z'),
+      createdAt: at('2026-09-01T00:00:00.000Z'),
       expectedCloseDate: '2026-10-02',
       id: 'opp-won-b',
       ownerEmployeeId: 'emp-b',
@@ -114,6 +116,7 @@ const fixture: MetricInputs = {
     {
       amountMinor: 100_000,
       closedAt: at('2026-10-03T10:00:00.000Z'),
+      createdAt: at('2026-09-05T10:00:00.000Z'),
       expectedCloseDate: '2026-10-03',
       id: 'opp-lost-a',
       ownerEmployeeId: 'emp-a',
@@ -124,6 +127,7 @@ const fixture: MetricInputs = {
     {
       amountMinor: 55_000,
       closedAt: at('2026-08-01T10:00:00.000Z'),
+      createdAt: at('2026-07-01T10:00:00.000Z'),
       expectedCloseDate: '2026-08-01',
       id: 'opp-lost-old',
       ownerEmployeeId: 'emp-a',
@@ -133,6 +137,7 @@ const fixture: MetricInputs = {
     },
     {
       amountMinor: 400_000,
+      createdAt: at('2026-09-20T08:00:00.000Z'),
       expectedCloseDate: '2026-10-20',
       id: 'opp-open',
       ownerEmployeeId: 'emp-b',
@@ -142,6 +147,7 @@ const fixture: MetricInputs = {
     },
     {
       amountMinor: 80_000,
+      createdAt: at('2026-11-01T00:00:00.000Z'),
       expectedCloseDate: '2026-11-30',
       id: 'opp-open-late',
       partyId: 'c1',
@@ -431,4 +437,89 @@ it('reports the same win rate for the same period whatever metric or grouping is
   for (const groupBy of ['month', 'employee', 'customer', 'tag'] as const) {
     expect(computeMetric('win_rate', seeded, { ...period, groupBy }).total).toBe(69.2);
   }
+});
+
+const opportunity = (patch: Partial<OpportunityInput> & Pick<OpportunityInput, 'id' | 'stage'>): OpportunityInput => ({
+  amountMinor: 100_000,
+  expectedCloseDate: '2026-10-01',
+  partyId: 'c1',
+  probability: 50,
+  ...patch,
+});
+
+it('summarises the open pipeline today next to the opened, won and lost opportunities of the period', () => {
+  const summary = computePipelineSummary(fixture, { ...range, today: '2026-10-13' });
+  // Snapshot: both open opportunities, including opp-open-late created after the range.
+  expect(summary.open.count).toBe(2);
+  expect(summary.open.valueMinor).toBe(480_000);
+  expect(summary.open.byStage).toEqual([
+    { count: 1, label: 'Lead', stage: 'LEAD', valueMinor: 80_000 },
+    { count: 0, label: 'Kvalifikace', stage: 'QUALIFIED', valueMinor: 0 },
+    { count: 0, label: 'Nabídka', stage: 'PROPOSAL', valueMinor: 0 },
+    { count: 1, label: 'Vyjednávání', stage: 'NEGOTIATION', valueMinor: 400_000 },
+  ]);
+  // Created in range: opp-won-b on the first day, opp-lost-a, opp-open; whatever their stage is now.
+  expect(summary.opened).toEqual({ count: 3, valueMinor: 700_000 });
+  expect(summary.won).toEqual({ count: 2, valueMinor: 500_000 });
+  // opp-lost-old closed before the range.
+  expect(summary.lost).toEqual({ count: 1, valueMinor: 100_000 });
+  expect(summary.closed).toEqual({ count: 3, valueMinor: 600_000 });
+  expect(summary.winRate).toBe(66.7);
+});
+
+it('reports the same win rate and won value as the KPI row for the same period', () => {
+  const period = { ...range, today: '2026-10-13' };
+  const byId = new Map(computeKpis(fixture, period).map((kpi) => [kpi.id, kpi.value]));
+  const summary = computePipelineSummary(fixture, period);
+  expect(summary.winRate).toBe(byId.get('win_rate'));
+  expect(summary.won.valueMinor).toBe(byId.get('opportunities_won'));
+  expect(summary.open.valueMinor).toBe(byId.get('pipeline_open_value'));
+});
+
+it('keeps the open pipeline but shows an empty flow and no win rate for a period with nothing in it', () => {
+  const summary = computePipelineSummary(fixture, { from: '2030-01-01', to: '2030-01-31', today: '2030-01-31' });
+  expect(summary.open.valueMinor).toBe(480_000);
+  expect(summary.opened).toEqual({ count: 0, valueMinor: 0 });
+  expect(summary.closed).toEqual({ count: 0, valueMinor: 0 });
+  expect(summary.winRate).toBeNull();
+});
+
+it('includes both range days whole, as UTC calendar days, for opened and closed opportunities', () => {
+  const opportunities = [
+    opportunity({ closedAt: at('2026-08-31T23:59:59.999Z'), id: 'before', stage: 'WON' }),
+    opportunity({ closedAt: at('2026-09-01T00:00:00.000Z'), id: 'first-day', stage: 'WON' }),
+    opportunity({ closedAt: at('2026-10-31T23:59:59.999Z'), id: 'last-day', stage: 'LOST' }),
+    opportunity({ closedAt: at('2026-11-01T00:00:00.000Z'), id: 'after', stage: 'LOST' }),
+    opportunity({ createdAt: at('2026-09-01T00:00:00.000Z'), id: 'opened-first', stage: 'LEAD' }),
+    opportunity({ createdAt: at('2026-10-31T23:59:59.999Z'), id: 'opened-last', stage: 'LEAD' }),
+    opportunity({ createdAt: at('2026-11-01T00:00:00.000Z'), id: 'opened-after', stage: 'LEAD' }),
+  ];
+  const summary = computePipelineSummary({ ...fixture, opportunities }, range);
+  expect(summary.won.count).toBe(1);
+  expect(summary.lost.count).toBe(1);
+  expect(summary.opened.count).toBe(2);
+});
+
+it('gives a real rate when only won or only lost opportunities closed', () => {
+  const closedOn = at('2026-09-15T12:00:00.000Z');
+  const onlyWon = [opportunity({ closedAt: closedOn, id: 'w', stage: 'WON' })];
+  const onlyLost = [opportunity({ closedAt: closedOn, id: 'l', stage: 'LOST' })];
+  expect(computePipelineSummary({ ...fixture, opportunities: onlyWon }, range).winRate).toBe(100);
+  expect(computePipelineSummary({ ...fixture, opportunities: onlyLost }, range).winRate).toBe(0);
+});
+
+it('sums values in haléře without rounding and skips opportunities without a creation time', () => {
+  const opportunities = [
+    opportunity({ amountMinor: 12_345, createdAt: at('2026-09-02T08:00:00.000Z'), id: 'a', stage: 'PROPOSAL' }),
+    opportunity({ amountMinor: 1, createdAt: at('2026-09-03T08:00:00.000Z'), id: 'b', stage: 'PROPOSAL' }),
+    opportunity({ amountMinor: 99, id: 'undated', stage: 'PROPOSAL' }),
+  ];
+  const summary = computePipelineSummary({ ...fixture, opportunities }, range);
+  expect(summary.opened).toEqual({ count: 2, valueMinor: 12_346 });
+  expect(summary.open.byStage.find((stage) => stage.stage === 'PROPOSAL')).toEqual({
+    count: 3,
+    label: 'Nabídka',
+    stage: 'PROPOSAL',
+    valueMinor: 12_445,
+  });
 });

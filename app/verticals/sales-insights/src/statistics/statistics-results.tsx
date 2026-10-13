@@ -14,8 +14,10 @@ import type {
   MetricPoint,
   MetricResult,
   MetricUnit,
+  PipelineSummary,
 } from '../../shared/metrics.ts';
 import { formatAxisValue, formatMetricValue, formatPeriodDay } from './format-metric.ts';
+import { PipelineSummaryCard } from './pipeline-summary-card.tsx';
 import { chartScale, isTimeGrouping, PIE_SLICE_LIMIT, pieSlices, roundSeriesToTotal } from './statistics-query.ts';
 import type { ChartKind, StatisticsQuery } from './statistics-query.ts';
 
@@ -199,6 +201,8 @@ export interface StatisticsResultsProps {
   readonly kpis: readonly KpiValue[] | undefined;
   readonly loading: boolean;
   readonly metric: MetricCatalogEntry | undefined;
+  /** Open pipeline today next to the period's opened and closed opportunities. */
+  readonly pipeline: PipelineSummary | undefined;
   readonly query: StatisticsQuery;
   readonly result: MetricResult | undefined;
 }
@@ -211,8 +215,16 @@ const displayedSeries = (result: MetricResult | undefined, unit: MetricUnit): re
     : rawSeries;
 };
 
-/** KPI row, the selected metric as a chart, and its series as a dense table. */
-export const StatisticsResults = ({ isForbidden, kpis, loading, metric, query, result }: StatisticsResultsProps) => {
+/** KPI row, the pipeline card, the selected metric as a chart, and its series as a dense table. */
+export const StatisticsResults = ({
+  isForbidden,
+  kpis,
+  loading,
+  metric,
+  pipeline,
+  query,
+  result,
+}: StatisticsResultsProps) => {
   const { t } = useModernI18n();
   const unit = metric?.unit ?? 'count';
   const title = metric?.label ?? '';
@@ -230,6 +242,14 @@ export const StatisticsResults = ({ isForbidden, kpis, loading, metric, query, r
         kpis={loading ? undefined : kpis}
         loadingLabel={t('sales-insights.loadingContent')}
         noAccessLabel={t(`${key}.noAccess`)}
+      />
+
+      <PipelineSummaryCard
+        forbidden={isForbidden('pipeline_open_value')}
+        from={query.from}
+        loading={loading}
+        summary={pipeline}
+        to={query.to}
       />
 
       <SectionCard
