@@ -6,7 +6,14 @@ import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { isSnapshotMetric } from '../../shared/metrics.ts';
-import type { KpiValue, MetricCatalogEntry, MetricPoint, MetricResult, MetricUnit } from '../../shared/metrics.ts';
+import type {
+  Grouping,
+  KpiValue,
+  MetricCatalogEntry,
+  MetricPoint,
+  MetricResult,
+  MetricUnit,
+} from '../../shared/metrics.ts';
 import { formatMetricValue } from './format-metric.ts';
 import { chartScale, isTimeGrouping, PIE_SLICE_LIMIT, pieSlices, roundSeriesToTotal } from './statistics-query.ts';
 import type { ChartKind, StatisticsQuery } from './statistics-query.ts';
@@ -141,8 +148,16 @@ const ChartBody = ({
   );
 };
 
-const seriesColumns = (unit: MetricUnit, groupHeader: string, valueHeader: string): ColumnDef<MetricPoint>[] => [
-  { accessorKey: 'label', header: groupHeader, meta: { type: 'string' } },
+const seriesColumns = (
+  unit: MetricUnit,
+  groupBy: Grouping,
+  groupHeader: string,
+  valueHeader: string,
+): ColumnDef<MetricPoint>[] => [
+  // Time groups sort by their ISO period key; the Czech label would sort "bře" before "led".
+  isTimeGrouping(groupBy)
+    ? { accessorKey: 'key', cell: (info) => info.row.original.label, header: groupHeader, meta: { type: 'string' } }
+    : { accessorKey: 'label', header: groupHeader, meta: { type: 'string' } },
   {
     accessorKey: 'value',
     cell: (info) => formatMetricValue(info.getValue<number>(), unit),
@@ -223,10 +238,14 @@ export const StatisticsResults = ({ kpis, loading, metric, query, result }: Stat
 
       {showTable && (
         <DataTable
-          columns={seriesColumns(unit, t(`${key}.table.group`), t(`${key}.table.value`))}
+          // A new grouping starts unsorted, so a sort chosen for the previous grouping does not carry over.
+          columns={seriesColumns(unit, query.groupBy, t(`${key}.table.group`), t(`${key}.table.value`))}
           data={[...series]}
           getRowId={(row) => row.key}
+          key={query.groupBy}
+          maxHeight="calc(100dvh - 15rem)"
           size="sm"
+          stickyHeader
           translations={{ emptyTitle: t(`${key}.empty`), loadingLabel: t('sales-insights.loading') }}
         />
       )}

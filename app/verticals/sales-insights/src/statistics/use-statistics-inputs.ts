@@ -3,7 +3,7 @@ import { listMovements, listOrders, listProducts } from '@app/merchandise/client
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { listInvoices } from '@app/siampark-billing-finance/clients/records';
 import { listTasks } from '@app/siampark-work/clients/records';
-import { assignmentsFor, listTags } from '@app/tagging/clients/records';
+import { assignmentsForSubjects, listTags } from '@app/tagging/clients/records';
 import { listEmployees } from '@app/workforce/clients/records';
 import { Effect, Random, Schema } from 'effect';
 import { useEffect, useState } from 'react';
@@ -154,18 +154,19 @@ const subjectKinds = ['customer', 'employee', 'opportunity', 'order', 'product']
 
 /** Reads every producer once. Each read is independent; a failed read is reported in `failed`. */
 const loadStatisticsInputs = Effect.gen(function* statisticsInputs() {
-  const customers = yield* sourced<readonly NamedInput[]>(
-    'customers',
-    [],
-  )(
-    listCustomers({}).pipe(
-      Effect.map((items) =>
-        items.map((item): NamedInput => ({ id: item.partyId, name: item.displayName ?? item.partyId })),
-      ),
-    ),
-  );
-  const [employees, invoices, movements, opportunities, orders, products, tags, tasks] = yield* Effect.all(
+  // The entity reads are independent and start together; only the tag assignments wait for the entity ids.
+  const [customers, employees, invoices, movements, opportunities, orders, products, tags, tasks] = yield* Effect.all(
     [
+      sourced<readonly NamedInput[]>(
+        'customers',
+        [],
+      )(
+        listCustomers({}).pipe(
+          Effect.map((items) =>
+            items.map((item): NamedInput => ({ id: item.partyId, name: item.displayName ?? item.partyId })),
+          ),
+        ),
+      ),
       sourced<readonly EmployeeInput[]>(
         'employees',
         [],
@@ -224,7 +225,7 @@ const loadStatisticsInputs = Effect.gen(function* statisticsInputs() {
         [],
       )(listTasks({}).pipe(Effect.map((response) => response.items.map(toTask)))),
     ],
-    { concurrency: 4 },
+    { concurrency: 6 },
   );
 
   const idsByKind = {
@@ -234,26 +235,22 @@ const loadStatisticsInputs = Effect.gen(function* statisticsInputs() {
     order: orders.value.map((order) => order.id),
     product: products.value.map((product) => product.id),
   } satisfies Record<(typeof subjectKinds)[number], readonly string[]>;
-  const assignments = yield* Effect.all(
-    subjectKinds.map((kind) =>
-      sourced<readonly TagAssignmentInput[]>(
-        'tags',
-        [],
-      )(
-        assignmentsFor(kind, idsByKind[kind]).pipe(
-          Effect.map((items) =>
-            items.map((item): TagAssignmentInput => ({
-              subject: { id: item.subject.id, kind: item.subject.kind },
-              tagId: item.tagId,
-            })),
-          ),
-        ),
+  // One tagging read covers all five subject kinds.
+  const assignments = yield* sourced<readonly TagAssignmentInput[]>(
+    'tags',
+    [],
+  )(
+    assignmentsForSubjects(subjectKinds.flatMap((kind) => idsByKind[kind].map((id) => ({ id, kind })))).pipe(
+      Effect.map((items) =>
+        items.map((item): TagAssignmentInput => ({
+          subject: { id: item.subject.id, kind: item.subject.kind },
+          tagId: item.tagId,
+        })),
       ),
     ),
-    { concurrency: 5 },
   );
 
-  const all = [customers, employees, invoices, movements, opportunities, orders, products, tags, tasks, ...assignments];
+  const all = [customers, employees, invoices, movements, opportunities, orders, products, tags, tasks, assignments];
   const failed = [...new Set(all.flatMap((source) => (source.failed === undefined ? [] : [source.failed])))];
   return {
     failed,
@@ -265,7 +262,7 @@ const loadStatisticsInputs = Effect.gen(function* statisticsInputs() {
       opportunities: opportunities.value,
       orders: orders.value,
       products: products.value,
-      tagAssignments: assignments.flatMap((source) => source.value),
+      tagAssignments: assignments.value,
       tags: tags.value,
       tasks: tasks.value,
     } satisfies MetricInputs,

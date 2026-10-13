@@ -317,7 +317,7 @@ it('computes the four headline KPIs over the period', () => {
   const byId = new Map(kpis.map((kpi) => [kpi.id, kpi.value]));
   expect(kpis.map((kpi) => [kpi.id, kpi.label, kpi.unit])).toEqual([
     ['revenue_invoiced', 'Tržby (potvrzené)', 'CZK'],
-    ['pipeline_open_value', 'Otevřená pipeline', 'CZK'],
+    ['pipeline_open_value', 'Otevřená pipeline (k dnešku)', 'CZK'],
     ['opportunities_won', 'Vyhráno', 'CZK'],
     ['win_rate', 'Úspěšnost', 'percent'],
   ]);

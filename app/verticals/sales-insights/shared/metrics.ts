@@ -596,10 +596,13 @@ const METRIC_ORDER: readonly MetricId[] = [
   'tasks_done',
 ];
 
-/** The four StatRow tiles. Their values depend on the period only, never on the selected metric or grouping. */
+/**
+ * The four StatRow tiles. Their values depend on the period only, never on the selected metric or grouping.
+ * The open pipeline is a snapshot of today, so its label says so instead of seeming to ignore the period.
+ */
 const KPI_TILES: readonly { readonly id: MetricId; readonly label: string }[] = [
   { id: 'revenue_invoiced', label: 'Tržby (potvrzené)' },
-  { id: 'pipeline_open_value', label: 'Otevřená pipeline' },
+  { id: 'pipeline_open_value', label: 'Otevřená pipeline (k dnešku)' },
   { id: 'opportunities_won', label: 'Vyhráno' },
   { id: 'win_rate', label: 'Úspěšnost' },
 ];
