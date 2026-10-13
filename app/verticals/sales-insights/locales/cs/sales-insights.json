@@ -38,6 +38,7 @@
         "chartDescription": "Období {{from}} – {{to}}",
         "chartLabel": "{{metric}}, {{from}} až {{to}}",
         "chartType": "Typ grafu",
+        "dateInvalid": "Zadejte platné datum.",
         "description": "Vyberte ukazatel, typ grafu, období a seskupení",
         "empty": "Za zvolené období nejsou žádná data.",
         "grouping": "Seskupit podle",
@@ -52,6 +53,9 @@
           "week": "Týden"
         },
         "metric": "Ukazatel",
+        "noAccess": "Bez oprávnění",
+        "noAccessMetric": "Vaše role nemá přístup k datům tohoto ukazatele.",
+        "noAccessSources": "Vaše role nemá přístup k těmto datům: {{sources}}. Ukazatele z nich se nezobrazují.",
         "other": "Ostatní",
         "period": "Období",
         "pieRateWarning": "Koláč ukazuje podíly na celku, ale míra úspěšnosti se nesčítá. Zvolte sloupcový graf.",

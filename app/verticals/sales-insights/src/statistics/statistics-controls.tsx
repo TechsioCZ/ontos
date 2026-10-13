@@ -38,11 +38,14 @@ const segmentNumber = (group: Element, type: 'day' | 'month' | 'year'): number |
   return raw === null || raw === undefined || raw === '' ? undefined : Number(raw);
 };
 
+// A year typed one digit at a time passes through 2 and 20; only a four-digit year is a date the user meant.
+const MIN_TYPED_YEAR = 1000;
+
 const typedDay = (group: Element): CalendarDay | undefined => {
   const year = segmentNumber(group, 'year');
   const month = segmentNumber(group, 'month');
   const day = segmentNumber(group, 'day');
-  if (year === undefined || month === undefined || day === undefined) {
+  if (year === undefined || year < MIN_TYPED_YEAR || month === undefined || day === undefined) {
     return undefined;
   }
   return asCalendarDay(`${padNumber(year, 4)}-${padNumber(month, 2)}-${padNumber(day, 2)}`);
@@ -80,9 +83,12 @@ export const StatisticsControls = ({ invertedRange, onChange, query, today }: St
   // The draft applies only to the period it was made against, so a URL change drops it without an effect.
   const periodKey = `${query.from}/${query.to}`;
   const [draftState, setDraftState] = useState<{ readonly period: string; readonly range: DayRange } | null>(null);
+  // A blurred picker with an empty or impossible typed date keeps its segments and marks them invalid.
+  const [invalidPeriod, setInvalidPeriod] = useState<string | null>(null);
   // Read only in handlers: whether the calendar popup is open when a value arrives.
   const calendarOpen = useRef(false);
   const draft = draftState?.period === periodKey ? draftState.range : null;
+  const typedInvalid = invalidPeriod === periodKey;
   const setDraft = (range: DayRange | null) => setDraftState(range === null ? null : { period: periodKey, range });
   const commitRange = (range: DayRange) => {
     if (isInvertedRange(range)) {
@@ -90,6 +96,7 @@ export const StatisticsControls = ({ invertedRange, onChange, query, today }: St
       return;
     }
     setDraft(null);
+    setInvalidPeriod(null);
     // An inverted URL range must be rewritten even when the new range equals the fallback period.
     if (invertedRange !== undefined || range.from !== query.from || range.to !== query.to) {
       onChange(range);
@@ -99,6 +106,7 @@ export const StatisticsControls = ({ invertedRange, onChange, query, today }: St
   const commitDraft = (root: Element) => {
     const typed = typedRangeOf(root);
     if (typed === null) {
+      setInvalidPeriod(periodKey);
       return;
     }
     const next = typed ?? draft;
@@ -160,7 +168,7 @@ export const StatisticsControls = ({ invertedRange, onChange, query, today }: St
       </div>
       <div className="flex min-w-0 flex-col gap-100">
         <DatePicker.Root
-          invalid={rangeInvalid}
+          invalid={rangeInvalid || typedInvalid}
           locale="cs-CZ"
           onBlur={onPickerBlur}
           onKeyDown={(event) => {
@@ -225,6 +233,7 @@ export const StatisticsControls = ({ invertedRange, onChange, query, today }: St
           })}
         </fieldset>
         {rangeInvalid && <StatusText status="error">{t(`${key}.rangeInvalid`)}</StatusText>}
+        {!rangeInvalid && typedInvalid && <StatusText status="error">{t(`${key}.dateInvalid`)}</StatusText>}
       </div>
       <div className="w-48">
         <SelectTemplate

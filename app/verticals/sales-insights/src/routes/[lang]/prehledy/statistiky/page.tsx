@@ -7,6 +7,7 @@ import csResource from '../../../../../locales/cs/sales-insights.json';
 import enResource from '../../../../../locales/en/sales-insights.json';
 import { computeKpis, computeMetric, metricCatalog } from '../../../../../shared/metrics.ts';
 import type { CalendarDay } from '../../../../../shared/metrics.ts';
+import { isMetricForbidden } from '../../../../statistics/statistics-access.ts';
 import { StatisticsControls } from '../../../../statistics/statistics-controls.tsx';
 import { StatisticsResults } from '../../../../statistics/statistics-results.tsx';
 import type { StatisticsQuery } from '../../../../statistics/statistics-query.ts';
@@ -60,6 +61,10 @@ const StatisticsPageContent = () => {
   // The StatRow takes only the period and the loaded inputs, so metric, chart and grouping changes cannot move it.
   const kpis =
     data.status === 'ready' ? computeKpis(data.inputs, { from: query.from, to: query.to, today }) : undefined;
+  const forbidden = data.status === 'ready' ? data.forbidden : [];
+  const forbiddenSet = new Set(forbidden);
+  const forbiddenText =
+    forbidden.length > 0 ? forbidden.map((source) => t(`${key}.sources.${source}`)).join(', ') : undefined;
   const failedText =
     data.status === 'ready' && data.failed.length > 0
       ? data.failed.map((source) => t(`${key}.sources.${source}`)).join(', ')
@@ -70,6 +75,11 @@ const StatisticsPageContent = () => {
       <UltramodernRouteHead />
       <section className="flex min-w-0 flex-col gap-250 text-fg-primary">
         <PageHeader description={t(`${key}.description`)} title={t(`${key}.title`)} />
+        {forbiddenText !== undefined && (
+          <StatusText showIcon status="default">
+            {t(`${key}.noAccessSources`, { sources: forbiddenText })}
+          </StatusText>
+        )}
         {failedText !== undefined && (
           <StatusText showIcon status="warning">
             {t(`${key}.sourceError`, { sources: failedText })}
@@ -78,7 +88,14 @@ const StatisticsPageContent = () => {
         <SectionCard>
           <StatisticsControls invertedRange={invertedRangeOf(search)} onChange={onChange} query={query} today={today} />
         </SectionCard>
-        <StatisticsResults kpis={kpis} loading={!ready} metric={metric} query={query} result={result} />
+        <StatisticsResults
+          isForbidden={(id) => isMetricForbidden(id, forbiddenSet)}
+          kpis={kpis}
+          loading={!ready}
+          metric={metric}
+          query={query}
+          result={result}
+        />
       </section>
     </>
   );

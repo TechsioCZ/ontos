@@ -38,6 +38,7 @@
         "chartDescription": "Period {{from}} – {{to}}",
         "chartLabel": "{{metric}}, {{from}} to {{to}}",
         "chartType": "Chart type",
+        "dateInvalid": "Enter a valid date.",
         "description": "Choose a metric, chart type, period and grouping",
         "empty": "No data for the selected period.",
         "grouping": "Group by",
@@ -52,6 +53,9 @@
           "week": "Week"
         },
         "metric": "Metric",
+        "noAccess": "No access",
+        "noAccessMetric": "Your role cannot access the data for this metric.",
+        "noAccessSources": "Your role cannot access this data: {{sources}}. Metrics based on it are not shown.",
         "other": "Other",
         "period": "Period",
         "pieRateWarning": "A pie shows shares of a whole, but a rate does not add up. Choose a bar chart.",

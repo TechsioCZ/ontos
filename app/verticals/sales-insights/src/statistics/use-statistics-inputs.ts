@@ -5,7 +5,7 @@ import { listInvoices } from '@app/siampark-billing-finance/clients/records';
 import { listTasks } from '@app/siampark-work/clients/records';
 import { assignmentsForSubjects, listTags } from '@app/tagging/clients/records';
 import { listEmployees } from '@app/workforce/clients/records';
-import { Effect, Random, Schema } from 'effect';
+import { Effect, Random, Ref, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type {
   EmployeeInput,
@@ -36,23 +36,57 @@ export type StatisticsSource = typeof StatisticsSourceSchema.Type;
 
 export type StatisticsData =
   | { readonly status: 'loading' }
-  | { readonly failed: readonly StatisticsSource[]; readonly inputs: MetricInputs; readonly status: 'ready' };
+  | {
+      readonly failed: readonly StatisticsSource[];
+      /** Sources the producer refused with 403: this role may not read them, so they are a permission state. */
+      readonly forbidden: readonly StatisticsSource[];
+      readonly inputs: MetricInputs;
+      readonly status: 'ready';
+    };
 
 interface Sourced<A> {
   readonly cause?: unknown;
   readonly failed?: StatisticsSource;
+  readonly forbidden?: StatisticsSource;
   readonly value: A;
 }
 
-/** One failing producer read must not blank the page: it becomes an empty list plus a warning. */
+const isForbiddenProblem = Schema.is(Schema.Struct({ status: Schema.Literal(403) }));
+
+/**
+ * Sources refused with 403 while this module is loaded. A role does not change without a sign-out, which reloads
+ * the document, so a refused source is not read again: a revisit fires no request the producer would refuse.
+ */
+const refusedSources = browserRuntime.runSync(Ref.make<ReadonlySet<StatisticsSource>>(new Set()));
+
+const withSource =
+  (source: StatisticsSource) =>
+  (current: ReadonlySet<StatisticsSource>): ReadonlySet<StatisticsSource> =>
+    new Set([...current, source]);
+
+/**
+ * One failing producer read must not blank the page: it becomes an empty list plus a warning. A 403 becomes an
+ * empty list plus a permission state, and later loads skip that read.
+ */
 const sourced =
   <A>(source: StatisticsSource, fallback: A) =>
   <E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<Sourced<A>, never, R> =>
-    effect.pipe(
-      Effect.match({
-        onFailure: (cause) => ({ cause, failed: source, value: fallback }),
-        onSuccess: (value) => ({ value }),
-      }),
+    Ref.get(refusedSources).pipe(
+      Effect.flatMap((refused) =>
+        refused.has(source)
+          ? Effect.succeed<Sourced<A>>({ forbidden: source, value: fallback })
+          : effect.pipe(
+              Effect.matchEffect({
+                onFailure: (cause): Effect.Effect<Sourced<A>> =>
+                  isForbiddenProblem(cause)
+                    ? Ref.update(refusedSources, withSource(source)).pipe(
+                        Effect.as({ cause, forbidden: source, value: fallback }),
+                      )
+                    : Effect.succeed({ cause, failed: source, value: fallback }),
+                onSuccess: (value): Effect.Effect<Sourced<A>> => Effect.succeed({ value }),
+              }),
+            ),
+      ),
     );
 
 const requestId = (operation: string) =>
@@ -252,8 +286,10 @@ const loadStatisticsInputs = Effect.gen(function* statisticsInputs() {
 
   const all = [customers, employees, invoices, movements, opportunities, orders, products, tags, tasks, assignments];
   const failed = [...new Set(all.flatMap((source) => (source.failed === undefined ? [] : [source.failed])))];
+  const forbidden = [...new Set(all.flatMap((source) => (source.forbidden === undefined ? [] : [source.forbidden])))];
   return {
     failed,
+    forbidden,
     inputs: {
       customers: customers.value,
       employees: employees.value,
@@ -268,6 +304,8 @@ const loadStatisticsInputs = Effect.gen(function* statisticsInputs() {
     } satisfies MetricInputs,
   };
 });
+
+const noSources: readonly StatisticsSource[] = [];
 
 const EMPTY_INPUTS: MetricInputs = {
   employees: [],
@@ -292,10 +330,15 @@ export const useStatisticsInputs = (): StatisticsData => {
       });
     const program = loadStatisticsInputs.pipe(
       Effect.match({
-        onFailure: (cause) => ({ cause, failed: StatisticsSourceSchema.literals, inputs: EMPTY_INPUTS }),
-        onSuccess: (result) => ({ failed: result.failed, inputs: result.inputs }),
+        onFailure: (cause) => ({
+          cause,
+          failed: StatisticsSourceSchema.literals,
+          forbidden: noSources,
+          inputs: EMPTY_INPUTS,
+        }),
+        onSuccess: (result) => ({ failed: result.failed, forbidden: result.forbidden, inputs: result.inputs }),
       }),
-      Effect.flatMap(({ failed, inputs }) => publish({ failed, inputs, status: 'ready' })),
+      Effect.flatMap(({ failed, forbidden, inputs }) => publish({ failed, forbidden, inputs, status: 'ready' })),
     );
     void browserRuntime.runPromise(program);
     return () => {

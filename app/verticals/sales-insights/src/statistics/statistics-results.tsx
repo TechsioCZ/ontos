@@ -10,6 +10,7 @@ import type {
   Grouping,
   KpiValue,
   MetricCatalogEntry,
+  MetricId,
   MetricPoint,
   MetricResult,
   MetricUnit,
@@ -22,12 +23,16 @@ const key = 'sales-insights.pages.statistics';
 const SKELETON_KPI_COUNT = 4;
 
 const KpiRow = ({
+  isForbidden,
   kpis,
   loadingLabel,
+  noAccessLabel,
 }: {
+  readonly isForbidden: (id: MetricId) => boolean;
   readonly kpis: readonly KpiValue[] | undefined;
   /** Accessible name of the loading skeletons; ui-kit's default is English. */
   readonly loadingLabel: string;
+  readonly noAccessLabel: string;
 }) => (
   <StatRow>
     {kpis === undefined
@@ -36,7 +41,14 @@ const KpiRow = ({
             <Skeleton.Rectangle className="h-24 w-full" />
           </Skeleton>
         ))
-      : kpis.map((kpi) => <StatCard key={kpi.id} label={kpi.label} value={formatMetricValue(kpi.value, kpi.unit)} />)}
+      : kpis.map((kpi) =>
+          // A tile the role may not read says so instead of showing 0 Kč.
+          isForbidden(kpi.id) ? (
+            <StatCard hint={noAccessLabel} key={kpi.id} label={kpi.label} value="—" />
+          ) : (
+            <StatCard key={kpi.id} label={kpi.label} value={formatMetricValue(kpi.value, kpi.unit)} />
+          ),
+        )}
   </StatRow>
 );
 
@@ -68,7 +80,8 @@ interface RankedBarsProps {
 const RankedBars = ({ ariaLabel, points, unit }: RankedBarsProps) => {
   const max = Math.max(0, ...points.map((point) => point.value));
   return (
-    <ul aria-label={ariaLabel} className="flex flex-col gap-100">
+    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <img> cannot hold the bar rows; the table below repeats these values.
+    <ul aria-label={ariaLabel} className="flex flex-col gap-100" role="img">
       {points.map((point) => {
         const unassigned = point.key === UNASSIGNED_KEY;
         const share = max > 0 ? (point.value / max) * 100 : 0;
@@ -178,6 +191,8 @@ const pieWarningKey = (query: StatisticsQuery, unit: MetricUnit): 'pieRateWarnin
 };
 
 export interface StatisticsResultsProps {
+  /** Metrics whose data this role may not read: their tiles and chart show a permission state. */
+  readonly isForbidden: (id: MetricId) => boolean;
   readonly kpis: readonly KpiValue[] | undefined;
   readonly loading: boolean;
   readonly metric: MetricCatalogEntry | undefined;
@@ -185,29 +200,38 @@ export interface StatisticsResultsProps {
   readonly result: MetricResult | undefined;
 }
 
+/** Whole-Kč rows that add up to the whole-Kč total, so the table never disagrees with "Celkem" by rounding. */
+const displayedSeries = (result: MetricResult | undefined, unit: MetricUnit): readonly MetricPoint[] => {
+  const rawSeries = result?.series ?? [];
+  return unit === 'CZK' && result !== undefined && result.total !== null
+    ? roundSeriesToTotal(rawSeries, result.total, chartScale(unit))
+    : rawSeries;
+};
+
 /** KPI row, the selected metric as a chart, and its series as a dense table. */
-export const StatisticsResults = ({ kpis, loading, metric, query, result }: StatisticsResultsProps) => {
+export const StatisticsResults = ({ isForbidden, kpis, loading, metric, query, result }: StatisticsResultsProps) => {
   const { t } = useModernI18n();
   const unit = metric?.unit ?? 'count';
   const title = metric?.label ?? '';
   const from = formatDate(query.from);
   const to = formatDate(query.to);
-  const rawSeries = result?.series ?? [];
-  // Whole-Kč rows that add up to the whole-Kč total, so the table never disagrees with "Celkem" by rounding.
-  const series =
-    unit === 'CZK' && result !== undefined && result.total !== null
-      ? roundSeriesToTotal(rawSeries, result.total, chartScale(unit))
-      : rawSeries;
+  const blocked = !loading && isForbidden(query.metric);
+  const series = blocked ? [] : displayedSeries(result, unit);
   const pieWarning = pieWarningKey(query, unit);
   const showTable = !loading && series.length > 0;
 
   return (
     <div className="flex min-w-0 flex-col gap-250">
-      <KpiRow kpis={loading ? undefined : kpis} loadingLabel={t('sales-insights.loadingContent')} />
+      <KpiRow
+        isForbidden={isForbidden}
+        kpis={loading ? undefined : kpis}
+        loadingLabel={t('sales-insights.loadingContent')}
+        noAccessLabel={t(`${key}.noAccess`)}
+      />
 
       <SectionCard
         actions={
-          result === undefined ? undefined : (
+          result === undefined || blocked ? undefined : (
             <span className="tabular-nums text-sm">
               {t(unit === 'percent' ? `${key}.rateTotal` : `${key}.total`, {
                 value: formatMetricValue(result.total, unit),
@@ -225,8 +249,8 @@ export const StatisticsResults = ({ kpis, loading, metric, query, result }: Stat
           <ChartBody
             ariaLabel={t(`${key}.chartLabel`, { from, metric: title, to })}
             chart={query.chart}
-            emptyText={t(`${key}.empty`)}
-            loading={loading || result === undefined}
+            emptyText={blocked ? t(`${key}.noAccessMetric`) : t(`${key}.empty`)}
+            loading={loading || (result === undefined && !blocked)}
             loadingLabel={t('sales-insights.loadingContent')}
             otherLabel={t(`${key}.other`)}
             series={series}
