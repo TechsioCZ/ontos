@@ -296,6 +296,26 @@ it.effect('submits valid values through the Shell authentication client and navi
   }),
 );
 
+it.effect('says the app is opening while the next page loads after a successful sign-in', () =>
+  Effect.gen(function* saysTheAppIsOpening() {
+    const navigation = Promise.withResolvers<null>();
+    navigateMock.mockReturnValueOnce(navigation.promise);
+    yield* submitLogin('admin', 'secret');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+        const submit = screen.getByRole('button', { name: /shell\.login\.opening/u });
+        expect(submit.hasAttribute('disabled')).toBe(true);
+        expect(screen.queryByText('shell.login.pending')).toBeNull();
+      }),
+    );
+
+    navigation.resolve(null);
+    yield* Effect.promise(() => waitFor(() => expect(getSubmit().hasAttribute('disabled')).toBe(false)));
+  }),
+);
+
 it.effect('returns to the protected page that sent the visitor to sign-in, with a fresh page cache', () =>
   Effect.gen(function* returnsToProtectedPage() {
     window.history.replaceState(null, '', '/en/login?returnTo=%2Fen%2Fprehledy%2Fstatistiky%3Fgroup%3Dmonth');

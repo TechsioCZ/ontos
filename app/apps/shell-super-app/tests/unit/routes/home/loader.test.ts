@@ -288,3 +288,22 @@ it.effect('reuses one authenticated browser session across loaders and rereads a
     expect(currentSessionMock).toHaveBeenCalledTimes(3);
   }),
 );
+
+it.effect('shares one composition, tenant and legal-entity read across concurrent browser loaders', () =>
+  Effect.gen(function* verifyContextMemo() {
+    yield* resetBrowserSessionCache;
+    const load = loadHomePageModel(new Request('https://shell.example.test/en')).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+    );
+    yield* Effect.all([load, load, load], { concurrency: 'unbounded' });
+    expect(shellCompositionMock).toHaveBeenCalledTimes(1);
+    expect(availableTenantsMock).toHaveBeenCalledTimes(1);
+    expect(availableLegalEntitiesMock).toHaveBeenCalledTimes(1);
+
+    yield* resetBrowserSessionCache;
+    availableTenantsMock.mockReturnValueOnce(Effect.fail({ _tag: 'TenantInternalProblem' }));
+    yield* load;
+    yield* load;
+    expect(availableTenantsMock).toHaveBeenCalledTimes(3);
+  }),
+);

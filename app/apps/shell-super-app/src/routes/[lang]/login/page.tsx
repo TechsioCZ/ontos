@@ -51,7 +51,9 @@ const LoginPage = () => {
   const loginRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const [validation, setValidation] = useState<LoginValidation>(validLogin);
-  const [submitting, setSubmitting] = useState(false);
+  // After a successful sign-in the URL moves at once, but this form stays on screen until the next page has loaded.
+  // The button then says the app is opening instead of still claiming to sign in.
+  const [attempt, setAttempt] = useState<'idle' | 'opening' | 'signing-in'>('idle');
   // A form action resets its uncontrolled fields after every attempt; keep the login so only the password is retyped.
   const [attemptedLogin, setAttemptedLogin] = useState('');
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
@@ -66,7 +68,7 @@ const LoginPage = () => {
     });
 
   const handleSubmit = (formData: FormData) => {
-    if (submitting) {
+    if (attempt !== 'idle') {
       return;
     }
 
@@ -111,7 +113,7 @@ const LoginPage = () => {
 
     // A sign-in attempt supersedes the feedback of earlier attempts, so stale validation toasts go away.
     toaster.dismiss();
-    setSubmitting(true);
+    setAttempt('signing-in');
     void browserRuntime.runPromise(
       signIn(credentials.value, { locale: language }).pipe(
         Effect.matchEffect({
@@ -126,7 +128,11 @@ const LoginPage = () => {
               passwordRef.current?.focus();
             }),
           onSuccess: () =>
-            Effect.tryPromise(() => router.invalidate({ sync: true })).pipe(
+            Effect.tryPromise(() => {
+              // Signed in: what remains is loading the next page, which can take a few seconds.
+              setAttempt('opening');
+              return router.invalidate({ sync: true });
+            }).pipe(
               Effect.andThen(
                 Effect.tryPromise(() => {
                   // Cached pages hold anonymous loader data; an invalidated cached page would render that stale
@@ -145,7 +151,7 @@ const LoginPage = () => {
               }),
             ),
         }),
-        Effect.ensuring(Effect.sync(() => setSubmitting(false))),
+        Effect.ensuring(Effect.sync(() => setAttempt('idle'))),
       ),
     );
   };
@@ -188,9 +194,9 @@ const LoginPage = () => {
               />
               <Button
                 block
-                disabled={submitting}
-                isLoading={submitting}
-                loadingText={t('shell.login.pending')}
+                disabled={attempt !== 'idle'}
+                isLoading={attempt !== 'idle'}
+                loadingText={t(attempt === 'opening' ? 'shell.login.opening' : 'shell.login.pending')}
                 size="md"
                 theme="solid"
                 type="submit"

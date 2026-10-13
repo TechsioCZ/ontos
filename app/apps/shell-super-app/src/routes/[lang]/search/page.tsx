@@ -42,6 +42,8 @@ const SearchResultItem = ({
           resourceId: result.ref.resourceId,
           resourceType: result.ref.resourceType,
         }}
+        // Every result would otherwise preload its page as soon as it scrolls into view.
+        prefetch="intent"
         to="/resources/$moduleId/$resourceType/$resourceId"
         variant="secondary"
       >

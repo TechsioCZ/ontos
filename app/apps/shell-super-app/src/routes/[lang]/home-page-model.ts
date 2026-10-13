@@ -90,6 +90,9 @@ const tenantRead = (error: AvailableTenantsClientError, tenantId: SafeTenantIden
     Match.exhaustive,
   );
 
+/** How long one successful browser read is reused. */
+const BROWSER_READ_TTL = '30 seconds';
+
 /**
  * TanStack runs this loader for every navigation and every link preload, so one Zákazníci visit read
  * `/auth/session` more than a dozen times. In the browser an authenticated session is reused for a short
@@ -101,17 +104,99 @@ const tenantRead = (error: AvailableTenantsClientError, tenantId: SafeTenantIden
 const browserSessionCache = browserRuntime.runSync(
   Cache.makeWith((baseUrl: string) => currentSession({ baseUrl: new URL(baseUrl) }), {
     capacity: 4,
-    timeToLive: (exit) => (Exit.isSuccess(exit) && exit.value.state === 'authenticated' ? '30 seconds' : 0),
+    timeToLive: (exit) => (Exit.isSuccess(exit) && exit.value.state === 'authenticated' ? BROWSER_READ_TTL : 0),
   }),
 );
 
-/** Drops every cached browser session. Tests call it between cases. */
-export const resetBrowserSessionCache = Cache.invalidateAll(browserSessionCache);
+/**
+ * The same loader also read the composition, tenants and legal entities on every navigation and preload, about
+ * 1.6 s each under load. In the browser a successful answer is reused for the same window, keyed by base URL,
+ * tenant, legal entity and (for the composition) the pinned release, so a switch or a new release reads fresh.
+ * Failed and non-available answers are never kept.
+ */
+const keyPart = '\n';
+const browserReadKey = (baseUrl: string, identity: SafeTenantIdentity, extra = '') =>
+  [baseUrl, identity.tenantId, 'legalEntityId' in identity ? String(identity.legalEntityId) : '', extra].join(keyPart);
+const baseUrlOfKey = (key: string) => new URL(key.split(keyPart)[0] ?? '');
+const successTtl = (exit: Exit.Exit<unknown, unknown>) => (Exit.isSuccess(exit) ? BROWSER_READ_TTL : 0);
 
-const sessionFor = ({ baseUrl, ...rest }: ShellAuthenticationClientOptions) =>
+const browserCompositionCache = browserRuntime.runSync(
+  Cache.makeWith(
+    (key: string) => {
+      const requestedRevision = key.split(keyPart)[3] ?? '';
+      return shellComposition(requestedRevision === '' ? {} : { compositionRevision: requestedRevision }, {
+        baseUrl: baseUrlOfKey(key),
+      });
+    },
+    {
+      capacity: 4,
+      timeToLive: (exit) => (Exit.isSuccess(exit) && exit.value.state === 'available' ? BROWSER_READ_TTL : 0),
+    },
+  ),
+);
+const browserLegalEntitiesCache = browserRuntime.runSync(
+  Cache.makeWith((key: string) => availableLegalEntities({ baseUrl: baseUrlOfKey(key) }), {
+    capacity: 4,
+    timeToLive: successTtl,
+  }),
+);
+const browserTenantsCache = browserRuntime.runSync(
+  Cache.makeWith((key: string) => availableTenants({ baseUrl: baseUrlOfKey(key) }), {
+    capacity: 4,
+    timeToLive: successTtl,
+  }),
+);
+
+/** Drops every cached browser read (session, composition, tenants, legal entities). Tests call it between cases. */
+export const resetBrowserSessionCache = Effect.all(
+  [
+    Cache.invalidateAll(browserSessionCache),
+    Cache.invalidateAll(browserCompositionCache),
+    Cache.invalidateAll(browserLegalEntitiesCache),
+    Cache.invalidateAll(browserTenantsCache),
+  ],
+  { concurrency: 1, discard: true },
+);
+
+/** The base URL when this read may use the browser caches; `undefined` for server rendering and explicit locales. */
+const browserBaseUrl = ({ baseUrl, ...rest }: ShellAuthenticationClientOptions) =>
   'document' in globalThis && baseUrl !== undefined && rest.cookie === undefined && rest.locale === undefined
-    ? Cache.get(browserSessionCache, String(baseUrl))
-    : currentSession(baseUrl === undefined ? rest : { ...rest, baseUrl });
+    ? String(baseUrl)
+    : undefined;
+
+const sessionFor = (options: ShellAuthenticationClientOptions) => {
+  const cacheBaseUrl = browserBaseUrl(options);
+  const { baseUrl, ...rest } = options;
+  if (cacheBaseUrl !== undefined) {
+    return Cache.get(browserSessionCache, cacheBaseUrl);
+  }
+  return currentSession(baseUrl === undefined ? rest : { ...rest, baseUrl });
+};
+
+const compositionFor = (
+  requestedRevision: string | undefined,
+  identity: SafeTenantIdentity,
+  options: ShellAuthenticationClientOptions,
+) => {
+  const cacheBaseUrl = browserBaseUrl(options);
+  return cacheBaseUrl === undefined
+    ? shellComposition(requestedRevision === undefined ? {} : { compositionRevision: requestedRevision }, options)
+    : Cache.get(browserCompositionCache, browserReadKey(cacheBaseUrl, identity, requestedRevision ?? ''));
+};
+
+const legalEntitiesFor = (identity: SafeTenantIdentity, options: ShellAuthenticationClientOptions) => {
+  const cacheBaseUrl = browserBaseUrl(options);
+  return cacheBaseUrl === undefined
+    ? availableLegalEntities(options)
+    : Cache.get(browserLegalEntitiesCache, browserReadKey(cacheBaseUrl, identity));
+};
+
+const tenantsFor = (identity: SafeTenantIdentity, options: ShellAuthenticationClientOptions) => {
+  const cacheBaseUrl = browserBaseUrl(options);
+  return cacheBaseUrl === undefined
+    ? availableTenants(options)
+    : Cache.get(browserTenantsCache, browserReadKey(cacheBaseUrl, identity));
+};
 
 export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
   function* loadHomePageModelEffect(request: Request) {
@@ -134,10 +219,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
             : Effect.fail(error),
         ),
       );
-      const composition = yield* shellComposition(
-        requestedRevision === undefined ? {} : { compositionRevision: requestedRevision },
-        options,
-      );
+      const composition = yield* compositionFor(requestedRevision, session.identity, options);
       if (composition.state !== 'available') {
         return unavailableModel;
       }
@@ -153,7 +235,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
     }
     const legalEntities =
       session.state === 'authenticated'
-        ? availableLegalEntities(options).pipe(
+        ? legalEntitiesFor(session.identity, options).pipe(
             Effect.map((response) => ({
               items: response.legalEntities,
               state: 'available' as const,
@@ -171,7 +253,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       {
         legalEntities,
         navigation: Effect.succeed(navigation),
-        tenants: availableTenants(options).pipe(
+        tenants: tenantsFor(session.identity, options).pipe(
           Effect.map(({ tenants }) => ({
             items: tenants,
             state: 'available' as const,

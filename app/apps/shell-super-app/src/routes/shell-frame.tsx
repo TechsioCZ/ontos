@@ -305,11 +305,18 @@ interface ShellNavigationModel {
 
 type Translate = (key: string) => string;
 
-/** LinkButton always forwards `href`; the localized router link derives it from `to`, so drop the empty one. */
+/**
+ * LinkButton always forwards `href`; the localized router link derives it from `to`, so drop the empty one.
+ * The router preloads every link in the viewport by default, and each shell route loader reads the session,
+ * composition, tenants and legal entities, so a page load ran that for every visible navigation item at once.
+ * Shell links preload on intent only.
+ */
 const ShellRouteLink = ({
   href: _unusedHref,
   ...props
-}: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => <LocalizedLink {...props} />;
+}: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => (
+  <LocalizedLink prefetch="intent" {...props} />
+);
 
 const presentationOrder = (entry: DashboardNavigationItem) => {
   const index = siamparkNavigationPresentation.findIndex(
@@ -753,19 +760,25 @@ const DashboardNavigationLink = ({
     ) : null;
   const destination =
     link.enabled && link.href !== null ? (
-      <LinkButton
-        aria-current={link.current ? 'page' : undefined}
-        as={ShellRouteLink}
-        block
-        className={link.current ? 'justify-start font-semibold' : 'justify-start hover:bg-overlay'}
-        icon={link.icon}
-        size="sm"
-        theme={link.current ? 'light' : 'unstyled'}
-        to={link.href}
-        variant={link.current ? 'primary' : 'secondary'}
-      >
-        <Sidebar.Label className="min-w-0 flex-1 truncate text-start">{link.label}</Sidebar.Label>
-      </LinkButton>
+      <Sidebar.Context>
+        {(sidebar) => (
+          <LinkButton
+            aria-current={link.current ? 'page' : undefined}
+            as={ShellRouteLink}
+            block
+            className={link.current ? 'justify-start font-semibold' : 'justify-start hover:bg-overlay'}
+            icon={link.icon}
+            // Below the breakpoint the navigation is a drawer; choosing a destination dismisses it.
+            onClick={() => sidebar.closeMobile()}
+            size="sm"
+            theme={link.current ? 'light' : 'unstyled'}
+            to={link.href}
+            variant={link.current ? 'primary' : 'secondary'}
+          >
+            <Sidebar.Label className="min-w-0 flex-1 truncate text-start">{link.label}</Sidebar.Label>
+          </LinkButton>
+        )}
+      </Sidebar.Context>
     ) : (
       <span className="flex h-form-control-sm items-center gap-button-sm p-button-sm text-button-sm text-fg-secondary">
         <Icon icon={link.icon} size="sm" />
@@ -941,7 +954,8 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         >
           <Header.Container className="flex w-auto min-w-0 flex-1 flex-nowrap items-center gap-200" position="start">
             <Sidebar.Trigger aria-label={t(navigationToggleKey)} side="start" tooltip={t(navigationToggleKey)} />
-            <LocalizedLink className="hidden no-underline md:flex" to="/">
+            {/* The brand is not a navigation item: the router would mark it current on every page. */}
+            <LocalizedLink aria-current={false} className="hidden no-underline md:flex" prefetch="intent" to="/">
               <DashboardBrand />
             </LocalizedLink>
             <div className="min-w-0 max-w-md flex-1">

@@ -125,6 +125,7 @@
         "login": "Enter your login.",
         "password": "Enter your password."
       },
+      "opening": "Opening the app…",
       "pending": "Logging in…",
       "seo": {
         "description": "Sign in to the OntOS workspace."
