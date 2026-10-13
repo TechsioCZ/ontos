@@ -1,3 +1,4 @@
+import { decideModuleStateAccess } from '@app/core-runtime';
 import { describe, expect, it } from 'effect-rstest';
 import { taxApi } from '../../shared/api.ts';
 import { getTaxReadiness } from '../../src/api/tax-client.ts';
@@ -12,6 +13,8 @@ import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-v
 import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revision.action.ts';
 import { finalizeOrderTaxAction } from '../../src/actions/finalize-order-tax.action.ts';
 import { importSellerVatRegimeDeclarationsAction } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
+import { finalOrderTaxRead } from '../../src/api/final-order-tax.read.ts';
+import { taxEvaluationRead } from '../../src/api/tax-evaluation.read.ts';
 import { taxManifest } from '../../vertical.manifest.ts';
 import { taxRegistration } from '../../vertical.registration.ts';
 
@@ -36,6 +39,44 @@ const governanceActionKeys = [
 ];
 
 describe('Tax module contract', () => {
+  it('#949 E29 frozen final Order Tax remains readable after TAX deactivation without enabling new evaluation or writes', () => {
+    const historical = finalOrderTaxRead.descriptor.entrypoint;
+    const prospective = taxEvaluationRead.descriptor.entrypoint;
+    const finalization = finalizeOrderTaxAction.descriptor.entrypoint;
+
+    expect(historical.access).toBe('historical_read');
+    expect(prospective.access).toBe('read');
+    expect(finalization.access).toBe('write');
+    for (const state of ['inactive', 'suspended', 'archived'] as const) {
+      expect(decideModuleStateAccess(state, historical.access), state).toBe('allow');
+      expect(decideModuleStateAccess(state, prospective.access), state).toBe('deny');
+      expect(decideModuleStateAccess(state, finalization.access), state).toBe('deny');
+    }
+  });
+
+  it('#949 E29 historical final Order Tax lookup retains current tenant permission and Selling Legal Entity scope', () => {
+    const { descriptor } = finalOrderTaxRead;
+    expect(descriptor.entrypoint.scope).toBe('tenant');
+    expect(descriptor.entrypoint.moduleKey).toBe('commerce.tax');
+    expect(descriptor.entrypoint.authorization).toEqual({
+      kind: 'context_permission',
+      permission: 'tax.governed.read',
+    });
+    expect(descriptor.legalEntityScope).toBe('required');
+    expect(descriptor.permissionTarget).toBe('module');
+    expect(descriptor.readKey).toBe('commerce.tax.api.final-order-tax');
+    expect(descriptor.evidencePolicy).toEqual({
+      captureMode: 'metadata_only',
+      policyKey: 'commerce.tax.api.final-order-tax.evidence.v1',
+    });
+  });
+
+  it('#949 E29 historical final Order Tax lookup remains denied for quarantined or missing module state', () => {
+    const { access } = finalOrderTaxRead.descriptor.entrypoint;
+    expect(decideModuleStateAccess('quarantined', access)).toBe('deny');
+    expect(decideModuleStateAccess(null, access)).toBe('deny');
+  });
+
   it('publishes the headless Tax Rule and Seller VAT Regime Declaration governance surface', () => {
     expect(taxManifest.module.id).toBe('commerce.tax');
     expect(Object.keys(taxManifest.publicSurface.api).toSorted()).toEqual([
