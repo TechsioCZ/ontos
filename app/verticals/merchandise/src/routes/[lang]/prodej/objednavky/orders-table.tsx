@@ -1,6 +1,6 @@
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
-import { formatDate, formatNumber, StatusBadge } from '@app/admin-ui';
+import { formatDate, formatNumber, StatusBadge, dataTableRowLabels } from '@app/admin-ui';
 import type { Tag } from '@app/tagging/contracts/records';
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
@@ -73,6 +73,7 @@ export const ordersColumns = (
 ];
 
 export const ordersTranslations = (t: Translate): DataTableTranslations => ({
+  ...dataTableRowLabels,
   actionsLabel: t(key('table.actionsLabel')),
   clearSearchLabel: t(key('table.clearSearchLabel')),
   columnsLabel: t(key('table.columnsLabel')),

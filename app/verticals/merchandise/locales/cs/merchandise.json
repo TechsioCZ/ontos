@@ -247,6 +247,7 @@
           "tab": "Historie cen"
         },
         "priceDialog": {
+          "affected": "Počet ovlivněných produktů: {{total}}",
           "description": "Zadejte změnu v procentech. Kladné číslo zdraží, záporné zlevní.",
           "field": "Změna ceny (%)",
           "submit": "Změnit cenu",
@@ -307,14 +308,25 @@
         "validation": {
           "delta": "Zadejte celé číslo různé od nuly.",
           "lowStock": "Zadejte celé číslo 0 nebo větší.",
-          "percent": "Zadejte celé číslo mezi −90 a 1000.",
+          "percent": "Zadejte nenulové celé číslo od −90 do 1000.",
           "positive": "Zadejte částku větší než 0 Kč.",
           "quantity": "Zadejte celé číslo větší než 0.",
           "required": "Vyplňte toto pole.",
           "stock": "Množství převyšuje zásobu na skladě."
         },
         "selectPlaceholder": "Vyberte…"
+      },
+      "records": {
+        "title": "Objednávky a produkty"
       }
+    },
+    "pagination": {
+      "first": "První stránka",
+      "last": "Poslední stránka",
+      "next": "Další stránka",
+      "page": "Stránka {{page}}",
+      "previous": "Předchozí stránka",
+      "root": "Stránkování"
     },
     "selectPlaceholder": "Vyberte…",
     "loading": "Načítám…"

@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { PageHeader, StatCard, StatRow, foldSearchText, formatNumber } from '@app/admin-ui';
+import { PageHeader, StatCard, StatRow, foldSearchText, formatNumber, toasterLabels } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { DateTime, Schema } from 'effect';
 import { useEffect, useState } from 'react';
@@ -354,7 +354,7 @@ const RecordsPageContent = () => {
             revision={revision}
           />
         )}
-        <Toaster />
+        <Toaster {...toasterLabels} />
       </div>
     </>
   );

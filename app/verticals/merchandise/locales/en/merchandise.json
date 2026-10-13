@@ -247,6 +247,7 @@
           "tab": "Price history"
         },
         "priceDialog": {
+          "affected": "Products affected: {{total}}",
           "description": "Enter the change in percent. A positive number raises prices, a negative one lowers them.",
           "field": "Price change (%)",
           "submit": "Change price",
@@ -307,14 +308,25 @@
         "validation": {
           "delta": "Enter a whole number other than zero.",
           "lowStock": "Enter a whole number of 0 or more.",
-          "percent": "Enter a whole number between −90 and 1000.",
+          "percent": "Enter a non-zero whole number from −90 to 1000.",
           "positive": "Enter an amount greater than 0 CZK.",
           "quantity": "Enter a whole number greater than 0.",
           "required": "Fill in this field.",
           "stock": "The quantity exceeds the stock on hand."
         },
         "selectPlaceholder": "Select…"
+      },
+      "records": {
+        "title": "Orders and products"
       }
+    },
+    "pagination": {
+      "first": "First page",
+      "last": "Last page",
+      "next": "Next page",
+      "page": "Page {{page}}",
+      "previous": "Previous page",
+      "root": "Pagination"
     },
     "selectPlaceholder": "Select…",
     "loading": "Loading…"

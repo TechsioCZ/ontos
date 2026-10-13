@@ -5,6 +5,7 @@ import { EmptyState } from '@app/admin-ui';
 import type { Tag } from '@app/tagging/contracts/records';
 import { Schema } from 'effect';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+import { paginationProps } from '../../../../form-number.ts';
 import { productColumns } from './products-columns.tsx';
 import { useTableTranslations } from './products-format.ts';
 
@@ -58,6 +59,7 @@ export const ProductsTable = ({
       onRowClick={(row) => onOpen(row.original.id)}
       onRowSelectionChange={onSelectionChange}
       pageSizeOptions={[50, 100, 200]}
+      paginationProps={paginationProps(t)}
       renderEmpty={() => {
         if (status === 'error') {
           return (

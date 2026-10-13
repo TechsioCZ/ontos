@@ -1,4 +1,4 @@
-import { formatNumber } from '@app/admin-ui';
+import { formatMoney, formatNumber } from '@app/admin-ui';
 import type { Tag } from '@app/tagging/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
@@ -15,7 +15,7 @@ export const productColumns = (
   { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 130 } },
   {
     accessorKey: 'currentPriceMinor',
-    cell: (info) => <span className="tabular-nums">{formatKc(info.getValue<number>())}</span>,
+    cell: (info) => <span className="tabular-nums">{formatMoney(info.getValue<number>())}</span>,
     header: label('columns.price'),
     meta: { align: 'end', type: 'number', width: 110 },
   },

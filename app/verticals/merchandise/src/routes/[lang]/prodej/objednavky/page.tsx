@@ -14,6 +14,7 @@ import {
   StatCard,
   StatRow,
   statusPresentation,
+  toasterLabels,
 } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect } from 'effect';
@@ -27,6 +28,7 @@ import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../t
 import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
+import { paginationProps } from '../../../../form-number.ts';
 import { formatKc } from '../../../../list-cells.tsx';
 import { useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
@@ -245,6 +247,7 @@ const OrdersPageContent = () => {
           onRowClick={(row) => setDetailId(row.original.id)}
           onRowSelectionChange={setSelection}
           pageSizeOptions={[50, 100, 200]}
+          paginationProps={paginationProps(t)}
           renderEmpty={() => {
             if (state.kind === 'error') {
               return (
@@ -339,7 +342,7 @@ const OrdersPageContent = () => {
           open={tagsOpen}
           subjectIds={toSubjectIds(selected.map((order) => order.id))}
         />
-        <Toaster />
+        <Toaster {...toasterLabels} />
       </section>
     </>
   );

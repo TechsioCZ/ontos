@@ -3,7 +3,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { DetailList, formatMoney, SidePanel } from '@app/admin-ui';
+import { DetailList, formatMoney, SidePanel, comboboxTranslations } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
@@ -155,7 +155,9 @@ export const OrderCreateDialog = ({
             {serverError}
           </StatusText>
         )}
+        {/* Not clearable: ui-kit names the clear control "Clear value" in English; picking another customer replaces it. */}
         <Combobox<CustomerEntry>
+          clearable={false}
           error={customers.status === 'error' ? t(key('create.customersFailed')) : undefined}
           helpText={submitted && partyError !== undefined ? partyError : t(key('create.customerHelp'))}
           items={customers.active.map((customer) => ({
@@ -182,6 +184,7 @@ export const OrderCreateDialog = ({
           )}
           required
           retryLabel={t(key('states.retry'))}
+          translations={comboboxTranslations}
           validateStatus={submitted && partyError !== undefined ? 'error' : 'default'}
           value={draft.partyId === '' ? [] : [draft.partyId]}
         />

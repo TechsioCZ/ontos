@@ -13,6 +13,7 @@ import { useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
+import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { CommandOutcome, FailureReason } from './products-api.ts';
 import {
@@ -42,7 +43,9 @@ type PatchDraft = { -readonly [Key in keyof ProductPatch]?: ProductPatch[Key] };
 
 /**
  * The panel footer submits the detail form through this id, so the save button stays in the fixed
- * footer. The footer offers Zrušit and Uložit změny on the Detail tab only; the other tabs show Zavřít.
+ * footer. The footer is the same on every tab: Zavřít, plus Uložit změny for writers. Tab contents stay
+ * mounted, so the draft survives a tab switch; saving from another tab first returns to Detail, where any
+ * validation message is visible.
  */
 const DETAIL_FORM_ID = 'product-detail-form';
 
@@ -177,10 +180,13 @@ const DetailForm = ({
     }
   };
 
+  // noValidate: the form may sit in a hidden tab when the footer submits it, and native validation would
+  // block that silently; save() validates and shows the Czech messages instead.
   return (
     <form
       className="flex flex-col gap-200"
       id={DETAIL_FORM_ID}
+      noValidate
       onSubmit={(event) => {
         event.preventDefault();
         save();
@@ -255,6 +261,7 @@ const DetailForm = ({
           min={0}
           name="price"
           onChange={setPriceCzk}
+          precision={2}
           step={1}
           value={priceCzk}
           {...fieldError(submitted, priceError)}
@@ -265,6 +272,7 @@ const DetailForm = ({
         </FormNumericInput>
         <FormNumericInput
           disabled={!canWrite}
+          formatOptions={WHOLE_NUMBER_FORMAT}
           id="detail-low-stock"
           label={k('fields.lowStock')}
           locale="cs-CZ"
@@ -303,20 +311,20 @@ export const ProductDetailDialog = ({
   const k = useProductLabel();
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState('detail');
-  const editing = canWrite && tab === 'detail';
 
   return (
     <SidePanel
       actions={
         <>
           <Button onClick={() => onOpenChange(false)} theme="outlined" variant="secondary">
-            {k(editing ? 'common.cancel' : 'common.close')}
+            {k('common.close')}
           </Button>
-          {editing && (
+          {canWrite && (
             <Button
               form={DETAIL_FORM_ID}
               isLoading={busy}
               loadingText={k('common.save')}
+              onClick={() => setTab('detail')}
               type="submit"
               variant="primary"
             >

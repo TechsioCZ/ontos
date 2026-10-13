@@ -6,10 +6,11 @@ import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { SidePanel } from '@app/admin-ui';
+import { SidePanel, comboboxTranslations } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
+import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { FailureReason } from './products-api.ts';
 
@@ -53,7 +54,7 @@ export const useCommandFailure = () => {
 /** Combobox reports a single value as a string or a one-item array; both shapes collapse to the picked id. */
 const pickFirst = (values: string | string[]): string | undefined => (Array.isArray(values) ? values[0] : values);
 
-/** Price in whole crowns: a finite number above zero. An emptied input reports NaN. */
+/** Price in Kč, haléře allowed (the input keeps two decimals): a finite number above zero. An emptied input reports NaN. */
 export const priceErrorKey = (priceCzk: number): string | undefined =>
   Number.isFinite(priceCzk) && priceCzk > 0 ? undefined : 'validation.positive';
 
@@ -104,7 +105,8 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   const [category, setCategory] = useState('');
   const [unit, setUnit] = useState<ProductUnit>('ks');
   const [vatRate, setVatRate] = useState<VatRate>(21);
-  const [priceCzk, setPriceCzk] = useState(0);
+  // NaN until typed: an empty price is refused by priceErrorKey instead of starting at 0.
+  const [priceCzk, setPriceCzk] = useState(Number.NaN);
   const [lowStock, setLowStock] = useState(0);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -150,7 +152,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
         setSku('');
         setName('');
         setCategory('');
-        setPriceCzk(0);
+        setPriceCzk(Number.NaN);
         setLowStock(0);
         setSubmitted(false);
         onOpenChange(false);
@@ -245,8 +247,10 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
             min={0}
             name="price"
             onChange={setPriceCzk}
+            precision={2}
+            required
             step={1}
-            value={priceCzk}
+            value={Number.isNaN(priceCzk) ? '' : priceCzk}
             {...fieldError(submitted, priceError)}
           >
             <NumericInput.Control>
@@ -254,6 +258,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
             </NumericInput.Control>
           </FormNumericInput>
           <FormNumericInput
+            formatOptions={WHOLE_NUMBER_FORMAT}
             id="product-low-stock"
             label={k('fields.lowStock')}
             locale="cs-CZ"
@@ -363,10 +368,12 @@ export const ReceiptDialog = ({
             setProductId(products.find((product) => product.id === picked)?.id ?? null);
           }}
           placeholder={k('filters.search')}
+          translations={comboboxTranslations}
           value={productId === null ? [] : [productId]}
           {...fieldError(submitted, productError)}
         />
         <FormNumericInput
+          formatOptions={WHOLE_NUMBER_FORMAT}
           id="receipt-quantity"
           label={k('fields.quantity')}
           locale="cs-CZ"
@@ -404,6 +411,7 @@ export const PriceChangeDialog = ({
 }: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
+  const { t } = useModernI18n();
   const [percent, setPercent] = useState(5);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -458,7 +466,11 @@ export const PriceChangeDialog = ({
         }}
       >
         <ErrorLine message={serverError} />
+        <p className="text-fg-secondary text-sm tabular-nums">
+          {t('merchandise.pages.products.priceDialog.affected', { total: ids.length })}
+        </p>
         <FormNumericInput
+          formatOptions={WHOLE_NUMBER_FORMAT}
           id="price-percent"
           label={k('priceDialog.field')}
           locale="cs-CZ"

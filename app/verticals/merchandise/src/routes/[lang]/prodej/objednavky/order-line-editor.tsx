@@ -3,9 +3,10 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
-import { formatMoney, formatNumber } from '@app/admin-ui';
+import { formatMoney, formatNumber, comboboxTranslations } from '@app/admin-ui';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
+import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 
 export interface DraftLine {
   readonly key: string;
@@ -38,7 +39,10 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
     <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
       <div className="grid grid-cols-[minmax(0,1fr)_7rem_auto] items-end gap-150">
         <div className="min-w-0">
+          {/* Not clearable: ui-kit names the clear control "Clear value" in English; picking another product replaces it. */}
           <Combobox
+            clearable={false}
+            translations={comboboxTranslations}
             {...(error === undefined ? {} : { helpText: error })}
             items={products.map((item) => ({ id: item.id, label: `${item.name} (${item.sku})`, value: item.id }))}
             label={t(key('create.product'))}
@@ -54,6 +58,7 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
         </div>
         <div className="min-w-0">
           <FormNumericInput
+            formatOptions={WHOLE_NUMBER_FORMAT}
             id={`orders-create-qty-${line.key}`}
             label={t(key('create.quantity'))}
             locale="cs-CZ"

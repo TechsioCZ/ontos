@@ -1,3 +1,4 @@
+import { dataTableRowLabels } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 
@@ -11,6 +12,7 @@ export const useTableTranslations = (): DataTableTranslations => {
   const { t } = useModernI18n();
   const k = (name: string) => t(`merchandise.pages.products.table.${name}`);
   return {
+    ...dataTableRowLabels,
     actionsLabel: k('actionsLabel'),
     clearSearchLabel: k('clearSearchLabel'),
     columnsLabel: k('columnsLabel'),

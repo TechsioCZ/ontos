@@ -11,6 +11,7 @@ import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { StockMovementReason } from '../../../../../shared/domain/merchandise-model.ts';
+import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { formatDelta } from './products-format.ts';
 import { fieldError, useCommandFailure, useProductLabel } from './product-forms.tsx';
@@ -171,11 +172,14 @@ export const MovementForm = ({
           placeholder={k('selectPlaceholder')}
           value={[reason]}
         />
-        {/* No min: the input clamps typed values on blur, which would hide an invalid quantity from validation. */}
+        {/* Real bounds for the ARIA range, without clamping on blur: an out-of-range quantity stays visible to validation. */}
         <FormNumericInput
+          clampValueOnBlur={false}
+          formatOptions={WHOLE_NUMBER_FORMAT}
           id="movement-quantity"
           label={k('fields.quantity')}
           locale="cs-CZ"
+          min={isAdjustment ? -stockOnHand : 1}
           name="movementQuantity"
           onChange={setQuantity}
           step={1}

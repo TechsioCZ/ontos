@@ -1,3 +1,4 @@
+import { dialogCloseLabel } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -36,6 +37,7 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
           </Button>
         </>
       }
+      closeLabel={dialogCloseLabel}
       customTrigger
       description={t(key('confirm.description'))}
       onOpenChange={({ open }) => {
