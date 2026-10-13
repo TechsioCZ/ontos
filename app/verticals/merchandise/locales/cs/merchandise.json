@@ -38,7 +38,6 @@
           "customer": "Zákazník",
           "lines": "Položek",
           "number": "Číslo",
-          "source": "Zdroj",
           "status": "Stav",
           "tags": "Štítky",
           "total": "Celkem s DPH"
@@ -97,6 +96,10 @@
           "updatedAt": "Naposledy změněno",
           "vatTotal": "DPH"
         },
+        "filters": {
+          "allStatuses": "Všechny stavy",
+          "status": "Stav"
+        },
         "source": {
           "manual": "Ručně",
           "opportunity": "Příležitost"
@@ -133,7 +136,7 @@
           "requiredLabel": "Povinné",
           "searchButtonLabel": "Hledat",
           "searchLabel": "Hledat",
-          "searchPlaceholder": "Hledat podle čísla objednávky…",
+          "searchPlaceholder": "Hledat podle čísla nebo zákazníka…",
           "selectAllLabel": "Vybrat všechny řádky",
           "selectionLabel": "Vybrat řádek"
         },
