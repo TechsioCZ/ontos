@@ -35,6 +35,7 @@
     "@app/admin-ui": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/merchandise": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/sales-pipeline": "workspace:*",
     "@app/shared-contracts": "workspace:*",
