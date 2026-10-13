@@ -1,6 +1,6 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { BulkActionBar, EmptyState, PageHeader, SectionCard, StatCard, StatRow, formatNumber } from '@app/admin-ui';
+import { BulkActionBar, EmptyState, PageHeader, StatCard, StatRow, formatNumber } from '@app/admin-ui';
 import { subjectsWithTag } from '@app/tagging/clients/records';
 import { BulkTagDialog, TagCell, TagFilter, runTagEffect, useTagsFor } from '@app/tagging/components/tag-controls';
 import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
@@ -9,6 +9,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
@@ -93,13 +94,12 @@ const statusCell = (info: CellContext<Employee>) => (
     {info.getValue<string>()}
   </Badge>
 );
+/** A linked account is a small text marker; the role already has its own column. */
 const accountCell = (info: CellContext<Employee>) =>
   info.row.original.principalRef === undefined ? (
-    <span className="block truncate">{info.getValue<string>()}</span>
+    <span className="block text-fg-secondary">—</span>
   ) : (
-    <Badge size="sm" variant="info">
-      {info.getValue<string>()}
-    </Badge>
+    <span className="block text-xs text-fg-secondary">{info.getValue<string>()}</span>
   );
 
 /** Tagging subject ids are the employee ids. An id that does not decode as a subject id is skipped, never thrown. */
@@ -180,30 +180,38 @@ const accessRows = [
   },
 ] as const;
 
-/** Read-only overview of who may do what in the demo. Static copy; the matrix lives in the demo permissions script. */
+/** Read-only overview of who may do what in the demo. Static copy; the matrix lives in the demo permissions script. Collapsed by default. */
 const PermissionsCard = () => {
   const { t } = useModernI18n();
   return (
-    <SectionCard flush title={t(`${key}.permissions.title`)}>
-      <div className="overflow-x-auto p-250 pt-150">
-        <table className="w-full table-fixed border-collapse text-left text-sm">
-          <thead>
-            <tr className="border-border-primary border-b">
-              <th className="w-56 py-100 pr-150 font-medium">{t(`${key}.permissions.role`)}</th>
-              <th className="py-100 font-medium">{t(`${key}.permissions.access`)}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {accessRows.map((row) => (
-              <tr className="border-border-primary border-b last:border-b-0" key={row.role}>
-                <td className="py-100 pr-150 align-top font-medium">{row.role}</td>
-                <td className="py-100 align-top">{row.access}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
+    <Accordion className="rounded-lg border border-border-primary bg-surface" collapsible multiple={false}>
+      <Accordion.Item value="permissions">
+        <Accordion.Header aria-level={2}>
+          <Accordion.Title>{t(`${key}.permissions.title`)}</Accordion.Title>
+          <Accordion.Indicator />
+        </Accordion.Header>
+        <Accordion.Content>
+          <div className="overflow-x-auto p-250 pt-150">
+            <table className="w-full table-fixed border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-border-primary border-b">
+                  <th className="w-56 py-100 pr-150 font-medium">{t(`${key}.permissions.role`)}</th>
+                  <th className="py-100 font-medium">{t(`${key}.permissions.access`)}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accessRows.map((row) => (
+                  <tr className="border-border-primary border-b last:border-b-0" key={row.role}>
+                    <td className="py-100 pr-150 align-top font-medium">{row.role}</td>
+                    <td className="py-100 align-top">{row.access}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Accordion.Content>
+      </Accordion.Item>
+    </Accordion>
   );
 };
 
@@ -265,10 +273,10 @@ const EmployeeFilterBar = ({
     ...departments.map((department) => ({ label: department, value: department })),
   ];
   return (
-    <div className="flex flex-wrap items-end gap-200">
+    <div className="flex flex-wrap items-end gap-150">
       <Input
         aria-label={t(`${key}.filters.searchLabel`)}
-        className="min-w-64 flex-1"
+        className="w-64"
         onChange={(event) => onChange({ query: event.target.value })}
         placeholder={t(`${key}.filters.search`)}
         size="sm"
@@ -276,6 +284,7 @@ const EmployeeFilterBar = ({
         value={filters.query}
       />
       <SelectTemplate
+        className="w-48"
         items={roleItems}
         label={t(`${key}.filters.role`)}
         name="roleFilter"
@@ -284,6 +293,7 @@ const EmployeeFilterBar = ({
         value={[filters.role ?? allOption]}
       />
       <SelectTemplate
+        className="w-48"
         items={departmentItems}
         label={t(`${key}.filters.department`)}
         name="departmentFilter"
@@ -291,7 +301,9 @@ const EmployeeFilterBar = ({
         size="sm"
         value={[filters.department ?? allOption]}
       />
-      <TagFilter kind="employee" onChange={onTagChange} value={tagValue} />
+      <div className="w-48">
+        <TagFilter kind="employee" onChange={onTagChange} value={tagValue} />
+      </div>
       <Switch checked={filters.activeOnly} onCheckedChange={(checked) => onChange({ activeOnly: checked })}>
         {t(`${key}.filters.activeOnly`)}
       </Switch>
@@ -473,28 +485,28 @@ const EmployeesPageContent = () => {
   };
 
   const columns: ColumnDef<Employee>[] = [
-    { accessorKey: 'fullName', cell: nameCell, header: t(`${key}.columns.name`), meta: { width: 220 } },
-    { accessorKey: 'email', cell: emailCell, header: t(`${key}.columns.email`), meta: { width: 260 } },
+    { accessorKey: 'fullName', cell: nameCell, header: t(`${key}.columns.name`), meta: { width: 200 } },
+    { accessorKey: 'email', cell: emailCell, header: t(`${key}.columns.email`), meta: { width: 240 } },
     {
       accessorFn: (row) => t(`${key}.roles.${row.role}`),
       header: t(`${key}.columns.role`),
       id: 'role',
-      meta: { width: 180 },
+      meta: { width: 150 },
     },
-    { accessorKey: 'department', header: t(`${key}.columns.department`), meta: { width: 180 } },
+    { accessorKey: 'department', header: t(`${key}.columns.department`), meta: { width: 160 } },
     {
       accessorFn: (row) => t(row.active ? `${key}.status.active` : `${key}.status.inactive`),
       cell: statusCell,
       header: t(`${key}.columns.status`),
       id: 'status',
-      meta: { width: 130 },
+      meta: { width: 110 },
     },
     {
-      accessorFn: (row) => t(row.principalRef === undefined ? `${key}.account.none` : `${key}.roles.${row.role}`),
+      accessorFn: (row) => t(row.principalRef === undefined ? `${key}.account.none` : `${key}.account.linked`),
       cell: accountCell,
       header: t(`${key}.columns.account`),
       id: 'account',
-      meta: { width: 170 },
+      meta: { width: 110 },
     },
     {
       accessorFn: (row) => tagsOf(row.id),
@@ -502,7 +514,7 @@ const EmployeesPageContent = () => {
       enableSorting: false,
       header: t(`${key}.columns.tags`),
       id: 'tags',
-      meta: { width: 200 },
+      meta: { width: 180 },
     },
   ];
 
