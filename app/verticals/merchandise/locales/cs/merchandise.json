@@ -23,13 +23,160 @@
         "title": "Objednávky"
       },
       "products": {
-        "title": "Produkty",
+        "actions": {
+          "newProduct": "Nový produkt",
+          "receipt": "Příjem zboží"
+        },
+        "bulk": {
+          "activate": "Aktivovat",
+          "changeCategory": "Změnit kategorii",
+          "changePrice": "Změnit cenu o %",
+          "clear": "Zrušit výběr",
+          "deactivate": "Deaktivovat",
+          "selected": "Vybráno: {{total}}"
+        },
+        "category": {
+          "field": "Nová kategorie",
+          "submit": "Změnit kategorii",
+          "title": "Změnit kategorii"
+        },
+        "columns": {
+          "category": "Kategorie",
+          "name": "Název",
+          "onHand": "Skladem",
+          "price": "Cena",
+          "sku": "SKU",
+          "stockValue": "Hodnota skladu",
+          "status": "Stav",
+          "tags": "Štítky",
+          "vat": "DPH"
+        },
+        "common": {
+          "cancel": "Zrušit",
+          "clearFilters": "Zrušit filtry",
+          "close": "Zavřít",
+          "retry": "Zkusit znovu",
+          "save": "Uložit změny"
+        },
+        "create": {
+          "submit": "Vytvořit produkt",
+          "title": "Nový produkt"
+        },
         "description": "Produkty, ceny a skladové pohyby.",
-        "refresh": "Načíst",
-        "empty": "Zatím žádné produkty.",
-        "count": "Počet záznamů: {{total}}",
-        "unavailable": "Data se nepodařilo načíst.",
-        "forbidden": "K této operaci nemáte oprávnění."
+        "detail": {
+          "active": "Aktivní produkt",
+          "tab": "Detail"
+        },
+        "fields": {
+          "category": "Kategorie",
+          "lowStock": "Minimum skladu (ks)",
+          "name": "Název",
+          "note": "Poznámka",
+          "price": "Cena (Kč)",
+          "product": "Produkt",
+          "quantity": "Množství (ks)",
+          "sku": "SKU",
+          "unit": "Jednotka",
+          "vat": "DPH (%)"
+        },
+        "filters": {
+          "allCategories": "Všechny kategorie",
+          "category": "Kategorie",
+          "lowStockOnly": "Jen pod minimem",
+          "search": "Hledat podle názvu nebo SKU…"
+        },
+        "messages": {
+          "bulkUpdated": "Produkty upraveny",
+          "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
+          "created": "Produkt vytvořen",
+          "failed": "Akci se nepodařilo provést. Zkuste to znovu.",
+          "movementRecorded": "Pohyb zaznamenán",
+          "priceChanged": "Cena změněna",
+          "receiptRecorded": "Příjem zaznamenán",
+          "updated": "Produkt uložen"
+        },
+        "movements": {
+          "columnDate": "Datum",
+          "columnDelta": "Množství ±",
+          "columnNote": "Poznámka",
+          "columnType": "Typ",
+          "empty": "Pro tento produkt zatím nejsou žádné pohyby.",
+          "quantityHint": "U korekce zadejte záporné číslo pro úbytek.",
+          "recordTitle": "Zaznamenat pohyb",
+          "submit": "Zaznamenat pohyb",
+          "tab": "Pohyby",
+          "typeField": "Typ pohybu"
+        },
+        "prices": {
+          "columnPrice": "Cena",
+          "columnValidFrom": "Platí od",
+          "empty": "Historie cen je zatím prázdná.",
+          "tab": "Historie cen"
+        },
+        "priceDialog": {
+          "description": "Zadejte změnu v procentech. Kladné číslo zdraží, záporné zlevní.",
+          "field": "Změna ceny (%)",
+          "submit": "Změnit cenu",
+          "title": "Změnit cenu o %",
+          "warning": "Změna ceny neovlivní vystavené faktury ani objednávky."
+        },
+        "receipt": {
+          "description": "Zaznamenejte příjem na sklad. Stav se přepočítá z pohybů.",
+          "submit": "Zaznamenat příjem",
+          "title": "Příjem zboží"
+        },
+        "states": {
+          "empty": "Zatím tu nejsou žádné produkty.",
+          "emptyDescription": "Založte první produkt a začněte evidovat sklad.",
+          "error": "Data se nepodařilo načíst.",
+          "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
+          "forbidden": "K této sekci nemáte oprávnění.",
+          "noResults": "Filtrům neodpovídá žádný produkt."
+        },
+        "stats": {
+          "lowStock": "Pod minimem",
+          "openOrders": "Otevřené objednávky",
+          "products": "Produkty",
+          "stockValue": "Hodnota skladu"
+        },
+        "status": {
+          "active": "Aktivní",
+          "inactive": "Neaktivní",
+          "lowStock": "Pod minimem"
+        },
+        "movementType": {
+          "ADJUSTMENT": "Korekce",
+          "ISSUE": "Výdej",
+          "ORDER": "Objednávka",
+          "RECEIPT": "Příjem"
+        },
+        "table": {
+          "actionsLabel": "Akce",
+          "clearSearchLabel": "Vymazat hledání",
+          "columnsLabel": "Nastavení sloupců",
+          "editingLabel": "Upravujete řádek, ostatní ovládání tabulky je zamčené",
+          "emptyDescription": "Nejsou k dispozici žádná data.",
+          "emptyTitle": "Žádné záznamy",
+          "filtersLabel": "Filtry sloupců",
+          "loadingLabel": "Načítání dat",
+          "pageSizeLabel": "Řádků na stránku",
+          "rangeLabel": "{{start}}–{{end}} z {{total}}",
+          "requiredLabel": "Povinné",
+          "reorderLabel": "Změnit pořadí řádků",
+          "searchButtonLabel": "Hledat",
+          "searchLabel": "Hledat",
+          "searchPlaceholder": "Hledat produkty…",
+          "selectAllLabel": "Vybrat všechny řádky",
+          "selectionLabel": "Vybrat řádky"
+        },
+        "title": "Produkty a sklad",
+        "validation": {
+          "delta": "Zadejte celé číslo různé od nuly.",
+          "percent": "Zadejte celé číslo mezi −90 a 1000.",
+          "positive": "Zadejte částku větší než 0 Kč.",
+          "quantity": "Zadejte množství větší než 0.",
+          "required": "Vyplňte toto pole."
+        }
       }
     }
   }

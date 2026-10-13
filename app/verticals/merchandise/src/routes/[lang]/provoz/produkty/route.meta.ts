@@ -2,11 +2,11 @@ import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoin
 
 const routeMeta = {
   canonicalPath: '/provoz/produkty',
-  descriptionKey: 'merchandise.pages.records.description',
+  descriptionKey: 'merchandise.pages.products.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
     authorization: { kind: 'context_permission', permission: 'module.access' },
-    entrypointKey: 'demo.merchandise.page.records',
+    entrypointKey: 'demo.merchandise.page.products',
     moduleKey: 'demo.merchandise',
     role: 'page',
   }),
@@ -22,7 +22,7 @@ const routeMeta = {
   ownerAppId: 'merchandise',
   public: false,
   publicSurface: 'private-app-screen',
-  titleKey: 'merchandise.pages.records.title',
+  titleKey: 'merchandise.pages.products.title',
 } as const;
 
 export default routeMeta;

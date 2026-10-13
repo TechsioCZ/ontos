@@ -23,13 +23,160 @@
         "title": "Orders"
       },
       "products": {
-        "title": "Products",
+        "actions": {
+          "newProduct": "New product",
+          "receipt": "Goods receipt"
+        },
+        "bulk": {
+          "activate": "Activate",
+          "changeCategory": "Change category",
+          "changePrice": "Change price by %",
+          "clear": "Clear selection",
+          "deactivate": "Deactivate",
+          "selected": "Selected: {{total}}"
+        },
+        "category": {
+          "field": "New category",
+          "submit": "Change category",
+          "title": "Change category"
+        },
+        "columns": {
+          "category": "Category",
+          "name": "Name",
+          "onHand": "On hand",
+          "price": "Price",
+          "sku": "SKU",
+          "stockValue": "Stock value",
+          "status": "Status",
+          "tags": "Tags",
+          "vat": "VAT"
+        },
+        "common": {
+          "cancel": "Cancel",
+          "clearFilters": "Clear filters",
+          "close": "Close",
+          "retry": "Try again",
+          "save": "Save changes"
+        },
+        "create": {
+          "submit": "Create product",
+          "title": "New product"
+        },
         "description": "Products, prices and stock movements.",
-        "refresh": "Load",
-        "empty": "No products yet.",
-        "count": "Records: {{total}}",
-        "unavailable": "Data could not be loaded.",
-        "forbidden": "You are not allowed to do this."
+        "detail": {
+          "active": "Active product",
+          "tab": "Detail"
+        },
+        "fields": {
+          "category": "Category",
+          "lowStock": "Minimum stock (pcs)",
+          "name": "Name",
+          "note": "Note",
+          "price": "Price (CZK)",
+          "product": "Product",
+          "quantity": "Quantity (pcs)",
+          "sku": "SKU",
+          "unit": "Unit",
+          "vat": "VAT (%)"
+        },
+        "filters": {
+          "allCategories": "All categories",
+          "category": "Category",
+          "lowStockOnly": "Below minimum only",
+          "search": "Search by name or SKU…"
+        },
+        "messages": {
+          "bulkUpdated": "Products updated",
+          "conflict": "Someone else changed this record. Reload it and try again.",
+          "created": "Product created",
+          "failed": "The action could not be completed. Try again.",
+          "movementRecorded": "Movement recorded",
+          "priceChanged": "Price changed",
+          "receiptRecorded": "Receipt recorded",
+          "updated": "Product saved"
+        },
+        "movements": {
+          "columnDate": "Date",
+          "columnDelta": "Quantity ±",
+          "columnNote": "Note",
+          "columnType": "Type",
+          "empty": "This product has no movements yet.",
+          "quantityHint": "For an adjustment, enter a negative number to reduce stock.",
+          "recordTitle": "Record movement",
+          "submit": "Record movement",
+          "tab": "Movements",
+          "typeField": "Movement type"
+        },
+        "prices": {
+          "columnPrice": "Price",
+          "columnValidFrom": "Valid from",
+          "empty": "No price history yet.",
+          "tab": "Price history"
+        },
+        "priceDialog": {
+          "description": "Enter the change in percent. A positive number raises prices, a negative one lowers them.",
+          "field": "Price change (%)",
+          "submit": "Change price",
+          "title": "Change price by %",
+          "warning": "The price change does not affect issued invoices or orders."
+        },
+        "receipt": {
+          "description": "Record stock received. On-hand stock is recalculated from movements.",
+          "submit": "Record receipt",
+          "title": "Goods receipt"
+        },
+        "states": {
+          "empty": "No products yet.",
+          "emptyDescription": "Create the first product and start tracking stock.",
+          "error": "Data could not be loaded.",
+          "errorDescription": "Check your connection and try again.",
+          "forbidden": "You do not have access to this section.",
+          "noResults": "No product matches the filters."
+        },
+        "stats": {
+          "lowStock": "Below minimum",
+          "openOrders": "Open orders",
+          "products": "Products",
+          "stockValue": "Stock value"
+        },
+        "status": {
+          "active": "Active",
+          "inactive": "Inactive",
+          "lowStock": "Below minimum"
+        },
+        "movementType": {
+          "ADJUSTMENT": "Adjustment",
+          "ISSUE": "Issue",
+          "ORDER": "Order",
+          "RECEIPT": "Receipt"
+        },
+        "table": {
+          "actionsLabel": "Actions",
+          "clearSearchLabel": "Clear search",
+          "columnsLabel": "Column settings",
+          "editingLabel": "A row is being edited, other table controls are locked",
+          "emptyDescription": "No data available.",
+          "emptyTitle": "No records",
+          "filtersLabel": "Column filters",
+          "loadingLabel": "Loading data",
+          "pageSizeLabel": "Rows per page",
+          "rangeLabel": "{{start}}–{{end}} of {{total}}",
+          "requiredLabel": "Required",
+          "reorderLabel": "Reorder rows",
+          "searchButtonLabel": "Search",
+          "searchLabel": "Search",
+          "searchPlaceholder": "Search products…",
+          "selectAllLabel": "Select all rows",
+          "selectionLabel": "Select rows"
+        },
+        "title": "Products and stock",
+        "validation": {
+          "delta": "Enter a whole number other than zero.",
+          "percent": "Enter a whole number between −90 and 1000.",
+          "positive": "Enter an amount greater than 0 CZK.",
+          "quantity": "Enter a quantity greater than 0.",
+          "required": "Fill in this field."
+        }
       }
     }
   }
