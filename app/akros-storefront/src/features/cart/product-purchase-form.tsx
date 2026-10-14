@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useId, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState, type CSSProperties } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
@@ -25,13 +25,22 @@ interface ProductPurchaseFormProps {
   initialVariantSearch?: string;
 }
 
+const variantListRowClassName =
+  "@min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:grid-cols-(--akros-variant-table-list-columns)! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:col-span-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:col-start-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:row-start-1 @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(2)]:hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-2! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:col-span-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:col-start-3! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:row-start-1 @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-0! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-0)!";
+
 const variantsPerPage = 5;
+const variantListOnlyClassName =
+  "hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:block";
 const noVariants: CatalogProductVariant[] = [];
 const variantCollator = new Intl.Collator("cs-CZ", {
   numeric: true,
   sensitivity: "base",
 });
 const measurementFormatter = new Intl.NumberFormat("cs-CZ", {
+  maximumFractionDigits: 2,
+});
+const priceInputFormatter = new Intl.NumberFormat("cs-CZ", {
+  minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
 
@@ -82,6 +91,15 @@ function VariantRangeFilter({
   value,
 }: VariantRangeFilterProps) {
   const scale = price ? 100 : 1;
+  const priceInputStyle: CSSProperties & {
+    "--akros-variant-filter-price-characters"?: number;
+  } = price
+    ? {
+        "--akros-variant-filter-price-characters": Math.max(
+          ...bounds.map((bound) => priceInputFormatter.format(bound / scale).length),
+        ),
+      }
+    : {};
   // Keep the NumericInput editing buffer (empty text and decimal separators).
   // Slider changes replace that buffer with the newly selected range.
   const [sliderRevision, setSliderRevision] = useState(0);
@@ -96,7 +114,8 @@ function VariantRangeFilter({
 
   return (
     <div
-      className={`akros-variant-filter-range ${filterGroupClassName} w-full ${price ? "akros-variant-filter-range--price md:w-(--akros-variant-filter-price-width)" : "md:w-(--akros-variant-filter-measurement-width)"}`}
+      style={priceInputStyle}
+      className={`akros-variant-filter-range ${filterGroupClassName} w-full md:shrink-0 md:@max-akros-variant-table/akros-variants:grow ${price ? "akros-variant-filter-range--price md:w-(--akros-variant-filter-price-width)" : "md:w-(--akros-variant-filter-measurement-width)"}`}
     >
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-(--dimension-8)">
         <NumericInput
@@ -412,6 +431,11 @@ export function ProductPurchaseForm({
               <strong className="min-w-0 whitespace-normal wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
                 {label}
               </strong>
+              <p
+                className={`${variantListOnlyClassName} mt-(--dimension-8) text-xs font-normal text-fg-secondary`}
+              >
+                Kód: {row.original.sku}
+              </p>
             </div>
           );
         },
@@ -460,6 +484,16 @@ export function ProductPurchaseForm({
 
           return (
             <div className="akros-variant-table__price min-w-0">
+              <div className={`${variantListOnlyClassName} mb-(--dimension-8)`}>
+                <span
+                  className="akros-variant-table__availability text-xs font-normal"
+                  data-available={row.original.stockCount >= row.original.minimumQuantity}
+                >
+                  {row.original.stockCount >= row.original.minimumQuantity
+                    ? "Skladem"
+                    : "Není skladem"}
+                </span>
+              </div>
               <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
                 {formatPrice(row.original.priceMinor).replace(/\s(?=\S+$)/u, " ")}
                 <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline! @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal">
@@ -594,7 +628,7 @@ export function ProductPurchaseForm({
 
   return (
     <div className="akros-variant-purchase @container/akros-variants">
-      <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit">
+      <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit md:@max-akros-variant-table/akros-variants:w-full">
         <form
           aria-label="Filtrování variant"
           className="akros-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-center"
@@ -651,26 +685,28 @@ export function ProductPurchaseForm({
             </fieldset>
           )}
 
-          {priceBounds && priceBounds[0] < priceBounds[1] && (
-            <VariantRangeFilter
-              bounds={priceBounds}
-              label={`Cena (Kč/${product.unit})`}
-              onChange={setPriceRange}
-              price
-              step={1}
-              value={priceRange}
-            />
-          )}
+          <div className="flex min-w-0 flex-col gap-y-(--dimension-12) md:flex-row md:items-center md:gap-x-(--dimension-12) md:@max-akros-variant-table/akros-variants:grow">
+            {priceBounds && priceBounds[0] < priceBounds[1] && (
+              <VariantRangeFilter
+                bounds={priceBounds}
+                label={`Cena (Kč/${product.unit})`}
+                onChange={setPriceRange}
+                price
+                step={1}
+                value={priceRange}
+              />
+            )}
 
-          <Button
-            className="akros-variant-filter-submit w-full font-bold md:ml-(--dimension-12) md:w-(--akros-variant-filter-submit-width)"
-            size="sm"
-            type="submit"
-            uppercase
-            variant="primary"
-          >
-            Filtruj
-          </Button>
+            <Button
+              className="akros-variant-filter-submit w-full font-bold md:ml-auto md:w-(--akros-variant-filter-submit-width)"
+              size="sm"
+              type="submit"
+              uppercase
+              variant="primary"
+            >
+              Filtruj
+            </Button>
+          </div>
         </form>
       </section>
 
@@ -695,8 +731,7 @@ export function ProductPurchaseForm({
                 "akros-variant-data-table__table @max-akros-variant-table/akros-variants:block @max-akros-variant-table/akros-variants:[&_thead]:sr-only @max-akros-variant-table/akros-variants:[&_tbody]:grid @max-akros-variant-table/akros-variants:[&_tbody]:min-w-0 @max-akros-variant-table/akros-variants:[&_tbody]:gap-(--dimension-12)",
             },
             row: {
-              className:
-                "akros-variant-data-table__row @max-akros-variant-table/akros-variants:grid @max-akros-variant-table/akros-variants:h-auto! @max-akros-variant-table/akros-variants:min-w-0 @max-akros-variant-table/akros-variants:grid-cols-[minmax(0,1fr)_auto] @max-akros-variant-table/akros-variants:gap-(--dimension-8) @max-akros-variant-table/akros-variants:items-center @max-akros-variant-table/akros-variants:border-(length:--border-sm)! @max-akros-variant-table/akros-variants:border-(--akros-variant-table-border-color)! @max-akros-variant-table/akros-variants:rounded-(--akros-variant-table-row-radius)! @max-akros-variant-table/akros-variants:p-(--dimension-12) @max-akros-variant-table/akros-variants:bg-base! @max-akros-variant-table/akros-variants:[&>td]:block @max-akros-variant-table/akros-variants:[&>td]:w-auto! @max-akros-variant-table/akros-variants:[&>td]:min-w-0 @max-akros-variant-table/akros-variants:[&>td]:border-0! @max-akros-variant-table/akros-variants:[&>td]:rounded-none! @max-akros-variant-table/akros-variants:[&>td]:p-(--dimension-0)! @max-akros-variant-table/akros-variants:[&>td]:bg-(--color-bg-transparent)! @max-akros-variant-table/akros-variants:[&>td:is(:nth-child(1),:nth-child(2),:nth-child(6))]:col-span-full @max-akros-variant-table/akros-variants:[&>td:nth-child(3)]:hidden @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:col-start-2 @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:row-start-3 @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-1 @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-3 @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-(length:--border-sm)! @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-(--akros-variant-table-cell-separator-color)! @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-12)!",
+              className: `akros-variant-data-table__row @max-akros-variant-table/akros-variants:grid @max-akros-variant-table/akros-variants:h-auto! @max-akros-variant-table/akros-variants:min-w-0 @max-akros-variant-table/akros-variants:grid-cols-[minmax(0,1fr)_auto] @max-akros-variant-table/akros-variants:gap-(--dimension-8) @max-akros-variant-table/akros-variants:items-center @max-akros-variant-table/akros-variants:border-(length:--border-sm)! @max-akros-variant-table/akros-variants:border-(--akros-variant-table-border-color)! @max-akros-variant-table/akros-variants:rounded-(--akros-variant-table-row-radius)! @max-akros-variant-table/akros-variants:p-(--dimension-12) @max-akros-variant-table/akros-variants:bg-base! @max-akros-variant-table/akros-variants:[&>td]:block @max-akros-variant-table/akros-variants:[&>td]:w-auto! @max-akros-variant-table/akros-variants:[&>td]:min-w-0 @max-akros-variant-table/akros-variants:[&>td]:border-0! @max-akros-variant-table/akros-variants:[&>td]:rounded-none! @max-akros-variant-table/akros-variants:[&>td]:p-(--dimension-0)! @max-akros-variant-table/akros-variants:[&>td]:bg-(--color-bg-transparent)! @max-akros-variant-table/akros-variants:[&>td:is(:nth-child(1),:nth-child(2),:nth-child(6))]:col-span-full @max-akros-variant-table/akros-variants:[&>td:nth-child(3)]:hidden @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:col-start-2 @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:row-start-3 @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-1 @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-3 @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-(length:--border-sm)! @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-(--akros-variant-table-cell-separator-color)! @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-12)! ${variantListRowClassName}`,
             },
           }}
           tableLayout="fixed"

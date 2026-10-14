@@ -1,5 +1,6 @@
 @theme static {
   --container-akros-variant-table: 1000px;
+  --container-akros-variant-list: 640px;
 }
 
 :root {
@@ -14,4 +15,7 @@
   --akros-variant-table-stock-fg: var(--color-fg-status-success);
   --akros-variant-table-compact-quantity-width: 152px;
   --akros-variant-table-compact-button-line-height: 1.2;
+  --akros-variant-table-list-order-width: 320px;
+  --akros-variant-table-list-columns: minmax(0, 1fr) calc(var(--dimension-96) + var(--dimension-48))
+    var(--akros-variant-table-list-order-width);
 }

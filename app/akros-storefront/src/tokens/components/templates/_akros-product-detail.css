@@ -19,7 +19,7 @@
   --akros-variant-filter-label-font-size: 13px;
   --akros-variant-filter-label-line-height: var(--dimension-16);
   --akros-variant-filter-measurement-width: 212px;
-  --akros-variant-filter-price-width: 242px;
+  --akros-variant-filter-price-track-space: calc(242px - var(--dimension-48) * 2);
   --akros-variant-filter-input-width: var(--dimension-32);
   --akros-variant-filter-submit-width: 113px;
   --akros-variant-filter-checkbox-indicator-size: var(--dimension-12);
@@ -93,7 +93,13 @@
 }
 
 .akros-variant-filter-range--price {
-  --akros-variant-filter-input-width: var(--dimension-48);
+  --akros-variant-filter-input-width: max(
+    var(--dimension-48),
+    calc(var(--akros-variant-filter-price-characters, 5) * 1ch + var(--dimension-8))
+  );
+  --akros-variant-filter-price-width: calc(
+    var(--akros-variant-filter-input-width) * 2 + var(--akros-variant-filter-price-track-space)
+  );
 }
 
 .akros-variant-filter-submit {

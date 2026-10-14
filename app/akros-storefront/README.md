@@ -13,7 +13,9 @@ npm run dev
 Open <http://localhost:3000>.
 
 With the storefront running, `npm run test:responsive` checks variant-table text and controls
-at 14 widths and cart/review rows at 23 widths from 320 to 1920 px. Cart fixtures include long
+at 22 widths and cart/review rows at 23 widths from 320 to 1920 px. Variant checks also cover
+filter overflow, readable price endpoints and the price/submit group across four products.
+Cart fixtures include long
 product names, six-decimal quantities and large totals, and use an isolated browser context.
 The checkout-section check also covers navigation/sidebar geometry, named-cart creation,
 switching, persistence and deletion, and address input border/height tokens.
@@ -23,6 +25,12 @@ selection, reload persistence, free shipping and the completed order snapshot.
 It uses installed Chrome; `AKROS_CHROMIUM_PATH` can select
 another Chromium executable and `AKROS_TEST_BASE_URL` can select another local server.
 Set `AKROS_CART_SCREENSHOTS` to a directory to save cart/review screenshots at selected widths.
+
+Variant rows use the original table above 1000 px of available content, a three-group list
+between 640 and 1000 px, and mobile cards below 640 px. The intermediate list groups the
+name/SKU, availability/price and purchase controls without changing order rules. Filter
+groups grow within the available space; price and submit stay together. Price endpoint
+width comes from a token supplied with the longest formatted bound's character count.
 
 ## Theme tokens
 
