@@ -21,6 +21,15 @@
   @apply akros-checkout-icon-[akros-checkout--return];
 }
 
+@utility token-icon-akros-account-disclosure {
+  @apply akros-checkout-icon-[akros-checkout--account-disclosure];
+}
+
+@utility token-icon-akros-account-select-chevron {
+  @apply akros-checkout-icon-[akros-checkout--account-select-chevron];
+  @apply text-(length:--akros-account-select-glyph-size);
+}
+
 @plugin "@iconify/tailwind4" {
   prefix: "akros-icon";
   square: true;

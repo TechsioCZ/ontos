@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { CartContent } from "@/features/cart/cart-content";
 import { CartProvider } from "@/features/cart/cart-provider";
+import { CheckoutProvider } from "@/features/checkout/checkout-provider";
 
 describe("CartContent", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   it("lets a shopper remove a persisted product from the cart", async () => {
@@ -37,7 +39,9 @@ describe("CartContent", () => {
 
     render(
       <CartProvider storage={window.localStorage}>
-        <CartContent />
+        <CheckoutProvider storage={window.sessionStorage}>
+          <CartContent />
+        </CheckoutProvider>
       </CartProvider>,
     );
 

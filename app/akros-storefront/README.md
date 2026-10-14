@@ -42,6 +42,32 @@ UI-kit `Icon` component. Keep their paths, view boxes and internal padding from 
 
 ## Prototype boundary
 
+`/muj-ucet` presents the Figma profile form. Changes are stored locally under
+`akros-demo-account-profile-v1`, with validation and storage-failure feedback. Password fields
+are never persisted; changing credentials and ARES lookup require integrations that this
+prototype does not have. Navigation sections without an existing implementation are disabled.
+The original dashboard remains at `/muj-ucet/prehled`. With the dev server running,
+`npm run test:account` checks desktop geometry, nine viewport widths, persistence and validation.
+
+The profile reference is Figma **7:2085**, whose cart sidebar is hidden. At 1920 px,
+the page has one 1660 px column, 32 px panel padding, 16 px navigation-item padding,
+20/30 px Inter text and an 800-weight active item. Contact content is 1160 px wide;
+billing fields occupy 1159 px. Inter optical sizing is disabled to match the source
+text widths. Original 24 px disclosure and 28 px select arrows use the UI-kit Icon.
+Account overrides are scoped in `_akros-account.css` and contain token declarations.
+The profile, overview, order history/detail, favorites, tracking and account claims
+share `AccountShell`, including its Inter font, wide content column and navigation.
+The additional screens adapt this visual foundation; Figma 7:2085 defines the profile,
+not their page content. Overview shortcuts expose favorites and tracking without a
+second sidebar. Order history has working search, month and status filters; below
+1280 px it uses cards instead of a wide table. Order detail follows the selected
+demo order and does not reuse the first order's products for other orders.
+Account claims stays inside the account; the public `/reklamace` page remains available.
+`npm run test:account` covers profile behavior and the navigation between account screens.
+The installed UI kit hardcodes Button weight, checkbox borders and select indicators;
+local token scopes and the necessary slot utilities handle those API gaps. Header,
+footer and checkout keep their existing layout.
+
 Checkout demo shipping becomes free at a goods subtotal of CZK 2,000, matching the existing
 shipping-information page. The optional 60-day return service costs CZK 159, with the same
 demo VAT assumptions as the delivery fixtures. Both rules are local prototype configuration

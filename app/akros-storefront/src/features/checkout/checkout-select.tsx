@@ -1,4 +1,5 @@
 "use client";
+import type { ReactNode } from "react";
 import { Select } from "@techsio/ui-kit/molecules/select";
 
 export function CheckoutSelect({
@@ -8,6 +9,7 @@ export function CheckoutSelect({
   items,
   onChange,
   error,
+  indicator,
 }: {
   id: string;
   label: string;
@@ -15,6 +17,7 @@ export function CheckoutSelect({
   items: { value: string; label: string }[];
   onChange: (value: string) => void;
   error?: string;
+  indicator?: ReactNode;
 }) {
   return (
     <Select
@@ -28,8 +31,12 @@ export function CheckoutSelect({
     >
       <Select.Label>{label}</Select.Label>
       <Select.Control>
-        <Select.Trigger aria-describedby={error ? `${id}-error` : undefined}>
+        <Select.Trigger
+          aria-describedby={error ? `${id}-error` : undefined}
+          className={indicator ? "[&>.token-icon-select-indicator]:hidden" : undefined}
+        >
           <Select.ValueText placeholder="Vyberte možnost" />
+          {indicator}
         </Select.Trigger>
       </Select.Control>
       <Select.Positioner>

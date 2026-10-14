@@ -1,47 +1,93 @@
+"use client";
+
+import localFont from "next/font/local";
 import NextLink from "next/link";
 import type { ReactNode } from "react";
-
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
-import { mockCustomer } from "@/mock-storefront/fixtures/account";
+import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 
-const accountLinks = [
-  { href: "/muj-ucet", label: "Přehled", key: "overview" },
-  { href: "/historie-objednavek", label: "Historie objednávek", key: "orders" },
-  { href: "/oblibene", label: "Oblíbené", key: "favorites" },
-  { href: "/sledovani-zasilky", label: "Sledování zásilky", key: "tracking" },
-  { href: "/muj-ucet#osobni-udaje", label: "Osobní údaje", key: "profile" },
-  { href: "/muj-ucet#adresy", label: "Adresy", key: "addresses" },
-  { href: "/muj-ucet#zmena-hesla", label: "Změna hesla", key: "password" },
-  { href: "/prihlaseni", label: "Odhlásit se", key: "logout" },
-] as const;
+const font = localFont({
+  src: "../fonts/InterVariable.woff2",
+  weight: "400 800",
+  display: "swap",
+  variable: "--font-akros-account",
+});
+const navigation = [
+  { key: "overview", label: "Přehled účtu", href: "/muj-ucet/prehled" },
+  { key: "profile", label: "Můj účet", href: "/muj-ucet" },
+  { key: "orders", label: "Objednávky", href: "/historie-objednavek" },
+  { key: "invoices", label: "Přehled faktur" },
+  { key: "watchdog", label: "Hlídací pes" },
+  { key: "claims", label: "Reklamace", href: "/muj-ucet/reklamace" },
+  { key: "commission", label: "Komisní prodej" },
+  { key: "service", label: "Servisní knížka" },
+];
+type AccountSection = "overview" | "profile" | "orders" | "favorites" | "tracking" | "claims";
+const titles: Record<AccountSection, string> = {
+  overview: "Přehled účtu",
+  profile: "Můj účet",
+  orders: "Objednávky",
+  favorites: "Oblíbené produkty",
+  tracking: "Sledování zásilky",
+  claims: "Reklamace",
+};
 
-export function AccountShell({ active, children }: { active: string; children: ReactNode }) {
+export function AccountShell({
+  active,
+  title = titles[active],
+  children,
+}: {
+  active: AccountSection;
+  title?: string;
+  children: ReactNode;
+}) {
+  const parent = active === "favorites" ? "overview" : active === "tracking" ? "orders" : active;
   return (
-    <div className="akros-shell">
+    <div className="min-h-screen bg-(--color-base)">
       <SiteHeader />
-      <main className="akros-account-layout">
-        <aside className="akros-account-sidebar" aria-label="Navigace zákaznického účtu">
-          <div className="akros-account-user">
-            <span aria-hidden="true">{mockCustomer.initials}</span>
-            <div>
-              <strong>{mockCustomer.name}</strong>
-              <small>Zákazník č. {mockCustomer.customerNumber}</small>
-            </div>
-          </div>
-          <nav>
-            {accountLinks.map((link) => (
-              <NextLink
-                aria-current={link.key === active ? "page" : undefined}
-                href={link.href}
-                key={link.key}
-              >
-                {link.label}
-              </NextLink>
-            ))}
-          </nav>
-        </aside>
-        <div className="akros-account-content">{children}</div>
+      <main
+        data-akros-account
+        className={`${font.variable} bg-(--akros-account-surface) px-(--dimension-16) pt-(--dimension-40) pb-(--dimension-80) font-(family-name:--font-body) text-(length:--akros-account-body-size) font-medium leading-(--akros-account-leading) text-fg-primary [font-optical-sizing:var(--akros-account-optical-sizing)]`}
+      >
+        <div data-akros-account-body className="mx-auto w-full max-w-(--akros-account-width)">
+          <StorefrontBreadcrumbs
+            className="mb-(--dimension-20)"
+            items={[
+              { label: "Domů", href: "/" },
+              ...(active === "profile" ? [] : [{ label: "Můj účet", href: "/muj-ucet" }]),
+              { label: title },
+            ]}
+          />
+          <section
+            aria-label={title}
+            className="min-w-0 rounded-(--dimension-8) bg-(--color-base) p-(--dimension-32) max-sm:p-(--dimension-16)"
+          >
+            <nav
+              aria-label="Navigace účtu"
+              data-account-navigation
+              className="mb-(--dimension-40) flex flex-wrap border-b border-(--akros-account-divider)"
+            >
+              {navigation.map((item) => (
+                <LinkButton
+                  as={NextLink}
+                  key={item.key}
+                  href={item.href ?? "#"}
+                  disabled={!item.href}
+                  title={!item.href ? "Tato sekce není v prototypu dostupná" : undefined}
+                  size="sm"
+                  theme="unstyled"
+                  aria-current={item.key === parent ? "page" : undefined}
+                  className="shrink-0 whitespace-nowrap hover:underline data-disabled:opacity-50 aria-[current=page]:border-b-(length:--akros-account-tab-border) aria-[current=page]:border-(--akros-account-accent)"
+                >
+                  {item.label}
+                </LinkButton>
+              ))}
+            </nav>
+            {children}
+          </section>
+        </div>
       </main>
       <SiteFooter />
     </div>
