@@ -1,7 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { withoutUndefined } from '../ontos-client.ts';
 import { applyCommand, defineTool, readRecordsOf, readRevision, VERTICAL } from './shared.ts';
-import type { TaggingRecordsWire, TagWire } from './wire.ts';
+import { RevisionWire, TaggingCommandResultWire, TaggingRecordsWire } from './wire.ts';
+import type { TagWire } from './wire.ts';
+
+type Tag = typeof TagWire.Type;
 
 export const SUBJECT_KINDS = ['customer', 'order', 'product', 'employee', 'opportunity'] as const;
 export type SubjectKind = (typeof SUBJECT_KINDS)[number];
@@ -18,7 +22,7 @@ export const listTagsInput = {
   kind: z.enum(SUBJECT_KINDS).optional().describe('Only tags that can be assigned to this subject kind.'),
 };
 
-const assignShape = {
+const assignFields = {
   kind: z.enum(SUBJECT_KINDS).describe('Subject kind: customer, order, product, employee or opportunity.'),
   subjectIds: z
     .array(subjectIdSchema)
@@ -47,22 +51,25 @@ export const createTagInput = {
     .describe('Subject kinds the tag may be assigned to.'),
 };
 
-export const assignTagsInput = assignShape;
-export const unassignTagsInput = assignShape;
+export const assignTagsInput = assignFields;
+export const unassignTagsInput = assignFields;
 
-export type TagSelection = { readonly tagId?: string | undefined; readonly tagName?: string | undefined };
+export interface TagSelection {
+  readonly tagId?: string | undefined;
+  readonly tagName?: string | undefined;
+}
 
 /** Resolves exactly one tag from an id or a name, and checks the tag accepts the subject kind. */
-export function resolveTag(tags: readonly TagWire[], selection: TagSelection, kind: SubjectKind): TagWire {
+export const resolveTag = (tags: readonly Tag[], selection: TagSelection, kind: SubjectKind): Tag => {
   if ((selection.tagId === undefined) === (selection.tagName === undefined)) {
     throw new Error('Zadejte právě jedno z tagId nebo tagName.');
   }
   const tag =
     selection.tagId === undefined
-      ? tags.filter(
+      ? tags.find(
           (candidate) =>
             candidate.name.toLocaleLowerCase('cs-CZ') === selection.tagName?.trim().toLocaleLowerCase('cs-CZ'),
-        )[0]
+        )
       : tags.find((candidate) => candidate.id === selection.tagId);
   if (tag === undefined) {
     throw new Error(`Štítek ${selection.tagId ?? selection.tagName} neexistuje.`);
@@ -71,10 +78,10 @@ export function resolveTag(tags: readonly TagWire[], selection: TagSelection, ki
     throw new Error(`Štítek "${tag.name}" nelze přiřadit typu ${kind}.`);
   }
   return tag;
-}
+};
 
-export async function listTags(input: { readonly kind?: SubjectKind | undefined }) {
-  const response = await readRecordsOf<TaggingRecordsWire>(VERTICAL.tagging, {});
+export const listTags = async (input: { readonly kind?: SubjectKind | undefined }) => {
+  const response = await readRecordsOf(VERTICAL.tagging, TaggingRecordsWire, {});
   const items = response.tags
     .filter((tag) => input.kind === undefined || tag.subjectKinds.includes(input.kind))
     .map((tag) => ({
@@ -86,43 +93,43 @@ export async function listTags(input: { readonly kind?: SubjectKind | undefined 
       subjectKinds: tag.subjectKinds,
     }));
   return { count: items.length, items, revision: response.revision };
-}
+};
 
 /** Creates a tag. The bot may create tags; renaming and deleting them stays human-only (tagging command guard). */
-export async function createTag(input: {
+export const createTag = async (input: {
   readonly color?: (typeof TAG_COLORS)[number] | undefined;
   readonly description?: string | undefined;
   readonly name: string;
   readonly subjectKinds: readonly SubjectKind[];
-}) {
-  const current = await readRecordsOf<TaggingRecordsWire>(VERTICAL.tagging, {});
+}) => {
+  const current = await readRecordsOf(VERTICAL.tagging, TaggingRecordsWire, {});
   const wanted = input.name.trim().toLocaleLowerCase('cs-CZ');
   const clash = current.tags.find((tag) => tag.name.toLocaleLowerCase('cs-CZ') === wanted);
   if (clash !== undefined) {
     throw new Error(`Štítek "${clash.name}" už existuje (pro ${clash.subjectKinds.join(', ')}). Zvolte jiný název.`);
   }
-  const result = await applyCommand<{ revision: number; tagId?: string }>(
+  const result = await applyCommand(
     VERTICAL.tagging,
-    {
+    RevisionWire,
+    withoutUndefined({
       _tag: 'CreateTag',
       color: input.color ?? 'gray',
+      description: input.description,
       name: input.name.trim(),
       subjectKinds: [...new Set(input.subjectKinds)],
-      ...(input.description === undefined ? {} : { description: input.description }),
-    },
-    () => readRevision(VERTICAL.tagging),
+    }),
+    async () => await readRevision(VERTICAL.tagging),
     current.revision,
   );
-  const created = (await readRecordsOf<TaggingRecordsWire>(VERTICAL.tagging, {})).tags.find(
-    (tag) => tag.name.toLocaleLowerCase('cs-CZ') === wanted,
-  );
+  const refreshed = await readRecordsOf(VERTICAL.tagging, TaggingRecordsWire, {});
+  const created = refreshed.tags.find((tag) => tag.name.toLocaleLowerCase('cs-CZ') === wanted);
   return {
     revision: result.revision,
     tag: created === undefined ? null : { id: created.id, name: created.name, subjectKinds: created.subjectKinds },
   };
-}
+};
 
-async function changeTagging(
+const changeTagging = async (
   commandTag: 'AssignTag' | 'UnassignTag',
   input: SubjectSelection,
 ): Promise<{
@@ -130,38 +137,39 @@ async function changeTagging(
   readonly revision: number;
   readonly tag: string;
   readonly tagId: string;
-}> {
-  const current = await readRecordsOf<TaggingRecordsWire>(VERTICAL.tagging, {});
+}> => {
+  const current = await readRecordsOf(VERTICAL.tagging, TaggingRecordsWire, {});
   const tag = resolveTag(current.tags, input, input.kind);
-  const result = await applyCommand<{ affectedAssignments: number; revision: number; tagId: string }>(
+  const result = await applyCommand(
     VERTICAL.tagging,
+    TaggingCommandResultWire,
     {
       _tag: commandTag,
       subjects: input.subjectIds.map((id) => ({ id, kind: input.kind })),
       tagId: tag.id,
     },
-    () => readRevision(VERTICAL.tagging),
+    async () => await readRevision(VERTICAL.tagging),
     current.revision,
   );
   return { affectedAssignments: result.affectedAssignments, revision: result.revision, tag: tag.name, tagId: tag.id };
-}
+};
 
-interface SubjectSelection extends TagSelection {
+export interface SubjectSelection extends TagSelection {
   readonly kind: SubjectKind;
   readonly subjectIds: readonly string[];
 }
 
-export async function assignTags(input: SubjectSelection) {
+export const assignTags = async (input: SubjectSelection) => {
   const result = await changeTagging('AssignTag', input);
   return { ...result, kind: input.kind, requested: input.subjectIds.length };
-}
+};
 
-export async function unassignTags(input: SubjectSelection) {
+export const unassignTags = async (input: SubjectSelection) => {
   const result = await changeTagging('UnassignTag', input);
   return { ...result, kind: input.kind, requested: input.subjectIds.length };
-}
+};
 
-export function registerTaggingTools(server: McpServer): void {
+export const registerTaggingTools = (server: McpServer): void => {
   defineTool(
     server,
     'list_tags',
@@ -190,4 +198,4 @@ export function registerTaggingTools(server: McpServer): void {
     unassignTagsInput,
     unassignTags,
   );
-}
+};

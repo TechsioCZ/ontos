@@ -13,6 +13,7 @@ pre-commit:
       glob:
         - "app/{apps,verticals,packages,scripts}/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
         - "app/tools/oxlint/effect-native/tests/*.test.mts"
+        - "app/tools/ontos-agent-mcp/**/*.{ts,mts,js,mjs}"
       exclude:
         - "app/tools/oxlint/effect-native/tests/fixtures/*"
       run: pnpm exec oxlint --fix --no-error-on-unmatched-pattern {staged_files}

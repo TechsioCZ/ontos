@@ -1,6 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { z } from 'zod';
+import { Predicate, Schema } from 'effect';
+import { z } from 'zod';
 import { callAction, OntosRequestError, readRecords } from '../ontos-client.ts';
+import type { JsonObject } from '../ontos-client.ts';
+import { RevisionWire } from './wire.ts';
 
 /** Audiences: stable vertical app IDs (directory names under app/verticals). */
 export const VERTICAL = {
@@ -19,85 +22,92 @@ export const minorFromCzk = (czk: number): number => Math.round(czk * 100);
 
 export const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/u;
 
-export type JsonObject = Record<string, unknown>;
+export const jsonResult = <A>(value: A) => ({
+  content: [{ text: JSON.stringify(value), type: 'text' as const }],
+  isError: false,
+});
 
-export function jsonResult(value: unknown) {
-  return { content: [{ text: JSON.stringify(value), type: 'text' as const }], isError: false };
-}
-
-export function errorResult(message: string) {
-  return { content: [{ text: message, type: 'text' as const }], isError: true };
-}
+export const errorResult = (message: string) => ({
+  content: [{ text: message, type: 'text' as const }],
+  isError: true,
+});
 
 /** Human-readable tool error. 403 reads "Agent nemá oprávnění: …"; every HTTP error keeps its status and code. */
-export function describeError(error: unknown): string {
-  if (error instanceof OntosRequestError) {
-    const detail = error.detail ?? error.title ?? 'bez podrobností';
-    const code = error.code === undefined ? '' : `, kód ${error.code}`;
-    if (error.status === 403) {
+export const describeError = (cause: unknown): string => {
+  if (Schema.is(OntosRequestError)(cause)) {
+    const detail = cause.detail ?? cause.title ?? 'bez podrobností';
+    const code = cause.code === undefined ? '' : `, kód ${cause.code}`;
+    if (cause.status === 403) {
       return `Agent nemá oprávnění: ${detail} (HTTP 403${code})`;
     }
-    return `HTTP ${error.status}${code}: ${detail}`;
+    return `HTTP ${cause.status}${code}: ${detail}`;
   }
-  return error instanceof Error ? error.message : String(error);
-}
+  return Predicate.isError(cause) ? cause.message : String(cause);
+};
 
 /** Runs one tool body and turns any failure into an MCP tool error. Never writes to stdout. */
-export async function runTool(body: () => Promise<unknown>) {
+export const runTool = async <A>(body: () => Promise<A>) => {
   try {
     return jsonResult(await body());
   } catch (error) {
-    console.error(`tool failed: ${describeError(error)}`);
+    process.stderr.write(`tool failed: ${describeError(error)}\n`);
     return errorResult(describeError(error));
   }
-}
+};
 
 /** Registers one tool whose input is validated by a zod shape before the body runs. */
-export function defineTool<Shape extends z.ZodRawShape>(
+export const defineTool = <Fields extends Readonly<Record<string, z.ZodTypeAny>>, A>(
   server: McpServer,
   name: string,
   description: string,
-  inputSchema: Shape,
-  body: (input: z.infer<z.ZodObject<Shape>>) => Promise<unknown>,
-): void {
+  inputSchema: Fields,
+  body: (input: z.infer<z.ZodObject<Fields>>) => Promise<A>,
+): void => {
   // The SDK's generic callback type does not resolve for a generic shape, so the shape is widened here.
-  const shape: z.ZodRawShape = inputSchema;
-  server.registerTool(name, { description, inputSchema: shape }, (input: unknown) =>
-    runTool(() => body(input as z.infer<z.ZodObject<Shape>>)),
+  const widened: Readonly<Record<string, z.ZodTypeAny>> = inputSchema;
+  const parseInput = z.object(inputSchema);
+  // The SDK has validated the arguments already; parsing again yields the typed value without a cast.
+  server.registerTool(
+    name,
+    { description, inputSchema: widened },
+    async (rawInput) => await runTool(async () => await body(parseInput.parse(rawInput))),
   );
-}
+};
 
-/** Records read: POST {vertical}/reads/records. The response shape is typed by the caller. */
-export async function readRecordsOf<T>(vertical: string, query: JsonObject = {}): Promise<T> {
-  return (await readRecords(vertical, 'records', query)) as T;
-}
+/** Records read: POST {vertical}/reads/records. The response is decoded by `schema`. */
+export const readRecordsOf = async <S extends Schema.Codec<unknown>>(
+  vertical: string,
+  schema: S,
+  query: JsonObject = {},
+): Promise<S['Type']> => await readRecords(vertical, 'records', query, schema);
 
-export async function readRevision(vertical: string, query: JsonObject = {}): Promise<number> {
-  return (await readRecordsOf<{ revision: number }>(vertical, query)).revision;
-}
+export const readRevision = async (vertical: string, query: JsonObject = {}): Promise<number> => {
+  const response = await readRecordsOf(vertical, RevisionWire, query);
+  return response.revision;
+};
 
-function isRevisionConflict(error: unknown): boolean {
-  return error instanceof OntosRequestError && error.status === 409 && (error.code ?? '').endsWith('revision_conflict');
-}
+const isRevisionConflict = (cause: unknown): boolean =>
+  Schema.is(OntosRequestError)(cause) && cause.status === 409 && (cause.code ?? '').endsWith('revision_conflict');
 
 /**
  * Sends one apply-command with expectedRevision. Uses `expectedRevision` when the caller already knows it,
  * otherwise reads the current revision first. On a revision conflict it re-reads and retries exactly once.
  */
-export async function applyCommand<R extends { readonly revision: number }>(
+export const applyCommand = async <S extends Schema.Codec<unknown>>(
   vertical: string,
+  schema: S,
   command: JsonObject,
   currentRevision: () => Promise<number>,
   expectedRevision?: number,
-): Promise<R> {
+): Promise<S['Type']> => {
   const send = async (revision: number) =>
-    (await callAction(vertical, 'apply-command', { command, expectedRevision: revision })) as R;
+    await callAction(vertical, 'apply-command', { command, expectedRevision: revision }, schema);
   try {
     return await send(expectedRevision ?? (await currentRevision()));
   } catch (error) {
     if (!isRevisionConflict(error)) {
       throw error;
     }
-    return send(await currentRevision());
+    return await send(await currentRevision());
   }
-}
+};

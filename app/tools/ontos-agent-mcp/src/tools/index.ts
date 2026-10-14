@@ -11,9 +11,9 @@ import { registerWorkforceTools } from './workforce.ts';
 /**
  * Registers the sales-agent domain tools: reads (list_*, get_metrics) and governed writes (create/update/assign).
  * Called once from src/server.ts after the core tools. Do not write to stdout from tool code: stdout is the
- * MCP stdio channel. Use console.error for diagnostics.
+ * MCP stdio channel. Use process.stderr for diagnostics.
  */
-export function registerDomainTools(server: McpServer): void {
+export const registerDomainTools = (server: McpServer): void => {
   registerCustomerTools(server);
   registerWorkforceTools(server);
   registerSalesTools(server);
@@ -22,4 +22,4 @@ export function registerDomainTools(server: McpServer): void {
   registerWorkTools(server);
   registerTaggingTools(server);
   registerMetricTools(server);
-}
+};

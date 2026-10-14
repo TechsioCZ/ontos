@@ -3,7 +3,7 @@
 /** Czech label for an enum code. Unknown codes pass through unchanged. */
 export const labelOf = (labels: Readonly<Record<string, string>>, code: string): string => labels[code] ?? code;
 
-export const EMPLOYEE_ROLE_CS: Readonly<Record<string, string>> = {
+export const EMPLOYEE_ROLE_CS = {
   ACCOUNTANT: 'účetní',
   SALES_HEAD: 'vedoucí obchodu',
   SALES_REP: 'obchodník',
@@ -11,7 +11,7 @@ export const EMPLOYEE_ROLE_CS: Readonly<Record<string, string>> = {
   WAREHOUSE: 'sklad',
 };
 
-export const OPPORTUNITY_STAGE_CS: Readonly<Record<string, string>> = {
+export const OPPORTUNITY_STAGE_CS = {
   LEAD: 'lead',
   LOST: 'prohraná',
   NEGOTIATION: 'jednání',
@@ -20,7 +20,7 @@ export const OPPORTUNITY_STAGE_CS: Readonly<Record<string, string>> = {
   WON: 'vyhraná',
 };
 
-export const TASK_STATE_CS: Readonly<Record<string, string>> = {
+export const TASK_STATE_CS = {
   CANCELLED: 'zrušen',
   DONE: 'splněn',
   IN_PROGRESS: 'probíhá',
@@ -28,7 +28,7 @@ export const TASK_STATE_CS: Readonly<Record<string, string>> = {
   WAITING: 'čeká',
 };
 
-export const ORDER_STATUS_CS: Readonly<Record<string, string>> = {
+export const ORDER_STATUS_CS = {
   CANCELLED: 'zrušena',
   CONFIRMED: 'potvrzena',
   DELIVERED: 'doručena',
@@ -36,19 +36,19 @@ export const ORDER_STATUS_CS: Readonly<Record<string, string>> = {
   SHIPPED: 'odeslána',
 };
 
-export const INVOICE_STATE_CS: Readonly<Record<string, string>> = {
+export const INVOICE_STATE_CS = {
   CONFIRMED: 'vystavena',
   DRAFT: 'koncept',
   VOIDED: 'stornována',
 };
 
-export const PAYMENT_STATE_CS: Readonly<Record<string, string>> = {
+export const PAYMENT_STATE_CS = {
   PAID: 'zaplaceno',
   PARTIALLY_PAID: 'částečně zaplaceno',
   UNPAID: 'nezaplaceno',
 };
 
-export const METRIC_GROUPING_CS: Readonly<Record<string, string>> = {
+export const METRIC_GROUPING_CS = {
   customer: 'zákazník',
   day: 'den',
   employee: 'obchodník',

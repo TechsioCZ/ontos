@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Predicate, Schema } from 'effect';
 import { z } from 'zod';
 import { getConfig } from './config.ts';
 import { getAssertion } from './gateway.ts';
@@ -10,20 +11,19 @@ const SERVER_NAME = 'ontos-sales-agent';
 const SERVER_VERSION = '0.1.0';
 const PROBE_AUDIENCE = 'siampark-work';
 
-function textResult(value: unknown, isError = false) {
-  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+const textResult = <A>(value: A, isError = false) => {
+  const text = Predicate.isString(value) ? value : JSON.stringify(value, null, 2);
   return { content: [{ text, type: 'text' as const }], isError };
-}
+};
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+/** `cause` is whatever was thrown; only its message is reported. */
+const errorMessage = (cause: unknown): string => (Predicate.isError(cause) ? cause.message : String(cause));
 
 // Fail fast on missing configuration. Startup errors go to stderr; stdout stays reserved for MCP.
 try {
   getConfig();
 } catch (error) {
-  console.error(errorMessage(error));
+  process.stderr.write(`${errorMessage(error)}\n`);
   process.exit(1);
 }
 
@@ -74,7 +74,7 @@ server.registerTool(
   },
   async ({ query, readName, vertical }) => {
     try {
-      return textResult(await readRecords(vertical, readName, query));
+      return textResult(await readRecords(vertical, readName, query, Schema.Json));
     } catch (error) {
       return textResult(errorMessage(error), true);
     }
@@ -84,4 +84,4 @@ server.registerTool(
 registerDomainTools(server);
 
 await server.connect(new StdioServerTransport());
-console.error(`${SERVER_NAME} ${SERVER_VERSION} ready on stdio`);
+process.stderr.write(`${SERVER_NAME} ${SERVER_VERSION} ready on stdio\n`);

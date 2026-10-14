@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { labelOf, ORDER_STATUS_CS } from './labels.ts';
 import { czkFromMinor, defineTool, readRecordsOf, VERTICAL } from './shared.ts';
-import type { MerchandiseRecordsWire } from './wire.ts';
+import { MerchandiseRecordsWire } from './wire.ts';
 
 export const ORDER_STATUSES = ['NEW', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED'] as const;
 
@@ -14,9 +14,10 @@ export const listOrdersInput = {
   status: z.enum(ORDER_STATUSES).optional().describe('Order status filter.'),
 };
 
-export async function listProducts(input: { readonly lowStockOnly?: boolean | undefined }) {
-  const response = await readRecordsOf<MerchandiseRecordsWire>(
+export const listProducts = async (input: { readonly lowStockOnly?: boolean | undefined }) => {
+  const response = await readRecordsOf(
     VERTICAL.merchandise,
+    MerchandiseRecordsWire,
     input.lowStockOnly === undefined ? {} : { view: { lowStockOnly: input.lowStockOnly } },
   );
   return {
@@ -41,11 +42,12 @@ export async function listProducts(input: { readonly lowStockOnly?: boolean | un
       vatRate: product.vatRate,
     })),
   };
-}
+};
 
-export async function listOrders(input: { readonly status?: (typeof ORDER_STATUSES)[number] | undefined }) {
-  const response = await readRecordsOf<MerchandiseRecordsWire>(
+export const listOrders = async (input: { readonly status?: (typeof ORDER_STATUSES)[number] | undefined }) => {
+  const response = await readRecordsOf(
     VERTICAL.merchandise,
+    MerchandiseRecordsWire,
     input.status === undefined ? {} : { view: { orderStatus: input.status } },
   );
   return {
@@ -72,9 +74,9 @@ export async function listOrders(input: { readonly status?: (typeof ORDER_STATUS
       totalVatCzk: czkFromMinor(order.totalVatMinor),
     })),
   };
-}
+};
 
-export function registerMerchandiseTools(server: McpServer): void {
+export const registerMerchandiseTools = (server: McpServer): void => {
   defineTool(
     server,
     'list_products',
@@ -89,4 +91,4 @@ export function registerMerchandiseTools(server: McpServer): void {
     listOrdersInput,
     listOrders,
   );
-}
+};

@@ -1,8 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { defineTool, VERTICAL } from './shared.ts';
 import { readRecords } from '../ontos-client.ts';
+import { defineTool, VERTICAL } from './shared.ts';
+import { CustomerListWire } from './wire.ts';
 import type { CustomerWire } from './wire.ts';
+
+type Customer = typeof CustomerWire.Type;
 
 /** party-registry customer-list read; the server caps `limit` at 500. */
 export const CUSTOMER_LIMIT = 500;
@@ -15,21 +18,25 @@ export const listCustomersInput = {
     .describe('Case-insensitive text matched against name, IČO, DIČ, e-mail and city.'),
 };
 
-export async function readCustomers(): Promise<readonly CustomerWire[]> {
-  const response = (await readRecords(VERTICAL.partyRegistry, 'customer-list', {
-    limit: CUSTOMER_LIMIT,
-  })) as { items: readonly CustomerWire[] };
+export const readCustomers = async (): Promise<readonly Customer[]> => {
+  const response = await readRecords(
+    VERTICAL.partyRegistry,
+    'customer-list',
+    { limit: CUSTOMER_LIMIT },
+    CustomerListWire,
+  );
   return response.items;
-}
+};
 
-export async function listCustomers(input: { readonly search?: string | undefined }) {
+export const listCustomers = async (input: { readonly search?: string | undefined }) => {
   const needle = input.search?.trim().toLocaleLowerCase('cs-CZ');
-  const matches = (customer: CustomerWire) =>
+  const matches = (customer: Customer) =>
     needle === undefined ||
     [customer.displayName, customer.companyId, customer.vatId, customer.email, customer.city].some(
       (field) => field !== null && field.toLocaleLowerCase('cs-CZ').includes(needle),
     );
-  const items = (await readCustomers()).filter(matches).map((customer) => ({
+  const customers = await readCustomers();
+  const items = customers.filter(matches).map((customer) => ({
     city: customer.city,
     dic: customer.vatId,
     email: customer.email,
@@ -40,9 +47,9 @@ export async function listCustomers(input: { readonly search?: string | undefine
     status: customer.status,
   }));
   return { count: items.length, items };
-}
+};
 
-export function registerCustomerTools(server: McpServer): void {
+export const registerCustomerTools = (server: McpServer): void => {
   defineTool(
     server,
     'list_customers',
@@ -50,4 +57,4 @@ export function registerCustomerTools(server: McpServer): void {
     listCustomersInput,
     listCustomers,
   );
-}
+};

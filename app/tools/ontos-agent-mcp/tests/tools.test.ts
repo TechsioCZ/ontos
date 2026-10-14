@@ -1,7 +1,9 @@
+/* oxlint-disable effect-native/no-promise-shaped-port -- node:test is a real runner boundary: its describe/it callbacks are async by API contract, so the Promise boundary stays. expires: 2027-03-31. */
 // Argument mapping for the sales-agent tools, against a mocked fetch. No shell is contacted.
 // Run: pnpm --ignore-workspace test   (node --experimental-strip-types --test)
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { z } from 'zod';
 
 const SHELL = 'http://shell.test';
 const REVISION = 'a'.repeat(64);
@@ -15,27 +17,40 @@ const { assignTags } = await import('../src/tools/tagging.ts');
 const { getMetrics } = await import('../src/tools/metrics.ts');
 const { describeError, runTool } = await import('../src/tools/shared.ts');
 
-type Reply = { readonly status?: number; readonly body: unknown };
-type Call = {
-  readonly vertical: string;
-  readonly path: string;
-  readonly body: Record<string, unknown>;
+/** A JSON object body, decoded from the request or response text. */
+const BodySchema = z.record(z.string(), z.unknown());
+type Body = z.infer<typeof BodySchema>;
+
+interface Reply {
+  readonly body: Body;
+  readonly status?: number;
+}
+
+interface Call {
   readonly auth: string | null;
-};
+  readonly body: Body;
+  readonly path: string;
+  readonly vertical: string;
+}
+
 type Route = (call: Call) => Reply;
 
-const ROUTE_PATTERN = /\/shell-super-app-api\/module-api\/([^/]+)\/[^/]+\/[^/]+-api(\/.*)$/u;
+const ROUTE_PATTERN = /\/shell-super-app-api\/module-api\/(?<vertical>[^/]+)\/[^/]+\/[^/]+-api(?<path>\/.*)$/u;
 const expiresAt = () => Math.floor(Date.now() / 1000) + 3600;
 
+const json = (status: number, body: Body): Response =>
+  Response.json(body, { headers: { 'content-type': 'application/json' }, status });
+
 /** Serves gateway assertions and routes vertical calls by "<vertical> <path>". Records every vertical call. */
-function installFetch(routes: Record<string, Route | Reply | Reply[]>): Call[] {
+const installFetch = (routes: Record<string, Route | Reply | Reply[]>): Call[] => {
   const calls: Call[] = [];
   const queue = new Map<string, Reply[]>();
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input);
-    const body = init?.body === undefined ? {} : (JSON.parse(String(init.body)) as Record<string, unknown>);
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const { url } = new Request(input);
+    const body: Body =
+      init?.body === undefined ? {} : BodySchema.parse(JSON.parse(await new Response(init.body).text()));
     if (url === `${SHELL}/shell-super-app-api/auth/api-key/gateway-context`) {
-      const audience = String(body.audience);
+      const { audience } = z.object({ audience: z.string() }).parse(body);
       return json(200, {
         apiBaseUrl: `/shell-super-app-api/module-api/${audience}/build1/${audience}-api`,
         compositionRevision: REVISION,
@@ -47,7 +62,7 @@ function installFetch(routes: Record<string, Route | Reply | Reply[]>): Call[] {
     if (match === null) {
       throw new Error(`unexpected URL ${url}`);
     }
-    const [, vertical = '', path = ''] = match;
+    const { path = '', vertical = '' } = match.groups ?? {};
     const headers = new Headers(init?.headers);
     const call: Call = { auth: headers.get('authorization'), body, path, vertical };
     calls.push(call);
@@ -65,21 +80,16 @@ function installFetch(routes: Record<string, Route | Reply | Reply[]>): Call[] {
       }
       return json(next.status ?? 200, next.body);
     }
-    const reply = typeof route === 'function' ? route(call) : route;
+    const reply = 'body' in route ? route : route(call);
     return json(reply.status ?? 200, reply.body);
-  }) as typeof fetch;
+  };
   return calls;
-}
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' }, status });
-}
+};
 
 const applyOf = (calls: readonly Call[], vertical: string) =>
   calls.filter((call) => call.vertical === vertical && call.path.endsWith('/actions/apply-command'));
 
 const taskWire = {
-  assigneeEmployeeId: undefined,
   collectionRef: {},
   contextRefs: [],
   createdAt: '2026-10-05T08:00:00.000Z',
@@ -97,7 +107,7 @@ const taskWire = {
 };
 
 const opportunityWire = {
-  amountMinor: 246912,
+  amountMinor: 246_912,
   createdAt: '2026-10-05T08:00:00.000Z',
   currency: 'CZK',
   expectedCloseDate: '2026-11-30',
@@ -111,6 +121,16 @@ const opportunityWire = {
   updatedAt: '2026-10-05T08:00:00.000Z',
 };
 
+const tagVip = () => ({
+  color: 'blue',
+  counts: { customer: 0 },
+  createdAt: '2026-10-01T00:00:00.000Z',
+  id: 'tag-vip',
+  name: 'VIP',
+  subjectKinds: ['customer'],
+  updatedAt: '2026-10-01T00:00:00.000Z',
+});
+
 let originalFetch: typeof fetch;
 beforeEach(() => {
   originalFetch = globalThis.fetch;
@@ -119,7 +139,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-describe('write tools map arguments onto apply-command', () => {
+void describe('write tools map arguments onto apply-command', () => {
   it('create_task sends CreateTask with the revision read first', async () => {
     const calls = installFetch({
       'siampark-work /reads/records': {
@@ -192,10 +212,10 @@ describe('write tools map arguments onto apply-command', () => {
     const [apply] = applyOf(calls, 'sales-pipeline');
     assert.ok(apply !== undefined);
     assert.equal(apply.body.expectedRevision, 3);
-    const command = apply.body.command as Record<string, unknown>;
+    const command = BodySchema.parse(apply.body.command);
     assert.equal(command._tag, 'CreateOpportunity');
     assert.equal('ownerEmployeeId' in command, false);
-    assert.deepEqual(command.lines, [{ productName: 'Server', quantity: 2, unitPriceMinor: 123456, vatRate: 21 }]);
+    assert.deepEqual(command.lines, [{ productName: 'Server', quantity: 2, unitPriceMinor: 123_456, vatRate: 21 }]);
   });
 
   it('assign_tags resolves the tag name case-insensitively and sends subject objects', async () => {
@@ -272,11 +292,11 @@ describe('write tools map arguments onto apply-command', () => {
       'tagging /tagging/actions/apply-command': [
         {
           body: {
+            code: 'tagging_revision_conflict',
             detail: 'Revize se změnila.',
             status: 409,
             title: 'Conflict',
             type: 'x',
-            code: 'tagging_revision_conflict',
           },
           status: 409,
         },
@@ -329,11 +349,11 @@ describe('write tools map arguments onto apply-command', () => {
   });
 });
 
-describe('get_metrics', () => {
+void describe('get_metrics', () => {
   it('converts CZK engine output from minor units and keeps counts as they are', async () => {
     installFetch({
+      'merchandise /reads/records': { body: { indicators: {}, movements: [], orders: [], products: [], revision: 1 } },
       'party-registry /reads/customer-list': { body: { items: [] } },
-      'workforce /reads/records': { body: { items: [] } },
       'sales-pipeline /reads/records': { body: { indicators: {}, items: [], revision: 1 } },
       'siampark-billing-finance /reads/records': {
         body: {
@@ -358,9 +378,9 @@ describe('get_metrics', () => {
           },
         },
       },
-      'merchandise /reads/records': { body: { indicators: {}, movements: [], orders: [], products: [], revision: 1 } },
       'siampark-work /reads/records': { body: { indicators: {}, items: [], referenceDate: '2026-10-05', revision: 1 } },
       'tagging /reads/records': { body: { assignments: [], revision: 1, tags: [] } },
+      'workforce /reads/records': { body: { items: [] } },
     });
 
     const result = await getMetrics({
@@ -382,15 +402,3 @@ describe('get_metrics', () => {
     );
   });
 });
-
-function tagVip() {
-  return {
-    color: 'blue',
-    counts: { customer: 0 },
-    createdAt: '2026-10-01T00:00:00.000Z',
-    id: 'tag-vip',
-    name: 'VIP',
-    subjectKinds: ['customer'],
-    updatedAt: '2026-10-01T00:00:00.000Z',
-  };
-}

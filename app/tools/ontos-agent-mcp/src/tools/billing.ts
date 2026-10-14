@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { INVOICE_STATE_CS, labelOf, PAYMENT_STATE_CS } from './labels.ts';
 import { czkFromMinor, defineTool, readRecordsOf, VERTICAL } from './shared.ts';
-import type { BillingRecordsWire } from './wire.ts';
+import { BillingRecordsWire } from './wire.ts';
 
 export const INVOICE_STATES = ['DRAFT', 'CONFIRMED', 'VOIDED'] as const;
 export const PAYMENT_STATES = ['UNPAID', 'PARTIALLY_PAID', 'PAID'] as const;
@@ -13,19 +13,18 @@ export const listInvoicesInput = {
 };
 
 /** Indicator keys ending in Minor become CZK numbers; counts pass through unchanged. */
-function indicatorsInCzk(indicators: Readonly<Record<string, number>>): Record<string, number> {
-  return Object.fromEntries(
+const indicatorsInCzk = (indicators: Readonly<Record<string, number>>): Record<string, number> =>
+  Object.fromEntries(
     Object.entries(indicators).map(([key, value]) =>
       key.endsWith('Minor') ? [`${key.slice(0, -'Minor'.length)}Czk`, czkFromMinor(value)] : [key, value],
     ),
   );
-}
 
-export async function listInvoices(input: {
+export const listInvoices = async (input: {
   readonly payment?: (typeof PAYMENT_STATES)[number] | undefined;
   readonly state?: (typeof INVOICE_STATES)[number] | undefined;
-}) {
-  const response = await readRecordsOf<BillingRecordsWire>(VERTICAL.siamparkBilling, {});
+}) => {
+  const response = await readRecordsOf(VERTICAL.siamparkBilling, BillingRecordsWire, {});
   const items = response.state.invoices
     .filter((invoice) => input.state === undefined || invoice.businessState === input.state)
     .filter((invoice) => input.payment === undefined || invoice.paymentState === input.payment)
@@ -51,9 +50,9 @@ export async function listInvoices(input: {
     items,
     referenceDate: response.referenceDate,
   };
-}
+};
 
-export function registerBillingTools(server: McpServer): void {
+export const registerBillingTools = (server: McpServer): void => {
   defineTool(
     server,
     'list_invoices',
@@ -61,4 +60,4 @@ export function registerBillingTools(server: McpServer): void {
     listInvoicesInput,
     listInvoices,
   );
-}
+};

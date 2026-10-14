@@ -1,8 +1,12 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { withoutUndefined } from '../ontos-client.ts';
 import { labelOf, TASK_STATE_CS } from './labels.ts';
 import { applyCommand, CALENDAR_DATE, defineTool, readRecordsOf, readRevision, VERTICAL } from './shared.ts';
-import type { TaskWire, WorkCommandResultWire, WorkRecordsWire } from './wire.ts';
+import { WorkCommandResultWire, WorkRecordsWire } from './wire.ts';
+import type { TaskWire } from './wire.ts';
+
+type Task = typeof TaskWire.Type;
 
 export const TASK_STATES = ['NEW', 'IN_PROGRESS', 'WAITING', 'DONE', 'CANCELLED'] as const;
 export const TASK_PRIORITIES = ['LOW', 'NORMAL', 'HIGH'] as const;
@@ -34,7 +38,7 @@ export const updateTaskInput = {
   state: z.enum(TASK_STATES).optional().describe('New task state.'),
 };
 
-const taskSummary = (task: TaskWire) => ({
+const taskSummary = (task: Task) => ({
   assigneeEmployeeId: task.assigneeEmployeeId ?? null,
   description: task.description ?? null,
   dueDate: task.dueDate ?? null,
@@ -47,15 +51,16 @@ const taskSummary = (task: TaskWire) => ({
   title: task.title,
 });
 
-export async function listTasks(input: {
+export const listTasks = async (input: {
   readonly assigneeEmployeeId?: string | undefined;
   readonly overdueOnly?: boolean | undefined;
   readonly state?: (typeof TASK_STATES)[number] | undefined;
-}) {
-  const response = await readRecordsOf<WorkRecordsWire>(VERTICAL.siamparkWork, {
-    ...(input.assigneeEmployeeId === undefined ? {} : { assigneeEmployeeId: input.assigneeEmployeeId }),
-    ...(input.state === undefined ? {} : { state: input.state }),
-  });
+}) => {
+  const response = await readRecordsOf(
+    VERTICAL.siamparkWork,
+    WorkRecordsWire,
+    withoutUndefined({ assigneeEmployeeId: input.assigneeEmployeeId, state: input.state }),
+  );
   const items = response.items
     .filter(
       (task) =>
@@ -70,9 +75,9 @@ export async function listTasks(input: {
     referenceDate: response.referenceDate,
     revision: response.revision,
   };
-}
+};
 
-export async function createTask(input: {
+export const createTask = async (input: {
   readonly assigneeEmployeeId?: string | undefined;
   readonly description?: string | undefined;
   readonly dueDate?: string | undefined;
@@ -80,57 +85,61 @@ export async function createTask(input: {
   readonly partyId?: string | undefined;
   readonly priority?: (typeof TASK_PRIORITIES)[number] | undefined;
   readonly title: string;
-}) {
-  const command = {
+}) => {
+  const command = withoutUndefined({
     _tag: 'CreateTask',
+    assigneeEmployeeId: input.assigneeEmployeeId,
+    description: input.description,
+    dueDate: input.dueDate,
+    opportunityId: input.opportunityId,
+    partyId: input.partyId,
+    priority: input.priority,
     title: input.title,
-    ...(input.assigneeEmployeeId === undefined ? {} : { assigneeEmployeeId: input.assigneeEmployeeId }),
-    ...(input.description === undefined ? {} : { description: input.description }),
-    ...(input.dueDate === undefined ? {} : { dueDate: input.dueDate }),
-    ...(input.opportunityId === undefined ? {} : { opportunityId: input.opportunityId }),
-    ...(input.partyId === undefined ? {} : { partyId: input.partyId }),
-    ...(input.priority === undefined ? {} : { priority: input.priority }),
-  };
-  const result = await applyCommand<WorkCommandResultWire>(VERTICAL.siamparkWork, command, () =>
-    readRevision(VERTICAL.siamparkWork),
+  });
+  const result = await applyCommand(
+    VERTICAL.siamparkWork,
+    WorkCommandResultWire,
+    command,
+    async () => await readRevision(VERTICAL.siamparkWork),
   );
   return { revision: result.revision, task: result.task === undefined ? null : taskSummary(result.task) };
-}
+};
 
-export async function updateTask(input: {
+export const updateTask = async (input: {
   readonly assigneeEmployeeId?: string | undefined;
   readonly dueDate?: string | undefined;
   readonly id: string;
   readonly state?: (typeof TASK_STATES)[number] | undefined;
-}) {
+}) => {
   if (input.state === undefined && input.assigneeEmployeeId === undefined && input.dueDate === undefined) {
     throw new Error('Zadejte state, assigneeEmployeeId nebo dueDate.');
   }
   const query = { resourceId: input.id };
-  const current = await readRecordsOf<WorkRecordsWire>(VERTICAL.siamparkWork, query);
-  const existing = current.items[0];
+  const current = await readRecordsOf(VERTICAL.siamparkWork, WorkRecordsWire, query);
+  const [existing] = current.items;
   if (existing === undefined) {
     throw new Error(`Úkol ${input.id} nebyl nalezen.`);
   }
   const taskRef = existing.ref;
-  const currentRevision = () => readRevision(VERTICAL.siamparkWork, query);
+  const currentRevision = async () => await readRevision(VERTICAL.siamparkWork, query);
 
   const changed: string[] = [];
-  let revision = current.revision;
-  let task: TaskWire | undefined;
+  let { revision } = current;
+  let task: Task | undefined;
   if (input.assigneeEmployeeId !== undefined || input.dueDate !== undefined) {
-    const result = await applyCommand<WorkCommandResultWire>(
+    const result = await applyCommand(
       VERTICAL.siamparkWork,
-      {
+      WorkCommandResultWire,
+      withoutUndefined({
         _tag: 'UpdateTask',
+        assigneeEmployeeId: input.assigneeEmployeeId,
+        dueDate: input.dueDate,
         taskRef,
-        ...(input.assigneeEmployeeId === undefined ? {} : { assigneeEmployeeId: input.assigneeEmployeeId }),
-        ...(input.dueDate === undefined ? {} : { dueDate: input.dueDate }),
-      },
+      }),
       currentRevision,
       revision,
     );
-    revision = result.revision;
+    ({ revision } = result);
     task = result.task ?? task;
     if (input.assigneeEmployeeId !== undefined) {
       changed.push('assigneeEmployeeId');
@@ -140,20 +149,21 @@ export async function updateTask(input: {
     }
   }
   if (input.state !== undefined) {
-    const result = await applyCommand<WorkCommandResultWire>(
+    const result = await applyCommand(
       VERTICAL.siamparkWork,
+      WorkCommandResultWire,
       { _tag: 'ChangeTaskState', state: input.state, taskRef },
       currentRevision,
       revision,
     );
-    revision = result.revision;
+    ({ revision } = result);
     task = result.task ?? task;
     changed.push('state');
   }
   return { changed, revision, task: task === undefined ? null : taskSummary(task) };
-}
+};
 
-export function registerWorkTools(server: McpServer): void {
+export const registerWorkTools = (server: McpServer): void => {
   defineTool(
     server,
     'list_tasks',
@@ -175,4 +185,4 @@ export function registerWorkTools(server: McpServer): void {
     updateTaskInput,
     updateTask,
   );
-}
+};

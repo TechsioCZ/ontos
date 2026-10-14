@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { withoutUndefined } from '../ontos-client.ts';
 import { OPPORTUNITY_STAGE_CS, labelOf } from './labels.ts';
 import {
   applyCommand,
@@ -11,7 +12,10 @@ import {
   readRevision,
   VERTICAL,
 } from './shared.ts';
-import type { OpportunitiesRecordsWire, OpportunityCommandResultWire, OpportunityWire } from './wire.ts';
+import { OpportunitiesRecordsWire, OpportunityCommandResultWire } from './wire.ts';
+import type { OpportunityWire } from './wire.ts';
+
+type Opportunity = typeof OpportunityWire.Type;
 
 export const OPPORTUNITY_STAGES = ['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST'] as const;
 const VAT_RATES = [0, 10, 12, 21] as const;
@@ -60,7 +64,7 @@ export const updateOpportunityInput = {
   stage: z.enum(OPPORTUNITY_STAGES).optional().describe('New pipeline stage.'),
 };
 
-const opportunitySummary = (o: OpportunityWire) => ({
+const opportunitySummary = (o: Opportunity) => ({
   amountCzk: czkFromMinor(o.amountMinor),
   expectedCloseDate: o.expectedCloseDate,
   id: o.id,
@@ -72,16 +76,16 @@ const opportunitySummary = (o: OpportunityWire) => ({
   title: o.title,
 });
 
-export async function listOpportunities(input: {
+export const listOpportunities = async (input: {
   readonly ownerEmployeeId?: string | undefined;
   readonly partyId?: string | undefined;
   readonly stage?: (typeof OPPORTUNITY_STAGES)[number] | undefined;
-}) {
-  const response = await readRecordsOf<OpportunitiesRecordsWire>(VERTICAL.salesPipeline, {
-    ...(input.ownerEmployeeId === undefined ? {} : { ownerEmployeeId: input.ownerEmployeeId }),
-    ...(input.partyId === undefined ? {} : { partyId: input.partyId }),
-    ...(input.stage === undefined ? {} : { stage: input.stage }),
-  });
+}) => {
+  const response = await readRecordsOf(
+    VERTICAL.salesPipeline,
+    OpportunitiesRecordsWire,
+    withoutUndefined({ ownerEmployeeId: input.ownerEmployeeId, partyId: input.partyId, stage: input.stage }),
+  );
   const { indicators } = response;
   return {
     count: response.items.length,
@@ -92,14 +96,14 @@ export async function listOpportunities(input: {
       openCount: indicators.openCount,
       openValueCzk: czkFromMinor(indicators.openValueMinor),
       weightedValueCzk: czkFromMinor(indicators.weightedValueMinor),
+      winRatePct: indicators.winRate === null ? null : Math.round(indicators.winRate * 1000) / 10,
       wonCount: indicators.wonCount,
       wonValueCzk: czkFromMinor(indicators.wonValueMinor),
-      winRatePct: indicators.winRate === null ? null : Math.round(indicators.winRate * 1000) / 10,
     },
   };
-}
+};
 
-export async function createOpportunity(input: {
+export const createOpportunity = async (input: {
   readonly expectedCloseDate: string;
   readonly lines?: readonly {
     readonly productId?: string | undefined;
@@ -113,72 +117,75 @@ export async function createOpportunity(input: {
   readonly partyId: string;
   readonly probability?: number | undefined;
   readonly title: string;
-}) {
-  const command = {
+}) => {
+  const command = withoutUndefined({
     _tag: 'CreateOpportunity',
     expectedCloseDate: input.expectedCloseDate,
-    lines: (input.lines ?? []).map((line) => ({
-      ...(line.productId === undefined ? {} : { productId: line.productId }),
-      productName: line.productName,
-      quantity: line.quantity,
-      unitPriceMinor: minorFromCzk(line.unitPriceCzk),
-      vatRate: line.vatRate,
-    })),
+    lines: (input.lines ?? []).map((line) =>
+      withoutUndefined({
+        productId: line.productId,
+        productName: line.productName,
+        quantity: line.quantity,
+        unitPriceMinor: minorFromCzk(line.unitPriceCzk),
+        vatRate: line.vatRate,
+      }),
+    ),
+    note: input.note,
+    ownerEmployeeId: input.ownerEmployeeId,
     partyId: input.partyId,
+    probability: input.probability,
     title: input.title,
-    ...(input.ownerEmployeeId === undefined ? {} : { ownerEmployeeId: input.ownerEmployeeId }),
-    ...(input.probability === undefined ? {} : { probability: input.probability }),
-    ...(input.note === undefined ? {} : { note: input.note }),
-  };
-  const result = await applyCommand<OpportunityCommandResultWire>(VERTICAL.salesPipeline, command, () =>
-    readRevision(VERTICAL.salesPipeline),
+  });
+  const result = await applyCommand(
+    VERTICAL.salesPipeline,
+    OpportunityCommandResultWire,
+    command,
+    async () => await readRevision(VERTICAL.salesPipeline),
   );
-  const created = result.opportunities[0];
+  const [created] = result.opportunities;
   return { created: created === undefined ? null : opportunitySummary(created), revision: result.revision };
-}
+};
 
-export async function updateOpportunity(input: {
+export const updateOpportunity = async (input: {
   readonly id: string;
   readonly note?: string | undefined;
   readonly ownerEmployeeId?: string | null | undefined;
   readonly stage?: (typeof OPPORTUNITY_STAGES)[number] | undefined;
-}) {
+}) => {
   if (input.stage === undefined && input.ownerEmployeeId === undefined) {
     throw new Error('Zadejte stage nebo ownerEmployeeId (null pro zrušení obchodníka).');
   }
-  const currentRevision = () => readRevision(VERTICAL.salesPipeline, { ids: [input.id] });
-  const current = await readRecordsOf<OpportunitiesRecordsWire>(VERTICAL.salesPipeline, { ids: [input.id] });
+  const query = { ids: [input.id] };
+  const currentRevision = async () => await readRevision(VERTICAL.salesPipeline, query);
+  const current = await readRecordsOf(VERTICAL.salesPipeline, OpportunitiesRecordsWire, query);
   if (current.items.length === 0) {
     throw new Error(`Příležitost ${input.id} nebyla nalezena.`);
   }
 
   const changed: string[] = [];
-  let revision = current.revision;
-  let latest: OpportunityWire | undefined = current.items[0];
+  let { revision } = current;
+  let latest: Opportunity | undefined = current.items[0];
   if (input.ownerEmployeeId !== undefined) {
-    const result = await applyCommand<OpportunityCommandResultWire>(
+    const result = await applyCommand(
       VERTICAL.salesPipeline,
+      OpportunityCommandResultWire,
       { _tag: 'AssignOpportunity', id: input.id, ownerEmployeeId: input.ownerEmployeeId },
       currentRevision,
       revision,
     );
-    revision = result.revision;
+    ({ revision } = result);
     latest = result.opportunities[0] ?? latest;
     changed.push('ownerEmployeeId');
   }
   if (input.stage !== undefined) {
-    const result = await applyCommand<OpportunityCommandResultWire>(
+    const result = await applyCommand(
       VERTICAL.salesPipeline,
-      {
-        _tag: 'ChangeOpportunityStage',
-        id: input.id,
-        toStage: input.stage,
-        ...(input.note === undefined ? {} : { note: input.note }),
-      },
+      OpportunityCommandResultWire,
+      withoutUndefined({ _tag: 'ChangeOpportunityStage', id: input.id, note: input.note, toStage: input.stage }),
       currentRevision,
       revision,
     );
-    revision = result.revision;
+    ({ revision } = result);
     latest = result.opportunities[0] ?? latest;
     changed.push('stage');
   }
@@ -187,9 +194,9 @@ export async function updateOpportunity(input: {
     opportunity: latest === undefined ? null : opportunitySummary(latest),
     revision,
   };
-}
+};
 
-export function registerSalesTools(server: McpServer): void {
+export const registerSalesTools = (server: McpServer): void => {
   defineTool(
     server,
     'list_opportunities',
@@ -211,4 +218,4 @@ export function registerSalesTools(server: McpServer): void {
     updateOpportunityInput,
     updateOpportunity,
   );
-}
+};

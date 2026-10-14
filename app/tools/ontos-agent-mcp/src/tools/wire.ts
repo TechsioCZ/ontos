@@ -1,207 +1,211 @@
-// Wire shapes the tools read. Hand-typed from each vertical's Schema (file references in the comments).
-// Decoding is deliberately shallow: the vertical owns validation, the tools only read the fields they show.
+// Wire shapes the tools read, as Effect Schemas. Each schema names the vertical file it mirrors.
+// Only the fields a tool reads are declared; the vertical owns validation of everything else.
 // Money fields are integer CZK minor units unless the name ends in Czk.
+import { Schema } from 'effect';
+
+/** Any answer that carries the current revision of a vertical's aggregate. */
+export const RevisionWire = Schema.Struct({ revision: Schema.Number });
 
 /** workforce/shared/apis/records.ts EmployeeSchema */
-export interface EmployeeWire {
-  readonly active: boolean;
-  readonly department: string;
-  readonly email: string;
-  readonly fullName: string;
-  readonly id: string;
-  readonly phone?: string;
-  readonly role: string;
-}
+export const EmployeeWire = Schema.Struct({
+  active: Schema.Boolean,
+  department: Schema.String,
+  email: Schema.String,
+  fullName: Schema.String,
+  id: Schema.String,
+  phone: Schema.optionalKey(Schema.String),
+  role: Schema.String,
+});
+
+export const EmployeesWire = Schema.Struct({ items: Schema.Array(EmployeeWire) });
 
 /** tagging/shared/apis/records.ts TagWithCountsSchema */
-export interface TagWire {
-  readonly color: string;
-  readonly counts: Readonly<Record<string, number>>;
-  readonly description?: string;
-  readonly id: string;
-  readonly name: string;
-  readonly subjectKinds: readonly string[];
-}
+export const TagWire = Schema.Struct({
+  color: Schema.String,
+  counts: Schema.Record(Schema.String, Schema.Number),
+  description: Schema.optionalKey(Schema.String),
+  id: Schema.String,
+  name: Schema.String,
+  subjectKinds: Schema.Array(Schema.String),
+});
 
 /** tagging/shared/apis/records.ts AssignmentSchema */
-export interface AssignmentWire {
-  readonly subject: { readonly id: string; readonly kind: string };
-  readonly tagId: string;
-}
+export const AssignmentWire = Schema.Struct({
+  subject: Schema.Struct({ id: Schema.String, kind: Schema.String }),
+  tagId: Schema.String,
+});
 
 /** tagging/shared/apis/records.ts RecordsResponseSchema */
-export interface TaggingRecordsWire {
-  readonly assignments: readonly AssignmentWire[];
-  readonly revision: number;
-  readonly tags: readonly TagWire[];
-}
+export const TaggingRecordsWire = Schema.Struct({
+  assignments: Schema.Array(AssignmentWire),
+  revision: Schema.Number,
+  tags: Schema.Array(TagWire),
+});
 
 /** party-registry/shared/apis/customer-list.ts CustomerListItemSchema (nullable Option fields are null on the wire) */
-export interface CustomerWire {
-  readonly city: string | null;
-  readonly companyId: string | null;
-  readonly displayName: string | null;
-  readonly email: string | null;
-  readonly partyId: string;
-  readonly phone: string | null;
-  readonly status: string;
-  readonly vatId: string | null;
-}
+export const CustomerWire = Schema.Struct({
+  city: Schema.NullOr(Schema.String),
+  companyId: Schema.NullOr(Schema.String),
+  displayName: Schema.NullOr(Schema.String),
+  email: Schema.NullOr(Schema.String),
+  partyId: Schema.String,
+  phone: Schema.NullOr(Schema.String),
+  status: Schema.String,
+  vatId: Schema.NullOr(Schema.String),
+});
+
+export const CustomerListWire = Schema.Struct({ items: Schema.Array(CustomerWire) });
 
 /** sales-pipeline/shared/model/opportunity.ts OpportunitySchema */
-export interface OpportunityWire {
-  readonly amountMinor: number;
-  readonly closedAt?: string;
-  readonly createdAt: string;
-  readonly expectedCloseDate: string;
-  readonly id: string;
-  readonly lines: readonly OpportunityLineWire[];
-  readonly note?: string;
-  readonly ownerEmployeeId?: string;
-  readonly partyId: string;
-  readonly probability: number;
-  readonly stage: string;
-  readonly title: string;
-  readonly updatedAt: string;
-}
-
-export interface OpportunityLineWire {
-  readonly productId?: string;
-  readonly productName: string;
-  readonly quantity: number;
-  readonly unitPriceMinor: number;
-  readonly vatRate: number;
-}
+export const OpportunityWire = Schema.Struct({
+  amountMinor: Schema.Number,
+  expectedCloseDate: Schema.String,
+  id: Schema.String,
+  ownerEmployeeId: Schema.optionalKey(Schema.String),
+  partyId: Schema.String,
+  probability: Schema.Number,
+  stage: Schema.String,
+  title: Schema.String,
+});
 
 /** sales-pipeline/shared/apis/records.ts OpportunityIndicatorsSchema; winRate is a 0..1 fraction or null */
-export interface OpportunityIndicatorsWire {
-  readonly lostCount: number;
-  readonly openCount: number;
-  readonly openValueMinor: number;
-  readonly weightedValueMinor: number;
-  readonly winRate: number | null;
-  readonly wonCount: number;
-  readonly wonValueMinor: number;
-}
+export const OpportunityIndicatorsWire = Schema.Struct({
+  lostCount: Schema.Number,
+  openCount: Schema.Number,
+  openValueMinor: Schema.Number,
+  weightedValueMinor: Schema.Number,
+  winRate: Schema.NullOr(Schema.Number),
+  wonCount: Schema.Number,
+  wonValueMinor: Schema.Number,
+});
 
-export interface OpportunitiesRecordsWire {
-  readonly indicators: OpportunityIndicatorsWire;
-  readonly items: readonly OpportunityWire[];
-  readonly revision: number;
-}
+export const OpportunitiesRecordsWire = Schema.Struct({
+  indicators: OpportunityIndicatorsWire,
+  items: Schema.Array(OpportunityWire),
+  revision: Schema.Number,
+});
 
-export interface OpportunityCommandResultWire {
-  readonly opportunities: readonly OpportunityWire[];
-  readonly revision: number;
-}
+export const OpportunityCommandResultWire = Schema.Struct({
+  opportunities: Schema.Array(OpportunityWire),
+  revision: Schema.Number,
+});
 
 /** merchandise/domain/merchandise-model.ts ProductRecordSchema */
-export interface ProductWire {
-  readonly active: boolean;
-  readonly category: string;
-  readonly currentPriceMinor: number;
-  readonly id: string;
-  readonly lowStock: boolean;
-  readonly lowStockThreshold: number;
-  readonly name: string;
-  readonly sku: string;
-  readonly stockOnHand: number;
-  readonly stockValueMinor: number;
-  readonly unit: string;
-  readonly vatRate: number;
-}
+export const ProductWire = Schema.Struct({
+  active: Schema.Boolean,
+  category: Schema.String,
+  currentPriceMinor: Schema.Number,
+  id: Schema.String,
+  lowStock: Schema.Boolean,
+  lowStockThreshold: Schema.Number,
+  name: Schema.String,
+  sku: Schema.String,
+  stockOnHand: Schema.Number,
+  stockValueMinor: Schema.Number,
+  unit: Schema.String,
+  vatRate: Schema.Number,
+});
 
 /** merchandise/domain/merchandise-model.ts StockMovementSchema */
-export interface MovementWire {
-  readonly delta: number;
-  readonly productId: string;
-}
+export const MovementWire = Schema.Struct({
+  delta: Schema.Number,
+  productId: Schema.String,
+});
 
 /** merchandise/domain/merchandise-model.ts OrderSchema */
-export interface OrderWire {
-  readonly createdAt: string;
-  readonly id: string;
-  readonly lines: readonly {
-    readonly productId: string;
-    readonly productName: string;
-    readonly quantity: number;
-    readonly unitPriceMinor: number;
-    readonly vatRate: number;
-  }[];
-  readonly number: string;
-  readonly opportunityId?: string;
-  readonly partyId: string;
-  readonly status: string;
-  readonly totalMinor: number;
-  readonly totalVatMinor: number;
-}
+export const OrderWire = Schema.Struct({
+  createdAt: Schema.String,
+  id: Schema.String,
+  lines: Schema.Array(
+    Schema.Struct({
+      productId: Schema.String,
+      productName: Schema.String,
+      quantity: Schema.Number,
+      unitPriceMinor: Schema.Number,
+      vatRate: Schema.Number,
+    }),
+  ),
+  number: Schema.String,
+  opportunityId: Schema.optionalKey(Schema.String),
+  partyId: Schema.String,
+  status: Schema.String,
+  totalMinor: Schema.Number,
+  totalVatMinor: Schema.Number,
+});
 
-export interface MerchandiseRecordsWire {
-  readonly indicators: {
-    readonly lowStockCount: number;
-    readonly openOrderValueMinor: number;
-    readonly orderCount: number;
-    readonly productCount: number;
-    readonly stockValueMinor: number;
-  };
-  readonly movements: readonly MovementWire[];
-  readonly orders: readonly OrderWire[];
-  readonly products: readonly ProductWire[];
-  readonly revision: number;
-}
+export const MerchandiseRecordsWire = Schema.Struct({
+  indicators: Schema.Struct({
+    lowStockCount: Schema.Number,
+    openOrderValueMinor: Schema.Number,
+    orderCount: Schema.Number,
+    productCount: Schema.Number,
+    stockValueMinor: Schema.Number,
+  }),
+  movements: Schema.Array(MovementWire),
+  orders: Schema.Array(OrderWire),
+  products: Schema.Array(ProductWire),
+  revision: Schema.Number,
+});
 
 /** siampark-billing-finance/shared/apis/records.ts InvoiceSchema (subset) */
-export interface InvoiceWire {
-  readonly businessState: string;
-  readonly counterpartyRef: { readonly resourceId: string };
-  readonly direction: string;
-  readonly documentNumber: string;
-  readonly dueDate: string;
-  readonly issueDate: string;
-  readonly number?: string;
-  readonly opportunityId?: string;
-  readonly paidMinor: number;
-  readonly partyId?: string;
-  readonly paymentState: string;
-  readonly totalMinor: number;
-}
+export const InvoiceWire = Schema.Struct({
+  businessState: Schema.String,
+  counterpartyRef: Schema.Struct({ resourceId: Schema.String }),
+  direction: Schema.String,
+  documentNumber: Schema.String,
+  dueDate: Schema.String,
+  issueDate: Schema.String,
+  number: Schema.optionalKey(Schema.String),
+  opportunityId: Schema.optionalKey(Schema.String),
+  paidMinor: Schema.Number,
+  partyId: Schema.optionalKey(Schema.String),
+  paymentState: Schema.String,
+  totalMinor: Schema.Number,
+});
 
-export interface BillingRecordsWire {
-  readonly canWrite: boolean;
-  readonly indicators: Readonly<Record<string, number>>;
-  readonly referenceDate: string;
-  readonly revision: number;
-  readonly state: { readonly invoices: readonly InvoiceWire[] };
-}
+export const BillingStateWire = Schema.Struct({ invoices: Schema.Array(InvoiceWire) });
+
+export const BillingRecordsWire = Schema.Struct({
+  canWrite: Schema.Boolean,
+  indicators: Schema.Record(Schema.String, Schema.Number),
+  referenceDate: Schema.String,
+  revision: Schema.Number,
+  state: BillingStateWire,
+});
 
 /** siampark-work/shared/apis/records.ts TaskSchema (subset) */
-export interface TaskWire {
-  readonly assigneeEmployeeId?: string;
-  readonly description?: string;
-  readonly dueDate?: string;
-  readonly opportunityId?: string;
-  readonly partyId?: string;
-  readonly priority: string;
-  readonly ref: {
-    readonly moduleId: string;
-    readonly resourceId: string;
-    readonly resourceType: string;
-    readonly tenantId: string;
-  };
-  readonly state: string;
-  readonly title: string;
-  readonly updatedAt: string;
-}
+export const TaskWire = Schema.Struct({
+  assigneeEmployeeId: Schema.optionalKey(Schema.String),
+  description: Schema.optionalKey(Schema.String),
+  dueDate: Schema.optionalKey(Schema.String),
+  opportunityId: Schema.optionalKey(Schema.String),
+  partyId: Schema.optionalKey(Schema.String),
+  priority: Schema.String,
+  // The whole reference goes back to the vertical as the task's identity on updates.
+  ref: Schema.Struct({
+    moduleId: Schema.String,
+    resourceId: Schema.String,
+    resourceType: Schema.String,
+    tenantId: Schema.String,
+  }),
+  state: Schema.String,
+  title: Schema.String,
+});
 
-export interface WorkRecordsWire {
-  readonly indicators: { readonly open: number; readonly overdue: number };
-  readonly items: readonly TaskWire[];
-  readonly referenceDate: string;
-  readonly revision: number;
-}
+export const WorkRecordsWire = Schema.Struct({
+  indicators: Schema.Struct({ open: Schema.Number, overdue: Schema.Number }),
+  items: Schema.Array(TaskWire),
+  referenceDate: Schema.String,
+  revision: Schema.Number,
+});
 
-export interface WorkCommandResultWire {
-  readonly results?: readonly { readonly outcome: string; readonly reason?: string; readonly resourceId: string }[];
-  readonly revision: number;
-  readonly task?: TaskWire;
-}
+export const WorkCommandResultWire = Schema.Struct({
+  revision: Schema.Number,
+  task: Schema.optionalKey(TaskWire),
+});
+
+export const TaggingCommandResultWire = Schema.Struct({
+  affectedAssignments: Schema.Number,
+  revision: Schema.Number,
+  tagId: Schema.String,
+});

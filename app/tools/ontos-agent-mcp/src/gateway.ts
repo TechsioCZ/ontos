@@ -18,11 +18,13 @@ const GATEWAY_CONTEXT_PATH = '/shell-super-app-api/auth/api-key/gateway-context'
 
 const AudienceSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u);
 const CompositionRevisionSchema = z.string().regex(/^[\da-f]{64}$/u);
+// Same shape zod's uuid() accepts; spelled out so the schema does not depend on zod's version-specific helper.
+const UuidSchema = z.string().regex(/^[\da-fA-F]{8}-[\da-fA-F]{4}-[\da-fA-F]{4}-[\da-fA-F]{4}-[\da-fA-F]{12}$/u);
 
 export const GatewayContextRequestSchema = z.object({
   audience: AudienceSchema,
   compositionRevision: CompositionRevisionSchema,
-  legalEntityId: z.string().uuid().optional(),
+  legalEntityId: UuidSchema.optional(),
 });
 
 export const GatewayContextResponseSchema = z.object({
@@ -37,13 +39,13 @@ export const GatewayContextResponseSchema = z.object({
 });
 
 export interface GatewayContext {
-  /** Bearer assertion for the audience. Never log it. */
-  readonly token: string;
   /** Path on the shell origin, e.g. /shell-super-app-api/module-api/<appId>/<build>/<appId>-api. */
   readonly apiBaseUrl: string;
   readonly compositionRevision: string;
   /** Epoch seconds. */
   readonly expiresAt: number;
+  /** Bearer assertion for the audience. Never log it. */
+  readonly token: string;
 }
 
 const CompositionSchema = z.object({ composition: z.object({ revision: CompositionRevisionSchema }) });
@@ -51,7 +53,7 @@ const CompositionSchema = z.object({ composition: z.object({ revision: Compositi
 /** Revision learned from the composition publisher; replaces a missing or stale ONTOS_COMPOSITION_REVISION. */
 let liveRevision: string | undefined;
 
-async function fetchActiveRevision(): Promise<string | undefined> {
+const fetchActiveRevision = async (): Promise<string | undefined> => {
   const { compositionUrl } = getConfig();
   try {
     const response = await fetch(compositionUrl);
@@ -59,21 +61,21 @@ async function fetchActiveRevision(): Promise<string | undefined> {
       return undefined;
     }
     liveRevision = CompositionSchema.parse(await response.json()).composition.revision;
-    console.error(`composition revision ${liveRevision.slice(0, 12)}… from ${compositionUrl}`);
+    process.stderr.write(`composition revision ${liveRevision.slice(0, 12)}… from ${compositionUrl}\n`);
     return liveRevision;
   } catch {
     return undefined;
   }
-}
+};
 
-async function requestGatewayContext(audience: string, compositionRevision: string): Promise<Response> {
+const requestGatewayContext = async (audience: string, compositionRevision: string): Promise<Response> => {
   const config = getConfig();
   const body = GatewayContextRequestSchema.parse({
     audience,
     compositionRevision,
-    ...(config.legalEntityId === undefined ? {} : { legalEntityId: config.legalEntityId }),
+    legalEntityId: config.legalEntityId,
   });
-  return fetch(`${config.shellUrl}${GATEWAY_CONTEXT_PATH}`, {
+  return await fetch(`${config.shellUrl}${GATEWAY_CONTEXT_PATH}`, {
     body: JSON.stringify(body),
     headers: {
       'content-type': 'application/json',
@@ -82,14 +84,14 @@ async function requestGatewayContext(audience: string, compositionRevision: stri
     },
     method: 'POST',
   });
-}
+};
 
 /**
  * Issues a fresh single-use assertion for one vertical call. Never cache the result.
  * The revision comes from ONTOS_COMPOSITION_REVISION, else from the composition publisher. When the shell answers
  * 409 (reload required: the stack was rebuilt), the live revision is fetched once and the request retried.
  */
-export async function getGatewayContext(audience: string): Promise<GatewayContext> {
+export const getGatewayContext = async (audience: string): Promise<GatewayContext> => {
   const config = getConfig();
   const revision = liveRevision ?? config.compositionRevision ?? (await fetchActiveRevision());
   if (revision === undefined) {
@@ -113,9 +115,10 @@ export async function getGatewayContext(audience: string): Promise<GatewayContex
 
   const context: GatewayContext = GatewayContextResponseSchema.parse(await response.json());
   return context;
-}
+};
 
 /** Returns only the bearer token for an audience. */
-export async function getAssertion(audience: string): Promise<string> {
-  return (await getGatewayContext(audience)).token;
-}
+export const getAssertion = async (audience: string): Promise<string> => {
+  const context = await getGatewayContext(audience);
+  return context.token;
+};

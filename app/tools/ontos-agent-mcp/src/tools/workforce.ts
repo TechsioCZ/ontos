@@ -1,8 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { withoutUndefined } from '../ontos-client.ts';
 import { EMPLOYEE_ROLE_CS, labelOf } from './labels.ts';
 import { defineTool, readRecordsOf, VERTICAL } from './shared.ts';
-import type { EmployeeWire } from './wire.ts';
+import { EmployeesWire } from './wire.ts';
 
 export const EMPLOYEE_ROLES = ['SALES_HEAD', 'SALES_REP', 'ACCOUNTANT', 'WAREHOUSE', 'SUPPORT'] as const;
 
@@ -13,11 +14,8 @@ export const listEmployeesInput = {
     .describe('Filter by role: SALES_HEAD, SALES_REP, ACCOUNTANT, WAREHOUSE, SUPPORT.'),
 };
 
-export async function listEmployees(input: { readonly role?: (typeof EMPLOYEE_ROLES)[number] | undefined }) {
-  const response = await readRecordsOf<{ items: readonly EmployeeWire[]; revision: number }>(
-    VERTICAL.workforce,
-    input.role === undefined ? {} : { role: input.role },
-  );
+export const listEmployees = async (input: { readonly role?: (typeof EMPLOYEE_ROLES)[number] | undefined }) => {
+  const response = await readRecordsOf(VERTICAL.workforce, EmployeesWire, withoutUndefined({ role: input.role }));
   const items = response.items.map((employee) => ({
     active: employee.active,
     department: employee.department,
@@ -29,9 +27,9 @@ export async function listEmployees(input: { readonly role?: (typeof EMPLOYEE_RO
     roleCs: labelOf(EMPLOYEE_ROLE_CS, employee.role),
   }));
   return { count: items.length, items };
-}
+};
 
-export function registerWorkforceTools(server: McpServer): void {
+export const registerWorkforceTools = (server: McpServer): void => {
   defineTool(
     server,
     'list_employees',
@@ -39,4 +37,4 @@ export function registerWorkforceTools(server: McpServer): void {
     listEmployeesInput,
     listEmployees,
   );
-}
+};

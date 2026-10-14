@@ -24,55 +24,70 @@
  * - Assertions are single-use, so every call issues a fresh one (see gateway.ts).
  */
 import { randomUUID } from 'node:crypto';
+import { Option, Result, Schema } from 'effect';
 import { getConfig } from './config.ts';
 import { getGatewayContext } from './gateway.ts';
 import type { GatewayContext } from './gateway.ts';
 
-function segment(value: string): string {
+/** A JSON object sent as an action payload or a read query. */
+export type JsonObject = Readonly<Record<string, Schema.Json>>;
+
+/** Keeps the defined fields only, so optional fields are omitted from the body rather than sent as `undefined`. */
+export const withoutUndefined = (fields: Readonly<Record<string, Schema.Json | undefined>>) =>
+  Object.fromEntries(Object.entries(fields).filter((entry): entry is [string, Schema.Json] => entry[1] !== undefined));
+
+const segment = (value: string): string => {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)) {
     throw new Error(`Invalid path segment: ${JSON.stringify(value)}`);
   }
   return encodeURIComponent(value);
-}
+};
+
+/** RFC 9457 problem details. Every field is optional: a vertical may answer with any JSON body. */
+const ProblemDetails = Schema.Struct({
+  code: Schema.optionalKey(Schema.String),
+  detail: Schema.optionalKey(Schema.String),
+  title: Schema.optionalKey(Schema.String),
+});
+
+const decodeProblem = Schema.decodeUnknownOption(Schema.fromJsonString(ProblemDetails));
+
+const problemOf = (text: string): typeof ProblemDetails.Type =>
+  Option.getOrElse(decodeProblem(text), (): typeof ProblemDetails.Type => ({}));
+
+const nonEmpty = (value: string | undefined): string | undefined =>
+  value === undefined || value === '' ? undefined : value;
 
 /** A non-2xx answer from the shell or a vertical. `code`, `title` and `detail` come from the RFC 9457 body. */
-export class OntosRequestError extends Error {
-  readonly status: number;
-  readonly code: string | undefined;
-  readonly title: string | undefined;
-  readonly detail: string | undefined;
+export class OntosRequestError extends Schema.TaggedError<OntosRequestError>()('OntosRequestError', {
+  code: Schema.optionalKey(Schema.String),
+  detail: Schema.optionalKey(Schema.String),
+  message: Schema.String,
+  status: Schema.Number,
+  title: Schema.optionalKey(Schema.String),
+}) {}
 
-  constructor(path: string, status: number, body: unknown) {
-    const problem = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
-    const asString = (value: unknown) => (typeof value === 'string' && value.length > 0 ? value : undefined);
-    const code = asString(problem.code);
-    const detail = asString(problem.detail);
-    super(`OntOS request ${path} failed: HTTP ${status}${code === undefined ? '' : ` ${code}`}`);
-    this.name = 'OntosRequestError';
-    this.status = status;
-    this.code = code;
-    this.title = asString(problem.title);
-    this.detail = detail;
-  }
-}
+const requestFailure = (path: string, status: number, text: string): OntosRequestError => {
+  const problem = problemOf(text);
+  const code = nonEmpty(problem.code);
+  const suffix = code === undefined ? '' : ` ${code}`;
+  return new OntosRequestError({
+    code,
+    detail: nonEmpty(problem.detail),
+    message: `OntosRequest ${path} failed: HTTP ${status}${suffix}`,
+    status,
+    title: nonEmpty(problem.title),
+  });
+};
 
-function parseBody(text: string): unknown {
-  if (text === '') {
-    return null;
-  }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return text;
-  }
-}
-
-async function postJson(
+/** POSTs JSON to a vertical path through the shell and decodes the answer with `schema`. */
+const postJson = async <S extends Schema.Codec<unknown>>(
   context: GatewayContext,
   path: string,
-  body: unknown,
+  body: JsonObject,
+  schema: S,
   headers: Readonly<Record<string, string>> = {},
-): Promise<unknown> {
+): Promise<S['Type']> => {
   const { shellUrl } = getConfig();
   const response = await fetch(`${shellUrl}${context.apiBaseUrl}${path}`, {
     body: JSON.stringify(body),
@@ -86,27 +101,37 @@ async function postJson(
     method: 'POST',
   });
 
-  const parsed = parseBody(await response.text());
+  const text = await response.text();
   if (!response.ok) {
-    throw new OntosRequestError(path, response.status, parsed);
+    throw requestFailure(path, response.status, text);
   }
-  return parsed;
-}
+  const decoded = Schema.decodeUnknownResult(Schema.fromJsonString(schema))(text);
+  if (Result.isFailure(decoded)) {
+    throw decoded.failure;
+  }
+  return decoded.success;
+};
 
-/** Invokes a vertical action. The audience is the vertical ID. */
-export async function callAction(vertical: string, actionSlug: string, payload: unknown): Promise<unknown> {
+/** Invokes a vertical action. The audience is the vertical ID; the answer is decoded by `schema`. */
+export const callAction = async <S extends Schema.Codec<unknown>>(
+  vertical: string,
+  actionSlug: string,
+  payload: JsonObject,
+  schema: S,
+): Promise<S['Type']> => {
   const context = await getGatewayContext(vertical);
-  return postJson(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, {
+  return await postJson(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, schema, {
     'idempotency-key': randomUUID(),
   });
-}
+};
 
 /** Reads a vertical's records endpoint. `readName` "records" maps to POST .../reads/records. */
-export async function readRecords(
+export const readRecords = async <S extends Schema.Codec<unknown>>(
   vertical: string,
   readName: string,
-  query: Readonly<Record<string, unknown>>,
-): Promise<unknown> {
+  query: JsonObject,
+  schema: S,
+): Promise<S['Type']> => {
   const context = await getGatewayContext(vertical);
-  return postJson(context, `/reads/${segment(readName)}`, query);
-}
+  return await postJson(context, `/reads/${segment(readName)}`, query, schema);
+};
