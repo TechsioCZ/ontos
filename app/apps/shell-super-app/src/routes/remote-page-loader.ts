@@ -38,42 +38,47 @@ const RemotePageSchema = ResolvedModuleTargetSchema.mapFields(({ compositionRevi
 type RemotePage = typeof RemotePageSchema.Type;
 const RemotePageKey = Schema.fromJsonString(RemotePageSchema);
 
-const loadRemotePageOnce = Effect.fn('RemotePageLoader.load')(function* loadRemotePageOnceEffect(target: RemotePage) {
-  yield* pinBrowserModuleTarget(target, document);
-  const { getInstance } = yield* browserFederationRuntime;
-  const host = getInstance((instance) => instance.name === 'shellSuperApp');
-  if (host === undefined || host === null) {
-    return { reason: 'unavailable', state: 'unavailable' } satisfies RemoteState;
-  }
-  const { federation } = target;
-  if (federation.remoteName === host.name) {
-    return { reason: 'incompatible', state: 'unavailable' } satisfies RemoteState;
-  }
-  const [result] = yield* settleModuleEntrypointLoads([
-    {
-      identity: target,
-      isCompatible: (loaded) =>
-        Predicate.isObjectKeyword(loaded) &&
-        loaded !== null &&
-        'default' in loaded &&
-        Predicate.isFunction(loaded.default),
-      load: () => {
-        host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
-        return host.loadRemote<RemotePageModule>(`${federation.remoteName}/${federation.expose.slice(2)}`);
-      },
-    },
-  ]);
-  if (result === undefined) {
-    return { reason: 'unavailable', state: 'unavailable' } satisfies RemoteState;
-  }
-  if (result.state === 'unavailable') {
-    return result;
-  }
-  if (result.value === null) {
-    return { reason: 'incompatible', state: 'unavailable' } satisfies RemoteState;
-  }
-  return { Component: result.value.default, state: 'ready' } satisfies RemoteState;
-});
+const loadRemotePageOnce = (target: RemotePage) =>
+  Effect.flatMap(pinBrowserModuleTarget(target, document), () => browserFederationRuntime).pipe(
+    Effect.flatMap(({ getInstance }) => {
+      const host = getInstance((instance) => instance.name === 'shellSuperApp');
+      if (host === undefined || host === null) {
+        return Effect.succeed<RemoteState>({ reason: 'unavailable', state: 'unavailable' });
+      }
+      const { federation } = target;
+      if (federation.remoteName === host.name) {
+        return Effect.succeed<RemoteState>({ reason: 'incompatible', state: 'unavailable' });
+      }
+      return settleModuleEntrypointLoads([
+        {
+          identity: target,
+          isCompatible: (loaded) =>
+            Predicate.isObjectKeyword(loaded) &&
+            loaded !== null &&
+            'default' in loaded &&
+            Predicate.isFunction(loaded.default),
+          load: () => {
+            host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
+            return host.loadRemote<RemotePageModule>(`${federation.remoteName}/${federation.expose.slice(2)}`);
+          },
+        },
+      ]).pipe(
+        Effect.map(([result]): RemoteState => {
+          if (result === undefined) {
+            return { reason: 'unavailable', state: 'unavailable' };
+          }
+          if (result.state === 'unavailable') {
+            return result;
+          }
+          if (result.value === null) {
+            return { reason: 'incompatible', state: 'unavailable' };
+          }
+          return { Component: result.value.default, state: 'ready' };
+        }),
+      );
+    }),
+    Effect.withSpan('RemotePageLoader.load'),
+  );
 
 /**
  * Remote page modules by release and exposed page. A route preload and the page share one load, and a revisit
