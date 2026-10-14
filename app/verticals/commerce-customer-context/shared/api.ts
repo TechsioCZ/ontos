@@ -41,6 +41,7 @@ import { CounterpartyAllOrderHistoryDetailApi } from './apis/counterparty-all-or
 import { CounterpartyCommerceAccessCheckApi } from './apis/counterparty-commerce-access-check.ts';
 import { CounterpartyCommerceAccessDetailApi } from './apis/counterparty-commerce-access-detail.ts';
 import { CounterpartyCommerceAccessListApi } from './apis/counterparty-commerce-access-list.ts';
+import { CounterpartyCustomerGroupMembershipsApi } from './apis/counterparty-customer-group-memberships.ts';
 import { CounterpartyOrderHistoryApi } from './apis/counterparty-order-history.ts';
 import { CounterpartyOrderHistoryDetailApi } from './apis/counterparty-order-history-detail.ts';
 import { CreateApprovalHierarchyActionApi } from './apis/create-approval-hierarchy-action.ts';
@@ -195,6 +196,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CounterpartyCommerceAccessCheckApi)
   .addHttpApi(CounterpartyCommerceAccessDetailApi)
   .addHttpApi(CounterpartyCommerceAccessListApi)
+  .addHttpApi(CounterpartyCustomerGroupMembershipsApi)
   .addHttpApi(CounterpartyOrderHistoryApi)
   .addHttpApi(CounterpartyOrderHistoryDetailApi)
   .addHttpApi(CreateApprovalHierarchyActionApi)

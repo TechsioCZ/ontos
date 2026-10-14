@@ -107,6 +107,7 @@ it('declares immutable exact group routine allowlist entries with Core-injected 
     'read_customer_group_members',
     'read_customer_group_history',
     'read_effective_customer_group_memberships',
+    'read_counterparty_customer_group_memberships',
   ]);
   for (const routine of customerGroupRoutineAllowlist) {
     expect(Object.isFrozen(routine)).toBe(true);
@@ -266,6 +267,32 @@ it.effect('refuses to treat a cursor-bearing effective membership read as a comp
       }),
     );
     expect(Schema.is(CustomerGroupPersistenceUnavailable)(failure)).toBe(true);
+  }),
+);
+
+it.effect('reads counterparty memberships by business code and counterparty id', () =>
+  Effect.gen(function* counterpartyMemberships() {
+    let capturedValues: readonly unknown[] = [];
+    // SAFETY: This test double exercises only the counterparty membership routine and returns its decoded row.
+    const transaction = {
+      invoke: (_routine: ScopedRoutineDefinition, values: readonly unknown[]) => {
+        capturedValues = values;
+        return Effect.succeed([
+          { groups_json: [group], items_json: [{ counterpartyResourceId: 'counterparty-1', membership }] },
+        ]);
+      },
+    } as CustomerGroupScopedRoutineInvoker;
+    const persistence = customerGroupPersistenceForTransaction(transaction, scope);
+    const result = yield* persistence.counterpartyMemberships({
+      businessCodes: ['DEALERS'],
+      counterpartyResourceIds: ['counterparty-1', 'counterparty-2'],
+      effectiveAt: recordedAt,
+      legalEntityId,
+      tenantId,
+    });
+    expect(capturedValues).toEqual([['DEALERS'], ['counterparty-1', 'counterparty-2'], recordedAt]);
+    expect(result.groups.map(({ businessCode }) => businessCode)).toEqual(['DEALERS']);
+    expect(result.items).toEqual([{ counterpartyResourceId: 'counterparty-1', membership }]);
   }),
 );
 

@@ -50,6 +50,7 @@ import { counterpartyApprovalRequestManagePermission } from './shared/permission
 import { CounterpartyCommerceAccessCheckApi } from './shared/apis/counterparty-commerce-access-check.ts';
 import { CounterpartyCommerceAccessDetailApi } from './shared/apis/counterparty-commerce-access-detail.ts';
 import { counterpartyCommerceAccessGrantResourceDescriptor } from './shared/resources/counterparty-commerce-access-grant.ts';
+import { CounterpartyCustomerGroupMembershipsApi } from './shared/apis/counterparty-customer-group-memberships.ts';
 import { CounterpartyCommerceAccessListApi } from './shared/apis/counterparty-commerce-access-list.ts';
 import { counterpartyHistoryReadAllPermission } from './shared/permissions/counterparty-history-read-all.ts';
 import { counterpartyHistoryReadOwnPermission } from './shared/permissions/counterparty-history-read-own.ts';
@@ -265,6 +266,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'counterparty-commerce-access-check': CounterpartyCommerceAccessCheckApi,
       'counterparty-commerce-access-detail': CounterpartyCommerceAccessDetailApi,
       'counterparty-commerce-access-list': CounterpartyCommerceAccessListApi,
+      'counterparty-customer-group-memberships': CounterpartyCustomerGroupMembershipsApi,
       'counterparty-order-history': CounterpartyOrderHistoryApi,
       'counterparty-order-history-detail': CounterpartyOrderHistoryDetailApi,
       'customer-archive': CustomerArchiveApi,

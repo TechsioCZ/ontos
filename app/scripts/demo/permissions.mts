@@ -50,6 +50,13 @@ const contextPermissionModules: ReadonlySet<DemoModuleId> = new Set([
 export const contextPermissionKey = (moduleId: DemoModuleId, access: ModuleAccess) =>
   `${moduleId.replaceAll('-', '_')}.${access === 'read' ? 'read_all' : 'write_all'}`;
 
+/**
+ * Owner-declared context permissions granted with any access to the module. The customers page reads the
+ * customer segments (commerce customer groups) with `customer.group.read`.
+ */
+const moduleReadPermissions = (moduleId: DemoModuleId): readonly string[] =>
+  moduleId === 'commerce.customer-context' ? ['customer.group.read'] : [];
+
 const everything = {
   'commerce.customer-context': 'write',
   'demo.merchandise': 'write',
@@ -208,6 +215,11 @@ export const principalRelationships = (
     }
     add('action', action, 'executor', 'principal', principalId);
   };
+  const grantContextPermission = (moduleId: DemoModuleId, permission: string) => {
+    const objectId = toContextPermissionAccessObjectId(demoTenantId, demoLegalEntityId, { moduleId, permission }) ?? '';
+    add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
+    add('context_permission', objectId, 'grantee', 'principal', principalId);
+  };
   const legal = legalEntityObject;
   const moduleAccess = moduleAccessObject;
   add('legal_entity', legal, 'tenant', 'tenant', demoTenantId);
@@ -226,14 +238,11 @@ export const principalRelationships = (
     add('module_access', moduleAccess(moduleId), 'accessor', 'principal', principalId);
     if (contextPermissionModules.has(moduleId)) {
       for (const level of access === 'write' ? (['read', 'write'] as const) : (['read'] as const)) {
-        const objectId =
-          toContextPermissionAccessObjectId(demoTenantId, demoLegalEntityId, {
-            moduleId,
-            permission: contextPermissionKey(moduleId, level),
-          }) ?? '';
-        add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
-        add('context_permission', objectId, 'grantee', 'principal', principalId);
+        grantContextPermission(moduleId, contextPermissionKey(moduleId, level));
       }
+    }
+    for (const permission of moduleReadPermissions(moduleId)) {
+      grantContextPermission(moduleId, permission);
     }
     if (moduleId === 'party.registry') {
       const relations = partyRelations(access);

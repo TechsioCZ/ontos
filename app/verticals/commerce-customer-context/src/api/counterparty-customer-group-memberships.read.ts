@@ -1,0 +1,80 @@
+import type { ReadHandlerContext } from '@app/core-runtime';
+import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { DateTime, Effect } from 'effect';
+import {
+  CounterpartyCustomerGroupMembershipsRequestSchema,
+  CounterpartyCustomerGroupMembershipsResponseSchema,
+} from '../../shared/apis/counterparty-customer-group-memberships.ts';
+import type { CounterpartyCustomerGroupMembershipsRequest } from '../../shared/apis/counterparty-customer-group-memberships.ts';
+import {
+  customerGroupReadServiceFactory,
+  customerGroupReadUnavailable,
+  requireCustomerGroupReadLegalEntityId,
+  requireCustomerGroupTenant,
+} from './customer-group-read-support.ts';
+import type { CustomerGroupReadServices } from './customer-group-read-support.ts';
+
+const MODULE_KEY = 'commerce.customer-context';
+
+const counterpartyCustomerGroupMembershipsEntrypoint = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'context_permission', permission: 'customer.group.read' },
+  entrypointKey: 'commerce.customer-context.api.counterparty-customer-group-memberships',
+  moduleKey: MODULE_KEY,
+  role: 'api',
+});
+
+/**
+ * Lets a reader resolve customer segments without the group or profile ids, which only the create and
+ * ensure-profile Actions return: groups are named by business code and customers by Party counterparty.
+ */
+const handleCounterpartyCustomerGroupMemberships = Effect.fn('CounterpartyCustomerGroupMembershipsRead.handle')(
+  function* counterpartyCustomerGroupMemberships(
+    input: CounterpartyCustomerGroupMembershipsRequest,
+    context: ReadHandlerContext<CustomerGroupReadServices>,
+  ) {
+    yield* requireCustomerGroupTenant(context.scope.tenantId, ...input.counterpartyRefs);
+    const legalEntityId = yield* requireCustomerGroupReadLegalEntityId(context.scope.legalEntityId);
+    const effectiveAt = DateTime.formatIso(yield* DateTime.now);
+    const refs = new Map(input.counterpartyRefs.map((ref) => [ref.resourceId, ref]));
+    const { groups, items } = yield* context.services
+      .counterpartyMemberships({
+        businessCodes: [...new Set(input.businessCodes)],
+        counterpartyResourceIds: [...refs.keys()],
+        effectiveAt,
+        legalEntityId,
+        tenantId: context.scope.tenantId,
+      })
+      .pipe(Effect.mapError(customerGroupReadUnavailable));
+    const resolved = items.flatMap(({ counterpartyResourceId, membership }) => {
+      const counterpartyRef = refs.get(counterpartyResourceId);
+      return counterpartyRef === undefined ? [] : [{ counterpartyRef, membership }];
+    });
+    return {
+      evidence: { resultCount: groups.length + resolved.length },
+      result: { effectiveAt, groups, items: resolved },
+    };
+  },
+);
+
+export const counterpartyCustomerGroupMembershipsRead = defineRead(
+  {
+    accessKind: 'list',
+    entrypoint: counterpartyCustomerGroupMembershipsEntrypoint,
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'commerce.customer-context.api.counterparty-customer-group-memberships.evidence.v1',
+    },
+    inputSchema: CounterpartyCustomerGroupMembershipsRequestSchema,
+    legalEntityScope: 'required',
+    owningModuleKey: MODULE_KEY,
+    permissionTarget: 'module',
+    policies: [],
+    readKey: 'commerce.customer-context.api.counterparty-customer-group-memberships',
+    resultSchema: CounterpartyCustomerGroupMembershipsResponseSchema,
+    schemaVersion: '1',
+  },
+  handleCounterpartyCustomerGroupMemberships,
+  customerGroupReadServiceFactory,
+  () => ({ kind: 'module', moduleId: MODULE_KEY }),
+);

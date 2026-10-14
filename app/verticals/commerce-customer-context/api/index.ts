@@ -161,6 +161,7 @@ import { counterpartyAllOrderHistoryReadApiLive } from './counterparty-all-order
 import { counterpartyCommerceAccessCheckReadApiLive } from './counterparty-commerce-access-check-read-server.ts';
 import { counterpartyCommerceAccessDetailReadApiLive } from './counterparty-commerce-access-detail-read-server.ts';
 import { counterpartyCommerceAccessListReadApiLive } from './counterparty-commerce-access-list-read-server.ts';
+import { counterpartyCustomerGroupMembershipsReadApiLive } from './counterparty-customer-group-memberships-read-server.ts';
 import { counterpartyOrderHistoryDetailReadApiLive } from './counterparty-order-history-detail-read-server.ts';
 import { counterpartyOrderHistoryReadApiLive } from './counterparty-order-history-read-server.ts';
 import { createApprovalHierarchyActionApiLive } from './create-approval-hierarchy-action-server.ts';
@@ -859,6 +860,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     counterpartyCommerceAccessCheckReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyCommerceAccessDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyCommerceAccessListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    counterpartyCustomerGroupMembershipsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyOrderHistoryDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyOrderHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     createApprovalHierarchyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
+import { Exit, Schema } from 'effect';
+import { CounterpartyCustomerGroupMembershipsRequestSchema } from '../../shared/apis/counterparty-customer-group-memberships.ts';
 import { CustomerGroupHistoryRequestSchema } from '../../shared/apis/customer-group-history.ts';
 import { CustomerGroupMembersRequestSchema } from '../../shared/apis/customer-group-members.ts';
 import { EffectiveCustomerGroupMembershipsRequestSchema } from '../../shared/apis/effective-customer-group-memberships.ts';
@@ -19,6 +20,7 @@ import {
   UpdateCustomerGroupPayloadSchema,
   updateCustomerGroupAction,
 } from '../../src/actions/update-customer-group.action.ts';
+import { counterpartyCustomerGroupMembershipsRead } from '../../src/api/counterparty-customer-group-memberships.read.ts';
 import { customerGroupDetailRead } from '../../src/api/customer-group-detail.read.ts';
 import { customerGroupHistoryRead } from '../../src/api/customer-group-history.read.ts';
 import { customerGroupMembersRead } from '../../src/api/customer-group-members.read.ts';
@@ -149,6 +151,18 @@ describe('Commerce Customer Group contracts', () => {
 
     expect(customerGroupDetailRead.descriptor.accessKind).toBe('detail');
     expect(customerGroupMembersRead.descriptor.permissionTarget).toBe('resource');
+  });
+
+  it('reads counterparty memberships under the module and the group read permission', () => {
+    expect(counterpartyCustomerGroupMembershipsRead.descriptor.permissionTarget).toBe('module');
+    expect(counterpartyCustomerGroupMembershipsRead.descriptor.entrypoint.authorization).toEqual({
+      kind: 'context_permission',
+      permission: 'customer.group.read',
+    });
+    const decode = Schema.decodeUnknownExit(CounterpartyCustomerGroupMembershipsRequestSchema);
+    expect(Exit.isSuccess(decode({ businessCodes: ['DEALERS'], counterpartyRefs: [] }))).toBe(true);
+    expect(Exit.isFailure(decode({ businessCodes: [], counterpartyRefs: [] }))).toBe(true);
+    expect(Exit.isFailure(decode({ businessCodes: ['dealers'], counterpartyRefs: [] }))).toBe(true);
   });
 
   it('accepts caller-selected time only through the authorized history contract', () => {

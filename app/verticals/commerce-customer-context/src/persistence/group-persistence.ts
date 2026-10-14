@@ -76,6 +76,17 @@ const MembershipPageRowSchema = Schema.Struct({
   outcome: Schema.String,
 });
 
+/** Party counterparty id as the owner stores it on a COUNTERPARTY purchasing profile. */
+const CounterpartyResourceIdSchema = Schema.String.pipe(Schema.brand('CounterpartyResourceId'));
+const CounterpartyMembershipRowSchema = Schema.Struct({
+  counterpartyResourceId: CounterpartyResourceIdSchema,
+  membership: JsonObjectSchema,
+});
+const CounterpartyMembershipsRowSchema = Schema.Struct({
+  groups_json: Schema.Array(JsonObjectSchema),
+  items_json: Schema.Array(CounterpartyMembershipRowSchema),
+});
+
 const detailRoutine = defineScopedRoutine({
   name: 'read_customer_group',
   ownerModuleKey: MODULE_KEY,
@@ -251,6 +262,21 @@ const effectiveMembershipsRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
+const counterpartyMembershipsRoutine = defineScopedRoutine({
+  name: 'read_counterparty_customer_group_memberships',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'text[]' },
+    { source: 'input', type: 'text[]' },
+    { source: 'input', type: 'timestamptz' },
+  ],
+  resultSchema: CounterpartyMembershipsRowSchema,
+  routineKey: 'customer-group.read-counterparty-memberships',
+  schema: 'commerce_customer_context',
+});
+
 const unavailable = (failure: ScopedRoutineInvocationError | string): CustomerGroupPersistenceUnavailableError =>
   new CustomerGroupPersistenceUnavailable({
     code: 'customer_group_persistence_unavailable',
@@ -280,6 +306,12 @@ const decodeMembership = (
       return error;
     }),
   );
+
+const decodeCounterpartyMembership = ({
+  counterpartyResourceId,
+  membership,
+}: typeof CounterpartyMembershipRowSchema.Type) =>
+  decodeMembership(membership).pipe(Effect.map((decoded) => ({ counterpartyResourceId, membership: decoded })));
 
 const decodeMemberships = (
   values: readonly JsonObject[],
@@ -539,6 +571,30 @@ export const customerGroupPersistenceForTransaction = (
         Effect.flatMap(mapAssignRow),
       );
   },
+  counterpartyMemberships: (query) => {
+    if (!scopeMatches(scope, query)) {
+      return Effect.fail(unavailable('The counterparty Customer Group membership scope is inconsistent'));
+    }
+    return transaction
+      .invoke(counterpartyMembershipsRoutine, [
+        [...query.businessCodes],
+        [...query.counterpartyResourceIds],
+        query.effectiveAt,
+      ])
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap((rows) => requireRow(rows, counterpartyMembershipsRoutine.routineKey)),
+        Effect.flatMap((row) =>
+          Effect.all(
+            {
+              groups: Effect.forEach(row.groups_json, (group) => decodeGroup(group), { concurrency: 1 }),
+              items: Effect.forEach(row.items_json, (item) => decodeCounterpartyMembership(item), { concurrency: 1 }),
+            },
+            { concurrency: 1 },
+          ),
+        ),
+      );
+  },
   create: (command): Effect.Effect<CreateCustomerGroupPersistenceOutcome, CustomerGroupPersistenceUnavailableError> => {
     if (!commandScopeMatches(scope, command)) {
       return Effect.fail(unavailable('The Customer Group creation scope is inconsistent'));
@@ -748,4 +804,5 @@ export const customerGroupRoutineAllowlist = Object.freeze([
   membersRoutine,
   historyRoutine,
   effectiveMembershipsRoutine,
+  counterpartyMembershipsRoutine,
 ]);
