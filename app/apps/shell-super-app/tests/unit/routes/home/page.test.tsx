@@ -100,6 +100,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 rstest.mock('@tanstack/react-router', () => ({
   useLoaderData: rstest.fn(),
   useNavigate: () => navigateMock,
+  useRouter: () => ({ matchRoutes: () => [], preloadRoute: () => Promise.resolve(), routesById: {} }),
 
   // Read lazily: mock factories run before this module's imports are initialized.
   useRouterState: (options: Parameters<typeof useSettledRouterState>[0]) => useSettledRouterState(options),
@@ -112,7 +113,11 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  browserRuntime: { runPromise: browserRunPromiseMock, runSyncExit: browserRuntime.runSyncExit },
+  browserRuntime: {
+    runFork: browserRuntime.runFork,
+    runPromise: browserRunPromiseMock,
+    runSyncExit: browserRuntime.runSyncExit,
+  },
 }));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');

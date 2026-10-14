@@ -1,8 +1,9 @@
 import { notFound, throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
 import type { NotFoundError } from '@modern-js/plugin-tanstack/runtime';
+import { Effect } from 'effect';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
-import { loadModulePageModel } from './modules/[moduleId]/module-page-model.ts';
+import { loadModulePageModel, preloadModuleTarget } from './modules/[moduleId]/module-page-model.ts';
 import type { ModuleTargetPageModel } from './modules/[moduleId]/module-page-model.ts';
 import { routeMeta } from './route.meta.ts';
 
@@ -36,6 +37,11 @@ export const loader = ({
     return Promise.resolve().then(() => throwTanstackRedirect(`/${encodeURIComponent(params.lang)}${aliasTarget}`));
   }
   return browserRuntime
-    .runPromise(loadModulePageModel({ canonicalPath, request }), { signal: request.signal })
+    .runPromise(
+      loadModulePageModel({ canonicalPath, request }).pipe(
+        Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
+      ),
+      { signal: request.signal },
+    )
     .then((model) => (model.state === 'not_found' ? notFound({ throw: true }) : model));
 };

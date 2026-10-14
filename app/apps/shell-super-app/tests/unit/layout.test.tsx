@@ -59,6 +59,7 @@ rstest.mock('@modern-js/runtime/head', () => ({
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   Outlet: () => <main>Current route</main>,
   useNavigate: () => () => Promise.resolve(),
+  useRouter: () => ({ matchRoutes: () => [], preloadRoute: () => Promise.resolve(), routesById: {} }),
   useRouterState: ({ select }: { readonly select: (state: RouterStateDouble) => string | undefined }) =>
     select(routerState.current ?? settledRouterState),
 }));
@@ -705,16 +706,16 @@ test('groups module-contributed entries into the demo navigation and hides Siamp
   expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual([
     'Sales',
     'Operations',
-    'Insights',
-    'Settings',
     'Other modules',
   ]);
+  expect(navigationElement.textContent).not.toContain('Opportunities');
+  expect(navigationElement.textContent).not.toContain('Statistics');
   expect(navigationElement.textContent).not.toContain('siampark.property');
   expect(navigationElement.textContent).not.toContain('siampark.occupancy');
   expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('OperationsProducts and stock');
 });
 
-test('keeps inactive and unavailable demo destinations visible without links', () => {
+test('hides destinations the composition omits and keeps unavailable ones visible without links', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
@@ -732,8 +733,9 @@ test('keeps inactive and unavailable demo destinations visible without links', (
   const navigationElement = screen.getByRole('navigation', { name: 'Dashboard navigation' });
   expect([...navigationElement.querySelectorAll('a')].map((link) => link.textContent)).toEqual(['Home']);
   expect(screen.getByText('Invoices')).toBeTruthy();
-  expect(screen.getByText('Opportunities')).toBeTruthy();
-  expect(screen.getAllByText('Inactive').length).toBe(8);
+  expect(screen.queryByText('Opportunities')).toBeNull();
+  expect(screen.queryByText('Inactive')).toBeNull();
+  expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual(['Sales']);
   expect(navigationElement.textContent).not.toContain('Overview');
   expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
 });

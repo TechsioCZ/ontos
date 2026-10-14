@@ -20,12 +20,15 @@ import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
 import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-navigation.ts';
+import { useIdleRoutePreload } from './use-idle-route-preload.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
 }
 
 interface DashboardNavigationItem {
+  /** Deployment of the destination; also the gateway audience of its module API. */
+  readonly appId?: string;
   readonly enabled: boolean;
   readonly href?: string;
   readonly label: string;
@@ -308,9 +311,8 @@ type Translate = (key: string) => string;
 
 /**
  * LinkButton always forwards `href`; the localized router link derives it from `to`, so drop the empty one.
- * The router preloads every link in the viewport by default, and each shell route loader reads the session,
- * composition, tenants and legal entities, so a page load ran that for every visible navigation item at once.
- * Shell links preload on intent only.
+ * Links preload as soon as they scroll into view: the route loader answers the Shell reads from the browser cache
+ * and starts the destination's remote page and remembered module reads, so a click renders the page at once.
  */
 const ShellRouteLink = ({
   href: _unusedHref,
@@ -318,7 +320,7 @@ const ShellRouteLink = ({
 }: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => (
   // Router-active styling matches a destination only when the location equals it. Without `exact`, the home link
   // ("/") counts as active on every page and is marked as the current page beside the real destination.
-  <LocalizedLink activeOptions={{ exact: true }} prefetch="intent" {...props} />
+  <LocalizedLink activeOptions={{ exact: true }} prefetch="viewport" {...props} />
 );
 
 const presentationOrder = (entry: DashboardNavigationItem) => {
@@ -377,7 +379,13 @@ const buildShellNavigation = (
     }
   }
 
-  const demoGroups = demoNavigationPresentation.map((group) => ({
+  // The composition lists only modules the principal may open, so a destination no entry claims is hidden, and
+  // so is a group left without destinations: a role never sees a menu item it cannot open.
+  const shownGroups = demoNavigationPresentation.flatMap((group) => {
+    const items = group.items.filter((item) => claimed.has(item));
+    return items.length === 0 ? [] : [{ ...group, items }];
+  });
+  const demoGroups = shownGroups.map((group) => ({
     icon: group.icon,
     key: group.key,
     label: t(`shell.dashboard.navigation.groups.${group.key}`),
@@ -957,6 +965,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const pendingPath = usePendingNavigationPath();
   const pendingHref = pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, language ?? '');
   const model = buildShellNavigation({ ...props, pendingHref }, t);
+  useIdleRoutePreload(props.navigation);
 
   // Back after sign-out or a tenant switch can restore this page from the back/forward cache with the old session's
   // navigation on screen. Hide it before the browser paints and load the document again, so the server decides.

@@ -8,6 +8,7 @@ import type { ComponentType } from 'react';
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from '../../../module-entrypoint-loader.ts';
+import { remotePageIdentity } from '../../../remote-page-loader.ts';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { signInHref } from '../../../sign-in-return.ts';
 import { useShellControls } from '../../../use-shell-controls.ts';
@@ -39,11 +40,14 @@ const browserFederationRuntime = __ONTOS_BROWSER_BUILD__
 
 const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageModel, { state: 'resolved' }> }) => {
   const { t } = useModernI18n();
+  // A loader re-run returns an equal target as a new object. Compare by remote page, so the mounted page is kept
+  // instead of flashing the loading state and remounting (which repeated all of its reads).
+  const identity = remotePageIdentity(model.target);
   const [loadedTarget, setLoadedTarget] = useState<{
+    readonly identity: string;
     readonly result: RemoteState;
-    readonly target: ResolvedModuleTarget;
-  }>({ result: { state: 'loading' }, target: model.target });
-  const remote: RemoteState = loadedTarget.target === model.target ? loadedTarget.result : { state: 'loading' };
+  }>({ identity, result: { state: 'loading' } });
+  const remote: RemoteState = loadedTarget.identity === identity ? loadedTarget.result : { state: 'loading' };
 
   useEffect(() => {
     let current = true;
@@ -107,7 +111,7 @@ const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageMod
             if (!current) {
               return;
             }
-            setLoadedTarget({ result, target: model.target });
+            setLoadedTarget({ identity: remotePageIdentity(model.target), result });
           }),
         ),
       );

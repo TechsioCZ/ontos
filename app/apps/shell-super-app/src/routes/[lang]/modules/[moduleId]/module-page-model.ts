@@ -2,13 +2,21 @@ import { Effect, Match, Schema } from 'effect';
 import type { Cause, Config } from 'effect';
 
 import { ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
-import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
+import type { ResolveModuleTargetPayload, ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { resolveModuleTarget } from '../../../../api/auth-client.ts';
-import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
+import type { ShellAuthenticationClientOptions, ShellTargetClientError } from '../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { prefetchRecordedReads } from '../../../browser-request-cache.ts';
+import {
+  browserBaseUrl,
+  browserReadKey,
+  browserStaleWhileRevalidateCache,
+  keyPart,
+} from '../../../browser-swr-cache.ts';
+import { loadRemotePage } from '../../../remote-page-loader.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../../home-page-model.ts';
-import type { HomePageModel } from '../../home-page-model.ts';
+import type { AuthenticatedHomePageModel, HomePageModel } from '../../home-page-model.ts';
 
 interface ModuleTargetLoaderArguments {
   readonly canonicalPath?: string;
@@ -64,6 +72,50 @@ const safeState = (error: Config.ConfigError | ShellTargetClientError, shell: Ho
     Match.exhaustive,
   );
 
+const ResolveModuleTargetPayloadJson = Schema.fromJsonString(ResolveModuleTargetPayloadSchema);
+
+/**
+ * A target resolution is fixed for one pinned release, tenant and legal entity, so the browser reuses it like the
+ * other Shell reads: a navigation or preload of a visited path resolves without a round trip.
+ */
+const browserTargetCache = browserStaleWhileRevalidateCache(
+  (key: string) => {
+    const parts = key.split(keyPart);
+    return Schema.decodeEffect(ResolveModuleTargetPayloadJson)(parts.at(-1) ?? '').pipe(
+      Effect.flatMap((decoded) => resolveModuleTarget(decoded, { baseUrl: new URL(parts[0] ?? '') })),
+    );
+  },
+  { capacity: 64, keep: () => true },
+);
+
+const targetFor = (
+  payload: ResolveModuleTargetPayload,
+  shell: AuthenticatedHomePageModel,
+  options: ShellAuthenticationClientOptions,
+) => {
+  const cacheBaseUrl = browserBaseUrl(options);
+  return cacheBaseUrl === undefined
+    ? resolveModuleTarget(payload, options)
+    : Schema.encodeEffect(ResolveModuleTargetPayloadJson)(payload).pipe(
+        Effect.flatMap((encoded) => browserTargetCache.get(browserReadKey(cacheBaseUrl, shell.identity, encoded))),
+      );
+};
+
+/**
+ * Starts loading what a resolved page needs before it renders: its remote page module and the module reads the
+ * path made on its last visit. Route preloads (links in view, idle preloading) run the loader, so this makes a
+ * later click render the page, and usually its data, at once. Detached: a cancelled navigation keeps the work.
+ */
+export const preloadModuleTarget = (model: ModuleTargetPageModel, pathname: string) =>
+  'document' in globalThis && model.state === 'resolved'
+    ? Effect.forkDetach(
+        Effect.all([loadRemotePage(model.target), prefetchRecordedReads(pathname)], {
+          concurrency: 2,
+          discard: true,
+        }),
+      ).pipe(Effect.asVoid)
+    : Effect.void;
+
 export const loadModulePageModel = ({
   canonicalPath,
   params,
@@ -87,7 +139,7 @@ export const loadModulePageModel = ({
           Schema.decodeEffect(ResolveModuleTargetPayloadSchema)({
             ...(canonicalPath === undefined ? params : { canonicalPath }),
             compositionRevision,
-          }).pipe(Effect.flatMap((payload) => resolveModuleTarget(payload, options))),
+          }).pipe(Effect.flatMap((payload) => targetFor(payload, shell, options))),
         ),
         Effect.map((target): ModuleTargetPageModel =>
           target.compositionRevision === compositionRevision
@@ -103,6 +155,9 @@ export const loadModulePageModel = ({
   );
 
 export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
-  browserRuntime.runPromise(loadModulePageModel(input), {
-    signal: input.request.signal,
-  });
+  browserRuntime.runPromise(
+    loadModulePageModel(input).pipe(
+      Effect.tap((model) => preloadModuleTarget(model, new URL(input.request.url).pathname)),
+    ),
+    { signal: input.request.signal },
+  );

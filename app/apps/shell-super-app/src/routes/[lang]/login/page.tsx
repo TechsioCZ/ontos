@@ -12,6 +12,7 @@ import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
 import { signInReturnPath } from '../../sign-in-return.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
@@ -128,27 +129,30 @@ const LoginPage = () => {
               passwordRef.current?.focus();
             }),
           onSuccess: () =>
-            Effect.tryPromise(() => {
-              // Signed in: what remains is loading the next page, which can take a few seconds.
-              setAttempt('opening');
-              return router.invalidate({ sync: true });
-            }).pipe(
-              Effect.andThen(
-                Effect.tryPromise(() => {
-                  // Cached pages hold anonymous loader data; an invalidated cached page would render that stale
-                  // data while it reloads in the background, so the signed-in user would briefly see the
-                  // logged-out view. Without a cache entry the next page loads before it renders.
-                  router.clearCache();
-                  // A protected deep link sent the visitor here; return there instead of the home page.
-                  const returnPath = signInReturnPath(window.location.href, language);
-                  return navigate(returnPath === undefined ? { to: `/${language}/` } : { href: returnPath });
+            Effect.andThen(
+              forgetRecordedPageReads,
+              Effect.tryPromise(() => {
+                // Signed in: what remains is loading the next page, which can take a few seconds.
+                setAttempt('opening');
+                return router.invalidate({ sync: true });
+              }).pipe(
+                Effect.andThen(
+                  Effect.tryPromise(() => {
+                    // Cached pages hold anonymous loader data; an invalidated cached page would render that stale
+                    // data while it reloads in the background, so the signed-in user would briefly see the
+                    // logged-out view. Without a cache entry the next page loads before it renders.
+                    router.clearCache();
+                    // A protected deep link sent the visitor here; return there instead of the home page.
+                    const returnPath = signInReturnPath(window.location.href, language);
+                    return navigate(returnPath === undefined ? { to: `/${language}/` } : { href: returnPath });
+                  }),
+                ),
+                Effect.timeout('10 seconds'),
+                Effect.matchEffect({
+                  onFailure: handleNavigationFailure,
+                  onSuccess: Effect.succeed,
                 }),
               ),
-              Effect.timeout('10 seconds'),
-              Effect.matchEffect({
-                onFailure: handleNavigationFailure,
-                onSuccess: Effect.succeed,
-              }),
             ),
         }),
         Effect.ensuring(Effect.sync(() => setAttempt('idle'))),

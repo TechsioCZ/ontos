@@ -1,5 +1,5 @@
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Cache, Effect, Exit, Match } from 'effect';
+import { Effect, Match } from 'effect';
 
 import type {
   AvailableTenant,
@@ -12,6 +12,7 @@ import type {
 import { availableLegalEntities, availableTenants, currentSession, shellComposition } from '../../api/auth-client.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { browserBaseUrl, browserReadKey, browserStaleWhileRevalidateCache, keyPart } from '../browser-swr-cache.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
 interface HomeLoaderArguments {
@@ -90,85 +91,68 @@ const tenantRead = (error: AvailableTenantsClientError, tenantId: SafeTenantIden
     Match.exhaustive,
   );
 
-/** How long one successful browser read is reused. */
-const BROWSER_READ_TTL = '30 seconds';
-
 /**
  * TanStack runs this loader for every navigation and every link preload, so one Zákazníci visit read
- * `/auth/session` more than a dozen times. In the browser an authenticated session is reused for a short
- * window and concurrent loaders share one request. Anonymous and failed reads are never kept, so a fresh
- * sign-in is seen at once; sign-out and tenant or legal-entity switches reload the document, which drops
- * the cache. Requests that carry a cookie header (server rendering) always read fresh: one SSR process
- * serves many users.
+ * `/auth/session` more than a dozen times. In the browser an authenticated session is reused and concurrent loaders
+ * share one request; a session older than a few seconds is still answered at once and re-read in the background, so a
+ * navigation never waits for it. Anonymous and failed reads are never kept, so a fresh sign-in is seen at once;
+ * sign-out and tenant or legal-entity switches reload the document, which drops the cache. Requests that carry a
+ * cookie header (server rendering) always read fresh: one SSR process serves many users.
  */
-const browserSessionCache = browserRuntime.runSync(
-  Cache.makeWith((baseUrl: string) => currentSession({ baseUrl: new URL(baseUrl) }), {
+const browserSessionCache = browserStaleWhileRevalidateCache(
+  (baseUrl: string) => currentSession({ baseUrl: new URL(baseUrl) }),
+  {
     capacity: 4,
-    timeToLive: (exit) => (Exit.isSuccess(exit) && exit.value.state === 'authenticated' ? BROWSER_READ_TTL : 0),
-  }),
+    keep: (session) => session.state === 'authenticated',
+  },
 );
 
 /**
  * The same loader also read the composition, tenants and legal entities on every navigation and preload, about
- * 1.6 s each under load. In the browser a successful answer is reused for the same window, keyed by base URL,
- * tenant, legal entity and (for the composition) the pinned release, so a switch or a new release reads fresh.
- * Failed and non-available answers are never kept.
+ * 1.6 s each under load. In the browser a successful answer is reused the same way, keyed by base URL, tenant,
+ * legal entity and (for the composition) the pinned release, so a switch or a new release reads fresh. Failed and
+ * non-available answers are never kept.
  */
-const keyPart = '\n';
-const browserReadKey = (baseUrl: string, identity: SafeTenantIdentity, extra = '') =>
-  [baseUrl, identity.tenantId, 'legalEntityId' in identity ? String(identity.legalEntityId) : '', extra].join(keyPart);
 const baseUrlOfKey = (key: string) => new URL(key.split(keyPart)[0] ?? '');
-const successTtl = (exit: Exit.Exit<unknown, unknown>) => (Exit.isSuccess(exit) ? BROWSER_READ_TTL : 0);
+const keepSuccess = () => true;
 
-const browserCompositionCache = browserRuntime.runSync(
-  Cache.makeWith(
-    (key: string) => {
-      const requestedRevision = key.split(keyPart)[3] ?? '';
-      return shellComposition(requestedRevision === '' ? {} : { compositionRevision: requestedRevision }, {
-        baseUrl: baseUrlOfKey(key),
-      });
-    },
-    {
-      capacity: 4,
-      timeToLive: (exit) => (Exit.isSuccess(exit) && exit.value.state === 'available' ? BROWSER_READ_TTL : 0),
-    },
-  ),
+const browserCompositionCache = browserStaleWhileRevalidateCache(
+  (key: string) => {
+    const requestedRevision = key.split(keyPart)[3] ?? '';
+    return shellComposition(requestedRevision === '' ? {} : { compositionRevision: requestedRevision }, {
+      baseUrl: baseUrlOfKey(key),
+    });
+  },
+  { capacity: 4, keep: (composition) => composition.state === 'available' },
 );
-const browserLegalEntitiesCache = browserRuntime.runSync(
-  Cache.makeWith((key: string) => availableLegalEntities({ baseUrl: baseUrlOfKey(key) }), {
-    capacity: 4,
-    timeToLive: successTtl,
-  }),
+const browserLegalEntitiesCache = browserStaleWhileRevalidateCache(
+  (key: string) => availableLegalEntities({ baseUrl: baseUrlOfKey(key) }),
+  { capacity: 4, keep: keepSuccess },
 );
-const browserTenantsCache = browserRuntime.runSync(
-  Cache.makeWith((key: string) => availableTenants({ baseUrl: baseUrlOfKey(key) }), {
+const browserTenantsCache = browserStaleWhileRevalidateCache(
+  (key: string) => availableTenants({ baseUrl: baseUrlOfKey(key) }),
+  {
     capacity: 4,
-    timeToLive: successTtl,
-  }),
+    keep: keepSuccess,
+  },
 );
 
 /** Drops every cached browser read (session, composition, tenants, legal entities). Tests call it between cases. */
 export const resetBrowserSessionCache = Effect.all(
   [
-    Cache.invalidateAll(browserSessionCache),
-    Cache.invalidateAll(browserCompositionCache),
-    Cache.invalidateAll(browserLegalEntitiesCache),
-    Cache.invalidateAll(browserTenantsCache),
+    browserSessionCache.invalidateAll,
+    browserCompositionCache.invalidateAll,
+    browserLegalEntitiesCache.invalidateAll,
+    browserTenantsCache.invalidateAll,
   ],
   { concurrency: 1, discard: true },
 );
-
-/** The base URL when this read may use the browser caches; `undefined` for server rendering and explicit locales. */
-const browserBaseUrl = ({ baseUrl, ...rest }: ShellAuthenticationClientOptions) =>
-  'document' in globalThis && baseUrl !== undefined && rest.cookie === undefined && rest.locale === undefined
-    ? String(baseUrl)
-    : undefined;
 
 const sessionFor = (options: ShellAuthenticationClientOptions) => {
   const cacheBaseUrl = browserBaseUrl(options);
   const { baseUrl, ...rest } = options;
   if (cacheBaseUrl !== undefined) {
-    return Cache.get(browserSessionCache, cacheBaseUrl);
+    return browserSessionCache.get(cacheBaseUrl);
   }
   return currentSession(baseUrl === undefined ? rest : { ...rest, baseUrl });
 };
@@ -181,21 +165,21 @@ const compositionFor = (
   const cacheBaseUrl = browserBaseUrl(options);
   return cacheBaseUrl === undefined
     ? shellComposition(requestedRevision === undefined ? {} : { compositionRevision: requestedRevision }, options)
-    : Cache.get(browserCompositionCache, browserReadKey(cacheBaseUrl, identity, requestedRevision ?? ''));
+    : browserCompositionCache.get(browserReadKey(cacheBaseUrl, identity, requestedRevision ?? ''));
 };
 
 const legalEntitiesFor = (identity: SafeTenantIdentity, options: ShellAuthenticationClientOptions) => {
   const cacheBaseUrl = browserBaseUrl(options);
   return cacheBaseUrl === undefined
     ? availableLegalEntities(options)
-    : Cache.get(browserLegalEntitiesCache, browserReadKey(cacheBaseUrl, identity));
+    : browserLegalEntitiesCache.get(browserReadKey(cacheBaseUrl, identity));
 };
 
 const tenantsFor = (identity: SafeTenantIdentity, options: ShellAuthenticationClientOptions) => {
   const cacheBaseUrl = browserBaseUrl(options);
   return cacheBaseUrl === undefined
     ? availableTenants(options)
-    : Cache.get(browserTenantsCache, browserReadKey(cacheBaseUrl, identity));
+    : browserTenantsCache.get(browserReadKey(cacheBaseUrl, identity));
 };
 
 export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(

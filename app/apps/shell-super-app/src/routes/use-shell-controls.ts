@@ -8,6 +8,7 @@ import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../..
 import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts';
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { forgetRecordedPageReads } from './browser-request-cache.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
 
 const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
@@ -68,6 +69,7 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     setLogoutFailed(false);
     void browserRuntime.runPromise(
       signOut({ locale: language }).pipe(
+        Effect.andThen(forgetRecordedPageReads),
         Effect.andThen(
           Effect.tryPromise(() => navigate({ reloadDocument: true, to: `/${language}/login` })).pipe(
             Effect.timeout('10 seconds'),
