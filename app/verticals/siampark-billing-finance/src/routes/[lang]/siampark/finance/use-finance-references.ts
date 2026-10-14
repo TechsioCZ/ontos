@@ -7,6 +7,7 @@ import { Effect, Predicate, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
 import { customerIndex } from './invoice-view.ts';
+import { salesPipelineReadable } from './sales-pipeline-readable.ts';
 
 const ReferenceSourceSchema = Schema.Literals(['customers', 'opportunities', 'products']);
 type ReferenceSource = typeof ReferenceSourceSchema.Type;
@@ -56,24 +57,31 @@ export const useFinanceReferences = () => {
         ),
       ),
     );
+    const markOpportunitiesForbidden = () => {
+      if (active) {
+        setOpportunitiesForbidden(true);
+      }
+    };
+    const loadOpportunityTitles = listOpportunities({}, 'siampark-finance.opportunities').pipe(
+      Effect.match({
+        onFailure: (cause) => {
+          if (Predicate.isTagged(cause, 'RecordsForbiddenProblem')) {
+            markOpportunitiesForbidden();
+          } else {
+            recordFailure('opportunities', cause);
+          }
+        },
+        onSuccess: (response) => {
+          if (active) {
+            setOpportunityTitles(new Map<string, string>(response.items.map((item) => [item.id, item.title] as const)));
+          }
+        },
+      }),
+    );
     void financeBrowserRuntime.runPromise(
-      listOpportunities({}, 'siampark-finance.opportunities').pipe(
-        Effect.match({
-          onFailure: (cause) => {
-            if (!Predicate.isTagged(cause, 'RecordsForbiddenProblem')) {
-              recordFailure('opportunities', cause);
-            } else if (active) {
-              setOpportunitiesForbidden(true);
-            }
-          },
-          onSuccess: (response) => {
-            if (active) {
-              setOpportunityTitles(
-                new Map<string, string>(response.items.map((item) => [item.id, item.title] as const)),
-              );
-            }
-          },
-        }),
+      salesPipelineReadable.pipe(
+        // A role whose composition leaves out the sales pipeline is refused without a read, so it never sees a 403.
+        Effect.flatMap((readable) => (readable ? loadOpportunityTitles : Effect.sync(markOpportunitiesForbidden))),
       ),
     );
     void financeBrowserRuntime.runPromise(
