@@ -119,5 +119,5 @@ patchedDependencies:
   # upstream: https://github.com/ScriptedAlchemy/effect-rstest (latest build cbbf87e still imports effect/unstable/arbitrary; Effect 4.0.0 exports Arbitrary from the effect root)
   effect-rstest: patches/effect-rstest-effect-4.0.0-arbitrary.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380 (optional policy/role fields)
-  # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6429 (Effect 4.0.0 SqlError declaration path; unreleased in rc5)
+  # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6429 (Effect 4.0.0 SqlError path and Schema.isBetweenLength; merged on rc5, unreleased)
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch

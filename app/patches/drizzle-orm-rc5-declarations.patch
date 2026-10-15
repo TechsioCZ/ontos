@@ -304,6 +304,80 @@ index 8076aaf..4520a18 100644
  import { EffectLoggerShape } from "../effect-core/logger.js";
  
  //#region src/effect-postgres/session.d.ts
+diff --git a/effect-schema/column.cjs b/effect-schema/column.cjs
+index cd95b7a..9b35e0e 100644
+--- a/effect-schema/column.cjs
++++ b/effect-schema/column.cjs
+@@ -200,12 +200,12 @@ function arrayColumnToSchema(column, constraint) {
+ 		case "halfvector": {
+ 			const length = column.length;
+ 			const schema = effect.Schema.Array(effect.Schema.Number);
+-			return length ? schema.check(effect.Schema.isLengthBetween(length, length)) : schema;
++			return length ? schema.check(effect.Schema.isBetweenLength(length, length)) : schema;
+ 		}
+ 		case "int64vector": {
+ 			const length = column.length;
+ 			const schema = effect.Schema.Array(effect.Schema.BigInt.check(effect.Schema.isGreaterThanOrEqualToBigInt(require_utils.CONSTANTS.INT64_MIN), effect.Schema.isLessThanOrEqualToBigInt(require_utils.CONSTANTS.INT64_MAX)));
+-			return length ? schema.check(effect.Schema.isLengthBetween(length, length)) : schema;
++			return length ? schema.check(effect.Schema.isBetweenLength(length, length)) : schema;
+ 		}
+ 		case "basecolumn": {
+ 			const baseColumn = column.baseColumn;
+@@ -213,7 +213,7 @@ function arrayColumnToSchema(column, constraint) {
+ 				const baseSchema = columnToSchema(baseColumn);
+ 				const length = column.length;
+ 				const schema = effect.Schema.Array(baseSchema);
+-				if (length) return schema.check(effect.Schema.isLengthBetween(length, length));
++				if (length) return schema.check(effect.Schema.isBetweenLength(length, length));
+ 				return schema;
+ 			}
+ 			return effect.Schema.Array(effect.Schema.Any);
+@@ -253,7 +253,7 @@ function stringColumnToSchema(column, constraint) {
+ 	if (constraint === "uint64") return unsignedBigintStringModeSchema;
+ 	let schema = effect.Schema.String;
+ 	schema = regex ? schema.check(effect.Schema.isPattern(regex)) : schema;
+-	return length && isLengthExact ? schema.check(effect.Schema.isLengthBetween(length, length)) : length ? schema.check(effect.Schema.isMaxLength(length)) : schema;
++	return length && isLengthExact ? schema.check(effect.Schema.isBetweenLength(length, length)) : length ? schema.check(effect.Schema.isMaxLength(length)) : schema;
+ }
+ 
+ //#endregion
+diff --git a/effect-schema/column.js b/effect-schema/column.js
+index 7a33c68..f740c29 100644
+--- a/effect-schema/column.js
++++ b/effect-schema/column.js
+@@ -198,12 +198,12 @@ function arrayColumnToSchema(column, constraint) {
+ 		case "halfvector": {
+ 			const length = column.length;
+ 			const schema = Schema.Array(Schema.Number);
+-			return length ? schema.check(Schema.isLengthBetween(length, length)) : schema;
++			return length ? schema.check(Schema.isBetweenLength(length, length)) : schema;
+ 		}
+ 		case "int64vector": {
+ 			const length = column.length;
+ 			const schema = Schema.Array(Schema.BigInt.check(Schema.isGreaterThanOrEqualToBigInt(CONSTANTS.INT64_MIN), Schema.isLessThanOrEqualToBigInt(CONSTANTS.INT64_MAX)));
+-			return length ? schema.check(Schema.isLengthBetween(length, length)) : schema;
++			return length ? schema.check(Schema.isBetweenLength(length, length)) : schema;
+ 		}
+ 		case "basecolumn": {
+ 			const baseColumn = column.baseColumn;
+@@ -211,7 +211,7 @@ function arrayColumnToSchema(column, constraint) {
+ 				const baseSchema = columnToSchema(baseColumn);
+ 				const length = column.length;
+ 				const schema = Schema.Array(baseSchema);
+-				if (length) return schema.check(Schema.isLengthBetween(length, length));
++				if (length) return schema.check(Schema.isBetweenLength(length, length));
+ 				return schema;
+ 			}
+ 			return Schema.Array(Schema.Any);
+@@ -251,7 +251,7 @@ function stringColumnToSchema(column, constraint) {
+ 	if (constraint === "uint64") return unsignedBigintStringModeSchema;
+ 	let schema = Schema.String;
+ 	schema = regex ? schema.check(Schema.isPattern(regex)) : schema;
+-	return length && isLengthExact ? schema.check(Schema.isLengthBetween(length, length)) : length ? schema.check(Schema.isMaxLength(length)) : schema;
++	return length && isLengthExact ? schema.check(Schema.isBetweenLength(length, length)) : length ? schema.check(Schema.isMaxLength(length)) : schema;
+ }
+ 
+ //#endregion
 diff --git a/effect-sqlite-bun/migrator.d.cts b/effect-sqlite-bun/migrator.d.cts
 index 7abd0ed..8da6b39 100644
 --- a/effect-sqlite-bun/migrator.d.cts
