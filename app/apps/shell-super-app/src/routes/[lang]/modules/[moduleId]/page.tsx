@@ -32,9 +32,10 @@ type RemoteState =
       readonly state: 'ready';
     };
 
-const browserFederationRuntime = __ONTOS_BROWSER_BUILD__
-  ? Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(Effect.timeout('5 seconds'))
-  : Effect.interrupt;
+const browserFederationRuntime =
+  import.meta.env.MODERN_TARGET === 'browser'
+    ? Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(Effect.timeout('5 seconds'))
+    : Effect.interrupt;
 
 const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageModel, { state: 'resolved' }> }) => {
   const { t } = useModernI18n();
@@ -47,7 +48,7 @@ const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageMod
   useEffect(() => {
     let current = true;
     const controller = new AbortController();
-    if (__ONTOS_BROWSER_BUILD__) {
+    if (import.meta.env.MODERN_TARGET === 'browser') {
       const load = Effect.flatMap(pinBrowserModuleTarget(model.target, document), () => {
         if (!current || controller.signal.aborted) {
           return Effect.interrupt;

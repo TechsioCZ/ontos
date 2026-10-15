@@ -67,7 +67,7 @@ export default defineConfig({
       restoreMocks: true,
       source: {
         define: {
-          __ONTOS_BROWSER_BUILD__: 'true',
+          'import.meta.env.MODERN_TARGET': "'browser'",
           ULTRAMODERN_SITE_URL: encodedSiteUrl,
         },
       },
