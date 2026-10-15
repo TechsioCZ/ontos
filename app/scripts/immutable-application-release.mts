@@ -24,8 +24,8 @@ import {
   Schema,
   Stream,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import type { PlatformError } from 'effect/PlatformError';
 
 import {

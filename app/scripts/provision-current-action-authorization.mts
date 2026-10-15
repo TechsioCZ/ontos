@@ -16,7 +16,7 @@ import {
   Path,
   Schema,
 } from 'effect';
-import { Command } from 'effect/unstable/cli';
+import { Command } from 'effect/cli';
 
 import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
 import {

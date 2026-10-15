@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { Cause, Context, Deferred, Effect, Exit, Fiber } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { makeTestDatabase } from '../support/database.ts';
 

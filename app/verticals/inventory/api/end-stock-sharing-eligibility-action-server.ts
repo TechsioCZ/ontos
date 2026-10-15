@@ -2,7 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug end-stock-sharing-eligibility
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { inventoryApi } from '../shared/api.ts';
 import { endStockSharingEligibilityAction } from '../src/actions/end-stock-sharing-eligibility.action.ts';

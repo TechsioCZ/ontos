@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Cause, DateTime, Effect, Option, Redacted, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
 import type { ActionRegistration, DomainEventContractMap, TrustedPrincipalContext } from '@app/core-runtime';

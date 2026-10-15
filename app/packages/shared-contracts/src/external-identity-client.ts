@@ -26,7 +26,7 @@ import type {
 } from '@app/core-runtime/auth/external-identity-contracts';
 import type { HttpApi, HttpApiClient, HttpApiGroup, HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 
 const ExternalIdentityRequestCorrelationSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));

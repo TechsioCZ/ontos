@@ -66,7 +66,8 @@ it.live(
             '#runtime-transport': { default: './src/transport.node.ts', workerd: './src/transport.workerd.ts' },
           },
         }),
-        'packages/core-runtime/src/auth/allowed-unstable.ts': "import { Foo } from 'effect/unstable/bar';\n",
+        'packages/core-runtime/src/auth/allowed-platform-subpath.ts':
+          "import { SqlError } from 'effect/sql/SqlError';\n",
         'packages/core-runtime/src/auth/allowed.ts': "import { Effect } from 'effect';\nimport { Pool } from 'pg';\n",
         // Core: a package import mapped inside Core source and the workerd platform module pass.
         'packages/core-runtime/src/auth/allowed-package-import.ts':

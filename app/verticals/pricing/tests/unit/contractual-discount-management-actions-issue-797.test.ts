@@ -6,7 +6,7 @@ import {
 } from '@app/pricing-contracts';
 import { PricingDiscountIdentityKeySchema } from '@app/pricing-contracts/domain/discount';
 import { DateTime, Effect, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { mapManageContractualDiscountActionProblem } from '../../api/manage-contractual-discount-action-problems.ts';

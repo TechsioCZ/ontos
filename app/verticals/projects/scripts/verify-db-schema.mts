@@ -2,7 +2,7 @@ import { PgClient } from '@effect/sql-pg';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Effect, Layer, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { PROJECTS_TABLE_INVENTORY, projects, projectsRelations } from '../src/db/schema.ts';
 
 class ProjectsSchemaVerificationError extends Schema.TaggedError<ProjectsSchemaVerificationError>()(

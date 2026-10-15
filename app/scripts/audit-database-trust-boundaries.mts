@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Config, Console, Effect, Exit, FileSystem, Path, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { collectSnapshot } from './database-trust-audit/collect-snapshot.mts';

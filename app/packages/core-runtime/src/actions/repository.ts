@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Cause } from 'effect';
 import { Context, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { isSqlError } from 'effect/sql/SqlError';
 
 import type { ActionInvocationStatus } from '../db/schema.ts';
 import {

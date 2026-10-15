@@ -1,6 +1,6 @@
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { CorrectPartyFactPayloadSchema } from '../../shared/command-api.ts';
 import {

@@ -186,7 +186,7 @@ export const outboxWorkerLayer = Layer.merge(
 const renderWorkerHostEntry = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import { Layer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
   defineOutboxWorkerEntry,

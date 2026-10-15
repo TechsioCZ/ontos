@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit, Schema } from 'effect';
 import type { Redacted } from 'effect';
-import type { Headers } from 'effect/unstable/http';
+import type { Headers } from 'effect/http';
 
 import type { ActionTransportMetadata } from '../actions/context.ts';
 import type { ActionRegistration } from '../actions/definition.ts';

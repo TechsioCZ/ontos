@@ -3,7 +3,7 @@
 // @ontos-action-http-slug move-project
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { MoveProjectPayloadSchema, MoveProjectResultSchema } from '../actions/move-project.ts';
 
 export { MoveProjectPayloadSchema } from '../actions/move-project.ts';

@@ -9,7 +9,7 @@ import {
 import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '../../src/resend.ts';
 import { Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 const configuration = {
   apiKey: Redacted.make('re_test_secret'),

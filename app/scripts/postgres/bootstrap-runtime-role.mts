@@ -2,8 +2,8 @@
 
 import { PgClient } from '@effect/sql-pg';
 import { Effect, Exit, Predicate, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from './runtime-role-grants.mts';

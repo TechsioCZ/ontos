@@ -6,8 +6,8 @@ import { pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Cause, Clock, DateTime, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
 import { assert, expect, it, rs } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';

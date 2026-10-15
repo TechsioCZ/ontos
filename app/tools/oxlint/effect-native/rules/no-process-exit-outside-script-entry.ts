@@ -5,7 +5,7 @@
  *   - **B3** "Convert consequential operational scripts into Effect programs" —
  *     "Approximately 79 of 103 scripts are primarily async/await; hundreds of manual throws and
  *     several independent argv parsers remain. […] Use scoped resources, shared Layers, typed
- *     errors, Schema decoders, and `effect/unstable/cli`. **Keep one small process-exit adapter at
+ *     errors, Schema decoders, and `effect/cli`. **Keep one small process-exit adapter at
  *     the executable edge.**"
  *     42 `process.exit` / `process.exitCode` sites live in 26 scripts today: they terminate the
  *     process from inside helpers and callbacks, so `Scope` finalizers, `Effect.ensuring`, open

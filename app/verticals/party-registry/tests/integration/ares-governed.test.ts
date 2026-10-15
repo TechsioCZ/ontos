@@ -11,7 +11,7 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { eq } from 'drizzle-orm';
 import { ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema, Predicate } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, pinDocumentCompositionRevision } from '@app/shared-contracts';

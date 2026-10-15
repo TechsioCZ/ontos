@@ -17,8 +17,8 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Clock, Context, DateTime, Duration, Effect, Layer, Redacted } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import { isSqlError } from 'effect/sql/SqlError';
 
 import { gatewayAssertionRedemptions } from '../database/schema.ts';
 

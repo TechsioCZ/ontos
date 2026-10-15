@@ -120,7 +120,7 @@ function boundIndices(pattern: AnyNode): readonly number[] | null {
   return indices;
 }
 
-/** Effect-native rule: a script declares its command line with `effect/unstable/cli`, never by hand. */
+/** Effect-native rule: a script declares its command line with `effect/cli`, never by hand. */
 export const rule = defineRule({
   meta: {
     type: 'problem',

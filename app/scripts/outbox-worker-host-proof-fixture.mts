@@ -23,9 +23,9 @@ import {
   Runtime,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
+import { Command, Flag } from 'effect/cli';
+import { HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 
 import { createSharedRuntimeConfig } from '../module-federation.shared.ts';
 import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';

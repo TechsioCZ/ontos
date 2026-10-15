@@ -2,7 +2,7 @@
 // @ontos-action-http-owner commerce.pricing
 // @ontos-action-http-slug manage-contractual-discount
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { pricingApi } from '../shared/api.ts';
 import { manageContractualDiscountAction } from '../src/actions/manage-contractual-discount.action.ts';

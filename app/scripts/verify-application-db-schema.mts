@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Console, Effect, Exit, Option, Order, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';

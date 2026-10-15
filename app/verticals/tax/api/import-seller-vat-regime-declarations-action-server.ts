@@ -3,7 +3,7 @@
 // @ontos-action-http-slug import-seller-vat-regime-declarations
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { taxApi } from '../shared/api.ts';
 import { importSellerVatRegimeDeclarationsAction } from '../src/actions/import-seller-vat-regime-declarations.action.ts';

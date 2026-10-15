@@ -1,6 +1,6 @@
 import { ConfigProvider, Effect, Layer, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 
 import {
   combineOutboxWorkerHealth,

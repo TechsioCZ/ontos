@@ -106,7 +106,7 @@ const DEFAULT_PORT_FILES: readonly string[] = [];
 const DEFAULT_POLICY_HELPER_PATTERN = '(Policy|Timeout|Retry)$';
 /** `Effect.*` members that bridge a Promise into the Effect runtime: unbounded unless told otherwise. */
 const DEFAULT_PROMISE_BRIDGES = ['promise', 'tryPromise', 'tryMapPromise'];
-/** `HttpClient` request-execution members (Effect v4 `effect/unstable/http`). */
+/** `HttpClient` request-execution members (Effect v4 `effect/http`). */
 const DEFAULT_HTTP_METHODS = ['execute', 'get', 'post', 'put', 'patch', 'del', 'head', 'options'];
 
 const TIMEOUT_MEMBERS = new Set(['timeout', 'timeoutOption', 'timeoutOrElse', 'timeoutFail']);

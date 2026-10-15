@@ -10,7 +10,7 @@ import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/ef
 import { eq, sql } from 'drizzle-orm';
 import { Context, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import {
   makeTestDatabaseFromClient,

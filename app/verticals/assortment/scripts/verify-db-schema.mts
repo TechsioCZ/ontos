@@ -3,7 +3,7 @@ import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Array as EffectArray, Effect, Layer, Order, Schema } from 'effect';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { AssortmentDatabase, AssortmentDatabaseLive, AssortmentPgClientLive } from '../src/database/client.ts';
 import {
   ASSORTMENT_SCHEMA_NAME,

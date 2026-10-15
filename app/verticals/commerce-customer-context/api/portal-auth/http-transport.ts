@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 
 import { Cookies, HttpEffect, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Option, Redacted, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import { CommercePortalAuthConfig } from './provider/config-service.ts';
 

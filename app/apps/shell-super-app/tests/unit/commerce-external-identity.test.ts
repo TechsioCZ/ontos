@@ -41,7 +41,7 @@ import {
 } from '../../api/auth/external-identity/request-context.ts';
 import type { ExternalIdentityHttpWorkloadContextValue } from '../../api/auth/external-identity/request-context.ts';
 import { GatewayIssuer, GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 type CommercePortalAuthVerificationClientPort = CommercePortalAuthVerificationClient['Service'];
 type CommercePortalAuthVerificationRequest = Schema.Schema.Type<typeof CommercePortalAuthVerificationRequestSchema>;

@@ -2,7 +2,7 @@
 // @ontos-action-http-owner commerce.assortment
 // @ontos-action-http-slug create-rule
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { assortmentApi } from '../shared/api.ts';
 import { createRuleAction } from '../src/actions/create-rule.action.ts';

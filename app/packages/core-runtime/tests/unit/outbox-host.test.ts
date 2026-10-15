@@ -1,7 +1,7 @@
 import { Clock, ConfigProvider, DateTime, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 
 import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';

@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 
 import { Clock, Config, Console, DateTime, Duration, Effect, FileSystem, Option, Path, Result, Schema } from 'effect';
-import { Argument, Command } from 'effect/unstable/cli';
+import { Argument, Command } from 'effect/cli';
 
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';

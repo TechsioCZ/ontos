@@ -4,7 +4,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeOperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Effect, Layer, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';

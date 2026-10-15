@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { parse } from 'yaml';
 
 const begin = '  # <generated-vertical-provider-deployments>';

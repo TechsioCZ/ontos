@@ -3,7 +3,7 @@
 // @ontos-action-http-slug define-commercial-fee
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { DefineCommercialFeePayloadSchema, DefineCommercialFeeResultSchema } from '../actions/define-commercial-fee.ts';
 
 export { DefineCommercialFeePayloadSchema } from '../actions/define-commercial-fee.ts';

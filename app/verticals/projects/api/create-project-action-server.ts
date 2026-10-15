@@ -3,7 +3,7 @@
 // @ontos-action-http-slug create-project
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { projectsApi } from '../shared/api.ts';
 import { createProjectAction } from '../src/actions/create-project.action.ts';

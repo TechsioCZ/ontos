@@ -3,7 +3,7 @@
 // @ontos-action-http-slug reconcile-payment-term-reference
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { paymentTermCatalogApi } from '../shared/api.ts';
 import { reconcilePaymentTermReferenceAction } from '../src/actions/reconcile-payment-term-reference.action.ts';

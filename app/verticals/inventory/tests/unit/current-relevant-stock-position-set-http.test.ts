@@ -19,8 +19,8 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { FetchHttpClient } from 'effect/http';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makeInventoryApiRuntime } from '../../api/index.ts';

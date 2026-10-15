@@ -15,7 +15,7 @@ import {
   Schema,
 } from 'effect';
 import type { Redacted } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { parse as parseYaml } from 'yaml';
 
 import { serviceIdVariable } from '../publish-active-application-composition.mts';

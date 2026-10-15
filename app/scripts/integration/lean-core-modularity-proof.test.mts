@@ -9,8 +9,8 @@ import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensio
 import { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { and, eq, inArray } from 'drizzle-orm';
 import { Config, ConfigProvider, Context, DateTime, Duration, Effect, FileSystem, Layer, Ref, Schema } from 'effect';
-import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
+import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt } from 'jose';
 

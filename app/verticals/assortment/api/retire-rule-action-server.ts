@@ -2,7 +2,7 @@
 // @ontos-action-http-owner commerce.assortment
 // @ontos-action-http-slug retire-rule
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { assortmentApi } from '../shared/api.ts';
 import { retireRuleAction } from '../src/actions/retire-rule.action.ts';

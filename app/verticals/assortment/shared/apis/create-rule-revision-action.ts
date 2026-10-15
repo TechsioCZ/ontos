@@ -3,7 +3,7 @@
 // @ontos-action-http-slug create-rule-revision
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateRuleRevisionPayloadSchema, CreateRuleRevisionResultSchema } from '../actions/create-rule-revision.ts';
 
 export { CreateRuleRevisionPayloadSchema } from '../actions/create-rule-revision.ts';

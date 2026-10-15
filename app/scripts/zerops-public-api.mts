@@ -1,5 +1,5 @@
 import { Config, Context, Duration, Effect, Layer, Match, Option, Redacted, Schedule, Schema, Stream } from 'effect';
-import { HttpClient, HttpClientError, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
 
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 

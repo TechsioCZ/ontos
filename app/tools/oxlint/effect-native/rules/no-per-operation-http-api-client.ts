@@ -15,7 +15,7 @@
  *      `const { make } = HttpApiClient`);
  *    - an Effect namespace member in `constructorMembers` (`HttpApiClient.make` / `makeWith`),
  *      resolved through real import bindings, including `import { make } from
- *      "effect/unstable/httpapi/HttpApiClient"`, aliased namespaces and literal computed access
+ *      "effect/http-api/HttpApiClient"`, aliased namespaces and literal computed access
  *      (`HttpApiClient["make"]`);
  *    - a member in `accessorMembers` (`HttpApiClient.group` / `endpoint`). Those take an *already
  *      built* `httpClient`, so they do not rebuild the transport — they get their own message, but
@@ -503,7 +503,7 @@ export const rule = defineRule({
       return null;
     }
 
-    /** `import { make } from "effect/unstable/httpapi/HttpApiClient"` and friends. */
+    /** `import { make } from "effect/http-api/HttpApiClient"` and friends. */
     function classifyNamedImport(entry: NamedImport): SiteKind | null {
       const resolved = options;
       if (resolved === null) return null;

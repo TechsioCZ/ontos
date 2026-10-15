@@ -14,7 +14,7 @@ import {
   DatabaseConfigLive,
 } from '@app/core-runtime';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { eq, like, sql } from 'drizzle-orm';
 import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';

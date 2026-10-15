@@ -440,7 +440,7 @@ it.live(
             authoredManifest
               .replace(
                 '// <generated-module-manifest-imports>',
-                "import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';\n\nconst PropertyApi = HttpApi.make('PropertyApi').add(\n  HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),\n);\n// <generated-module-manifest-imports>",
+                "import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';\n\nconst PropertyApi = HttpApi.make('PropertyApi').add(\n  HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),\n);\n// <generated-module-manifest-imports>",
               )
               .replace(
                 '      // <generated-module-manifest-apis>\n      // </generated-module-manifest-apis>',

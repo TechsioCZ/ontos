@@ -14,7 +14,7 @@ import {
 import { ResendEmailDeliveryConfigurationError } from './configuration-error.ts';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import type { Duration } from 'effect';
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 /** The sole production endpoint used by the initial Resend adapter. */
 export const RESEND_EMAILS_ENDPOINT = 'https://api.resend.com/emails';

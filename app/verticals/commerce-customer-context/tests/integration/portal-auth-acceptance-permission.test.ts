@@ -22,7 +22,7 @@ import { NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   GatewayAssertionRedemptionService,

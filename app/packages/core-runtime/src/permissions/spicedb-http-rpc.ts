@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Option, Schema } from 'effect';
 import type { Redacted } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { SpiceDbRpcError, spiceDbDeadline } from './spicedb-rpc.ts';
 import type { SpiceDbRpc } from './spicedb-rpc.ts';

@@ -3,7 +3,7 @@
 // @ontos-action-http-slug assign-sku
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { AssignSkuPayloadSchema, AssignSkuResultSchema } from '../actions/assign-sku.ts';
 
 export { AssignSkuPayloadSchema } from '../actions/assign-sku.ts';

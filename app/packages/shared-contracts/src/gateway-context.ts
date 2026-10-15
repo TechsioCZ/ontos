@@ -11,7 +11,7 @@ import {
 } from '@modern-js/bff-effect/effect-client';
 import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { problemDetailsContentType, problemDetailsFields } from './problem-details.ts';
 

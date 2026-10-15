@@ -219,7 +219,7 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer } from 'effect';
-import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
 

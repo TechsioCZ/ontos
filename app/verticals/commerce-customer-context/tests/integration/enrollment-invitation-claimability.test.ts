@@ -9,7 +9,7 @@ import {
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { eq, sql } from 'drizzle-orm';
 import { Config, Effect, Layer, Redacted, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import {

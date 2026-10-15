@@ -347,7 +347,7 @@ export const renderActionHttpContract = (
 // @ontos-action-http-slug ${action}
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import {
   ${type}PayloadSchema,
   ${type}ResultSchema,
@@ -652,7 +652,7 @@ const renderActionHttpServer = (vertical: OntosVerticalMetadata, action: string)
 // @ontos-action-http-slug ${action}
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { ${toCamelCase(vertical.slug)}Api } from '../shared/api.ts';
 import { ${value}Action } from '../src/actions/${action}.action.ts';

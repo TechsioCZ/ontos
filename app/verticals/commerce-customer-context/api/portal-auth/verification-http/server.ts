@@ -1,6 +1,6 @@
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Redacted } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { CommercePortalAuthVerificationService } from '../provider/verification.ts';
 import { CommercePortalAuthVerificationApi } from '../../../shared/portal-auth-verification.ts';
 import type { CommercePortalAuthVerificationRequest } from '../../../shared/portal-auth-verification.ts';

@@ -2,7 +2,7 @@
 import { PrivacyOwnerCoverageResultSchema, PrivacyOwnerScopeSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Match, Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { CatalogToStockBindingHistoryEntrySchema } from '../domain/catalog-to-stock-binding.ts';
 import { CommitmentProtectionSchema } from '../domain/commitment-protection.ts';

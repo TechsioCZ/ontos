@@ -96,7 +96,7 @@ import { CommercePortalAuthSessionStoreLive } from '../src/portal-auth/persisten
 import { CommercePortalAuthServiceLive, portalAuthSessionApiLive } from './portal-auth/session/http.ts';
 import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
 import { ResendEmailDeliveryConfigLive, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   CommerceEnrollmentOwnerTransitionPreparation,
   CommerceEnrollmentPreparedOwnerCapability,

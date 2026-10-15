@@ -1,6 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 
 import {

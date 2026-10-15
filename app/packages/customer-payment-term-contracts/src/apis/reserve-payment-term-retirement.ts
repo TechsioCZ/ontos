@@ -3,7 +3,7 @@ import { PaymentTermMillisecondInstantSchema } from '@app/payment-term-catalog-c
 import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const ReservationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PaymentTermRetirementReservationId'),

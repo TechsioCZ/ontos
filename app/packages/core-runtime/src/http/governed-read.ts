@@ -1,7 +1,7 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
 import { Cause, Effect, Match, Option, Redacted, Schema } from 'effect';
-import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import { HttpEffect, HttpServerResponse } from 'effect/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';

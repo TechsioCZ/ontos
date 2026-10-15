@@ -1,6 +1,6 @@
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Duration, Effect, Redacted, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import { hashSubjectKey, noStoreHeaders, requireTrustedOrigin, resolveClientKey } from '../../http-transport.ts';
 import { commerceCustomerContextApi } from '../../../../shared/api.ts';

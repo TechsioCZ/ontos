@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Console, Data, Effect, FileSystem, Match, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 

@@ -14,7 +14,7 @@ import path from 'node:path';
 import { NodeServices } from '@effect/platform-node';
 import { Config, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { auditSteps, runQualityAudit, validateReport } from '../quality-audit.mts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';

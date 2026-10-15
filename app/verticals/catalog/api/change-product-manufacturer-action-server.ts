@@ -3,7 +3,7 @@
 // @ontos-action-http-slug change-product-manufacturer
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { catalogApi } from '../shared/api.ts';
 import { changeProductManufacturerAction } from '../src/actions/change-product-manufacturer.action.ts';
