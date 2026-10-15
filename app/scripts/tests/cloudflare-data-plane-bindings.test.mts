@@ -214,7 +214,7 @@ it('generates Commerce without a retired mutable owner binding while preserving 
     createWranglerConfig(process.cwd(), deploy === undefined ? {} : { deploy }),
   );
   expect(wrangler).toEqual({
-    compatibility_flags: ['global_fetch_strictly_public', 'nodejs_compat'],
+    compatibility_flags: ['global_fetch_strictly_public', 'nodejs_compat', 'enable_request_signal'],
     hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }],
     kv_namespaces: [COMPOSITION_BINDING],
     vpc_services: [{ binding: 'SPICEDB', service_id: SPICEDB_VPC_SERVICE }],

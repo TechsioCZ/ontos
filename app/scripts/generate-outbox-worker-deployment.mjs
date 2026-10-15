@@ -8,6 +8,7 @@ import {
   outboxWorkerDelivery,
   outboxWorkerHostDelivery,
 } from './outbox-worker-delivery.mjs';
+import { readDevelopmentPorts } from './topology-development-ports.mjs';
 
 /** Readiness port of the combined host; it must not collide with any topology vertical port. */
 export const OUTBOX_WORKER_HOST_HEALTH_PORT = '4100';
@@ -17,7 +18,6 @@ const TopologySchema = Schema.fromJsonString(
     verticals: Schema.Array(
       Schema.Struct({
         id: Schema.String,
-        moduleFederation: Schema.Struct({ manifestUrl: Schema.String }),
         package: Schema.String,
         path: Schema.String,
       }),
@@ -65,11 +65,9 @@ export const readOutboxWorkerHost = (root) =>
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
       yield* fs.readFileString(path.join(root, 'topology/reference-topology.json')),
     );
+    const ports = yield* readDevelopmentPorts(root);
     for (const vertical of topology.verticals) {
-      const port = yield* Effect.try({
-        catch: () => failure(`Invalid topology manifest URL for ${vertical.id}`),
-        try: () => new URL(vertical.moduleFederation.manifestUrl).port,
-      });
+      const port = String(ports[vertical.id] ?? '');
       if (port === OUTBOX_WORKER_HOST_HEALTH_PORT) {
         return yield* Effect.fail(failure(`${vertical.id} uses the Outbox Worker host health port`));
       }
@@ -200,6 +198,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
     const path = yield* Path.Path;
     const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
+    const ports = yield* readDevelopmentPorts(root);
     let result = source.replace(
       /\n {2}# <generated-outbox-worker-deployments>[\s\S]*? {2}# <\/generated-outbox-worker-deployments>\n?/u,
       '\n',
@@ -222,10 +221,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         return yield* Effect.fail(failure(`Missing owner deployment for ${vertical.id}`));
       }
       const port = /^ {8}PORT: '(?<port>[0-9]+)'$/mu.exec(ownerSection)?.groups?.port;
-      const topologyPort = yield* Effect.try({
-        catch: () => failure(`Invalid topology manifest URL for ${vertical.id}`),
-        try: () => new URL(vertical.moduleFederation.manifestUrl).port,
-      });
+      const topologyPort = String(ports[vertical.id] ?? '');
       if (port === undefined || port.length === 0 || port !== topologyPort) {
         return yield* Effect.fail(failure(`Owner port disagrees with topology for ${vertical.id}`));
       }
