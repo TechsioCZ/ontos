@@ -92,7 +92,8 @@ export type AssortmentEvidenceReference = typeof AssortmentEvidenceReferenceSche
  * branded wrappers preserve an exact owner-qualified ResourceRef without
  * inventing a Catalog deployment/module or private resource type.
  */
-const catalogRefOf = (brand: string) => AssortmentOwnerResourceRefSchema.pipe(Schema.brand(brand));
+const catalogRefOf = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) =>
+  AssortmentOwnerResourceRefSchema.pipe(Schema.brand<Brand>(brand));
 
 export const CatalogProductRefSchema = catalogRefOf('AssortmentCatalogProductRef');
 export type CatalogProductRef = typeof CatalogProductRefSchema.Type;

@@ -1,7 +1,8 @@
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import type { PartyRef } from '@app/party-registry/resources/party';
-import { Config, DateTime, Effect, Encoding, Redacted, Schema } from 'effect';
+import { Config, DateTime, Effect, Redacted, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
 
 import { BindRetailPortalProfilePayloadSchema } from '../../../shared/actions/bind-retail-portal-profile.ts';
 import type { RetailPortalBindingResult } from '../../../shared/actions/bind-retail-portal-profile.ts';
@@ -439,7 +440,7 @@ const issueRetailOwnerConnection = Effect.fn('RetailEnrollment.issueOwnerConnect
     const [, encodedClaims] = yield* Schema.decodeUnknownEffect(
       Schema.Tuple([Schema.String, Schema.String, Schema.String]),
     )(response.token.split('.'));
-    const claimsText = yield* Effect.fromResult(Encoding.decodeBase64UrlString(encodedClaims));
+    const claimsText = yield* Effect.fromResult(Base64Url.decodeString(encodedClaims));
     const claims = yield* Schema.decodeEffect(Schema.fromJsonString(SupportedGatewayContextClaimsSchema))(claimsText);
     if (
       claims.aud !== 'commerce-customer-context' ||
