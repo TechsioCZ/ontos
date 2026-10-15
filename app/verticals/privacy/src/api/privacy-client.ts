@@ -1,5 +1,5 @@
-import { Effect } from '@modern-js/bff-effect/effect-client';
-import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
+import { makeEffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import type { EffectBffRequestContext } from '@app/shared-contracts/client-runtime';
 import type {
   HttpClientError,
@@ -209,24 +209,29 @@ export const createPrivacyClient = ({
   baseUrl,
   ...requestContext
 }: PrivacyClientOptions = {}): PrivacyClientEffect<PrivacyClient> =>
-  makeEffectBffClient({
-    api: privacyApi,
+  makeEffectBffClientOptions({
     baseUrl: baseUrl ?? privacyApiContract.apiPrefix,
     defaultApiPrefix: privacyApiContract.apiPrefix,
     requestContext,
-  });
+  }).pipe(
+    // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- #358 explicitly requires lazy uncached client construction so request metadata and credentials cannot survive across operations. expires: 2026-12-31.
+    Effect.flatMap((clientOptions) => makeEffectHttpApiClient(privacyApi, clientOptions)),
+  );
 /* jscpd:ignore-end */
 
 export const getPrivacyReadiness = ({
   baseUrl,
   ...requestContext
 }: PrivacyClientOptions = {}): PrivacyClientEffect<PrivacyReadiness> =>
-  makeEffectBffClient({
-    api: privacyApi,
+  makeEffectBffClientOptions({
     baseUrl: baseUrl ?? privacyApiContract.apiPrefix,
     defaultApiPrefix: privacyApiContract.apiPrefix,
     requestContext: {
       ...requestContext,
       operationContext: requestContext.operationContext ?? privacyOperationContexts.readiness,
     },
-  }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
+  }).pipe(
+    // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- #358 explicitly requires lazy uncached client construction so request metadata and credentials cannot survive across operations. expires: 2026-12-31.
+    Effect.flatMap((clientOptions) => makeEffectHttpApiClient(privacyApi, clientOptions)),
+    Effect.flatMap((client) => client.foundation.readiness({})),
+  );

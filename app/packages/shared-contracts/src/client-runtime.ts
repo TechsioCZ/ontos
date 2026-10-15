@@ -1,7 +1,7 @@
 import { Effect, Schema, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import type { EffectHttpApiClientOptions, HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { Redacted } from 'effect';
-import { Headers as HttpHeaders, HttpClient, HttpClientRequest } from 'effect/http';
+import { Headers as HttpHeaders, HttpClient } from 'effect/http';
 
 const EffectBffOperationContextSchema = Schema.Struct({
   method: Schema.String,
@@ -24,64 +24,58 @@ export interface EffectBffClientOptions {
   readonly baseUrl?: string | URL;
   readonly compositionRevision?: string;
   readonly requestContext?: EffectBffRequestContext;
+  /** Owner-resolved transport headers; undefined values stay absent on the wire. */
   readonly transportHeaders?: HttpHeaders.Input;
 }
 
-export interface EffectBffClientConfig<
-  ApiId extends string,
-  Groups extends HttpApiGroup.Constraint,
-> extends EffectBffClientOptions {
-  readonly api: HttpApi.HttpApi<ApiId, Groups>;
+export interface EffectBffClientOptionsConfig extends EffectBffClientOptions {
   readonly defaultApiPrefix: string | URL;
 }
 
 const encodeOperationContext = Schema.encodeResult(Schema.fromJsonString(EffectBffOperationContextSchema));
 
-export const makeEffectBffClient = <ApiId extends string, Groups extends HttpApiGroup.Constraint>({
-  api,
+// Effect injects fresh trace headers after request transforms. OntOS clients instead make the caller's
+// request context authoritative, so explicit traceparent values survive and absent tracing stays absent.
+const withCallerTraceContext = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  client.pipe(
+    HttpClient.transform((effect) => Effect.provideService(effect, HttpClient.TracerPropagationEnabled, false)),
+  );
+
+/**
+ * Options for the native `makeEffectHttpApiClient`: the owner prefix fallback, the governed operation
+ * context and transport headers, and the caller's locale and traceparent. The operation context is sent
+ * exactly as the Effect BFF server decodes it (`x-operation-id` plus the encoded
+ * `x-modernjs-bff-operation-context`), and transport headers win over it, as before.
+ */
+export const makeEffectBffClientOptions = ({
   baseUrl,
   defaultApiPrefix,
   requestContext,
   transportHeaders,
-}: EffectBffClientConfig<ApiId, Groups>) => {
-  const { operationContext } = requestContext ?? {};
-  const resolvedTransportHeaders = HttpHeaders.fromInput(transportHeaders);
-  const makeClient = (operationContextText: string | null) => {
-    const clientOptions: EffectHttpApiClientOptions = {
-      baseUrl: baseUrl ?? defaultApiPrefix,
-      transformClient: (client) => {
-        const transformedClient = client.pipe(
-          HttpClient.mapRequest((request) => {
-            let nextRequest = request;
-            if (operationContext !== undefined && operationContextText !== null) {
-              nextRequest = HttpClientRequest.setHeader(
-                nextRequest,
-                'x-modernjs-bff-operation-context',
-                operationContextText,
-              );
-              const { operationId } = operationContext;
-              nextRequest = HttpClientRequest.setHeader(nextRequest, 'x-operation-id', operationId);
-            }
-            return HttpClientRequest.setHeaders(nextRequest, resolvedTransportHeaders);
-          }),
-        );
-        // Effect injects fresh trace headers after request transforms. This boundary instead makes
-        // the caller's request context authoritative so explicit traceparent values survive and
-        // absent optional tracing metadata stays absent.
-        return transformedClient.pipe(
-          HttpClient.transform((effect) => Effect.provideService(effect, HttpClient.TracerPropagationEnabled, false)),
-        );
-      },
-    };
-    if (requestContext !== undefined) {
-      clientOptions.requestContext = requestContext;
-    }
-    // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- #358 explicitly requires lazy uncached client construction so request metadata and credentials cannot survive across operations. expires: 2026-12-31.
-    return makeEffectHttpApiClient(api, clientOptions);
-  };
+}: EffectBffClientOptionsConfig): Effect.Effect<EffectHttpApiClientOptions, Schema.SchemaError> => {
+  const { operationContext, ...callerContext } = requestContext ?? {};
   const operationContextText: Effect.Effect<string | null, Schema.SchemaError> =
     operationContext === undefined ? Effect.succeed(null) : Effect.fromResult(encodeOperationContext(operationContext));
-  return operationContextText.pipe(Effect.flatMap(makeClient));
+  return operationContextText.pipe(
+    Effect.map((encodedOperationContext) => {
+      const operationHeaders =
+        operationContext === undefined || encodedOperationContext === null
+          ? {}
+          : {
+              'x-modernjs-bff-operation-context': encodedOperationContext,
+              'x-operation-id': operationContext.operationId,
+            };
+      const options: EffectHttpApiClientOptions = {
+        baseUrl: baseUrl ?? defaultApiPrefix,
+        headers: { ...operationHeaders, ...HttpHeaders.fromInput(transportHeaders) },
+        transformClient: withCallerTraceContext,
+      };
+      if (requestContext !== undefined) {
+        options.requestContext = callerContext;
+      }
+      return options;
+    }),
+  );
 };
 
 interface GovernedEffectBffClientConfig<ApiId extends string, Groups extends HttpApiGroup.Constraint> {
@@ -129,9 +123,9 @@ export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends
     'x-ontos-composition-revision': options.compositionRevision,
     'x-trace-id': requestTrace,
   };
-  const clientConfig = { api, baseUrl, defaultApiPrefix, transportHeaders };
   return Schema.decodeUnknownEffect(Schema.Literal(true))(isGovernedBaseUrl(baseUrl)).pipe(
-    Effect.map(() => clientConfig),
-    Effect.flatMap(makeEffectBffClient),
+    Effect.flatMap(() => makeEffectBffClientOptions({ baseUrl, defaultApiPrefix, transportHeaders })),
+    // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- #358 explicitly requires lazy uncached client construction so request metadata and credentials cannot survive across operations. expires: 2026-12-31.
+    Effect.flatMap((clientOptions) => makeEffectHttpApiClient(api, clientOptions)),
   );
 };
