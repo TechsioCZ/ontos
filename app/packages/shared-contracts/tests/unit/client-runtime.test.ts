@@ -1,4 +1,5 @@
-import { makeEffectBffClient, makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { makeEffectBffClientOptions, makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import type { EffectBffClientOptionsConfig } from '@app/shared-contracts/client-runtime';
 import {
   Effect,
   HttpApi,
@@ -6,6 +7,7 @@ import {
   HttpApiGroup,
   HttpApiSchema,
   Schema,
+  makeEffectHttpApiClient,
 } from '@modern-js/bff-effect/effect-client';
 import { Predicate, Redacted, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -27,12 +29,17 @@ const RepresentativeApi = HttpApi.make('RepresentativeApi').add(
   ),
 );
 
+// Owner clients call the native factory with the shared OntOS options, as api:check requires.
+const representativeClient = (config: EffectBffClientOptionsConfig) =>
+  makeEffectBffClientOptions(config).pipe(
+    Effect.flatMap((clientOptions) => makeEffectHttpApiClient(RepresentativeApi, clientOptions)),
+  );
+
 const controlledTransportFailureFetch: typeof fetch = () =>
   Promise.reject(new TypeError('controlled transport failure'));
 const invalidResponseFetch: typeof fetch = () => Promise.resolve(Response.json({ value: 358 }));
 
-const representativeClientEffect = makeEffectBffClient({
-  api: RepresentativeApi,
+const representativeClientEffect = representativeClient({
   defaultApiPrefix: '/representative-api',
 });
 type RepresentativeClient = Effect.Success<typeof representativeClientEffect>;
@@ -56,8 +63,7 @@ void preserveRepresentativeErrorType;
 
 it.effect('constructs fresh typed clients lazily as Effect values', () =>
   Effect.gen(function* testScenario1() {
-    const clientEffect = makeEffectBffClient({
-      api: RepresentativeApi,
+    const clientEffect = representativeClient({
       defaultApiPrefix: 'https://owner.example/representative-api',
     });
     expect(Effect.isEffect(clientEffect)).toBe(true);
@@ -92,8 +98,7 @@ it.effect('uses the owner-supplied API prefix by default', () =>
       value: { origin: 'https://shell.example', pathname: '/en' },
     });
 
-    const result = yield* makeEffectBffClient({
-      api: RepresentativeApi,
+    const result = yield* representativeClient({
       defaultApiPrefix: '/representative-api',
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
@@ -113,8 +118,7 @@ it.effect('uses an explicit caller base URL instead of the owner prefix', () =>
       return Promise.resolve(Response.json({ value: 'override' }));
     };
 
-    const result = yield* makeEffectBffClient({
-      api: RepresentativeApi,
+    const result = yield* representativeClient({
       baseUrl: new URL('https://owner.example/custom-api'),
       defaultApiPrefix: '/representative-api',
     }).pipe(
@@ -142,8 +146,7 @@ it.effect('propagates supported request context and resolved transport headers',
     };
     const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
 
-    yield* makeEffectBffClient({
-      api: RepresentativeApi,
+    yield* representativeClient({
       baseUrl: 'https://owner.example/representative-api',
       defaultApiPrefix: '/representative-api',
       requestContext: {
@@ -173,6 +176,10 @@ it.effect('propagates supported request context and resolved transport headers',
         request.headers.get('x-modernjs-bff-operation-context') ?? '',
       ),
     ).toEqual(operationContext);
+    // The wire bytes are the Schema encoding the Effect BFF server decodes, field order included.
+    expect(request.headers.get('x-modernjs-bff-operation-context')).toBe(
+      '{"method":"GET","operationId":"RepresentativeApi:/read","routePath":"/read","source":"effect-server"}',
+    );
     expect(request.headers.get('authorization')).toBe('Bearer owner-resolved-assertion');
     expect(request.headers.get('x-correlation-id')).toBe('correlation-358');
   }),
@@ -186,8 +193,7 @@ it.effect('omits absent optional request context and transport header values', (
       return Promise.resolve(Response.json({ value: 'omitted' }));
     };
 
-    yield* makeEffectBffClient({
-      api: RepresentativeApi,
+    yield* representativeClient({
       baseUrl: 'https://owner.example/representative-api',
       defaultApiPrefix: '/representative-api',
       requestContext: {},
@@ -225,8 +231,7 @@ it.effect('keeps declared backend failures in the typed Effect error channel', (
         }),
       );
 
-    const outcome = yield* makeEffectBffClient({
-      api: RepresentativeApi,
+    const outcome = yield* representativeClient({
       defaultApiPrefix: 'https://owner.example/representative-api',
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
@@ -245,8 +250,7 @@ for (const [failureKind, transport, expectedTag] of [
 ] as const) {
   it.effect(`keeps ${failureKind} failures in the typed Effect error channel`, () =>
     Effect.gen(function* typedClientFailure() {
-      const outcome = yield* makeEffectBffClient({
-        api: RepresentativeApi,
+      const outcome = yield* representativeClient({
         defaultApiPrefix: 'https://owner.example/representative-api',
       }).pipe(
         Effect.flatMap((client) => client.representative.read({})),
@@ -288,5 +292,13 @@ it.effect('governed clients send the Idempotency-Key as a transport header only 
       'governed-correlation',
       'governed-correlation',
     ]);
+    expect(requests.map(({ headers }) => headers.get('authorization'))).toEqual(['Bearer governed', 'Bearer governed']);
+    // Caller trace context is authoritative: no tracer-generated traceparent and no operation context.
+    for (const header of ['traceparent', 'x-operation-id', 'x-modernjs-bff-operation-context']) {
+      expect(
+        requests.map(({ headers }) => headers.has(header)),
+        header,
+      ).toEqual([false, false]);
+    }
   }),
 );

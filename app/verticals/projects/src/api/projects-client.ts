@@ -1,5 +1,5 @@
-import { Effect } from '@modern-js/bff-effect/effect-client';
-import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
+import { makeEffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import type { EffectBffRequestContext } from '@app/shared-contracts/client-runtime';
 import { projectsApi, projectsApiContract, projectsOperationContexts } from '../../shared/api.ts';
 import { executeCreateProject } from './create-project-action-client.ts';
@@ -34,12 +34,15 @@ export const getProjectsReadiness = ({
   baseUrl,
   ...requestContext
 }: EffectBffRequestContext & { baseUrl?: string | URL } = {}) =>
-  makeEffectBffClient({
-    api: projectsApi,
+  makeEffectBffClientOptions({
     baseUrl: baseUrl ?? projectsApiContract.apiPrefix,
     defaultApiPrefix: projectsApiContract.apiPrefix,
     requestContext: {
       ...requestContext,
       operationContext: requestContext.operationContext ?? projectsOperationContexts.readiness,
     },
-  }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
+  }).pipe(
+    // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- #358 explicitly requires lazy uncached client construction so request metadata and credentials cannot survive across operations. expires: 2026-12-31.
+    Effect.flatMap((clientOptions) => makeEffectHttpApiClient(projectsApi, clientOptions)),
+    Effect.flatMap((client) => client.foundation.readiness({})),
+  );
