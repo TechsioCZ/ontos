@@ -52,7 +52,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: 'af022b7822b7562c',
+        buildMarker: '1844d569e65d1318',
         unitId: 'app/price-group-catalog',
         version: '0.1.0',
       },

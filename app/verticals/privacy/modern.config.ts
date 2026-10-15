@@ -88,7 +88,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: '00f31ee28a035d1a',
+        buildMarker: 'a9ef1effd4ab4d10',
         unitId: 'app/privacy',
         version: '0.1.0',
       },

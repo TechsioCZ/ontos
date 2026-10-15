@@ -250,7 +250,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: '3f023644c8a07e9a',
+        buildMarker: 'ce1850eb4219ff1e',
         unitId: 'app/party-registry',
         version: '0.1.0',
       },

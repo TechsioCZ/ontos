@@ -51,7 +51,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: '5c4b3253f7d46679',
+        buildMarker: '793654988b71d648',
         unitId: 'app/tax',
         version: '0.1.0',
       },

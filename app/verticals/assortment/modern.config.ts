@@ -88,7 +88,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: '26e7bfcc7c19d1d4',
+        buildMarker: '14fe7553819b4068',
         unitId: 'app/assortment',
         version: '0.1.0',
       },
