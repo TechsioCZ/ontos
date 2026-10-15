@@ -52,7 +52,7 @@ import {
   Schema,
   Tracer,
 } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { ModuleApiTransportLive } from '../src/module-api/transport.ts';
 

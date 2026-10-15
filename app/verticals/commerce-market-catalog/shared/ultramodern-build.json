@@ -1,7 +1,6 @@
 {
   "deliveryUnit": {
     "appId": "commerce-market-catalog",
-    "buildMarker": "a3f3551680596bed",
     "deployProfile": "cloudflare-ssr-mf-effect-v1",
     "kind": "microvertical-delivery-unit",
     "packageName": "@app/commerce-market-catalog",
@@ -9,14 +8,14 @@
     "sourceRevision": "workspace",
     "unitId": "app/commerce-market-catalog",
     "version": "0.1.0",
-    "build": "a3f3551680596bed"
+    "buildMarker": "90197a2b7dff4653",
+    "build": "90197a2b7dff4653"
   },
   "kind": "ultramodern-build-artifact",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "surfaces": {
     "api": {
       "appId": "commerce-market-catalog",
-      "buildMarker": "a3f3551680596bed",
       "deployProfile": "cloudflare-ssr-mf-effect-v1",
       "kind": "microvertical-delivery-unit",
       "packageName": "@app/commerce-market-catalog",
@@ -24,12 +23,12 @@
       "sourceRevision": "workspace",
       "unitId": "app/commerce-market-catalog",
       "version": "0.1.0",
-      "build": "a3f3551680596bed",
+      "buildMarker": "90197a2b7dff4653",
+      "build": "90197a2b7dff4653",
       "surface": "api"
     },
     "ui": {
       "appId": "commerce-market-catalog",
-      "buildMarker": "a3f3551680596bed",
       "deployProfile": "cloudflare-ssr-mf-effect-v1",
       "kind": "microvertical-delivery-unit",
       "packageName": "@app/commerce-market-catalog",
@@ -37,8 +36,56 @@
       "sourceRevision": "workspace",
       "unitId": "app/commerce-market-catalog",
       "version": "0.1.0",
-      "build": "a3f3551680596bed",
-      "surface": "ui"
+      "buildMarker": "90197a2b7dff4653",
+      "build": "90197a2b7dff4653",
+      "surface": "ui",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "commerce-market-catalog",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "90197a2b7dff4653"
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.0"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      }
     }
   }
 }

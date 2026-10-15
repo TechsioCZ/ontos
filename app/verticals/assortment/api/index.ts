@@ -22,7 +22,7 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Result, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
@@ -62,7 +62,7 @@ const operationAttributes = (operationContext: OperationContext) => {
     : { ...attributes, 'modernjs.trace.id': operationContext.traceId };
 };
 
-const assortmentApiMarker = Result.getOrThrow(Schema.decodeUnknownResult(assortmentMarkerSchema)(ultramodernApiMarker));
+const assortmentApiMarker = Result.getOrThrow(Schema.decodeResult(assortmentMarkerSchema)(ultramodernApiMarker));
 
 const assortmentReadinessLayer = HttpApiBuilder.group(assortmentApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>

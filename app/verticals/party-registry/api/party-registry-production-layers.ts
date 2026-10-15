@@ -17,7 +17,7 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { Layer } from '@modern-js/bff-effect/effect-edge';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { AresSubjectServiceLive } from '../src/integrations/ares/ares-subject.service.ts';
 import { PartySearchProjectionGatewayLive } from '../src/search/parties.provider.ts';
