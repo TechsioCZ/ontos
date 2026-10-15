@@ -1,5 +1,4 @@
 /// <reference types="node" />
-/* oxlint-disable effect-native/no-literal-union-type-alias, effect-native/no-throw-in-scripts, eslint/no-nested-ternary -- Plain sales-demo fixture data shared by seed scripts; not product code. expires: 2027-03-31. */
 /**
  * Single source of truth for the cross-module sales-demo dataset. The sales-pipeline, merchandise and
  * siampark-billing-finance seeds all derive their rows from this plan, so WON opportunities, their orders
@@ -9,8 +8,11 @@
  * employees by workforce key. Resolve IDs with `demoId(namespace, key)` from `./fixture-ids.mts`.
  */
 
+import { Effect, Schema } from 'effect';
+
 export type VatRate = 0 | 10 | 12 | 21;
-export type OpportunityStage = 'LEAD' | 'QUALIFIED' | 'PROPOSAL' | 'NEGOTIATION' | 'WON' | 'LOST';
+const OpportunityStageSchema = Schema.Literals(['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST']);
+export type OpportunityStage = typeof OpportunityStageSchema.Type;
 
 export interface CatalogProduct {
   readonly category: string;
@@ -436,22 +438,24 @@ export const opportunities: readonly PlannedOpportunity[] = Array.from({ length:
   };
 });
 
-export const productByKey = (key: string): CatalogProduct => {
+class UnknownDemoProduct extends Schema.TaggedError<UnknownDemoProduct>()('UnknownDemoProduct', {
+  key: Schema.String,
+}) {}
+
+export const productByKey = (key: string): Effect.Effect<CatalogProduct, UnknownDemoProduct> => {
   const product = catalog.find((candidate) => candidate.key === key);
   if (product === undefined) {
-    throw new Error(`Unknown demo product ${key}`);
+    return Effect.fail(new UnknownDemoProduct({ key }));
   }
-  return product;
+  return Effect.succeed(product);
 };
 
 /**
  * Snapshot unit price used by historical documents. Everything closed before the recent price change
  * (more than 14 days ago) uses the original price; this is what makes requirement 7d visible.
  */
-export const snapshotPriceMinor = (productKey: string, daysAgo: number): number => {
-  const product = productByKey(productKey);
-  return daysAgo > 14 ? product.originalPriceMinor : product.currentPriceMinor;
-};
+export const snapshotPriceMinor = (product: CatalogProduct, daysAgo: number): number =>
+  daysAgo > 14 ? product.originalPriceMinor : product.currentPriceMinor;
 
 /** Days ago of the recent price change for p01, p05, p09, p18–p21. */
 export const priceChangeDaysAgo = 14;
@@ -466,6 +470,13 @@ export interface PlannedInvoice {
   readonly state: 'CONFIRMED' | 'DRAFT';
 }
 
+const invoicePaymentForIndex = (index: number): PlannedInvoice['payment'] => {
+  if (index < 12) {
+    return 'PAID';
+  }
+  return index < 15 ? 'PARTIALLY_PAID' : 'UNPAID';
+};
+
 const wonOpportunities = opportunities.filter((opportunity) => opportunity.stage === 'WON');
 
 /** i01…i18 from WON opportunities (same lines, issued on close), i19…i30 standalone invoices. */
@@ -476,7 +487,7 @@ export const invoices: readonly PlannedInvoice[] = [
     key: `i${pad2(index + 1)}`,
     lines: opportunity.lines,
     opportunityKey: opportunity.key,
-    payment: index < 12 ? ('PAID' as const) : index < 15 ? ('PARTIALLY_PAID' as const) : ('UNPAID' as const),
+    payment: invoicePaymentForIndex(index),
     state: 'CONFIRMED' as const,
   })),
   ...Array.from({ length: 12 }, (_slot3, index) => {
@@ -503,6 +514,13 @@ export interface PlannedOrder {
   readonly status: 'NEW' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
 }
 
+const orderStatusForIndex = (index: number): PlannedOrder['status'] => {
+  if (index < 14) {
+    return 'DELIVERED';
+  }
+  return index < 16 ? 'SHIPPED' : 'CONFIRMED';
+};
+
 /** r01…r18 fulfil WON opportunities, r19…r40 standalone orders. */
 export const orders: readonly PlannedOrder[] = [
   ...wonOpportunities.map((opportunity, index) => ({
@@ -511,7 +529,7 @@ export const orders: readonly PlannedOrder[] = [
     key: `r${pad2(index + 1)}`,
     lines: opportunity.lines,
     opportunityKey: opportunity.key,
-    status: index < 14 ? ('DELIVERED' as const) : index < 16 ? ('SHIPPED' as const) : ('CONFIRMED' as const),
+    status: orderStatusForIndex(index),
   })),
   ...Array.from({ length: 22 }, (_slot4, index) => {
     const random = prng(9000 + index);
@@ -540,5 +558,5 @@ export const plannedSoldQuantity = (productKey: string): number =>
  * Opening RECEIPT quantity seeded ~13 months ago: planned orders then issue stock, leaving exactly
  * `openingStock` on hand today (UPS-1500 deliberately ends below its threshold).
  */
-export const openingReceiptQuantity = (productKey: string): number =>
-  productByKey(productKey).openingStock + plannedSoldQuantity(productKey);
+export const openingReceiptQuantity = (product: CatalogProduct): number =>
+  product.openingStock + plannedSoldQuantity(product.key);

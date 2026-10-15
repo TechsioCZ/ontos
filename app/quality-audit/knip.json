@@ -40,7 +40,9 @@
         "!repos/**",
         "!tools/oxlint/effect-native/tests/fixtures/**",
         "scripts/**/*.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
-        "quality-audit/knip-reporter.mts"
+        "quality-audit/knip-reporter.mts",
+        "scripts/demo/prove-sales-demo.mts",
+        "scripts/demo/provision-actions.mts"
       ],
       "project": [
         "scripts/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
@@ -246,6 +248,20 @@
       "ignoreDependencies": [
         "cloudflare"
       ]
+    },
+    "tools/ontos-agent-mcp": {
+      "entry": [
+        "src/server.ts",
+        "tests/*.test.ts",
+        "scripts/demo-session.mts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "tests/**/*.ts",
+        "scripts/**/*.mts"
+      ],
+      "node": false,
+      "lefthook": false
     }
   }
 }

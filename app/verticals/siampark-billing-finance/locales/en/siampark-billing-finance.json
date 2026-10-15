@@ -170,7 +170,9 @@
         "searchPlaceholder": "Search invoices…",
         "selectAll": "Select all rows",
         "selection": "Select rows"
-      }
+      },
+      "relatedFilter": "Showing this customer’s records in the selected legal entity.",
+      "clearRelatedFilter": "Show all customers"
     },
     "demo": {
       "simulation": "Demo reference date: 5 October 2026. Accounting receipts and payments are simulated.",

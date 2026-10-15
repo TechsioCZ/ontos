@@ -31,7 +31,10 @@
           "result": "Changed: {{changed}}, failed: {{failed}}",
           "statusPlaceholder": "Change status…",
           "success": "Order status changed",
-          "tags": "Tags"
+          "tags": "Tags",
+          "selectHint": "Select orders in the table to change their status or tags together.",
+          "selectionScope": "Actions apply to the selected orders in the current filter, including other pages.",
+          "noCommonStatus": "The selected orders have no shared next status. You can still change their tags together."
         },
         "columns": {
           "createdAt": "Created",
@@ -153,6 +156,10 @@
           "unknown": "Unknown customer"
         }
       },
+      "productDetail": {
+        "description": "This page is ready for implementation.",
+        "title": "New Page"
+      },
       "products": {
         "actions": {
           "newProduct": "New product",
@@ -202,7 +209,12 @@
           "discardDescription": "Unsaved changes in this form will be lost.",
           "discardKeep": "Keep editing",
           "discardTitle": "Discard unsaved changes to {{name}}?",
-          "tab": "Detail"
+          "tab": "Detail",
+          "back": "Back to products",
+          "priceExplanation": "Edit the price excluding VAT. The price including VAT is calculated from the selected VAT rate.",
+          "variantsExplanation": "Informational variants share the product SKU, price and stock.",
+          "addVariant": "Add variant",
+          "removeVariant": "Remove variant"
         },
         "fields": {
           "category": "Category",
@@ -214,7 +226,18 @@
           "quantity": "Quantity",
           "sku": "SKU",
           "unit": "Unit",
-          "vat": "VAT (%)"
+          "vat": "VAT (%)",
+          "priceNet": "Price excl. VAT (CZK)",
+          "priceGross": "Price incl. VAT (CZK)",
+          "shortDescription": "Short description",
+          "description": "Description",
+          "weightGrams": "Weight (g)",
+          "lengthMm": "Length (mm)",
+          "widthMm": "Width (mm)",
+          "heightMm": "Height (mm)",
+          "variants": "Variants",
+          "variantName": "Variant name",
+          "variantAttributes": "Properties"
         },
         "filters": {
           "allCategories": "All categories",
@@ -232,7 +255,8 @@
           "receiptRecorded": "Receipt recorded",
           "rejected": "The action is not possible in the current state, for example because of insufficient stock. Check the values you entered.",
           "saving": "Saving changes…",
-          "updated": "Product saved"
+          "updated": "Product saved",
+          "navigationTimeout": "Opening the page took too long. Try again."
         },
         "movements": {
           "columnDate": "Date",
@@ -273,7 +297,10 @@
           "errorDescription": "Check your connection and try again.",
           "forbidden": "You do not have access to this section.",
           "noResults": "No product matches the filters.",
-          "tagFilterFailed": "Tags could not be loaded. Try again."
+          "tagFilterFailed": "Tags could not be loaded. Try again.",
+          "notFound": "Product not found",
+          "invalidId": "The product address is invalid.",
+          "loading": "Loading product…"
         },
         "stats": {
           "lowStock": "Below minimum",
@@ -321,7 +348,9 @@
           "required": "Fill in this field.",
           "skuTaken": "A product with this SKU already exists.",
           "stock": "The quantity exceeds the stock on hand.",
-          "tooLong": "Enter at most {{max}} characters."
+          "tooLong": "Enter at most {{max}} characters.",
+          "measurement": "Enter a whole number from 1 to 1,000,000,000, or leave blank.",
+          "metadata": "Check descriptions, variant names and measurements."
         },
         "selectPlaceholder": "Select…"
       },

@@ -21,6 +21,7 @@ export const salesInsightsRegistration = defineVerticalRuntimeRegistration({
     },
     components: {
       // <generated-module-registration-components>
+      'crm-dashboard': () => import('./src/components/crm-dashboard.tsx'),
       // </generated-module-registration-components>
     },
     pages: {

@@ -13,7 +13,7 @@ export type RecordsLoadError = typeof RecordsLoadErrorSchema.Type;
  * a failed read keeps the last good response out of the way and reports why it failed. `pending` is true while
  * the read for changed filters has not settled, so the old rows are not presented as the new result.
  */
-export const usePipelineRecords = (filters: PipelineFilterValues, reloadKey: number) => {
+export const usePipelineRecords = (filters: PipelineFilterValues, reloadKey: number, enabled = true) => {
   const [response, setResponse] = useState<RecordsResponse>();
   const [loadError, setLoadError] = useState<RecordsLoadError>();
   const [settledKey, setSettledKey] = useState<string>();
@@ -23,34 +23,36 @@ export const usePipelineRecords = (filters: PipelineFilterValues, reloadKey: num
 
   useEffect(() => {
     let current = true;
-    void browserRuntime.runPromise(
-      loadPipeline(recordsFilters({ customer, owner, stage }), `sales-pipeline:records:${reloadKey}`).pipe(
-        Effect.match({
-          onFailure: (error) => {
-            if (current) {
-              setSettledKey(filterKey);
-              setLoadError(
-                Match.value(error).pipe(
-                  Match.tag('RecordsForbiddenProblem', () => 'forbidden' as const),
-                  Match.orElse(() => 'unavailable' as const),
-                ),
-              );
-            }
-          },
-          onSuccess: (result) => {
-            if (current) {
-              setSettledKey(filterKey);
-              setLoadError(undefined);
-              setResponse(result);
-            }
-          },
-        }),
-      ),
-    );
+    if (enabled) {
+      void browserRuntime.runPromise(
+        loadPipeline(recordsFilters({ customer, owner, stage }), `sales-pipeline:records:${reloadKey}`).pipe(
+          Effect.match({
+            onFailure: (error) => {
+              if (current) {
+                setSettledKey(filterKey);
+                setLoadError(
+                  Match.value(error).pipe(
+                    Match.tag('RecordsForbiddenProblem', () => 'forbidden' as const),
+                    Match.orElse(() => 'unavailable' as const),
+                  ),
+                );
+              }
+            },
+            onSuccess: (result) => {
+              if (current) {
+                setSettledKey(filterKey);
+                setLoadError(undefined);
+                setResponse(result);
+              }
+            },
+          }),
+        ),
+      );
+    }
     return () => {
       current = false;
     };
-  }, [customer, filterKey, owner, reloadKey, stage]);
+  }, [customer, enabled, filterKey, owner, reloadKey, stage]);
 
   return { loadError, pending: settledKey !== filterKey, response };
 };

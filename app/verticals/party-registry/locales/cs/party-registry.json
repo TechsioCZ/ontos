@@ -28,7 +28,8 @@
           "selected": "Vybráno zákazníků: {{total}}",
           "submit": "Archivovat",
           "title": "Upravit hromadně",
-          "toastArchived": "Archivováno zákazníků: {{archived}}"
+          "toastArchived": "Archivováno zákazníků: {{archived}}",
+          "archiveConfirm_many": "Archivovat {{count}} aktivního zákazníka? Už archivovaní se přeskočí."
         },
         "columns": {
           "city": "Město",
@@ -96,7 +97,7 @@
           "createdAt": "Vytvořeno",
           "discard": {
             "confirm": "Zahodit změny",
-            "description": "Neuložená změna názvu se ztratí.",
+            "description": "Neuložené změny budou ztraceny. Již uložené části zůstanou zachované.",
             "keep": "Pokračovat v úpravách",
             "title": "Zahodit neuložené změny?"
           },
@@ -111,7 +112,59 @@
           "status": "Stav",
           "title": "Zákazník",
           "toastRenamed": "Změny uloženy",
-          "vatId": "DIČ"
+          "vatId": "DIČ",
+          "loading": "Načítání detailu…",
+          "forbidden": "Pro tyto údaje nebo změnu nemáte oprávnění.",
+          "unavailable": "Údaje nejsou dostupné. Zkuste je načíst znovu.",
+          "validation": "Zkontrolujte údaje a vyplňte důvod změny i odkaz na podklad.",
+          "savedReloadFailed": "Tato část byla uložena, ale nové údaje se nepodařilo načíst. Před další změnou obnovte detail. {{reason}}",
+          "restoreBlocked": "Obnovení vyžaduje vyřešení případu identity. Zákazník zůstal archivovaný.",
+          "separateSaves": "Každou část ukládáte samostatně. Již uložené změny zůstávají zachované, pokud se jinou část uložit nepodaří.",
+          "evidence": "Podklad pro změnu (odkaz nebo reference)",
+          "reason": "Důvod změny",
+          "reload": "Obnovit detail",
+          "partyId": "Identita subjektu",
+          "counterpartyId": "Obchodní kontext",
+          "saveName": "Uložit název",
+          "saveIdentifier": "Uložit identifikátor",
+          "saveContact": "Uložit kontakt",
+          "sharedIdentity": "Název, identifikátory, kontakty a archivace patří ke sdílenému subjektu. Změna se projeví i v jeho ostatních obchodních kontextech.",
+          "archive": "Archivovat subjekt",
+          "restore": "Obnovit subjekt",
+          "identifiers": "Identifikátory",
+          "contacts": "Kontaktní údaje",
+          "newContact": "(nový)",
+          "contactTypes": {
+            "EMAIL": "E-mail",
+            "PHONE": "Telefon",
+            "ADDRESS": "Adresa"
+          },
+          "address": {
+            "addressLine1": "Ulice a číslo",
+            "addressLine2": "Druhý řádek adresy",
+            "city": "Město",
+            "postalCode": "PSČ",
+            "region": "Kraj nebo oblast",
+            "countryCode": "Kód země"
+          },
+          "registeredAddress": "Sídlo s ověřeným registračním podkladem vyžaduje opravu přes autoritativní zdroj. Ruční přepis zde není dostupný.",
+          "history": "Historie kontaktů a identifikátorů",
+          "states": {
+            "ACTIVE": "Aktivní",
+            "ENDED": "Ukončené",
+            "SUPERSEDED": "Nahrazené",
+            "RETRACTED": "Odvolané",
+            "DISPUTED": "Sporné"
+          },
+          "related": "Související záznamy",
+          "relatedContext": "Seznamy se otevřou pro tohoto zákazníka v aktuálním právním subjektu. Každý modul samostatně ověří přístup.",
+          "relatedLinks": {
+            "opportunities": "Příležitosti",
+            "tasks": "Úkoly",
+            "invoices": "Faktury"
+          },
+          "endContact": "Ukončit kontakt",
+          "endIdentifier": "Ukončit platnost identifikátoru"
         },
         "filters": {
           "allSegments": "Všechny segmenty",

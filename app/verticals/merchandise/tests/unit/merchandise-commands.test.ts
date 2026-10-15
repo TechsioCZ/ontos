@@ -5,6 +5,7 @@ import {
   MerchandiseLifecycleConflict,
   MerchandiseNotFound,
 } from '../../shared/actions/apply-command.ts';
+import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import type { OrderStatus } from '../../shared/domain/merchandise-model.ts';
@@ -263,3 +264,114 @@ it('order totals keep VAT per line in whole minor units', () => {
   // 1050 at 21 % is 220.5, rounded half-up to 221; the 0 % line adds nothing.
   expect(totals).toEqual({ totalMinor: 2271, totalVatMinor: 221 });
 });
+
+it.effect('old JSONB products decode and metadata roundtrips and clears without changing snapshots or stock', () =>
+  Effect.gen(function* metadataCompatibility() {
+    const created = yield* addProduct(empty, 'product-1', 'KAB-1', 1050);
+    const stocked = yield* receive(created.state, 'product-1', 4, 'receipt-1');
+    const ordered = yield* placeOrder(stocked.state, 'order-1', [{ productId: 'product-1', quantity: 1 }], 'order-1');
+    const oldJson = yield* Schema.encodeEffect(MerchandiseStateSchema)(ordered.state);
+    const oldState = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(oldJson);
+    expect(oldState.products[0]?.description).toBeUndefined();
+    const patch = {
+      description: 'Long description',
+      heightMm: 10,
+      lengthMm: 100,
+      shortDescription: 'Short description',
+      variants: [{ attributes: 'Colour: black', name: 'Black' }],
+      weightGrams: 120,
+      widthMm: 50,
+    };
+    const edited = yield* apply(oldState, { _tag: 'UpdateProduct', id: 'product-1', patch }, 'edit-1', t1);
+    const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(edited.state);
+    const decoded = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(encoded);
+    expect(encoded.products[0]).toMatchObject(patch);
+    expect(decoded.products[0]?.priceHistory).toEqual(oldState.products[0]?.priceHistory);
+    expect(decoded.orders).toEqual(oldState.orders);
+    expect(decoded.movements).toEqual(oldState.movements);
+    const cleared = yield* apply(
+      decoded,
+      {
+        _tag: 'UpdateProduct',
+        id: 'product-1',
+        patch: {
+          description: '',
+          heightMm: null,
+          lengthMm: null,
+          shortDescription: '',
+          variants: [],
+          weightGrams: null,
+          widthMm: null,
+        },
+      },
+      'clear-1',
+      t1,
+    );
+    const clearedJson = yield* Schema.encodeEffect(MerchandiseStateSchema)(cleared.state);
+    const clearedState = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(clearedJson);
+    expect(clearedJson.products[0]).toMatchObject({
+      description: '',
+      lengthMm: null,
+      variants: [],
+      weightGrams: null,
+    });
+    expect(clearedState.orders).toEqual(oldState.orders);
+  }),
+);
+
+it('metadata rejects negative, fractional and excessive measurements and unnamed variants', () => {
+  const valid = Schema.is(MerchandiseCommandSchema);
+  const base = { _tag: 'UpdateProduct', id: productIdOf('p') } as const;
+  for (const weightGrams of [-1, 0, 1.5, 1_000_000_001]) {
+    expect(valid({ ...base, patch: { weightGrams } })).toBe(false);
+  }
+  expect(valid({ ...base, patch: { variants: [{ attributes: '', name: '' }] } })).toBe(false);
+  expect(valid({ ...base, patch: { description: 'x'.repeat(20_001) } })).toBe(false);
+  expect(
+    valid({ ...base, patch: { variants: Array.from({ length: 51 }, () => ({ attributes: '', name: 'A' })) } }),
+  ).toBe(false);
+});
+
+it('unit gross prices use the same half-up VAT arithmetic for zero and non-zero rates', () => {
+  expect(
+    orderTotals([
+      { productId: productIdOf('p'), productName: 'A', quantity: 1, sku: 'A', unitPriceMinor: 1050, vatRate: 21 },
+    ]),
+  ).toEqual({ totalMinor: 1271, totalVatMinor: 221 });
+  expect(
+    orderTotals([
+      { productId: productIdOf('p'), productName: 'A', quantity: 1, sku: 'A', unitPriceMinor: 1050, vatRate: 0 },
+    ]),
+  ).toEqual({ totalMinor: 1050, totalVatMinor: 0 });
+});
+
+it.effect('CreateProduct retains informational metadata and encodes optional measurements', () =>
+  Effect.gen(function* createMetadata() {
+    const change = yield* apply(
+      empty,
+      {
+        _tag: 'CreateProduct',
+        active: true,
+        category: 'IT',
+        description: 'Description',
+        heightMm: null,
+        lowStockThreshold: 0,
+        name: 'Cable',
+        priceMinor: 1050,
+        sku: 'CABLE',
+        unit: 'ks',
+        variants: [{ attributes: 'Colour: black', name: 'Black' }],
+        vatRate: 21,
+        weightGrams: 100,
+      },
+      'metadata-product',
+    );
+    const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(change.state);
+    expect(encoded.products[0]).toMatchObject({
+      description: 'Description',
+      heightMm: null,
+      variants: [{ attributes: 'Colour: black', name: 'Black' }],
+      weightGrams: 100,
+    });
+  }),
+);

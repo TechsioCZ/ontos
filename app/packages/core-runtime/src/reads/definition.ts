@@ -1,4 +1,4 @@
-/* oxlint-disable anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-unknown-parameters, typescript/no-unsafe-type-assertion -- Opaque declarations validate and freeze finite keys before their one private representation cast; expires: 2027-03-31. */
+/* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-unknown-parameters, typescript/no-unsafe-type-assertion -- Opaque declarations validate and freeze finite keys before their one private representation cast; expires: 2027-03-31. */
 import { Predicate, Schema } from 'effect';
 import type { Effect } from 'effect';
 
@@ -269,7 +269,7 @@ export const defineReadConditionalPermission = <Input, Selected extends Readonly
         ];
       }),
     ),
-  ) as unknown as ReadConditionalPermissionPrivateValue<Input>['branches'];
+  ) as ReadConditionalPermissionPrivateValue<Input>['branches'];
   return ReadPrivateStorage.create(Object.freeze({ branches, select: input.select }), {
     branchTags: Object.freeze([...branchTags]) as readonly [string, string, ...string[]],
     [conditionalPermissionDeclarationMarker]: true as const,

@@ -12,6 +12,7 @@ import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { merchandiseReadAllPermission } from './shared/permissions/merchandise-read-all.ts';
 import { merchandiseWriteAllPermission } from './shared/permissions/merchandise-write-all.ts';
 import { OrdersPage } from './src/routes/[lang]/prodej/objednavky/page.tsx';
+import { ProductDetailPage } from './src/routes/[lang]/provoz/produkty/[id]/page.tsx';
 import { productResourceDescriptor } from './shared/resources/product.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/provoz/produkty/page.tsx';
@@ -64,6 +65,7 @@ export const merchandiseManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-orders': OrdersPage,
+      'page-product-detail': ProductDetailPage,
       'page-products': RecordsPage,
       // </generated-module-manifest-components>
     },
@@ -130,6 +132,20 @@ export const merchandiseManifest = defineOntosModuleManifest({
           },
           expose: './PageOrders',
           routePath: '/prodej/objednavky',
+        }),
+        pageContribution({
+          componentKey: 'demo.merchandise.page-product-detail',
+          contributionKey: 'demo.merchandise.page.product-detail',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'demo.merchandise.read_all' },
+            entrypointKey: 'demo.merchandise.page.product-detail',
+            moduleKey: 'demo.merchandise',
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageProductDetail',
+          routePath: '/provoz/produkty/:id',
         }),
         pageContribution({
           componentKey: 'demo.merchandise.page-products',

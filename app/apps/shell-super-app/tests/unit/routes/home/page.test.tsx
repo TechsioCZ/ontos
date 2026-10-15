@@ -1,7 +1,7 @@
 import { getDocumentCompositionRevision } from '@app/shared-contracts';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import {
@@ -11,10 +11,12 @@ import {
   LegalEntityIdSchema,
   ModuleIdSchema,
   PrincipalIdSchema,
+  ResolvedModuleTargetSchema,
   TenantAccessForbiddenProblemSchema,
   TenantAuthenticationRequiredProblemSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
+import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
@@ -29,6 +31,7 @@ const {
   languageState,
   localizedLinkCalls,
   navigateMock,
+  resolvedTargetMock,
   signOutMock,
   switchLegalEntityMock,
   switchTenantMock,
@@ -39,11 +42,16 @@ const {
     languageState: { current: 'en' },
     localizedLinkCalls: recordedLinkCalls,
     navigateMock: rstest.fn(),
+    resolvedTargetMock: rstest.fn<(props: { readonly model: ModuleTargetPageModel }) => null>(() => null),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
     switchTenantMock: rstest.fn(),
   };
 });
+
+rstest.mock('../../../../src/routes/[lang]/modules/[moduleId]/page.tsx', () => ({
+  ResolvedTarget: resolvedTargetMock,
+}));
 
 const translations = new Map(
   Object.entries({
@@ -453,3 +461,46 @@ it.live.each(switchFailureCases)(
       expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(false);
     }),
 );
+
+it('does not invoke the lazy owner renderer for forbidden or unavailable Home targets', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated') {
+    throw new Error('Expected authenticated fixture');
+  }
+  const { rerender } = render(<HomeView initialModel={{ ...model, homeContribution: { state: 'forbidden' } }} />);
+  expect(resolvedTargetMock).not.toHaveBeenCalled();
+  rerender(<HomeView initialModel={{ ...model, homeContribution: { state: 'unavailable' } }} />);
+  expect(resolvedTargetMock).not.toHaveBeenCalled();
+});
+
+it('hands only the admitted Home target and trusted context to the existing lazy owner renderer', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated') {
+    throw new Error('Expected authenticated fixture');
+  }
+  const target = Result.getOrThrow(
+    Schema.decodeResult(ResolvedModuleTargetSchema)({
+      appId: 'sales-insights',
+      componentKey: 'demo.sales-insights.crm-dashboard',
+      compositionRevision,
+      entrypointKey: 'demo.sales-insights.component.crm-dashboard',
+      federation: {
+        expose: './CrmDashboard',
+        manifest: { sha256: '3'.repeat(64), url: 'https://sales.example.test/mf-manifest.json' },
+        remoteName: 'verticalSalesInsights',
+      },
+      moduleId: 'demo.sales-insights',
+      routeParameters: {},
+      writable: true,
+    }),
+  );
+  render(<HomeView initialModel={{ ...model, homeContribution: { state: 'ready', target } }} />);
+  expect(resolvedTargetMock).toHaveBeenCalled();
+  expect(resolvedTargetMock.mock.calls[0]?.[0]).toMatchObject({
+    model: {
+      shell: { identity: model.identity, selectedLegalEntityId: model.selectedLegalEntityId },
+      state: 'resolved',
+      target,
+    },
+  });
+});

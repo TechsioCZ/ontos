@@ -29,6 +29,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
+    './CrmDashboard': './src/components/crm-dashboard.tsx',
     './PageRecords': './src/routes/[lang]/prehledy/statistiky/page.tsx',
     './Route': './src/federation-entry.tsx',
   },

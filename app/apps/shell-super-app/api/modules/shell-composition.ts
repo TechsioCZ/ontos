@@ -5,7 +5,7 @@ import type {
   OntosShellContributions,
   TenantModuleStateServiceContract,
 } from '@app/core-runtime';
-import { decideModuleStateAccess, isReservedShellRouteRoot } from '@app/core-runtime';
+import { decideModuleStateAccess, isReservedShellRouteRoot, toContextPermissionAccessKey } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/api.ts';
@@ -20,6 +20,7 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 type ShellPageContribution = OntosShellContributions['pages'][number];
+type ShellRenderableContribution = ShellPageContribution | OntosShellContributions['publicComponents'][number];
 
 const shellCompositionUnavailableErrorFields = {
   cause: Schema.optionalKey(Schema.Defect()),
@@ -43,7 +44,7 @@ export interface ShellCompositionContext {
 
 export interface ShellCompositionSources {
   readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
-  readonly contextAccess: Pick<ContextAccessService, 'modules'>;
+  readonly contextAccess: Pick<ContextAccessService, 'modules' | 'contextPermissions'>;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 
@@ -69,10 +70,10 @@ const pageByContributionKey = (catalog: InstalledModuleCatalog): ReadonlyMap<str
 const resolveContributionPage = (
   contributions: OntosShellContributions,
   input: { readonly entrypointKey?: string; readonly moduleId: string },
-): ShellPageContribution | undefined => {
-  const { navigation, pages } = contributions;
+): ShellRenderableContribution | undefined => {
+  const { navigation, pages, publicComponents } = contributions;
   if (input.entrypointKey !== undefined) {
-    return pages.find(
+    return [...pages, ...publicComponents].find(
       ({ entrypoint }) => entrypoint.entrypointKey === input.entrypointKey && entrypoint.moduleKey === input.moduleId,
     );
   }
@@ -242,6 +243,49 @@ const resolveTargetPermission = Effect.fn('ShellComposition.resolveTargetPermiss
   return null;
 });
 
+const matchesComponentExposure = (
+  component: { readonly expose: string; readonly mfBoundaryId: string },
+  federation: { readonly exposes: readonly string[]; readonly remoteName: string },
+  expose: string,
+): boolean =>
+  federation.exposes.includes(expose) &&
+  expose === component.expose &&
+  federation.remoteName === component.mfBoundaryId;
+
+/** Public components require their declared permission in addition to module access. */
+const resolvePublicComponentPermission = Effect.fn('ShellComposition.resolvePublicComponentPermission')(
+  function* resolvePublicComponentPermissionEffect(
+    sources: ShellCompositionSources,
+    context: ShellCompositionContext,
+    page: ShellRenderableContribution,
+  ) {
+    if (page.entrypoint.role !== 'public_component') {
+      return null;
+    }
+    const { authorization } = page.entrypoint;
+    if (authorization.kind === 'authenticated_principal' || authorization.kind === 'public') {
+      return null;
+    }
+    const check = sources.contextAccess.contextPermissions;
+    if (authorization.kind !== 'context_permission' || check === undefined) {
+      return { outcome: 'unavailable' } as const;
+    }
+    const target = { moduleId: page.entrypoint.moduleKey, permission: authorization.permission };
+    const [decision, ...extra] = yield* check({
+      ...context,
+      targets: [target],
+    });
+    if (
+      extra.length > 0 ||
+      decision?.key !== toContextPermissionAccessKey(target) ||
+      decision.decision === 'unavailable'
+    ) {
+      return { outcome: 'unavailable' } as const;
+    }
+    return decision.decision === 'denied' ? ({ outcome: 'forbidden' } as const) : null;
+  },
+);
+
 export const makeShellComposition = (sources: ShellCompositionSources) => {
   const compose = Effect.fn('makeShellComposition.compose')(function* composeShellEffect(
     context: ShellCompositionContext,
@@ -357,13 +401,10 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     const moduleId = contract.manifest.module.id;
     const approvedModule = catalog.composition.modules.find((module) => module.moduleId === moduleId);
     const component = contract.manifest.publicSurface.components.find(({ key }) => key === page.componentKey);
-    if (
-      approvedModule?.federation.execution !== 'browser' ||
-      component === undefined ||
-      !approvedModule.federation.exposes.includes(page.expose) ||
-      page.expose !== component.expose ||
-      approvedModule.federation.remoteName !== component.mfBoundaryId
-    ) {
+    if (approvedModule?.federation.execution !== 'browser' || component === undefined) {
+      return { outcome: 'unavailable' } as const;
+    }
+    if (!matchesComponentExposure(component, approvedModule.federation, page.expose)) {
       return { outcome: 'unavailable' } as const;
     }
     const records = yield* loadStates(sources, context, [moduleId]);
@@ -385,6 +426,11 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     if (permission !== null) {
       return permission;
     }
+    const publicPermission = yield* resolvePublicComponentPermission(sources, context, page);
+    if (publicPermission !== null) {
+      return publicPermission;
+    }
+
     return {
       appId: contract.deployment.appId,
       compositionRevision: catalog.composition.revision,

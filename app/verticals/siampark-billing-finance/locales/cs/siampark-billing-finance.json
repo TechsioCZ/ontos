@@ -170,7 +170,9 @@
         "searchPlaceholder": "Hledat faktury…",
         "selectAll": "Vybrat všechny řádky",
         "selection": "Vybrat řádky"
-      }
+      },
+      "relatedFilter": "Zobrazeny pouze záznamy tohoto zákazníka v aktuálním právním subjektu.",
+      "clearRelatedFilter": "Zobrazit všechny zákazníky"
     },
     "demo": {
       "simulation": "Ukázka s referenčním datem 5. 10. 2026. Účetní potvrzení a platby jsou simulované.",

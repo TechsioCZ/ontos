@@ -1,5 +1,5 @@
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Effect, Match } from 'effect';
+import { Effect, Match, Option } from 'effect';
 
 import type {
   AvailableTenant,
@@ -10,6 +10,8 @@ import type {
   ShellUnavailableDeployment,
 } from '../../../shared/api.ts';
 import { availableLegalEntities, availableTenants, currentSession, shellComposition } from '../../api/auth-client.ts';
+import { loadHomeContribution } from './home-contribution-model.ts';
+import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { browserBaseUrl, browserReadKey, browserStaleWhileRevalidateCache, keyPart } from '../browser-swr-cache.ts';
@@ -34,6 +36,7 @@ export interface ReloadRequiredHomePageModel {
 export interface AuthenticatedHomePageModel {
   readonly compositionRevision?: string;
   readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required';
+  readonly homeContribution?: HomeContribution;
   readonly identity: SafeTenantIdentity;
   readonly legalEntities:
     | {
@@ -235,6 +238,10 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
           });
     return yield* Effect.all(
       {
+        homeContribution:
+          session.state === 'authenticated' && compositionRevision !== undefined
+            ? loadHomeContribution(request, compositionRevision, options)
+            : Effect.succeedNone,
         legalEntities,
         navigation: Effect.succeed(navigation),
         tenants: tenantsFor(session.identity, options).pipe(
@@ -250,26 +257,37 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       },
       { concurrency: 3 },
     ).pipe(
-      Effect.map(({ legalEntities: choices, navigation: items, tenants }): HomePageModel => {
-        if (tenants.state === 'stale') {
-          return anonymousModel;
-        }
-        const baseModel = {
-          contextState: session.state,
-          identity: session.identity,
+      Effect.map(
+        ({
+          homeContribution: contributionOption,
           legalEntities: choices,
           navigation: items,
-          state: 'authenticated' as const,
           tenants,
-        };
-        const model = compositionRevision === undefined ? baseModel : { ...baseModel, compositionRevision };
-        return session.state === 'authenticated'
-          ? {
-              ...model,
-              selectedLegalEntityId: session.identity.legalEntityId,
-            }
-          : model;
-      }),
+        }): HomePageModel => {
+          if (tenants.state === 'stale') {
+            return anonymousModel;
+          }
+          const contribution = Option.getOrUndefined(contributionOption);
+          const baseModel = {
+            contextState: session.state,
+            identity: session.identity,
+            legalEntities: choices,
+            navigation: items,
+            state: 'authenticated' as const,
+            tenants,
+          };
+          const withContribution =
+            contribution === undefined ? baseModel : { ...baseModel, homeContribution: contribution };
+          const model =
+            compositionRevision === undefined ? withContribution : { ...withContribution, compositionRevision };
+          return session.state === 'authenticated'
+            ? {
+                ...model,
+                selectedLegalEntityId: session.identity.legalEntityId,
+              }
+            : model;
+        },
+      ),
     );
   },
   Effect.matchEffect({

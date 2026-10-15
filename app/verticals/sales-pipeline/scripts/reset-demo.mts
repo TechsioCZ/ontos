@@ -56,16 +56,20 @@ const opportunityRecord = Effect.fn('SalesPipeline.opportunityRecord')(function*
     at: at(Math.round(createdDaysAgo + ((lastStageDaysAgo - createdDaysAgo) * index) / Math.max(path.length - 1, 1))),
     stage: pathStage,
   }));
-  const lines = planned.lines.map((line) => {
-    const product = productByKey(line.productKey);
-    return {
-      productId: demoId('product', line.productKey),
-      productName: product.name,
-      quantity: line.quantity,
-      unitPriceMinor: snapshotPriceMinor(line.productKey, closedDaysAgo ?? 0),
-      vatRate: product.vatRate,
-    };
-  });
+  const lines = yield* Effect.all(
+    planned.lines.map((line) =>
+      Effect.gen(function* plannedLine() {
+        const product = yield* productByKey(line.productKey);
+        return {
+          productId: demoId('product', line.productKey),
+          productName: product.name,
+          quantity: line.quantity,
+          unitPriceMinor: snapshotPriceMinor(product, closedDaysAgo ?? 0),
+          vatRate: product.vatRate,
+        };
+      }),
+    ),
+  );
   const decodedLines = yield* Schema.decodeUnknownEffect(OpportunityLinesSchema)(lines);
   const expectedCloseDate =
     closedDaysAgo === null

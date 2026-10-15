@@ -34,7 +34,7 @@ import { useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
-import { orderStatuses, orderStats, statusDoneKey } from './orders-model.ts';
+import { commonOrderTransitions, ordersPageSummary, orderStatuses, statusDoneKey } from './orders-model.ts';
 import { changeOrderStatuses, useOrders } from './orders-records.ts';
 import { ordersColumns, ordersTranslations } from './orders-table.tsx';
 
@@ -55,6 +55,27 @@ const bulkStatusItems = orderStatuses.map((value) => ({ label: statusPresentatio
 const isTableLoading = (ordersLoading: boolean, tagStatus: SubjectTagFilter['status']): boolean =>
   ordersLoading || tagStatus === 'loading';
 
+const statusChangeNotification = (
+  t: ReturnType<typeof useModernI18n>['t'],
+  status: OrderStatus,
+  total: number,
+  changed: number,
+  failed: number,
+) => {
+  if (failed > 0) {
+    return {
+      description: t(key('bulk.result'), { changed, failed }),
+      title: t(key('bulk.partial')),
+      type: 'error',
+    } satisfies Parameters<ReturnType<typeof useToast>['create']>[0];
+  }
+  const doneKey = statusDoneKey(status);
+  return {
+    title: total === 1 && doneKey !== null ? t(doneKey) : t(key('bulk.success')),
+    type: 'success',
+  } satisfies Parameters<ReturnType<typeof useToast>['create']>[0];
+};
+
 const OrdersPageContent = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
@@ -70,7 +91,7 @@ const OrdersPageContent = () => {
   const directory = useCustomerDirectory();
 
   const ready = state.kind === 'ready' ? state : undefined;
-  const orders = [...(ready?.records.orders ?? [])];
+  const { canWrite, orders, stats } = ordersPageSummary(ready);
   const orderTags = useSubjectTags(
     'order',
     orders.map((order) => order.id),
@@ -84,9 +105,12 @@ const OrdersPageContent = () => {
       (statusFilter === null || order.status === statusFilter) &&
       tagFilter.matches(order.id),
   );
-  const canWrite = ready?.records.canWrite === true;
-  const stats = ready === undefined ? undefined : orderStats(orders, ready.now);
   const selected = visible.filter((order) => selection[order.id] === true);
+  const availableBulkStatuses = commonOrderTransitions(selected);
+  const selectedStatusItems = availableBulkStatuses.map((value) => ({
+    label: statusPresentation('order', value).label,
+    value,
+  }));
   const detailOrder = orders.find((order) => order.id === detailId);
   const filtered = query !== '' || statusFilter !== null || tagFilter.tagId !== null;
 
@@ -99,19 +123,7 @@ const OrdersPageContent = () => {
       changeOrderStatuses({ orders: targets, revision: ready.records.revision, status }).pipe(
         Effect.flatMap(({ changed, failed }) =>
           Effect.sync(() => {
-            const doneKey = statusDoneKey(status);
-            if (failed === 0) {
-              toaster.create({
-                title: targets.length === 1 && doneKey !== null ? t(doneKey) : t(key('bulk.success')),
-                type: 'success',
-              });
-            } else {
-              toaster.create({
-                description: t(key('bulk.result'), { changed, failed }),
-                title: t(key('bulk.partial')),
-                type: 'error',
-              });
-            }
+            toaster.create(statusChangeNotification(t, status, targets.length, changed, failed));
             setSelection({});
             setBusy(false);
             setPendingCancel(null);
@@ -203,32 +215,41 @@ const OrdersPageContent = () => {
         )}
 
         {canWrite && (
-          <BulkActionBar onClear={() => setSelection({})} selectedCount={selected.length}>
-            <Button
-              icon="icon-[mdi--tag-multiple-outline]"
-              onClick={() => setTagsOpen(true)}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              {t(key('bulk.tags'))}
-            </Button>
-            <SelectTemplate
-              disabled={busy}
-              items={bulkStatusItems}
-              name="bulkStatus"
-              onValueChange={(details) => {
-                const [next] = details.value;
-                const status = orderStatuses.find((candidate) => candidate === next);
-                if (status !== undefined) {
-                  requestStatus(selected, status);
-                }
-              }}
-              placeholder={t(key('bulk.statusPlaceholder'))}
-              size="sm"
-              value={[]}
-            />
-          </BulkActionBar>
+          <>
+            <StatusText status="default">
+              {t(key(selected.length === 0 ? 'bulk.selectHint' : 'bulk.selectionScope'))}
+            </StatusText>
+            {selected.length > 0 && availableBulkStatuses.length === 0 && (
+              <StatusText status="default">{t(key('bulk.noCommonStatus'))}</StatusText>
+            )}
+            <BulkActionBar onClear={() => setSelection({})} selectedCount={selected.length}>
+              <Button
+                disabled={busy}
+                icon="icon-[mdi--tag-multiple-outline]"
+                onClick={() => setTagsOpen(true)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                {t(key('bulk.tags'))}
+              </Button>
+              <SelectTemplate
+                disabled={busy || availableBulkStatuses.length === 0}
+                items={selectedStatusItems}
+                name="bulkStatus"
+                onValueChange={(details) => {
+                  const [next] = details.value;
+                  const status = availableBulkStatuses.find((candidate) => candidate === next);
+                  if (status !== undefined) {
+                    requestStatus(selected, status);
+                  }
+                }}
+                placeholder={t(key('bulk.statusPlaceholder'))}
+                size="sm"
+                value={[]}
+              />
+            </BulkActionBar>
+          </>
         )}
 
         <DataTable

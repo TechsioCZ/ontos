@@ -195,7 +195,8 @@
         "errors": {
           "conflict": "Someone else changed the record in the meantime. Reload it and repeat your change.",
           "forbidden": "You are not allowed to do this.",
-          "generic": "The change could not be saved. Try again."
+          "generic": "The change could not be saved. Try again.",
+          "invalidFilter": "The customer filter in the page URL is invalid."
         },
         "bulkByTag": {
           "title": "Bulk by tag",

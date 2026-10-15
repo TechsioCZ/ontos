@@ -154,7 +154,10 @@
           "LOW": "Nízká",
           "NORMAL": "Normální",
           "HIGH": "Vysoká"
-        }
+        },
+        "invalidFilter": "Neplatný filtr zákazníka v adrese stránky.",
+        "relatedFilter": "Zobrazeny pouze záznamy tohoto zákazníka v aktuálním právním subjektu.",
+        "clearRelatedFilter": "Zobrazit všechny zákazníky"
       }
     },
     "selectPlaceholder": "Vyberte…"

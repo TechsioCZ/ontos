@@ -115,6 +115,39 @@
     },
     "selectPlaceholder": "Select…",
     "loading": "Loading…",
-    "loadingContent": "Loading content"
+    "loadingContent": "Loading content",
+    "dashboard": {
+      "title": "Sales overview",
+      "description": "Current opportunities, receivables and tasks.",
+      "scope": "Values follow the selected tenant, legal entity and your permissions.",
+      "refresh": "Refresh data",
+      "settings": "Overview settings",
+      "reset": "Restore defaults",
+      "metrics": "Visible metrics",
+      "display": "Display",
+      "view": {
+        "cards": "Cards",
+        "list": "List"
+      },
+      "browserOnly": "Metric and display choices are saved only in this browser, separately for your account, tenant and legal entity.",
+      "storageUnavailable": "Browser storage is unavailable. Choices apply until you leave this page.",
+      "loading": "Loading sales overview…",
+      "noneSelected": "Select at least one metric.",
+      "currentSnapshot": "Current snapshot",
+      "openSource": "Open records: {{metric}}",
+      "openRecords": "View records",
+      "state": {
+        "empty": "This source has no records yet.",
+        "forbidden": "You do not have permission to read this source.",
+        "unavailable": "This source is temporarily unavailable. Try refreshing the data."
+      },
+      "metric": {
+        "opportunities_open": "Open opportunities",
+        "pipeline_open_value": "Open opportunity value",
+        "unpaid_amount": "Unpaid confirmed outgoing invoices",
+        "tasks_open": "Open tasks",
+        "tasks_overdue": "Overdue tasks"
+      }
+    }
   }
 }

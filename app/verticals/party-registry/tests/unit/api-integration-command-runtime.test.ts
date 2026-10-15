@@ -940,8 +940,8 @@ it.live('the generated governed Read seam sanitizes unexpected runtime defects',
   }),
 );
 
-it.live('replayed assertions are challenged before a second Action or generated Read lifecycle', () =>
-  Effect.gen(function* rejectAssertionReplays() {
+it.live('valid reused assertions still enter each Action and generated Read lifecycle', () =>
+  Effect.gen(function* reuseAssertionsWithoutBypassingLifecycles() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness();
     const { readRuntime, readCount } = makeMissingDecisionReadRuntime();
@@ -952,7 +952,7 @@ it.live('replayed assertions are challenged before a second Action or generated 
         'idempotency-key': 'first-redemption',
       }),
     );
-    expect(firstAction.status).not.toBe(401);
+    expect(firstAction.status).toBe(403);
     expect(harness.snapshot().invocations.length).toBe(1);
     const replayedAction = yield* handle(
       app,
@@ -960,22 +960,22 @@ it.live('replayed assertions are challenged before a second Action or generated 
         'idempotency-key': 'second-redemption',
       }),
     );
-    expect(replayedAction.status).toBe(401);
-    expect(replayedAction.headers.get('www-authenticate')).toBe('Bearer');
+    expect(replayedAction.status).toBe(403);
+    expect(replayedAction.headers.get('www-authenticate')).toBeNull();
     expect(replayedAction.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
-    expect(harness.snapshot().invocations.length).toBe(1);
+    expect(harness.snapshot().invocations.length).toBe(2);
     const actionAssertionReadReplay = yield* handle(app, decisionRequest(randomUUID(), assertion.token));
-    expect(actionAssertionReadReplay.status).toBe(401);
-    expect(actionAssertionReadReplay.headers.get('www-authenticate')).toBe('Bearer');
-    expect(readCount()).toBe(0);
+    expect(actionAssertionReadReplay.status).toBe(404);
+    expect(actionAssertionReadReplay.headers.get('www-authenticate')).toBeNull();
+    expect(readCount()).toBe(1);
     const firstRead = yield* handle(app, decisionRequest(randomUUID(), assertion.otherToken));
     expect(firstRead.status).toBe(404);
-    expect(readCount()).toBe(1);
+    expect(readCount()).toBe(2);
     const replayedRead = yield* handle(app, decisionRequest(randomUUID(), assertion.otherToken));
-    expect(replayedRead.status).toBe(401);
-    expect(replayedRead.headers.get('www-authenticate')).toBe('Bearer');
+    expect(replayedRead.status).toBe(404);
+    expect(replayedRead.headers.get('www-authenticate')).toBeNull();
     expect(replayedRead.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
-    expect(readCount()).toBe(1);
+    expect(readCount()).toBe(3);
   }),
 );
 

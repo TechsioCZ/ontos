@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { createHash } from 'node:crypto';
+import { v5 } from 'uuid';
 
 /**
  * Fixed UUIDv5 namespace for every sales-demo fixture identity. Never change it: seeds, tests and the
@@ -11,22 +11,8 @@ export const SALES_DEMO_NAMESPACE = '5a1e5d3e-0000-5000-8000-0000000d3e70' as co
 export const demoTenantId = '70000000-0000-4000-8000-000000000020' as const;
 export const demoLegalEntityId = '71000000-0000-4000-8000-000000000020' as const;
 
-const uuidBytes = (uuid: string) => Buffer.from(uuid.replaceAll('-', ''), 'hex');
-
-const formatUuid = (bytes: Buffer) => {
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-};
-
 /** RFC 9562 UUIDv5 of `name` inside `namespace`. */
-export const uuidV5 = (namespace: string, name: string): string => {
-  // oxlint-disable-next-line sonarjs/hashing -- RFC 9562 UUIDv5 mandates SHA-1; IDs are public fixture identities.
-  const hash = createHash('sha1').update(uuidBytes(namespace)).update(name, 'utf-8').digest().subarray(0, 16);
-  // Version 5 in the high nibble of byte 6, RFC 4122 variant in the top two bits of byte 8.
-  hash.writeUInt8((hash.readUInt8(6) % 16) + 0x50, 6);
-  hash.writeUInt8((hash.readUInt8(8) % 64) + 0x80, 8);
-  return formatUuid(hash);
-};
+export const uuidV5 = (namespace: string, name: string): string => v5(name, namespace);
 
 /**
  * Deterministic demo ID, e.g. `demoId('workforce.employee', 'obchod')` or

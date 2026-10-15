@@ -488,7 +488,7 @@ export const TaskFormDialog = ({
           }
         }}
         open
-        size="md"
+        size="lg"
         title={t(isEdit ? `${key}.edit` : `${key}.create`)}
       >
         <div className="flex flex-col gap-200 py-200" ref={formRef}>

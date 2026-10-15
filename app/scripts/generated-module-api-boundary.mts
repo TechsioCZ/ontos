@@ -414,6 +414,8 @@ interface GovernedClientExpectation {
 }
 
 const MODULE_API_INVOCATION_KIND = 'module-api';
+const SHARED_CLIENT_RUNTIME_MODULE = '@app/shared-contracts/client-runtime';
+const ACTION_GATEWAY_MODULE = './action-gateway.ts';
 
 export const hasUniqueExactNamedImport = (source: string, importedName: string, moduleSpecifier: string): boolean => {
   const tokens = tokenizeGovernedClient(source);
@@ -528,7 +530,7 @@ const hasExactGeneratedImports = (
       [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
       [SyntaxKind.CloseBraceToken],
       [SyntaxKind.FromKeyword],
-      [SyntaxKind.StringLiteral, '@app/shared-contracts/client-runtime'],
+      [SyntaxKind.StringLiteral, SHARED_CLIENT_RUNTIME_MODULE],
       [SyntaxKind.SemicolonToken],
     ],
     [
@@ -567,7 +569,7 @@ const hasExactGeneratedImports = (
       [SyntaxKind.Identifier, 'operationGateway'],
       [SyntaxKind.CloseBraceToken],
       [SyntaxKind.FromKeyword],
-      [SyntaxKind.StringLiteral, './action-gateway.ts'],
+      [SyntaxKind.StringLiteral, ACTION_GATEWAY_MODULE],
       [SyntaxKind.SemicolonToken],
     ],
   ] satisfies readonly (readonly ExpectedToken[])[];
@@ -2162,11 +2164,228 @@ import { operationGateway } from './action-gateway.ts';`);
   );
 };
 
+interface ConsumerClientImport {
+  readonly bindings: readonly string[];
+  readonly end: number;
+  readonly module: string;
+  readonly typeOnly: boolean;
+}
+
+const consumerClientImport = (
+  tokens: readonly GovernedClientToken[],
+  start: number,
+): ConsumerClientImport | undefined => {
+  const typeOnly = tokenKind(tokens, start + 1) === SyntaxKind.TypeKeyword;
+  const open = start + (typeOnly ? 2 : 1);
+  if (tokenKind(tokens, open) !== SyntaxKind.OpenBraceToken) {
+    return undefined;
+  }
+  const close = findClosingBrace(tokens, open);
+  if (
+    close === undefined ||
+    !matchesSequence(tokens, close + 1, [
+      [SyntaxKind.FromKeyword],
+      [SyntaxKind.StringLiteral],
+      [SyntaxKind.SemicolonToken],
+    ])
+  ) {
+    return undefined;
+  }
+  const bindings: string[] = [];
+  for (let index = open + 1; index < close; index += 2) {
+    if (tokenKind(tokens, index) !== SyntaxKind.Identifier) {
+      return undefined;
+    }
+    const name = tokenValue(tokens, index);
+    if (name === undefined) {
+      return undefined;
+    }
+    bindings.push(name);
+    if (index + 1 < close && tokenKind(tokens, index + 1) !== SyntaxKind.CommaToken) {
+      return undefined;
+    }
+  }
+  const module = tokenValue(tokens, close + 2);
+  return module === undefined ? undefined : { bindings, end: close + 4, module, typeOnly };
+};
+
+const isConsumerClientImport = (declaration: ConsumerClientImport, expectation: GovernedClientExpectation): boolean => {
+  if (declaration.typeOnly) {
+    return (
+      declaration.module === expectation.ownerContractImport ||
+      /^\.\.\/\.\.\/shared\/[a-z0-9/-]+\.ts$/u.test(declaration.module)
+    );
+  }
+  const request = governedRequestType(expectation);
+  const allowed = new Map([
+    [SHARED_CLIENT_RUNTIME_MODULE, ['makeGovernedEffectBffClient']],
+    ['effect', ['Effect', 'Random', 'Redacted', 'Schema']],
+    [expectation.ownerContractImport, [expectation.ownerApiValue, `${request}Schema`]],
+    [ACTION_GATEWAY_MODULE, ['operationGateway']],
+  ]);
+  const names = allowed.get(declaration.module);
+  if (names !== undefined) {
+    return declaration.bindings.every((name) => names.includes(name));
+  }
+  const action = /^\.\/(?<stem>[a-z][a-z0-9-]*)-action-client\.ts$/u.exec(declaration.module)?.groups?.stem;
+  if (action === undefined) {
+    return false;
+  }
+  const camel = toCamelCase(action);
+  const operation = `execute${camel.charAt(0).toUpperCase()}${camel.slice(1)}`;
+  return declaration.bindings.length === 1 && declaration.bindings[0] === operation;
+};
+
+/** Consumer helpers may call the public operation, never the private credential or transport boundary. */
+const hasOnlyConsumerClientStatements = (
+  tokens: readonly GovernedClientToken[],
+  start: number,
+  helper: string,
+  expectation: GovernedClientExpectation,
+): boolean => {
+  const protectedNames = new Set([
+    helper,
+    expectation.authorizedOperation,
+    expectation.ownerApiValue,
+    'makeGovernedEffectBffClient',
+    'operationGateway',
+    'makeEffectHttpApiClient',
+    'HttpClientRequest',
+    'fetch',
+    'XMLHttpRequest',
+    'WebSocket',
+    'globalThis',
+    'window',
+    'document',
+    'self',
+    'global',
+    'require',
+    'eval',
+    'Function',
+    'process',
+  ]);
+  let cursor = start;
+  while (cursor < tokens.length) {
+    const declaration = tokenKind(tokens, cursor) === SyntaxKind.ExportKeyword ? cursor + 1 : cursor;
+    const kind = tokenKind(tokens, declaration);
+    if (kind !== SyntaxKind.ConstKeyword && kind !== SyntaxKind.TypeKeyword) {
+      return false;
+    }
+    const end = findStatementSemicolon(tokens, declaration);
+    if (end === undefined) {
+      return false;
+    }
+    if (kind === SyntaxKind.ConstKeyword) {
+      for (let index = declaration; index < end; index += 1) {
+        const token = tokens[index];
+        if (token?.kind === SyntaxKind.ImportKeyword || token?.kind === SyntaxKind.ExportKeyword) {
+          return false;
+        }
+        if (token?.kind !== SyntaxKind.Identifier) {
+          continue;
+        }
+        if (protectedNames.has(token.value)) {
+          return false;
+        }
+        if (
+          token.value === expectation.publicOperation &&
+          tokenKind(tokens, index + 1) !== SyntaxKind.OpenParenToken &&
+          tokenKind(tokens, index - 1) !== SyntaxKind.TypeOfKeyword
+        ) {
+          return false;
+        }
+      }
+    }
+    cursor = end + 1;
+  }
+  return true;
+};
+
+const hasRequiredConsumerClientImports = (
+  bindings: ReadonlyMap<string, ConsumerClientImport>,
+  expectation: GovernedClientExpectation,
+  encoded: boolean,
+): boolean => {
+  const request = governedRequestType(expectation);
+  const requestName = encoded ? `${request}Encoded` : request;
+  const required = new Map<string, string>([
+    ['makeGovernedEffectBffClient', SHARED_CLIENT_RUNTIME_MODULE],
+    ['Effect', 'effect'],
+    ['Redacted', 'effect'],
+    [expectation.ownerApiValue, expectation.ownerContractImport],
+    [requestName, expectation.ownerContractImport],
+    ['operationGateway', ACTION_GATEWAY_MODULE],
+  ]);
+  if (encoded) {
+    required.set('Schema', 'effect');
+    required.set(`${request}Schema`, expectation.ownerContractImport);
+  }
+  return [...required].every(([name, module]) => {
+    const binding = bindings.get(name);
+    return binding !== undefined && binding.module === module && binding.typeOnly === (name === requestName);
+  });
+};
+
+/** Keep the complete generated transport for its existing strict validator, separately proving helper isolation. */
+const normalizedConsumerClientTokens = (
+  tokens: readonly GovernedClientToken[],
+  expectation: GovernedClientExpectation,
+): readonly GovernedClientToken[] | undefined => {
+  if (expectation.invocationKind !== MODULE_API_INVOCATION_KIND) {
+    return tokens;
+  }
+  const bindings = new Map<string, ConsumerClientImport>();
+  let cursor = 0;
+  while (tokenKind(tokens, cursor) === SyntaxKind.ImportKeyword) {
+    const declaration = consumerClientImport(tokens, cursor);
+    if (declaration === undefined || !isConsumerClientImport(declaration, expectation)) {
+      return undefined;
+    }
+    for (const name of declaration.bindings) {
+      if (bindings.has(name)) {
+        return undefined;
+      }
+      bindings.set(name, declaration);
+    }
+    cursor = declaration.end;
+  }
+  const request = governedRequestType(expectation);
+  const encoded = bindings.has(`${request}Encoded`);
+  const requestName = encoded ? `${request}Encoded` : request;
+  if (!hasRequiredConsumerClientImports(bindings, expectation, encoded)) {
+    return undefined;
+  }
+  const declarations = exportedConsts(tokens);
+  const authorized = declarations.find(({ name }) => name === expectation.authorizedOperation);
+  const operation = declarations.find(({ name }) => name === expectation.publicOperation);
+  const helper = authorized === undefined ? undefined : findClientHelper(tokens, authorized.start);
+  const end = operation === undefined ? undefined : findStatementSemicolon(tokens, operation.start);
+  if (
+    authorized === undefined ||
+    helper === undefined ||
+    end === undefined ||
+    !hasOnlyConsumerClientStatements(tokens, end + 1, helper.name, expectation)
+  ) {
+    return undefined;
+  }
+  const canonicalImports =
+    tokenizeGovernedClient(`import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { Effect, Redacted${encoded ? ', Schema' : ''} } from 'effect';
+import { ${expectation.ownerApiValue}${encoded ? `, ${request}Schema` : ''} } from '${expectation.ownerContractImport}';
+import type { ${requestName} } from '${expectation.ownerContractImport}';
+import { operationGateway } from './action-gateway.ts';`);
+  return [...canonicalImports, ...tokens.slice(cursor, end + 1)];
+};
+
 export const hasGeneratedGovernedClientContract = (source: string, expectation: GovernedClientExpectation): boolean => {
   if (!hasGeneratedSourceHeader(source, expectation.generatedHeader)) {
     return false;
   }
-  const tokens = normalizedDecodedClientTokens(tokenizeGovernedClient(source), expectation);
+  const consumer = normalizedConsumerClientTokens(tokenizeGovernedClient(source), expectation);
+  if (consumer === undefined) {
+    return false;
+  }
+  const tokens = normalizedDecodedClientTokens(consumer, expectation);
   const declarations = exportedConsts(tokens);
   const authorized = declarations.find(({ name }) => name.endsWith('WithAuthorization'));
   if (authorized === undefined) {

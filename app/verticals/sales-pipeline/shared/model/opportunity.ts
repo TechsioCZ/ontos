@@ -42,7 +42,6 @@ export const OpportunityStageHistoryEntrySchema = Schema.Struct({
   at: Schema.DateTimeUtcFromString,
   stage: OpportunityStageSchema,
 });
-export type OpportunityStageHistoryEntry = typeof OpportunityStageHistoryEntrySchema.Type;
 
 export const OpportunitySchema = Schema.Struct({
   amountMinor: MinorUnitsSchema,

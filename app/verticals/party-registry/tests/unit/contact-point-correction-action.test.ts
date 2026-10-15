@@ -9,6 +9,7 @@ import { createActionCollector } from '../../../../packages/core-runtime/src/act
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';
 import { updateContactPointAction } from '../../src/actions/update-contact-point.action.ts';
+import { endContactPointAction } from '../../src/actions/end-contact-point.action.ts';
 
 const tenantId = Schema.decodeSync(TenantIdSchema)('20000000-0000-4000-8000-000000000001');
 const principalId = Schema.decodeSync(PrincipalIdSchema)('50000000-0000-4000-8000-000000000001');
@@ -113,6 +114,88 @@ it.effect('correction publishes the corrected stable ref while returning the val
     });
     expect(snapshot.outboxMessages[0]?.message.payloadJson).toEqual({
       contactPointRef: originalContactPointRef,
+      partyRef,
+    });
+  }),
+);
+
+it.effect('ending a contact publishes a JSON timestamp accepted by the real Action collector', () =>
+  Effect.gen(function* endContactScenario() {
+    const effectiveEnd = DateTime.makeUnsafe('2026-10-15T11:42:02.000Z');
+    const actionInvocationId = '40000000-0000-4000-8000-000000000001';
+    const reason = 'Mailbox is no longer used';
+    const ended = {
+      ...replacement,
+      current: false,
+      provenance: { ...replacement.provenance, evidenceReferences: ['evidence:party-confirmation:42'] },
+      end: {
+        effectiveEnd,
+        endedByActionInvocationId: actionInvocationId,
+        endedByPrincipalId: principalId,
+        provenance: {
+          evidenceReferences: ['evidence:party-confirmation:42'],
+          method: 'MANUAL_CONFIRMATION',
+          source: 'USER_ASSERTION',
+        },
+        reason,
+        recordedAt: effectiveEnd,
+      },
+      revision: 2,
+      state: 'ENDED',
+      validTo: effectiveEnd,
+      value: {
+        displayValue: 'correct@example.test',
+        lookupValue: 'correct@example.test',
+        preferred: false,
+        type: 'EMAIL',
+      },
+    } satisfies PartyContactPoint;
+    const collector = createActionCollector(
+      endContactPointAction.descriptor.domainEvents,
+      'party.registry',
+      endContactPointAction.descriptor.accessEvidencePolicy,
+    );
+    const result = yield* getActionHandler(endContactPointAction)(
+      {
+        contactPointRef: ended.contactPointRef,
+        effectiveEnd,
+        provenance: replacement.provenance,
+        reason,
+        target: { type: 'WHOLE_CONTACT_POINT' },
+      },
+      {
+        actionInvocationId,
+        compositionRevision: 'a'.repeat(64),
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope: {
+          authMethod: 'system',
+          correlationId: 'end-contact-test',
+          principalId,
+          tenantId,
+        },
+        services: {
+          end: (command) => {
+            expect(command.effectiveEnd).toBe('2026-10-15T11:42:02.000Z');
+            return Effect.succeed({ changed: true, contactPoint: ended });
+          },
+        },
+      },
+    );
+    expect(result).toEqual(ended);
+    const snapshot = collector.snapshot();
+    expect(snapshot.domainEvents).toHaveLength(1);
+    expect(snapshot.domainEvents[0]?.payloadJson).toEqual({
+      contactPointRef: ended.contactPointRef,
+      effectiveEnd: '2026-10-15T11:42:02.000Z',
+      partyRef,
+      revision: 2,
+    });
+    expect(snapshot.outboxMessages).toHaveLength(1);
+    expect(snapshot.outboxMessages[0]?.message.payloadJson).toEqual({
+      contactPointRef: ended.contactPointRef,
       partyRef,
     });
   }),
