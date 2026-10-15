@@ -20,7 +20,7 @@ import type { ProductPatch } from '../../../../../shared/actions/apply-command.t
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductMetadata, ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
-import { MONEY_FORMAT, NO_ARIA_MAX, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
+import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { CommandOutcome, FailureReason } from './products-api.ts';
 import {
@@ -446,7 +446,7 @@ const DetailForm = (props: DetailFormProps) => {
           {...fieldError(submitted, priceError)}
         >
           <NumericInput.Control>
-            <NumericInput.Input {...NO_ARIA_MAX} />
+            <NumericInput.Input aria-valuemax={undefined} />
           </NumericInput.Control>
         </FormNumericInput>
         <FormNumericInput
@@ -466,7 +466,7 @@ const DetailForm = (props: DetailFormProps) => {
           {...fieldError(submitted, lowStockError)}
         >
           <NumericInput.Control>
-            <NumericInput.Input {...NO_ARIA_MAX} />
+            <NumericInput.Input aria-valuemax={undefined} />
           </NumericInput.Control>
         </FormNumericInput>
       </div>

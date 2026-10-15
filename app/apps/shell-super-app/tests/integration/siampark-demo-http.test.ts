@@ -589,11 +589,15 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
         idempotencyKey: correlation(),
         referenceCredentials: taskProviders,
       });
+      const followUpTask = task.task;
+      if (followUpTask === undefined) {
+        return yield* new LiveDemoPrerequisiteUnavailable({ reason: 'The follow-up command returned no Work Task.' });
+      }
       const activityPayload = yield* Schema.decodeEffect(ActivityPayloadSchema)({
         command: {
           _tag: 'RecordActivity',
           counterpartyRef: contract.counterpartyRef,
-          followUpTaskRef: task.task.ref,
+          followUpTaskRef: followUpTask.ref,
           kind: 'CALL',
           occurredAt: referenceInstant,
           ownerPrincipalRef: before.actorPrincipalRef,
@@ -618,19 +622,19 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
       expect(after.revision).toBe(recorded.revision);
       expect(after.items.find((item) => item.ref.resourceId === recorded.activity.ref.resourceId)).toMatchObject({
         counterpartyRef: contract.counterpartyRef,
-        followUpTaskRef: task.task.ref,
+        followUpTaskRef: followUpTask.ref,
         kind: 'CALL',
         ownerPrincipalRef: before.actorPrincipalRef,
       });
       const taskReadGrant = yield* authorize(session, 'siampark-work');
       const persistedTask = yield* readTasks(
-        { resourceId: task.task.ref.resourceId },
+        { resourceId: followUpTask.ref.resourceId },
         taskReadGrant.credential,
         correlation(),
         taskReadGrant.options,
       );
       expect(persistedTask.revision).toBe(task.revision);
-      expect(persistedTask.items).toEqual([task.task]);
+      expect(persistedTask.items).toEqual([followUpTask]);
       return after.revision;
     }).pipe(Effect.mapError(safeTransportFailure)),
   );

@@ -1,7 +1,7 @@
 # @ontos/agent-mcp
 
 stdio MCP server that gives a coding agent authenticated access to OntOS verticals through the shell.
-Standalone package, not part of the pnpm workspace. Always run pnpm with `--ignore-workspace`.
+Workspace tool installed and validated with the application from `app/`.
 
 ## Configuration
 
@@ -22,17 +22,17 @@ The composition revision changes whenever the demo stack is rebuilt. Read the cu
 started by `scripts/demo/up.sh`). The server needs no manual update: without a revision, or when the shell answers
 409 (reload required) for a stale one, it reads `composition.revision` from that endpoint and retries once.
 
-Every vertical call exchanges the API key for a fresh gateway assertion: assertions are single-use (each vertical
-records the redeemed `jti`), and actions also carry a fresh `idempotency-key`. Better Auth limits each API key to
+Every vertical call exchanges the API key for a fresh gateway assertion. Core validates the assertion and
+evaluates each Read or Action lifecycle; actions also carry a fresh `idempotency-key`. Better Auth limits each API key to
 10 verifications per 24 h by default, so `reset-permissions.mts` disables that limit on the `agent-bot` keys.
 
 ## Run
 
 ```bash
-cd app/tools/ontos-agent-mcp
-pnpm install --ignore-workspace
-pnpm --ignore-workspace typecheck
-pnpm --ignore-workspace start      # stdio server; no output on stdout until a client connects
+cd app
+mise exec -- pnpm install
+mise exec -- pnpm --filter @ontos/agent-mcp typecheck
+mise exec -- pnpm --filter @ontos/agent-mcp start      # stdio server; no output on stdout until a client connects
 ```
 
 Core tools: `whoami` (shell URL and whether a `siampark-work` assertion can be obtained) and
@@ -45,13 +45,13 @@ Sales tools (src/tools): reads `list_customers`, `list_employees`, `list_opportu
 "Agent nemá oprávnění: …" with the HTTP status and problem code.
 
 `get_metrics` imports the pure engine at `app/verticals/sales-insights/shared/metrics.ts` by relative path, so this
-package works only inside the OntOS checkout. Unit tests: `pnpm --ignore-workspace test` (mocked fetch, no shell).
+package works only inside the OntOS checkout. Unit tests: `mise exec -- pnpm --filter @ontos/agent-mcp test` from `app/` (Effect-aware Rstest harness, mocked fetch, no shell).
 
 ## Demo s Claude
 
 Předpoklad: běží lokální demo (`app/scripts/demo/README.md`) a `app/.env.demo.local` obsahuje klíč bota
 (zapisuje ho `scripts/demo/reset-permissions.mts`). Jednorázově nainstalujte závislosti
-(`pnpm install --ignore-workspace` v této složce) a zaregistrujte server v Claude Code:
+(`mise exec -- pnpm install` ve složce `app/`) a zaregistrujte server v Claude Code:
 
 ```bash
 claude mcp add ontos-sales -- /Users/satan/.local/share/mise/installs/node/26.7.0/bin/node --no-warnings /Volumes/TraceDecayKingston/techsio-demo/ontos-demo/app/tools/ontos-agent-mcp/src/server.ts
@@ -80,7 +80,8 @@ cen ani mazání štítků; přímé volání vrací 403 (`app/scripts/demo/prov
 Skriptovaná verze téže relace bez modelu (JSON-RPC přes stdio, přepis do `app/docs/demo/agent-session.md`):
 
 ```bash
-node --no-warnings scripts/demo-session.mts            # zapisuje do demo dat: úkol, změna fáze, štítky
+cd app
+mise exec -- pnpm exec node tools/ontos-agent-mcp/scripts/demo-session.mts # zapisuje do demo dat: úkol, změna fáze, štítky
 ```
 
 ## Security

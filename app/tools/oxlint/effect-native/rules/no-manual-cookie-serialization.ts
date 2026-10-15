@@ -307,6 +307,36 @@ function constantInitializer(def: Variable['defs'][number]): ESTree.Node | null 
   return def.node.init ?? null;
 }
 
+/** Reading an existing cookie name does not construct a cookie or its attribute contract. */
+function inspectsCookiePrefix(node: ESTree.Node): boolean {
+  const parent = node.parent;
+  if (parent?.type === 'CallExpression' && parent.arguments[0] === node) {
+    const callee = unwrap(parent.callee);
+    return callee?.type === 'MemberExpression' && memberName(callee) === 'startsWith';
+  }
+  return parent?.type === 'MemberExpression' && parent.object === node && memberName(parent) === 'length';
+}
+
+/** Only exact local constants whose every value use is inspection qualify; escaped values stay blocked. */
+function isReadOnlyCookiePrefix(context: Context, node: ESTree.Node): boolean {
+  if (inspectsCookiePrefix(node)) return true;
+  const declaration = node.parent;
+  if (declaration?.type !== 'VariableDeclarator' || declaration.init !== node || declaration.id.type !== 'Identifier') {
+    return false;
+  }
+  if (
+    declaration.parent?.type !== 'VariableDeclaration' ||
+    declaration.parent.kind !== 'const' ||
+    declaration.parent.parent?.type === 'ExportNamedDeclaration'
+  )
+    return false;
+  const variable = lookupVariable(context, declaration.id);
+  if (variable === null || variable.references.some((reference) => reference.isWrite() && !reference.init))
+    return false;
+  const reads = variable.references.filter((reference) => reference.isRead());
+  return reads.length > 0 && reads.every((reference) => inspectsCookiePrefix(reference.identifier));
+}
+
 export const rule = defineRule({
   meta: {
     type: 'problem',
@@ -400,6 +430,7 @@ export const rule = defineRule({
       if (isCoveredByOuterReport(node)) return;
       const prefix = COOKIE_NAME_PREFIX.exec(text)?.[0];
       if (prefix !== undefined) {
+        if (isReadOnlyCookiePrefix(context, node)) return;
         context.report({
           node,
           messageId: 'cookieNamePrefix',

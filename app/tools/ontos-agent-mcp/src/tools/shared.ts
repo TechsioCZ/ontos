@@ -56,7 +56,7 @@ export const runTool = async <A>(body: () => Promise<A>) => {
 };
 
 /** Registers one tool whose input is validated by a zod shape before the body runs. */
-export const defineTool = <Fields extends Readonly<Record<string, z.ZodTypeAny>>, A>(
+export const defineTool = <Fields extends Readonly<Record<string, z.ZodType>>, A>(
   server: McpServer,
   name: string,
   description: string,
@@ -64,7 +64,7 @@ export const defineTool = <Fields extends Readonly<Record<string, z.ZodTypeAny>>
   body: (input: z.infer<z.ZodObject<Fields>>) => Promise<A>,
 ): void => {
   // The SDK's generic callback type does not resolve for a generic shape, so the shape is widened here.
-  const widened: Readonly<Record<string, z.ZodTypeAny>> = inputSchema;
+  const widened: Readonly<Record<string, z.ZodType>> = inputSchema;
   const parseInput = z.object(inputSchema);
   // The SDK has validated the arguments already; parsing again yields the typed value without a cast.
   server.registerTool(

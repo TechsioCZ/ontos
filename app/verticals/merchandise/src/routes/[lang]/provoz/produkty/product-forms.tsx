@@ -12,7 +12,7 @@ import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
-import { MONEY_FORMAT, NO_ARIA_MAX, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { FailureReason } from './products-api.ts';
 
@@ -389,7 +389,7 @@ export const CreateProductDialog = ({
               {...fieldError(submitted, priceError)}
             >
               <NumericInput.Control>
-                <NumericInput.Input {...NO_ARIA_MAX} />
+                <NumericInput.Input aria-valuemax={undefined} />
               </NumericInput.Control>
             </FormNumericInput>
             <FormNumericInput
@@ -409,7 +409,7 @@ export const CreateProductDialog = ({
               {...fieldError(submitted, lowStockError)}
             >
               <NumericInput.Control>
-                <NumericInput.Input {...NO_ARIA_MAX} />
+                <NumericInput.Input aria-valuemax={undefined} />
               </NumericInput.Control>
             </FormNumericInput>
           </div>
@@ -560,7 +560,7 @@ export const ReceiptDialog = ({
             {...fieldError(submitted, quantityError)}
           >
             <NumericInput.Control>
-              <NumericInput.Input {...NO_ARIA_MAX} />
+              <NumericInput.Input aria-valuemax={undefined} />
             </NumericInput.Control>
           </FormNumericInput>
           <FormInput

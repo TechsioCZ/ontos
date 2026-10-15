@@ -7,7 +7,7 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { buildKnipModel } from '../../quality-audit/knip-model.mts';
-import { buildKnipRuntimeEvidence } from '../../quality-audit/knip-runtime-model.mts';
+import { buildKnipRuntimeEvidence, workspaceDirectories } from '../../quality-audit/knip-runtime-model.mts';
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 const shellRoot = 'apps/shell';
@@ -342,5 +342,41 @@ it.live(
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
+  }),
+);
+
+it.live(
+  'tool package workspaces are audited without promoting adjacent unowned directories or unused exports',
+  Effect.fn(function* toolWorkspaceConsumers() {
+    const root = yield* fixture();
+    const tool = 'tools/agent';
+    write(
+      root,
+      `${tool}/package.json`,
+      '{"name":"@fixture/agent","type":"module","scripts":{"start":"node src/server.ts"}}',
+    );
+    write(root, `${tool}/src/server.ts`, "import { live } from './live.ts'; void live;");
+    write(root, `${tool}/src/live.ts`, 'export const live = 1; export const unusedToolExport = 2;');
+    write(root, `${tool}/src/dead.ts`, 'export const unusedToolFile = 1;');
+    write(root, 'tools/no-package/src/server.ts', 'export const noPackageFile = 1;');
+    const directories = yield* workspaceDirectories(root).pipe(Effect.provide(NodeServices.layer));
+    expect(directories).toContain(tool);
+    expect(directories).not.toContain('tools/no-package');
+    const consumerPath = path.join(root, 'consumers.mts');
+    const model = yield* buildKnipModel(
+      root,
+      {
+        workspaces: {
+          '.': { entry: [], node: false, project: [] },
+          'tools/*': { entry: ['src/server.ts'], node: false, project: ['src/**/*.ts'] },
+        },
+      },
+      consumerPath,
+    ).pipe(Effect.provide(NodeServices.layer));
+    expect(Object.hasOwn(model.config.workspaces ?? {}, tool)).toBe(true);
+    expect(Object.hasOwn(model.config.workspaces ?? {}, 'tools/no-package')).toBe(false);
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.stdout).toContain('unusedToolExport');
+    expect(run.stdout).toContain(`${tool}/src/dead.ts`);
   }),
 );

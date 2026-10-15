@@ -6,27 +6,15 @@
 //   Counterparty demoId('party.counterparty', `ico-${ico}`)
 // The vertical's TypeScript project cannot import app/scripts, so the UUIDv5 derivation is mirrored here
 // and reset-demo.mts verifies the shared namespace, Tenant and Legal Entity against fixture-ids at runtime.
-import { createHash } from 'node:crypto';
+import { v5 } from 'uuid';
 
 /** Must equal `SALES_DEMO_NAMESPACE` in app/scripts/demo/fixture-ids.mts. */
 export const SALES_DEMO_NAMESPACE = '5a1e5d3e-0000-5000-8000-0000000d3e70' as const;
 export const salesDemoTenantId = '70000000-0000-4000-8000-000000000020' as const;
 export const salesDemoLegalEntityId = '71000000-0000-4000-8000-000000000020' as const;
 
-const uuidBytes = (uuid: string) => Buffer.from(uuid.replaceAll('-', ''), 'hex');
-
-/** RFC 9562 UUIDv5; byte-for-byte the fixture-ids derivation. */
-const uuidV5 = (namespace: string, name: string): string => {
-  // oxlint-disable-next-line sonarjs/hashing -- RFC 9562 UUIDv5 mandates SHA-1; IDs are public fixture identities.
-  const hash = createHash('sha1').update(uuidBytes(namespace)).update(name, 'utf-8').digest().subarray(0, 16);
-  hash.writeUInt8((hash.readUInt8(6) % 16) + 0x50, 6);
-  hash.writeUInt8((hash.readUInt8(8) % 64) + 0x80, 8);
-  const hex = hash.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-};
-
 /** Same value as fixture-ids `demoId(namespace, key)`. */
-export const demoId = (namespace: string, key: string): string => uuidV5(SALES_DEMO_NAMESPACE, `${namespace}:${key}`);
+export const demoId = (namespace: string, key: string): string => v5(`${namespace}:${key}`, SALES_DEMO_NAMESPACE);
 
 export interface SalesDemoCustomer {
   readonly city: string;

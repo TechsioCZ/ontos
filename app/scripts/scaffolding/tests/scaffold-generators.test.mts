@@ -6512,6 +6512,73 @@ it('generated fluent slots preserve multiline call entries', () => {
   expect(entries[0] ?? '').toMatch(/FirstApi/u);
 });
 
+it.live(
+  'governed generation preserves formatter-merged support imports without duplicating canonical bindings',
+  Effect.fn(function* mergedSupportImports() {
+    yield* withFixture(
+      Effect.fn(function* supportImportFixture(fixture) {
+        yield* run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+        ]);
+        const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
+        const source = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
+        const canonical =
+          "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';";
+        const merged =
+          "import {\n  GatewayAssertionRedemptionDatabaseLive,\n  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,\n} from './auth/gateway-assertion-redemption.ts';";
+        expect(source.includes(canonical)).toBe(true);
+        yield* Effect.promise(() => writeFile(rootPath, source.replace(canonical, merged)));
+        const flags = [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail];
+        yield* run(fixture, scaffoldCommand.moduleApi, flags);
+        const generated = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
+        expect(generated).toContain(merged);
+        const beforeRerun = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.moduleApi, flags);
+        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
+        const entries = readGeneratedSlotEntries(
+          generated,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+          GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+        );
+        expect(entries.filter((entry) => entry.includes("'./auth/gateway-assertion-redemption.ts'"))).toHaveLength(1);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'governed generation rejects a merged support import whose generated binding points at another export',
+  Effect.fn(function* invalidMergedSupportImports() {
+    yield* withFixture(
+      Effect.fn(function* invalidSupportImportFixture(fixture) {
+        yield* run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+        ]);
+        const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
+        const source = yield* readFixtureFile(fixture.root, inventoryHandlerRootFile);
+        const invalid = source.replace(
+          'GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive',
+          'GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionLive',
+        );
+        expect(invalid).not.toBe(source);
+        yield* Effect.promise(() => writeFile(rootPath, invalid));
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
+          /unsupported developer content/u,
+        );
+      }),
+    );
+  }),
+);
+
 for (const [start, end] of [
   [GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END],
   [GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END],

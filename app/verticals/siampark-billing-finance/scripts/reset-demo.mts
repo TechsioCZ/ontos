@@ -152,16 +152,20 @@ const salesDemoInvoice = Effect.fn('ResetDemo.salesDemoInvoice')(function* sales
   }
   // Snapshot lines: price and VAT are frozen at the invoice's issue date and never re-read from the catalog.
   const lines = yield* Schema.decodeEffect(InvoiceLinesSchema)(
-    planned.lines.map((line) => {
-      const product = productByKey(line.productKey);
-      return {
-        description: product.name,
-        productId: demoId('product', line.productKey),
-        quantity: line.quantity,
-        unitPriceMinor: snapshotPriceMinor(line.productKey, planned.issueDaysAgo),
-        vatRate: product.vatRate,
-      };
-    }),
+    yield* Effect.all(
+      planned.lines.map((line) =>
+        Effect.gen(function* plannedLine() {
+          const product = yield* productByKey(line.productKey);
+          return {
+            description: product.name,
+            productId: demoId('product', line.productKey),
+            quantity: line.quantity,
+            unitPriceMinor: snapshotPriceMinor(product, planned.issueDaysAgo),
+            vatRate: product.vatRate,
+          };
+        }),
+      ),
+    ),
   );
   const totals = computeInvoiceTotals(lines);
   if (totals === undefined) {
@@ -275,12 +279,15 @@ const command = Command.make(
     validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)),
   },
   ({ fixture, salesDemo, validateOnly }) =>
-    salesDemo
-      ? seedSalesDemo(validateOnly)
-      : Option.match(fixture, {
-          onNone: () => Effect.fail(new ResetInputError({ reason: '--fixture is required' })),
-          onSome: reset,
-        }),
+    Effect.gen(function* resetFromFlags() {
+      if (salesDemo) {
+        return yield* seedSalesDemo(validateOnly);
+      }
+      return yield* Option.match(fixture, {
+        onNone: () => Effect.fail(new ResetInputError({ reason: '--fixture is required' })),
+        onSome: reset,
+      });
+    }),
 );
 const main = Command.run(command, { version: '1.0.0' });
 const resetProgram = Layer.effectDiscard(main).pipe(

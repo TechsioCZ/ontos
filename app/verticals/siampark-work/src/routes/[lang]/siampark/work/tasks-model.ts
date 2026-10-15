@@ -236,8 +236,8 @@ export const filterTasks = (
 };
 
 /**
- * The Úkoly view (tab and filters) survives a reload within the browser session. Only the page reads it after
- * mount, so server and first client render agree. Storage that is missing or full keeps the defaults.
+ * The Úkoly view (tab and filters) survives a reload within the browser session. React reads the serialized
+ * snapshot as an external store; its server snapshot uses defaults. Missing or full storage keeps the defaults.
  */
 const StoredTaskFiltersSchema = Schema.Struct({
   assignee: Schema.String,
@@ -259,15 +259,33 @@ export interface StoredTaskView {
   readonly tab: TaskTab;
 }
 
-export const readStoredTaskView = (): StoredTaskView | undefined => {
+export const storedTaskViewServerSnapshot = (): null => null;
+
+export const storedTaskViewSnapshot = (): string | null => {
   try {
-    const raw = sessionStorageOrUndefined()?.getItem(taskViewStorageKey);
-    return raw === null || raw === undefined
-      ? undefined
-      : Option.getOrUndefined(Schema.decodeOption(StoredTaskViewSchema)(raw));
+    return sessionStorageOrUndefined()?.getItem(taskViewStorageKey) ?? null;
   } catch {
-    return undefined;
+    return null;
   }
+};
+
+export const taskViewFromSnapshot = (raw: string | null): StoredTaskView | undefined =>
+  raw === null ? undefined : Option.getOrUndefined(Schema.decodeOption(StoredTaskViewSchema)(raw));
+
+const taskViewChangedEvent = 'siampark-work:task-view-changed';
+
+export const subscribeStoredTaskView = (onChange: () => void): (() => void) => {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === null || event.key === taskViewStorageKey) {
+      onChange();
+    }
+  };
+  globalThis.addEventListener('storage', onStorage);
+  globalThis.addEventListener(taskViewChangedEvent, onChange);
+  return () => {
+    globalThis.removeEventListener('storage', onStorage);
+    globalThis.removeEventListener(taskViewChangedEvent, onChange);
+  };
 };
 
 export const writeStoredTaskView = (view: StoredTaskView) => {
@@ -278,6 +296,7 @@ export const writeStoredTaskView = (view: StoredTaskView) => {
   }
   try {
     storage.setItem(taskViewStorageKey, encoded.success);
+    globalThis.dispatchEvent(new Event(taskViewChangedEvent));
   } catch {
     // Storage is full or blocked: the view is simply not kept across a reload.
   }

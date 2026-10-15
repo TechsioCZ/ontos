@@ -56,11 +56,9 @@ class DemoPermissionsError extends Schema.TaggedError<DemoPermissionsError>()('D
 }) {}
 const fail = (reason: string) => new DemoPermissionsError({ reason });
 
-// oxlint-disable-next-line sonarjs/no-hardcoded-passwords -- documented local demo credential (README, brief).
-const DEMO_PASSWORD = 'password1234';
+const demoPassword = Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234')));
 const ENV_FILE = '.env.demo.local';
 const BOT_KEY_AUDIENCE = 'siampark-work';
-// oxlint-disable-next-line effect-native/no-manual-cookie-serialization -- reads the shell's existing cookie name; builds no cookie.
 const SECURE_COOKIE_PREFIX = '__Secure-';
 const [headOfSales] = demoHumanAccounts;
 
@@ -77,9 +75,10 @@ const demoAgentConfig = Config.all({
 const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
   const { executor } = yield* AuthDatabase;
   const now = yield* DateTime.nowAsDate;
+  const credential = yield* demoPassword;
   const password = yield* Effect.tryPromise({
     catch: () => fail('Unable to hash the demo password'),
-    try: async () => await hashPassword(DEMO_PASSWORD),
+    try: async () => await hashPassword(Redacted.value(credential)),
   });
   yield* executor.transaction((transaction) =>
     Effect.gen(function* writeIdentityRows() {
@@ -282,7 +281,7 @@ const issueBotKey = Effect.fn('DemoPermissions.issueBotKey')(function* issueBotK
   const signIn = yield* postJson(
     `${shellUrl}/shell-super-app-api/auth/sign-in`,
     SignInBodySchema,
-    { email: headOfSales.email, password: Redacted.make(DEMO_PASSWORD) },
+    { email: headOfSales.email, password: yield* demoPassword },
     { origin: shellUrl },
   );
   if (signIn.status !== 200) {

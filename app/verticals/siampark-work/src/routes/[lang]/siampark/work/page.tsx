@@ -41,7 +41,10 @@ import {
   initialTaskFilters,
   newerTaskList,
   overdueCount,
-  readStoredTaskView,
+  storedTaskViewServerSnapshot,
+  storedTaskViewSnapshot,
+  subscribeStoredTaskView,
+  taskViewFromSnapshot,
   todayIsoDate,
   unassignedOpenCount,
   withBulkResult,
@@ -285,6 +288,16 @@ const ClosedRowsHint = ({ visible }: { readonly visible: boolean }) => {
   return visible ? <p className="text-fg-secondary text-sm">{t(`${key}.bulk.closedHint`)}</p> : null;
 };
 
+const useTaskView = (partyId: typeof PartyIdSchema.Type | undefined, invalidFilter: boolean) => {
+  const snapshot = useSyncExternalStore(subscribeStoredTaskView, storedTaskViewSnapshot, storedTaskViewServerSnapshot);
+  const stored = partyId === undefined && !invalidFilter ? taskViewFromSnapshot(snapshot) : undefined;
+  const [tabOverride, setTabOverride] = useState<TaskTab>();
+  const [filtersOverride, setFiltersOverride] = useState<TaskFilters>();
+  const tab = tabOverride ?? stored?.tab ?? (partyId === undefined ? 'mine' : 'all');
+  const filters = filtersOverride ?? stored?.filters ?? initialTaskFilters;
+  return { filters, setFilters: setFiltersOverride, setTab: setTabOverride, tab };
+};
+
 const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFilter: boolean) => {
   const { t } = useModernI18n();
   const toaster = useToast();
@@ -296,8 +309,7 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
   const [opportunities, setOpportunities] = useState<readonly OpportunityOption[]>([]);
   const [referenceFailed, setReferenceFailed] = useState(false);
   const [lookups, setLookups] = useState<LookupState>({ customers: false, employees: false, opportunities: false });
-  const [tab, setTab] = useState<TaskTab>(partyId === undefined ? 'mine' : 'all');
-  const [filters, setFilters] = useState<TaskFilters>(initialTaskFilters);
+  const { filters, setFilters, setTab, tab } = useTaskView(partyId, invalidFilter);
   // Default order: the nearest due date first. Tasks without a date sort last (column option).
   const [sorting, setSorting] = useState<{ desc: boolean; id: string }[]>([{ desc: false, id: 'dueDate' }]);
   const [selection, setSelection] = useState<Record<string, true>>({});
@@ -334,13 +346,6 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
   useEffect(() => {
     if (invalidFilter) {
       return;
-    }
-    // Read after mount: the first render matches the server, and the saved view applies on top of it.
-    const stored = readStoredTaskView();
-    if (stored !== undefined && partyId === undefined) {
-      // oxlint-disable-next-line react/set-state-in-effect -- One-time sync from sessionStorage after mount; initial state from storage would break server/client hydration.
-      setTab(stored.tab);
-      setFilters(stored.filters);
     }
     const settle = (name: keyof LookupState) => setLookups((current) => ({ ...current, [name]: true }));
     loadRecords({ setLoadState, setRecords }, partyId);

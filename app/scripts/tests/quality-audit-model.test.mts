@@ -35,6 +35,7 @@ const appRoot = path.resolve(import.meta.dirname, '../..');
 const nativeRoutesWorkspace = 'apps/native-routes';
 const nativeRoutesRoot = `${nativeRoutesWorkspace}/src/routes/[lang]`;
 const nodeExecutableExpression = 'process.execPath';
+const unusedNeighborSource = 'export const unusedNeighbor = 1;';
 const nativeSubprocessReason = 'Native Node subprocess';
 const nativePlaywrightReason = 'Native Playwright webServer.command';
 const playwrightPackageName = '@playwright/test';
@@ -550,6 +551,72 @@ it.live(
 );
 
 it.live(
+  'Effect subprocesses consume immutable owner-loop and called script values while preserving invalid neighbors',
+  Effect.fn(function* ownerLoopSubprocessConsumers() {
+    const root = yield* fixture();
+    write(root, packageFile, '{"name":"loop-controls","type":"module","dependencies":{"effect":"*"}}');
+    const consumer = 'scripts/reset.mts';
+    const used = ['verticals/one/scripts/reset.mts', 'verticals/two/scripts/reset.mts', 'scripts/permissions.mts'];
+    const unused = ['verticals/dead/scripts/reset.mts', 'scripts/unknown.mts', 'scripts/one-other.mts'];
+    for (const file of [...used, ...unused]) {
+      write(root, file, unusedNeighborSource);
+    }
+    write(
+      root,
+      consumer,
+      [
+        "import { Effect, Path } from 'effect';",
+        "import { ChildProcess } from 'effect/unstable/process';",
+        "const OWNERS = ['one', 'two'] as const;",
+        "const unusedOwners = ['dead'] as const;",
+        `const ownerScript = (owner: string) => \`verticals/\${owner}/scripts/reset.mts\`;`,
+        'const run = Effect.gen(function* () {',
+        '  const path = yield* Path.Path;',
+        "  const root = yield* path.fromFileUrl(new URL('..', import.meta.url));",
+        '  const runScript = (script: string) => ChildProcess.make(process.execPath, [path.join(root, script)], {cwd: root});',
+        "  runScript('scripts/permissions.mts');",
+        '  runScript(unknownScript);',
+        `  const paired = (left: string, right: string) => ChildProcess.make(process.execPath, [path.join(root, \`scripts/\${left}-\${right}.mts\`)], {cwd: root});`,
+        "  paired('one', 'live'); paired('two', 'other');",
+        '  for (const owner of OWNERS) ChildProcess.make(process.execPath, [path.join(root, ownerScript(owner))], {cwd: root});',
+        '});',
+      ].join('\n'),
+    );
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(
+      root,
+      { workspaces: { '.': { entry: [consumer], node: false, project: ['scripts/**/*.mts', 'verticals/**/*.mts'] } } },
+      consumerPath,
+    ).pipe(Effect.provide(NodeServices.layer));
+    const subprocesses = model.evidence.filter((fact) => fact.reason.startsWith(nativeSubprocessReason));
+    for (const file of used) {
+      expect(
+        subprocesses.some((fact) => fact.target === file),
+        file,
+      ).toBe(true);
+    }
+    for (const file of unused) {
+      expect(
+        subprocesses.some((fact) => fact.target === file),
+        file,
+      ).toBe(false);
+    }
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const unusedFiles = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+    for (const file of used) {
+      expect(unusedFiles).not.toContain(file);
+      expect(report.issues.find((issue) => issue.file === file)?.exports.map((finding) => finding.name)).toContain(
+        'unusedNeighbor',
+      );
+    }
+    for (const file of unused) {
+      expect(unusedFiles).toContain(file);
+    }
+  }),
+);
+
+it.live(
   'native subprocess consumers prove working directories and called parameter values without hiding neighbors',
   Effect.fn(function* nativeSubprocessConsumers() {
     const root = yield* fixture();
@@ -695,8 +762,8 @@ it.live(
     const coreSource = `${core}/tests/unit/outbox-process.test.ts`;
     write(root, shellSource, readFileSync(path.join(appRoot, actualShellConsumer), 'utf-8'));
     write(root, coreSource, readFileSync(path.join(appRoot, actualCoreConsumer), 'utf-8'));
-    write(root, 'scripts/integration/fixtures/native-owner-process.mts', 'export const unusedNeighbor = 1;');
-    write(root, `${core}/tests/fixtures/outbox-worker-process.fixture.ts`, 'export const unusedNeighbor = 1;');
+    write(root, 'scripts/integration/fixtures/native-owner-process.mts', unusedNeighborSource);
+    write(root, `${core}/tests/fixtures/outbox-worker-process.fixture.ts`, unusedNeighborSource);
     const actual = yield* buildKnipModel(
       root,
       {

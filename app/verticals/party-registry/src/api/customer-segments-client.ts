@@ -29,7 +29,6 @@ import { customerSegmentDefinitions } from './customer-segment-definitions.ts';
 import type { CustomerSegmentCode } from './customer-segment-definitions.ts';
 
 export { customerSegmentDefinitions } from './customer-segment-definitions.ts';
-export type { CustomerSegmentCode } from './customer-segment-definitions.ts';
 
 const OWNER_API_PREFIX = '/commerce-customer-context-api';
 const ownerGateway = makeOperationGateway('commerce-customer-context');

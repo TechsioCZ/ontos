@@ -73,7 +73,7 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
       }
       return yield* Effect.tryPromise({
         catch: (cause) => unavailable('verification-email-delivery', cause),
-        try: raw.sendVerificationEmail.bind(raw, data),
+        try: raw.sendVerificationEmail.bind(raw, data, undefined),
       }).pipe(
         Effect.timeoutOrElse({
           duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds),
@@ -106,7 +106,7 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
       }
       return yield* Effect.tryPromise({
         catch: (cause) => unavailable('reset-password-email-delivery', cause),
-        try: raw.sendResetPassword.bind(raw, data),
+        try: raw.sendResetPassword.bind(raw, data, undefined),
       }).pipe(
         Effect.timeoutOrElse({
           duration: Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds),

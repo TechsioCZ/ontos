@@ -191,7 +191,7 @@ export const workspaceDirectories = Effect.fn('QualityAudit.knipWorkspaces')(fun
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspaces = ['.'];
-  for (const directory of ['apps', 'verticals', 'packages', 'vendor']) {
+  for (const directory of ['apps', 'verticals', 'packages', 'vendor', 'tools']) {
     const location = path.join(appRoot, directory);
     if (!(yield* fs.exists(location))) {
       continue;

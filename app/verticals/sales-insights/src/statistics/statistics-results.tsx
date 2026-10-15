@@ -87,8 +87,6 @@ const RankedBars = ({ ariaLabel, points, unit }: RankedBarsProps) => {
     <ul
       aria-label={ariaLabel}
       className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-150 gap-y-100 text-sm md:grid-cols-[minmax(7rem,14rem)_minmax(0,1fr)_auto]"
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <img> cannot hold the bar rows; the table below repeats these values.
-      role="img"
     >
       {points.map((point) => {
         const unassigned = point.key === UNASSIGNED_KEY;

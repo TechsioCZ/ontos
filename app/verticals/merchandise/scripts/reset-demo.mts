@@ -81,7 +81,7 @@ const productState = (product: CatalogProduct): EncodedMerchandiseState['product
 
 const openingReceipt = (product: CatalogProduct): EncodedMerchandiseState['movements'][number] => ({
   at: daysAgo(OPENING_RECEIPT_DAYS_AGO),
-  delta: openingReceiptQuantity(product.key),
+  delta: openingReceiptQuantity(product),
   id: demoId(MOVEMENT_NAMESPACE, `receipt:${product.key}`),
   note: OPENING_RECEIPT_NOTE,
   productId: demoId('product', product.key),
@@ -92,17 +92,21 @@ const openingReceipt = (product: CatalogProduct): EncodedMerchandiseState['movem
 const buildOrder = Effect.fn('Merchandise.buildOrder')(function* buildOrder(planned: PlannedOrder, index: number) {
   const number = `${ORDER_NUMBER_PREFIX}${String(index + 1).padStart(4, '0')}`;
   const createdAt = daysAgo(planned.createdDaysAgo);
-  const lines = planned.lines.map((line) => {
-    const product = productByKey(line.productKey);
-    return {
-      productId: demoId('product', line.productKey),
-      productName: product.name,
-      quantity: line.quantity,
-      sku: product.sku,
-      unitPriceMinor: snapshotPriceMinor(line.productKey, planned.createdDaysAgo),
-      vatRate: product.vatRate,
-    };
-  });
+  const lines = yield* Effect.all(
+    planned.lines.map((line) =>
+      Effect.gen(function* plannedLine() {
+        const product = yield* productByKey(line.productKey);
+        return {
+          productId: demoId('product', line.productKey),
+          productName: product.name,
+          quantity: line.quantity,
+          sku: product.sku,
+          unitPriceMinor: snapshotPriceMinor(product, planned.createdDaysAgo),
+          vatRate: product.vatRate,
+        };
+      }),
+    ),
+  );
   const typedLines = yield* Schema.decodeUnknownEffect(Schema.Array(OrderLineSchema))(lines);
   const totals = orderTotals(typedLines);
   const movements: EncodedMerchandiseState['movements'] =
