@@ -71,12 +71,14 @@
   },
   "dependencies": {
     "@app/catalog": "workspace:*",
+    "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@effect/opentelemetry": "4.0.0",
     "@effect/sql-pg": "4.0.0",
+    "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
     "@modern-js/i18n-integration": "catalog:ultramodern",
@@ -95,8 +97,7 @@
     "i18next": "26.4.2",
     "pg": "8.22.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "@app/commerce-customer-context": "workspace:*"
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@effect/tsgo": "0.41.0",
