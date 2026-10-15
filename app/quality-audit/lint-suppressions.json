@@ -76,7 +76,7 @@
     "react-doctor/js-cache-property-access": 1,
     "react-doctor/js-combine-iterations": 1,
     "sonarjs/no-built-in-override": 1,
-    "sonarjs/no-duplicate-string": 26,
+    "sonarjs/no-duplicate-string": 22,
     "sonarjs/no-nested-functions": 44,
     "sonarjs/no-undefined-assignment": 5,
     "sonarjs/no-wildcard-import": 18,

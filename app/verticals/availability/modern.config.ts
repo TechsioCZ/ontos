@@ -2,7 +2,6 @@ import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
-import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 
 import {
@@ -38,7 +37,7 @@ const modernConfig = createModernConfig({
   chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_AVAILABILITY_LOADED_CHUNKS__',
   cloudflareWorkerName,
   moduleUrl: import.meta.url,
-  plugins: [ultramodernAppTools(), tanstackRouterPlugin(), bffPlugin()],
+  plugins: [ultramodernAppTools(), bffPlugin()],
   uniqueName: 'verticalAvailability',
 });
 
