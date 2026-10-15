@@ -53,7 +53,7 @@ import { OpsShell } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
 import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
-const BUILD_MARKER = '0123456789abcdef';
+const BUILD_MARKER = '0123456789abcdef'.repeat(4);
 const SOURCE_REVISION = 'a'.repeat(40);
 const APP_ID = 'shell-super-app';
 const CONTRACT_PATH = '.well-known/ontos-shell-runtime.json';
