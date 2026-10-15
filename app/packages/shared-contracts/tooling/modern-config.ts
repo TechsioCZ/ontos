@@ -566,26 +566,22 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
 };
 
 /**
- * OntOS extensions of a headless (API-only) unit's `presetUltramodernWorkspace` config. The workspace
- * preset already derives the unit's port, asset prefix, output layout, build cache, site URL, dev CORS
- * and Worker identity (name, compatibility date, security, SSR) from topology; this adds only what
- * OntOS owns: the Worker's private data plane and cost guards, the development module contract, the
- * shell origin, the API-only entry scan, the Cloudflare runtime externals and the chunk namespace.
+ * OntOS extensions of a unit built with `presetUltramodernWorkspace`. The workspace preset derives the
+ * unit's port, asset prefix, output layout, build cache, site URL, dev CORS and Worker identity (name,
+ * compatibility date, security, SSR) from topology, and for UI units also its renderer, Zephyr upload
+ * and chunk namespace. This adds only what OntOS owns: the Worker's private data plane and cost guards,
+ * the development module contract, the shell origin and the Cloudflare runtime externals.
  */
-export const createHeadlessModernConfig = <Plugin>({
+export const createWorkspaceModernConfig = <Plugin>({
   build,
-  chunkLoadingGlobal,
   cloudflareCpuMs = CLOUDFLARE_WORKER_CPU_MS.vertical,
   moduleUrl,
   plugins,
-  uniqueName,
 }: {
   build: ModernBuildContext;
-  chunkLoadingGlobal: string;
-  cloudflareCpuMs?: number;
+  cloudflareCpuMs?: number | undefined;
   moduleUrl: string;
   plugins: Plugin[];
-  uniqueName: string;
 }) => ({
   ...(build.cloudflareDeployEnabled
     ? {
@@ -600,29 +596,58 @@ export const createHeadlessModernConfig = <Plugin>({
   dev: {
     setupMiddlewares: [createDevelopmentContractMiddleware(moduleUrl)],
   },
-  output: {
-    // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
-    disableTsChecker: true,
-  },
   plugins,
   server: {
     publicDir: ['./.dev-public'],
   },
   source: {
-    // Modern.js detects API-only apps from a missing entries directory. Keep owner source under
-    // `src/`, while directing its web-entry scan to a path that does not exist.
-    entriesDir: '.api-only-no-web-entry',
     globalVars: {
       ULTRAMODERN_SHELL_ORIGIN: build.moduleFederationDevServerOrigin,
     },
   },
   tools: {
-    bundlerChain: (chain: BundlerChain) => {
-      chain.output.uniqueName(uniqueName).chunkLoadingGlobal(chunkLoadingGlobal);
-    },
     rspack: createCloudflareRspack(build.cloudflareDeployEnabled, fileURLToPath(new URL('api/', moduleUrl))),
   },
 });
+
+/**
+ * `createWorkspaceModernConfig` for a headless (API-only) unit. The preset gives a headless unit no
+ * chunk namespace, so OntOS keeps its own; `pnpm typecheck` owns its type diagnostics, and its web-entry
+ * scan points at a path that does not exist so Modern.js treats it as API-only.
+ */
+export const createHeadlessModernConfig = <Plugin>({
+  build,
+  chunkLoadingGlobal,
+  cloudflareCpuMs,
+  moduleUrl,
+  plugins,
+  uniqueName,
+}: {
+  build: ModernBuildContext;
+  chunkLoadingGlobal: string;
+  cloudflareCpuMs?: number | undefined;
+  moduleUrl: string;
+  plugins: Plugin[];
+  uniqueName: string;
+}) => {
+  const workspace = createWorkspaceModernConfig({ build, cloudflareCpuMs, moduleUrl, plugins });
+  return {
+    ...workspace,
+    output: {
+      disableTsChecker: true,
+    },
+    source: {
+      ...workspace.source,
+      entriesDir: '.api-only-no-web-entry',
+    },
+    tools: {
+      ...workspace.tools,
+      bundlerChain: (chain: BundlerChain) => {
+        chain.output.uniqueName(uniqueName).chunkLoadingGlobal(chunkLoadingGlobal);
+      },
+    },
+  };
+};
 
 // Zephyr uploads only for a deploy that provides ZE_CI_TOKEN; the deploy environment then sets
 // ZE_FAIL_BUILD=true so a failed upload fails the build instead of shipping without it.
