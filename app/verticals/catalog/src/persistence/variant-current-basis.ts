@@ -1,7 +1,9 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import type { ProductRef } from '../../shared/resources/product.ts';
 import type { VariantRef } from '../../shared/resources/variant.ts';
@@ -12,7 +14,7 @@ import { variantAxisPersistenceForScope } from './variant-axis-persistence.ts';
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
 /** Stable length-independent encoding of the empty axis vector. */
-export const axisFreeCombinationKey = (): string => createHash('sha256').update('[]').digest('hex');
+export const axisFreeCombinationKey = (): string => Hex.encode(sha256(utf8ToBytes('[]')));
 
 const unavailable = (cause: unknown): CatalogPersistenceUnavailable => {
   const failure = new CatalogPersistenceUnavailable({

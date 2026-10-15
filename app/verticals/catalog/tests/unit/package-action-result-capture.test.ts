@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -115,7 +116,7 @@ describe('Package Action result capture', () => {
         { optionRevision: 3, state: 'ACTIVE' },
         { optionRevision: 3, state: 'RETIRED' },
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails the decoded-success hook if snapshot storage fails', () =>
@@ -131,6 +132,6 @@ describe('Package Action result capture', () => {
         );
         expect(failure).toMatchObject({ code: 'action_transaction_failed' });
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

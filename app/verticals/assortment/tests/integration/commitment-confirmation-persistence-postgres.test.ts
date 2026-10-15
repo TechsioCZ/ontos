@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { randomUUID } from 'node:crypto';
 
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
@@ -539,10 +540,12 @@ it.live('persists immutable confirmations with replay, RLS isolation, and append
               },
             },
             assortmentCommitmentConfirmationRepositoryForScope(transaction, scope),
-          ).issue(componentPayload, {
-            actionInvocationId: randomUUID(),
-            actorPrincipalId: principalId,
-          }),
+          )
+            .issue(componentPayload, {
+              actionInvocationId: randomUUID(),
+              actorPrincipalId: principalId,
+            })
+            .pipe(Effect.provide(NodeCrypto.layer)),
         );
         expect(issued.constituent).toEqual(component);
         expect(issued.constituent.role).toBe('REQUIRED_COMPONENT');

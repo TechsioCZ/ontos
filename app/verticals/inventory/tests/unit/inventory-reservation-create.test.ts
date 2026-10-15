@@ -338,7 +338,7 @@ const makeHarness = Effect.gen(function* makeHarness() {
       ]),
     makeAllocationId: ({ effectId: id, positionId, purchaseDemandOccurrenceId }) =>
       Schema.decodeUnknownSync(StockAllocationIdSchema)(`${id}:${purchaseDemandOccurrenceId}:${positionId}`),
-    makeMutationId: () => mutationId,
+    makeMutationId: Effect.succeed(mutationId),
     resolver: { resolve: (demand) => Effect.succeed(resolved(demand.purchaseDemandOccurrenceId, demand.quantity)) },
   });
   const execution = makeInventoryReservationCreateExecutionService({ backend, effects: effects.persistence, ledger });
@@ -624,7 +624,7 @@ describe('Inventory Reservation create result', () => {
         ledger: makeInMemoryInventoryEffectLedger(timestamp),
         lockBindingScopes: () => Effect.die('bindings must not be locked for exact replay'),
         makeAllocationId: () => Schema.decodeUnknownSync(StockAllocationIdSchema)('unused'),
-        makeMutationId: () => mutationId,
+        makeMutationId: Effect.succeed(mutationId),
         resolver: { resolve: () => Effect.die('demand must not be re-resolved for exact replay') },
       });
 
@@ -707,7 +707,7 @@ describe('Inventory Reservation create result', () => {
         lockBindingScopes: () => Effect.void,
         makeAllocationId: ({ effectId: id, positionId, purchaseDemandOccurrenceId }) =>
           Schema.decodeUnknownSync(StockAllocationIdSchema)(`${id}:${purchaseDemandOccurrenceId}:${positionId}`),
-        makeMutationId: () => mutationId,
+        makeMutationId: Effect.succeed(mutationId),
         resolver: {
           resolve: (current) => Effect.succeed(resolved(current.purchaseDemandOccurrenceId, current.quantity)),
         },
@@ -742,7 +742,7 @@ describe('Inventory Reservation create result', () => {
         ledger: makeInMemoryInventoryEffectLedger(timestamp),
         lockBindingScopes: () => Effect.void,
         makeAllocationId: () => Schema.decodeUnknownSync(StockAllocationIdSchema)('unused'),
-        makeMutationId: () => mutationId,
+        makeMutationId: Effect.succeed(mutationId),
         resolver: {
           resolve: () =>
             Effect.fail(
@@ -777,7 +777,7 @@ describe('Inventory Reservation create result', () => {
         ledger: makeInMemoryInventoryEffectLedger(timestamp),
         lockBindingScopes: () => Effect.void,
         makeAllocationId: () => Schema.decodeUnknownSync(StockAllocationIdSchema)('unused'),
-        makeMutationId: () => mutationId,
+        makeMutationId: Effect.succeed(mutationId),
         resolver: { resolve: () => Effect.die('resolver must not execute') },
       });
 

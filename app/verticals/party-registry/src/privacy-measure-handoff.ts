@@ -1,8 +1,10 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 export interface OwnerResourceRef {
   readonly legalEntityId: string;
@@ -29,16 +31,18 @@ export const parseOwnerResourceRef = (value: string): OwnerResourceRef | undefin
 const encodeHandoff = Schema.encodeResult(Schema.fromJsonString(PrivacyMeasureHandoffSchema));
 
 export const fingerprintPrivacyMeasureHandoff = (handoff: PrivacyMeasureHandoff): string =>
-  createHash('sha256')
-    .update(
-      Result.getOrThrow(
-        encodeHandoff({
-          ...handoff,
-          contentScopeRefs: handoff.contentScopeRefs.toSorted(),
-          expectedEvidenceRefs: handoff.expectedEvidenceRefs.toSorted(),
-          preconditionRefs: handoff.preconditionRefs.toSorted(),
-          resourceRefs: handoff.resourceRefs.toSorted(),
-        }),
+  Hex.encode(
+    sha256(
+      utf8ToBytes(
+        Result.getOrThrow(
+          encodeHandoff({
+            ...handoff,
+            contentScopeRefs: handoff.contentScopeRefs.toSorted(),
+            expectedEvidenceRefs: handoff.expectedEvidenceRefs.toSorted(),
+            preconditionRefs: handoff.preconditionRefs.toSorted(),
+            resourceRefs: handoff.resourceRefs.toSorted(),
+          }),
+        ),
       ),
-    )
-    .digest('hex');
+    ),
+  );

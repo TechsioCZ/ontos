@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Struct, Clock, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -372,7 +373,10 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     resources: () => Effect.succeed([]),
     tenants: () => Effect.succeed([]),
   };
-  const scopeResolver = makeOperationalScopeResolver({ load: () => Effect.succeed(activeScope) }, contextAccess);
+  const scopeResolver = yield* makeOperationalScopeResolver(
+    { load: () => Effect.succeed(activeScope) },
+    contextAccess,
+  ).pipe(Effect.provide(NodeCrypto.layer));
   const moduleStateGate = {
     check: checkModuleEntrypoint,
     prepareSnapshot: (scopeTenantId: string, entrypoints: readonly ModuleEntrypointDescriptor[]) =>

@@ -1,5 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { Effect } from 'effect';
+import type { Crypto } from 'effect';
 
 import type {
   CartOpenSelectionPopulationEvidence,
@@ -75,7 +76,7 @@ export interface CatalogOpenSelectionImpactRequest {
 export const assessCatalogOpenSelectionImpact = Effect.fn('CatalogSelectionOpenPopulation.assessImpact')(
   function* assessOpenSelectionImpact(
     input: CatalogOpenSelectionImpactRequest & { readonly assess: CatalogSelectionEvidenceReader['assess'] },
-  ): Effect.fn.Return<CatalogOpenSelectionImpact, CartOpenSelectionPopulationUnavailable> {
+  ): Effect.fn.Return<CatalogOpenSelectionImpact, CartOpenSelectionPopulationUnavailable, Crypto.Crypto> {
     if (input.population === undefined) {
       return {
         kind: 'POPULATION_UNAVAILABLE',

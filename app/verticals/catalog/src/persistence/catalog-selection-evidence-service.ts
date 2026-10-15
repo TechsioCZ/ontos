@@ -1,5 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { Effect } from 'effect';
+import type { Crypto } from 'effect';
 
 import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
@@ -79,7 +80,7 @@ export interface CatalogSelectionCurrentBasisReader {
   readonly read: (input: {
     readonly purpose: string;
     readonly selection: CatalogSelection;
-  }) => Effect.Effect<CatalogSelectionCurrentFacts, CatalogPersistenceUnavailable>;
+  }) => Effect.Effect<CatalogSelectionCurrentFacts, CatalogPersistenceUnavailable, Crypto.Crypto>;
 }
 
 /**
@@ -169,7 +170,7 @@ export const catalogSelectionEvidenceFromCurrentReader = (
 ) => ({
   assess: Effect.fn('CatalogSelectionEvidence.assess')(function* assess(
     input: CatalogSelectionEvidenceRequest,
-  ): Effect.fn.Return<CatalogSelectionEvidenceServiceResult> {
+  ): Effect.fn.Return<CatalogSelectionEvidenceServiceResult, never, Crypto.Crypto> {
     const { at, purpose, selection, validUntil } = input;
     return yield* Effect.gen(function* prepareAndRevalidate() {
       const request = { purpose, selection };

@@ -1,8 +1,10 @@
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import type { PriceProductTargetOutcomeIdentity } from '@app/pricing-contracts/domain/catalog-price-target';
 import type { PriceRef } from '@app/pricing-contracts/resources/price';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Context, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import type { Effect } from 'effect';
 
 import type { ManageProductPriceOperation } from '../../shared/actions/manage-product-prices-bulk.ts';
@@ -47,9 +49,7 @@ export interface ProductPriceBulkCommand<Operation> extends ProductPriceBulkTarg
 
 /** Stable owner-local Action identity used to reconcile one target across later bulk retries. */
 export const productPriceBulkActionInvocationIdFor = (tenantId: string, intentId: string): string => {
-  const digest = createHash('sha256')
-    .update(`commerce.pricing:product-price-bulk:${tenantId}:${intentId}`)
-    .digest('hex');
+  const digest = Hex.encode(sha256(utf8ToBytes(`commerce.pricing:product-price-bulk:${tenantId}:${intentId}`)));
   const variant = ['8', '9', 'a', 'b'][Number.parseInt(digest[16] ?? '0', 16) % 4] ?? '8';
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-${variant}${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 };

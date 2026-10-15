@@ -18,7 +18,8 @@ import {
 } from '@app/core-runtime/auth/external-identity-admission';
 import type { TrustedAdmissionObservationService } from '@app/core-runtime/auth/external-identity-admission';
 import { ExternalOperationAuthentication } from '@app/core-runtime/operations/external-authentication';
-import { Clock, DateTime, Effect, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Clock, Crypto, DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -208,7 +209,7 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
     );
     const canonicalRepository = makeOperationalScopeRepository({ executor: database });
     const canonicalLoads: { readonly operation: string; readonly tenantId: string }[] = [];
-    const scopeResolver = makeOperationalScopeResolver(
+    const scopeResolver = yield* makeOperationalScopeResolver(
       {
         load: (principal) =>
           Effect.suspend(() => {
@@ -220,7 +221,7 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
     );
     const actionRuntime = makeActionRuntime(
       { executor: database },
-      makeActionRepository(),
+      makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       scopeResolver,
       { ...openActionRuntimeOptions, contextAccess: actionContextAccess },
@@ -383,5 +384,5 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       .where(eq(outboxMessages.tenantId, tenantOneId));
     expect(pendingOutbox).toHaveLength(1);
     expect(pendingOutbox[0]?.matchedAt).toBe(null);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );

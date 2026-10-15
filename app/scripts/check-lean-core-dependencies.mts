@@ -204,6 +204,8 @@ const allowedCoreExternalSpecifiers = new Set([
   '@authzed/authzed-node',
   '@effect/platform-node',
   '@effect/sql-pg',
+  '@noble/hashes/sha2.js',
+  '@noble/hashes/utils.js',
   'drizzle-kit',
   'drizzle-orm',
   'drizzle-orm/effect-core',
@@ -211,7 +213,6 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm/pg-core',
   'cloudflare:workers',
   'effect',
-  'node:crypto',
   'pg',
 ]);
 
@@ -240,7 +241,7 @@ const isInsideCoreSource = (resolved: string): boolean =>
   resolved === coreSourceRoot || resolved.startsWith(`${coreSourceRoot}/`);
 
 // These native dependencies are admitted only behind a proven Node condition, never in the shared set.
-const nodeTransportSpecifiers = new Set(['node:stream', 'node:stream/web', '@effect/platform-node/Undici']);
+const nodeTransportSpecifiers = new Set(['@effect/platform-node/NodeStream', '@effect/platform-node/Undici']);
 
 const recordCoreSourceViolations = (
   record: (violation: LeanCoreDependencyViolation) => void,
@@ -492,6 +493,7 @@ const allowedCorePackageDependencies = new Set([
   '@authzed/authzed-node',
   '@effect/platform-node',
   '@effect/sql-pg',
+  '@noble/hashes',
   'drizzle-kit',
   'drizzle-orm',
   'effect',

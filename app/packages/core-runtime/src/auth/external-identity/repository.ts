@@ -1,8 +1,10 @@
 /* oxlint-disable effect-native/no-dependency-parameters -- Transaction-scoped repository factories intentionally receive trusted deployment seams explicitly; expires: 2027-03-31. */
-import { createHash } from 'node:crypto';
 
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq } from 'drizzle-orm';
 import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   AuthBindingStatusSchema,
@@ -889,9 +891,11 @@ export const externalIdentityRepositoryFromTransaction = (
   });
 
 export const externalIdentityQueryHash = (subject: ExternalUserSubject): string =>
-  createHash('sha256')
-    .update(`${subject.authenticationNamespaceId}\u0000${subject.subjectType}\u0000${subject.providerSubjectId}`)
-    .digest('hex');
+  Hex.encode(
+    sha256(
+      utf8ToBytes(`${subject.authenticationNamespaceId}\u0000${subject.subjectType}\u0000${subject.providerSubjectId}`),
+    ),
+  );
 
 export interface ExternalIdentityBindingSubjectLookupInput {
   readonly authBindingId: string;

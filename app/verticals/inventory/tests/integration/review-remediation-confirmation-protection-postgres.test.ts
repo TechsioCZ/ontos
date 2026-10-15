@@ -2,7 +2,8 @@ import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/work
 import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { PgInsertValue } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Option, Ref, Schema, Semaphore } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Crypto, DateTime, Effect, Option, Ref, Schema, Semaphore } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -598,9 +599,10 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
   yield* seedCore(coreAdmin);
   yield* seedInventory(admin);
 
+  const crypto = yield* Crypto.Crypto;
   const actionRuntime = makeActionRuntime(
     { executor: runtimeDatabase },
-    makeActionRepository(),
+    makeActionRepository(crypto),
     allowedPermission,
     testOperationalScopeResolver,
     {
@@ -616,7 +618,7 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
     contextAccess,
     { ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay },
   );
-  const outbox = makeOutboxRuntime(makeOutboxRepository(runtimeDatabase));
+  const outbox = makeOutboxRuntime(makeOutboxRepository(runtimeDatabase, crypto));
   const baseFanout = makeOutboxWorkerLegalEntityScopeFanout(
     makePostgresOutboxWorkerLegalEntityScopeBackend({
       executor: runtimeDatabase,
@@ -876,7 +878,7 @@ it.live(
           expect(yield* Ref.get(scenario.protectionAuthorityCalls)).toBe(1);
         }),
       ),
-    ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.live(
@@ -1044,5 +1046,5 @@ it.live(
           expect(yield* Ref.get(scenario.protectionAuthorityCalls)).toBe(1);
         }),
       ),
-    ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
 );

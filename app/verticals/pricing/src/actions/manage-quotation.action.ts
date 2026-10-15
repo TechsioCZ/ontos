@@ -17,8 +17,10 @@ import {
   PricingQuotationIssuedSchema,
 } from '@app/pricing-contracts/domain/quotation';
 import type { PricingQuotationBinding, PricingQuotationIssuanceRequest } from '@app/pricing-contracts/domain/quotation';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Context, DateTime, Duration, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   ManageQuotationPayloadSchema,
@@ -433,7 +435,7 @@ const issueCanonicalQuotation = (request: PricingQuotationIssuanceRequest, trust
 
 const commandFingerprint = (payload: ManageQuotationPayload) =>
   Schema.encodeEffect(Schema.fromJsonString(ManageQuotationPayloadSchema))(payload).pipe(
-    Effect.map((encoded) => createHash('sha256').update(encoded).digest('hex')),
+    Effect.map((encoded) => Hex.encode(sha256(utf8ToBytes(encoded)))),
     Effect.mapError((cause) => {
       const failure = new ManageQuotationRejected({
         code: 'manage_quotation_issuer_mismatch',

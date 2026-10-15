@@ -284,8 +284,8 @@ importers:
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/tsgo':
-        specifier: 0.41.0
-        version: 0.41.0
+        specifier: 0.53.1
+        version: 0.53.1
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.7(c898f7a6f616ccc0ba1a3c335da2bc62)'
@@ -460,6 +460,9 @@ importers:
       '@module-federation/modern-js-v3':
         specifier: npm:@bleedingdev/mf-modern-js-v3@2.9.4
         version: '@bleedingdev/mf-modern-js-v3@2.9.4(@rsbuild/core@2.2.11(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.2.8(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(react-dom@19.3.0(react@19.3.0))(react-router@7.18.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       '@tanstack/react-router':
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -591,6 +594,9 @@ importers:
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=295e082fd3f3096665b208a5cd19e0d50478c26a6933f7fcd5637ef1fc1bb73e)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0(effect@4.0.0))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0)(pg@8.22.0)(zod@4.6.5)
@@ -689,6 +695,9 @@ importers:
         specifier: 6.2.5
         version: 6.2.5
     devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@rstest/core':
         specifier: 0.11.12
         version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)
@@ -840,6 +849,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -882,6 +894,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       '@tanstack/react-router':
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -905,8 +920,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@effect/tsgo':
-        specifier: 0.41.0
-        version: 0.41.0
+        specifier: 0.53.1
+        version: 0.53.1
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.7(c7536a6bd7bc3b14376d77ecc498ea2e)'
@@ -1055,6 +1070,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -1097,6 +1115,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       '@tanstack/react-router':
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1117,8 +1138,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@effect/tsgo':
-        specifier: 0.41.0
-        version: 0.41.0
+        specifier: 0.53.1
+        version: 0.53.1
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.7(c7536a6bd7bc3b14376d77ecc498ea2e)'
@@ -1215,6 +1236,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -1242,6 +1266,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       better-auth:
         specifier: 1.7.6
         version: 1.7.6(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=295e082fd3f3096665b208a5cd19e0d50478c26a6933f7fcd5637ef1fc1bb73e)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0(effect@4.0.0))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0)(pg@8.22.0)(zod@4.6.5))(pg@8.22.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(solid-js@2.0.0-rc.13)
@@ -1312,6 +1339,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -1354,6 +1384,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       '@tanstack/react-router':
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1374,8 +1407,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@effect/tsgo':
-        specifier: 0.41.0
-        version: 0.41.0
+        specifier: 0.53.1
+        version: 0.53.1
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.7(c7536a6bd7bc3b14376d77ecc498ea2e)'
@@ -1451,6 +1484,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -1493,6 +1529,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       '@tanstack/react-router':
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1516,8 +1555,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@effect/tsgo':
-        specifier: 0.41.0
-        version: 0.41.0
+        specifier: 0.53.1
+        version: 0.53.1
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.7(c7536a6bd7bc3b14376d77ecc498ea2e)'
@@ -1590,6 +1629,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -1632,6 +1674,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       '@tanstack/react-router':
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1652,8 +1697,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@effect/tsgo':
-        specifier: 0.41.0
-        version: 0.41.0
+        specifier: 0.53.1
+        version: 0.53.1
       '@modern-js/adapter-rstest':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.7(a6efd254b8fcfe72ed1c1a9320e2aaae)'
@@ -1741,6 +1786,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -1759,6 +1807,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=295e082fd3f3096665b208a5cd19e0d50478c26a6933f7fcd5637ef1fc1bb73e)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0(effect@4.0.0))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0)(pg@8.22.0)(zod@4.6.5)
@@ -1914,6 +1965,9 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -1932,6 +1986,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=295e082fd3f3096665b208a5cd19e0d50478c26a6933f7fcd5637ef1fc1bb73e)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0(effect@4.0.0))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0)(pg@8.22.0)(zod@4.6.5)
@@ -1990,6 +2047,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -2055,8 +2115,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@effect/tsgo':
-        specifier: 0.41.0
-        version: 0.41.0
+        specifier: 0.53.1
+        version: 0.53.1
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.7(c7536a6bd7bc3b14376d77ecc498ea2e)'
@@ -2123,6 +2183,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0
         version: 4.0.0(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0)
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -2188,8 +2251,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@effect/tsgo':
-        specifier: 0.41.0
-        version: 0.41.0
+        specifier: 0.53.1
+        version: 0.53.1
       '@modern-js/app-tools':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.7(c7536a6bd7bc3b14376d77ecc498ea2e)'
@@ -2253,6 +2316,9 @@ importers:
       '@app/storefront-registry-contracts':
         specifier: workspace:*
         version: link:../../packages/storefront-registry-contracts
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -2323,6 +2389,9 @@ importers:
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@effect/sql-pg':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
@@ -2341,6 +2410,9 @@ importers:
       '@module-federation/runtime':
         specifier: npm:@bleedingdev/mf-runtime@2.9.3
         version: '@bleedingdev/mf-runtime@2.9.3'
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=295e082fd3f3096665b208a5cd19e0d50478c26a6933f7fcd5637ef1fc1bb73e)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0(effect@4.0.0))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0)(pg@8.22.0)(zod@4.6.5)
@@ -3348,19 +3420,14 @@ packages:
     peerDependencies:
       effect: ^4.0.0
 
-  '@effect/tsgo-darwin-arm64@0.41.0':
-    resolution: {integrity: sha512-3iEPtcHF72yDjv7T5YpnX+Io1LDLywJb1oGG3Fp/Fth4xmqiT1Vacyz5wnPCfEWGQ6CyrlyCZSSjUxPyJ70+DQ==}
-    cpu: [arm64]
-    os: [darwin]
-
   '@effect/tsgo-darwin-arm64@0.53.0':
     resolution: {integrity: sha512-YDwx3cFpohEMtjbd+65iH/tVxIZs39pkR8KW2Vy7c5GB1LjOzkB+jo2rcku6DOueV/bfpS1wiSmsD1jsTVNIRg==}
     cpu: [arm64]
     os: [darwin]
 
-  '@effect/tsgo-darwin-x64@0.41.0':
-    resolution: {integrity: sha512-rrVVNacJ/Qh8DfdfgNJDuzcVmR3xPnqes3z+F1kio99umJwPIRB8iPWRAY0SrO+Y84A/y2SSb0AjMGqA5V3Aiw==}
-    cpu: [x64]
+  '@effect/tsgo-darwin-arm64@0.53.1':
+    resolution: {integrity: sha512-wje3jvSaN3ttD7sBm9Bw/E8xHq2ZQWMJNg1YAGCj3/tiwUxHDUjKrt1LC/HLju+OnTBSsSvkUE8jXUT3OdQY4A==}
+    cpu: [arm64]
     os: [darwin]
 
   '@effect/tsgo-darwin-x64@0.53.0':
@@ -3368,19 +3435,19 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@effect/tsgo-linux-arm64@0.41.0':
-    resolution: {integrity: sha512-RVI+7pG3tP56LfH06a2aq4KLp2RQ0HohW8mmoGmrBPyNEL9DnzFEGB98ZoMJ+ERYUJoIp74Jy3nKRVbnzVhxFw==}
-    cpu: [arm64]
-    os: [linux]
+  '@effect/tsgo-darwin-x64@0.53.1':
+    resolution: {integrity: sha512-x4mNzV8WLPZ71Vu7vyOJiJGTNOrfYR0g5+Zg9Q9ZieKCVSJkWJvOIOND+EvT9gUP4qdTYQh4kzGbe/T+kSrilg==}
+    cpu: [x64]
+    os: [darwin]
 
   '@effect/tsgo-linux-arm64@0.53.0':
     resolution: {integrity: sha512-Io1RblTJ6hvff99rqsZSjEz18Yyprq8R7eZS7g/fzqMQ3aYqzbouUjpZaiCGRnZZfXS4Ft6I/1b4Nu3lBrEMhQ==}
     cpu: [arm64]
     os: [linux]
 
-  '@effect/tsgo-linux-arm@0.41.0':
-    resolution: {integrity: sha512-JddS91IaupLa22oc4YQiYppe7iAZAEyx/2iR9sAAAhpVanWACsIAcyUy4RJrs8sPLLoLsZQaKQa+9rbQO1FLsg==}
-    cpu: [arm]
+  '@effect/tsgo-linux-arm64@0.53.1':
+    resolution: {integrity: sha512-p2HrEKCh0EAY2G9MYS5vjJy2ZX27UyjZRgy2SUQu8PUVHLq3TAGTsX0d6I7LlNbRsUFxmI4HgypP6IPAUnjUwQ==}
+    cpu: [arm64]
     os: [linux]
 
   '@effect/tsgo-linux-arm@0.53.0':
@@ -3388,9 +3455,9 @@ packages:
     cpu: [arm]
     os: [linux]
 
-  '@effect/tsgo-linux-x64@0.41.0':
-    resolution: {integrity: sha512-U3+kMDVe2Opa5mxbN4B6PgOizWx5B4LXLN98CZDUl2vYtRGfwrRRhKQiB+de3ELaZ0MuDjPlCvU7S2mXQ8UiuQ==}
-    cpu: [x64]
+  '@effect/tsgo-linux-arm@0.53.1':
+    resolution: {integrity: sha512-y29MekM4Riv1MjnRS0ST49ttmvHoVdPNmpR3aivmNlOWIKXXm4XSGx0F+PEnblq8dESWeSXmAcC0mcETUq880A==}
+    cpu: [arm]
     os: [linux]
 
   '@effect/tsgo-linux-x64@0.53.0':
@@ -3398,19 +3465,19 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@effect/tsgo-win32-arm64@0.41.0':
-    resolution: {integrity: sha512-H6/xkn+B4B63OPKc0UAzQQFvLs0MXKigiD9dtvQeCU7czWGztOQILuLkyHnM1Dlc+uy4cJ5eXHiMXd+lwl+E8g==}
-    cpu: [arm64]
-    os: [win32]
+  '@effect/tsgo-linux-x64@0.53.1':
+    resolution: {integrity: sha512-dvvZGUW2DhQGjP+28v7Q977it6CLw44rh+OhP/+3snk0IeoMiRtnmtd6k42ny3/uvexJFAgLc2ch0ttwwGc/LQ==}
+    cpu: [x64]
+    os: [linux]
 
   '@effect/tsgo-win32-arm64@0.53.0':
     resolution: {integrity: sha512-qM7Aqw1uGmMDs8x/Iy2/kxKzzXx0WzH3/u66bjlEExSTv6DzHuAMXZmmb/1iUsth+TfqrwHwhHErFkwyyaLATg==}
     cpu: [arm64]
     os: [win32]
 
-  '@effect/tsgo-win32-x64@0.41.0':
-    resolution: {integrity: sha512-vRN/Mhi381xEGrvV68IN/VO4Lc0pnlVQzHSVmNCJXLwGLmJUvuvPoyZ7Lv4wwHRX9iZe8Rch21xUGu5jSQtUSw==}
-    cpu: [x64]
+  '@effect/tsgo-win32-arm64@0.53.1':
+    resolution: {integrity: sha512-9AvAoqT6QDhVKSaVx2PpgBxFJNbOP8gjBz+Q9cCJTaiOFFMxpuSvsrU1+ttDh4XuaWn3mJXtdQDSrEHlepuhoQ==}
+    cpu: [arm64]
     os: [win32]
 
   '@effect/tsgo-win32-x64@0.53.0':
@@ -3418,12 +3485,17 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@effect/tsgo@0.41.0':
-    resolution: {integrity: sha512-C/U7lFM0AXsfpqRilDOgwu+llBhAo8bcdIlzgbRWf1LWlU4KZKB2UsUvBPL3qPnm+wmbCvQLeTQc4BjV9oJrcg==}
-    hasBin: true
+  '@effect/tsgo-win32-x64@0.53.1':
+    resolution: {integrity: sha512-XTKMzsK3I78oApuTTcOx6orxGOqkGeDZBDHYiJQ6vIlwiKaeyZqCWm2fUtAgkvyxDyY5g4JXm8Qd23RVRSoxmg==}
+    cpu: [x64]
+    os: [win32]
 
   '@effect/tsgo@0.53.0':
     resolution: {integrity: sha512-a8Ss/rI9QoOvJTQPet0YUpLqXp+/Qaydil+WpIHOhhsqvCu3l6aqN5xB+C/Mff/QW51r54n3Frk7a/joFszHgw==}
+    hasBin: true
+
+  '@effect/tsgo@0.53.1':
+    resolution: {integrity: sha512-0LW8VI1+HvC+S5KOpReuAneN4T93ipcd8aKNXpy2DubBfm6ShWhBtWxtxPSaQ9M25gAtQs6w/D9NEmXqgd8uGg==}
     hasBin: true
 
   '@emnapi/core@1.11.2':
@@ -14085,57 +14157,47 @@ snapshots:
     dependencies:
       effect: 4.0.0
 
-  '@effect/tsgo-darwin-arm64@0.41.0':
-    optional: true
-
   '@effect/tsgo-darwin-arm64@0.53.0':
     optional: true
 
-  '@effect/tsgo-darwin-x64@0.41.0':
+  '@effect/tsgo-darwin-arm64@0.53.1':
     optional: true
 
   '@effect/tsgo-darwin-x64@0.53.0':
     optional: true
 
-  '@effect/tsgo-linux-arm64@0.41.0':
+  '@effect/tsgo-darwin-x64@0.53.1':
     optional: true
 
   '@effect/tsgo-linux-arm64@0.53.0':
     optional: true
 
-  '@effect/tsgo-linux-arm@0.41.0':
+  '@effect/tsgo-linux-arm64@0.53.1':
     optional: true
 
   '@effect/tsgo-linux-arm@0.53.0':
     optional: true
 
-  '@effect/tsgo-linux-x64@0.41.0':
+  '@effect/tsgo-linux-arm@0.53.1':
     optional: true
 
   '@effect/tsgo-linux-x64@0.53.0':
     optional: true
 
-  '@effect/tsgo-win32-arm64@0.41.0':
+  '@effect/tsgo-linux-x64@0.53.1':
     optional: true
 
   '@effect/tsgo-win32-arm64@0.53.0':
     optional: true
 
-  '@effect/tsgo-win32-x64@0.41.0':
+  '@effect/tsgo-win32-arm64@0.53.1':
     optional: true
 
   '@effect/tsgo-win32-x64@0.53.0':
     optional: true
 
-  '@effect/tsgo@0.41.0':
-    optionalDependencies:
-      '@effect/tsgo-darwin-arm64': 0.41.0
-      '@effect/tsgo-darwin-x64': 0.41.0
-      '@effect/tsgo-linux-arm': 0.41.0
-      '@effect/tsgo-linux-arm64': 0.41.0
-      '@effect/tsgo-linux-x64': 0.41.0
-      '@effect/tsgo-win32-arm64': 0.41.0
-      '@effect/tsgo-win32-x64': 0.41.0
+  '@effect/tsgo-win32-x64@0.53.1':
+    optional: true
 
   '@effect/tsgo@0.53.0':
     optionalDependencies:
@@ -14146,6 +14208,16 @@ snapshots:
       '@effect/tsgo-linux-x64': 0.53.0
       '@effect/tsgo-win32-arm64': 0.53.0
       '@effect/tsgo-win32-x64': 0.53.0
+
+  '@effect/tsgo@0.53.1':
+    optionalDependencies:
+      '@effect/tsgo-darwin-arm64': 0.53.1
+      '@effect/tsgo-darwin-x64': 0.53.1
+      '@effect/tsgo-linux-arm': 0.53.1
+      '@effect/tsgo-linux-arm64': 0.53.1
+      '@effect/tsgo-linux-x64': 0.53.1
+      '@effect/tsgo-win32-arm64': 0.53.1
+      '@effect/tsgo-win32-x64': 0.53.1
 
   '@emnapi/core@1.11.2':
     dependencies:

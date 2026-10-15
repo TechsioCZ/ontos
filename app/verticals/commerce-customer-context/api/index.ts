@@ -694,7 +694,7 @@ const actionRuntimeAwaitingOwnerPreparation = enrollmentAwareActionRuntimeLive.p
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
   Layer.provideMerge(purchaseApprovalCurrentnessFactoryLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, commercePortalAuthPlatformCryptoLive)),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
 const commerceCustomerContextActionRuntime = actionRuntimeAwaitingOwnerPreparation.pipe(
@@ -705,7 +705,7 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, commercePortalAuthPlatformCryptoLive)),
 );
 const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(
   Layer.provide(activeApplicationCompositionLive),

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -103,7 +104,7 @@ describe('committed Variant-axis change event', () => {
         producerModuleKey: 'commerce.catalog',
         topic: 'commerce.catalog.variant-axes-changed.v1',
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('publishes nothing when the governance call is unchanged or rejected', () =>
@@ -125,7 +126,7 @@ describe('committed Variant-axis change event', () => {
       yield* handleGovernVariantAxes(payload, rejected.value).pipe(Effect.flip);
       expect(rejected.events).toHaveLength(0);
       expect(rejected.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('decodes legacy axes input but fails closed before persistence without change evidence', () =>
@@ -144,7 +145,7 @@ describe('committed Variant-axis change event', () => {
       expect(failure).toMatchObject({ conflict: 'INVALID_INPUT' });
       expect(state.events).toHaveLength(0);
       expect(state.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed before persistence when an axis allowance revision is absent', () =>
@@ -177,7 +178,7 @@ describe('committed Variant-axis change event', () => {
       expect(failure).toMatchObject({ conflict: 'INVALID_INPUT' });
       expect(state.events).toHaveLength(0);
       expect(state.outbox).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('rejects an event whose Product subject does not belong to its Tenant', () => {

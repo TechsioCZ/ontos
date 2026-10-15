@@ -136,7 +136,7 @@
     "@babel/types": "8.0.6",
     "@effect/opentelemetry": "4.0.0",
     "@effect/platform-node": "4.0.0",
-    "@effect/tsgo": "0.41.0",
+    "@effect/tsgo": "0.53.1",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",

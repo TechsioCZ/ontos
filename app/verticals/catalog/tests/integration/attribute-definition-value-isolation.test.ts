@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
@@ -87,7 +88,7 @@ it.live('keeps two Products using one material definition independent in Current
               reason: 'Verified material correction',
               values: [{ kind: 'TEXT', text: material }],
             });
-          }),
+          }).pipe(Effect.provide(NodeCrypto.layer)),
         );
 
       yield* admin.insert(products).values(

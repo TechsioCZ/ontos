@@ -1,5 +1,6 @@
 /* eslint-disable effect-native/require-context-service-for-service-interface -- The public Context service is declared in cart-open-selection-population-service.ts to satisfy the one-class-per-file rule; owner: Catalog #479; tracking: #398; expires: 2027-03-31. */
 import { Effect, Option, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import { CatalogRevisionInstantSchema, CatalogRevisionTenantIdSchema } from './catalog-revision-reference.ts';
 import type { CatalogSelectionOwnerAssessmentResult } from './catalog-selection-owner-contract.ts';
@@ -106,7 +107,7 @@ export interface CatalogSelectionEvidenceReader {
   readonly assess: (input: {
     readonly purpose: CatalogSelectionPurpose;
     readonly selection: CatalogSelection;
-  }) => Effect.Effect<{ readonly evidence: CatalogSelectionOwnerAssessmentResult }>;
+  }) => Effect.Effect<{ readonly evidence: CatalogSelectionOwnerAssessmentResult }, never, Crypto.Crypto>;
 }
 
 /** A selection references the exact Product when owner, Resource, and Tenant all match. */

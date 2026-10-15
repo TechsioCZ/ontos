@@ -1,4 +1,4 @@
-import { Config, DateTime, Effect, Redacted, Result } from 'effect';
+import { Config, Crypto, DateTime, Effect, Redacted, Result } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { eq } from 'drizzle-orm';
@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import type { CommercePortalAuthSessionStore } from '../../api/portal-auth/session/store-service.ts';
@@ -194,7 +195,11 @@ const revocationEvent = (
 };
 
 const makeSessionAuditFixture = Effect.fn('CommercePortalAuthAuditIntegration.makeSessionFixture')(
-  function* makeSessionAuditFixtureEffect(): Effect.fn.Return<SessionAuditFixture, unknown, Scope.Scope> {
+  function* makeSessionAuditFixtureEffect(): Effect.fn.Return<
+    SessionAuditFixture,
+    unknown,
+    Scope.Scope | Crypto.Crypto
+  > {
     const connectionString = yield* DATABASE_URL;
     const configuration = yield* parseCommercePortalAuthConfig({
       COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(connectionString),
@@ -244,7 +249,7 @@ const makeSessionAuditFixture = Effect.fn('CommercePortalAuthAuditIntegration.ma
       sessionId,
       sessionRows: () =>
         database.executor.select({ id: session.id }).from(session).where(eq(session.id, sessionId)).pipe(Effect.orDie),
-      store: makeCommercePortalAuthSessionStore(database.executor),
+      store: makeCommercePortalAuthSessionStore(database.executor, yield* Crypto.Crypto),
     };
   },
 );
@@ -269,7 +274,7 @@ it.live('rolls a revocation back when PostgreSQL refuses its audit row', () =>
       expect(yield* fixture.sessionRows()).toStrictEqual([{ id: fixture.sessionId }]);
       expect(yield* fixture.auditRows()).toStrictEqual([]);
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it.live('commits a revocation and exactly one audit row together', () =>
@@ -288,5 +293,5 @@ it.live('commits a revocation and exactly one audit row together', () =>
         { eventType: 'commerce.portal-auth.session-revoked.v1', operation: 'revoke' },
       ]);
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

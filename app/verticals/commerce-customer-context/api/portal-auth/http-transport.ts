@@ -1,7 +1,10 @@
-import { createHmac } from 'node:crypto';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { Cookies, HttpEffect, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Option, Redacted, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
 import type { HttpServerRequest } from 'effect/http';
 
 import { CommercePortalAuthConfig } from './provider/config-service.ts';
@@ -55,7 +58,7 @@ export const requestHeaders = (headers: CommercePortalAuthRequestHeaders): Heade
  * portal's customers and the credentials they hold.
  */
 export const hashSubjectKey = (subject: string, secret: Redacted.Redacted): string =>
-  createHmac('sha256', Redacted.value(secret)).update(subject).digest('base64url');
+  Base64Url.encode(hmac(sha256, utf8ToBytes(Redacted.value(secret)), utf8ToBytes(subject)));
 
 /** Every request that cannot name a peer shares this key, so an unattributable caller is capped. */
 export const UNRESOLVED_PORTAL_AUTH_CLIENT_KEY = 'no-trusted-peer';

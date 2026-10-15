@@ -177,10 +177,9 @@ it.live('passes on a tree with only allowed dependencies and documented seams', 
 );
 
 const nodeDriverSource = [
-  "import { Readable } from 'node:stream';",
-  "import { ReadableStream } from 'node:stream/web';",
+  "import { fromReadable } from '@effect/platform-node/NodeStream';",
   "import { request } from '@effect/platform-node/Undici';",
-  'export const driver = [Readable, ReadableStream, request];',
+  'export const driver = [fromReadable, request];',
 ].join('\n');
 const nodeAdapterPath = './src/transport.adapter.ts';
 const workerAdapterPath = './src/transport.worker.ts';

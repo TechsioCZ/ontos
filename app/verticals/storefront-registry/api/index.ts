@@ -1,4 +1,5 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { NodeCrypto } from '@effect/platform-node';
 import {
   ContextAccessLive,
   CorePersistenceLive,
@@ -88,7 +89,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
 );
 
 type StorefrontRegistryApiRuntimeArguments = readonly [

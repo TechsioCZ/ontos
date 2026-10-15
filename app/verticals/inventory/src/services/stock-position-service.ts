@@ -1,7 +1,5 @@
-import { randomUUID } from 'node:crypto';
-
 import type { Effect as EffectType } from 'effect';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 
 import type { InventoryBackendConfiguration } from '../../shared/domain/inventory-backend-configuration.ts';
 import type { InventoryBackendConfigurationPersistenceUnavailable } from '../../shared/domain/inventory-backend-configuration-persistence-unavailable.ts';
@@ -20,10 +18,8 @@ import type {
   StockPositionReservedEvidence,
 } from '../../shared/domain/stock-position.ts';
 import type { StockPositionRef } from '../../shared/resources/stock-position.ts';
-import type {
-  StockPositionPersistence,
-  StockPositionPersistenceUnavailable,
-} from '../persistence/stock-position-repository.ts';
+import type { StockPositionPersistence } from '../persistence/stock-position-repository.ts';
+import { StockPositionPersistenceUnavailable } from '../persistence/stock-position-repository.ts';
 import type { InventoryBackendConfigurationPersistence } from '../persistence/inventory-backend-configuration-repository.ts';
 import type { StockPositionAllocationReadUnavailable } from './stock-position-allocation-read-unavailable.ts';
 
@@ -84,7 +80,9 @@ const isSelectedOwner = (position: StockPosition, configuration: InventoryBacken
 // oxlint-disable-next-line effect-native/require-context-service-for-service-interface -- Core supplies this transaction-scoped owner service through the generated factory; it has no independent runtime Context identity; expires: 2027-03-31.
 export interface StockPositionServiceContract {
   readonly end: (ref: StockPositionRef, endedAt: string) => EffectType.Effect<StockPosition, StockPositionServiceError>;
-  readonly establish: (input: CreateStockPositionInput) => EffectType.Effect<StockPosition, StockPositionServiceError>;
+  readonly establish: (
+    input: CreateStockPositionInput,
+  ) => EffectType.Effect<StockPosition, StockPositionServiceError, Crypto.Crypto>;
   readonly read: (ref: StockPositionRef) => EffectType.Effect<
     {
       readonly position: StockPosition;
@@ -148,6 +146,16 @@ export const makeStockPositionService = ({
         });
       }
       const createdAt = DateTime.formatIso(yield* DateTime.now);
+      const crypto = yield* Crypto.Crypto;
+      const positionId = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError(
+          (cause) =>
+            new StockPositionPersistenceUnavailable({
+              code: 'stock_position_persistence_unavailable',
+              reason: `Stock Position identity is unavailable: ${String(cause)}`,
+            }),
+        ),
+      );
       const candidate = yield* Schema.decodeEffect(StockPositionSchema)({
         createdAt,
         endedAt: null,
@@ -155,7 +163,7 @@ export const makeStockPositionService = ({
         onHand: input.onHand,
         ref: {
           moduleId: 'commerce.inventory',
-          resourceId: randomUUID(),
+          resourceId: positionId,
           resourceType: 'commerce.inventory.stock-position',
           tenantId: input.scope.stockItemRef.tenantId,
         },

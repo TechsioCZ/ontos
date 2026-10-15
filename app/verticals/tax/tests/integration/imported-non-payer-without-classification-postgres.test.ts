@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { ContextAccess, ReadRuntime, toContextPermissionAccessKey } from '@app/core-runtime';
 import type {
   ContextAccessService,
@@ -9,12 +7,13 @@ import type {
 } from '@app/core-runtime';
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq, sql } from 'drizzle-orm';
-import { Context, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
@@ -59,30 +58,43 @@ import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-v
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
-const tenantId = randomUUID();
-const legalEntityId = randomUUID();
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
 const T = '2026-06-01T10:00:00.000Z';
-const scope: OperationalScope = {
-  authBindingId: randomUUID(),
-  authContextRef: `better-auth-session:${randomUUID()}`,
-  authMethod: 'session',
-  correlationId: randomUUID(),
-  legalEntityId,
-  principalId: randomUUID(),
-  tenantId,
-};
+
+/** One seller scope of one Tenant, fresh for each test. */
+const makeFixture = Effect.gen(function* makeImportedNonPayerFixture() {
+  const [tenantId, legalEntityId, authBindingId, authContextId, correlationId, principalId] = yield* Effect.all([
+    nextUuid,
+    nextUuid,
+    nextUuid,
+    nextUuid,
+    nextUuid,
+    nextUuid,
+  ]);
+  const scope: OperationalScope = {
+    authBindingId,
+    authContextRef: `better-auth-session:${authContextId}`,
+    authMethod: 'session',
+    correlationId,
+    legalEntityId,
+    principalId,
+    tenantId,
+  };
+  return { legalEntityId, scope, tenantId };
+});
 type CoreTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 
 const runScoped = <Value, Failure>(
   database: CoreTestDatabase,
+  scope: OperationalScope,
   operation: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure>,
 ) => database.transaction((transaction) => installOperationalScope(transaction, scope).pipe(Effect.flatMap(operation)));
 
 /** Trusted Action admission/collector seam; owner persistence is native PostgreSQL, not a scripted service. */
-const actionContext = <Services>(services: Services) => {
+const actionContext = <Services>(scope: OperationalScope, actionInvocationId: string, services: Services) => {
   const eventReference: DomainEventReference = Schema.decodeSync(Schema.Any)({});
   return {
-    actionInvocationId: randomUUID(),
+    actionInvocationId,
     addDomainEvent: () => Effect.succeed(eventReference),
     addOutboxMessage: () => Effect.void,
     compositionRevision: 'c'.repeat(64),
@@ -93,7 +105,7 @@ const actionContext = <Services>(services: Services) => {
   };
 };
 
-const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
+const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>, tenantId: string) =>
   admin.transaction((transaction) =>
     Effect.gen(function* cleanupImportedNonPayerFixtures() {
       yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
@@ -124,6 +136,7 @@ const positionalRow = (row: readonly unknown[]) => Object.fromEntries(row.map((v
  */
 const evaluationHttp = Effect.fn('ImportedNonPayerTest.evaluationHttp')(function* evaluationHttp(
   runtimeClient: PgClient.PgClient,
+  scope: OperationalScope,
 ) {
   const harness = yield* makeReadTestHarness({
     executeOwnerQuery: (query) =>
@@ -193,119 +206,131 @@ const EvaluatedSuccessSchema = Schema.TaggedStruct('EVALUATED', {
   outcome: TaxOutcomeSuccessSchema,
 });
 
-it.live(
-  'E03 imported NON_PAYER without TAX_CATEGORY evaluates over public HTTP and finalizes from persisted import',
-  () =>
-    Effect.scoped(
-      Effect.gen(function* importedNonPayerWithoutClassification() {
-        const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
-        const admin = yield* makeTestDatabaseFromClient(adminClient, taxRelations);
-        const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
-        yield* cleanup(admin);
-        yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-        const importPayload = yield* Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)({
-          declarations: [{ regime: 'NON_PAYER', sourceRecordRef: 'legacy:non-payer-without-tax-category' }],
-          migrationRunRef: 'e03:source-import',
-          migrationStartedAt: '2026-01-15T00:00:00.000Z',
-        });
-        const importDeclarations = runScoped(runtime, (transaction) =>
-          handleImportSellerVatRegimeDeclarations(
-            importPayload,
-            actionContext(sellerVatRegimeDeclarationsForScope(transaction, scope)),
-          ),
-        ).pipe(Effect.flatMap(Schema.encodeEffect(ImportSellerVatRegimeDeclarationsResultSchema)));
-        expect(yield* importDeclarations).toMatchObject({ created: true });
-        expect(yield* importDeclarations).toMatchObject({ created: false });
-        const sourceRows = yield* adminClient.unsafe(
-          `select regime, provenance, effective_from_origin, source_record_ref
-       from tax.tax_seller_vat_regime_declarations where tenant_id = $1 and legal_entity_id = $2`,
-          [tenantId, legalEntityId],
-        );
-        expect(sourceRows).toEqual([
-          {
-            effective_from_origin: 'MIGRATION_START',
-            provenance: 'MIGRATED',
-            regime: 'NON_PAYER',
-            source_record_ref: 'legacy:non-payer-without-tax-category',
-          },
-        ]);
-
-        const { catalog: _catalog, ...withoutClassification } = evaluationRequestInput({
-          purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: legalEntityId, tenantId }),
-          taxRelevantTime: T,
-        });
-        const request = yield* Schema.decodeEffect(TaxEvaluationRequestSchema)(withoutClassification);
-        expect(request).not.toHaveProperty('catalog');
-        const http = yield* evaluationHttp(runtimeClient);
-        const evaluated = yield* http
-          .run(request)
-          .pipe(
-            Effect.flatMap(Schema.encodeEffect(TaxEvaluationResponseSchema)),
-            Effect.flatMap(Schema.decodeUnknownEffect(EvaluatedSuccessSchema)),
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('imported non-payer without classification', (suite) => {
+  suite.effect(
+    'E03 imported NON_PAYER without TAX_CATEGORY evaluates over public HTTP and finalizes from persisted import',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* importedNonPayerWithoutClassification() {
+          const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+          const admin = yield* makeTestDatabaseFromClient(adminClient, taxRelations);
+          const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+          const { legalEntityId, scope, tenantId } = yield* makeFixture;
+          yield* cleanup(admin, tenantId);
+          yield* Effect.addFinalizer(() => cleanup(admin, tenantId).pipe(Effect.orDie));
+          const importPayload = yield* Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)({
+            declarations: [{ regime: 'NON_PAYER', sourceRecordRef: 'legacy:non-payer-without-tax-category' }],
+            migrationRunRef: 'e03:source-import',
+            migrationStartedAt: '2026-01-15T00:00:00.000Z',
+          });
+          const importDeclarations = nextUuid.pipe(
+            Effect.flatMap((actionInvocationId) =>
+              runScoped(runtime, scope, (transaction) =>
+                handleImportSellerVatRegimeDeclarations(
+                  importPayload,
+                  actionContext(scope, actionInvocationId, sellerVatRegimeDeclarationsForScope(transaction, scope)),
+                ),
+              ),
+            ),
+            Effect.flatMap(Schema.encodeEffect(ImportSellerVatRegimeDeclarationsResultSchema)),
           );
-        expect(http.statuses).toEqual([200]);
-        expect(evaluated.outcome.decision.purchaseBinding).toEqual(request.purchase);
-        expect(evaluated.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
-        expect(evaluated.outcome.decision.declarationRevisionRef).toEqual({ revision: 1 });
-        expect(evaluated.outcome.result.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
-        expect(
-          evaluated.outcome.decision.units.every(({ treatment }) =>
-            Schema.is(SellerNotVatPayerTreatmentSchema)(treatment),
-          ),
-        ).toBe(true);
-        expect(
-          evaluated.outcome.decision.units.every(
-            (unit) => !('taxClassification' in unit) && !('governingTaxRuleRevisionRef' in unit),
-          ),
-        ).toBe(true);
-        expect(evaluated.evidence.sellerVatRegime.selection).toMatchObject({
-          effectiveFromOrigin: 'MIGRATION_START',
-          provenance: 'MIGRATED',
-        });
-        expect(evaluated.evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
-        expect(evaluated.evidence.ruleSets).toEqual([]);
-        expect(http.snapshot().ownerQueries.some((query) => /tax_rules|tax_rule_revisions/iu.test(query.sql))).toBe(
-          false,
-        );
+          expect(yield* importDeclarations).toMatchObject({ created: true });
+          expect(yield* importDeclarations).toMatchObject({ created: false });
+          const sourceRows = yield* adminClient.unsafe(
+            `select regime, provenance, effective_from_origin, source_record_ref
+         from tax.tax_seller_vat_regime_declarations where tenant_id = $1 and legal_entity_id = $2`,
+            [tenantId, legalEntityId],
+          );
+          expect(sourceRows).toEqual([
+            {
+              effective_from_origin: 'MIGRATION_START',
+              provenance: 'MIGRATED',
+              regime: 'NON_PAYER',
+              source_record_ref: 'legacy:non-payer-without-tax-category',
+            },
+          ]);
 
-        const { taxRelevantTime: _taxRelevantTime, ...candidate } = withoutClassification;
-        const submissionRef = `e03:submission:${randomUUID()}`;
-        const finalPayload = yield* Schema.decodeEffect(FinalizeOrderTaxPayloadSchema)({
-          candidate,
-          orderCommitmentTime: T,
-          provenanceRef: 'e03:acceptance',
-          reason: 'Imported non-payer final',
-          submissionRef,
-        });
-        const final = yield* runScoped(runtime, (transaction) =>
-          handleFinalizeOrderTax(finalPayload, actionContext(orderTaxFinalizationsForScope(transaction, scope))),
-        ).pipe(
-          Effect.flatMap(Schema.encodeEffect(FinalizeOrderTaxResultSchema)),
-          Effect.flatMap(Schema.decodeUnknownEffect(FinalizeOrderTaxResultSchema)),
-        );
-        const finalized = yield* Match.value(final).pipe(
-          Match.tag('FINALIZED', (value) => Effect.succeed(value)),
-          Match.orElse(() => Effect.die(new Error('Expected an imported non-payer final'))),
-        );
-        expect(finalized.created).toBe(true);
-        expect(finalized.handoff.outcome.decision.purchaseBinding).toEqual(request.purchase);
-        expect(finalized.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
-        expect(finalized.handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
-        expect(DateTime.formatIso(finalized.handoff.orderCommitmentTime)).toBe(T);
-        expect(finalized.evidence.sellerVatRegime.selection).toMatchObject({ provenance: 'MIGRATED' });
-        expect(finalized.evidence.ruleSets).toEqual([]);
-        const recovered = yield* runScoped(runtime, (transaction) =>
-          orderTaxFinalizationsForScope(transaction, scope).finalOrderTax({
-            submissionRef: finalPayload.submissionRef,
-          }),
-        ).pipe(Effect.map(Option.getOrThrow));
-        expect(recovered.handoff).toEqual(finalized.handoff);
-        const finalRows = yield* adminClient.unsafe(
-          `select outcome -> 'result' -> 'purchaseTaxTotal' ->> 'amount' as tax_amount, governing_rule_revisions
-       from tax.tax_order_tax_finalizations where tenant_id = $1 and submission_ref = $2`,
-          [tenantId, submissionRef],
-        );
-        expect(finalRows).toEqual([{ governing_rule_revisions: [], tax_amount: '0.00' }]);
-      }),
-    ),
-);
+          const { catalog: _catalog, ...withoutClassification } = evaluationRequestInput({
+            purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: legalEntityId, tenantId }),
+            taxRelevantTime: T,
+          });
+          const request = yield* Schema.decodeEffect(TaxEvaluationRequestSchema)(withoutClassification);
+          expect(request).not.toHaveProperty('catalog');
+          const http = yield* evaluationHttp(runtimeClient, scope);
+          const evaluated = yield* http
+            .run(request)
+            .pipe(
+              Effect.flatMap(Schema.encodeEffect(TaxEvaluationResponseSchema)),
+              Effect.flatMap(Schema.decodeUnknownEffect(EvaluatedSuccessSchema)),
+            );
+          expect(http.statuses).toEqual([200]);
+          expect(evaluated.outcome.decision.purchaseBinding).toEqual(request.purchase);
+          expect(evaluated.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
+          expect(evaluated.outcome.decision.declarationRevisionRef).toEqual({ revision: 1 });
+          expect(evaluated.outcome.result.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
+          expect(
+            evaluated.outcome.decision.units.every(({ treatment }) =>
+              Schema.is(SellerNotVatPayerTreatmentSchema)(treatment),
+            ),
+          ).toBe(true);
+          expect(
+            evaluated.outcome.decision.units.every(
+              (unit) => !('taxClassification' in unit) && !('governingTaxRuleRevisionRef' in unit),
+            ),
+          ).toBe(true);
+          expect(evaluated.evidence.sellerVatRegime.selection).toMatchObject({
+            effectiveFromOrigin: 'MIGRATION_START',
+            provenance: 'MIGRATED',
+          });
+          expect(evaluated.evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
+          expect(evaluated.evidence.ruleSets).toEqual([]);
+          expect(http.snapshot().ownerQueries.some((query) => /tax_rules|tax_rule_revisions/iu.test(query.sql))).toBe(
+            false,
+          );
+
+          const { taxRelevantTime: _taxRelevantTime, ...candidate } = withoutClassification;
+          const [submissionId, finalizationInvocationId] = yield* Effect.all([nextUuid, nextUuid]);
+          const submissionRef = `e03:submission:${submissionId}`;
+          const finalPayload = yield* Schema.decodeEffect(FinalizeOrderTaxPayloadSchema)({
+            candidate,
+            orderCommitmentTime: T,
+            provenanceRef: 'e03:acceptance',
+            reason: 'Imported non-payer final',
+            submissionRef,
+          });
+          const final = yield* runScoped(runtime, scope, (transaction) =>
+            handleFinalizeOrderTax(
+              finalPayload,
+              actionContext(scope, finalizationInvocationId, orderTaxFinalizationsForScope(transaction, scope)),
+            ),
+          ).pipe(
+            Effect.flatMap(Schema.encodeEffect(FinalizeOrderTaxResultSchema)),
+            Effect.flatMap(Schema.decodeUnknownEffect(FinalizeOrderTaxResultSchema)),
+          );
+          const finalized = yield* Match.value(final).pipe(
+            Match.tag('FINALIZED', (value) => Effect.succeed(value)),
+            Match.orElse(() => Effect.die(new Error('Expected an imported non-payer final'))),
+          );
+          expect(finalized.created).toBe(true);
+          expect(finalized.handoff.outcome.decision.purchaseBinding).toEqual(request.purchase);
+          expect(finalized.handoff.outcome.decision.sellerVatRegime).toBe('NON_PAYER');
+          expect(finalized.handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
+          expect(DateTime.formatIso(finalized.handoff.orderCommitmentTime)).toBe(T);
+          expect(finalized.evidence.sellerVatRegime.selection).toMatchObject({ provenance: 'MIGRATED' });
+          expect(finalized.evidence.ruleSets).toEqual([]);
+          const recovered = yield* runScoped(runtime, scope, (transaction) =>
+            orderTaxFinalizationsForScope(transaction, scope).finalOrderTax({
+              submissionRef: finalPayload.submissionRef,
+            }),
+          ).pipe(Effect.map(Option.getOrThrow));
+          expect(recovered.handoff).toEqual(finalized.handoff);
+          const finalRows = yield* adminClient.unsafe(
+            `select outcome -> 'result' -> 'purchaseTaxTotal' ->> 'amount' as tax_amount, governing_rule_revisions
+         from tax.tax_order_tax_finalizations where tenant_id = $1 and submission_ref = $2`,
+            [tenantId, submissionRef],
+          );
+          expect(finalRows).toEqual([{ governing_rule_revisions: [], tax_amount: '0.00' }]);
+        }),
+      ),
+  );
+});

@@ -7,6 +7,7 @@ import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   CommerceSessionReferenceSchema,
 } from '../../shared/portal-auth-contracts.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../api/portal-auth/provider/config.ts';
 import type { CommercePortalAuthConfigValue } from '../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
@@ -355,6 +356,7 @@ const runWithFixture = <A, E>(
     Effect.provideService(CommercePortalAuthStepUpCodeVerifierService, fixture.codeVerifier),
     Effect.provideService(CommercePortalAuthSessionLifecycle, fixture.lifecycle),
     Effect.provideService(CommercePortalAuthSessionReaderService, fixture.sessionReader),
+    Effect.provide(commercePortalAuthPlatformCryptoLive),
     Effect.provide(TestClock.layer()),
   );
 };

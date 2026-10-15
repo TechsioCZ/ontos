@@ -1,18 +1,12 @@
-import { Readable } from 'node:stream';
-import { ReadableStream as NodeReadableStream } from 'node:stream/web';
-
+import { fromReadable, toReadable } from '@effect/platform-node/NodeStream';
 import { request as requestNodeHttp } from '@effect/platform-node/Undici';
-import { Duration, Effect, Schema } from 'effect';
+import { Duration, Effect, Schema, Stream } from 'effect';
 
 import { ApplicationCompositionBackendSchema } from '../modules/application-composition-backend.ts';
 import type { ApplicationCompositionModule } from '../modules/application-composition.ts';
 import { moduleReleaseWorkerName } from './module-release-identity.ts';
 import { ModuleReleaseTransportError } from './module-release-transport-error.ts';
 import type { UnitRoutedFetch, UnitServiceFetch } from './unit-service-fetch.ts';
-
-// Node exposes the same native streams through two incompatible declaration files.
-const NodeRequestBodySchema = Schema.instanceOf(NodeReadableStream<Uint8Array>);
-const WebResponseBodySchema = Schema.instanceOf(globalThis.ReadableStream<Uint8Array>);
 
 /** Node reaches every unit at its configured URL. */
 export const unitServiceFetch: UnitServiceFetch = () => globalThis.fetch;
@@ -39,15 +33,15 @@ export const moduleReleaseFetch = Effect.fn('ModuleRelease.fetchNode')(function*
   const ownerUrl = new URL(backend.baseUrl);
   ownerUrl.pathname = requestedUrl.pathname;
   ownerUrl.search = requestedUrl.search;
+  const requestBody = request.body;
   const body =
-    request.body === null
+    requestBody === null
       ? null
-      : yield* Schema.decodeUnknownEffect(NodeRequestBodySchema)(request.body).pipe(
-          Effect.map((stream) => Readable.fromWeb(stream)),
-          Effect.mapError(
-            (cause) =>
-              new ModuleReleaseTransportError({ cause, reason: 'The owner request body is not a native Node stream' }),
-          ),
+      : yield* toReadable(
+          Stream.fromReadableStream({
+            evaluate: () => requestBody,
+            onError: (cause) => new ModuleReleaseTransportError({ cause, reason: 'The owner request body failed' }),
+          }),
         );
   const response = yield* Effect.tryPromise({
     catch: (cause) =>
@@ -83,11 +77,11 @@ export const moduleReleaseFetch = Effect.fn('ModuleRelease.fetchNode')(function*
   }
   const responseBody = hasNoBody
     ? null
-    : yield* Schema.decodeUnknownEffect(WebResponseBodySchema)(Readable.toWeb(response.body)).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ModuleReleaseTransportError({ cause, reason: 'The owner response body is not a native Web stream' }),
-        ),
+    : Stream.toReadableStream(
+        fromReadable<Uint8Array, ModuleReleaseTransportError>({
+          evaluate: () => response.body,
+          onError: (cause) => new ModuleReleaseTransportError({ cause, reason: 'The owner response body failed' }),
+        }),
       );
   return new Response(responseBody, {
     headers,

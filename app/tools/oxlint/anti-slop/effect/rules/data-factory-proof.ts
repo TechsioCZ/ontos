@@ -36,6 +36,10 @@ const array = (element: Value, empty = false): Value => ({ kind: 'array', elemen
 const record = (fields: ReadonlyMap<string, Value>, open = false): Value => ({ kind: 'record', fields, open });
 const schema = (payload: Value): Value => ({ kind: 'schema', payload });
 const native = (name: string): Value => ({ kind: 'native', native: name });
+/** Pure byte functions: one data argument in, bytes out. */
+const NOBLE_DATA_FUNCTIONS = new Set(['@noble/hashes/sha2.js:sha256', '@noble/hashes/utils.js:utf8ToBytes']);
+/** Pure `effect/encoding` functions: one data argument in, a string out. */
+const ENCODING_DATA_FUNCTIONS = new Set(['effect/encoding:Hex.encode', 'effect/encoding:Base64Url.encode']);
 const isData = (value: Value): boolean =>
   value.kind === 'data' ||
   (value.kind === 'array' && isData(value.element ?? BAD)) ||
@@ -374,8 +378,12 @@ class DataFactoryProof {
     if (imported !== undefined) {
       if (imported.source === 'effect' && ['Schema', 'Predicate', 'Result', 'Order'].includes(imported.imported)) {
         result = native(`effect:${imported.imported}`);
-      } else if (imported.source === 'node:crypto' && imported.imported === 'createHash')
+      } else if (imported.source === 'effect/encoding' && ['Hex', 'Base64Url'].includes(imported.imported))
+        result = native(`effect/encoding:${imported.imported}`);
+      else if (imported.source === 'node:crypto' && imported.imported === 'createHash')
         result = native('crypto:createHash');
+      else if (NOBLE_DATA_FUNCTIONS.has(`${imported.source}:${imported.imported}`))
+        result = native(`noble:${imported.imported}`);
       else {
         const owner = this.imported(model, imported.source);
         const exported = owner?.exports.get(imported.imported);
@@ -789,6 +797,8 @@ class DataFactoryProof {
     if (name === 'regexp:exec' && args.every(isData))
       return record(new Map([['groups', { kind: 'record', fields: new Map(), element: DATA }]]));
     if (name === 'crypto:createHash') return args.every(isData) ? { kind: 'hash' } : BAD;
+    if ((name.startsWith('noble:') || ENCODING_DATA_FUNCTIONS.has(name)) && args.length === 1 && isData(args[0]))
+      return DATA;
     if (['hash:update', 'hash:digest'].includes(name))
       return args.every(isData) ? (name === 'hash:digest' ? DATA : { kind: 'hash' }) : BAD;
     if (name === 'global:Object.freeze') return args.length === 1 && isData(args[0]) ? args[0] : BAD;

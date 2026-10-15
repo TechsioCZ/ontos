@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -184,7 +185,7 @@ describe('Catalog Selection category basis', () => {
           selection,
         }).status,
       ).toBe('VALID');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('treats an absent Category classification as incomplete for Assortment', () =>
@@ -204,7 +205,7 @@ describe('Catalog Selection category basis', () => {
           selection,
         }).status,
       ).toBe('INDETERMINATE');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not read or carry Category facts for purchase acceptance', () =>
@@ -218,7 +219,7 @@ describe('Catalog Selection category basis', () => {
       }
       expect(result.dependentFactsComplete).toBe(true);
       expect(result.basis.some(({ role }) => role === 'CATEGORY')).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not present evidence issued at t0 as valid at t1', () =>
@@ -245,6 +246,6 @@ describe('Catalog Selection category basis', () => {
       });
       expect(reused.status).toBe('INDETERMINATE');
       expect(reused.assessedAt).toBe(later);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

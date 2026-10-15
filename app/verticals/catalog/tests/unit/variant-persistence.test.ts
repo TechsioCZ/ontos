@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -347,7 +348,7 @@ describe('Variant persistence', () => {
       const service = variantPersistenceForScope(transaction, scope);
       const result = yield* service.reactivate({ ...evidence, expectedRevision: 1, variantRef }).pipe(Effect.flip);
       expect(Schema.is(VariantCurrentBasisUnavailable)(result)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   const combinationKey = 'a'.repeat(64);
@@ -420,7 +421,7 @@ describe('Variant persistence', () => {
           variantId,
         }),
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('writes the proven Current combination identity when reactivating', () =>
@@ -435,7 +436,7 @@ describe('Variant persistence', () => {
       const service = variantPersistenceForScope(transaction, scope, provenAssessment);
       yield* service.reactivate({ ...evidence, expectedRevision: 2, variantRef });
       expect(written).toMatchObject({ combinationAxisRevision: 1, combinationKey, lifecycleState: 'ACTIVE' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('maps a partial-unique-index violation during reactivation to identity_conflict', () =>
@@ -450,7 +451,7 @@ describe('Variant persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('maps a reactivation allowed-value violation to invalid_change without writing', () =>
@@ -489,7 +490,7 @@ describe('Variant persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('maps an open-selection revalidation conflict to its own typed outcome', () =>
@@ -525,7 +526,7 @@ describe('Variant persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('retires the targeted Variant and appends its lifecycle revision', () =>

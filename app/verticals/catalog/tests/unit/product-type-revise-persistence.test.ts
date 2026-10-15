@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -80,6 +81,6 @@ describe('Product Type revision persistence boundary', () => {
         code: 'product_type_impact_basis_unavailable',
         reason: 'Authoritative open-selection reader is required',
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

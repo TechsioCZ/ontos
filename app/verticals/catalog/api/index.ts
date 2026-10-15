@@ -1,4 +1,5 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { NodeCrypto } from '@effect/platform-node';
 import {
   ContextAccessLive,
   CorePersistenceLive,
@@ -325,14 +326,14 @@ const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe
       operationalScopeResolverLive,
     ),
   ),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
 );
 const catalogReadRuntime = ReadRuntimeLive.pipe(
   Layer.provide(catalogExternalCorrelationResolverLive),
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
 );
 
 type CatalogApiRuntimeArguments = readonly [

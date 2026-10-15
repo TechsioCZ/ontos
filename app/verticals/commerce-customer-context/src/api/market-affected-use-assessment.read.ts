@@ -23,8 +23,10 @@ import type {
   MarketAffectedUseAssessmentResponse,
   MarketAffectedUseSourceEvidence,
 } from '../../shared/apis/market-affected-use-assessment.ts';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Context, Effect, Option, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import { MarketRefSchema } from '@app/commerce-market-catalog/resources/market';
 
 import { marketAffectedUseAssessmentRepositoryForInvoker } from '../persistence/market-retirement-persistence.ts';
@@ -123,7 +125,7 @@ const canonicalDigest = (
       : { ...digestInput, nextApplicabilityBoundary: assessment.nextApplicabilityBoundary };
   return Schema.encodeEffect(CanonicalMarketAffectedUseDigestJsonSchema)(completeDigestInput).pipe(
     Effect.flatMap(Schema.decodeEffect(CanonicalJsonSchema)),
-    Effect.map((encoded) => createHash('sha256').update(canonicalJsonString(encoded)).digest('hex')),
+    Effect.map((encoded) => Hex.encode(sha256(utf8ToBytes(canonicalJsonString(encoded))))),
     Effect.mapError((cause) => {
       const failure = new ReadHandlerUnavailable({
         code: 'read_handler_unavailable',

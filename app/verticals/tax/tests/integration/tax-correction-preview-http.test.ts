@@ -22,6 +22,7 @@ import type { ContextAccessService, OperationalScope, ReadRuntimeService } from 
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { NodeCrypto } from '@effect/platform-node';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Context, DateTime, Effect, Layer, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -208,8 +209,8 @@ const run = (requestInput: PreviewRequestInput, runtime: ReadRuntimeService) =>
     return { result, statuses };
   });
 
-describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () => {
-  it.effect('a. HISTORY_OWNER_UNAVAILABLE + CORRECTION is a typed 200, never the unavailable problem', () =>
+it.layer(NodeCrypto.layer)('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', (suite) => {
+  suite.effect('a. HISTORY_OWNER_UNAVAILABLE + CORRECTION is a typed 200, never the unavailable problem', () =>
     Effect.gen(function* dependencyUnavailableCorrection() {
       const harness = yield* makeGrantedHarness();
       const { result, statuses } = yield* run(
@@ -226,7 +227,7 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
     }),
   );
 
-  it.effect('b. ORIGINAL_RECORD_UNAVAILABLE MISSING stays TAX_HISTORICAL_INPUT_UNRESOLVED, distinct from D4', () =>
+  suite.effect('b. ORIGINAL_RECORD_UNAVAILABLE MISSING stays TAX_HISTORICAL_INPUT_UNRESOLVED, distinct from D4', () =>
     Effect.gen(function* originalRecordUnavailable() {
       const harness = yield* makeGrantedHarness();
       const { result, statuses } = yield* run(
@@ -243,7 +244,7 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
     }),
   );
 
-  it.effect('c. a retry after recovery over the real Billing Document previews a Tax Correction Delta', () =>
+  suite.effect('c. a retry after recovery over the real Billing Document previews a Tax Correction Delta', () =>
     Effect.gen(function* retryAfterRecovery() {
       const harness = yield* makeGrantedHarness();
       const { result, statuses } = yield* run(
@@ -260,7 +261,7 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
     }),
   );
 
-  it.effect('907-Q07 #948 a goods + NET Shipping correction of a NET-Shipping original previews over HTTP', () =>
+  suite.effect('907-Q07 #948 a goods + NET Shipping correction of a NET-Shipping original previews over HTTP', () =>
     Effect.gen(function* netShippingCorrection() {
       const harness = yield* makeGrantedHarness();
       // Original o-1: line 100.00 NET, quantity 2, Shipping 10.00 NET @ 21 %: 100 * 21/100 + 10 * 21/100 = 23.10.
@@ -305,7 +306,7 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
     }),
   );
 
-  it.effect("d. a ReadRuntime outage is TAX's own 503, not the D4 mapping", () =>
+  suite.effect("d. a ReadRuntime outage is TAX's own 503, not the D4 mapping", () =>
     Effect.gen(function* ownerOutage() {
       const { result, statuses } = yield* run(
         { acceptedTaxTerms: historyOwnerUnavailable, declaredPurpose: correctionDeclaredPurpose },
@@ -320,7 +321,7 @@ describe('Tax correction preview HTTP request contract (D-3, #938 F22-F26)', () 
     }),
   );
 
-  it.effect('e. every request writes its evidence exactly once', () =>
+  suite.effect('e. every request writes its evidence exactly once', () =>
     Effect.gen(function* callsOnce() {
       for (const request of [
         { acceptedTaxTerms: historyOwnerUnavailable, declaredPurpose: correctionDeclaredPurpose },

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -97,7 +98,7 @@ describe('Product Configuration publication event', () => {
         topic: 'commerce.catalog.product-configuration-published.v1',
       });
       expect(Schema.is(OutboxPayloadSchema)(state.messages[0]?.message.payloadJson)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not announce a rejected publication', () =>
@@ -108,7 +109,7 @@ describe('Product Configuration publication event', () => {
       yield* handlePublishProductConfiguration(payload, state.context).pipe(Effect.flip);
       expect(state.events).toHaveLength(0);
       expect(state.messages).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('rejects cross-Tenant or invalid revision event payloads', () => {

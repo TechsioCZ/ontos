@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 
 import {
@@ -24,6 +22,9 @@ import {
   Schema,
   Semaphore,
 } from 'effect';
+import { Base64Url } from 'effect/encoding';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { SignJWT, importJWK } from 'jose';
 
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
@@ -161,9 +162,7 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     privateJwk: GatewayIssuerConfigValue['privateJwk'],
   ): Effect.Effect<CryptoKey, GatewayIssuerError> => {
     // Fingerprint all key material without retaining the private scalar separately.
-    const fingerprint = createHash('sha256')
-      .update(`${privateJwk.kid}\n${privateJwk.x}\n${privateJwk.d}`)
-      .digest('base64url');
+    const fingerprint = Base64Url.encode(sha256(utf8ToBytes(`${privateJwk.kid}\n${privateJwk.x}\n${privateJwk.d}`)));
     return Semaphore.withPermits(
       gate,
       1,

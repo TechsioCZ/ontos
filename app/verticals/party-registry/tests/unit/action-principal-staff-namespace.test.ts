@@ -3,6 +3,7 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/princip
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeOperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -28,7 +29,7 @@ const staffPrincipal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   tenantId,
 });
 
-const resolver = makeOperationalScopeResolver(
+const makeResolver = makeOperationalScopeResolver(
   {
     load: () =>
       Effect.succeed({
@@ -52,17 +53,24 @@ const resolver = makeOperationalScopeResolver(
 );
 
 const resolveFor = (audience: string) =>
-  resolver.resolve({
-    audience,
-    correlationId: 'party-registry-staff-namespace',
-    legalEntityScope: 'forbidden',
-    principal: staffPrincipal,
-  });
+  makeResolver.pipe(
+    Effect.flatMap((resolver) =>
+      resolver.resolve({
+        audience,
+        correlationId: 'party-registry-staff-namespace',
+        legalEntityScope: 'forbidden',
+        principal: staffPrincipal,
+      }),
+    ),
+  );
 
 it.layer(
-  ActionPrincipalVerifierLive.pipe(
-    Layer.provide(ActiveApplicationCompositionSourceLive),
-    Layer.provide(FetchHttpClient.layer),
+  Layer.mergeAll(
+    ActionPrincipalVerifierLive.pipe(
+      Layer.provide(ActiveApplicationCompositionSourceLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+    NodeCrypto.layer,
   ),
 )('party-registry action boundary', (suite) => {
   suite.effect('revalidates a Shell-issued staff principal for this audience', () =>

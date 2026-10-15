@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
-
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Effect, Fiber, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
 import { expect, it, rstest } from 'effect-rstest';
 
@@ -39,7 +40,7 @@ const snapshot = (): ActiveApplicationCompositionSnapshot => {
   return {
     composition: {
       ...composition,
-      revision: createHash('sha256').update(canonicalizeApplicationComposition(composition)).digest('hex'),
+      revision: Hex.encode(sha256(utf8ToBytes(canonicalizeApplicationComposition(composition)))),
     },
     observedAt: Schema.decodeSync(Schema.DateTimeUtcFromString)(observedAt),
     validUntil: Schema.decodeSync(Schema.DateTimeUtcFromString)(validUntil),

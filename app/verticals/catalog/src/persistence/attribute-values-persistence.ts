@@ -1,8 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { findPostgresFailure } from '@app/core-runtime';
 import { and, eq, isNull } from 'drizzle-orm';
-import { Effect, Option, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { Crypto, Effect, Option, Schema } from 'effect';
 
 import type { AttributeValue, UnitConversion } from '../../shared/domain/attribute-values.ts';
 import type { VariantAttributeChangeClassification } from '../../shared/actions/attribute-value-mutations.ts';
@@ -105,16 +104,32 @@ export interface AttributeValuesChangeResult {
 export interface AttributeValuesPersistence {
   readonly removeProductValues: (
     input: RemoveProductValuesInput,
-  ) => Effect.Effect<AttributeValuesChangeResult, AttributeValuesConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    AttributeValuesChangeResult,
+    AttributeValuesConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
   readonly removeVariantOverride: (
     input: RemoveVariantOverrideInput,
-  ) => Effect.Effect<AttributeValuesChangeResult, AttributeValuesConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    AttributeValuesChangeResult,
+    AttributeValuesConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
   readonly setProductValues: (
     input: SetProductValuesInput,
-  ) => Effect.Effect<AttributeValuesChangeResult, AttributeValuesConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    AttributeValuesChangeResult,
+    AttributeValuesConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
   readonly setVariantOverride: (
     input: SetVariantOverrideInput,
-  ) => Effect.Effect<AttributeValuesChangeResult, AttributeValuesConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    AttributeValuesChangeResult,
+    AttributeValuesConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
 }
 
 interface MeasurementRow {
@@ -576,7 +591,8 @@ export const attributeValuesPersistenceForScope = (
       },
     );
     const affectedVariantRefs = yield* proveAffectedVariants();
-    const setId = current?.attributeValueSetId ?? randomUUID();
+    const crypto = yield* Crypto.Crypto;
+    const setId = current?.attributeValueSetId ?? (yield* crypto.randomUUIDv4.pipe(Effect.mapError(unavailable)));
     const revision = (current?.currentRevision ?? 0) + 1;
     const persist = Effect.fn('AttributeValuesPersistence.persist')(function* persist() {
       if (current === undefined) {

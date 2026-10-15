@@ -7,6 +7,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect } from 'effect';
+import type { Crypto } from 'effect';
 
 import {
   QuantityBasisCompatibilityRequestSchema,
@@ -35,7 +36,7 @@ export const readQuantityBasisCompatibility = Effect.fn('QuantityBasisCompatibil
     input: QuantityBasisCompatibilityRequest,
     tenantId: string,
     services: ReturnType<typeof catalogQuantityHandoffForScope>,
-  ): Effect.fn.Return<QuantityBasisCompatibilityResponse, ReadHandlerNotFound> {
+  ): Effect.fn.Return<QuantityBasisCompatibilityResponse, ReadHandlerNotFound, Crypto.Crypto> {
     if (input.handoff.selection.productRef.tenantId !== tenantId) {
       return yield* new ReadHandlerNotFound({
         code: 'read_handler_not_found',

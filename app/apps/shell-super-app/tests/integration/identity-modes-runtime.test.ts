@@ -11,7 +11,8 @@ import {
   makeSupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
 import { and, eq, inArray } from 'drizzle-orm';
-import { Context, Effect, Predicate, Redacted, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Context, Crypto, Effect, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
@@ -158,13 +159,13 @@ it.live.each([
       effect: Effect.Effect<Success, Failure, Requirements>,
     ) =>
       provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
-    const operationalScope = makeOperationalScopeResolver(
+    const operationalScope = yield* makeOperationalScopeResolver(
       makeOperationalScopeRepository({ executor: coreDatabase }),
       allowedContextAccess,
     );
     const actionRuntime = makeActionRuntime(
       { executor: coreDatabase },
-      makeActionRepository(),
+      makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
       { ...openActionRuntimeOptions, contextAccess: allowedContextAccess },
@@ -645,5 +646,5 @@ it.live.each([
     ).toBe(true);
     const recovery = yield* authDatabase.select().from(supportImpersonationRecovery);
     expect(recovery.length).toBe(0);
-  }),
+  }, Effect.provide(NodeCrypto.layer)),
 );

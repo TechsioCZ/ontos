@@ -9,8 +9,10 @@ import {
   defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Context, Effect, Option } from 'effect';
+import { Hex } from 'effect/encoding';
 import {
   PaymentTermAffectedUseAssessmentRequestSchema,
   PaymentTermAffectedUseAssessmentResponseSchema,
@@ -105,11 +107,14 @@ export const makePaymentTermAffectedUseAssessmentServices = (dependencies: {
     );
     const assessment = {
       currentCustomerEntitlementCount: customerUse.currentCustomerEntitlementCount,
-      evidenceReference: `affected-use:${createHash('sha256')
-        .update(customerUse.evidenceReference)
-        .update('\0')
-        .update(purchaseUse.evidenceReference)
-        .digest('hex')}`,
+      evidenceReference: `affected-use:${Hex.encode(
+        sha256
+          .create()
+          .update(utf8ToBytes(customerUse.evidenceReference))
+          .update(utf8ToBytes('\0'))
+          .update(utf8ToBytes(purchaseUse.evidenceReference))
+          .digest(),
+      )}`,
       observedAt: customerUse.observedAt < purchaseUse.observedAt ? customerUse.observedAt : purchaseUse.observedAt,
       openPurchaseCount: purchaseUse.openPurchaseCount,
     };

@@ -2,12 +2,14 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug recover-inventory-effect
 /* oxlint-disable effect-native/no-dependency-parameters -- The generated Action factory constructs and binds owner-local transaction services once; expires: 2027-03-31. */
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionHandlerContext, ActionRegistration } from '@app/core-runtime';
 import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { Effect as EffectType } from 'effect';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   RecoverInventoryEffectActionRejected,
@@ -113,7 +115,7 @@ const sameTarget = (left: RecoverInventoryEffectTargetRef, right: RecoverInvento
   left.tenantId === right.tenantId;
 
 const deterministicUuid = (seed: string) => {
-  const digest = createHash('sha256').update(seed).digest('hex');
+  const digest = Hex.encode(sha256(utf8ToBytes(seed)));
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 };
 

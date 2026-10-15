@@ -397,6 +397,7 @@ it.live(
         );
         expect(packageJson.dependencies).toEqual({
           '@app/core-runtime': 'workspace:*',
+          '@effect/platform-node': '4.0.0',
           zeta: '1.0.0',
         });
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });
@@ -735,7 +736,10 @@ export default apiRuntime;
         expect(shared).toContain('export const governedHttpApi = fixtureApi;');
         expect(runtime).toContain('GovernedReadLayer.mergeAll(originalHandlers, governedReadApiHandlersLive)');
         expect(runtime).toContain('GovernedReadLayer.provide(governedApplicationCompositionSourceLive)');
-        expect(runtime).toContain('GovernedReadLayer.provide(GovernedDatabaseConfigLive)');
+        expect(runtime).toContain("import { NodeCrypto } from '@effect/platform-node';");
+        expect(runtime).toContain(
+          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer))',
+        );
         expect(runtime).toContain('GovernedReadLayer.orDie');
         expect(runtime).not.toContain('const layer = HttpApiBuilder.layer(');
         expect(hasValidGovernedHttpCompositionRoot(shared, runtime)).toBe(true);

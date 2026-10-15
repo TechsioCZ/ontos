@@ -183,6 +183,7 @@
     "@app/pricing-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@effect/opentelemetry": "4.0.0",
+    "@effect/platform-node": "4.0.0",
     "@effect/sql-pg": "4.0.0",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
@@ -192,6 +193,7 @@
     "@modern-js/runtime-extensions": "catalog:ultramodern",
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
+    "@noble/hashes": "2.2.0",
     "better-auth": "1.7.6",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0"
