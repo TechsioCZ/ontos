@@ -242,7 +242,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: 'd87a59b2fccc989f',
+        buildMarker: '65701c1d6634cd7b',
         unitId: 'app/inventory',
         version: '0.1.0',
       },

@@ -52,7 +52,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: '3812f892cf5544cf',
+        buildMarker: '1c20de722548cc76',
         unitId: 'app/payment-term-catalog',
         version: '0.1.0',
       },

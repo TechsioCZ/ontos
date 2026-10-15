@@ -51,7 +51,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: '472426e9fbfd8da9',
+        buildMarker: 'b5403c43a092fccb',
         unitId: 'app/pricing',
         version: '0.1.0',
       },

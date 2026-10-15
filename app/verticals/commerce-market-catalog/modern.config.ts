@@ -250,7 +250,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: 'a3f3551680596bed',
+        buildMarker: '90197a2b7dff4653',
         unitId: 'app/commerce-market-catalog',
         version: '0.1.0',
       },

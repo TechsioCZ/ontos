@@ -323,7 +323,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: '090dd0a19fdd0853',
+        buildMarker: '7e26364adfac1493',
         unitId: 'app/shell-super-app',
         version: '0.1.0',
       },

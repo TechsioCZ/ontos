@@ -55,7 +55,7 @@ export default defineConfig(
     {
       appId,
       deliveryUnit: {
-        buildMarker: '2b4d72d8d032dd53',
+        buildMarker: '19fda008a3f0e23b',
         unitId: 'app/commerce-customer-context',
         version: '0.1.0',
       },
