@@ -195,7 +195,8 @@
         "errors": {
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "forbidden": "K této operaci nemáte oprávnění.",
-          "generic": "Změnu se nepodařilo uložit. Zkuste to znovu."
+          "generic": "Změnu se nepodařilo uložit. Zkuste to znovu.",
+          "invalidFilter": "Neplatný filtr zákazníka v adrese stránky."
         },
         "bulkByTag": {
           "title": "Hromadně podle štítku",

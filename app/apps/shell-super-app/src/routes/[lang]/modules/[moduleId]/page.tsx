@@ -15,6 +15,7 @@ import { useShellControls } from '../../../use-shell-controls.ts';
 import type { ModuleTargetPageModel } from './module-page-model.ts';
 
 type ApprovedModulePageComponent = ComponentType<{
+  readonly context?: { readonly legalEntityId: string; readonly principalId: string; readonly tenantId: string };
   readonly routeParams: Readonly<Record<string, string>>;
   readonly target: ResolvedModuleTarget;
 }>;
@@ -38,7 +39,11 @@ const browserFederationRuntime = __ONTOS_BROWSER_BUILD__
   ? Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(Effect.timeout('5 seconds'))
   : Effect.interrupt;
 
-const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageModel, { state: 'resolved' }> }) => {
+export const ResolvedTarget = ({
+  model,
+}: {
+  readonly model: Extract<ModuleTargetPageModel, { state: 'resolved' }>;
+}) => {
   const { t } = useModernI18n();
   // A loader re-run returns an equal target as a new object. Compare by remote page, so the mounted page is kept
   // instead of flashing the loading state and remounting (which repeated all of its reads).
@@ -124,7 +129,21 @@ const ResolvedTarget = ({ model }: { readonly model: Extract<ModuleTargetPageMod
   }, [model.target]);
 
   if (remote.state === 'ready') {
-    return <remote.Component routeParams={model.routeParams} target={model.target} />;
+    return (
+      <remote.Component
+        {...(model.shell.state === 'authenticated' && model.shell.selectedLegalEntityId !== undefined
+          ? {
+              context: {
+                legalEntityId: model.shell.selectedLegalEntityId,
+                principalId: model.shell.identity.principalId,
+                tenantId: model.shell.identity.tenantId,
+              },
+            }
+          : {})}
+        routeParams={model.routeParams}
+        target={model.target}
+      />
+    );
   }
   return (
     <StatusText aria-live="polite" showIcon status={remote.state === 'loading' ? 'default' : 'error'}>

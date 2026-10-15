@@ -1,11 +1,13 @@
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { Match } from 'effect';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { useShellControls } from '../use-shell-controls.ts';
+import { ResolvedTarget } from './modules/[moduleId]/page.tsx';
 import type { HomePageModel } from './home-page-model.ts';
 
 interface HomeViewProps {
@@ -47,18 +49,6 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     );
   }
 
-  // Show the names the user recognises; raw ids only appear when the name list failed to load, so show a dash.
-  const tenants: readonly { readonly name: string; readonly tenantId: string }[] = model.tenants.items;
-  const tenantName =
-    model.tenants.state === 'available'
-      ? tenants.find((tenant) => tenant.tenantId === model.identity.tenantId)?.name
-      : undefined;
-  const legalEntities: readonly { readonly legalEntityId: string; readonly legalName: string }[] =
-    model.legalEntities.items;
-  const legalEntityName = legalEntities.find(
-    (entity) => entity.legalEntityId === model.selectedLegalEntityId,
-  )?.legalName;
-
   return (
     <>
       <UltramodernRouteHead />
@@ -84,30 +74,26 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         title={t('shell.dashboard.home.title')}
         unavailableDeployments={model.navigation.unavailableDeployments}
       >
-        <section
-          aria-label={t('shell.auth.identity.title')}
-          className="shell:flex shell:w-full shell:max-w-lg shell:flex-col shell:gap-4 shell:bg-(--color-surface) shell:p-6"
-        >
-          <dl className="shell:grid shell:gap-3">
-            <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.displayName')}</dt>
-              <dd>{model.identity.displayName}</dd>
-            </div>
-            <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.email')}</dt>
-              <dd>{model.identity.email}</dd>
-            </div>
-            <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.tenant')}</dt>
-              <dd>{tenantName ?? '—'}</dd>
-            </div>
-            {model.contextState === 'authenticated' ? (
-              <div>
-                <dt className="shell:font-semibold">{t('shell.auth.identity.legalEntity')}</dt>
-                <dd>{legalEntityName ?? '—'}</dd>
-              </div>
-            ) : null}
-          </dl>
+        <section className="shell:flex shell:w-full shell:flex-col shell:gap-4">
+          {Match.value(model.homeContribution).pipe(
+            Match.when({ state: 'ready' }, (contribution) => (
+              <ResolvedTarget
+                key={`${model.identity.principalId}:${model.identity.tenantId}:${model.selectedLegalEntityId}`}
+                model={{ routeParams: {}, shell: model, state: 'resolved', target: contribution.target }}
+              />
+            )),
+            Match.when({ state: 'forbidden' }, () => (
+              <StatusText aria-live="polite" showIcon status="default">
+                {t('shell.moduleTarget.forbidden')}
+              </StatusText>
+            )),
+            Match.when({ state: 'unavailable' }, () => (
+              <StatusText aria-live="polite" showIcon status="error">
+                {t('shell.dashboard.unavailable')}
+              </StatusText>
+            )),
+            Match.orElse(() => null),
+          )}
           {model.contextState === 'selection_required' ? (
             <StatusText aria-live="polite" showIcon status="warning">
               {t('shell.dashboard.legalEntity.selectionRequired')}

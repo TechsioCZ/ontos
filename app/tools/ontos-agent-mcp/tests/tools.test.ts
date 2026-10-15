@@ -3,6 +3,7 @@
 // Run: pnpm --ignore-workspace test   (node --experimental-strip-types --test)
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { Predicate } from 'effect';
 import { z } from 'zod';
 
 const SHELL = 'http://shell.test';
@@ -213,9 +214,9 @@ void describe('write tools map arguments onto apply-command', () => {
     assert.ok(apply !== undefined);
     assert.equal(apply.body.expectedRevision, 3);
     const command = BodySchema.parse(apply.body.command);
-    assert.equal(command._tag, 'CreateOpportunity');
     assert.equal('ownerEmployeeId' in command, false);
     assert.deepEqual(command.lines, [{ productName: 'Server', quantity: 2, unitPriceMinor: 123_456, vatRate: 21 }]);
+    assert.ok(Predicate.isTagged(command, 'CreateOpportunity'));
   });
 
   it('assign_tags resolves the tag name case-insensitively and sends subject objects', async () => {

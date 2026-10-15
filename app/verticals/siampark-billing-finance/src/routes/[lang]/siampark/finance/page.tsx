@@ -1,9 +1,11 @@
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { formatMoney, formatNumber, PageHeader, StatCard, StatRow, Toaster, dialogCloseLabel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { useState } from 'react';
+import { Option } from 'effect';
 import csResource from '../../../../../locales/cs/siampark-billing-finance.json';
 import enResource from '../../../../../locales/en/siampark-billing-finance.json';
 import '../../../index.css';
@@ -11,7 +13,7 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { CreateInvoiceDialog } from './create-invoice-dialog.tsx';
 import { FinanceInvoiceDetail } from './invoice-detail.tsx';
 import { FinanceInvoiceTable } from './invoices-table.tsx';
-import { useFinanceRecords } from './use-finance-records.ts';
+import { customerInvoiceFilterKey, decodeCustomerInvoiceSearch, useFinanceRecords } from './use-finance-records.ts';
 
 const resources = {
   cs: { 'siampark-billing-finance': csResource },
@@ -68,6 +70,14 @@ const RecordsPageContent = () => {
               description={t(`${ns}.description`)}
               title={t(`${ns}.title`)}
             />
+            {vm.relatedCustomer && (
+              <p className="text-fg-secondary text-sm">
+                {t(`${ns}.relatedFilter`)}{' '}
+                <a className="underline" href="?">
+                  {t(`${ns}.clearRelatedFilter`)}
+                </a>
+              </p>
+            )}
             <StatRow>
               <StatCard label={t(`${ns}.kpi.revenue`)} value={kpi((source) => wholeKc(source.revenueMinor))} />
               <StatCard
@@ -151,14 +161,23 @@ const RecordsPageContent = () => {
   );
 };
 
-export const RecordsPage = () => (
-  <FederatedI18nBoundary
-    defaultNamespace="siampark-billing-finance"
-    fallbackLanguage="en"
-    resources={resources}
-    supportedLanguages={['en', 'cs']}
-  >
-    <RecordsPageContent />
-  </FederatedI18nBoundary>
-);
+export const RecordsPage = () => {
+  const rawSearch = useRouterState({
+    select: (state) => {
+      const input: unknown = state.location.search;
+      return decodeCustomerInvoiceSearch(input).pipe(Option.getOrElse(() => null));
+    },
+  });
+  const filterKey = customerInvoiceFilterKey(rawSearch);
+  return (
+    <FederatedI18nBoundary
+      defaultNamespace="siampark-billing-finance"
+      fallbackLanguage="en"
+      resources={resources}
+      supportedLanguages={['en', 'cs']}
+    >
+      <RecordsPageContent key={filterKey} />
+    </FederatedI18nBoundary>
+  );
+};
 export default RecordsPage;

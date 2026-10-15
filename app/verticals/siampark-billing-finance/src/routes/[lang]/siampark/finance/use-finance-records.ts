@@ -1,4 +1,5 @@
 import type { CustomerListItem } from '@app/party-registry/api/client';
+import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -6,6 +7,7 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import type { FinanceCommand } from '../../../../../shared/actions/apply-command.ts';
+import { FinancePartyIdSchema, RecordsRequestSchema } from '../../../../../shared/apis/records.ts';
 import type { CalendarDateSchema, Invoice, InvoiceLine, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { nextInvoiceNumber } from '../../../../../shared/domain/invoice-totals.ts';
 import { commandReferenceAudiences } from '../../../../../shared/domain/reference-audiences.ts';
@@ -30,8 +32,48 @@ export type DraftInvoiceOutcome =
   | { readonly invoice: Invoice; readonly ok: true };
 
 const searchSchema = Schema.Struct({
+  counterpartyId: Schema.optional(CounterpartyRefSchema.fields.resourceId),
+  partyId: Schema.optional(FinancePartyIdSchema),
   resourceId: Schema.optional(InvoiceRefSchema.fields.resourceId.check(Schema.isUUID())),
+  tenantId: Schema.optional(CounterpartyRefSchema.fields.tenantId),
 });
+export const decodeCustomerInvoiceSearch = Schema.decodeUnknownOption(Schema.toEncoded(searchSchema));
+
+const customerInvoiceRequest = (
+  partyId: string | undefined,
+  counterpartyId: string | undefined,
+  tenantId: string | undefined,
+) => {
+  if ((counterpartyId === undefined) !== (tenantId === undefined)) {
+    return Option.none();
+  }
+  if (counterpartyId !== undefined && tenantId !== undefined) {
+    return Schema.decodeOption(RecordsRequestSchema)({
+      counterpartyRef: {
+        moduleId: 'party.registry',
+        resourceId: counterpartyId,
+        resourceType: 'party.registry.counterparty',
+        tenantId,
+      },
+    });
+  }
+  return Schema.decodeOption(RecordsRequestSchema)(partyId === undefined ? {} : { partyId });
+};
+
+/** Filter changes remount the owning view, so a new customer never displays an old customer's snapshot. */
+export const customerInvoiceFilterKey = (rawSearch: typeof searchSchema.Encoded | null): string => {
+  const search = rawSearch === null ? Option.none() : Schema.decodeOption(searchSchema)(rawSearch);
+  if (Option.isNone(search)) {
+    return 'invalid';
+  }
+  const request = customerInvoiceRequest(search.value.partyId, search.value.counterpartyId, search.value.tenantId);
+  return Option.isSome(request)
+    ? Schema.encodeOption(Schema.fromJsonString(RecordsRequestSchema))(request.value).pipe(
+        Option.getOrElse(() => 'invalid'),
+      )
+    : 'invalid';
+};
+
 const FeedbackSchema = Schema.Literals([
   'loading',
   'ready',
@@ -73,7 +115,7 @@ const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submit
   });
 });
 
-const fetchRecords = () => executeRecords({}, 'siampark-finance.records');
+const fetchRecords = (request: typeof RecordsRequestSchema.Type) => executeRecords(request, 'siampark-finance.records');
 
 /** TanStack history numbers its entries in `history.state`; only the index is read here. */
 const TanstackHistoryStateSchema = Schema.Struct({ __TSR_index: Schema.Int });
@@ -105,8 +147,18 @@ const pushDetailUrl = (id: string) => {
 export const useFinanceRecords = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const search = Schema.decodeOption(searchSchema)(useRouterState().location.search);
-  const requestedId = Option.getOrUndefined(search)?.resourceId;
+  const rawSearch = useRouterState({
+    select: (state) => {
+      const input: unknown = state.location.search;
+      return decodeCustomerInvoiceSearch(input).pipe(Option.getOrElse(() => null));
+    },
+  });
+  const search = rawSearch === null ? Option.none() : Schema.decodeOption(searchSchema)(rawSearch);
+  const searchInvalid = Option.isNone(search);
+  const fields = Option.getOrElse(search, (): typeof searchSchema.Type => ({}));
+  const { counterpartyId, partyId, tenantId } = fields;
+  const requestedId = fields.resourceId;
+  const request = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
   const [snapshot, setSnapshot] = useState<RecordsResponse>();
   const [feedback, setFeedback] = useState<Feedback>('loading');
   const [voidTarget, setVoidTarget] = useState<Invoice>();
@@ -116,10 +168,16 @@ export const useFinanceRecords = () => {
   const detailPushed = useRef(false);
   const selected = snapshot?.state.invoices.find((record) => record.ref.resourceId === requestedId);
   const busy = feedback === 'loading' || feedback === 'saving';
-  const canWrite = snapshot?.canWrite === true;
+  const canWrite = Option.isSome(request) && snapshot?.canWrite === true;
   const references = useFinanceReferences();
 
-  const load = () => fetchRecords().pipe(Effect.tap((value) => Effect.sync(() => setSnapshot(value))));
+  const load = (): Effect.Effect<void, UiFailure> =>
+    Option.isSome(request)
+      ? fetchRecords(request.value).pipe(
+          Effect.tap((value) => Effect.sync(() => setSnapshot(value))),
+          Effect.asVoid,
+        )
+      : Effect.void;
 
   /**
    * Creates a draft from the form. The counterparty ref is the party registry's own ref for the customer, and the
@@ -155,27 +213,30 @@ export const useFinanceRecords = () => {
 
   useEffect(() => {
     let active = true;
-    void financeBrowserRuntime.runPromise(
-      fetchRecords().pipe(
-        Effect.match({
-          onFailure: (error) => {
-            if (active) {
-              setFeedback(financeFailureFeedback(error));
-            }
-          },
-          onSuccess: (value) => {
-            if (active) {
-              setSnapshot(value);
-              setFeedback('ready');
-            }
-          },
-        }),
-      ),
-    );
+    const current = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
+    if (Option.isSome(current)) {
+      void financeBrowserRuntime.runPromise(
+        fetchRecords(current.value).pipe(
+          Effect.match({
+            onFailure: (error) => {
+              if (active) {
+                setFeedback(financeFailureFeedback(error));
+              }
+            },
+            onSuccess: (value) => {
+              if (active) {
+                setSnapshot(value);
+                setFeedback('ready');
+              }
+            },
+          }),
+        ),
+      );
+    }
     return () => {
       active = false;
     };
-  }, []);
+  }, [counterpartyId, partyId, searchInvalid, tenantId]);
 
   const reload = () => {
     setFeedback('loading');
@@ -255,15 +316,16 @@ export const useFinanceRecords = () => {
       setVoidTarget(undefined);
     },
     createDraft,
-    feedback,
-    indicators: snapshot?.indicators,
-    invoices: [...(snapshot?.state.invoices ?? [])],
+    feedback: Option.isNone(request) ? ('validation' as const) : feedback,
+    indicators: Option.isSome(request) ? snapshot?.indicators : undefined,
+    invoices: Option.isSome(request) ? [...(snapshot?.state.invoices ?? [])] : [],
     openDetail: (id: string) => {
       detailPushed.current = true;
       pushDetailUrl(id);
     },
     referenceDate: snapshot?.referenceDate ?? '',
     references,
+    relatedCustomer: partyId !== undefined || counterpartyId !== undefined,
     reload,
     requestVoid: (invoice: Invoice) => setVoidTarget(invoice),
     selected,

@@ -154,7 +154,10 @@
           "LOW": "Low",
           "NORMAL": "Normal",
           "HIGH": "High"
-        }
+        },
+        "invalidFilter": "The customer filter in the page URL is invalid.",
+        "relatedFilter": "Showing this customer’s records in the selected legal entity.",
+        "clearRelatedFilter": "Show all customers"
       }
     },
     "selectPlaceholder": "Select…"

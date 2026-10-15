@@ -656,6 +656,23 @@ it.live('confines native Federation imports, including aliases and dynamic impor
   }),
 );
 
+it.live('accepts the governed Shell page preloader and rejects the same implementation at another path', () =>
+  Effect.gen(function* governedPagePreloaderBoundary() {
+    const root = yield* makeFixture();
+    const source = yield* Effect.promise(() =>
+      readFile(new URL('../../apps/shell-super-app/src/routes/remote-page-loader.ts', import.meta.url), 'utf-8'),
+    );
+    yield* write(root, 'apps/shell-super-app/src/routes/remote-page-loader.ts', source);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* assertRejectedSources(
+      root,
+      'apps/shell-super-app/src/routes/other-remote-page-loader.ts',
+      [source],
+      /native Federation runtime imports.*approved Shell module-entrypoint loader/u,
+    );
+  }),
+);
+
 it.live('requires the generic canonical route to retain private metadata and the Shell authentication gate', () =>
   Effect.gen(function* canonicalRouteBoundary() {
     const root = yield* makeFixture();

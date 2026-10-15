@@ -33,7 +33,12 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { CustomerBulkEditDialog } from './customer-bulk-edit-dialog.tsx';
 import { CustomerCreateDialog } from './customer-create-dialog.tsx';
 import { CustomerDetailDialog } from './customer-detail-dialog.tsx';
-import { customerWritesRefused, loadCustomers, rememberCustomerWriteRefusal } from './customers-data.ts';
+import {
+  customerWritesRefused,
+  useCustomerDetailSelection,
+  loadCustomers,
+  rememberCustomerWriteRefusal,
+} from './customers-data.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
 import {
   buildCustomersCsv,
@@ -293,7 +298,7 @@ const CustomersContent = () => {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<Selection>({});
-  const [detail, setDetail] = useState<CustomerListItem | null>(null);
+  const { closeDetail, detail, detailFailure, detailValue, openDetail, retryDetail } = useCustomerDetailSelection();
   const [createOpen, setCreateOpen] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(defaultColumnVisibility);
   const [editOpen, setEditOpen] = useState(false);
@@ -445,11 +450,6 @@ const CustomersContent = () => {
   };
 
   const openCreate = () => setCreateOpen(true);
-  const closeDetail = (open: boolean) => {
-    if (!open) {
-      setDetail(null);
-    }
-  };
 
   const renderEmpty = () => (
     <CustomersEmpty
@@ -524,7 +524,7 @@ const CustomersContent = () => {
           loadingRowCount={12}
           maxHeight="calc(100dvh - 15rem)"
           onColumnVisibilityChange={setColumnVisibility}
-          onRowClick={(row) => setDetail(row.original)}
+          onRowClick={(row) => openDetail(row.original)}
           onRowSelectionChange={setSelection}
           pageSizeOptions={pageSizeOptions}
           paginationProps={{ translations: paginationTranslations }}
@@ -544,7 +544,14 @@ const CustomersContent = () => {
         onWriteRefused={refuseWrites}
         open={createOpen}
       />
-      <CustomerDetailDialog customer={detail} onOpenChange={closeDetail} onRenamed={reload} />
+      <CustomerDetailDialog
+        customer={detail}
+        failure={detailFailure}
+        onOpenChange={closeDetail}
+        onRenamed={reload}
+        onRetry={retryDetail}
+        snapshot={detailValue}
+      />
       <CustomerBulkEditDialog
         canTag={enrichment.tagsWritable}
         items={selectedItems}

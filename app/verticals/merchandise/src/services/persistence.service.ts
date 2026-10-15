@@ -169,19 +169,15 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   if (state.products.some((entry) => sameSku(entry.sku, value.sku))) {
     return yield* conflict('A product with this SKU already exists');
   }
+  const { _tag, priceMinor, ...fields } = value;
+  void _tag;
   const product: Product = {
-    active: value.active,
-    category: value.category,
+    ...fields,
     createdAt: input.now,
-    currentPriceMinor: value.priceMinor,
+    currentPriceMinor: priceMinor,
     id,
-    lowStockThreshold: value.lowStockThreshold,
-    name: value.name,
-    priceHistory: [{ changedBy: input.actor, effectiveFrom: input.now, priceMinor: value.priceMinor }],
-    sku: value.sku,
-    unit: value.unit,
+    priceHistory: [{ changedBy: input.actor, effectiveFrom: input.now, priceMinor }],
     updatedAt: input.now,
-    vatRate: value.vatRate,
   };
   const entity = yield* entityIdOf(id);
   return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };

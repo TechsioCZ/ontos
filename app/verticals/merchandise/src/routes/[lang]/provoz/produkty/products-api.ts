@@ -1,8 +1,11 @@
 import { Effect, Match, Random, Schema } from 'effect';
+import type { Cause } from 'effect';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
+import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
+import type { ProductRecord } from '../../../../../shared/domain/merchandise-model.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 
 /**
@@ -35,7 +38,21 @@ const recordsReason = (error: RecordsFailure): FailureReason =>
     Match.tag('RecordsPolicyConflictProblem', (): FailureReason => 'conflict'),
     Match.tag('RecordsAuthenticationProblem', 'RecordsForbiddenProblem', (): FailureReason => 'forbidden'),
     Match.tag('RecordsInvalidProblem', 'RecordsPolicyProblem', (): FailureReason => 'invalid'),
-    Match.orElse((): FailureReason => 'unavailable'),
+    Match.tag('GatewayAuthenticationRequiredProblem', 'GatewayForbiddenProblem', (): FailureReason => 'forbidden'),
+    Match.tag('GatewayAudienceInvalidProblem', (): FailureReason => 'invalid'),
+    Match.tag('GatewayReloadRequiredProblem', 'DocumentCompositionRevisionError', (): FailureReason => 'conflict'),
+    Match.tag(
+      'RecordsNotFoundProblem',
+      'RecordsUnavailableProblem',
+      'RecordsInternalProblem',
+      'GatewayRateLimitedProblem',
+      'GatewayUnavailableProblem',
+      'GatewayInternalProblem',
+      'HttpClientError',
+      'SchemaError',
+      (): FailureReason => 'unavailable',
+    ),
+    Match.exhaustive,
   );
 
 /** Maps the apply-command problems onto the UI outcomes. Anything unlisted reads as unavailable. */
@@ -87,3 +104,80 @@ export const runCommand = (
     ),
   );
 };
+
+export type ProductDetailSnapshot =
+  | { readonly status: 'loading' }
+  | { readonly status: 'invalid' }
+  | { readonly status: 'not-found' }
+  | { readonly reason: FailureReason; readonly status: 'error' }
+  | {
+      readonly product: ProductRecord;
+      readonly refreshFailure?: FailureReason;
+      readonly response: RecordsResponse;
+      readonly status: 'ready';
+    };
+
+/** One route lifetime, no global cache. React subscribes at its framework edge; stale reads cannot replace a newer result. */
+export const createProductDetailQuery = (routeId: string, read = loadProducts) => {
+  const validId = Schema.is(ProductIdSchema)(routeId);
+  const initial: ProductDetailSnapshot = validId ? { status: 'loading' } : { status: 'invalid' };
+  let snapshot: ProductDetailSnapshot = initial;
+  let generation = 0;
+  let started = false;
+  const listeners = new Set<() => void>();
+  const publish = (next: ProductDetailSnapshot) => {
+    snapshot = next;
+    for (const listener of listeners) {
+      listener();
+    }
+  };
+  const reload = () => {
+    if (!validId || listeners.size === 0) {
+      return;
+    }
+    started = true;
+    generation += 1;
+    const requestedGeneration = generation;
+    read((outcome) => {
+      if (requestedGeneration !== generation || listeners.size === 0) {
+        return;
+      }
+      if (!outcome.ok) {
+        publish(
+          snapshot.status === 'ready' && outcome.reason !== 'forbidden'
+            ? { ...snapshot, refreshFailure: outcome.reason }
+            : { reason: outcome.reason, status: 'error' },
+        );
+        return;
+      }
+      const product = outcome.response.products.find((entry) => entry.id === routeId);
+      publish(
+        product === undefined ? { status: 'not-found' } : { product, response: outcome.response, status: 'ready' },
+      );
+    });
+  };
+  return {
+    getServerSnapshot: () => initial,
+    getSnapshot: () => snapshot,
+    reload,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      if (!started) {
+        reload();
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+          generation += 1;
+          started = false;
+        }
+      };
+    },
+  };
+};
+
+export const productNavigationFailureKey = Match.type<Cause.TimeoutError | Cause.UnknownError>().pipe(
+  Match.tag('TimeoutError', () => 'messages.navigationTimeout'),
+  Match.tag('UnknownError', () => 'messages.failed'),
+  Match.exhaustive,
+);

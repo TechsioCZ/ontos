@@ -43,7 +43,7 @@ const daysAgo = (days: number): string => DateTime.formatIso(DateTime.subtract(S
 const productState = (product: CatalogProduct): EncodedMerchandiseState['products'][number] => {
   const repriced = product.currentPriceMinor !== product.originalPriceMinor;
   const createdAt = daysAgo(PRODUCT_CREATED_DAYS_AGO);
-  return {
+  const base = {
     active: true,
     category: product.category,
     createdAt,
@@ -59,6 +59,23 @@ const productState = (product: CatalogProduct): EncodedMerchandiseState['product
     unit: product.unit,
     updatedAt: repriced ? daysAgo(priceChangeDaysAgo) : createdAt,
     vatRate: product.vatRate,
+  };
+  if (product.key !== 'p01') {
+    return base;
+  }
+  return {
+    ...base,
+    description:
+      'Firemní pracovní stanice. Evidenční varianty popisují dostupná provedení; cena a sklad se vztahují k produktu.',
+    heightMm: 18,
+    lengthMm: 320,
+    shortDescription: 'Přenosný pracovní počítač pro každodenní práci.',
+    variants: [
+      { attributes: 'Barva: černá', name: 'Tmavé provedení' },
+      { attributes: 'Barva: stříbrná', name: 'Světlé provedení' },
+    ],
+    weightGrams: 1800,
+    widthMm: 220,
   };
 };
 

@@ -5,16 +5,18 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellPublicComponentContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { CrmDashboard } from './src/components/crm-dashboard.tsx';
+import { metricCollectionResourceDescriptor } from './shared/resources/metric-collection.ts';
+import { metricResourceDescriptor } from './shared/resources/metric.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/prehledy/statistiky/page.tsx';
 import { salesInsightsReadAllPermission } from './shared/permissions/sales-insights-read-all.ts';
 import { salesInsightsWriteAllPermission } from './shared/permissions/sales-insights-write-all.ts';
-import { metricCollectionResourceDescriptor } from './shared/resources/metric-collection.ts';
-import { metricResourceDescriptor } from './shared/resources/metric.ts';
 // </generated-module-manifest-imports>
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
@@ -24,6 +26,9 @@ const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+
+const publicComponentContribution = (value: typeof ShellPublicComponentContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
 
 const moduleKey = 'demo.sales-insights';
 const recordsPageKey = 'demo.sales-insights.page.records';
@@ -61,6 +66,7 @@ export const salesInsightsManifest = defineOntosModuleManifest({
     ],
     components: {
       // <generated-module-manifest-components>
+      'crm-dashboard': CrmDashboard,
       'page-records': RecordsPage,
       // </generated-module-manifest-components>
     },
@@ -119,6 +125,19 @@ export const salesInsightsManifest = defineOntosModuleManifest({
       ],
       publicComponents: [
         // <generated-module-shell-components>
+        publicComponentContribution({
+          componentKey: 'demo.sales-insights.crm-dashboard',
+          contributionKey: 'demo.sales-insights.component.crm-dashboard',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'demo.sales_insights.read_all' },
+            entrypointKey: 'demo.sales-insights.component.crm-dashboard',
+            moduleKey: 'demo.sales-insights',
+            role: 'public_component',
+            scope: 'tenant',
+          },
+          expose: './CrmDashboard',
+        }),
         // </generated-module-shell-components>
       ],
       reports: [

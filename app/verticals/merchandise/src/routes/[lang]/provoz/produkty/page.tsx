@@ -1,5 +1,5 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useRouterState, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -8,7 +8,8 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { PageHeader, StatCard, StatRow, foldSearchText, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useEffect, useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
@@ -19,10 +20,9 @@ import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { formatKc } from '../../../../list-cells.tsx';
-import { loadProducts, runCommand } from './products-api.ts';
+import { loadProducts, runCommand, productNavigationFailureKey } from './products-api.ts';
 import type { FailureReason, LoadOutcome } from './products-api.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
-import { ProductDetailDialog } from './product-detail-dialog.tsx';
 import { CategoryDialog, CreateProductDialog, PriceChangeDialog, ReceiptDialog } from './product-forms.tsx';
 import type { ProductsTableStatus } from './products-table.tsx';
 import { ProductsTable } from './products-table.tsx';
@@ -105,7 +105,8 @@ const matchesSearch = (product: ProductRecord, foldedQuery: string): boolean =>
   foldSearchText(`${product.name} ${product.sku}`).includes(foldedQuery);
 
 const RecordsPageContent = () => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const navigate = useNavigate();
   const toaster = useToast();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
 
@@ -114,7 +115,6 @@ const RecordsPageContent = () => {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [selection, setSelection] = useState<Record<string, true>>({});
-  const [detailId, setDetailId] = useState<ProductRecord['id'] | null>(null);
   const [dialog, setDialog] = useState<typeof DialogKind.Type | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -155,7 +155,6 @@ const RecordsPageContent = () => {
   const selectedIds = products.flatMap((product) => (selection[product.id] === true ? [product.id] : []));
   const filtersActive = query !== '' || category !== ALL_CATEGORIES || lowStockOnly || tagFilter.tagId !== null;
   const tableStatus = tableStatusFor(state.status, tagFilter.status);
-  const detail = products.find((product) => product.id === detailId);
 
   const onCommitted = (message: string) => {
     toaster.create({ duration: SUCCESS_TOAST_MS, title: message, type: 'success' });
@@ -194,7 +193,21 @@ const RecordsPageContent = () => {
   };
   const openDetail = (id: ProductRecord['id']) => {
     toaster.dismiss();
-    setDetailId(id);
+    void browserRuntime.runPromise(
+      Effect.tryPromise(
+        navigate.bind(undefined, { to: `/${language ?? 'cs'}/provoz/produkty/${encodeURIComponent(id)}` }),
+      ).pipe(
+        Effect.timeout('10 seconds'),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() => {
+              const messageKey = productNavigationFailureKey(error);
+              toaster.create({ title: k(messageKey), type: 'error' });
+            }),
+          onSuccess: Effect.succeed,
+        }),
+      ),
+    );
   };
   const closeDialog = (open: boolean) => {
     if (!open) {
@@ -355,23 +368,6 @@ const RecordsPageContent = () => {
               subjectIds={toSubjectIds(selectedIds)}
             />
           </>
-        )}
-        {ready !== undefined && detail !== undefined && (
-          <ProductDetailDialog
-            canWrite={canWrite}
-            key={detail.id}
-            movements={ready.movements.filter((movement) => movement.productId === detail.id)}
-            onCommitted={onCommitted}
-            onOpenChange={(open) => {
-              if (!open) {
-                setDetailId(null);
-              }
-            }}
-            onReload={reload}
-            open
-            product={detail}
-            revision={revision}
-          />
         )}
         <Toaster />
       </div>

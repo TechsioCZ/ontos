@@ -1,6 +1,7 @@
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
+import type { OrdersSnapshot } from './orders-records.ts';
 
 export const orderStatuses = [
   'NEW',
@@ -20,6 +21,12 @@ const nextStatuses = {
 
 /** Statuses an order can move to. The forward step comes first; it is the primary action. */
 export const transitionsFrom = (status: OrderStatus): readonly OrderStatus[] => nextStatuses[status];
+
+/** A bulk choice must be legal for every selected order, including selections spanning pages. */
+export const commonOrderTransitions = (orders: readonly Pick<Order, 'status'>[]): readonly OrderStatus[] => {
+  const allowed = orders.map((order) => new Set(transitionsFrom(order.status)));
+  return orders.length === 0 ? [] : orderStatuses.filter((next) => allowed.every((statuses) => statuses.has(next)));
+};
 
 const actionLabelKeys = {
   CANCELLED: 'merchandise.pages.orders.actions.cancel',
@@ -60,6 +67,16 @@ export const orderStats = (orders: readonly Order[], now: DateTime.Utc) => {
     openValueMinor: sum(open.map((order) => order.totalMinor)),
     shippedThisMonth: orders.filter((order) => order.status === 'SHIPPED' && sameUtcMonth(order.updatedAt, now)).length,
     total: orders.length,
+  };
+};
+
+/** Route-oriented values for a pending or loaded records snapshot. */
+export const ordersPageSummary = (snapshot: OrdersSnapshot | undefined) => {
+  const orders = snapshot?.records.orders ?? [];
+  return {
+    canWrite: snapshot?.records.canWrite === true,
+    orders,
+    stats: snapshot === undefined ? undefined : orderStats(orders, snapshot.now),
   };
 };
 

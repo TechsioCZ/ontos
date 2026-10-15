@@ -249,7 +249,7 @@ export const OpportunityFormDialog = ({
         description={isEdit ? t(`${K}.edit.description`) : t(`${K}.create.description`)}
         onOpenChange={requestClose}
         open
-        size="lg"
+        size="xl"
         title={isEdit ? t(`${K}.edit.title`) : t(`${K}.create.title`)}
       >
         {/* The form scrolls on its own, so the footer with Zrušit and the submit button stays at the panel bottom.

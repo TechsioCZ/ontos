@@ -26,6 +26,7 @@ export const merchandiseRegistration = defineVerticalRuntimeRegistration({
     pages: {
       // <generated-module-registration-pages>
       'page-orders': () => import('./src/routes/[lang]/prodej/objednavky/page.tsx'),
+      'page-product-detail': () => import('./src/routes/[lang]/provoz/produkty/[id]/page.tsx'),
       'page-products': () => import('./src/routes/[lang]/provoz/produkty/page.tsx'),
       // </generated-module-registration-pages>
     },

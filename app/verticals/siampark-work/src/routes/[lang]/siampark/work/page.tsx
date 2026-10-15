@@ -11,6 +11,7 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Random, Schema } from 'effect';
 import type { Types } from 'effect';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -23,7 +24,7 @@ import type {
   WorkCommand,
 } from '../../../../../shared/actions/apply-command.ts';
 import { canTransition, isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
-import { EmployeeIdSchema } from '../../../../../shared/apis/records.ts';
+import { EmployeeIdSchema, PartyIdSchema } from '../../../../../shared/apis/records.ts';
 import type { RecordsResponse, Task, TaskState } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { buildTaskColumns } from './tasks-columns.tsx';
@@ -120,10 +121,10 @@ interface EmployeeSetters {
 }
 
 // Module-scope loaders take the state setters as arguments, so the mount effect needs no dependencies.
-const loadRecords = ({ setLoadState, setRecords }: RecordsSetters) => {
+const loadRecords = ({ setLoadState, setRecords }: RecordsSetters, partyId?: typeof PartyIdSchema.Type) => {
   browserRuntime.runFork(
     requestId.pipe(
-      Effect.flatMap((id) => executeRecords({}, id)),
+      Effect.flatMap((id) => executeRecords(partyId === undefined ? {} : { partyId }, id)),
       Effect.match({
         onFailure: (error) =>
           setLoadState(
@@ -284,7 +285,7 @@ const ClosedRowsHint = ({ visible }: { readonly visible: boolean }) => {
   return visible ? <p className="text-fg-secondary text-sm">{t(`${key}.bulk.closedHint`)}</p> : null;
 };
 
-const useTasksPage = () => {
+const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFilter: boolean) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const [records, setRecords] = useState<RecordsResponse>();
@@ -295,7 +296,7 @@ const useTasksPage = () => {
   const [opportunities, setOpportunities] = useState<readonly OpportunityOption[]>([]);
   const [referenceFailed, setReferenceFailed] = useState(false);
   const [lookups, setLookups] = useState<LookupState>({ customers: false, employees: false, opportunities: false });
-  const [tab, setTab] = useState<TaskTab>('mine');
+  const [tab, setTab] = useState<TaskTab>(partyId === undefined ? 'mine' : 'all');
   const [filters, setFilters] = useState<TaskFilters>(initialTaskFilters);
   // Default order: the nearest due date first. Tasks without a date sort last (column option).
   const [sorting, setSorting] = useState<{ desc: boolean; id: string }[]>([{ desc: false, id: 'dueDate' }]);
@@ -331,19 +332,22 @@ const useTasksPage = () => {
   };
 
   useEffect(() => {
+    if (invalidFilter) {
+      return;
+    }
     // Read after mount: the first render matches the server, and the saved view applies on top of it.
     const stored = readStoredTaskView();
-    if (stored !== undefined) {
+    if (stored !== undefined && partyId === undefined) {
       // oxlint-disable-next-line react/set-state-in-effect -- One-time sync from sessionStorage after mount; initial state from storage would break server/client hydration.
       setTab(stored.tab);
       setFilters(stored.filters);
     }
     const settle = (name: keyof LookupState) => setLookups((current) => ({ ...current, [name]: true }));
-    loadRecords({ setLoadState, setRecords });
+    loadRecords({ setLoadState, setRecords }, partyId);
     loadEmployees({ setEmployees, setEmployeesFailed, settle });
     loadCustomerNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
     loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
-  }, []);
+  }, [invalidFilter, partyId]);
 
   const today = todayIsoDate();
   const employeeNames = new Map<string, string>(employees.map((employee) => [employee.id, employee.fullName]));
@@ -387,7 +391,7 @@ const useTasksPage = () => {
   const showSavedTask = (saved: Task, revision: number) =>
     setRecords((current) => (current === undefined ? current : withSavedTask(current, saved, revision)));
   const reloadRecords = requestId.pipe(
-    Effect.flatMap((id) => executeRecords({}, id)),
+    Effect.flatMap((id) => executeRecords(partyId === undefined ? {} : { partyId }, id)),
     Effect.tap((fresh) => Effect.sync(() => showFreshRecords(fresh))),
   );
 
@@ -599,7 +603,7 @@ const useTasksPage = () => {
 
   const handleReload = () => {
     setLoadState('loading');
-    loadRecords({ setLoadState, setRecords });
+    loadRecords({ setLoadState, setRecords }, partyId);
   };
 
   const handleOpenCreate = () => {
@@ -664,8 +668,17 @@ const useTasksPage = () => {
   };
 };
 
-const TasksPageContent = () => {
-  const model = useTasksPage();
+const taskStatCount = (records: RecordsResponse | undefined, countRows: (items: readonly Task[]) => number) =>
+  records === undefined ? undefined : countRows(records.items);
+
+const TasksPageContent = ({
+  invalidFilter,
+  partyId,
+}: {
+  readonly invalidFilter: boolean;
+  readonly partyId: typeof PartyIdSchema.Type | undefined;
+}) => {
+  const model = useTasksPage(partyId, invalidFilter);
   const { t } = model;
   const { records } = model;
   const columns = buildTaskColumns({
@@ -678,6 +691,10 @@ const TasksPageContent = () => {
   });
   const selectedCount = model.selectedIds.length;
   const narrow = useNarrowViewport();
+
+  if (invalidFilter) {
+    return <StatusText status="error">{t(`${key}.invalidFilter`)}</StatusText>;
+  }
 
   return (
     <>
@@ -694,19 +711,28 @@ const TasksPageContent = () => {
         title={t(`${key}.title`)}
       />
 
+      {partyId !== undefined && (
+        <p className="text-fg-secondary text-sm">
+          {t(`${key}.relatedFilter`)}{' '}
+          <a className="underline" href="?">
+            {t(`${key}.clearRelatedFilter`)}
+          </a>
+        </p>
+      )}
+
       <StatRow>
         <StatCard label={t(`${key}.stats.open`)} value={formatCount(records?.indicators.open)} />
         <StatCard
           label={t(`${key}.stats.overdue`)}
-          value={formatCount(records === undefined ? undefined : overdueCount(records.items, model.today))}
+          value={formatCount(taskStatCount(records, (items) => overdueCount(items, model.today)))}
         />
         <StatCard
           label={t(`${key}.stats.doneThisWeek`)}
-          value={formatCount(records === undefined ? undefined : doneThisWeek(records.items, model.today))}
+          value={formatCount(taskStatCount(records, (items) => doneThisWeek(items, model.today)))}
         />
         <StatCard
           label={t(`${key}.stats.unassigned`)}
-          value={formatCount(records === undefined ? undefined : unassignedOpenCount(records.items))}
+          value={formatCount(taskStatCount(records, unassignedOpenCount))}
         />
       </StatRow>
 
@@ -878,16 +904,38 @@ const TasksPageContent = () => {
 };
 
 // One Toaster for the whole page tree: the shell mounts none, and ui-kit's toast store is per remote.
-export const RecordsPage = () => (
-  <FederatedI18nBoundary
-    defaultNamespace="siampark-work"
-    fallbackLanguage="en"
-    resources={siamparkWorkI18nResources}
-    supportedLanguages={['en', 'cs']}
-  >
-    <Toaster />
-    <TasksPageContent />
-  </FederatedI18nBoundary>
-);
+const customerSearchSchema = Schema.Struct({ partyId: Schema.optional(PartyIdSchema) });
+
+export const RecordsPage = () => {
+  const search = useRouterState({
+    select: (state) => {
+      const rawSearch: unknown = state.location.search;
+      return Schema.decodeUnknownOption(Schema.toEncoded(customerSearchSchema))(rawSearch).pipe(
+        Option.map((value) => ({ partyId: value.partyId ?? null })),
+        Option.getOrElse(() => null),
+      );
+    },
+  });
+  const href = useRouterState({ select: (state) => state.location.href });
+  const requested =
+    search === null
+      ? Option.none()
+      : Schema.decodeOption(customerSearchSchema)(search.partyId === null ? {} : { partyId: search.partyId });
+  return (
+    <FederatedI18nBoundary
+      defaultNamespace="siampark-work"
+      fallbackLanguage="en"
+      resources={siamparkWorkI18nResources}
+      supportedLanguages={['en', 'cs']}
+    >
+      <Toaster />
+      <TasksPageContent
+        invalidFilter={Option.isNone(requested)}
+        key={href}
+        partyId={Option.getOrUndefined(requested)?.partyId}
+      />
+    </FederatedI18nBoundary>
+  );
+};
 
 export default RecordsPage;
