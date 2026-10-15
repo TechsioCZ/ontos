@@ -22,7 +22,7 @@ import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';

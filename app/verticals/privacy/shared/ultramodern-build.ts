@@ -1,5 +1,5 @@
-import buildArtifact from './ultramodern-build.json' with { type: 'json' };
-import { resolveUltramodernBuildArtifact } from '@modern-js/runtime-extensions/build-identity';
+import buildArtifact = require('./ultramodern-build.json');
+import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
 
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
@@ -10,5 +10,9 @@ const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(buildArtifact, 
 });
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;
-export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
+const ultramodernUiSurface = ultramodernBuildArtifact.surfaces.ui;
+if (ultramodernUiSurface === undefined) {
+  throw new Error('Application privacy requires a UI build identity.');
+}
+export const ultramodernUiMarker = ultramodernUiSurface;
 export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;

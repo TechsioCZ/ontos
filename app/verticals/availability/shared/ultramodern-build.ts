@@ -1,5 +1,5 @@
-import buildArtifact from './ultramodern-build.json' with { type: 'json' };
-import { resolveUltramodernBuildArtifact } from '@modern-js/runtime-extensions/build-identity';
+import buildArtifact = require('./ultramodern-build.json');
+import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
 
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;

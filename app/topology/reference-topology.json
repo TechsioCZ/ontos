@@ -20,13 +20,23 @@
     ],
     "authentication": {
       "kind": "shell-core-capability",
-      "owners": ["shell-super-app", "core-runtime"],
+      "owners": [
+        "shell-super-app",
+        "core-runtime"
+      ],
       "databaseSchema": "auth",
       "api": {
         "runtimeFramework": "effect",
         "strictEffectApproach": true,
         "prefix": "/shell-super-app-api",
-        "operations": ["signIn", "currentSession", "signOut", "availableTenants", "switchTenant", "issueGatewayContext"]
+        "operations": [
+          "signIn",
+          "currentSession",
+          "signOut",
+          "availableTenants",
+          "switchTenant",
+          "issueGatewayContext"
+        ]
       }
     },
     "moduleFederation": {
@@ -77,7 +87,10 @@
       "workerName": "app-shell-super-app",
       "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP",
       "compatibilityDate": "2026-06-02",
-      "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+      "compatibilityFlags": [
+        "nodejs_compat",
+        "global_fetch_strictly_public"
+      ],
       "assetsBinding": "ASSETS",
       "distributedSsrProofRoutes": [],
       "routes": {
@@ -95,18 +108,64 @@
         "contentSecurityPolicy": {
           "mode": "report-only",
           "directives": {
-            "base-uri": ["'self'"],
-            "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-            "default-src": ["'self'"],
-            "font-src": ["'self'", "data:", "https:", "http:"],
-            "form-action": ["'self'"],
-            "frame-ancestors": ["'self'"],
-            "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-            "manifest-src": ["'self'", "https:", "http:"],
-            "object-src": ["'none'"],
-            "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-            "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-            "worker-src": ["'self'", "blob:"]
+            "base-uri": [
+              "'self'"
+            ],
+            "connect-src": [
+              "'self'",
+              "https:",
+              "http:",
+              "wss:",
+              "ws:"
+            ],
+            "default-src": [
+              "'self'"
+            ],
+            "font-src": [
+              "'self'",
+              "data:",
+              "https:",
+              "http:"
+            ],
+            "form-action": [
+              "'self'"
+            ],
+            "frame-ancestors": [
+              "'self'"
+            ],
+            "img-src": [
+              "'self'",
+              "data:",
+              "blob:",
+              "https:",
+              "http:"
+            ],
+            "manifest-src": [
+              "'self'",
+              "https:",
+              "http:"
+            ],
+            "object-src": [
+              "'none'"
+            ],
+            "script-src": [
+              "'self'",
+              "'unsafe-inline'",
+              "'unsafe-eval'",
+              "https:",
+              "http:",
+              "blob:"
+            ],
+            "style-src": [
+              "'self'",
+              "'unsafe-inline'",
+              "https:",
+              "http:"
+            ],
+            "worker-src": [
+              "'self'",
+              "blob:"
+            ]
           },
           "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
         },
@@ -172,8 +231,72 @@
       "unitId": "app/shell-super-app",
       "packageName": "@app/shell-super-app",
       "version": "0.1.0",
-      "buildMarker": "090dd0a19fdd0853",
+      "buildMarker": "7e26364adfac1493",
       "sourceRevision": "workspace"
+    },
+    "renderer": "react",
+    "rendererIdentity": {
+      "renderer": "react",
+      "appId": "shell-super-app",
+      "entryName": "index",
+      "protocolVersion": 1,
+      "buildId": "7e26364adfac1493"
+    },
+    "rendererIdentities": {
+      "index": {
+        "renderer": "react",
+        "appId": "shell-super-app",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "7e26364adfac1493"
+      }
+    },
+    "rendererProfile": {
+      "renderer": "react",
+      "protocolVersion": 1,
+      "compiler": {
+        "name": "@rsbuild/plugin-react",
+        "version": "2.1.1"
+      },
+      "hydration": {
+        "name": "react-dom",
+        "version": "19.3.0"
+      },
+      "router": {
+        "name": "react-router",
+        "version": "7.18.4",
+        "coreName": "react-router",
+        "coreVersion": "7.18.4"
+      }
+    },
+    "routerBindings": {
+      "index": {
+        "owner": "@modern-js/plugin-tanstack",
+        "evidence": "file-routes",
+        "defaultProvider": {
+          "framework": "tanstack",
+          "name": "@tanstack/react-router",
+          "version": "1.170.39",
+          "coreName": "@tanstack/router-core",
+          "coreVersion": "1.171.32"
+        },
+        "providers": [
+          {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          }
+        ]
+      }
+    },
+    "rendererCapabilities": {
+      "ssr": true,
+      "streaming": true,
+      "workers": true,
+      "federation": true,
+      "rsc": true
     }
   },
   "verticals": [
@@ -187,7 +310,9 @@
         "role": "remote",
         "name": "verticalPartyRegistry",
         "manifestUrl": "http://localhost:4102/mf-manifest.json",
-        "exposes": ["./PageContacts"],
+        "exposes": [
+          "./PageContacts"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -202,7 +327,7 @@
           "unitId": "app/party-registry",
           "packageName": "@app/party-registry",
           "version": "0.1.0",
-          "buildMarker": "3f023644c8a07e9a",
+          "buildMarker": "ce1850eb4219ff1e",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -270,7 +395,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/party-registry",
-              "buildMarker": "3f023644c8a07e9a"
+              "buildMarker": "ce1850eb4219ff1e"
             }
           }
         },
@@ -298,7 +423,7 @@
         "unitId": "app/party-registry",
         "packageName": "@app/party-registry",
         "version": "0.1.0",
-        "buildMarker": "3f023644c8a07e9a",
+        "buildMarker": "ce1850eb4219ff1e",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -318,7 +443,11 @@
         },
         "serverEntry": "verticals/party-registry/api/index.ts",
         "basePath": "/party-registry-api/party-registry",
-        "consumedBy": ["shell-super-app", "commerce-customer-context", "party-registry"],
+        "consumedBy": [
+          "shell-super-app",
+          "commerce-customer-context",
+          "party-registry"
+        ],
         "readiness": {
           "endpoint": "/party-registry/readiness",
           "marker": {
@@ -326,7 +455,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -346,9 +480,14 @@
         "workerName": "app-party-registry",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
-        "distributedSsrProofRoutes": ["/en/contacts"],
+        "distributedSsrProofRoutes": [
+          "/en/contacts"
+        ],
         "routes": {
           "ssr": "/en/contacts",
           "mfManifest": "/mf-manifest.json",
@@ -364,18 +503,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -441,8 +626,74 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#party-registry",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#party-registry"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#party-registry"
+          ]
         }
+      },
+      "renderer": "react",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "party-registry",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "ce1850eb4219ff1e"
+      },
+      "rendererIdentities": {
+        "index": {
+          "renderer": "react",
+          "appId": "party-registry",
+          "entryName": "index",
+          "protocolVersion": 1,
+          "buildId": "ce1850eb4219ff1e"
+        }
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.0"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      },
+      "rendererCapabilities": {
+        "ssr": true,
+        "streaming": true,
+        "workers": true,
+        "federation": true,
+        "rsc": true
       }
     },
     {
@@ -452,14 +703,6 @@
       "domain": "commerce-customer-context",
       "package": "@app/commerce-customer-context",
       "path": "verticals/commerce-customer-context",
-      "moduleFederation": {
-        "role": "remote",
-        "name": "verticalCommerceCustomerContext",
-        "manifestUrl": "http://localhost:4101/mf-manifest.json",
-        "exposes": [],
-        "ssr": true,
-        "sharedContractVersion": "mf-ssr-contract-v1"
-      },
       "backendFederation": {
         "role": "microvertical-server",
         "name": "verticalCommerceCustomerContextBackend",
@@ -471,7 +714,7 @@
           "unitId": "app/commerce-customer-context",
           "packageName": "@app/commerce-customer-context",
           "version": "0.1.0",
-          "buildMarker": "2b4d72d8d032dd53",
+          "buildMarker": "19fda008a3f0e23b",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -531,7 +774,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/commerce-customer-context",
-              "buildMarker": "2b4d72d8d032dd53"
+              "buildMarker": "19fda008a3f0e23b"
             }
           }
         },
@@ -559,7 +802,7 @@
         "unitId": "app/commerce-customer-context",
         "packageName": "@app/commerce-customer-context",
         "version": "0.1.0",
-        "buildMarker": "2b4d72d8d032dd53",
+        "buildMarker": "19fda008a3f0e23b",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -579,7 +822,10 @@
         },
         "serverEntry": "verticals/commerce-customer-context/api/index.ts",
         "basePath": "/commerce-customer-context-api/commerce-customer-context",
-        "consumedBy": ["shell-super-app", "commerce-customer-context"],
+        "consumedBy": [
+          "shell-super-app",
+          "commerce-customer-context"
+        ],
         "readiness": {
           "endpoint": "/commerce-customer-context/readiness",
           "marker": {
@@ -587,7 +833,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -630,7 +881,10 @@
         "workerName": "app-commerce-customer-context",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "apiReadiness": "/commerce-customer-context-api/commerce-customer-context/readiness"
@@ -645,18 +899,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -722,9 +1022,12 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
+          ]
         }
-      }
+      },
+      "renderer": "none"
     },
     {
       "id": "payment-term-catalog",
@@ -733,14 +1036,6 @@
       "domain": "payment-term-catalog",
       "package": "@app/payment-term-catalog",
       "path": "verticals/payment-term-catalog",
-      "moduleFederation": {
-        "role": "remote",
-        "name": "verticalPaymentTermCatalog",
-        "manifestUrl": "http://localhost:4103/mf-manifest.json",
-        "exposes": [],
-        "ssr": true,
-        "sharedContractVersion": "mf-ssr-contract-v1"
-      },
       "backendFederation": {
         "role": "microvertical-server",
         "name": "verticalPaymentTermCatalogBackend",
@@ -752,7 +1047,7 @@
           "unitId": "app/payment-term-catalog",
           "packageName": "@app/payment-term-catalog",
           "version": "0.1.0",
-          "buildMarker": "3812f892cf5544cf",
+          "buildMarker": "1c20de722548cc76",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -812,7 +1107,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/payment-term-catalog",
-              "buildMarker": "3812f892cf5544cf"
+              "buildMarker": "1c20de722548cc76"
             }
           }
         },
@@ -840,7 +1135,7 @@
         "unitId": "app/payment-term-catalog",
         "packageName": "@app/payment-term-catalog",
         "version": "0.1.0",
-        "buildMarker": "3812f892cf5544cf",
+        "buildMarker": "1c20de722548cc76",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -860,7 +1155,10 @@
         },
         "serverEntry": "verticals/payment-term-catalog/api/index.ts",
         "basePath": "/payment-term-catalog-api/payment-term-catalog",
-        "consumedBy": ["shell-super-app", "payment-term-catalog"],
+        "consumedBy": [
+          "shell-super-app",
+          "payment-term-catalog"
+        ],
         "readiness": {
           "endpoint": "/payment-term-catalog/readiness",
           "marker": {
@@ -868,7 +1166,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -911,7 +1214,10 @@
         "workerName": "app-payment-term-catalog",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "apiReadiness": "/payment-term-catalog-api/payment-term-catalog/readiness"
@@ -926,18 +1232,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -1003,9 +1355,12 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#payment-term-catalog",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"
+          ]
         }
-      }
+      },
+      "renderer": "none"
     },
     {
       "id": "commerce-market-catalog",
@@ -1017,7 +1372,9 @@
         "role": "remote",
         "name": "verticalCommerceMarketCatalog",
         "manifestUrl": "http://localhost:4109/mf-manifest.json",
-        "exposes": ["./Route"],
+        "exposes": [
+          "./Route"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -1032,7 +1389,7 @@
           "unitId": "app/commerce-market-catalog",
           "packageName": "@app/commerce-market-catalog",
           "version": "0.1.0",
-          "buildMarker": "a3f3551680596bed",
+          "buildMarker": "90197a2b7dff4653",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -1100,7 +1457,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/commerce-market-catalog",
-              "buildMarker": "a3f3551680596bed"
+              "buildMarker": "90197a2b7dff4653"
             }
           }
         },
@@ -1128,7 +1485,7 @@
         "unitId": "app/commerce-market-catalog",
         "packageName": "@app/commerce-market-catalog",
         "version": "0.1.0",
-        "buildMarker": "a3f3551680596bed",
+        "buildMarker": "90197a2b7dff4653",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -1148,7 +1505,11 @@
         },
         "serverEntry": "verticals/commerce-market-catalog/api/index.ts",
         "basePath": "/commerce-market-catalog-api/commerce-market-catalog",
-        "consumedBy": ["shell-super-app", "commerce-customer-context", "commerce-market-catalog"],
+        "consumedBy": [
+          "shell-super-app",
+          "commerce-customer-context",
+          "commerce-market-catalog"
+        ],
         "readiness": {
           "endpoint": "/commerce-market-catalog/readiness",
           "marker": {
@@ -1156,7 +1517,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -1176,7 +1542,10 @@
         "workerName": "app-commerce-market-catalog",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
@@ -1194,18 +1563,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -1271,8 +1686,74 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-market-catalog",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#commerce-market-catalog"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-market-catalog"
+          ]
         }
+      },
+      "renderer": "react",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "commerce-market-catalog",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "90197a2b7dff4653"
+      },
+      "rendererIdentities": {
+        "index": {
+          "renderer": "react",
+          "appId": "commerce-market-catalog",
+          "entryName": "index",
+          "protocolVersion": 1,
+          "buildId": "90197a2b7dff4653"
+        }
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.0"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      },
+      "rendererCapabilities": {
+        "ssr": true,
+        "streaming": true,
+        "workers": true,
+        "federation": true,
+        "rsc": true
       }
     },
     {
@@ -1285,7 +1766,10 @@
         "role": "remote",
         "name": "verticalCatalog",
         "manifestUrl": "http://localhost:4105/mf-manifest.json",
-        "exposes": ["./Route", "./Widget"],
+        "exposes": [
+          "./Route",
+          "./Widget"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -1300,7 +1784,7 @@
           "unitId": "app/catalog",
           "packageName": "@app/catalog",
           "version": "0.1.0",
-          "buildMarker": "d68f889ade45a491",
+          "buildMarker": "5a997e5dec1e8cee",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -1368,7 +1852,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/catalog",
-              "buildMarker": "d68f889ade45a491"
+              "buildMarker": "5a997e5dec1e8cee"
             }
           }
         },
@@ -1396,7 +1880,7 @@
         "unitId": "app/catalog",
         "packageName": "@app/catalog",
         "version": "0.1.0",
-        "buildMarker": "d68f889ade45a491",
+        "buildMarker": "5a997e5dec1e8cee",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -1416,7 +1900,10 @@
         },
         "serverEntry": "verticals/catalog/api/index.ts",
         "basePath": "/catalog-api/catalog",
-        "consumedBy": ["shell-super-app", "catalog"],
+        "consumedBy": [
+          "shell-super-app",
+          "catalog"
+        ],
         "readiness": {
           "endpoint": "/catalog/readiness",
           "marker": {
@@ -1424,7 +1911,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -1460,7 +1952,10 @@
         "workerName": "app-catalog",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CATALOG",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
@@ -1478,18 +1973,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -1555,8 +2096,74 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#catalog",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#catalog"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#catalog"
+          ]
         }
+      },
+      "renderer": "react",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "catalog",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "5a997e5dec1e8cee"
+      },
+      "rendererIdentities": {
+        "index": {
+          "renderer": "react",
+          "appId": "catalog",
+          "entryName": "index",
+          "protocolVersion": 1,
+          "buildId": "5a997e5dec1e8cee"
+        }
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.0"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      },
+      "rendererCapabilities": {
+        "ssr": true,
+        "streaming": true,
+        "workers": true,
+        "federation": true,
+        "rsc": true
       }
     },
     {
@@ -1566,14 +2173,6 @@
       "domain": "pricing",
       "package": "@app/pricing",
       "path": "verticals/pricing",
-      "moduleFederation": {
-        "role": "remote",
-        "name": "verticalPricing",
-        "manifestUrl": "http://localhost:4106/mf-manifest.json",
-        "exposes": [],
-        "ssr": true,
-        "sharedContractVersion": "mf-ssr-contract-v1"
-      },
       "backendFederation": {
         "role": "microvertical-server",
         "name": "verticalPricingBackend",
@@ -1585,7 +2184,7 @@
           "unitId": "app/pricing",
           "packageName": "@app/pricing",
           "version": "0.1.0",
-          "buildMarker": "472426e9fbfd8da9",
+          "buildMarker": "b5403c43a092fccb",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -1645,7 +2244,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/pricing",
-              "buildMarker": "472426e9fbfd8da9"
+              "buildMarker": "b5403c43a092fccb"
             }
           }
         },
@@ -1673,7 +2272,7 @@
         "unitId": "app/pricing",
         "packageName": "@app/pricing",
         "version": "0.1.0",
-        "buildMarker": "472426e9fbfd8da9",
+        "buildMarker": "b5403c43a092fccb",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -1693,7 +2292,10 @@
         },
         "serverEntry": "verticals/pricing/api/index.ts",
         "basePath": "/pricing-api/pricing",
-        "consumedBy": ["shell-super-app", "pricing"],
+        "consumedBy": [
+          "shell-super-app",
+          "pricing"
+        ],
         "readiness": {
           "endpoint": "/pricing/readiness",
           "marker": {
@@ -1701,7 +2303,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -1744,7 +2351,10 @@
         "workerName": "app-pricing",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRICING",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "apiReadiness": "/pricing-api/pricing/readiness"
@@ -1759,18 +2369,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -1836,9 +2492,12 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#pricing",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#pricing"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#pricing"
+          ]
         }
-      }
+      },
+      "renderer": "none"
     },
     {
       "id": "storefront-registry",
@@ -1847,14 +2506,6 @@
       "domain": "storefront-registry",
       "package": "@app/storefront-registry",
       "path": "verticals/storefront-registry",
-      "moduleFederation": {
-        "role": "remote",
-        "name": "verticalStorefrontRegistry",
-        "manifestUrl": "http://localhost:4107/mf-manifest.json",
-        "exposes": [],
-        "ssr": true,
-        "sharedContractVersion": "mf-ssr-contract-v1"
-      },
       "backendFederation": {
         "role": "microvertical-server",
         "name": "verticalStorefrontRegistryBackend",
@@ -1866,7 +2517,7 @@
           "unitId": "app/storefront-registry",
           "packageName": "@app/storefront-registry",
           "version": "0.1.0",
-          "buildMarker": "6e1423f340df12ea",
+          "buildMarker": "07dd35dd87823ff5",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -1926,7 +2577,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/storefront-registry",
-              "buildMarker": "6e1423f340df12ea"
+              "buildMarker": "07dd35dd87823ff5"
             }
           }
         },
@@ -1954,7 +2605,7 @@
         "unitId": "app/storefront-registry",
         "packageName": "@app/storefront-registry",
         "version": "0.1.0",
-        "buildMarker": "6e1423f340df12ea",
+        "buildMarker": "07dd35dd87823ff5",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -1974,7 +2625,10 @@
         },
         "serverEntry": "verticals/storefront-registry/api/index.ts",
         "basePath": "/storefront-registry-api/storefront-registry",
-        "consumedBy": ["shell-super-app", "storefront-registry"],
+        "consumedBy": [
+          "shell-super-app",
+          "storefront-registry"
+        ],
         "readiness": {
           "endpoint": "/storefront-registry/readiness",
           "marker": {
@@ -1982,7 +2636,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -2025,7 +2684,10 @@
         "workerName": "app-storefront-registry",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "apiReadiness": "/storefront-registry-api/storefront-registry/readiness"
@@ -2040,18 +2702,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -2117,9 +2825,12 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#storefront-registry",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#storefront-registry"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#storefront-registry"
+          ]
         }
-      }
+      },
+      "renderer": "none"
     },
     {
       "id": "price-group-catalog",
@@ -2128,14 +2839,6 @@
       "domain": "price-group-catalog",
       "package": "@app/price-group-catalog",
       "path": "verticals/price-group-catalog",
-      "moduleFederation": {
-        "role": "remote",
-        "name": "verticalPriceGroupCatalog",
-        "manifestUrl": "http://localhost:4108/mf-manifest.json",
-        "exposes": [],
-        "ssr": true,
-        "sharedContractVersion": "mf-ssr-contract-v1"
-      },
       "backendFederation": {
         "role": "microvertical-server",
         "name": "verticalPriceGroupCatalogBackend",
@@ -2147,7 +2850,7 @@
           "unitId": "app/price-group-catalog",
           "packageName": "@app/price-group-catalog",
           "version": "0.1.0",
-          "buildMarker": "af022b7822b7562c",
+          "buildMarker": "1844d569e65d1318",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -2207,7 +2910,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/price-group-catalog",
-              "buildMarker": "af022b7822b7562c"
+              "buildMarker": "1844d569e65d1318"
             }
           }
         },
@@ -2235,7 +2938,7 @@
         "unitId": "app/price-group-catalog",
         "packageName": "@app/price-group-catalog",
         "version": "0.1.0",
-        "buildMarker": "af022b7822b7562c",
+        "buildMarker": "1844d569e65d1318",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -2255,7 +2958,10 @@
         },
         "serverEntry": "verticals/price-group-catalog/api/index.ts",
         "basePath": "/price-group-catalog-api/price-group-catalog",
-        "consumedBy": ["shell-super-app", "price-group-catalog"],
+        "consumedBy": [
+          "shell-super-app",
+          "price-group-catalog"
+        ],
         "readiness": {
           "endpoint": "/price-group-catalog/readiness",
           "marker": {
@@ -2263,7 +2969,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -2306,7 +3017,10 @@
         "workerName": "app-price-group-catalog",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "apiReadiness": "/price-group-catalog-api/price-group-catalog/readiness"
@@ -2321,18 +3035,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -2398,9 +3158,12 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#price-group-catalog",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#price-group-catalog"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#price-group-catalog"
+          ]
         }
-      }
+      },
+      "renderer": "none"
     },
     {
       "id": "inventory",
@@ -2412,7 +3175,10 @@
         "role": "remote",
         "name": "verticalInventory",
         "manifestUrl": "http://localhost:4110/mf-manifest.json",
-        "exposes": ["./Route", "./Widget"],
+        "exposes": [
+          "./Route",
+          "./Widget"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -2427,7 +3193,7 @@
           "unitId": "app/inventory",
           "packageName": "@app/inventory",
           "version": "0.1.0",
-          "buildMarker": "d87a59b2fccc989f",
+          "buildMarker": "65701c1d6634cd7b",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -2495,7 +3261,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/inventory",
-              "buildMarker": "d87a59b2fccc989f"
+              "buildMarker": "65701c1d6634cd7b"
             }
           }
         },
@@ -2523,7 +3289,7 @@
         "unitId": "app/inventory",
         "packageName": "@app/inventory",
         "version": "0.1.0",
-        "buildMarker": "d87a59b2fccc989f",
+        "buildMarker": "65701c1d6634cd7b",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -2543,7 +3309,10 @@
         },
         "serverEntry": "verticals/inventory/api/index.ts",
         "basePath": "/inventory-api/inventory",
-        "consumedBy": ["shell-super-app", "inventory"],
+        "consumedBy": [
+          "shell-super-app",
+          "inventory"
+        ],
         "readiness": {
           "endpoint": "/inventory/readiness",
           "marker": {
@@ -2551,7 +3320,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -2594,7 +3368,10 @@
         "workerName": "app-inventory",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_INVENTORY",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
@@ -2612,18 +3389,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -2689,8 +3512,74 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#inventory",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#inventory"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#inventory"
+          ]
         }
+      },
+      "renderer": "react",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "inventory",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "65701c1d6634cd7b"
+      },
+      "rendererIdentities": {
+        "index": {
+          "renderer": "react",
+          "appId": "inventory",
+          "entryName": "index",
+          "protocolVersion": 1,
+          "buildId": "65701c1d6634cd7b"
+        }
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.0"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      },
+      "rendererCapabilities": {
+        "ssr": true,
+        "streaming": true,
+        "workers": true,
+        "federation": true,
+        "rsc": true
       }
     },
     {
@@ -2703,7 +3592,9 @@
         "role": "remote",
         "name": "verticalAssortment",
         "manifestUrl": "http://localhost:4104/mf-manifest.json",
-        "exposes": ["./Route"],
+        "exposes": [
+          "./Route"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -2718,7 +3609,7 @@
           "unitId": "app/assortment",
           "packageName": "@app/assortment",
           "version": "0.1.0",
-          "buildMarker": "26e7bfcc7c19d1d4",
+          "buildMarker": "14fe7553819b4068",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -2786,7 +3677,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/assortment",
-              "buildMarker": "26e7bfcc7c19d1d4"
+              "buildMarker": "14fe7553819b4068"
             }
           }
         },
@@ -2814,7 +3705,7 @@
         "unitId": "app/assortment",
         "packageName": "@app/assortment",
         "version": "0.1.0",
-        "buildMarker": "26e7bfcc7c19d1d4",
+        "buildMarker": "14fe7553819b4068",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -2834,7 +3725,10 @@
         },
         "serverEntry": "verticals/assortment/api/index.ts",
         "basePath": "/assortment-api/assortment",
-        "consumedBy": ["shell-super-app", "assortment"],
+        "consumedBy": [
+          "shell-super-app",
+          "assortment"
+        ],
         "readiness": {
           "endpoint": "/assortment/readiness",
           "marker": {
@@ -2842,7 +3736,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -2885,7 +3784,10 @@
         "workerName": "app-assortment",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_ASSORTMENT",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
@@ -2903,18 +3805,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -2981,8 +3929,74 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#assortment",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#assortment"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#assortment"
+          ]
         }
+      },
+      "renderer": "react",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "assortment",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "14fe7553819b4068"
+      },
+      "rendererIdentities": {
+        "index": {
+          "renderer": "react",
+          "appId": "assortment",
+          "entryName": "index",
+          "protocolVersion": 1,
+          "buildId": "14fe7553819b4068"
+        }
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.0"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      },
+      "rendererCapabilities": {
+        "ssr": true,
+        "streaming": true,
+        "workers": true,
+        "federation": true,
+        "rsc": true
       }
     },
     {
@@ -2992,14 +4006,6 @@
       "domain": "availability",
       "package": "@app/availability",
       "path": "verticals/availability",
-      "moduleFederation": {
-        "role": "remote",
-        "name": "verticalAvailability",
-        "manifestUrl": "http://localhost:4111/mf-manifest.json",
-        "exposes": [],
-        "ssr": true,
-        "sharedContractVersion": "mf-ssr-contract-v1"
-      },
       "backendFederation": {
         "role": "microvertical-server",
         "name": "verticalAvailabilityBackend",
@@ -3011,7 +4017,7 @@
           "unitId": "app/availability",
           "packageName": "@app/availability",
           "version": "0.1.0",
-          "buildMarker": "7b0e5ab486adc9c0",
+          "buildMarker": "6f223a96beb11996",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -3071,7 +4077,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/availability",
-              "buildMarker": "7b0e5ab486adc9c0"
+              "buildMarker": "6f223a96beb11996"
             }
           }
         },
@@ -3099,7 +4105,7 @@
         "unitId": "app/availability",
         "packageName": "@app/availability",
         "version": "0.1.0",
-        "buildMarker": "7b0e5ab486adc9c0",
+        "buildMarker": "6f223a96beb11996",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -3119,7 +4125,10 @@
         },
         "serverEntry": "verticals/availability/api/index.ts",
         "basePath": "/availability-api/availability",
-        "consumedBy": ["shell-super-app", "availability"],
+        "consumedBy": [
+          "shell-super-app",
+          "availability"
+        ],
         "readiness": {
           "endpoint": "/availability/readiness",
           "marker": {
@@ -3127,7 +4136,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -3148,7 +4162,10 @@
         "workerName": "app-availability",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_AVAILABILITY",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "apiReadiness": "/availability-api/availability/readiness"
@@ -3163,18 +4180,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -3237,9 +4300,12 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#availability",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#availability"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#availability"
+          ]
         }
-      }
+      },
+      "renderer": "none"
     },
     {
       "id": "privacy",
@@ -3251,7 +4317,10 @@
         "role": "remote",
         "name": "verticalPrivacy",
         "manifestUrl": "http://localhost:4113/mf-manifest.json",
-        "exposes": ["./Route", "./Widget"],
+        "exposes": [
+          "./Route",
+          "./Widget"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -3266,7 +4335,7 @@
           "unitId": "app/privacy",
           "packageName": "@app/privacy",
           "version": "0.1.0",
-          "buildMarker": "00f31ee28a035d1a",
+          "buildMarker": "a9ef1effd4ab4d10",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -3334,7 +4403,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/privacy",
-              "buildMarker": "00f31ee28a035d1a"
+              "buildMarker": "a9ef1effd4ab4d10"
             }
           }
         },
@@ -3362,7 +4431,7 @@
         "unitId": "app/privacy",
         "packageName": "@app/privacy",
         "version": "0.1.0",
-        "buildMarker": "00f31ee28a035d1a",
+        "buildMarker": "a9ef1effd4ab4d10",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -3382,7 +4451,10 @@
         },
         "serverEntry": "verticals/privacy/api/index.ts",
         "basePath": "/privacy-api/privacy",
-        "consumedBy": ["shell-super-app", "privacy"],
+        "consumedBy": [
+          "shell-super-app",
+          "privacy"
+        ],
         "readiness": {
           "endpoint": "/privacy/readiness",
           "marker": {
@@ -3390,7 +4462,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -3433,7 +4510,10 @@
         "workerName": "app-privacy",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PRIVACY",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
@@ -3451,18 +4531,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -3529,8 +4655,74 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#privacy",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#privacy"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#privacy"
+          ]
         }
+      },
+      "renderer": "react",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "privacy",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "a9ef1effd4ab4d10"
+      },
+      "rendererIdentities": {
+        "index": {
+          "renderer": "react",
+          "appId": "privacy",
+          "entryName": "index",
+          "protocolVersion": 1,
+          "buildId": "a9ef1effd4ab4d10"
+        }
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.0"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      },
+      "rendererCapabilities": {
+        "ssr": true,
+        "streaming": true,
+        "workers": true,
+        "federation": true,
+        "rsc": true
       }
     },
     {
@@ -3540,14 +4732,6 @@
       "domain": "tax",
       "package": "@app/tax",
       "path": "verticals/tax",
-      "moduleFederation": {
-        "role": "remote",
-        "name": "verticalTax",
-        "manifestUrl": "http://localhost:4112/mf-manifest.json",
-        "exposes": [],
-        "ssr": true,
-        "sharedContractVersion": "mf-ssr-contract-v1"
-      },
       "backendFederation": {
         "role": "microvertical-server",
         "name": "verticalTaxBackend",
@@ -3559,7 +4743,7 @@
           "unitId": "app/tax",
           "packageName": "@app/tax",
           "version": "0.1.0",
-          "buildMarker": "5c4b3253f7d46679",
+          "buildMarker": "793654988b71d648",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -3619,7 +4803,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/tax",
-              "buildMarker": "5c4b3253f7d46679"
+              "buildMarker": "793654988b71d648"
             }
           }
         },
@@ -3647,7 +4831,7 @@
         "unitId": "app/tax",
         "packageName": "@app/tax",
         "version": "0.1.0",
-        "buildMarker": "5c4b3253f7d46679",
+        "buildMarker": "793654988b71d648",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -3667,7 +4851,10 @@
         },
         "serverEntry": "verticals/tax/api/index.ts",
         "basePath": "/tax-api/tax",
-        "consumedBy": ["shell-super-app", "tax"],
+        "consumedBy": [
+          "shell-super-app",
+          "tax"
+        ],
         "readiness": {
           "endpoint": "/tax/readiness",
           "marker": {
@@ -3675,7 +4862,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -3718,7 +4910,10 @@
         "workerName": "app-tax",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAX",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "apiReadiness": "/tax-api/tax/readiness"
@@ -3733,18 +4928,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -3810,9 +5051,12 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#tax",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#tax"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#tax"
+          ]
         }
-      }
+      },
+      "renderer": "none"
     },
     {
       "id": "projects",
@@ -3824,7 +5068,10 @@
         "role": "remote",
         "name": "verticalProjects",
         "manifestUrl": "http://localhost:4114/mf-manifest.json",
-        "exposes": ["./Route", "./PageCreateProject"],
+        "exposes": [
+          "./Route",
+          "./PageCreateProject"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -3839,7 +5086,7 @@
           "unitId": "app/projects",
           "packageName": "@app/projects",
           "version": "0.1.0",
-          "buildMarker": "2f8579c96e222105",
+          "buildMarker": "fef92f196db4d5ee",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -3907,7 +5154,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/projects",
-              "buildMarker": "2f8579c96e222105"
+              "buildMarker": "fef92f196db4d5ee"
             }
           }
         },
@@ -3935,7 +5182,7 @@
         "unitId": "app/projects",
         "packageName": "@app/projects",
         "version": "0.1.0",
-        "buildMarker": "2f8579c96e222105",
+        "buildMarker": "fef92f196db4d5ee",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -3955,7 +5202,10 @@
         },
         "serverEntry": "verticals/projects/api/index.ts",
         "basePath": "/projects-api/projects",
-        "consumedBy": ["shell-super-app", "projects"],
+        "consumedBy": [
+          "shell-super-app",
+          "projects"
+        ],
         "readiness": {
           "endpoint": "/projects/readiness",
           "marker": {
@@ -3963,7 +5213,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -3984,7 +5239,10 @@
         "workerName": "app-projects",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROJECTS",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en/projects/create-project",
@@ -4002,18 +5260,64 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
-              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -4076,8 +5380,74 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#projects",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#projects"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#projects"
+          ]
         }
+      },
+      "renderer": "react",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "projects",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "fef92f196db4d5ee"
+      },
+      "rendererIdentities": {
+        "index": {
+          "renderer": "react",
+          "appId": "projects",
+          "entryName": "index",
+          "protocolVersion": 1,
+          "buildId": "fef92f196db4d5ee"
+        }
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.0"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      },
+      "rendererCapabilities": {
+        "ssr": true,
+        "streaming": true,
+        "workers": true,
+        "federation": true,
+        "rsc": true
       }
     }
   ],
@@ -4156,6 +5526,11 @@
     }
   ],
   "validation": {
-    "commands": ["pnpm i18n:boundaries", "pnpm api:check", "pnpm module-entrypoints:check", "pnpm contract:check"]
+    "commands": [
+      "pnpm i18n:boundaries",
+      "pnpm api:check",
+      "pnpm module-entrypoints:check",
+      "pnpm contract:check"
+    ]
   }
 }

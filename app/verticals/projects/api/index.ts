@@ -18,7 +18,7 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
-import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer, Schema } from '@modern-js/bff-effect/effect-edge';
 import { projectsApi, projectsOperationContexts, projectsMarkerSchema } from '../shared/api.ts';
@@ -122,7 +122,7 @@ const operationAttributes = (operationContext: OperationContext) => {
 
 const projectsReadinessLayer = HttpApiBuilder.group(projectsApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
-    Schema.decodeUnknownEffect(projectsMarkerSchema)(ultramodernApiMarker).pipe(
+    Schema.decodeEffect(projectsMarkerSchema)(ultramodernApiMarker).pipe(
       Effect.orDie,
       Effect.map((marker) => ({
         checks: {
