@@ -2249,6 +2249,7 @@ const framework = {
   moduleFederationPlugin: () => ({}),
   pluginTailwindcss: () => ({}),
   presetUltramodern: configuration => configuration,
+  presetUltramodernWorkspace: configuration => configuration,
   tanstackRouterPlugin: () => ({}),
   ultramodernLocalisedUrls: {},
 };
@@ -2543,10 +2544,10 @@ runInNewContext(${JSON.stringify(code)}, {
 });
 const configuration = module.exports.default;
 const observations = {};
-if (configuration?.tools) {
+if (configuration) {
   const chainValues = [];
   const output = { uniqueName: name => { chainValues.push(name); return output; }, chunkLoadingGlobal: name => { chainValues.push(name); return output; } };
-  configuration.tools.bundlerChain?.({ output });
+  configuration.tools?.bundlerChain?.({ output });
   observations.chain = chainValues;
   observations.plugins = [];
   for (const entry of configuration.plugins ?? []) entry.setup?.({ modifyRspackConfig: value => observations.plugins.push(value) });
@@ -2561,7 +2562,7 @@ if (configuration?.tools) {
   };
   observations.rspack = ['client', 'workerSSR'].map(name => {
     const config = { resolve: {}, externals: [], plugins: [], node: {} };
-    configuration.tools.rspack?.(config, { environment: { name }, rspack: plugins });
+    configuration.tools?.rspack?.(config, { environment: { name }, rspack: plugins });
     const externalResults = [];
     for (const external of config.externals) for (const request of ['node:fs', 'fs', 'cloudflare:sockets', 'unrelated']) {
       external({ request, dependencyType: 'commonjs' }, (...args) => externalResults.push(args));
@@ -2599,8 +2600,9 @@ process.stdout.write(JSON.stringify(evidence, normalize));
 
 // OntOS's one intended extension of a generated UI vertical config: its Worker binds the private
 // data plane (Hyperdrive and the SpiceDB Workers VPC service), with the harness's placeholder IDs.
+// The workspace preset owns the Worker identity, so the scaffold config may carry no deploy section.
 const OntosEvaluatedConfigSchema = Schema.Struct({
-  deploy: Schema.Struct({ worker: Schema.Record(Schema.String, Schema.Json) }),
+  deploy: Schema.optional(Schema.Struct({ worker: Schema.optional(Schema.Record(Schema.String, Schema.Json)) })),
 });
 const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
   const { deploy } = Schema.decodeUnknownSync(OntosEvaluatedConfigSchema)(configuration);
@@ -2616,7 +2618,7 @@ const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
   );
   return Schema.decodeUnknownSync(Schema.Json)({
     ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
-    deploy: { ...deploy, worker: { ...workerConfig, ...deploy.worker } },
+    deploy: { ...deploy, worker: { ...workerConfig, ...deploy?.worker } },
   });
 };
 
