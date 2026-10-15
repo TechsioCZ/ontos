@@ -13,7 +13,7 @@
   "dependencies": {
     "better-auth": "1.7.6",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0-rc.117"
+    "effect": "4.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.4.1"

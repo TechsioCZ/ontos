@@ -14,11 +14,11 @@ zerops:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/node/'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/node/'
       deployFiles:
         - 'app/.mise.toml'
         - 'app/.zerops/node'
@@ -155,15 +155,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/party-registry' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/party-registry' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/party-registry/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/party-registry/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/party-registry/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/party-registry/node/'
+        - mkdir 'app/.zerops/runtime/party-registry/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/party-registry/node/'
       deployFiles:
         - 'app/.zerops/runtime/party-registry'
     deploy:
@@ -204,15 +204,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/commerce-customer-context' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/commerce-customer-context' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/commerce-customer-context/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/commerce-customer-context/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/commerce-customer-context/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-customer-context/node/'
+        - mkdir 'app/.zerops/runtime/commerce-customer-context/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/commerce-customer-context/node/'
       deployFiles:
         - 'app/.zerops/runtime/commerce-customer-context'
     deploy:
@@ -254,15 +254,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/payment-term-catalog' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'payment-term-catalog' --package '@app/payment-term-catalog' --package-dir 'verticals/payment-term-catalog'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/payment-term-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'payment-term-catalog' --package '@app/payment-term-catalog' --package-dir 'verticals/payment-term-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/payment-term-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/payment-term-catalog/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/payment-term-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/payment-term-catalog/node/'
+        - mkdir 'app/.zerops/runtime/payment-term-catalog/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/payment-term-catalog/node/'
       deployFiles:
         - 'app/.zerops/runtime/payment-term-catalog'
     deploy:
@@ -303,15 +303,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/commerce-market-catalog' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-market-catalog' --package '@app/commerce-market-catalog' --package-dir 'verticals/commerce-market-catalog'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/commerce-market-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-market-catalog' --package '@app/commerce-market-catalog' --package-dir 'verticals/commerce-market-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/commerce-market-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/commerce-market-catalog/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/commerce-market-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-market-catalog/node/'
+        - mkdir 'app/.zerops/runtime/commerce-market-catalog/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/commerce-market-catalog/node/'
       deployFiles:
         - 'app/.zerops/runtime/commerce-market-catalog'
     deploy:
@@ -352,15 +352,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/catalog' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'catalog' --package '@app/catalog' --package-dir 'verticals/catalog'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'catalog' --package '@app/catalog' --package-dir 'verticals/catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/catalog/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/catalog/node/'
+        - mkdir 'app/.zerops/runtime/catalog/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/catalog/node/'
       deployFiles:
         - 'app/.zerops/runtime/catalog'
     deploy:
@@ -401,15 +401,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/pricing' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'pricing' --package '@app/pricing' --package-dir 'verticals/pricing'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/pricing' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'pricing' --package '@app/pricing' --package-dir 'verticals/pricing'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/pricing/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/pricing/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/pricing/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/pricing/node/'
+        - mkdir 'app/.zerops/runtime/pricing/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/pricing/node/'
       deployFiles:
         - 'app/.zerops/runtime/pricing'
     deploy:
@@ -450,15 +450,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/storefront-registry' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'storefront-registry' --package '@app/storefront-registry' --package-dir 'verticals/storefront-registry'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/storefront-registry' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'storefront-registry' --package '@app/storefront-registry' --package-dir 'verticals/storefront-registry'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/storefront-registry/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/storefront-registry/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/storefront-registry/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/storefront-registry/node/'
+        - mkdir 'app/.zerops/runtime/storefront-registry/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/storefront-registry/node/'
       deployFiles:
         - 'app/.zerops/runtime/storefront-registry'
     deploy:
@@ -499,15 +499,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/price-group-catalog' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/price-group-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/price-group-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/price-group-catalog/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/price-group-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/price-group-catalog/node/'
+        - mkdir 'app/.zerops/runtime/price-group-catalog/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/price-group-catalog/node/'
       deployFiles:
         - 'app/.zerops/runtime/price-group-catalog'
     deploy:
@@ -548,15 +548,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/inventory' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'inventory' --package '@app/inventory' --package-dir 'verticals/inventory'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/inventory' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'inventory' --package '@app/inventory' --package-dir 'verticals/inventory'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/inventory/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/inventory/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/inventory/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/inventory/node/'
+        - mkdir 'app/.zerops/runtime/inventory/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/inventory/node/'
       deployFiles:
         - 'app/.zerops/runtime/inventory'
     deploy:
@@ -597,15 +597,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/assortment' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'assortment' --package '@app/assortment' --package-dir 'verticals/assortment'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/assortment' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'assortment' --package '@app/assortment' --package-dir 'verticals/assortment'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/assortment/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/assortment/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/assortment/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/assortment/node/'
+        - mkdir 'app/.zerops/runtime/assortment/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/assortment/node/'
       deployFiles:
         - 'app/.zerops/runtime/assortment'
     deploy:
@@ -646,15 +646,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/availability' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'availability' --package '@app/availability' --package-dir 'verticals/availability'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/availability' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'availability' --package '@app/availability' --package-dir 'verticals/availability'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/availability/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/availability/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/availability/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/availability/node/'
+        - mkdir 'app/.zerops/runtime/availability/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/availability/node/'
       deployFiles:
         - 'app/.zerops/runtime/availability'
     deploy:
@@ -695,15 +695,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/privacy' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'privacy' --package '@app/privacy' --package-dir 'verticals/privacy'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/privacy' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'privacy' --package '@app/privacy' --package-dir 'verticals/privacy'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/privacy/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/privacy/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/privacy/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/privacy/node/'
+        - mkdir 'app/.zerops/runtime/privacy/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/privacy/node/'
       deployFiles:
         - 'app/.zerops/runtime/privacy'
     deploy:
@@ -744,15 +744,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/tax' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'tax' --package '@app/tax' --package-dir 'verticals/tax'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/tax' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'tax' --package '@app/tax' --package-dir 'verticals/tax'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/tax/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/tax/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/tax/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/tax/node/'
+        - mkdir 'app/.zerops/runtime/tax/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/tax/node/'
       deployFiles:
         - 'app/.zerops/runtime/tax'
     deploy:
@@ -793,15 +793,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/projects' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'projects' --package '@app/projects' --package-dir 'verticals/projects'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/projects' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'projects' --package '@app/projects' --package-dir 'verticals/projects'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/projects/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/projects/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/projects/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/projects/node/'
+        - mkdir 'app/.zerops/runtime/projects/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/projects/node/'
       deployFiles:
         - 'app/.zerops/runtime/projects'
     deploy:
@@ -845,15 +845,15 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/shell-super-app' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm --filter '@app/shell-super-app' run build
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/shell-super-app/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/shell-super-app/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/shell-super-app/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/shell-super-app/node/'
+        - mkdir 'app/.zerops/runtime/shell-super-app/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/shell-super-app/node/'
       deployFiles:
         - 'app/.zerops/runtime/shell-super-app'
     deploy:
@@ -895,12 +895,12 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry' --worker
-        - mkdir 'app/.zerops/runtime/party-registry-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/party-registry-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry' --worker
+        - mkdir 'app/.zerops/runtime/party-registry-worker/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/party-registry-worker/node/'
       deployFiles:
         - 'app/.zerops/runtime/party-registry-worker'
     deploy:
@@ -941,12 +941,12 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context' --worker
-        - mkdir 'app/.zerops/runtime/commerce-customer-context-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-customer-context-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context' --worker
+        - mkdir 'app/.zerops/runtime/commerce-customer-context-worker/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/commerce-customer-context-worker/node/'
       deployFiles:
         - 'app/.zerops/runtime/commerce-customer-context-worker'
     deploy:
@@ -988,12 +988,12 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker
-        - mkdir 'app/.zerops/runtime/price-group-catalog-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/price-group-catalog-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker
+        - mkdir 'app/.zerops/runtime/price-group-catalog-worker/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/price-group-catalog-worker/node/'
       deployFiles:
         - 'app/.zerops/runtime/price-group-catalog-worker'
     deploy:
@@ -1034,12 +1034,12 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'inventory' --package '@app/inventory' --package-dir 'verticals/inventory' --worker
-        - mkdir 'app/.zerops/runtime/inventory-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/inventory-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'inventory' --package '@app/inventory' --package-dir 'verticals/inventory' --worker
+        - mkdir 'app/.zerops/runtime/inventory-worker/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/inventory-worker/node/'
       deployFiles:
         - 'app/.zerops/runtime/inventory-worker'
     deploy:
@@ -1080,12 +1080,12 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'privacy' --package '@app/privacy' --package-dir 'verticals/privacy' --worker
-        - mkdir 'app/.zerops/runtime/privacy-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/privacy-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'privacy' --package '@app/privacy' --package-dir 'verticals/privacy' --worker
+        - mkdir 'app/.zerops/runtime/privacy-worker/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/privacy-worker/node/'
       deployFiles:
         - 'app/.zerops/runtime/privacy-worker'
     deploy:
@@ -1126,12 +1126,12 @@ zerops:
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.10.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker
-        - mkdir 'app/.zerops/runtime/outbox-worker-host/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/outbox-worker-host/node/'
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.10.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.10.0/bin:$PATH" pnpm run zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker
+        - mkdir 'app/.zerops/runtime/outbox-worker-host/node' && cp -a "$HOME/.local/node-26.10.0/bin" "$HOME/.local/node-26.10.0/lib" 'app/.zerops/runtime/outbox-worker-host/node/'
       deployFiles:
         - 'app/.zerops/runtime/outbox-worker-host'
     deploy:
