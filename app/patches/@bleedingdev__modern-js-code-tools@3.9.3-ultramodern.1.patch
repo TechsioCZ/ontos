@@ -225,7 +225,7 @@ index 301a68e5510b254216ef413e5a371f344decb530..a75433284e81209a1278d0c5cf29dbf6
 +                                    const callee = graph.evaluate(source, node.callee);
 +                                    if (callee.length > 0 && callee.every((value)=>'external' === value.kind && [
 +                                            effect,
-+                                            'effect/unstable/httpapi'
++                                            'effect/http-api'
 +                                        ].includes(value.specifier) && 'HttpApi' === value.name && 1 === value.members.length && 'make' === value.members[0])) {
 +                                        if (1 !== node.arguments.length || !types_namespaceObject.isStringLiteral(node.arguments[0])) return false;
 +                                        break;
@@ -933,7 +933,7 @@ index 980e7be914bcba8d7b418eec76acea2163bff7b3..b0411dfdc67a7d850f86d3b26308f334
 +                                    const callee = graph.evaluate(source, node.callee);
 +                                    if (callee.length > 0 && callee.every((value)=>'external' === value.kind && [
 +                                            effect,
-+                                            'effect/unstable/httpapi'
++                                            'effect/http-api'
 +                                        ].includes(value.specifier) && 'HttpApi' === value.name && 1 === value.members.length && 'make' === value.members[0])) {
 +                                        if (1 !== node.arguments.length || !__rspack_external__babel_types_6e8337dd.isStringLiteral(node.arguments[0])) return false;
 +                                        break;
@@ -1641,7 +1641,7 @@ index 5c443ce530c8bec5c6576b1d25e3cb2072a63f2c..c18ac16a1d9d0c1e0c99c20b40e6676b
 +                                    const callee = graph.evaluate(source, node.callee);
 +                                    if (callee.length > 0 && callee.every((value)=>'external' === value.kind && [
 +                                            effect,
-+                                            'effect/unstable/httpapi'
++                                            'effect/http-api'
 +                                        ].includes(value.specifier) && 'HttpApi' === value.name && 1 === value.members.length && 'make' === value.members[0])) {
 +                                        if (1 !== node.arguments.length || !__rspack_external__babel_types_6e8337dd.isStringLiteral(node.arguments[0])) return false;
 +                                        break;
