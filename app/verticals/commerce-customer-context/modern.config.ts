@@ -16,10 +16,11 @@ installGlobalRequire(import.meta.url);
 
 const appId = 'commerce-customer-context';
 const bffPrefix = COMMERCE_CUSTOMER_CONTEXT_API_PREFIX;
+const cloudflareWorkerName = 'app-commerce-customer-context';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT',
-  cloudflareWorkerName: 'app-commerce-customer-context',
+  cloudflareWorkerName,
   defaultPort: 4101,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,

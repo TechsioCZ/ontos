@@ -14,10 +14,11 @@ installGlobalRequire(import.meta.url);
 
 const appId = 'price-group-catalog';
 const bffPrefix = '/price-group-catalog-api';
+const cloudflareWorkerName = 'app-price-group-catalog';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG',
-  cloudflareWorkerName: 'app-price-group-catalog',
+  cloudflareWorkerName,
   defaultPort: 4108,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,

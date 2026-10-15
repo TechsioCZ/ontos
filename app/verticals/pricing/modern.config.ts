@@ -14,10 +14,11 @@ installGlobalRequire(import.meta.url);
 
 const appId = 'pricing';
 const bffPrefix = '/pricing-api';
+const cloudflareWorkerName = 'app-pricing';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_PRICING',
-  cloudflareWorkerName: 'app-pricing',
+  cloudflareWorkerName,
   defaultPort: 4106,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,

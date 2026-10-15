@@ -14,10 +14,11 @@ installGlobalRequire(import.meta.url);
 
 const appId = 'tax';
 const bffPrefix = '/tax-api';
+const cloudflareWorkerName = 'app-tax';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_TAX',
-  cloudflareWorkerName: 'app-tax',
+  cloudflareWorkerName,
   defaultPort: 4112,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,

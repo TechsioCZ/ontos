@@ -14,10 +14,11 @@ installGlobalRequire(import.meta.url);
 
 const appId = 'payment-term-catalog';
 const bffPrefix = '/payment-term-catalog-api';
+const cloudflareWorkerName = 'app-payment-term-catalog';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG',
-  cloudflareWorkerName: 'app-payment-term-catalog',
+  cloudflareWorkerName,
   defaultPort: 4103,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,
