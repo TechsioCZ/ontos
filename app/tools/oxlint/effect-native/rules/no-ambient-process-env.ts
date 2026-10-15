@@ -181,6 +181,32 @@ const modernCompilerProcess = (context: Context, target: ESTree.Node): Identifie
   return process.type === 'Identifier' && isUnshadowedGlobal(context, process, 'process') ? process : null;
 };
 
+/**
+ * The framework defines `import.meta.env.MODERN_TARGET` with the same per-environment value as
+ * `process.env.MODERN_TARGET`. Only the literal static chain qualifies; `import.meta` cannot be rebound.
+ */
+const isModernCompilerImportMetaTarget = (target: ESTree.Node): boolean => {
+  if (
+    target.type !== 'MemberExpression' ||
+    target.computed ||
+    target.optional ||
+    target.property.type !== 'Identifier' ||
+    target.property.name !== 'MODERN_TARGET'
+  ) {
+    return false;
+  }
+  const environment = target.object;
+  return (
+    environment.type === 'MemberExpression' &&
+    !environment.computed &&
+    !environment.optional &&
+    environment.property.type === 'Identifier' &&
+    environment.property.name === 'env' &&
+    environment.object.type === 'MetaProperty' &&
+    isImportMeta(environment.object)
+  );
+};
+
 interface RuleOptions {
   readonly allowPaths: readonly string[];
   readonly ignoreTestFiles: boolean;
@@ -295,13 +321,13 @@ const isImmutableModernProcess = (context: Context, process: IdentifierNode): bo
   return true;
 };
 
-/** Modern's SSR builder replaces exactly this expression with 'browser' or 'node'. */
+/** Modern's SSR builder replaces exactly these expressions with 'browser' or 'node'. */
 export const isModernCompilerTargetComparison = (context: Context, node: ESTree.Node): boolean => {
   if (node.type !== 'BinaryExpression' || node.operator !== '===') {
     return false;
   }
   const process = modernCompilerProcess(context, node.left);
-  if (process === null) {
+  if (process === null && !isModernCompilerImportMetaTarget(node.left)) {
     return false;
   }
   if (node.right.type !== 'Literal' || (node.right.value !== 'browser' && node.right.value !== 'node')) {
@@ -311,7 +337,7 @@ export const isModernCompilerTargetComparison = (context: Context, node: ESTree.
   if (!((parent?.type === 'IfStatement' || parent?.type === 'ConditionalExpression') && parent.test === node)) {
     return false;
   }
-  return isImmutableModernProcess(context, process) && hasModernCompilerOwner(context.filename);
+  return (process === null || isImmutableModernProcess(context, process)) && hasModernCompilerOwner(context.filename);
 };
 
 function patternSource(node: AnyNode): AnyNode | null {
