@@ -3,6 +3,8 @@ import { Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { parse } from 'yaml';
 
+import { readDevelopmentPorts } from './topology-development-ports.mjs';
+
 const begin = '  # <generated-vertical-provider-deployments>';
 const end = '  # </generated-vertical-provider-deployments>';
 const importsBegin = '  # <generated-vertical-provider-imports>';
@@ -13,7 +15,6 @@ const TopologySchema = Schema.fromJsonString(
     verticals: Schema.Array(
       Schema.Struct({
         id: Schema.String,
-        moduleFederation: Schema.Struct({ manifestUrl: Schema.String }),
         package: Schema.String,
         path: Schema.String,
       }),
@@ -29,10 +30,32 @@ const invalid = (reason: string) => new ProviderDeploymentInvalid({ reason });
 
 interface ProviderVertical {
   readonly id: string;
-  readonly moduleFederation: { readonly manifestUrl: string };
   readonly package: string;
   readonly path: string;
+  readonly port: number;
 }
+
+const isPort = (port: number): boolean => Number.isInteger(port) && port >= 1 && port <= 65_535;
+
+/** Joins reference-topology providers with their development-overlay ports. */
+export const readZeropsProviderTopology = (root: string) =>
+  Effect.gen(function* readProviderTopology() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
+      yield* fs.readFileString(path.join(root, 'topology/reference-topology.json')),
+    );
+    const ports = yield* readDevelopmentPorts(root);
+    const verticals: ProviderVertical[] = [];
+    for (const vertical of topology.verticals) {
+      const port = ports[vertical.id];
+      if (port === undefined) {
+        return yield* invalid(`Missing development port for topology provider: ${vertical.id}`);
+      }
+      verticals.push({ ...vertical, port });
+    }
+    return { verticals };
+  });
 
 export interface ZeropsToolchain {
   readonly node: string;
@@ -53,13 +76,9 @@ const renderProvider = (
     ) {
       return yield* invalid(`Invalid topology provider identity: ${id}`);
     }
-    const url = yield* Effect.try({
-      catch: () => invalid(`Invalid topology provider manifest URL: ${id}`),
-      try: () => new URL(vertical.moduleFederation.manifestUrl),
-    });
-    const port = Number(url.port);
-    if (!Number.isInteger(port) || port < 1 || port > 65_535 || url.pathname !== '/mf-manifest.json') {
-      return yield* invalid(`Invalid topology provider manifest URL: ${id}`);
+    const { port } = vertical;
+    if (!isPort(port)) {
+      return yield* invalid(`Invalid topology provider port: ${id}`);
     }
     const readiness = `/${id}-api/${id}/readiness`;
     const runtime = `app/.zerops/runtime/${id}`;
@@ -135,10 +154,7 @@ export const generateZeropsProviderDeployment = (
         return yield* invalid(`Duplicate topology provider: ${vertical.id}`);
       }
       ids.add(vertical.id);
-      const { port } = yield* Effect.try({
-        catch: () => invalid(`Invalid topology provider manifest URL: ${vertical.id}`),
-        try: () => new URL(vertical.moduleFederation.manifestUrl),
-      });
+      const { port } = vertical;
       if (ports.has(port)) {
         return yield* invalid(`Duplicate topology provider port: ${port}`);
       }
@@ -148,7 +164,7 @@ export const generateZeropsProviderDeployment = (
     const priceGroupCatalogBaseUrl =
       priceGroupCatalog === undefined
         ? undefined
-        : `http://pricegroupcatalog:${new URL(priceGroupCatalog.moduleFederation.manifestUrl).port}/price-group-catalog-api`;
+        : `http://pricegroupcatalog:${priceGroupCatalog.port}/price-group-catalog-api`;
     const providers = yield* Effect.all(
       topology.verticals.map((vertical) => renderProvider(vertical, priceGroupCatalogBaseUrl, toolchain)),
     );
@@ -321,8 +337,7 @@ const runCommand = ({ write }: { readonly write: boolean }) =>
     const root = path.resolve();
     const sourcePath = path.join(root, 'zerops.yaml');
     const source = yield* fs.readFileString(sourcePath);
-    const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
-    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
+    const topology = yield* readZeropsProviderTopology(root);
     const toolchain = yield* readZeropsToolchain(
       yield* fs.readFileString(path.join(root, '.mise.toml')),
       yield* fs.readFileString(path.join(root, 'package.json')),

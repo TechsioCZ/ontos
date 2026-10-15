@@ -337,10 +337,11 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         return yield* failure('generated package module marker does not match the owner manifest');
       }
       const [topologyEntry] = topologyEntries;
-      if (topologyEntry === undefined || topologyEntry.moduleFederation?.name === undefined) {
-        return yield* failure('vertical topology Module Federation boundary is missing');
+      if (topologyEntry === undefined) {
+        return yield* failure('vertical package and topology deployment identity do not match exactly');
       }
-      const moduleFederationName = topologyEntry.moduleFederation.name;
+      // Headless (api-only) units have no UI Module Federation boundary in UltraModern topology.
+      const moduleFederationName = topologyEntry.moduleFederation?.name;
 
       return { appId, moduleFederationName, topologyEntry };
     });
@@ -364,6 +365,9 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         const expose = selector ?? `./${toPascalCase(key)}`;
         if (!exposes.has(expose)) {
           return yield* failure(`public component ${key} has no matching Module Federation exposure`);
+        }
+        if (moduleFederationName === undefined) {
+          return yield* failure('vertical topology Module Federation boundary is missing');
         }
         components.push({ expose, key: componentKey, mfBoundaryId: moduleFederationName });
       }

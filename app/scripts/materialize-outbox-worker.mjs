@@ -29,7 +29,6 @@ const TopologySchema = Schema.fromJsonString(
           }),
         ),
         id: Schema.String,
-        moduleFederation: Schema.Struct({ manifestUrl: Schema.String }),
         package: Schema.String,
         path: Schema.String,
       }),

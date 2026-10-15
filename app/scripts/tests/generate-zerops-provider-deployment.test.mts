@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -9,6 +9,7 @@ import {
   generateZeropsProviderImports,
   generateZeropsProviderMigrations,
   generateZeropsMigratorInventory,
+  readZeropsProviderTopology,
   readZeropsToolchain,
 } from '../generate-zerops-provider-deployment.mts';
 
@@ -20,30 +21,16 @@ const ledgerPath = 'verticals/ledger';
 const projectsPath = 'verticals/projects';
 const ledger = {
   id: 'ledger',
-  moduleFederation: { manifestUrl: 'http://localhost:4140/mf-manifest.json' },
   package: '@app/ledger',
   path: ledgerPath,
+  port: 4140,
 };
-
-const TopologySchema = Schema.fromJsonString(
-  Schema.Struct({
-    verticals: Schema.Array(
-      Schema.Struct({
-        id: Schema.String,
-        moduleFederation: Schema.Struct({ manifestUrl: Schema.String }),
-        package: Schema.String,
-        path: Schema.String,
-      }),
-    ),
-  }),
-);
 
 it.effect('reproduces the checked-in provider setups from topology and preserves other services', () =>
   Effect.gen(function* testProviderReproducer() {
     const fs = yield* FileSystem.FileSystem;
     const source = yield* fs.readFileString(path.join(root, 'zerops.yaml'));
-    const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
-    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
+    const topology = yield* readZeropsProviderTopology(root);
     const checkedInToolchain = yield* readZeropsToolchain(
       yield* fs.readFileString(path.join(root, '.mise.toml')),
       yield* fs.readFileString(path.join(root, 'package.json')),
@@ -133,15 +120,15 @@ it.effect('keeps provider startup independent of composition availability', () =
   Effect.gen(function* independentCompositionStartup() {
     const customerContext = {
       id: 'commerce-customer-context',
-      moduleFederation: { manifestUrl: 'http://localhost:4101/mf-manifest.json' },
       package: '@app/commerce-customer-context',
       path: 'verticals/commerce-customer-context',
+      port: 4101,
     };
     const partyRegistry = {
       id: 'party-registry',
-      moduleFederation: { manifestUrl: 'http://localhost:4102/mf-manifest.json' },
       package: '@app/party-registry',
       path: 'verticals/party-registry',
+      port: 4102,
     };
     const source = "zerops:\n  - setup: 'commerce-customer-context'\n\n  - setup: 'shellsuperapp'\n";
     const generated = yield* generateZeropsProviderDeployment(

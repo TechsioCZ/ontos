@@ -14,6 +14,7 @@ import { expect, it } from 'effect-rstest';
 import { generateOutboxWorkerDeployment } from '../generate-outbox-worker-deployment.mjs';
 import { materializeOutboxWorker } from '../materialize-outbox-worker.mjs';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
+import { DEVELOPMENT_OVERLAY_PATH } from '../topology-development-ports.mjs';
 
 const LEDGER_PACKAGE = '@app/ledger';
 const LEDGER_PATH = 'verticals/ledger';
@@ -153,15 +154,16 @@ const makeFixture = () =>
           verticals: [
             {
               id: 'ledger',
-              moduleFederation: {
-                manifestUrl: 'http://localhost:4110/mf-manifest.json',
-              },
               package: LEDGER_PACKAGE,
               path: LEDGER_PATH,
             },
           ],
         }),
       ),
+    );
+    yield* Effect.tryPromise(() => mkdir(path.join(root, path.dirname(DEVELOPMENT_OVERLAY_PATH)), { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(path.join(root, DEVELOPMENT_OVERLAY_PATH), JSON.stringify({ ports: { ledger: 4110 } })),
     );
     return root;
   });
@@ -406,11 +408,17 @@ const makeReleaseMarkerFixture = (sourceRevision = 'workspace') =>
               unitId: `app/${owner.id}`,
             },
             id: owner.id,
-            moduleFederation: { manifestUrl: `http://localhost:${owner.port}/mf-manifest.json` },
             package: `@app/${owner.id}`,
             path: `verticals/${owner.id}`,
           })),
         }),
+      ),
+    );
+    yield* Effect.tryPromise(() => mkdir(path.join(root, path.dirname(DEVELOPMENT_OVERLAY_PATH)), { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, DEVELOPMENT_OVERLAY_PATH),
+        JSON.stringify({ ports: Object.fromEntries(RELEASE_FIXTURE_OWNERS.map((owner) => [owner.id, owner.port])) }),
       ),
     );
     const deployments =

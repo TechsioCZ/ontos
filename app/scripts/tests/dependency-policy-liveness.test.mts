@@ -95,12 +95,28 @@ interface SelectorPart {
 
 const isExactVersion = (version: string): boolean => /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(version);
 
+/** Splits `parent>child` at package boundaries, never inside a `>=`/`>1.0.0` version range. */
+const selectorSegments = (selector: string): readonly SelectorPart[] =>
+  selector.split(/>(?=[@a-z])/iu).map((part) => ({ name: nameOf(part), version: part.slice(nameOf(part).length + 1) }));
+
 /** `parent@1.2.3>child` -> its parts; `undefined` when a part uses a range this gate cannot evaluate. */
 const selectorParts = (selector: string): readonly SelectorPart[] | undefined => {
-  const parts = selector
-    .split('>')
-    .map((part) => ({ name: nameOf(part), version: part.slice(nameOf(part).length + 1) }));
+  const parts = selectorSegments(selector);
   return parts.every(({ version }) => version === '' || isExactVersion(version)) ? parts : undefined;
+};
+
+/**
+ * Override selectors may range their final target (`name@>=3.0.0 <3.0.4`): liveness is judged by the
+ * target's name, because the override replaces exactly the versions it ranges. Parents stay exact.
+ */
+const overrideParts = (selector: string): readonly SelectorPart[] | undefined => {
+  const parts = selectorSegments(selector);
+  const parents = parts.slice(0, -1);
+  const target = parts.at(-1);
+  if (target === undefined || !parents.every(({ version }) => version === '' || isExactVersion(version))) {
+    return undefined;
+  }
+  return [...parents, { name: target.name, version: '' }];
 };
 
 /** A bare name matches every resolved version; `name@1.2.3` matches only that version. */
@@ -111,7 +127,7 @@ const rangeSelector = (section: string, key: string): string =>
   `${section}.${key} selects a version range this gate cannot evaluate; select an exact version or the bare name`;
 
 const deadOverride = (key: string, value: string, lock: Lockfile, manifests: Manifests): readonly string[] => {
-  const parts = selectorParts(key);
+  const parts = overrideParts(key);
   if (parts === undefined) {
     return [rangeSelector('overrides', key)];
   }
@@ -160,9 +176,18 @@ const deadPackageExtension = (key: string, lock: Lockfile): readonly string[] =>
     : [`packageExtensions.${key} matches nothing in pnpm-lock.yaml; delete it`];
 };
 
+/** A bare patch key applies to every resolved version, including remote-tarball identities. */
+const patchTargets = (key: string, id: string): boolean => {
+  const [part] = selectorSegments(key);
+  if (part === undefined) {
+    return false;
+  }
+  return part.version === '' ? nameOf(id) === part.name : id === key;
+};
+
 const deadPatches = (workspaceYaml: string, lock: Lockfile): readonly string[] =>
   patchEntries(workspaceYaml).flatMap(({ comment, key }) => [
-    ...(lock.packageIds.has(key)
+    ...([...lock.packageIds].some((id) => patchTargets(key, id))
       ? []
       : [`patchedDependencies.${key} matches nothing in pnpm-lock.yaml; delete the patch`]),
     ...(/https:\/\/\S+/u.test(comment)
@@ -227,6 +252,9 @@ packages:
   zod@4.6.5:
     resolution: {integrity: sha512-x}
 
+  remote-tarball@https://pkg.example/remote-tarball@abc123:
+    resolution: {tarball: https://pkg.example/remote-tarball@abc123}
+
 snapshots:
 
   '@scope/host@1.0.0(react@19.2.8)':
@@ -237,6 +265,7 @@ snapshots:
 const liveWorkspace = `overrides:
   react: 19.2.8
   '@scope/host@1.0.0>react': 19.2.8
+  'react@>=19.0.0 <19.2.8': 19.2.8
 packageExtensions:
   zod@4.6.5:
     dependencies:
@@ -251,6 +280,8 @@ peerDependencyRules:
 patchedDependencies:
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380
   drizzle-orm@1.0.0: patches/drizzle-orm.patch
+  # upstream: https://github.com/example/remote-tarball
+  remote-tarball: patches/remote-tarball.patch
 `;
 
 it('pnpm-workspace.yaml carries no dead overrides, peer rules, extensions or unlinked patches', () => {
@@ -269,12 +300,16 @@ it('flags overrides that match nothing, name a parent without that edge, or rest
   '@missing/parent>react': 19.2.8
   drizzle-orm>react: 19.2.8
   zod: 4.6.5
+  'absent@>=1.0.0 <1.0.1': 1.0.1
+  '@scope/host@^1.0.0>react@>=19.0.0': 19.2.8
 `;
   expect(findDeadDependencyPolicy(workspace, lockFixture, { '.': { zod: '4.6.5' } })).toEqual([
     'overrides.optional-peer matches nothing in pnpm-lock.yaml; delete it',
     'overrides.@missing/parent>react names a parent that no longer depends on react in pnpm-lock.yaml; delete it',
     'overrides.drizzle-orm>react names a parent that no longer depends on react in pnpm-lock.yaml; delete it',
     'overrides.zod only restates the range every importer declares; delete it',
+    'overrides.absent@>=1.0.0 <1.0.1 matches nothing in pnpm-lock.yaml; delete it',
+    'overrides.@scope/host@^1.0.0>react@>=19.0.0 selects a version range this gate cannot evaluate; select an exact version or the bare name',
   ]);
 });
 
@@ -300,6 +335,8 @@ it('flags package extensions pinned to an unresolved version and patches without
   drizzle-orm@1.0.0: patches/drizzle-orm.patch
   # upstream: https://github.com/better-auth/better-fetch/pull/1
   '@better-fetch/fetch@1.3.1': patches/better-fetch.patch
+  # upstream: https://github.com/example/absent-tarball
+  absent-tarball: patches/absent-tarball.patch
 packageExtensions:
   eslint-plugin-perfectionist@5.10.1:
     dependencies:
@@ -313,5 +350,6 @@ packageExtensions:
     'packageExtensions.zod@4.6.4 matches nothing in pnpm-lock.yaml; delete it',
     'patchedDependencies.drizzle-orm@1.0.0 has no upstream URL; add a "# upstream: https://..." comment above it',
     'patchedDependencies.@better-fetch/fetch@1.3.1 matches nothing in pnpm-lock.yaml; delete the patch',
+    'patchedDependencies.absent-tarball matches nothing in pnpm-lock.yaml; delete the patch',
   ]);
 });

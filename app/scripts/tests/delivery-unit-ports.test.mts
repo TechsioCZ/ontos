@@ -20,7 +20,8 @@ const OverlaySchema = Schema.Struct({
 });
 const VerticalSchema = Schema.Struct({
   id: Schema.String,
-  moduleFederation: Schema.Struct({ name: Schema.String }),
+  // Headless (api-only) units have no UI Module Federation boundary.
+  moduleFederation: Schema.optional(Schema.Struct({ name: Schema.String })),
   path: Schema.String,
 });
 const TopologySchema = Schema.Struct({

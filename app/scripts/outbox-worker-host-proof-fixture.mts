@@ -125,7 +125,8 @@ export const HostProofTopologySchema = Schema.Struct({
     Schema.Struct({
       deliveryUnit: DeliveryIdentitySchema,
       id: Schema.NonEmptyString,
-      moduleFederation: Schema.Struct({ name: Schema.NonEmptyString }),
+      // Headless (api-only) owners have no UI Module Federation boundary.
+      moduleFederation: Schema.optional(Schema.Struct({ name: Schema.NonEmptyString })),
       path: Schema.NonEmptyString,
     }),
   ),
@@ -341,6 +342,9 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
           if (contract.manifest.publicSurface.components.length === 0) {
             yield* Ref.set(ownerDocuments, ownerArtifacts);
             return common;
+          }
+          if (owner.moduleFederation === undefined) {
+            return yield* fail(`the ${owner.id} public components have no Module Federation boundary`);
           }
           const manifestPath = '/mf-manifest.json';
           const manifest = yield* Schema.encodeEffect(federationClaimsJson)({
