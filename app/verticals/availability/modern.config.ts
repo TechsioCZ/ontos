@@ -14,10 +14,11 @@ installGlobalRequire(import.meta.url);
 
 const appId = 'availability';
 const bffPrefix = '/availability-api';
+const cloudflareWorkerName = 'app-availability';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_AVAILABILITY',
-  cloudflareWorkerName: 'app-availability',
+  cloudflareWorkerName,
   defaultPort: 4111,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,

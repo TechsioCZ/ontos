@@ -14,10 +14,11 @@ installGlobalRequire(import.meta.url);
 
 const appId = 'storefront-registry';
 const bffPrefix = '/storefront-registry-api';
+const cloudflareWorkerName = 'app-storefront-registry';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY',
-  cloudflareWorkerName: 'app-storefront-registry',
+  cloudflareWorkerName,
   defaultPort: 4107,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,
