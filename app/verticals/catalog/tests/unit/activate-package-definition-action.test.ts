@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -67,7 +68,7 @@ describe('Activate Package Definition Action', () => {
       );
       expect(result.contentRevision.revision).toBe(2);
       expect(result.definitionRef.resourceId).toBe(packageDefinitionId);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('maps stale and unavailable persistence without claiming activation', () =>
@@ -81,7 +82,7 @@ describe('Activate Package Definition Action', () => {
         context(compositionSnapshot.composition.revision, () => Effect.succeed({ _tag: 'stale', actualRevision: 2 })),
       ).pipe(Effect.flip);
       expect(stale.code).toBe('package_definition_stale');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('declares a governed tenant write, explicit authorization, and idempotency', () => {

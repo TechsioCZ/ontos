@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import type { ConfigurationUnitRevision } from '../../shared/domain/configuration-unit.ts';
 
@@ -44,7 +45,7 @@ export interface ConfigurationSelectionImpact {
     readonly proposed: ConfigurationRuleSnapshot;
     readonly proposedRevision: number;
     readonly tenantId: string;
-  }) => Effect.Effect<boolean, ProductConfigurationPersistenceUnavailable>;
+  }) => Effect.Effect<boolean, ProductConfigurationPersistenceUnavailable, Crypto.Crypto>;
 }
 
 interface ConfigurationChoiceInput {
@@ -141,7 +142,7 @@ export interface CurrentConfigurationRevision {
 export interface ProductConfigurationPersistence {
   readonly publish: (
     input: PublishProductConfigurationInput,
-  ) => Effect.Effect<PublishProductConfigurationOutcome, ProductConfigurationPersistenceUnavailable>;
+  ) => Effect.Effect<PublishProductConfigurationOutcome, ProductConfigurationPersistenceUnavailable, Crypto.Crypto>;
   /** None means authoritatively no applicable revision; corrupt or ambiguous evidence is unavailable. */
   readonly readCurrent: (input: {
     readonly at: Date;

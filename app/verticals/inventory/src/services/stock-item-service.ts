@@ -1,5 +1,4 @@
-import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { StockItemRejected, StockItemSchema } from '../../shared/domain/stock-item.ts';
 import type {
@@ -9,7 +8,7 @@ import type {
   StockItemInstant,
 } from '../../shared/domain/stock-item.ts';
 import { StockItemRepository } from '../persistence/stock-item-repository.ts';
-import type { StockItemPersistenceUnavailable } from '../persistence/stock-item-persistence-error.ts';
+import { StockItemPersistenceUnavailable } from '../persistence/stock-item-persistence-error.ts';
 
 type StockItemServiceError = StockItemRejected | StockItemPersistenceUnavailable;
 
@@ -43,7 +42,17 @@ const notFound = (stockItemId: StockItem['stockItemRef']['resourceId']): StockIt
   new StockItemRejected({ code: 'stock_item_rejected', reason: 'stock_item_not_found', stockItemId });
 
 const makeStockItemService = Effect.gen(function* makeStockItemService() {
+  const crypto = yield* Crypto.Crypto;
   const repository = yield* StockItemRepository;
+  const nextStockItemId = crypto.randomUUIDv4.pipe(
+    Effect.mapError(
+      (cause) =>
+        new StockItemPersistenceUnavailable({
+          code: 'stock_item_persistence_unavailable',
+          reason: `Stock Item identity is unavailable: ${String(cause)}`,
+        }),
+    ),
+  );
 
   return {
     assertCompatibleMeaning: (item, candidate) => {
@@ -85,9 +94,14 @@ const makeStockItemService = Effect.gen(function* makeStockItemService() {
         Effect.flatMap(
           Option.match({
             onNone: () =>
-              DateTime.now.pipe(
-                Effect.map(DateTime.formatIso),
-                Effect.flatMap((createdAt) =>
+              Effect.all(
+                {
+                  createdAt: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+                  stockItemId: nextStockItemId,
+                },
+                { concurrency: 2 },
+              ).pipe(
+                Effect.flatMap(({ createdAt, stockItemId }) =>
                   decodeStockItem({
                     createdAt,
                     exactSelectionMeaning: input.exactSelectionMeaning,
@@ -96,14 +110,13 @@ const makeStockItemService = Effect.gen(function* makeStockItemService() {
                     revision: 1,
                     stockItemRef: {
                       moduleId: 'commerce.inventory',
-                      resourceId: randomUUID(),
+                      resourceId: stockItemId,
                       resourceType: 'commerce.inventory.stock-item',
                       tenantId: input.tenantId,
                     },
                     unitRef: input.unitRef,
-                  }),
+                  }).pipe(Effect.orDie),
                 ),
-                Effect.orDie,
                 Effect.flatMap(repository.insert),
               ),
             onSome: (existing) =>

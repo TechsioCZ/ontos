@@ -1,7 +1,5 @@
-import { randomUUID } from 'node:crypto';
-
 import { v1 } from '@authzed/authzed-node';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import {
   ActionRuntime,
   ActiveApplicationCompositionService,
@@ -34,7 +32,7 @@ import {
   staffAuthenticationNamespaceRegistryLayer,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Config, ConfigProvider, Context, Data, Effect, Layer, Schema, pipe } from 'effect';
+import { Config, ConfigProvider, Context, Crypto, Data, Effect, Layer, Schema, pipe } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
 
@@ -50,7 +48,6 @@ const T = '2026-06-01T10:00:00.000Z';
 const MODULE = 'commerce.tax';
 const MessageSchema = Schema.Struct({ message: Schema.String });
 const LocalHostSchema = Schema.Literals(['localhost', '127.0.0.1']);
-const transport = () => ({ correlationId: randomUUID(), idempotencyKey: randomUUID() });
 
 class HistoricalAccessFixtureError extends Data.TaggedError('HistoricalAccessFixtureError')<{
   readonly cause?: unknown;
@@ -101,6 +98,9 @@ interface HistoricalFixtureDatabaseResult {
  * Foreign purchase inputs remain the named CALLER_SUPPLIED_UNVERIFIED receiving doubles; no owner integration is claimed.
  */
 const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect() {
+  const crypto = yield* Crypto.Crypto;
+  const nextUuid = crypto.randomUUIDv4;
+  const transport = Effect.all({ correlationId: nextUuid, idempotencyKey: nextUuid });
   const adminUrl = yield* requiredEnvironment('DATABASE_ADMIN_URL');
   const runtimeUrl = yield* requiredEnvironment('DATABASE_URL');
   const endpoint = yield* requiredEnvironment('SPICEDB_ENDPOINT');
@@ -139,21 +139,23 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     query("SELECT pg_advisory_lock(hashtextextended('ontos.search-test-authority', 0))"),
     () => query("SELECT pg_advisory_unlock(hashtextextended('ontos.search-test-authority', 0))").pipe(Effect.orDie),
   );
-  const deployment = { appId: 'tax', buildMarker: `historical-access-${randomUUID()}` };
+  const deployment = { appId: 'tax', buildMarker: `historical-access-${yield* nextUuid}` };
   const snapshot = yield* makeApplicationCompositionSnapshotFixture([deployment.appId], deployment.buildMarker);
   const previousRows = yield* query('SELECT row_to_json(a) AS authority FROM core.application_composition_authority a');
   const previous = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ authority: AuthoritySchema })))(
     previousRows.rows,
   );
-  const tenantId = randomUUID();
-  const otherTenantId = randomUUID();
-  const sellerId = randomUUID();
-  const otherSellerId = randomUUID();
-  const foreignSellerId = randomUUID();
-  const principalId = randomUUID();
-  const foreignPrincipalId = randomUUID();
-  const authBindingId = randomUUID();
-  const foreignAuthBindingId = randomUUID();
+  const [
+    tenantId,
+    otherTenantId,
+    sellerId,
+    otherSellerId,
+    foreignSellerId,
+    principalId,
+    foreignPrincipalId,
+    authBindingId,
+    foreignAuthBindingId,
+  ] = yield* Effect.all([nextUuid, nextUuid, nextUuid, nextUuid, nextUuid, nextUuid, nextUuid, nextUuid, nextUuid]);
   const ownedRelations: v1.Relationship[] = [];
   let relationshipsWritten = false;
   const tenantIds = [tenantId, otherTenantId];
@@ -336,7 +338,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
       },
       principal,
       registration: declareSellerVatRegimeAction,
-      transport: transport(),
+      transport: yield* transport,
     })
     .pipe(Effect.provide(context));
   const input = evaluationRequestInput(
@@ -353,7 +355,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     orderCommitmentTime: T,
     provenanceRef: 'fixture:historical-access',
     reason: 'Disposable historical-access final',
-    submissionRef: `history-${randomUUID()}`,
+    submissionRef: `history-${yield* nextUuid}`,
   };
   const final = yield* actions
     .runAction({
@@ -361,36 +363,45 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
       payload,
       principal,
       registration: finalizeOrderTaxAction,
-      transport: transport(),
+      transport: yield* transport,
     })
     .pipe(Effect.provide(context));
   if (!Schema.is(FinalizeOrderTaxResultSchema.members[0])(final)) {
     return yield* new HistoricalAccessFixtureError({ reason: 'Governed action did not persist a successful final' });
   }
   const readFinal = (selected = principal) =>
-    reads
-      .runRead({
-        audience: 'tax',
-        input: { submissionRef: payload.submissionRef },
-        principal: selected,
-        registration: finalOrderTaxRead,
-        transport: transport(),
-      })
-      .pipe(Effect.provide(context));
+    transport.pipe(
+      Effect.flatMap((readTransport) =>
+        reads.runRead({
+          audience: 'tax',
+          input: { submissionRef: payload.submissionRef },
+          principal: selected,
+          registration: finalOrderTaxRead,
+          transport: readTransport,
+        }),
+      ),
+      Effect.provide(context),
+    );
   const evaluate = () =>
-    reads
-      .runRead({ audience: 'tax', input, principal, registration: taxEvaluationRead, transport: transport() })
-      .pipe(Effect.provide(context));
+    transport.pipe(
+      Effect.flatMap((readTransport) =>
+        reads.runRead({ audience: 'tax', input, principal, registration: taxEvaluationRead, transport: readTransport }),
+      ),
+      Effect.provide(context),
+    );
   const write = () =>
-    actions
-      .runAction({
-        audience: 'tax',
-        payload,
-        principal,
-        registration: finalizeOrderTaxAction,
-        transport: transport(),
-      })
-      .pipe(Effect.provide(context));
+    transport.pipe(
+      Effect.flatMap((actionTransport) =>
+        actions.runAction({
+          audience: 'tax',
+          payload,
+          principal,
+          registration: finalizeOrderTaxAction,
+          transport: actionTransport,
+        }),
+      ),
+      Effect.provide(context),
+    );
   const setState = (state: string) =>
     query('UPDATE core.tenant_module_states SET state=$1 WHERE tenant_id=$2 AND module_key=$3', [
       state,
@@ -421,43 +432,47 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   };
 });
 
-it.live('E29: real Core runtime preserves frozen final reads across inactive suspended and archived states', () =>
-  Effect.scoped(
-    Effect.gen(function* historicalLifecycle() {
-      const test = yield* fixture();
-      const active = yield* test.readFinal();
-      expect(active.handoff).toEqual(test.final.handoff);
-      yield* test.evaluate();
-      for (const state of ['inactive', 'suspended', 'archived']) {
-        yield* test.setState(state);
-        expect(yield* test.readFinal()).toEqual(active);
-        expect(Schema.is(ModuleStateDeniedError)(yield* test.evaluate().pipe(Effect.flip))).toBe(true);
-        expect(Schema.is(ModuleStateDeniedError)(yield* test.write().pipe(Effect.flip))).toBe(true);
-      }
-      yield* test.setState('quarantined');
-      expect(Schema.is(ModuleStateDeniedError)(yield* test.readFinal().pipe(Effect.flip))).toBe(true);
-    }),
-  ),
-);
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('historical final Order Tax access', (suite) => {
+  suite.effect(
+    'E29: real Core runtime preserves frozen final reads across inactive suspended and archived states',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* historicalLifecycle() {
+          const test = yield* fixture();
+          const active = yield* test.readFinal();
+          expect(active.handoff).toEqual(test.final.handoff);
+          yield* test.evaluate();
+          for (const state of ['inactive', 'suspended', 'archived']) {
+            yield* test.setState(state);
+            expect(yield* test.readFinal()).toEqual(active);
+            expect(Schema.is(ModuleStateDeniedError)(yield* test.evaluate().pipe(Effect.flip))).toBe(true);
+            expect(Schema.is(ModuleStateDeniedError)(yield* test.write().pipe(Effect.flip))).toBe(true);
+          }
+          yield* test.setState('quarantined');
+          expect(Schema.is(ModuleStateDeniedError)(yield* test.readFinal().pipe(Effect.flip))).toBe(true);
+        }),
+      ),
+  );
 
-it.live('E30: real SpiceDB revocation and PostgreSQL scope prevent unauthorized historical final recovery', () =>
-  Effect.scoped(
-    Effect.gen(function* historicalAuthorization() {
-      const test = yield* fixture();
-      const active = yield* test.readFinal();
-      yield* test.setState('inactive');
-      yield* test.changeRelationships([test.grant], v1.RelationshipUpdate_Operation.DELETE);
-      expect(Schema.is(ReadPermissionDenied)(yield* test.readFinal().pipe(Effect.flip))).toBe(true);
-      yield* test.changeRelationships([test.grant], v1.RelationshipUpdate_Operation.TOUCH);
-      expect(yield* test.readFinal()).toEqual(active);
-      for (const principal of test.principals.slice(1)) {
-        expect(Schema.is(ReadHandlerNotFound)(yield* test.readFinal(principal).pipe(Effect.flip))).toBe(true);
-      }
-      const rows = yield* test.query(
-        'SELECT count(*)::int AS count FROM tax.tax_order_tax_finalizations WHERE tenant_id=$1 AND legal_entity_id=$2 AND submission_ref=$3',
-        [test.tenantId, test.sellerId, test.payload.submissionRef],
-      );
-      expect(rows.rows).toEqual([{ count: 1 }]);
-    }),
-  ),
-);
+  suite.effect('E30: real SpiceDB revocation and PostgreSQL scope prevent unauthorized historical final recovery', () =>
+    Effect.scoped(
+      Effect.gen(function* historicalAuthorization() {
+        const test = yield* fixture();
+        const active = yield* test.readFinal();
+        yield* test.setState('inactive');
+        yield* test.changeRelationships([test.grant], v1.RelationshipUpdate_Operation.DELETE);
+        expect(Schema.is(ReadPermissionDenied)(yield* test.readFinal().pipe(Effect.flip))).toBe(true);
+        yield* test.changeRelationships([test.grant], v1.RelationshipUpdate_Operation.TOUCH);
+        expect(yield* test.readFinal()).toEqual(active);
+        for (const principal of test.principals.slice(1)) {
+          expect(Schema.is(ReadHandlerNotFound)(yield* test.readFinal(principal).pipe(Effect.flip))).toBe(true);
+        }
+        const rows = yield* test.query(
+          'SELECT count(*)::int AS count FROM tax.tax_order_tax_finalizations WHERE tenant_id=$1 AND legal_entity_id=$2 AND submission_ref=$3',
+          [test.tenantId, test.sellerId, test.payload.submissionRef],
+        );
+        expect(rows.rows).toEqual([{ count: 1 }]);
+      }),
+    ),
+  );
+});

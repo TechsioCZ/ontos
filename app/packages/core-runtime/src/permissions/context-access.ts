@@ -1,6 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Context, Effect, Layer, Match, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import type { Scope } from 'effect';
 
 import {
@@ -640,13 +642,15 @@ export const toAssortmentPermissionAccessObjectId = (
     : undefined;
   return scopeIdentity === undefined
     ? undefined
-    : `asp_${createHash('sha256')
-        .update(
-          Result.getOrThrow(
-            encodeContextAccessObjectIdParts([...scopeIdentity, target.permission, ...assortmentTargetParts(target)]),
+    : `asp_${Hex.encode(
+        sha256(
+          utf8ToBytes(
+            Result.getOrThrow(
+              encodeContextAccessObjectIdParts([...scopeIdentity, target.permission, ...assortmentTargetParts(target)]),
+            ),
           ),
-        )
-        .digest('hex')}`;
+        ),
+      )}`;
 };
 
 /**
@@ -676,7 +680,7 @@ export const toAssortmentPermissionAccessObjectIdForTargets = (
   const encoded = Result.getOrThrow(
     encodeAssortmentDigestParts({ marker: 'assortment_permission_conjunction', targets: scopeIdentities }),
   );
-  return `asp_${createHash('sha256').update(encoded).digest('hex')}`;
+  return `asp_${Hex.encode(sha256(utf8ToBytes(encoded)))}`;
 };
 
 export const toContextPermissionAccessKey = ({ moduleId, permission }: ContextPermissionAccessTarget): string =>

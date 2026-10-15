@@ -45,6 +45,7 @@ import {
   MODULE_REGISTRATION_WORKER_SLOT_END,
   MODULE_REGISTRATION_WORKER_SLOT_START,
   ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
+  PLATFORM_NODE_DEPENDENCY,
   VERTICAL_PUBLIC_COMPONENT_SLOT_END,
   VERTICAL_PUBLIC_COMPONENT_SLOT_START,
   VERTICAL_REPORT_SLOT_END,
@@ -218,6 +219,7 @@ import {
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { NodeCrypto } from '@effect/platform-node';
 import { Layer as GovernedReadLayer } from 'effect';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}
@@ -273,7 +275,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     return `${generatedRoot}\n${source.slice(0, handlerProperty.start)}
     handlers: GovernedReadLayer.mergeAll(${handlers}, governedReadApiHandlersLive).pipe(
       GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-      GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
       GovernedReadLayer.orDie,
     )${source.slice(handlerProperty.end)}`;
   }
@@ -282,7 +284,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     runtimeLayerEnd,
   )}  GovernedReadLayer.provide(governedReadApiHandlersLive),
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
   GovernedReadLayer.orDie,
 ${source.slice(runtimeLayerEnd)}`;
 };
@@ -542,11 +544,14 @@ const patchPackage = (
     const dependencies = yield* trySync(() => ({
       ...asJsonObject(vertical.packageJson['dependencies'], `vertical ${vertical.slug} dependencies`),
     }));
-    const currentCore = dependencies['@app/core-runtime'];
-    if (currentCore !== undefined && currentCore !== 'workspace:*') {
-      return yield* scaffoldError(`vertical ${vertical.slug} has an incompatible @app/core-runtime dependency`);
+    // The governed handler root composes the Node platform Crypto beside the database configuration.
+    for (const [name, range] of [['@app/core-runtime', 'workspace:*'], PLATFORM_NODE_DEPENDENCY] as const) {
+      const current = dependencies[name];
+      if (current !== undefined && current !== range) {
+        return yield* scaffoldError(`vertical ${vertical.slug} has an incompatible ${name} dependency`);
+      }
+      dependencies[name] = range;
     }
-    dependencies['@app/core-runtime'] = 'workspace:*';
     const sortedDependencies = Object.fromEntries(
       Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)),
     );

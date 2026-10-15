@@ -2,6 +2,7 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { DatabaseConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
+import { NodeCrypto } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
@@ -82,11 +83,15 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
-const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));
+const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+);
 const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
   Layer.provide(DatabaseConfigLive),
 );
-const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));
+const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+);
 
 type PartyRegistryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
@@ -147,7 +152,7 @@ export const makePartyRegistryApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, NodeCrypto.layer)),
     Layer.provide(
       ActiveApplicationCompositionSourceLive.pipe(
         Layer.provide(

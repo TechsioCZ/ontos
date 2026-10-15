@@ -1,4 +1,5 @@
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Struct } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Cause, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import {
@@ -598,7 +599,7 @@ const makeRepositoryFailures = Effect.fn(function* testProgram1() {
     }),
   });
   const executor = yield* makeTestDatabase(() => Effect.fail(cause));
-  const repository = makeActionRepository();
+  const repository = makeActionRepository(yield* Crypto.Crypto);
   const input = {
     actionInvocationId: 'invocation-1',
     actionKey: 'shell.counter.denied',
@@ -625,19 +626,6 @@ const makeRepositoryFailures = Effect.fn(function* testProgram1() {
   return { cause, persistenceFailure, transactionFailure };
 });
 
-it.effect(
-  'repository constructors retain original causes across Effect Cause propagation',
-  Effect.fn(function* testProgram2() {
-    const { cause, persistenceFailure, transactionFailure } = yield* makeRepositoryFailures();
-    const propagatedTransaction = yield* Effect.flip(Effect.failCause(Cause.fail(transactionFailure)));
-    const propagatedPersistence = yield* Effect.flip(Effect.failCause(Cause.fail(persistenceFailure)));
-    expect(propagatedTransaction).toBe(transactionFailure);
-    expect(propagatedPersistence).toBe(persistenceFailure);
-    expect(getActionTransactionFailureCause(propagatedTransaction)).toEqual(Cause.die(cause));
-    expect(getActionInvocationPersistenceFailureCause(propagatedPersistence)).toEqual(Cause.die(cause));
-  }),
-);
-
 it('public error classes expose no retained-cause accessors', () => {
   for (const errorClass of [ActionTransactionError, ActionInvocationPersistenceError]) {
     expect('withCause' in errorClass).toBe(false);
@@ -645,38 +633,55 @@ it('public error classes expose no retained-cause accessors', () => {
   }
 });
 
-it.effect(
-  'repository causes are absent from reflection, JSON, and Schema encoding',
-  Effect.fn(function* testProgram3() {
-    const { persistenceFailure, transactionFailure } = yield* makeRepositoryFailures();
-    const publicTransaction = new ActionTransactionError({
-      code: transactionFailure.code,
-      reason: transactionFailure.reason,
-    });
-    const publicPersistence = new ActionInvocationPersistenceError({
-      code: persistenceFailure.code,
-      reason: persistenceFailure.reason,
-    });
-    expect(Object.keys(transactionFailure)).toEqual(Object.keys(publicTransaction));
-    expect(Object.keys(persistenceFailure)).toEqual(Object.keys(publicPersistence));
-    expect(Reflect.ownKeys(transactionFailure)).toEqual(Reflect.ownKeys(publicTransaction));
-    expect(Reflect.ownKeys(persistenceFailure)).toEqual(Reflect.ownKeys(publicPersistence));
-    expectSameJson(transactionFailure, publicTransaction);
-    expectSameJson(persistenceFailure, publicPersistence);
-    const encodedTransactionFailure = yield* Schema.encodeEffect(ActionTransactionError)(transactionFailure);
-    expect(Schema.is(Schema.toEncoded(ActionTransactionError))(encodedTransactionFailure)).toBe(true);
-    expect(Struct.omit(encodedTransactionFailure, ['_tag'])).toEqual({
-      code: transactionFailure.code,
-      reason: transactionFailure.reason,
-    });
-    const encodedPersistenceFailure = yield* Schema.encodeEffect(ActionInvocationPersistenceError)(persistenceFailure);
-    expect(Schema.is(Schema.toEncoded(ActionInvocationPersistenceError))(encodedPersistenceFailure)).toBe(true);
-    expect(Struct.omit(encodedPersistenceFailure, ['_tag'])).toEqual({
-      code: persistenceFailure.code,
-      reason: persistenceFailure.reason,
-    });
-  }),
-);
+it.layer(NodeCrypto.layer)('Action repository failure causes', (suite) => {
+  suite.effect(
+    'repository constructors retain original causes across Effect Cause propagation',
+    Effect.fn(function* testProgram2() {
+      const { cause, persistenceFailure, transactionFailure } = yield* makeRepositoryFailures();
+      const propagatedTransaction = yield* Effect.flip(Effect.failCause(Cause.fail(transactionFailure)));
+      const propagatedPersistence = yield* Effect.flip(Effect.failCause(Cause.fail(persistenceFailure)));
+      expect(propagatedTransaction).toBe(transactionFailure);
+      expect(propagatedPersistence).toBe(persistenceFailure);
+      expect(getActionTransactionFailureCause(propagatedTransaction)).toEqual(Cause.die(cause));
+      expect(getActionInvocationPersistenceFailureCause(propagatedPersistence)).toEqual(Cause.die(cause));
+    }),
+  );
+
+  suite.effect(
+    'repository causes are absent from reflection, JSON, and Schema encoding',
+    Effect.fn(function* testProgram3() {
+      const { persistenceFailure, transactionFailure } = yield* makeRepositoryFailures();
+      const publicTransaction = new ActionTransactionError({
+        code: transactionFailure.code,
+        reason: transactionFailure.reason,
+      });
+      const publicPersistence = new ActionInvocationPersistenceError({
+        code: persistenceFailure.code,
+        reason: persistenceFailure.reason,
+      });
+      expect(Object.keys(transactionFailure)).toEqual(Object.keys(publicTransaction));
+      expect(Object.keys(persistenceFailure)).toEqual(Object.keys(publicPersistence));
+      expect(Reflect.ownKeys(transactionFailure)).toEqual(Reflect.ownKeys(publicTransaction));
+      expect(Reflect.ownKeys(persistenceFailure)).toEqual(Reflect.ownKeys(publicPersistence));
+      expectSameJson(transactionFailure, publicTransaction);
+      expectSameJson(persistenceFailure, publicPersistence);
+      const encodedTransactionFailure = yield* Schema.encodeEffect(ActionTransactionError)(transactionFailure);
+      expect(Schema.is(Schema.toEncoded(ActionTransactionError))(encodedTransactionFailure)).toBe(true);
+      expect(Struct.omit(encodedTransactionFailure, ['_tag'])).toEqual({
+        code: transactionFailure.code,
+        reason: transactionFailure.reason,
+      });
+      const encodedPersistenceFailure = yield* Schema.encodeEffect(ActionInvocationPersistenceError)(
+        persistenceFailure,
+      );
+      expect(Schema.is(Schema.toEncoded(ActionInvocationPersistenceError))(encodedPersistenceFailure)).toBe(true);
+      expect(Struct.omit(encodedPersistenceFailure, ['_tag'])).toEqual({
+        code: persistenceFailure.code,
+        reason: persistenceFailure.reason,
+      });
+    }),
+  );
+});
 
 it('repository cause readers reject foreign objects carrying the former cause property', () => {
   const formerCauseProperty = ['ontos', 'Repository', 'Failure', 'Cause'].join('');

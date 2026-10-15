@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -50,7 +51,7 @@ describe('Catalog selection-evidence read owner routing', () => {
       expect(result).toEqual(unavailableResponse);
       expect(receivedOwnerEvidence).toBeUndefined();
       expect(cartReads).toBe(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('preserves injected Cart evidence for non-PRICING purposes', () =>
@@ -83,6 +84,6 @@ describe('Catalog selection-evidence read owner routing', () => {
 
       expect(result).toEqual(unavailableResponse);
       expect(receivedOwnerEvidence).toEqual(ownerEvidence);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

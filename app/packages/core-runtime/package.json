@@ -71,6 +71,7 @@
     "@authzed/authzed-node": "1.6.1",
     "@effect/platform-node": "4.0.0",
     "@effect/sql-pg": "4.0.0",
+    "@noble/hashes": "2.2.0",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0"
   },

@@ -8,7 +8,19 @@ import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { and, eq, inArray } from 'drizzle-orm';
-import { Config, ConfigProvider, Context, DateTime, Duration, Effect, FileSystem, Layer, Ref, Schema } from 'effect';
+import {
+  Config,
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Ref,
+  Schema,
+} from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import { expect, it } from 'effect-rstest';
@@ -768,13 +780,13 @@ it.live(
       effect: Effect.Effect<Success, Failure, Requirements>,
     ) =>
       provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
-    const operationalScope = makeOperationalScopeResolver(
+    const operationalScope = yield* makeOperationalScopeResolver(
       makeOperationalScopeRepository({ executor: coreDatabase }),
       allowedContextAccess,
     );
     const supportActionRuntime = makeActionRuntime(
       { executor: coreDatabase },
-      makeActionRepository(),
+      makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
       { ...openActionRuntimeOptions, contextAccess: allowedContextAccess },

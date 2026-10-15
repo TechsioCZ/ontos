@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit, Option, Schema } from 'effect';
 
@@ -205,7 +206,7 @@ describe('Privacy Actions', () => {
 
   it.effect('creates and retains a Processing Purpose through the Action service seam', () =>
     Effect.gen(function* createPurpose() {
-      const repository = makeInMemoryProcessingPurposeRepository();
+      const repository = yield* makeInMemoryProcessingPurposeRepository();
       const collector = createActionCollector(
         createProcessingPurposeAction.descriptor.domainEvents,
         'privacy.core',
@@ -234,7 +235,7 @@ describe('Privacy Actions', () => {
       expect(result.businessCode).toBe('ACCOUNT_SECURITY');
       expect(result.legalEntityId).toBe(legalEntityId);
       expect(collector.snapshot().auditEvidence.purposeId).toBe(result.purposeRef.resourceId);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('rejects a legacy caller-supplied Notice Provision proof at the public schema', () => {
@@ -363,7 +364,7 @@ describe('Privacy Actions', () => {
   );
   it.effect('rejects consent that does not resolve to the authoritative Purpose Version', () =>
     Effect.gen(function* rejectUnresolvedPurposeVersion() {
-      const purposeRepository = makeInMemoryProcessingPurposeRepository();
+      const purposeRepository = yield* makeInMemoryProcessingPurposeRepository();
       const purpose = yield* purposeRepository.create(tenantId, legalEntityId, actionInvocationId, {
         businessCode: 'ACCOUNT_SECURITY',
         effectiveFrom: '2026-01-01T00:00:00Z',
@@ -421,12 +422,12 @@ describe('Privacy Actions', () => {
       );
 
       expect(Exit.isFailure(result)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects consent missing a material dimension required by the authoritative Purpose Version', () =>
     Effect.gen(function* rejectMissingPurposeDimension() {
-      const purposeRepository = makeInMemoryProcessingPurposeRepository();
+      const purposeRepository = yield* makeInMemoryProcessingPurposeRepository();
       const purpose = yield* purposeRepository.create(tenantId, legalEntityId, actionInvocationId, {
         businessCode: 'CONSENT_CHANNEL',
         effectiveFrom: '2026-01-01T00:00:00Z',
@@ -486,7 +487,7 @@ describe('Privacy Actions', () => {
       );
 
       expect(Exit.isFailure(result)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('does not accept a caller-supplied applicability decision in the legal-basis payload', () => {

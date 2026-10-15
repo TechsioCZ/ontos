@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Option } from 'effect';
 
@@ -22,18 +23,18 @@ const input = {
 describe('Privacy Notice Version catalog', () => {
   it.effect('creates an addressable immutable version with exact content identity and scope', () =>
     Effect.gen(function* createsNoticeVersion() {
-      const catalog = makeInMemoryPrivacyNoticeVersionCatalog();
+      const catalog = yield* makeInMemoryPrivacyNoticeVersionCatalog();
       const version = yield* catalog.create(tenantId, input);
       expect(version.versionNumber).toBe(1);
       expect(version.language).toBe('cs-CZ');
       expect(version.contentIdentity).toBe('sha256:notice-v1');
       expect(version.applicableScope).toEqual(scope);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps V1 historical after creating an independent V2 artifact-backed version', () =>
     Effect.gen(function* preservesHistoricalVersion() {
-      const catalog = makeInMemoryPrivacyNoticeVersionCatalog();
+      const catalog = yield* makeInMemoryPrivacyNoticeVersionCatalog();
       const first = yield* catalog.create(tenantId, input);
       const second = yield* catalog.addVersion(first.noticeRef.resourceId, {
         ...input,
@@ -49,14 +50,14 @@ describe('Privacy Notice Version catalog', () => {
         expect(historical.value.wording).toBe(input.wording);
         expect(historical.value.evidenceArtifactRef).toBeNull();
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a version with neither historical wording nor an artifact reference', () =>
     Effect.gen(function* rejectsMissingContent() {
-      const catalog = makeInMemoryPrivacyNoticeVersionCatalog();
+      const catalog = yield* makeInMemoryPrivacyNoticeVersionCatalog();
       const error = yield* Effect.flip(catalog.create(tenantId, { ...input, wording: null }));
       expect(error).toBeInstanceOf(InvalidPrivacyNoticeContent);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

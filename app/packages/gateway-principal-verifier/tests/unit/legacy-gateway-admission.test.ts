@@ -1,4 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off -- Test-owned verifier layer is the application entrypoint for this integration proof; expires: 2026-12-31.
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
@@ -159,7 +160,7 @@ it.effect('maps a verified staff v1 assertion before Core resolves a migrated no
     const principal = yield* verifyWithMapping(fixture.token, fixture.environment);
     expect(principal.authenticationNamespaceId).toBe(staffNamespace);
 
-    const resolver = makeOperationalScopeResolver(
+    const resolver = yield* makeOperationalScopeResolver(
       { load: () => Effect.succeed(activeStaffBinding) },
       { legalEntities: () => Effect.succeed([]) },
     );
@@ -179,14 +180,17 @@ it.effect('maps a verified staff v1 assertion before Core resolves a migrated no
 
     expect(scope.authenticationNamespaceId).toBe(staffNamespace);
     expect(scope.principalId).toBe(principalId);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition }),
+    Effect.provide(NodeCrypto.layer),
+  ),
 );
 
 it.effect('rejects a mapped v1 assertion whose binding IDs belong to another namespace', () =>
   Effect.gen(function* externalBindingIds() {
     const fixture = yield* makeAssertion();
     const principal = yield* verifyWithMapping(fixture.token, fixture.environment);
-    const resolver = makeOperationalScopeResolver(
+    const resolver = yield* makeOperationalScopeResolver(
       {
         load: () =>
           Effect.succeed({
@@ -212,14 +216,17 @@ it.effect('rejects a mapped v1 assertion whose binding IDs belong to another nam
       );
 
     expect(failure).toBeInstanceOf(OperationAuthenticationRequired);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition }),
+    Effect.provide(NodeCrypto.layer),
+  ),
 );
 
 it.effect('does not fall back to a namespace-less v1 context for a migrated staff binding', () =>
   Effect.gen(function* missingMapping() {
     const fixture = yield* makeAssertion();
     const principal = yield* verifyWithoutMapping(fixture.token, fixture.environment);
-    const resolver = makeOperationalScopeResolver(
+    const resolver = yield* makeOperationalScopeResolver(
       { load: () => Effect.succeed(activeStaffBinding) },
       { legalEntities: () => Effect.succeed([]) },
     );
@@ -239,7 +246,10 @@ it.effect('does not fall back to a namespace-less v1 context for a migrated staf
       );
 
     expect(failure).toBeInstanceOf(OperationAuthenticationRequired);
-  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+  }).pipe(
+    Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition }),
+    Effect.provide(NodeCrypto.layer),
+  ),
 );
 
 it.effect('keeps issuer and namespace mismatches fail closed', () =>

@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
 import type { PgClient } from '@effect/sql-pg';
-import { Effect, Schema, Predicate } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Crypto, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { coreRelations } from '../../src/db/schema.ts';
@@ -18,278 +17,283 @@ const queryEffect = <Row extends object>(
 ) => client.unsafe<Row>(statement, parameters);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-it.live('durably rebuilds tenant projections with tombstones and selected-Legal-Entity filtering', () =>
-  Effect.gen(function* searchPersistenceIntegration() {
-    const { admin, runtime } = yield* testDatabaseClients;
-    yield* installSearchTestAuthority();
-    const tenantId = randomUUID();
-    const otherTenantId = randomUUID();
-    const context = attestOutboxWorkerHandlerContext({
-      attemptNumber: 1,
-      claimId: 'claim-1',
-      compositionRevision: 'a'.repeat(64),
-      consumerModuleKey: 'party.registry',
-      deliveryId: 'delivery-1',
-      domainEventId: 'event-1',
-      legalEntityScope: 'forbidden',
-      messageId: 'message-1',
-      producerModuleKey: 'party.registry',
-      tenantId,
-      tenantSequenceNo: 1n,
-      topic: 'party.registry.party-updated.v1',
-      workerKey: 'party.registry.project-party-updated-to-search',
-    });
-    const legalEntityId = randomUUID();
-    const otherLegalEntityId = randomUUID();
-    const partyId = randomUUID();
-    const removedPartyId = randomUUID();
-    const counterpartyId = randomUUID();
-    const otherCounterpartyId = randomUUID();
-    const aliasRef = {
-      moduleId: 'party.registry',
-      resourceId: randomUUID(),
-      resourceType: 'party.registry.party',
-      tenantId,
-    };
-    const store = makePostgresCoreSearchProjectionStore({
-      executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
-    });
-    const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
-      aliases: [
-        {
-          kind: 'resource',
-          ref: aliasRef,
-          searchableText: ['Former Acme'],
-          temporalSearchableText: [
-            {
-              validFrom: '2026-01-01T00:00:00Z',
-              validTo: '2026-02-01T00:00:00Z',
-              value: 'alias-private@example.test',
-            },
-          ],
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', (suite) => {
+  suite.effect('durably rebuilds tenant projections with tombstones and selected-Legal-Entity filtering', () =>
+    Effect.gen(function* searchPersistenceIntegration() {
+      const { admin, runtime } = yield* testDatabaseClients;
+      yield* installSearchTestAuthority();
+      const crypto = yield* Crypto.Crypto;
+      const tenantId = yield* crypto.randomUUIDv4;
+      const otherTenantId = yield* crypto.randomUUIDv4;
+      const context = attestOutboxWorkerHandlerContext({
+        attemptNumber: 1,
+        claimId: 'claim-1',
+        compositionRevision: 'a'.repeat(64),
+        consumerModuleKey: 'party.registry',
+        deliveryId: 'delivery-1',
+        domainEventId: 'event-1',
+        legalEntityScope: 'forbidden',
+        messageId: 'message-1',
+        producerModuleKey: 'party.registry',
+        tenantId,
+        tenantSequenceNo: 1n,
+        topic: 'party.registry.party-updated.v1',
+        workerKey: 'party.registry.project-party-updated-to-search',
+      });
+      const legalEntityId = yield* crypto.randomUUIDv4;
+      const otherLegalEntityId = yield* crypto.randomUUIDv4;
+      const partyId = yield* crypto.randomUUIDv4;
+      const removedPartyId = yield* crypto.randomUUIDv4;
+      const counterpartyId = yield* crypto.randomUUIDv4;
+      const otherCounterpartyId = yield* crypto.randomUUIDv4;
+      const aliasRef = {
+        moduleId: 'party.registry',
+        resourceId: yield* crypto.randomUUIDv4,
+        resourceType: 'party.registry.party',
+        tenantId,
+      };
+      const store = makePostgresCoreSearchProjectionStore({
+        executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
+      });
+      const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+      const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
+        aliases: [
+          {
+            kind: 'resource',
+            ref: aliasRef,
+            searchableText: ['Former Acme'],
+            temporalSearchableText: [
+              {
+                validFrom: '2026-01-01T00:00:00Z',
+                validTo: '2026-02-01T00:00:00Z',
+                value: 'alias-private@example.test',
+              },
+            ],
+          },
+        ],
+        archived: false,
+        facets: [],
+        metadata: [],
+        projectionVersion,
+        ref: {
+          moduleId: 'party.registry',
+          resourceId,
+          resourceType: 'party.registry.party',
+          tenantId,
         },
-      ],
-      archived: false,
-      facets: [],
-      metadata: [],
-      projectionVersion,
-      ref: {
-        moduleId: 'party.registry',
-        resourceId,
-        resourceType: 'party.registry.party',
-        tenantId,
-      },
-      searchableText: [title, 'private@example.test'],
-      temporalSearchableText: [
-        {
-          validFrom: '2026-02-01T00:00:00Z',
-          value: 'canonical-private@example.test',
+        searchableText: [title, 'private@example.test'],
+        temporalSearchableText: [
+          {
+            validFrom: '2026-02-01T00:00:00Z',
+            value: 'canonical-private@example.test',
+          },
+        ],
+        title,
+      });
+      const counterpartyDocument = (resourceId: string, selectedLegalEntityId: string) => ({
+        archived: false,
+        facets: [],
+        metadata: [],
+        projectionVersion: '1',
+        ref: {
+          moduleId: 'party.registry',
+          resourceId,
+          resourceType: 'party.registry.counterparty',
+          tenantId,
         },
-      ],
-      title,
-    });
-    const counterpartyDocument = (resourceId: string, selectedLegalEntityId: string) => ({
-      archived: false,
-      facets: [],
-      metadata: [],
-      projectionVersion: '1',
-      ref: {
-        moduleId: 'party.registry',
-        resourceId,
-        resourceType: 'party.registry.counterparty',
-        tenantId,
-      },
-      searchableText: ['Acme counterparty'],
-      selectedLegalEntityId,
-      title: 'Acme counterparty',
-    });
+        searchableText: ['Acme counterparty'],
+        selectedLegalEntityId,
+        title: 'Acme counterparty',
+      });
 
-    const cleanup = Effect.gen(function* cleanSearchPersistenceFixtures() {
-      yield* queryEffect(admin, `delete from core.search_index_entries where tenant_id = $1`, [tenantId]);
-      yield* queryEffect(admin, `delete from core.search_projection_rebuilds where tenant_id = $1`, [tenantId]);
-      yield* queryEffect(admin, `delete from core.legal_entities where tenant_id = $1`, [tenantId]);
-      yield* queryEffect(admin, `delete from core.tenants where tenant_id in ($1, $2)`, [tenantId, otherTenantId]);
-    }).pipe(Effect.orDie);
+      const cleanup = Effect.gen(function* cleanSearchPersistenceFixtures() {
+        yield* queryEffect(admin, `delete from core.search_index_entries where tenant_id = $1`, [tenantId]);
+        yield* queryEffect(admin, `delete from core.search_projection_rebuilds where tenant_id = $1`, [tenantId]);
+        yield* queryEffect(admin, `delete from core.legal_entities where tenant_id = $1`, [tenantId]);
+        yield* queryEffect(admin, `delete from core.tenants where tenant_id in ($1, $2)`, [tenantId, otherTenantId]);
+      }).pipe(Effect.orDie);
 
-    yield* Effect.addFinalizer(() => cleanup);
-    yield* queryEffect(
-      admin,
-      `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Search tenant', 'active', 'en'), ($3, $4, 'Other tenant', 'active', 'en')`,
-      [tenantId, `search-${tenantId}`, otherTenantId, `search-${otherTenantId}`],
-    );
-    yield* queryEffect(
-      admin,
-      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Search LE', 'CZ', $1::uuid::text, 'active'), ($3::uuid, $2, 'Other LE', 'CZ', $3::uuid::text, 'active')`,
-      [legalEntityId, tenantId, otherLegalEntityId],
-    );
+      yield* Effect.addFinalizer(() => cleanup);
+      yield* queryEffect(
+        admin,
+        `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Search tenant', 'active', 'en'), ($3, $4, 'Other tenant', 'active', 'en')`,
+        [tenantId, `search-${tenantId}`, otherTenantId, `search-${otherTenantId}`],
+      );
+      yield* queryEffect(
+        admin,
+        `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Search LE', 'CZ', $1::uuid::text, 'active'), ($3::uuid, $2, 'Other LE', 'CZ', $3::uuid::text, 'active')`,
+        [legalEntityId, tenantId, otherLegalEntityId],
+      );
 
-    yield* store.replace(
-      {
-        documents: [partyDocument(partyId, '1', 'Acme'), partyDocument(removedPartyId, '1', 'Remove me')],
-        moduleId: 'party.registry',
-        rebuildVersion: '1',
-        resourceType: 'party.registry.party',
-        tenantId,
-      },
-      context,
-    );
-    yield* store.replace(
-      {
-        documents: [partyDocument(partyId, '2', 'Acme current')],
-        moduleId: 'party.registry',
-        rebuildVersion: '2',
-        resourceType: 'party.registry.party',
-        tenantId,
-      },
-      context,
-    );
-    yield* store.apply(
-      {
-        document: partyDocument(partyId, '1', 'Acme stale'),
-        kind: 'upsert',
-      },
-      context,
-    );
-    yield* store.apply(
-      {
-        document: counterpartyDocument(counterpartyId, legalEntityId),
-        kind: 'upsert',
-      },
-      context,
-    );
-    yield* store.apply(
-      {
-        document: counterpartyDocument(otherCounterpartyId, otherLegalEntityId),
-        kind: 'upsert',
-      },
-      context,
-    );
+      yield* store.replace(
+        {
+          documents: [partyDocument(partyId, '1', 'Acme'), partyDocument(removedPartyId, '1', 'Remove me')],
+          moduleId: 'party.registry',
+          rebuildVersion: '1',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        context,
+      );
+      yield* store.replace(
+        {
+          documents: [partyDocument(partyId, '2', 'Acme current')],
+          moduleId: 'party.registry',
+          rebuildVersion: '2',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        context,
+      );
+      yield* store.apply(
+        {
+          document: partyDocument(partyId, '1', 'Acme stale'),
+          kind: 'upsert',
+        },
+        context,
+      );
+      yield* store.apply(
+        {
+          document: counterpartyDocument(counterpartyId, legalEntityId),
+          kind: 'upsert',
+        },
+        context,
+      );
+      yield* store.apply(
+        {
+          document: counterpartyDocument(otherCounterpartyId, otherLegalEntityId),
+          kind: 'upsert',
+        },
+        context,
+      );
 
-    const partyHits = yield* search.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'private@example.test',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
-    expect(partyHits.map(({ title }) => title)).toEqual(['Acme current']);
-    expect(yield* encodeJson(partyHits)).not.toMatch(/private@example\.test/u);
-    const evidenceSearch = (query: string, effectiveAt = '2026-02-01T00:00:00Z') =>
-      search.search({
-        effectiveAt,
+      const partyHits = yield* search.search({
         includeArchived: false,
         moduleId: 'party.registry',
-        query,
+        query: 'private@example.test',
         resourceType: 'party.registry.party',
         tenantId,
       });
-    const aliasHits = yield* evidenceSearch('former');
-    expect(aliasHits.length).toBe(1);
-    expect(aliasHits[0]?.matchedRef).toEqual(aliasRef);
-    const canonicalHits = yield* evidenceSearch('acme');
-    expect(canonicalHits[0]?.matchedRef).toBe(undefined);
-    const historicalAliasHits = yield* evidenceSearch('alias-private', '2026-01-01T00:00:00Z');
-    expect(historicalAliasHits[0]?.matchedRef).toEqual(aliasRef);
-    expect(yield* evidenceSearch('alias-private')).toEqual([]);
-    expect(yield* evidenceSearch('canonical-private', '2026-01-31T00:00:00Z')).toEqual([]);
-    const temporalHits = yield* evidenceSearch('canonical-private');
-    expect(temporalHits.length).toBe(1);
-    expect(temporalHits[0]?.matchedRef).toBe(undefined);
-    expect(yield* encodeJson([aliasHits, temporalHits])).not.toMatch(/private@example|searchableText|aliases/u);
-    const floorRef = {
-      ...aliasRef,
-      resourceType: 'party.registry.floor-test',
-    };
-    const emptyRebuild = {
-      documents: [],
-      moduleId: floorRef.moduleId,
-      rebuildVersion: '2',
-      resourceType: floorRef.resourceType,
-      tenantId,
-    };
-    const staleDocument = {
-      ...partyDocument(floorRef.resourceId, '1', 'Unseen resource'),
-      ref: floorRef,
-    };
-    yield* store.replace(emptyRebuild, context);
-    // A fresh service instance must observe the durable floor, not process-local state.
-    const restarted = makePostgresCoreSearchProjectionStore({
-      executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
-    });
-    const restartedSearch = yield* createCoreSearchQueryRuntime.pipe(
-      Effect.provideService(CoreSearchProjectionStore, restarted),
-    );
-    const floorSearch = () =>
-      restartedSearch.search({
-        includeArchived: false,
+      expect(partyHits.map(({ title }) => title)).toEqual(['Acme current']);
+      expect(yield* encodeJson(partyHits)).not.toMatch(/private@example\.test/u);
+      const evidenceSearch = (query: string, effectiveAt = '2026-02-01T00:00:00Z') =>
+        search.search({
+          effectiveAt,
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query,
+          resourceType: 'party.registry.party',
+          tenantId,
+        });
+      const aliasHits = yield* evidenceSearch('former');
+      expect(aliasHits.length).toBe(1);
+      expect(aliasHits[0]?.matchedRef).toEqual(aliasRef);
+      const canonicalHits = yield* evidenceSearch('acme');
+      expect(canonicalHits[0]?.matchedRef).toBe(undefined);
+      const historicalAliasHits = yield* evidenceSearch('alias-private', '2026-01-01T00:00:00Z');
+      expect(historicalAliasHits[0]?.matchedRef).toEqual(aliasRef);
+      expect(yield* evidenceSearch('alias-private')).toEqual([]);
+      expect(yield* evidenceSearch('canonical-private', '2026-01-31T00:00:00Z')).toEqual([]);
+      const temporalHits = yield* evidenceSearch('canonical-private');
+      expect(temporalHits.length).toBe(1);
+      expect(temporalHits[0]?.matchedRef).toBe(undefined);
+      expect(yield* encodeJson([aliasHits, temporalHits])).not.toMatch(/private@example|searchableText|aliases/u);
+      const floorRef = {
+        ...aliasRef,
+        resourceType: 'party.registry.floor-test',
+      };
+      const emptyRebuild = {
+        documents: [],
         moduleId: floorRef.moduleId,
-        query: 'unseen',
+        rebuildVersion: '2',
         resourceType: floorRef.resourceType,
         tenantId,
+      };
+      const staleDocument = {
+        ...partyDocument(floorRef.resourceId, '1', 'Unseen resource'),
+        ref: floorRef,
+      };
+      yield* store.replace(emptyRebuild, context);
+      // A fresh service instance must observe the durable floor, not process-local state.
+      const restarted = makePostgresCoreSearchProjectionStore({
+        executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
       });
-    yield* restarted.apply({ document: staleDocument, kind: 'upsert' }, context);
-    yield* restarted.replace(
-      {
-        ...emptyRebuild,
-        documents: [staleDocument],
-        rebuildVersion: '1',
-      },
-      context,
-    );
-    expect(yield* floorSearch()).toEqual([]);
-    yield* restarted.replace(emptyRebuild, context);
-    const divergence = yield* Effect.flip(restarted.replace({ ...emptyRebuild, documents: [staleDocument] }, context));
-    expect(Predicate.isTagged(divergence, 'CoreSearchProjectionInvalid')).toBe(true);
-    yield* restarted.apply(
-      {
-        document: { ...staleDocument, projectionVersion: '3' },
-        kind: 'upsert',
-      },
-      context,
-    );
-    yield* restarted.replace(emptyRebuild, context);
-    const rebuiltFloorHits = yield* floorSearch();
-    expect(rebuiltFloorHits.length).toBe(1);
-    const rebuildRows = yield* queryEffect(
-      runtime,
-      `select rebuild_version from core.search_projection_rebuilds where tenant_id = $1`,
-      [tenantId],
-    );
-    expect(rebuildRows.length).toBe(0);
-    const counterpartyHits = yield* search.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'acme',
-      resourceType: 'party.registry.counterparty',
-      selectedLegalEntityId: legalEntityId,
-      tenantId,
-    });
-    expect(counterpartyHits.map(({ ref }) => ref.resourceId)).toEqual([counterpartyId]);
-    expect(
-      yield* search.search({
+      const restartedSearch = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, restarted),
+      );
+      const floorSearch = () =>
+        restartedSearch.search({
+          includeArchived: false,
+          moduleId: floorRef.moduleId,
+          query: 'unseen',
+          resourceType: floorRef.resourceType,
+          tenantId,
+        });
+      yield* restarted.apply({ document: staleDocument, kind: 'upsert' }, context);
+      yield* restarted.replace(
+        {
+          ...emptyRebuild,
+          documents: [staleDocument],
+          rebuildVersion: '1',
+        },
+        context,
+      );
+      expect(yield* floorSearch()).toEqual([]);
+      yield* restarted.replace(emptyRebuild, context);
+      const divergence = yield* Effect.flip(
+        restarted.replace({ ...emptyRebuild, documents: [staleDocument] }, context),
+      );
+      expect(Predicate.isTagged(divergence, 'CoreSearchProjectionInvalid')).toBe(true);
+      yield* restarted.apply(
+        {
+          document: { ...staleDocument, projectionVersion: '3' },
+          kind: 'upsert',
+        },
+        context,
+      );
+      yield* restarted.replace(emptyRebuild, context);
+      const rebuiltFloorHits = yield* floorSearch();
+      expect(rebuiltFloorHits.length).toBe(1);
+      const rebuildRows = yield* queryEffect(
+        runtime,
+        `select rebuild_version from core.search_projection_rebuilds where tenant_id = $1`,
+        [tenantId],
+      );
+      expect(rebuildRows.length).toBe(0);
+      const counterpartyHits = yield* search.search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'acme',
         resourceType: 'party.registry.counterparty',
+        selectedLegalEntityId: legalEntityId,
         tenantId,
-      }),
-    ).toEqual([]);
+      });
+      expect(counterpartyHits.map(({ ref }) => ref.resourceId)).toEqual([counterpartyId]);
+      expect(
+        yield* search.search({
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: 'acme',
+          resourceType: 'party.registry.counterparty',
+          tenantId,
+        }),
+      ).toEqual([]);
 
-    const runtimeRows = yield* queryEffect(
-      runtime,
-      `select source_resource_id from core.search_index_entries where tenant_id = $1`,
-      [tenantId],
-    );
-    expect(runtimeRows.length).toBe(0);
-    const stored = yield* queryEffect<{
-      deleted: boolean;
-      projection_version: string;
-    }>(
-      admin,
-      `select deleted, projection_version::text from core.search_index_entries where tenant_id = $1 and source_resource_id = $2`,
-      [tenantId, removedPartyId],
-    );
-    expect(stored).toEqual([{ deleted: true, projection_version: '2' }]);
-  }),
-);
+      const runtimeRows = yield* queryEffect(
+        runtime,
+        `select source_resource_id from core.search_index_entries where tenant_id = $1`,
+        [tenantId],
+      );
+      expect(runtimeRows.length).toBe(0);
+      const stored = yield* queryEffect<{
+        deleted: boolean;
+        projection_version: string;
+      }>(
+        admin,
+        `select deleted, projection_version::text from core.search_index_entries where tenant_id = $1 and source_resource_id = $2`,
+        [tenantId, removedPartyId],
+      );
+      expect(stored).toEqual([{ deleted: true, projection_version: '2' }]);
+    }),
+  );
+});

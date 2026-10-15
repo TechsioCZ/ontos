@@ -1,6 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import type { SetCompositionRevision } from '../../shared/domain/set-composition.ts';
 import { SetCompositionRevisionSchema, classifySetCompositionChange } from '../../shared/domain/set-composition.ts';
@@ -51,7 +52,7 @@ export interface SetCompositionBasis {
   readonly verify: (input: {
     readonly at: Date;
     readonly revision: SetCompositionRevision;
-  }) => Effect.Effect<boolean, SetCompositionPersistenceUnavailable>;
+  }) => Effect.Effect<boolean, SetCompositionPersistenceUnavailable, Crypto.Crypto>;
 }
 
 /**
@@ -65,7 +66,7 @@ export interface SetCompositionSelectionImpact {
     readonly compositionId: string;
     readonly previousRevision: number;
     readonly tenantId: string;
-  }) => Effect.Effect<boolean, SetCompositionPersistenceUnavailable>;
+  }) => Effect.Effect<boolean, SetCompositionPersistenceUnavailable, Crypto.Crypto>;
 }
 
 export interface PublishSetCompositionInput {
@@ -96,7 +97,7 @@ interface StoredSetCompositionRevision {
 export interface SetCompositionPersistence {
   readonly publish: (
     input: PublishSetCompositionInput,
-  ) => Effect.Effect<PublishSetCompositionOutcome, SetCompositionPersistenceUnavailable>;
+  ) => Effect.Effect<PublishSetCompositionOutcome, SetCompositionPersistenceUnavailable, Crypto.Crypto>;
   readonly readCurrent: (input: {
     readonly at: Date;
     readonly compositionId: string;
@@ -148,7 +149,11 @@ const correctionImpactOutcome = Effect.fn('SetCompositionPersistence.correctionI
     input: PublishSetCompositionInput,
     tenantId: string,
     selectionImpact: SetCompositionSelectionImpact | undefined,
-  ): Effect.fn.Return<Option.Option<PublishSetCompositionOutcome>, SetCompositionPersistenceUnavailable> {
+  ): Effect.fn.Return<
+    Option.Option<PublishSetCompositionOutcome>,
+    SetCompositionPersistenceUnavailable,
+    Crypto.Crypto
+  > {
     if (classification !== 'EVIDENCE_CORRECTION') {
       return Option.none();
     }

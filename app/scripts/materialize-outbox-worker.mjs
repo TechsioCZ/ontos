@@ -210,10 +210,11 @@ const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => 
       },
       () => ({
         contents: [
+          "import * as NodeCrypto from '@effect/platform-node/NodeCrypto';",
           "import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem';",
           "import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer';",
           "import * as NodePath from '@effect/platform-node/NodePath';",
-          'export { NodeFileSystem, NodeHttpServer, NodePath };',
+          'export { NodeCrypto, NodeFileSystem, NodeHttpServer, NodePath };',
         ].join('\n'),
         loader: 'js',
         resolveDir: workspaceRoot,

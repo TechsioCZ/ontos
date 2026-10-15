@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Match, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -173,7 +174,7 @@ describe('Set composition persistence', () => {
         expect.objectContaining({ componentId: revision.components[0]?.componentId, quantityAmount: '1' }),
         expect.objectContaining({ componentId: revision.components[1]?.componentId, quantityAmount: '2' }),
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a stale expected revision without appending any rows', () =>
@@ -203,7 +204,7 @@ describe('Set composition persistence', () => {
           Match.orElse(() => 0),
         ),
       ).toBe(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('recognizes a corrected old quantity but fails closed before advancing Current', () =>
@@ -287,7 +288,7 @@ describe('Set composition persistence', () => {
           Match.orElse(() => ''),
         ),
       ).toBe('Original-data-error correction requires open-selection impact authority');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('returns the retained revision for an exact Action replay without a second write', () =>
@@ -357,7 +358,7 @@ describe('Set composition persistence', () => {
           Match.orElse(() => ''),
         ),
       ).toBe('Action invocation payload differs from retained Set revision');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('reads an exact historical revision and as-of Current without changing the stored content', () =>
@@ -540,7 +541,7 @@ describe('Set composition persistence', () => {
       const service = setCompositionPersistenceForScope(transaction, scope);
       const error = yield* service.publish(input).pipe(Effect.flip);
       expect(Schema.is(SetCompositionPersistenceUnavailable)(error)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects cross-Tenant composition references before querying', () =>
@@ -568,7 +569,7 @@ describe('Set composition persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not allow a retired composition to be issued as its initial revision', () =>
@@ -587,7 +588,7 @@ describe('Set composition persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not write when exact component basis is invalid', () =>
@@ -616,6 +617,6 @@ describe('Set composition persistence', () => {
           Match.orElse(() => ''),
         ),
       ).toBe('Component Current basis is invalid');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

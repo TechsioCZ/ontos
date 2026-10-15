@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -153,7 +154,7 @@ describe('Catalog Product Category Actions', () => {
       expect(harness.snapshot().committed).toHaveLength(1);
       yield* harness.runtime.runAction(request).pipe(Effect.flip);
       expect(captured).toHaveLength(1);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('does not commit a category Action when result capture fails', () =>
@@ -190,7 +191,7 @@ describe('Catalog Product Category Actions', () => {
         .pipe(Effect.flip);
       expect(failure).toMatchObject({ code: 'action_transaction_failed' });
       expect(harness.snapshot().committed).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('keeps six exact tenant Actions idempotent and legal-entity independent', () => {
@@ -242,7 +243,7 @@ describe('Catalog Product Category Actions', () => {
       expect(recorded).toMatchObject({ name: 'Wall shelves', principalId: scope.principalId, tenantId });
       expect(run.events).toHaveLength(1);
       expect(run.reads).toHaveLength(1);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a cross-tenant move before persistence', () =>

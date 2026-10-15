@@ -143,7 +143,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision, key }))),
   };
-  const scopeResolver = makeOperationalScopeResolver(
+  const scopeResolver = yield* makeOperationalScopeResolver(
     {
       load: () =>
         Effect.succeed({

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Exit, Schema } from 'effect';
 
@@ -319,7 +320,7 @@ it.effect('issues a selected maximal proof, renews it with overlap, and does not
     const renewedAtRenewal = yield* validateAssortmentCommitmentConfirmation(renewed, payload, renewed.issuedAt);
     expect(renewedAtFirst.confirmationRef.resourceId).toBe(first.confirmationRef.resourceId);
     expect(renewedAtRenewal.confirmationRef.resourceId).toBe(renewed.confirmationRef.resourceId);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('rejects a valid ALLOW candidate that is present but not maximal', () =>
@@ -346,7 +347,7 @@ it.effect('rejects a valid ALLOW candidate that is present but not maximal', () 
       ).issue(broadPayload, { actionInvocationId: 'invocation-non-maximal', actorPrincipalId: 'principal-1' }),
     );
     expect(Exit.isFailure(failed)).toBe(true);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('rejects stale positive evidence and fails closed without an evaluator', () =>
@@ -369,7 +370,7 @@ it.effect('rejects stale positive evidence and fails closed without an evaluator
       }),
     );
     expect(Exit.isFailure(unavailableExit)).toBe(true);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect('issues a required-component proof only for its own exact selection and role', () =>
@@ -413,5 +414,5 @@ it.effect('issues a required-component proof only for its own exact selection an
     );
     expect(Exit.isFailure(refused)).toBe(true);
     expect(persisted).toHaveLength(1);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );

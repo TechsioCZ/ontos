@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
-
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Cause } from 'effect';
-import { Context, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import { isSqlError } from 'effect/sql/SqlError';
 
 import type { ActionInvocationStatus } from '../db/schema.ts';
@@ -190,13 +191,11 @@ export const computeActionRequestHash = (input: ActionRequestHashInput): string 
     new WeakSet(),
   );
 
-  return createHash('sha256').update(encodeCanonicalValue(canonicalEnvelope)).digest('hex');
+  return Hex.encode(sha256(utf8ToBytes(encodeCanonicalValue(canonicalEnvelope))));
 };
 
 export const computeCanonicalValueHash = <Value>(value?: Value): string =>
-  createHash('sha256')
-    .update(encodeCanonicalValue(normalizeForHash(value, new WeakSet())))
-    .digest('hex');
+  Hex.encode(sha256(utf8ToBytes(encodeCanonicalValue(normalizeForHash(value, new WeakSet())))));
 
 export interface PrepareActionInvocationInput {
   readonly actionKey: string;
@@ -375,7 +374,7 @@ export const logActionTransactionFailureCause = (
   return cause === undefined ? Effect.void : Effect.annotateLogs(Effect.logError(message, cause), annotations);
 };
 
-export const makeActionRepository = (): ActionRepositoryService => {
+export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositoryService => {
   const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = Effect.fn(
     'makeActionRepository.createOrResolveInvocation',
   )(function* createOrResolveInvocationEffect(executor: CoreDatabaseExecutor, input: PrepareActionInvocationInput) {
@@ -851,19 +850,27 @@ export const makeActionRepository = (): ActionRepositoryService => {
         }
       }
 
-      const persistedDomainEvents = input.evidence.domainEvents.map((event) => ({
-        actionInvocationId: input.actionInvocationId,
-        domainEventId: randomUUID(),
-        eventType: event.eventType,
-        legalEntityId: input.principal.legalEntityId,
-        occurredAt: event.occurredAt,
-        payloadJson: event.payloadJson,
-        producerModuleKey: event.producerModuleKey,
-        subjectModuleKey: event.subjectModuleKey,
-        subjectResourceId: event.subjectResourceId,
-        subjectResourceType: event.subjectResourceType,
-        tenantId: input.principal.tenantId,
-      }));
+      const persistedDomainEvents = yield* Effect.forEach(
+        input.evidence.domainEvents,
+        (event) =>
+          crypto.randomUUIDv4.pipe(
+            Effect.mapError((cause) => transactionFailure(failureReason, cause)),
+            Effect.map((domainEventId) => ({
+              actionInvocationId: input.actionInvocationId,
+              domainEventId,
+              eventType: event.eventType,
+              legalEntityId: input.principal.legalEntityId,
+              occurredAt: event.occurredAt,
+              payloadJson: event.payloadJson,
+              producerModuleKey: event.producerModuleKey,
+              subjectModuleKey: event.subjectModuleKey,
+              subjectResourceId: event.subjectResourceId,
+              subjectResourceType: event.subjectResourceType,
+              tenantId: input.principal.tenantId,
+            })),
+          ),
+        { concurrency: 1 },
+      );
 
       if (persistedDomainEvents.length > 0) {
         yield* transaction
@@ -947,4 +954,10 @@ export class ActionRepository extends Context.Service<ActionRepository, ActionRe
   '@app/core-runtime/actions/repository/ActionRepository',
 ) {}
 
-export const ActionRepositoryLive = Layer.succeed(ActionRepository, makeActionRepository());
+export const ActionRepositoryLive = Layer.effect(
+  ActionRepository,
+  Effect.gen(function* makeActionRepositoryService() {
+    const crypto = yield* Crypto.Crypto;
+    return makeActionRepository(crypto);
+  }),
+);

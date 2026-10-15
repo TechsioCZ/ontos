@@ -1,7 +1,7 @@
 import { expect, it } from 'effect-rstest';
-import { randomUUID } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
@@ -23,170 +23,173 @@ import { makeOutboxRepository } from '../../src/outbox/repository.ts';
 const MergeIdSchema = Schema.String.pipe(Schema.brand('OutboxWorkerActorEvidenceMergeId'));
 const payloadSchema = Schema.Struct({ mergeId: MergeIdSchema });
 
-it.live('derives worker actor evidence from the exact same-Tenant Action invocation', () =>
-  Effect.gen(function* workerActorEvidenceIntegration() {
-    const tenantId = randomUUID();
-    const legalEntityId = randomUUID();
-    const principalId = randomUUID();
-    const configuration = yield* loadDatabaseConnectionPair();
-    const { executor } = yield* makeCoreDatabase(configuration.runtime);
-    const { executor: adminExecutor } = yield* makeCoreDatabase(configuration.admin);
-    const compositionRevision = 'c'.repeat(64);
-    const cleanup = Effect.gen(function* cleanupWorkerActorEvidence() {
-      yield* adminExecutor
-        .delete(applicationCompositionAuthority)
-        .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-      const messages = yield* executor
-        .select({ messageId: outboxMessages.outboxMessageId })
-        .from(outboxMessages)
-        .where(eq(outboxMessages.tenantId, tenantId));
-      const messageIds = messages.map(({ messageId }) => messageId);
-      const deliveries = yield* executor
-        .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
-        .from(outboxDeliveries)
-        .where(inArray(outboxDeliveries.outboxMessageId, messageIds));
-      yield* executor.delete(outboxAttempts).where(
-        inArray(
-          outboxAttempts.outboxDeliveryId,
-          deliveries.map(({ deliveryId }) => deliveryId),
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor evidence', (suite) => {
+  suite.effect('derives worker actor evidence from the exact same-Tenant Action invocation', () =>
+    Effect.gen(function* workerActorEvidenceIntegration() {
+      const crypto = yield* Crypto.Crypto;
+      const tenantId = yield* crypto.randomUUIDv4;
+      const legalEntityId = yield* crypto.randomUUIDv4;
+      const principalId = yield* crypto.randomUUIDv4;
+      const configuration = yield* loadDatabaseConnectionPair();
+      const { executor } = yield* makeCoreDatabase(configuration.runtime);
+      const { executor: adminExecutor } = yield* makeCoreDatabase(configuration.admin);
+      const compositionRevision = 'c'.repeat(64);
+      const cleanup = Effect.gen(function* cleanupWorkerActorEvidence() {
+        yield* adminExecutor
+          .delete(applicationCompositionAuthority)
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        const messages = yield* executor
+          .select({ messageId: outboxMessages.outboxMessageId })
+          .from(outboxMessages)
+          .where(eq(outboxMessages.tenantId, tenantId));
+        const messageIds = messages.map(({ messageId }) => messageId);
+        const deliveries = yield* executor
+          .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
+          .from(outboxDeliveries)
+          .where(inArray(outboxDeliveries.outboxMessageId, messageIds));
+        yield* executor.delete(outboxAttempts).where(
+          inArray(
+            outboxAttempts.outboxDeliveryId,
+            deliveries.map(({ deliveryId }) => deliveryId),
+          ),
+        );
+        yield* executor.delete(outboxDeliveries).where(inArray(outboxDeliveries.outboxMessageId, messageIds));
+        yield* executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
+        yield* executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
+        yield* executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
+        yield* executor.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId));
+        yield* executor.delete(principals).where(eq(principals.tenantId, tenantId));
+        yield* executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
+        yield* executor.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      });
+      yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
+      yield* executor.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'Worker actor evidence',
+        slug: `worker-actor-${tenantId}`,
+        status: 'active',
+        tenantId,
+      });
+      yield* executor.insert(legalEntities).values({
+        legalEntityId,
+        legalName: 'Worker actor legal entity',
+        registrationCountry: 'CZ',
+        registrationNumber: `WORKER-ACTOR-${legalEntityId}`,
+        status: 'active',
+        tenantId,
+      });
+      yield* executor.insert(principals).values({
+        displayName: 'Worker actor',
+        kind: 'human',
+        principalId,
+        status: 'active',
+        tenantId,
+      });
+      const invocation = Option.getOrThrow(
+        Option.fromNullishOr(
+          (yield* executor
+            .insert(actionInvocations)
+            .values({
+              actionKey: 'party.registry.merge-party',
+              authMethod: 'session',
+              correlationId: 'merge-correlation-1',
+              legalEntityId,
+              principalId,
+              requestHash: 'request-hash',
+              status: 'succeeded',
+              tenantId,
+            })
+            .returning({ actionInvocationId: actionInvocations.actionInvocationId }))[0],
         ),
       );
-      yield* executor.delete(outboxDeliveries).where(inArray(outboxDeliveries.outboxMessageId, messageIds));
-      yield* executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
-      yield* executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
-      yield* executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
-      yield* executor.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId));
-      yield* executor.delete(principals).where(eq(principals.tenantId, tenantId));
-      yield* executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
-      yield* executor.delete(tenants).where(eq(tenants.tenantId, tenantId));
-    });
-    yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
-    yield* executor.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Worker actor evidence',
-      slug: `worker-actor-${tenantId}`,
-      status: 'active',
-      tenantId,
-    });
-    yield* executor.insert(legalEntities).values({
-      legalEntityId,
-      legalName: 'Worker actor legal entity',
-      registrationCountry: 'CZ',
-      registrationNumber: `WORKER-ACTOR-${legalEntityId}`,
-      status: 'active',
-      tenantId,
-    });
-    yield* executor.insert(principals).values({
-      displayName: 'Worker actor',
-      kind: 'human',
-      principalId,
-      status: 'active',
-      tenantId,
-    });
-    const invocation = Option.getOrThrow(
-      Option.fromNullishOr(
-        (yield* executor
-          .insert(actionInvocations)
-          .values({
-            actionKey: 'party.registry.merge-party',
-            authMethod: 'session',
-            correlationId: 'merge-correlation-1',
-            legalEntityId,
-            principalId,
-            requestHash: 'request-hash',
-            status: 'succeeded',
-            tenantId,
-          })
-          .returning({ actionInvocationId: actionInvocations.actionInvocationId }))[0],
-      ),
-    );
-    const event = Option.getOrThrow(
-      Option.fromNullishOr(
-        (yield* executor
-          .insert(domainEvents)
-          .values({
-            actionInvocationId: invocation.actionInvocationId,
-            eventType: 'PartyMerged',
-            legalEntityId,
-            payloadJson: { mergeId: 'merge-1' },
-            producerModuleKey: 'party.registry',
-            subjectModuleKey: 'party.registry',
-            subjectResourceId: 'merge-1',
-            subjectResourceType: 'party-merge',
-            tenantId,
-          })
-          .returning({ domainEventId: domainEvents.domainEventId }))[0],
-      ),
-    );
-    const now = yield* DateTime.nowAsDate;
-    const message = Option.getOrThrow(
-      Option.fromNullishOr(
-        (yield* executor
-          .insert(outboxMessages)
-          .values({
-            domainEventId: event.domainEventId,
-            matchedAt: now,
-            payloadJson: { mergeId: 'merge-1' },
-            producerModuleKey: 'party.registry',
-            tenantId,
-            topic: 'party.registry.party-merged.v1',
-          })
-          .returning({ messageId: outboxMessages.outboxMessageId }))[0],
-      ),
-    );
-    yield* executor.insert(tenantModuleStates).values({
-      moduleKey: 'commerce.customer-context',
-      state: 'active',
-      tenantId,
-    });
-    const registration = defineOutboxWorker(
-      {
-        consumerModuleKey: 'commerce.customer-context',
-        entrypoint: defineTenantModuleEntrypoint({
-          access: 'background',
-          authorization: { kind: 'owner_local_background' },
-          entrypointKey: 'commerce.customer-context.reconcile-party-merge',
-          moduleKey: 'commerce.customer-context',
-          role: 'worker',
-        }),
-        leaseDurationMs: 30_000,
-        payloadSchema,
-        producerModuleKey: 'party.registry',
-        retryPolicy: {
-          initialBackoffMs: 1000,
-          maxAttempts: 5,
-          maxBackoffMs: 60_000,
-          multiplier: 2,
+      const event = Option.getOrThrow(
+        Option.fromNullishOr(
+          (yield* executor
+            .insert(domainEvents)
+            .values({
+              actionInvocationId: invocation.actionInvocationId,
+              eventType: 'PartyMerged',
+              legalEntityId,
+              payloadJson: { mergeId: 'merge-1' },
+              producerModuleKey: 'party.registry',
+              subjectModuleKey: 'party.registry',
+              subjectResourceId: 'merge-1',
+              subjectResourceType: 'party-merge',
+              tenantId,
+            })
+            .returning({ domainEventId: domainEvents.domainEventId }))[0],
+        ),
+      );
+      const now = yield* DateTime.nowAsDate;
+      const message = Option.getOrThrow(
+        Option.fromNullishOr(
+          (yield* executor
+            .insert(outboxMessages)
+            .values({
+              domainEventId: event.domainEventId,
+              matchedAt: now,
+              payloadJson: { mergeId: 'merge-1' },
+              producerModuleKey: 'party.registry',
+              tenantId,
+              topic: 'party.registry.party-merged.v1',
+            })
+            .returning({ messageId: outboxMessages.outboxMessageId }))[0],
+        ),
+      );
+      yield* executor.insert(tenantModuleStates).values({
+        moduleKey: 'commerce.customer-context',
+        state: 'active',
+        tenantId,
+      });
+      const registration = defineOutboxWorker(
+        {
+          consumerModuleKey: 'commerce.customer-context',
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'background',
+            authorization: { kind: 'owner_local_background' },
+            entrypointKey: 'commerce.customer-context.reconcile-party-merge',
+            moduleKey: 'commerce.customer-context',
+            role: 'worker',
+          }),
+          leaseDurationMs: 30_000,
+          payloadSchema,
+          producerModuleKey: 'party.registry',
+          retryPolicy: {
+            initialBackoffMs: 1000,
+            maxAttempts: 5,
+            maxBackoffMs: 60_000,
+            multiplier: 2,
+          },
+          topic: 'party.registry.party-merged.v1',
+          workerKey: 'commerce.customer-context.reconcile-party-merge',
         },
-        topic: 'party.registry.party-merged.v1',
-        workerKey: 'commerce.customer-context.reconcile-party-merge',
-      },
-      () => Effect.void,
-    );
-    const repository = makeOutboxRepository(executor);
-    const authority = {
-      authorityKey: 'active',
-      phase: 'active' as const,
-      revision: compositionRevision,
-      subscriptionsJson: extractOutboxWorkerSubscriptions([registration]),
-      validUntil: DateTime.makeUnsafe(now).pipe(DateTime.add({ hours: 1 }), DateTime.toDateUtc),
-    };
-    yield* adminExecutor.insert(applicationCompositionAuthority).values(authority).onConflictDoUpdate({
-      set: authority,
-      target: applicationCompositionAuthority.authorityKey,
-    });
-    yield* executor.insert(outboxDeliveries).values({
-      availableAt: now,
-      consumerModuleKey: registration.descriptor.consumerModuleKey,
-      outboxMessageId: message.messageId,
-      workerKey: registration.descriptor.workerKey,
-    });
-    const claimAt = DateTime.makeUnsafe(now).pipe(DateTime.add({ milliseconds: 1000 }), DateTime.toDateUtc);
-    const claimed = Option.getOrThrow(
-      yield* repository.claimNext([registration], 'worker-actor-evidence', claimAt, compositionRevision),
-    );
-    expect(claimed.actorPrincipalId).toBe(principalId);
-    expect(claimed.correlationId).toBe('merge-correlation-1');
-    return yield* Effect.void;
-  }),
-);
+        () => Effect.void,
+      );
+      const repository = makeOutboxRepository(executor, crypto);
+      const authority = {
+        authorityKey: 'active',
+        phase: 'active' as const,
+        revision: compositionRevision,
+        subscriptionsJson: extractOutboxWorkerSubscriptions([registration]),
+        validUntil: DateTime.makeUnsafe(now).pipe(DateTime.add({ hours: 1 }), DateTime.toDateUtc),
+      };
+      yield* adminExecutor.insert(applicationCompositionAuthority).values(authority).onConflictDoUpdate({
+        set: authority,
+        target: applicationCompositionAuthority.authorityKey,
+      });
+      yield* executor.insert(outboxDeliveries).values({
+        availableAt: now,
+        consumerModuleKey: registration.descriptor.consumerModuleKey,
+        outboxMessageId: message.messageId,
+        workerKey: registration.descriptor.workerKey,
+      });
+      const claimAt = DateTime.makeUnsafe(now).pipe(DateTime.add({ milliseconds: 1000 }), DateTime.toDateUtc);
+      const claimed = Option.getOrThrow(
+        yield* repository.claimNext([registration], 'worker-actor-evidence', claimAt, compositionRevision),
+      );
+      expect(claimed.actorPrincipalId).toBe(principalId);
+      expect(claimed.correlationId).toBe('merge-correlation-1');
+      return yield* Effect.void;
+    }),
+  );
+});

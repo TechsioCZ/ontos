@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-
+import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { ContextAccess, ReadRuntime, toContextPermissionAccessKey } from '@app/core-runtime';
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
@@ -8,7 +7,7 @@ import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bf
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq, sql } from 'drizzle-orm';
-import { Context, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
@@ -25,7 +24,6 @@ import {
   DeclareSellerVatRegimePayloadSchema,
   ImportSellerVatRegimeDeclarationsPayloadSchema,
 } from '../../shared/actions/seller-vat-regime-declaration.ts';
-import type { DeclareSellerVatRegimePayload } from '../../shared/actions/seller-vat-regime-declaration.ts';
 import {
   TaxEvaluationApi,
   TaxEvaluationAuthenticationProblemSchema,
@@ -82,18 +80,27 @@ import {
 } from '../unit/tax-evaluation-fixtures.ts';
 import { occurrenceInput, purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 
-const tenantId = randomUUID();
-const principalId = randomUUID();
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
 
-const scopeFor = (legalEntityId: string): OperationalScope => ({
-  authBindingId: randomUUID(),
-  authContextRef: `better-auth-session:${randomUUID()}`,
-  authMethod: 'session',
-  correlationId: randomUUID(),
-  legalEntityId,
-  principalId,
-  tenantId,
-});
+interface FixtureIdentity {
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+const scopeFor = (identity: FixtureIdentity, legalEntityId: string) =>
+  Effect.gen(function* makeTaxEvaluationScope() {
+    const [authBindingId, authContextId, correlationId] = yield* Effect.all([nextUuid, nextUuid, nextUuid]);
+    const scope: OperationalScope = {
+      authBindingId,
+      authContextRef: `better-auth-session:${authContextId}`,
+      authMethod: 'session',
+      correlationId,
+      legalEntityId,
+      principalId: identity.principalId,
+      tenantId: identity.tenantId,
+    };
+    return scope;
+  });
 
 type CoreTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 
@@ -111,15 +118,18 @@ const runScoped = <Value, Failure>(
 
 /** Fixed trusted operation time for governed setup; evaluation itself uses the real server clock. */
 const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-02-01T00:00:00.000Z'));
-const invocation = (scope: OperationalScope, at = operationTime) => ({
-  actionInvocationId: randomUUID(),
-  actorPrincipalId: principalId,
-  legalEntityId: scope.legalEntityId ?? '',
-  operationTime: at,
-  tenantId: scope.tenantId,
-});
+const invocation = (scope: OperationalScope, at = operationTime) =>
+  nextUuid.pipe(
+    Effect.map((actionInvocationId) => ({
+      actionInvocationId,
+      actorPrincipalId: scope.principalId,
+      legalEntityId: scope.legalEntityId ?? '',
+      operationTime: at,
+      tenantId: scope.tenantId,
+    })),
+  );
 
-const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
+const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>, tenantId: string) =>
   admin.transaction((transaction) =>
     Effect.gen(function* cleanupTaxEvaluationRows() {
       // Append-only triggers reject deletes; replica mode is the test-only escape for owned fixture rows.
@@ -139,9 +149,10 @@ const acquireDatabases = Effect.gen(function* acquireTaxEvaluationTestDatabases(
   const admin = yield* makeTestDatabaseFromClient(adminClient, taxRelations);
   // Owner services run as the least-privilege runtime role so forced RLS is part of every assertion.
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
-  yield* cleanup(admin);
-  yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  return { admin, runtime, runtimeClient };
+  const [tenantId, principalId] = yield* Effect.all([nextUuid, nextUuid]);
+  yield* cleanup(admin, tenantId);
+  yield* Effect.addFinalizer(() => cleanup(admin, tenantId).pipe(Effect.orDie));
+  return { admin, identity: { principalId, tenantId }, runtime, runtimeClient };
 });
 
 const evaluationProblems = makeGovernedReadProblems({
@@ -259,26 +270,31 @@ const evaluationHttp = Effect.fn('TaxEvaluationTest.evaluationHttp')(function* e
 type AdminTestDatabase = TestDatabaseFromClient<typeof taxRelations>;
 
 /** Commits the next VAT_PAYER revision (effective before T) from a separate admin transaction on every run. */
-const concurrentRevisionWriter = (admin: AdminTestDatabase, legalEntityId: string) => {
+const concurrentRevisionWriter = (admin: AdminTestDatabase, scope: OperationalScope, crypto: Crypto.Crypto) => {
   const state = { head: 1 };
   return Effect.suspend(() => {
     state.head += 1;
-    return admin.insert(taxSellerVatRegimeDeclarations).values({
-      actionInvocationId: randomUUID(),
-      actorPrincipalId: principalId,
-      effectiveFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-03-01T00:00:00.000Z')),
-      idempotencyKey: randomUUID(),
-      intentFingerprint: '0'.repeat(64),
-      legalEntityId,
-      provenance: 'MERCHANT_DECLARED',
-      reason: 'Concurrent declaration committed between two observations of one evaluation (Unit 10 C)',
-      recordedAt: operationTime,
-      regime: 'VAT_PAYER',
-      replacesScheduled: false,
-      revision: state.head,
-      tenantId,
-    });
-  }).pipe(Effect.orDie);
+    return Effect.all([crypto.randomUUIDv4, crypto.randomUUIDv4]);
+  }).pipe(
+    Effect.flatMap(([actionInvocationId, idempotencyKey]) =>
+      admin.insert(taxSellerVatRegimeDeclarations).values({
+        actionInvocationId,
+        actorPrincipalId: scope.principalId,
+        effectiveFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-03-01T00:00:00.000Z')),
+        idempotencyKey,
+        intentFingerprint: '0'.repeat(64),
+        legalEntityId: scope.legalEntityId ?? '',
+        provenance: 'MERCHANT_DECLARED',
+        reason: 'Concurrent declaration committed between two observations of one evaluation (Unit 10 C)',
+        recordedAt: operationTime,
+        regime: 'VAT_PAYER',
+        replacesScheduled: false,
+        revision: state.head,
+        tenantId: scope.tenantId,
+      }),
+    ),
+    Effect.orDie,
+  );
 };
 
 /** The real declaration reads, except that the numbered `atInstant` observations first run the concurrent writer. */
@@ -300,41 +316,49 @@ const racingDeclarations = (
 };
 
 /** Governed TAX setup of one seller, through the same owner services the Actions use. */
-const seller = (runtime: CoreTestDatabase) => {
-  const legalEntityId = randomUUID();
-  const scope = scopeFor(legalEntityId);
-  const declare = (overrides: Partial<typeof DeclareSellerVatRegimePayloadSchema.Encoded> = {}) =>
-    Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+const seller = Effect.fnUntraced(function* makeSeller(runtime: CoreTestDatabase, identity: FixtureIdentity) {
+  const crypto = yield* Crypto.Crypto;
+  const legalEntityId = yield* nextUuid;
+  const scope = yield* scopeFor(identity, legalEntityId);
+  const { tenantId } = identity;
+  const declare = Effect.fnUntraced(function* declareAction(
+    overrides: Partial<typeof DeclareSellerVatRegimePayloadSchema.Encoded> = {},
+  ) {
+    const payload = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
       effectiveFrom: '2026-01-01T00:00:00.000Z',
       expectedCurrentRevision: 0,
       reason: 'Merchant-declared backdated effect for acceptance fixtures',
       regime: 'VAT_PAYER',
       ...overrides,
-    }).pipe(
-      Effect.flatMap((payload: DeclareSellerVatRegimePayload) =>
-        runScoped(runtime, scope, (transaction) =>
-          sellerVatRegimeDeclarationsForScope(transaction, scope).declare({
-            ...payload,
-            ...invocation(scope),
-          }),
-        ),
-      ),
+    });
+    const actionInvocation = yield* invocation(scope);
+    return yield* runScoped(runtime, scope, (transaction) =>
+      sellerVatRegimeDeclarationsForScope(transaction, scope).declare({
+        ...payload,
+        ...actionInvocation,
+      }),
     );
-  const importDeclarations = (input: typeof ImportSellerVatRegimeDeclarationsPayloadSchema.Encoded) =>
-    Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input).pipe(
-      Effect.flatMap((decoded) =>
-        runScoped(runtime, scope, (transaction) =>
-          sellerVatRegimeDeclarationsForScope(transaction, scope).importDeclarations({
-            ...decoded,
-            ...invocation(scope),
-          }),
-        ),
-      ),
+  });
+  const importDeclarations = Effect.fnUntraced(function* importDeclarationsAction(
+    input: typeof ImportSellerVatRegimeDeclarationsPayloadSchema.Encoded,
+  ) {
+    const decoded = yield* Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input);
+    const actionInvocation = yield* invocation(scope);
+    return yield* runScoped(runtime, scope, (transaction) =>
+      sellerVatRegimeDeclarationsForScope(transaction, scope).importDeclarations({
+        ...decoded,
+        ...actionInvocation,
+      }),
     );
+  });
   const declareVatPayer = () => declare({ regime: 'VAT_PAYER' });
   const declareNonPayer = () => declare({ reason: 'Merchant-declared non-payer', regime: 'NON_PAYER' });
-  const createRule = (stableCode: string, taxClassificationCode: string, ratePercent: string) =>
-    Schema.decodeEffect(CreateTaxRulePayloadSchema)({
+  const createRule = Effect.fnUntraced(function* createRuleAction(
+    stableCode: string,
+    taxClassificationCode: string,
+    ratePercent: string,
+  ) {
+    const payload = yield* Schema.decodeEffect(CreateTaxRulePayloadSchema)({
       initialRevision: {
         compositionKind: 'EXCLUSIVE',
         effectiveFrom: '2026-01-01T00:00:00.000Z',
@@ -347,13 +371,12 @@ const seller = (runtime: CoreTestDatabase) => {
       provenanceRef: `acceptance:${stableCode}`,
       reason: 'Czech VAT rate',
       stableCode,
-    }).pipe(
-      Effect.flatMap((payload) =>
-        runScoped(runtime, scope, (transaction) =>
-          taxRuleGovernancePersistenceForScope(transaction, scope).createTaxRule({ ...payload, ...invocation(scope) }),
-        ),
-      ),
+    });
+    const actionInvocation = yield* invocation(scope);
+    return yield* runScoped(runtime, scope, (transaction) =>
+      taxRuleGovernancePersistenceForScope(transaction, scope).createTaxRule({ ...payload, ...actionInvocation }),
     );
+  });
   const evaluate = (overrides: Parameters<typeof evaluationRequestInput>[0] = {}) =>
     runScoped(runtime, scope, (transaction) =>
       taxEvaluationForScope(transaction, scope).evaluate(
@@ -403,7 +426,7 @@ const seller = (runtime: CoreTestDatabase) => {
           declarations: racingDeclarations(
             sellerVatRegimeDeclarationsForScope(transaction, scope),
             racedObservations,
-            concurrentRevisionWriter(admin, legalEntityId),
+            concurrentRevisionWriter(admin, scope, crypto),
           ),
           governed: taxGovernedReadsForScope(transaction, scope),
         },
@@ -434,7 +457,7 @@ const seller = (runtime: CoreTestDatabase) => {
     readPublic,
     scope,
   };
-};
+});
 
 const EvaluatedSchema = Schema.TaggedStruct('EVALUATED', {});
 const isEvaluated = Schema.is(EvaluatedSchema);
@@ -478,11 +501,39 @@ const evaluationWireFor = (scope: OperationalScope) =>
     taxRelevantTime: '2026-06-01T00:00:00.000Z',
   });
 
+/** The declaration revision one evidence selection names; throws on `NOT_DECLARED`, which every caller excludes. */
+const selectedRevisionOf = (selection: SellerVatRegimeAtInstantSelection) =>
+  Match.value(selection).pipe(
+    Match.tag('DECLARED', ({ declarationRevisionRef }) => declarationRevisionRef.revision),
+    Match.tag('NOT_DECLARED', () => {
+      throw new Error('Expected a DECLARED Seller VAT Regime selection');
+    }),
+    Match.exhaustive,
+  );
+
+const CreatedRuleIdSchema = Schema.Struct({ taxRuleId: Schema.String.pipe(Schema.brand('TaxTestRuleId')) });
+const successOf = (response: Option.Option<TaxEvaluationResponse>) => {
+  const outcome = outcomeOf(response);
+  if (!isSuccess(outcome)) {
+    throw new Error('Expected a successful Tax Outcome');
+  }
+  return outcome;
+};
+const publishedByUnit = (response: Option.Option<TaxEvaluationResponse>) =>
+  successOf(response).result.units.map(({ publishedTaxAmount, taxableSupplyUnitId }) => [
+    taxableSupplyUnitId,
+    publishedTaxAmount.amount,
+  ]);
+const centsOf = (amount: string) => BigInt(amount.replace('.', ''));
+
+// Each test stays a live registration against real PostgreSQL and builds Node Crypto in its scope.
+const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+
 it.live('#907 F1 ordinary eligibility survives generated HTTP serialization and persisted TAX evaluation', () =>
   Effect.scoped(
     Effect.gen(function* ordinaryEligibilityHttp() {
-      const { runtime, runtimeClient } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime, runtimeClient } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
       const http = yield* evaluationHttp(runtimeClient, subject.scope);
@@ -494,18 +545,20 @@ it.live('#907 F1 ordinary eligibility survives generated HTTP serialization and 
       const evaluated = evaluatedOf(Option.some(response));
       expect(evaluated.evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
       expect(isSuccess(evaluated.outcome)).toBe(true);
-      expect(evaluated.outcome).toMatchObject({ result: { purchaseTaxTotal: { amount: '270.00', currency: 'CZK' } } });
+      expect(evaluated.outcome).toMatchObject({
+        result: { purchaseTaxTotal: { amount: '270.00', currency: 'CZK' } },
+      });
       expect(http.snapshot().evidenceWrites).toBe(1);
       expect(http.snapshot().ownerQueries.length).toBeGreaterThan(0);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#907 F2 HTTP omits rate classification for a persisted NON_PAYER without reading TAX rules', () =>
   Effect.scoped(
     Effect.gen(function* nonPayerHttp() {
-      const { runtime, runtimeClient } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime, runtimeClient } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareNonPayer();
       const http = yield* evaluationHttp(runtimeClient, subject.scope);
       const wire = evaluationWireFor(subject.scope);
@@ -531,15 +584,15 @@ it.live('#907 F2 HTTP omits rate classification for a persisted NON_PAYER withou
       expect(http.snapshot().evidenceWrites).toBe(1);
       expect(http.snapshot().ownerQueries.every(({ sql: queryText }) => !queryText.includes('tax_rule'))).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#907 F1 HTTP preserves unsupported and missing eligibility for both persisted seller regimes', () =>
   Effect.scoped(
     Effect.gen(function* eligibilityFailuresHttp() {
-      const { runtime, runtimeClient } = yield* acquireDatabases;
+      const { identity, runtime, runtimeClient } = yield* acquireDatabases;
       for (const sellerRegime of ['VAT_PAYER', 'NON_PAYER'] as const) {
-        const subject = seller(runtime);
+        const subject = yield* seller(runtime, identity);
         yield* subject.declare({ regime: sellerRegime });
         const http = yield* evaluationHttp(runtimeClient, subject.scope);
         const wire = evaluationWireFor(subject.scope);
@@ -559,14 +612,14 @@ it.live('#907 F1 HTTP preserves unsupported and missing eligibility for both per
         expect(http.snapshot().evidenceWrites).toBe(2);
       }
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#907 F1 malformed eligibility is an HTTP 400 before Core or TAX reads execute', () =>
   Effect.scoped(
     Effect.gen(function* malformedEligibilityHttp() {
-      const { runtime, runtimeClient } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime, runtimeClient } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       const http = yield* evaluationHttp(runtimeClient, subject.scope);
       const wire = evaluationWireFor(subject.scope);
       const jsonText = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))({
@@ -579,14 +632,14 @@ it.live('#907 F1 malformed eligibility is an HTTP 400 before Core or TAX reads e
       expect(http.snapshot().ownerQueries).toEqual([]);
       expect(http.snapshot().evidenceWrites).toBe(0);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#942 #936 #941 a VAT_PAYER seller publishes one rated Decision and Result from complete rule state', () =>
   Effect.scoped(
     Effect.gen(function* prospectiveEvaluationAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -616,7 +669,7 @@ it.live('#942 #936 #941 a VAT_PAYER seller publishes one rated Decision and Resu
       // #942 F23 the same complete state and input give the same Decision identity.
       expect(decisionIdOf(yield* subject.evaluate())).toBe(decisionIdOf(response));
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live(
@@ -624,8 +677,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* nonPayerAcceptance() {
-        const { runtime } = yield* acquireDatabases;
-        const subject = seller(runtime);
+        const { identity, runtime } = yield* acquireDatabases;
+        const subject = yield* seller(runtime, identity);
         yield* subject.declareNonPayer();
         // No Tax Rules exist at all; a NON_PAYER seller makes no rule read and still succeeds (#942 F5, F9-F21).
 
@@ -638,21 +691,21 @@ it.live(
         expect(declaredRegimeOf(evaluated.evidence.sellerVatRegime.selection)).toBe('NON_PAYER');
         expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(evaluated.customerSafe)).toBe(true);
       }),
-    ),
+    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('Unit 10 C a seller with nothing declared is indeterminate, never a stored final meaning', () =>
   Effect.scoped(
     Effect.gen(function* notDeclaredAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.launchRules;
 
       const response = yield* subject.evaluate();
       expect(outcomeOf(response)).toEqual(TaxStateIndeterminateSchema.make({}));
       expect(evaluatedOf(response).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live(
@@ -660,8 +713,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* migratedEvaluationAcceptance() {
-        const { runtime } = yield* acquireDatabases;
-        const subject = seller(runtime);
+        const { identity, runtime } = yield* acquireDatabases;
+        const subject = yield* seller(runtime, identity);
         yield* subject.importDeclarations({
           declarations: [{ regime: 'VAT_PAYER', sourceRecordRef: 'legacy:current' }],
           migrationRunRef: 'migration-run-1',
@@ -686,34 +739,34 @@ it.live(
         expect(outcomeOf(before)).toEqual(TaxStateIndeterminateSchema.make({}));
         expect(evaluatedOf(before).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
       }),
-    ),
+    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#942 F12-F15 #938 a VAT_PAYER seller with incomplete or conflicting rule state keeps its typed meaning', () =>
   Effect.scoped(
     Effect.gen(function* nonSuccessAcceptance() {
-      const { runtime } = yield* acquireDatabases;
+      const { identity, runtime } = yield* acquireDatabases;
 
-      const missing = seller(runtime);
+      const missing = yield* seller(runtime, identity);
       yield* missing.declareVatPayer();
       yield* missing.createRule('cz.standard', 'cz-standard-goods', '21');
       // The reduced code has a complete, authoritative and empty applicable set.
       expect(outcomeOf(yield* missing.evaluate())).toEqual(TaxRuleMissingSchema.make({}));
 
-      const overlapping = seller(runtime);
+      const overlapping = yield* seller(runtime, identity);
       yield* overlapping.declareVatPayer();
       yield* overlapping.launchRules;
       yield* overlapping.createRule('cz.standard-duplicate', 'cz-standard-goods', '21');
       expect(outcomeOf(yield* overlapping.evaluate())).toEqual(TaxRuleOverlapSchema.make({}));
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('Unit 10 C a regime revision effective after T but recorded before E still selects the regime at T', () =>
   Effect.scoped(
     Effect.gen(function* regimeAtTAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -734,24 +787,14 @@ it.live('Unit 10 C a regime revision effective after T but recorded before E sti
       expect(declaredRegimeOf(evaluated.evidence.sellerVatRegime.selection)).toBe('VAT_PAYER');
       expect(evaluated.evidence.sellerVatRegime.headRevision).toBe(2);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
-
-/** The declaration revision one evidence selection names; throws on `NOT_DECLARED`, which every caller excludes. */
-const selectedRevisionOf = (selection: SellerVatRegimeAtInstantSelection) =>
-  Match.value(selection).pipe(
-    Match.tag('DECLARED', ({ declarationRevisionRef }) => declarationRevisionRef.revision),
-    Match.tag('NOT_DECLARED', () => {
-      throw new Error('Expected a DECLARED Seller VAT Regime selection');
-    }),
-    Match.exhaustive,
-  );
 
 it.live('Unit 10 C #942 F17-F18 a declaration head that moves between observations discards the candidate', () =>
   Effect.scoped(
     Effect.gen(function* sellerHeadDiscardAcceptance() {
-      const { admin, runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { admin, identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -766,14 +809,14 @@ it.live('Unit 10 C #942 F17-F18 a declaration head that moves between observatio
       const { outcome } = evaluated;
       expect(isSuccess(outcome) && outcome.decision.declarationRevisionRef.revision).toBe(2);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('Unit 10 C #942 F19 a declaration head that moves within every attempt exhausts as indeterminate', () =>
   Effect.scoped(
     Effect.gen(function* sellerHeadExhaustionAcceptance() {
-      const { admin, runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { admin, identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -791,27 +834,30 @@ it.live('Unit 10 C #942 F19 a declaration head that moves within every attempt e
       expect(evaluated.evidence.sellerVatRegime.headRevision).toBe(4);
       expect(selectedRevisionOf(evaluated.evidence.sellerVatRegime.selection)).toBe(4);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time bound every evaluation', () =>
   Effect.scoped(
     Effect.gen(function* scopeAndTimeAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
       // A purchase naming another Selling Legal Entity is not visible in this scope.
       const foreign = yield* subject.evaluate({
-        purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: randomUUID(), tenantId }),
+        purchase: purchaseBindingInput(['o1', 'o2'], {
+          sellingLegalEntityRef: yield* nextUuid,
+          tenantId: identity.tenantId,
+        }),
       });
       expect(Option.isNone(foreign)).toBe(true);
       // A purchase naming another Tenant is not visible either, whatever its seller (#950 F24).
       const otherTenant = yield* subject.evaluate({
         purchase: purchaseBindingInput(['o1', 'o2'], {
           sellingLegalEntityRef: subject.legalEntityId,
-          tenantId: randomUUID(),
+          tenantId: yield* nextUuid,
         }),
       });
       expect(Option.isNone(otherTenant)).toBe(true);
@@ -820,14 +866,16 @@ it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time boun
       expect(isRejected(future) && future.reasons).toEqual(['FUTURE_TAX_RELEVANT_TIME']);
 
       // Supplied classification must bind; absent payer classification is material state, not a purchase defect.
-      const incompleteClassification = yield* subject.evaluate({ catalog: [catalogEntry('o1', 'cz-standard-goods')] });
+      const incompleteClassification = yield* subject.evaluate({
+        catalog: [catalogEntry('o1', 'cz-standard-goods')],
+      });
       expect(Schema.is(TaxStateIndeterminateSchema)(outcomeOf(incompleteClassification))).toBe(true);
       const unbound = Option.getOrThrow(
         yield* subject.evaluate({ catalog: [catalogEntry('foreign-occurrence', 'cz-standard-goods')] }),
       );
       expect(isRejected(unbound) && unbound.reasons).toEqual(['STRUCTURAL_BINDING_INVALID']);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live(
@@ -835,8 +883,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* shippingAllocationAcceptance() {
-        const { runtime } = yield* acquireDatabases;
-        const subject = seller(runtime);
+        const { identity, runtime } = yield* acquireDatabases;
+        const subject = yield* seller(runtime, identity);
         yield* subject.declareVatPayer();
         yield* subject.launchRules;
 
@@ -848,7 +896,7 @@ it.live(
           purchase: purchaseBindingInput(['o1', 'o2'], {
             sellingLegalEntityRef: subject.legalEntityId,
             shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
-            tenantId,
+            tenantId: identity.tenantId,
           }),
           shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00') },
         } as const;
@@ -895,14 +943,14 @@ it.live(
         expect(replayOutcome.decision.shippingAllocation).toEqual(outcome.decision.shippingAllocation);
         expect(replayOutcome.result.purchaseTaxTotal).toEqual(outcome.result.purchaseTaxTotal);
       }),
-    ),
+    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('907-Q07 #933 a payer NET Shipping charge over NET lines evaluates from real reads in its own NET basis', () =>
   Effect.scoped(
     Effect.gen(function* netShippingAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -915,7 +963,7 @@ it.live('907-Q07 #933 a payer NET Shipping charge over NET lines evaluates from 
           purchase: purchaseBindingInput(['o1', 'o2'], {
             sellingLegalEntityRef: subject.legalEntityId,
             shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
-            tenantId,
+            tenantId: identity.tenantId,
           }),
           shipping: { affectedOccurrenceIds: ['o1', 'o2'], source: shippingCharge('99.00', 'NET') },
         }),
@@ -946,29 +994,14 @@ it.live('907-Q07 #933 a payer NET Shipping charge over NET lines evaluates from 
       ]);
       expect(outcome.result.purchaseTaxTotal.amount).toBe('49.51');
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
-
-const CreatedRuleIdSchema = Schema.Struct({ taxRuleId: Schema.String.pipe(Schema.brand('TaxTestRuleId')) });
-const successOf = (response: Option.Option<TaxEvaluationResponse>) => {
-  const outcome = outcomeOf(response);
-  if (!isSuccess(outcome)) {
-    throw new Error('Expected a successful Tax Outcome');
-  }
-  return outcome;
-};
-const publishedByUnit = (response: Option.Option<TaxEvaluationResponse>) =>
-  successOf(response).result.units.map(({ publishedTaxAmount, taxableSupplyUnitId }) => [
-    taxableSupplyUnitId,
-    publishedTaxAmount.amount,
-  ]);
-const centsOf = (amount: string) => BigInt(amount.replace('.', ''));
 
 it.live('#961 scenario 1: ordinary B2C for a declared VAT_PAYER seller through the public read handler', () =>
   Effect.scoped(
     Effect.gen(function* ordinaryB2cScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       const ruleIds = (yield* Schema.decodeUnknownEffect(Schema.Array(CreatedRuleIdSchema))(yield* subject.launchRules))
         .map(({ taxRuleId }) => taxRuleId)
@@ -1001,14 +1034,14 @@ it.live('#961 scenario 1: ordinary B2C for a declared VAT_PAYER seller through t
       expect(declaredRegimeOf(evaluated.evidence.sellerVatRegime.selection)).toBe('VAT_PAYER');
       expect(evaluated.evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#961 scenario 2: ordinary B2B with no buyer VAT status has the same success meaning as B2C', () =>
   Effect.scoped(
     Effect.gen(function* ordinaryB2bScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -1017,7 +1050,7 @@ it.live('#961 scenario 2: ordinary B2B with no buyer VAT status has the same suc
         purchase: purchaseBindingInput(['o1', 'o2'], {
           purchasingSubject: { _tag: 'COUNTERPARTY', counterpartyRef: 'counterparty-1' },
           sellingLegalEntityRef: subject.legalEntityId,
-          tenantId,
+          tenantId: identity.tenantId,
           traceabilityContext: { channel: 'B2B', storefrontRef: 'storefront-1' },
         }),
       });
@@ -1026,14 +1059,14 @@ it.live('#961 scenario 2: ordinary B2B with no buyer VAT status has the same suc
       expect(successOf(b2b).result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
       expect(evaluatedOf(b2b).evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#961 scenario 3: two equal-valued distinct occurrences at 21 % stay two units, each rounded separately', () =>
   Effect.scoped(
     Effect.gen(function* equalOccurrencesScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -1052,14 +1085,14 @@ it.live('#961 scenario 3: two equal-valued distinct occurrences at 21 % stay two
       ]);
       expect(successOf(response).result.purchaseTaxTotal).toEqual({ amount: '0.02', currency: 'CZK' });
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#961 scenario 4: a supported whole-treatment Set is one Taxable Supply Unit with no component prices', () =>
   Effect.scoped(
     Effect.gen(function* wholeTreatmentSetScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -1074,7 +1107,7 @@ it.live('#961 scenario 4: a supported whole-treatment Set is one Taxable Supply 
         purchase: purchaseBindingInput(['o1'], {
           purchaseDemandOccurrences: [{ ...occurrenceInput('o1'), catalogSelection: setSelection }],
           sellingLegalEntityRef: subject.legalEntityId,
-          tenantId,
+          tenantId: identity.tenantId,
         }),
         setSupplyMeanings: [{ meaning: 'WHOLE_TREATMENT_SET', occurrenceId: 'o1' }],
       });
@@ -1092,14 +1125,14 @@ it.live('#961 scenario 4: a supported whole-treatment Set is one Taxable Supply 
       expect(unit.taxableBasisInterpretation.components).toHaveLength(1);
       expect(Schema.is(LineCommercialValueBasisSchema)(unit.taxableBasisInterpretation.components[0])).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#961 scenario 5: a complete empty rule state for a supported case is TAX_RULE_MISSING, never 0 CZK', () =>
   Effect.scoped(
     Effect.gen(function* completeEmptyScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
 
       const response = yield* subject.readPublic();
@@ -1109,14 +1142,14 @@ it.live('#961 scenario 5: a complete empty rule state for a supported case is TA
         ['TAX_RULE_MISSING', 0],
       ]);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#961 scenario 6: an unavailable delivery destination is TAX_DEPENDENCY_UNAVAILABLE, never a CZ fallback', () =>
   Effect.scoped(
     Effect.gen(function* unavailableSourceScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
@@ -1128,7 +1161,7 @@ it.live('#961 scenario 6: an unavailable delivery destination is TAX_DEPENDENCY_
       });
       expect(outcomeOf(response)).toEqual(TaxDependencyUnavailableSchema.make({}));
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live(
@@ -1136,8 +1169,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* nonCzechDestinationScenario() {
-        const { runtime } = yield* acquireDatabases;
-        const subject = seller(runtime);
+        const { identity, runtime } = yield* acquireDatabases;
+        const subject = yield* seller(runtime, identity);
         yield* subject.declareVatPayer();
         yield* subject.launchRules;
 
@@ -1151,16 +1184,16 @@ it.live(
           TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NON_CZECH_DOMESTIC_TAX_PLACE' }),
         );
       }),
-    ),
+    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#961 scenario 8: a NON_PAYER seller succeeds as non-payer and an undeclared seller is indeterminate', () =>
   Effect.scoped(
     Effect.gen(function* sellerRegimeScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const nonPayer = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const nonPayer = yield* seller(runtime, identity);
       yield* nonPayer.declareNonPayer();
-      const undeclared = seller(runtime);
+      const undeclared = yield* seller(runtime, identity);
       yield* undeclared.launchRules;
 
       const nonPayerResponse = yield* nonPayer.readPublic();
@@ -1172,21 +1205,24 @@ it.live('#961 scenario 8: a NON_PAYER seller succeeds as non-payer and an undecl
       expect(outcomeOf(undeclaredResponse)).toEqual(TaxStateIndeterminateSchema.make({}));
       expect(evaluatedOf(undeclaredResponse).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#961 scenario 10: a supported 0.00 CZK line is a successful taxable 0.00 with its persisted rule', () =>
   Effect.scoped(
     Effect.gen(function* taxableZeroScenario() {
-      const { runtime } = yield* acquireDatabases;
-      const subject = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const subject = yield* seller(runtime, identity);
       yield* subject.declareVatPayer();
       yield* subject.launchRules;
 
       const response = yield* subject.readPublic({
         catalog: [catalogEntry('o1', STANDARD_CODE)],
         pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '0.00')] },
-        purchase: purchaseBindingInput(['o1'], { sellingLegalEntityRef: subject.legalEntityId, tenantId }),
+        purchase: purchaseBindingInput(['o1'], {
+          sellingLegalEntityRef: subject.legalEntityId,
+          tenantId: identity.tenantId,
+        }),
       });
 
       // Zero follows from a taxable Decision at 21 % under a persisted rule: not zero-rate, exempt or non-payer.
@@ -1198,5 +1234,5 @@ it.live('#961 scenario 10: a supported 0.00 CZK line is a successful taxable 0.0
       expect('governingTaxRuleRevisionRef' in unit && unit.governingTaxRuleRevisionRef.revision).toBe(1);
       expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(evaluatedOf(response).customerSafe)).toBe(false);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );

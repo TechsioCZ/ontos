@@ -1,8 +1,10 @@
-import { createHash } from 'node:crypto';
+import { sha256 as sha256Digest } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { CoreSearchResourceRefSchema, PrincipalRefSchema } from '@app/core-runtime';
 import type { CoreSearchResourceRef, PrincipalRef } from '@app/core-runtime';
 import { DateTime, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import { PurchaseApprovalRequestRefSchema } from '../resources/purchase-approval-request.ts';
 import { ApprovalDecisionRefSchema } from '../resources/approval-decision.ts';
@@ -490,7 +492,7 @@ const canonicalizePurchaseProposal = (proposal: PurchaseProposalRevision): strin
 
 /** Deterministic, lowercase SHA-256 hash of the canonical proposal snapshot. */
 export const computePurchaseProposalCanonicalHash = (proposal: PurchaseProposalRevision): string =>
-  createHash('sha256').update(canonicalizePurchaseProposal(proposal)).digest('hex');
+  Hex.encode(sha256Digest(utf8ToBytes(canonicalizePurchaseProposal(proposal))));
 
 const monetaryRangeContains = (value: MonetaryAmount, selector: ApprovalHierarchy['selector']): boolean => {
   if (value.currency !== selector.minimumPurchaseValue.currency) {

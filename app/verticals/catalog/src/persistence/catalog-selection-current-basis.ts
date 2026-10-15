@@ -1,7 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 
 import {
   CatalogRevisionNumberSchema,
@@ -1135,8 +1134,10 @@ export const catalogSelectionCurrentBasisForScope = (transaction: ScopedTransact
     if (indirect.reason !== null) {
       return result(indirect.status, indirect.reason);
     }
+    const crypto = yield* Crypto.Crypto;
+    const attestationId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(unavailable));
     const membership = yield* Schema.decodeEffect(CatalogSelectionMembershipSchema)({
-      attestationId: randomUUID(),
+      attestationId,
       observedAt: assessedAt,
       productRef: selection.productRef,
       source: 'CATALOG_OWNER_CURRENT_READ',

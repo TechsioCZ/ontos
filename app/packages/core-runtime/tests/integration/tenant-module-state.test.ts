@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { Cause, Effect, Exit, Match, Option, Schema, Layer } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Cause, Crypto, Effect, Exit, Match, Option, Schema, Layer } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
@@ -204,9 +205,10 @@ const setup = Effect.gen(function* initializeTenantModuleStateFixtures() {
   );
 });
 
-const Fixtures = Layer.merge(
+const Fixtures = Layer.mergeAll(
   Layer.effectDiscard(Effect.acquireRelease(setup, () => cleanup.pipe(Effect.orDie))),
   Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+  NodeCrypto.layer,
 );
 
 const allowedPermission = {
@@ -305,12 +307,13 @@ const tenantModuleStateTest1 = withDatabase((database) =>
   }),
 );
 const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantModuleState() {
+  const crypto = yield* Crypto.Crypto;
   const moduleKey = testModuleKey('testing', tenantOne);
 
   yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
-      makeActionRepository(),
+      makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
@@ -381,6 +384,7 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
   );
 });
 const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleStates() {
+  const crypto = yield* Crypto.Crypto;
   const otherModuleKey = testModuleKey('other', tenantOne);
   const targetModuleKey = testModuleKey('independent', tenantOne);
   const transitionCatalog = catalogFrom(installedContract(otherModuleKey), installedContract(targetModuleKey));
@@ -395,7 +399,7 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
   yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
-      makeActionRepository(),
+      makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
@@ -446,13 +450,14 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
   );
 });
 const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameStateRejection() {
+  const crypto = yield* Crypto.Crypto;
   const moduleKey = testModuleKey('idempotency', tenantOne);
   const input = actionInput(moduleKey, 'active', 'same-intent');
 
   yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
-      makeActionRepository(),
+      makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
@@ -462,7 +467,7 @@ const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameState
   const replay = yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
-      makeActionRepository(),
+      makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
@@ -474,7 +479,7 @@ const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameState
   const unchanged = yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
-      makeActionRepository(),
+      makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
@@ -532,11 +537,12 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
   return { executor };
 };
 const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleStateWrite() {
+  const crypto = yield* Crypto.Crypto;
   const moduleKey = testModuleKey('rollback', tenantOne);
   const failure = yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       withTenantStateWriteFailure(database),
-      makeActionRepository(),
+      makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
@@ -573,11 +579,12 @@ const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleSt
   );
 });
 const tenantModuleStateTest6 = Effect.gen(function* serializeConcurrentTenantModuleStateTransitions() {
+  const crypto = yield* Crypto.Crypto;
   const moduleKey = testModuleKey('concurrency', tenantOne);
   yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
-      makeActionRepository(),
+      makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
@@ -594,7 +601,7 @@ const tenantModuleStateTest6 = Effect.gen(function* serializeConcurrentTenantMod
       withDatabase((database) => {
         const runtime = makeActionRuntime(
           database,
-          makeActionRepository(),
+          makeActionRepository(crypto),
           allowedPermission,
           testOperationalScopeResolver,
           openActionRuntimeOptions,
@@ -628,6 +635,7 @@ const tenantModuleStateTest6 = Effect.gen(function* serializeConcurrentTenantMod
   );
 });
 const tenantModuleStateTest7 = Effect.gen(function* deriveTrustedTenantScope() {
+  const crypto = yield* Crypto.Crypto;
   const moduleKey = testModuleKey('isolation', tenantOne);
   yield* withDatabase((database) =>
     database.executor.insert(tenantModuleStates).values({
@@ -640,7 +648,7 @@ const tenantModuleStateTest7 = Effect.gen(function* deriveTrustedTenantScope() {
   yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
       database,
-      makeActionRepository(),
+      makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,

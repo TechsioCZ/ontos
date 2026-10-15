@@ -1,7 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Option } from 'effect';
+import { Crypto, DateTime, Effect, Option } from 'effect';
 
 import type { SetComponentCurrentProof } from '../../shared/domain/set-component-validation.ts';
 import { validateSetComponents } from '../../shared/domain/set-component-validation.ts';
@@ -192,9 +191,10 @@ const readComponent = Effect.fn('SetCompositionComponentCurrentBasis.readCompone
   if (configuration.status !== 'PROVEN') {
     return configuration;
   }
+  const crypto = yield* Crypto.Crypto;
   const proof: SetComponentCurrentProof = {
     assessedAt,
-    attestationId: randomUUID(),
+    attestationId: yield* crypto.randomUUIDv4,
     componentId,
     divisible: current.unit.divisible,
     productKind: 'ATOMIC',

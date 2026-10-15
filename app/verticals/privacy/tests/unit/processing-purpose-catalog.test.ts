@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit } from 'effect';
 
@@ -28,7 +29,7 @@ const materialChange = (purposeId: string) => ({
 describe('Processing Purpose catalog', () => {
   it.effect('creates a stable purpose identity with its first immutable version', () =>
     Effect.gen(function* createsPurpose() {
-      const repository = makeInMemoryProcessingPurposeRepository();
+      const repository = yield* makeInMemoryProcessingPurposeRepository();
       const purpose = yield* repository.create(tenantId, legalEntityId, createInvocationId, {
         businessCode: 'ACCOUNT_SECURITY',
         effectiveFrom: '2026-01-01T00:00:00Z',
@@ -40,12 +41,12 @@ describe('Processing Purpose catalog', () => {
       expect(purpose.purposeRef.tenantId).toBe(tenantId);
       expect(purpose.versions).toHaveLength(1);
       expect(purpose.versions[0]?.versionNumber).toBe(1);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('closes the former effective period when a material meaning version is added', () =>
     Effect.gen(function* versionsPurposeMeaning() {
-      const repository = makeInMemoryProcessingPurposeRepository();
+      const repository = yield* makeInMemoryProcessingPurposeRepository();
       const created = yield* repository.create(tenantId, legalEntityId, createInvocationId, {
         businessCode: 'ACCOUNT_SECURITY',
         effectiveFrom: '2026-01-01T00:00:00Z',
@@ -76,12 +77,12 @@ describe('Processing Purpose catalog', () => {
       expect(revised.versions[1]?.materialChangeAssessment?.current.meaning).toBe(
         'Protect the account and detect account takeover attempts',
       );
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('resolves historical meaning without rewriting an earlier Purpose Version', () =>
     Effect.gen(function* readsHistoricalPurposeMeaning() {
-      const repository = makeInMemoryProcessingPurposeRepository();
+      const repository = yield* makeInMemoryProcessingPurposeRepository();
       const created = yield* repository.create(tenantId, legalEntityId, createInvocationId, {
         businessCode: 'ACCOUNT_SECURITY',
         effectiveFrom: '2026-01-01T00:00:00Z',
@@ -112,12 +113,12 @@ describe('Processing Purpose catalog', () => {
       expect(historical.items[0]?.effectiveVersion?.versionNumber).toBe(1);
       expect(current.items[0]?.effectiveVersion?.versionNumber).toBe(2);
       expect(historical.items[0]?.purpose.versions[0]?.effectiveTo).toBe('2026-06-01T00:00:00Z');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects Purpose Version writes without matching materiality evidence', () =>
     Effect.gen(function* rejectsUnprovenVersion() {
-      const repository = makeInMemoryProcessingPurposeRepository();
+      const repository = yield* makeInMemoryProcessingPurposeRepository();
       const created = yield* repository.create(tenantId, legalEntityId, createInvocationId, {
         businessCode: 'ACCOUNT_SECURITY',
         effectiveFrom: '2026-01-01T00:00:00Z',
@@ -134,12 +135,12 @@ describe('Processing Purpose catalog', () => {
       );
 
       expect(Exit.isFailure(invalid)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects non-monotonic versions and makes exact invocation replay idempotent', () =>
     Effect.gen(function* validatesVersionOrderingAndReplay() {
-      const repository = makeInMemoryProcessingPurposeRepository();
+      const repository = yield* makeInMemoryProcessingPurposeRepository();
       const created = yield* repository.create(tenantId, legalEntityId, createInvocationId, {
         businessCode: 'ACCOUNT_SECURITY',
         effectiveFrom: '2026-01-01T00:00:00Z',
@@ -179,6 +180,6 @@ describe('Processing Purpose catalog', () => {
 
       expect(replay.versions).toHaveLength(first.versions.length);
       expect(Exit.isFailure(stale)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

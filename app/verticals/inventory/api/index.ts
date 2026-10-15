@@ -17,6 +17,7 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { NodeCrypto } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
@@ -122,12 +123,14 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(NodeCrypto.layer),
 );
 const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(NodeCrypto.layer),
 );
 
 type InventoryApiRuntimeArguments = readonly [
@@ -194,7 +197,7 @@ export const makeInventoryApiRuntime = (
     InventoryApiGroups,
     InventoryHandlerRequirements
   >['handlers'] = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, NodeCrypto.layer)),
     Layer.orDie,
   );
 

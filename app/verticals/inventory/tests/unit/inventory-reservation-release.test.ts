@@ -239,7 +239,7 @@ const makeHarness = (input?: {
   const service = makeInventoryReservationReleaseService({
     effects: effects.persistence,
     ledger,
-    makeMutationId: () => mutationId,
+    makeMutationId: Effect.succeed(mutationId),
     obligations: { read: () => Effect.succeed(Option.some(reservation)) },
   });
   const execution = makeInventoryReservationReleaseExecutionService({

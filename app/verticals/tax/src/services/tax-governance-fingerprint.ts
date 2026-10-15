@@ -1,5 +1,7 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Result, Schema } from 'effect';
-import { createHash } from 'node:crypto';
+import { Hex } from 'effect/encoding';
 
 const CanonicalJsonSchema: Schema.Codec<Schema.Json> = Schema.suspend(() =>
   Schema.Union([
@@ -35,7 +37,7 @@ const canonicalJson = (value: Schema.Json): Schema.Json => {
 export const taxMeaningFingerprint = <Value extends object>(value: Value): string => {
   const decoded = Result.getOrThrow(Schema.decodeUnknownResult(CanonicalJsonSchema)(value));
   const canonical = Result.getOrThrow(Schema.encodeResult(JsonStringSchema)(canonicalJson(decoded)));
-  return createHash('sha256').update(canonical, 'utf-8').digest('hex');
+  return Hex.encode(sha256(utf8ToBytes(canonical)));
 };
 
 /** Canonical UTC instant text for fingerprints and governed read output. */

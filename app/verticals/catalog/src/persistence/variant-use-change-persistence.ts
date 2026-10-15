@@ -1,6 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import type {
   VariantReactivationRequiredPackageOption,
@@ -86,7 +87,8 @@ export interface VariantUseChangePersistence {
     input: VariantReactivationAssessmentInput,
   ) => Effect.Effect<
     VariantReactivationAssessment,
-    CatalogPersistenceUnavailable | VariantUseChangeBasisUnavailable | VariantUseChangeConflict
+    CatalogPersistenceUnavailable | VariantUseChangeBasisUnavailable | VariantUseChangeConflict,
+    Crypto.Crypto
   >;
 }
 

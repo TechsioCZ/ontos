@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -294,7 +295,7 @@ describe('Catalog Selection evidence assembly service', () => {
       }
       expect(result.validity).toMatchObject({ basis: result.evidence.basis });
       expect(yield* Ref.get(reads)).toBe(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when a deciding source changes between preparation and revalidation', () =>
@@ -321,7 +322,7 @@ describe('Catalog Selection evidence assembly service', () => {
       });
       expect(result.validity).toBeUndefined();
       expect(yield* Ref.get(reads)).toBe(2);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('fails closed to INDETERMINATE, with no validity, when the deciding basis is unavailable', () => {
@@ -393,7 +394,7 @@ describe('Catalog Selection evidence assembly service', () => {
       const result = yield* service.assess({ purpose: 'PURCHASE_ACCEPTANCE', selection });
       expect(result.evidence).toMatchObject({ kind: 'UNAVAILABLE' });
       expect(result.validity).toBeUndefined();
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails a foreign Tenant selection closed before any read or write', () =>
@@ -406,6 +407,6 @@ describe('Catalog Selection evidence assembly service', () => {
       const service = catalogSelectionEvidenceForScope(untouchedTransaction, scope);
       const result = yield* service.assess({ purpose: 'PURCHASE_ACCEPTANCE', selection: foreignSelection });
       expect(result.evidence).toMatchObject({ status: 'INDETERMINATE' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

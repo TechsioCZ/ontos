@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { and, eq, sql } from 'drizzle-orm';
 import type { PgInsertValue } from 'drizzle-orm/pg-core';
-import { Effect, Match, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Crypto, Effect, Match, Schema } from 'effect';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
@@ -440,7 +441,7 @@ it.live(
         });
         const actionRuntime = makeActionRuntime(
           { executor: runtimeDatabase },
-          makeActionRepository(),
+          makeActionRepository(yield* Crypto.Crypto),
           allowedPermission,
           testOperationalScopeResolver,
           {
@@ -652,6 +653,6 @@ it.live(
         expect(authorityCalls).toEqual([effectId]);
         expect(completions).toHaveLength(1);
       }),
-    ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
   120_000,
 );

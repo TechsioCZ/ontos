@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -94,7 +95,7 @@ describe('Product Type Action result capture', () => {
         { actionKey: 'commerce.catalog.set-product-type', schemaVersion: 1 },
       ]);
       expect(rows.map(({ encodedResult }) => encodedResult)).toEqual(cases.map(([, result]) => result));
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails the success hook when the snapshot write fails', () =>
@@ -118,6 +119,6 @@ describe('Product Type Action result capture', () => {
         );
         expect(failure).toMatchObject({ code: 'action_transaction_failed' });
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

@@ -1967,10 +1967,9 @@ export const makeShellAuthenticationApiRuntime = (
     shellGovernedReadsLayer,
     readRuntimeLayer,
     runtimeObservabilityLive,
-    ShellCryptoLive,
     externalIdentityWorkloadAuthorizationLive,
     externalIdentityDeploymentLayer,
-  );
+  ).pipe(Layer.provideMerge(ShellCryptoLive));
   const apiHandlersLive = Layer.mergeAll(
     authenticationGroupLive,
     identityGroupLive,

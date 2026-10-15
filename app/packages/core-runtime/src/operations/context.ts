@@ -1,8 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
 import { and, eq } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { Context, Effect, Layer, Option } from 'effect';
+import { Context, Crypto, Effect, Layer, Option } from 'effect';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import {
@@ -351,10 +349,11 @@ const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEnt
   },
 );
 
-export const makeOperationalScopeResolver = (
+export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOperationalScopeResolver(
   repository: Pick<OperationalScopeRepository, 'load'>,
   contextAccess: LegalEntityScopeAccess,
-): OperationalScopeResolverService => {
+): Effect.fn.Return<OperationalScopeResolverService, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
   const prepareExternalAdmission = Effect.fn('OperationalScopeResolver.prepareExternalAdmission')(
     function* prepareExternalAdmissionEffect(input: ResolveOperationalScopeInput) {
       const { principal } = input;
@@ -420,8 +419,8 @@ export const makeOperationalScopeResolver = (
       if (Option.isNone(authenticationOption)) {
         return yield* operationContextUnavailable();
       }
-      const operationRef = yield* Effect.sync(randomUUID).pipe(Effect.mapError(operationContextUnavailable));
-      const nonce = yield* Effect.sync(randomUUID).pipe(Effect.mapError(operationContextUnavailable));
+      const operationRef = yield* crypto.randomUUIDv4.pipe(Effect.mapError(operationContextUnavailable));
+      const nonce = yield* crypto.randomUUIDv4.pipe(Effect.mapError(operationContextUnavailable));
       const request: ExternalOperationAuthenticationRequest = {
         audience: input.audience,
         authBindingId,
@@ -512,7 +511,7 @@ export const makeOperationalScopeResolver = (
   });
 
   return { resolve: resolveOperationalScope };
-};
+});
 
 export const OperationalScopeRepositoryLive = Layer.effect(
   OperationalScopeRepositoryContext,
@@ -524,7 +523,7 @@ export const OperationalScopeResolverFromRepositoryLive = Layer.effect(
   Effect.gen(function* createOperationalScopeResolverService() {
     const repository = yield* OperationalScopeRepositoryContext;
     const contextAccess = yield* ContextAccess;
-    return makeOperationalScopeResolver(repository, contextAccess);
+    return yield* makeOperationalScopeResolver(repository, contextAccess);
   }),
 );
 
@@ -533,6 +532,6 @@ export const OperationalScopeResolverLive = Layer.effect(
   Effect.gen(function* createLiveOperationalScopeResolverService() {
     const database = yield* CoreDatabase;
     const contextAccess = yield* ContextAccess;
-    return makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+    return yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
   }),
 );

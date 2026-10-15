@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
+import { NodeCrypto } from '@effect/platform-node';
 import { eq, inArray } from 'drizzle-orm';
-import { ConfigProvider, DateTime, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import { ConfigProvider, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CoreDatabaseLive, makeCoreDatabase } from '../../src/db/client.ts';
@@ -30,6 +29,7 @@ import {
   outboxWorkerCompositionLayer,
 } from '../support/outbox-worker-composition.ts';
 
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
 const PRODUCER_MODULE = 'producer.host';
 const TOPIC = 'producer.host.message-created';
 const MESSAGES_PER_TOPIC = 6;
@@ -91,7 +91,7 @@ const insertMatchedMessage = (
   workers: readonly ReturnType<typeof recordingWorker>[],
 ) =>
   Effect.gen(function* insertMatchedMessageEffect() {
-    const messageKey = randomUUID();
+    const messageKey = yield* nextUuid;
     const now = yield* DateTime.nowAsDate;
     const [event] = yield* database
       .insert(domainEvents)
@@ -154,155 +154,160 @@ const ownerWorkerLayer = OutboxRuntimeLive.pipe(
   Layer.provide(OutboxRepositoryLive),
   Layer.provide(CoreDatabaseLive),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(NodeCrypto.layer),
 );
 
-it.live('two hosts each running both owners claim only their own deliveries under their own claim owners', () =>
-  Effect.gen(function* noCrossClaiming() {
-    const configuration = yield* loadDatabaseConnectionPair();
-    const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
-    const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
-    const suffix = randomUUID().slice(0, 8);
-    const tenantId = yield* Effect.acquireRelease(
-      Effect.gen(function* insertTenant() {
-        const id = randomUUID();
-        yield* database.insert(tenants).values({
-          defaultLocale: 'en',
-          name: 'Outbox Worker Host Integration',
-          slug: `outbox-worker-host-${id}`,
-          status: 'active',
-          tenantId: id,
-        });
-        return id;
-      }),
-      (id) => cleanupTenant(database, id).pipe(Effect.orDie),
-    );
-    const alphaModule = `alpha${suffix}.host`;
-    const betaModule = `beta${suffix}.host`;
-    yield* database.insert(tenantModuleStates).values([
-      { moduleKey: alphaModule, state: 'active', tenantId },
-      { moduleKey: betaModule, state: 'active', tenantId },
-    ]);
-    const handled: Handled = {
-      all: yield* Deferred.make<null>(),
-      deliveries: yield* Ref.make<readonly HandledDelivery[]>([]),
-    };
-    const alphaWorker = recordingWorker(alphaModule, handled);
-    const betaWorker = recordingWorker(betaModule, handled);
-    const alphaDeployment = { appId: `alpha${suffix}-host`, buildMarker: `alpha${suffix}-host-build` };
-    const betaDeployment = { appId: `beta${suffix}-host`, buildMarker: `beta${suffix}-host-build` };
-    const composition = makeOutboxWorkerComposition([
-      { appId: 'producer-host', moduleId: PRODUCER_MODULE },
-      { ...alphaDeployment, moduleId: alphaModule, subscriptions: extractOutboxWorkerSubscriptions([alphaWorker]) },
-      { ...betaDeployment, moduleId: betaModule, subscriptions: extractOutboxWorkerSubscriptions([betaWorker]) },
-    ]);
-    const snapshot = yield* freshOutboxWorkerCompositionSnapshot(composition);
-    yield* Effect.acquireRelease(
-      adminDatabase.transaction(
-        Effect.fn('seedHostCompositionAuthority')(function* seedHostCompositionAuthority(transaction: CoreTransaction) {
-          yield* lockApplicationCompositionPublication(transaction);
-          const [previous] = yield* transaction
-            .select()
-            .from(applicationCompositionAuthority)
-            .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-          const authority: typeof applicationCompositionAuthority.$inferInsert = {
-            authorityKey: 'active',
-            phase: 'active',
-            revision: composition.revision,
-            subscriptionsJson: extractOutboxWorkerSubscriptions([alphaWorker, betaWorker]),
-            validUntil: DateTime.toDateUtc(snapshot.validUntil),
-          };
-          yield* transaction.insert(applicationCompositionAuthority).values(authority).onConflictDoUpdate({
-            set: authority,
-            target: applicationCompositionAuthority.authorityKey,
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker host', (suite) => {
+  suite.effect('two hosts each running both owners claim only their own deliveries under their own claim owners', () =>
+    Effect.gen(function* noCrossClaiming() {
+      const configuration = yield* loadDatabaseConnectionPair();
+      const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
+      const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
+      const suffix = (yield* nextUuid).slice(0, 8);
+      const tenantId = yield* Effect.acquireRelease(
+        Effect.gen(function* insertTenant() {
+          const id = yield* nextUuid;
+          yield* database.insert(tenants).values({
+            defaultLocale: 'en',
+            name: 'Outbox Worker Host Integration',
+            slug: `outbox-worker-host-${id}`,
+            status: 'active',
+            tenantId: id,
           });
-          return previous;
+          return id;
         }),
-      ),
-      (previous) =>
-        adminDatabase
-          .transaction(
-            Effect.fn('restoreHostCompositionAuthority')(function* restoreHostCompositionAuthority(
-              transaction: CoreTransaction,
-            ) {
-              yield* lockApplicationCompositionPublication(transaction);
-              yield* transaction
-                .delete(applicationCompositionAuthority)
-                .where(eq(applicationCompositionAuthority.revision, composition.revision));
-              if (previous !== undefined) {
-                yield* transaction.insert(applicationCompositionAuthority).values(previous);
-              }
-            }),
-          )
-          .pipe(Effect.orDie),
-    );
-    const layer = Layer.merge(ownerWorkerLayer, outboxWorkerCompositionLayer(composition));
-    yield* Effect.forEach(
-      Array.from({ length: MESSAGES_PER_TOPIC }),
-      () => insertMatchedMessage(database, tenantId, [alphaWorker, betaWorker]),
-      { discard: true },
-    );
-    // Both owners subscribe to the same topic, so every message has one delivery per owner; each hosted
-    // entry carries exactly its owner's registrations and deployed descriptor snapshot, as generated.
-    const entries = [
-      defineOutboxWorkerEntry({
-        claimOwnerPrefix: `${alphaModule}-outbox-worker`,
-        expectedDeployment: alphaDeployment,
-        layer,
-        registrations: [alphaWorker],
-        subscriptions: extractOutboxWorkerSubscriptions([alphaWorker]),
-      }),
-      defineOutboxWorkerEntry({
-        claimOwnerPrefix: `${betaModule}-outbox-worker`,
-        expectedDeployment: betaDeployment,
-        layer,
-        registrations: [betaWorker],
-        subscriptions: extractOutboxWorkerSubscriptions([betaWorker]),
-      }),
-    ];
-    const host = (identity: string) =>
-      runOutboxWorkerHost({ entries }).pipe(
-        Effect.provideService(
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.orElse(
-            ConfigProvider.fromUnknown({
-              OUTBOX_WORKER_MAX_DELIVERIES: '2',
-              OUTBOX_WORKER_POLL_INTERVAL_MS: '25',
-              OUTBOX_WORKER_PROCESS_IDENTITY: identity,
-            }),
-            ConfigProvider.fromEnv(),
-          ),
-        ),
-        Effect.forkChild,
+        (id) => cleanupTenant(database, id).pipe(Effect.orDie),
       );
-    const hosts = [yield* host('host-a'), yield* host('host-b')];
+      const alphaModule = `alpha${suffix}.host`;
+      const betaModule = `beta${suffix}.host`;
+      yield* database.insert(tenantModuleStates).values([
+        { moduleKey: alphaModule, state: 'active', tenantId },
+        { moduleKey: betaModule, state: 'active', tenantId },
+      ]);
+      const handled: Handled = {
+        all: yield* Deferred.make<null>(),
+        deliveries: yield* Ref.make<readonly HandledDelivery[]>([]),
+      };
+      const alphaWorker = recordingWorker(alphaModule, handled);
+      const betaWorker = recordingWorker(betaModule, handled);
+      const alphaDeployment = { appId: `alpha${suffix}-host`, buildMarker: `alpha${suffix}-host-build` };
+      const betaDeployment = { appId: `beta${suffix}-host`, buildMarker: `beta${suffix}-host-build` };
+      const composition = makeOutboxWorkerComposition([
+        { appId: 'producer-host', moduleId: PRODUCER_MODULE },
+        { ...alphaDeployment, moduleId: alphaModule, subscriptions: extractOutboxWorkerSubscriptions([alphaWorker]) },
+        { ...betaDeployment, moduleId: betaModule, subscriptions: extractOutboxWorkerSubscriptions([betaWorker]) },
+      ]);
+      const snapshot = yield* freshOutboxWorkerCompositionSnapshot(composition);
+      yield* Effect.acquireRelease(
+        adminDatabase.transaction(
+          Effect.fn('seedHostCompositionAuthority')(function* seedHostCompositionAuthority(
+            transaction: CoreTransaction,
+          ) {
+            yield* lockApplicationCompositionPublication(transaction);
+            const [previous] = yield* transaction
+              .select()
+              .from(applicationCompositionAuthority)
+              .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+            const authority: typeof applicationCompositionAuthority.$inferInsert = {
+              authorityKey: 'active',
+              phase: 'active',
+              revision: composition.revision,
+              subscriptionsJson: extractOutboxWorkerSubscriptions([alphaWorker, betaWorker]),
+              validUntil: DateTime.toDateUtc(snapshot.validUntil),
+            };
+            yield* transaction.insert(applicationCompositionAuthority).values(authority).onConflictDoUpdate({
+              set: authority,
+              target: applicationCompositionAuthority.authorityKey,
+            });
+            return previous;
+          }),
+        ),
+        (previous) =>
+          adminDatabase
+            .transaction(
+              Effect.fn('restoreHostCompositionAuthority')(function* restoreHostCompositionAuthority(
+                transaction: CoreTransaction,
+              ) {
+                yield* lockApplicationCompositionPublication(transaction);
+                yield* transaction
+                  .delete(applicationCompositionAuthority)
+                  .where(eq(applicationCompositionAuthority.revision, composition.revision));
+                if (previous !== undefined) {
+                  yield* transaction.insert(applicationCompositionAuthority).values(previous);
+                }
+              }),
+            )
+            .pipe(Effect.orDie),
+      );
+      const layer = Layer.merge(ownerWorkerLayer, outboxWorkerCompositionLayer(composition));
+      yield* Effect.forEach(
+        Array.from({ length: MESSAGES_PER_TOPIC }),
+        () => insertMatchedMessage(database, tenantId, [alphaWorker, betaWorker]),
+        { discard: true },
+      );
+      // Both owners subscribe to the same topic, so every message has one delivery per owner; each hosted
+      // entry carries exactly its owner's registrations and deployed descriptor snapshot, as generated.
+      const entries = [
+        defineOutboxWorkerEntry({
+          claimOwnerPrefix: `${alphaModule}-outbox-worker`,
+          expectedDeployment: alphaDeployment,
+          layer,
+          registrations: [alphaWorker],
+          subscriptions: extractOutboxWorkerSubscriptions([alphaWorker]),
+        }),
+        defineOutboxWorkerEntry({
+          claimOwnerPrefix: `${betaModule}-outbox-worker`,
+          expectedDeployment: betaDeployment,
+          layer,
+          registrations: [betaWorker],
+          subscriptions: extractOutboxWorkerSubscriptions([betaWorker]),
+        }),
+      ];
+      const host = (identity: string) =>
+        runOutboxWorkerHost({ entries }).pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.orElse(
+              ConfigProvider.fromUnknown({
+                OUTBOX_WORKER_MAX_DELIVERIES: '2',
+                OUTBOX_WORKER_POLL_INTERVAL_MS: '25',
+                OUTBOX_WORKER_PROCESS_IDENTITY: identity,
+              }),
+              ConfigProvider.fromEnv(),
+            ),
+          ),
+          Effect.forkChild,
+        );
+      const hosts = [yield* host('host-a'), yield* host('host-b')];
 
-    // Every delivery handled once completes the proof; the integration test timeout bounds the wait.
-    yield* Deferred.await(handled.all).pipe(
-      Effect.raceFirst(Effect.forEach(hosts, Fiber.join, { concurrency: hosts.length, discard: true })),
-    );
-    yield* Effect.forEach(hosts, Fiber.interrupt, { discard: true });
+      // Every delivery handled once completes the proof; the integration test timeout bounds the wait.
+      yield* Deferred.await(handled.all).pipe(
+        Effect.raceFirst(Effect.forEach(hosts, Fiber.join, { concurrency: hosts.length, discard: true })),
+      );
+      yield* Effect.forEach(hosts, Fiber.interrupt, { discard: true });
 
-    const deliveries = yield* database
-      .select({ status: outboxDeliveries.status, workerKey: outboxDeliveries.workerKey })
-      .from(outboxDeliveries)
-      .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
-      .where(eq(outboxMessages.tenantId, tenantId));
-    expect(deliveries).toHaveLength(MESSAGES_PER_TOPIC * 2);
-    // The last handled delivery may still be finalizing when the hosts stop; its lease then expires.
-    expect(deliveries.filter(({ status }) => status === 'pending' || status === 'dead')).toEqual([]);
-    expect(deliveries.filter(({ workerKey }) => workerKey === alphaWorker.descriptor.workerKey)).toHaveLength(
-      MESSAGES_PER_TOPIC,
-    );
-    const records = yield* Ref.get(handled.deliveries);
-    // Leases hand each delivery to exactly one claim, and only to a loop of the delivery's owner.
-    expect(new Set(records.map(({ deliveryId }) => deliveryId)).size).toBe(records.length);
-    expect(records).toHaveLength(MESSAGES_PER_TOPIC * 2);
-    for (const { claimId, workerKey } of records) {
-      const owner = workerKey === alphaWorker.descriptor.workerKey ? alphaModule : betaModule;
-      const escapedOwner = owner.replaceAll('.', String.raw`\.`);
-      expect(claimId).toMatch(new RegExp(`^${escapedOwner}-outbox-worker:host-[ab]:`, 'u'));
-    }
-    const claimingHosts = new Set(records.map(({ claimId }) => claimId.split(':')[1]));
-    expect([...claimingHosts].every((identity) => identity === 'host-a' || identity === 'host-b')).toBe(true);
-  }),
-);
+      const deliveries = yield* database
+        .select({ status: outboxDeliveries.status, workerKey: outboxDeliveries.workerKey })
+        .from(outboxDeliveries)
+        .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
+        .where(eq(outboxMessages.tenantId, tenantId));
+      expect(deliveries).toHaveLength(MESSAGES_PER_TOPIC * 2);
+      // The last handled delivery may still be finalizing when the hosts stop; its lease then expires.
+      expect(deliveries.filter(({ status }) => status === 'pending' || status === 'dead')).toEqual([]);
+      expect(deliveries.filter(({ workerKey }) => workerKey === alphaWorker.descriptor.workerKey)).toHaveLength(
+        MESSAGES_PER_TOPIC,
+      );
+      const records = yield* Ref.get(handled.deliveries);
+      // Leases hand each delivery to exactly one claim, and only to a loop of the delivery's owner.
+      expect(new Set(records.map(({ deliveryId }) => deliveryId)).size).toBe(records.length);
+      expect(records).toHaveLength(MESSAGES_PER_TOPIC * 2);
+      for (const { claimId, workerKey } of records) {
+        const owner = workerKey === alphaWorker.descriptor.workerKey ? alphaModule : betaModule;
+        const escapedOwner = owner.replaceAll('.', String.raw`\.`);
+        expect(claimId).toMatch(new RegExp(`^${escapedOwner}-outbox-worker:host-[ab]:`, 'u'));
+      }
+      const claimingHosts = new Set(records.map(({ claimId }) => claimId.split(':')[1]));
+      expect([...claimingHosts].every((identity) => identity === 'host-a' || identity === 'host-b')).toBe(true);
+    }),
+  );
+});

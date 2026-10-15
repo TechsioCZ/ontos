@@ -80,6 +80,14 @@ minimumReleaseAgeExclude:
   - '@bleedingdev/modern-js-ultramodern-app-tools@3.9.3-ultramodern.7'
   - '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.7'
   - '@bleedingdev/modern-js-utils@3.9.3-ultramodern.7'
+  - '@effect/tsgo-darwin-arm64@0.53.1'
+  - '@effect/tsgo-darwin-x64@0.53.1'
+  - '@effect/tsgo-linux-arm64@0.53.1'
+  - '@effect/tsgo-linux-arm@0.53.1'
+  - '@effect/tsgo-linux-x64@0.53.1'
+  - '@effect/tsgo-win32-arm64@0.53.1'
+  - '@effect/tsgo-win32-x64@0.53.1'
+  - '@effect/tsgo@0.53.1'
 minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 trustPolicy: no-downgrade

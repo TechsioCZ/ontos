@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -486,6 +487,6 @@ it.live(
           'RELEASE',
         ]);
       }),
-    ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
   240_000,
 );

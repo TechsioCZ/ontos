@@ -1,5 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { Context, Effect, Match, Ref, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Context, Crypto, Effect, Match, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -514,7 +515,7 @@ it.live('repairs physical and reservation owner state before terminal recovery w
       };
       const actionRuntime = makeActionRuntime(
         { executor: runtimeDatabase },
-        makeActionRepository(),
+        makeActionRepository(yield* Crypto.Crypto),
         allowedPermission,
         testOperationalScopeResolver,
         {
@@ -602,5 +603,5 @@ it.live('repairs physical and reservation owner state before terminal recovery w
       expect(ledgerRows).toHaveLength(2);
       expect(ledgerRows.every(({ currentState }) => currentState === 'SUCCEEDED')).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provide(NodeCrypto.layer)),
 );

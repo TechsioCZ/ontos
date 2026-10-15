@@ -1,7 +1,9 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   partyIdFromString,
@@ -56,7 +58,7 @@ export const recordPartyInvariantAccess = (
 ) =>
   context.recordDataAccess({
     accessKind: 'read',
-    queryHash: createHash('sha256').update(`${queryPrefix}:${party.partyRef.resourceId}`).digest('hex'),
+    queryHash: Hex.encode(sha256(utf8ToBytes(`${queryPrefix}:${party.partyRef.resourceId}`))),
     resultCount: 1,
     servingModuleKey: 'party.registry',
     targetModuleKey: 'party.registry',

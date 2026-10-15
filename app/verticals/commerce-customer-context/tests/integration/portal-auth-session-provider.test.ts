@@ -5,6 +5,7 @@ import {
   Config,
   Context,
   DateTime,
+  Crypto,
   Deferred,
   Duration,
   Effect,
@@ -34,6 +35,7 @@ import {
   CommercePortalAuthSessionLifecycle,
   makeCommercePortalAuthSessionLifecycle,
 } from '../../api/portal-auth/session/lifecycle.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
 import { CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
@@ -339,7 +341,7 @@ const publicRefresh = (fixture: ProviderFixture, headers: Headers): Effect.Effec
 const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.makeFixture')(function* makeFixture(
   caseName: string,
   ipPrefix: string,
-): Effect.fn.Return<ProviderFixture, unknown, Scope.Scope> {
+): Effect.fn.Return<ProviderFixture, unknown, Scope.Scope | Crypto.Crypto> {
   const connectionString = yield* DATABASE_URL;
   const configuration = yield* parseCommercePortalAuthConfig({
     COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(connectionString),
@@ -387,7 +389,7 @@ const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.mak
         returnHeaders: true,
       }),
   });
-  const store = makeCommercePortalAuthSessionStore(database.executor);
+  const store = makeCommercePortalAuthSessionStore(database.executor, yield* Crypto.Crypto);
   const lifecycle = makeCommercePortalAuthSessionLifecycle(
     store,
     makeCommercePortalAuthSessionProvider(auth),
@@ -449,7 +451,7 @@ it.live('proves the production Better Auth adapter factory initializes and publi
       const row = yield* readSessionRow(fixture.database, providerSession.value.sessionId);
       expect(row).not.toBeNull();
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it.live('renews cookies on repeated explicit refreshes while keeping DB inactivity and absolute bounds', () =>
@@ -564,7 +566,7 @@ it.live('renews cookies on repeated explicit refreshes while keeping DB inactivi
       expect(pastDeadlineRow.createdAt.getTime()).toBe(pastDeadlineCreatedAt.getTime());
       expect(pastDeadlineRow.expiresAt.getTime() <= pastDeadlineNow.getTime()).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it.live('admits exactly one concurrent public sign-in at the five-session cap', () =>
@@ -647,5 +649,5 @@ it.live('admits exactly one concurrent public sign-in at the five-session cap', 
       const after = yield* readActiveRows(fixture.database, firstSession.value.userId);
       expect(after.length).toBe(5);
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

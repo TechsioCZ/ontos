@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -92,6 +93,6 @@ describe('Product create initial Variant history', () => {
         tenantId,
         variantId,
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

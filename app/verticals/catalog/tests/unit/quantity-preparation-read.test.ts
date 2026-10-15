@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { ReadHandlerNotFound } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -57,7 +58,7 @@ describe('Catalog governed Quantity preparation', () => {
       expect(result.status).toBe('UNVERIFIABLE');
       expect(() => Schema.encodeSync(QuantityPreparationResponseSchema)(result)).not.toThrow();
       expect(JSON.stringify(result)).not.toMatch(/allowed|approved|customer/iu);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a foreign Product before owner-local persistence', () =>
@@ -68,6 +69,6 @@ describe('Catalog governed Quantity preparation', () => {
       );
       expect(Schema.is(ReadHandlerNotFound)(failure)).toBe(true);
       expect(quantityPreparationRead.descriptor.permissionTarget).toBe('resource');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { DateTime, Effect } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Crypto, DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -172,7 +173,7 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
 
       const runtime = makeActionRuntime(
         { executor: database },
-        makeActionRepository(),
+        makeActionRepository(yield* Crypto.Crypto),
         allowedPermission,
         testOperationalScopeResolver,
         {
@@ -265,5 +266,5 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
       );
       expect(persistedRetirement.recordedAt.getTime()).toBe(Date.parse(accepted.verifiedAt));
     }),
-  ),
+  ).pipe(Effect.provide(NodeCrypto.layer)),
 );

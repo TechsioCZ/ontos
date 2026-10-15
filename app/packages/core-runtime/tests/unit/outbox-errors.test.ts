@@ -1,4 +1,5 @@
-import { DateTime, Effect, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Crypto, DateTime, Effect, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -124,20 +125,22 @@ checkErrorContract(
   },
 );
 
-it.effect('repository persistence failures carry the driver failure as their native cause', () =>
-  Effect.gen(function* persistenceFailureCarriesCause() {
-    const driverError = new SqlError({
-      reason: new ConnectionError({ cause: new Error('private repository defect') }),
-    });
-    const executor = yield* makeTestDatabase(() => Effect.fail(driverError));
-    const failure = yield* makeOutboxRepository(executor)
-      .matchUnmatched('a'.repeat(64), DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
-      .pipe(Effect.flip);
-    expect(failure).toBeInstanceOf(PersistenceFailure);
-    expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
-    expect(failure.cause).toBe(driverError);
-  }),
-);
+it.layer(NodeCrypto.layer)('outbox repository failures', (suite) => {
+  suite.effect('repository persistence failures carry the driver failure as their native cause', () =>
+    Effect.gen(function* persistenceFailureCarriesCause() {
+      const driverError = new SqlError({
+        reason: new ConnectionError({ cause: new Error('private repository defect') }),
+      });
+      const executor = yield* makeTestDatabase(() => Effect.fail(driverError));
+      const failure = yield* makeOutboxRepository(executor, yield* Crypto.Crypto)
+        .matchUnmatched('a'.repeat(64), DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
+        .pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(PersistenceFailure);
+      expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
+      expect(failure.cause).toBe(driverError);
+    }),
+  );
+});
 
 it('sanitizer normalizes control whitespace, trims, truncates and falls back', () => {
   expect(sanitizeOutboxErrorMessage(' \r\nfirst\r\n\tsecond\t third \n')).toBe('first second  third');

@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -129,7 +130,7 @@ describe('Attribute Action result capture', () => {
         expect(rows.at(-1)).toMatchObject({ actionKey: `commerce.catalog.${name}`, schemaVersion: 1 });
       }
       expect(rows).toHaveLength(cases.length);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('aborts decoded success when snapshot storage fails', () =>
@@ -145,6 +146,6 @@ describe('Attribute Action result capture', () => {
         );
         expect(failure).toMatchObject({ code: 'action_transaction_failed' });
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
