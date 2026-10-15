@@ -7,10 +7,9 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
+import { Arbitrary, ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import { Arbitrary } from 'effect/unstable/arbitrary';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';

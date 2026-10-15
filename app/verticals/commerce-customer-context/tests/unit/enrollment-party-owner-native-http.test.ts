@@ -1,6 +1,7 @@
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
-import { ConfigProvider, DateTime, Effect, Encoding, Result, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { ConfigProvider, DateTime, Effect, Result, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
@@ -76,7 +77,7 @@ const tokenFor = (claimsTenantId = tenantId, claimsRevision = compositionRevisio
     targetBuildMarker: 'party-release-1',
     ver: 1,
   };
-  return `${Encoding.encodeBase64Url('{}')}.${Encoding.encodeBase64Url(JSON.stringify(claims))}.test-signature`;
+  return `${Base64Url.encode('{}')}.${Base64Url.encode(JSON.stringify(claims))}.test-signature`;
 };
 const gatewayResponse = (claimsTenantId = tenantId, tokenId = 1) => ({
   apiBaseUrl: '/api/approved/party-registry',
@@ -268,7 +269,7 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
       const credential = request.headers.get('authorization') ?? '';
       const [, tokenPayload] = credential.slice('Bearer '.length).split('.');
       const claims = Schema.decodeSync(Schema.fromJsonString(SupportedGatewayContextClaimsSchema))(
-        Result.getOrThrow(Encoding.decodeBase64UrlString(tokenPayload)),
+        Result.getOrThrow(Base64Url.decodeString(tokenPayload)),
       );
       if (consumed.has(claims.jti)) {
         return Promise.resolve(
