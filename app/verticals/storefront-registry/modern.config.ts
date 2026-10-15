@@ -2,40 +2,38 @@ import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
-import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
+import { presetUltramodernWorkspace, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
+
 import {
+  createHeadlessModernConfig,
   createModernBuildContext,
-  createModernConfig,
   installGlobalRequire,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 installGlobalRequire(import.meta.url);
 
 const appId = 'storefront-registry';
-const cloudflareWorkerName = 'app-storefront-registry';
+const bffPrefix = '/storefront-registry-api';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY',
-  cloudflareWorkerName,
+  cloudflareWorkerName: 'app-storefront-registry',
   defaultPort: 4107,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,
   portEnvironmentVariable: 'VERTICAL_STOREFRONT_REGISTRY_PORT',
 });
 
+// Headless unit: the workspace preset derives its delivery identity, port, output, dev CORS and Worker
+// identity from topology; OntOS adds its data plane, module contract and runtime externals.
 export default defineConfig(
-  presetUltramodern(
+  presetUltramodernWorkspace(
     {
-      ...createModernConfig({
-        apiOnly: true,
-        appId,
-        bffPrefix: '/storefront-registry-api',
+      ...createHeadlessModernConfig({
         build,
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_STOREFRONT_REGISTRY_LOADED_CHUNKS__',
-        cloudflareWorkerName,
         moduleUrl: import.meta.url,
         plugins: [ultramodernAppTools(), bffPlugin()],
-        rsdoctorEnabled: build.getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
         uniqueName: 'verticalStorefrontRegistry',
       }),
       bff: {
@@ -44,17 +42,10 @@ export default defineConfig(
           openapi: { path: '/openapi.json' },
           strictEffectApproach: true,
         },
-        prefix: '/storefront-registry-api',
+        prefix: bffPrefix,
         runtimeFramework: 'effect',
       },
     } satisfies AppToolsUserConfig,
-    {
-      appId,
-      deliveryUnit: {
-        buildMarker: '07dd35dd87823ff5',
-        unitId: 'app/storefront-registry',
-        version: '0.1.0',
-      },
-    },
+    { appId, from: import.meta.url },
   ),
 );

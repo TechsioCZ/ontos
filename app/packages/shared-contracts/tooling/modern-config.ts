@@ -207,7 +207,7 @@ export const installGlobalRequire = (moduleUrl: string) => {
 interface DevelopmentMiddlewareSetup {
   unshift: (
     middleware: (
-      request: { url?: string },
+      request: { url?: string | undefined },
       response: { end: (body: Buffer) => void; setHeader: (name: string, value: string) => void },
       next: () => void,
     ) => void,
@@ -450,7 +450,6 @@ interface BundlerChain {
 /* oxlint-enable anti-slop/no-unknown-returns */
 
 export const createModernConfig = <Plugin, BuilderPlugin>({
-  apiOnly = false,
   appId,
   bffPrefix,
   build,
@@ -463,7 +462,6 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   rsdoctorEnabled,
   uniqueName,
 }: {
-  apiOnly?: boolean;
   appId: string;
   bffPrefix: string;
   build: ModernBuildContext;
@@ -549,10 +547,6 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
       alias: {
         '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
       },
-      // Modern.js detects API-only apps from a missing entries directory. Keep
-      // owner source under `src/`, while directing its web-entry scan to a path
-      // that does not exist for API-only MicroVerticals.
-      entriesDir: apiOnly ? '.api-only-no-web-entry' : undefined,
       globalVars: {
         ULTRAMODERN_SHELL_ORIGIN: build.moduleFederationDevServerOrigin,
         ULTRAMODERN_SITE_URL: build.siteUrl,
@@ -570,6 +564,65 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     },
   };
 };
+
+/**
+ * OntOS extensions of a headless (API-only) unit's `presetUltramodernWorkspace` config. The workspace
+ * preset already derives the unit's port, asset prefix, output layout, build cache, site URL, dev CORS
+ * and Worker identity (name, compatibility date, security, SSR) from topology; this adds only what
+ * OntOS owns: the Worker's private data plane and cost guards, the development module contract, the
+ * shell origin, the API-only entry scan, the Cloudflare runtime externals and the chunk namespace.
+ */
+export const createHeadlessModernConfig = <Plugin>({
+  build,
+  chunkLoadingGlobal,
+  cloudflareCpuMs = CLOUDFLARE_WORKER_CPU_MS.vertical,
+  moduleUrl,
+  plugins,
+  uniqueName,
+}: {
+  build: ModernBuildContext;
+  chunkLoadingGlobal: string;
+  cloudflareCpuMs?: number;
+  moduleUrl: string;
+  plugins: Plugin[];
+  uniqueName: string;
+}) => ({
+  ...(build.cloudflareDeployEnabled
+    ? {
+        deploy: {
+          worker: createCloudflareWorkerConfig(build.envValue, {
+            cpuMs: cloudflareCpuMs,
+            publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
+          }),
+        },
+      }
+    : undefined),
+  dev: {
+    setupMiddlewares: [createDevelopmentContractMiddleware(moduleUrl)],
+  },
+  output: {
+    // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
+    disableTsChecker: true,
+  },
+  plugins,
+  server: {
+    publicDir: ['./.dev-public'],
+  },
+  source: {
+    // Modern.js detects API-only apps from a missing entries directory. Keep owner source under
+    // `src/`, while directing its web-entry scan to a path that does not exist.
+    entriesDir: '.api-only-no-web-entry',
+    globalVars: {
+      ULTRAMODERN_SHELL_ORIGIN: build.moduleFederationDevServerOrigin,
+    },
+  },
+  tools: {
+    bundlerChain: (chain: BundlerChain) => {
+      chain.output.uniqueName(uniqueName).chunkLoadingGlobal(chunkLoadingGlobal);
+    },
+    rspack: createCloudflareRspack(build.cloudflareDeployEnabled, fileURLToPath(new URL('api/', moduleUrl))),
+  },
+});
 
 // Zephyr uploads only for a deploy that provides ZE_CI_TOKEN; the deploy environment then sets
 // ZE_FAIL_BUILD=true so a failed upload fails the build instead of shipping without it.

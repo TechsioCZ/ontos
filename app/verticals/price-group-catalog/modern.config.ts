@@ -2,41 +2,38 @@ import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
-import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
+import { presetUltramodernWorkspace, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 
 import {
+  createHeadlessModernConfig,
   createModernBuildContext,
-  createModernConfig,
   installGlobalRequire,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 installGlobalRequire(import.meta.url);
 
 const appId = 'price-group-catalog';
-const cloudflareWorkerName = 'app-price-group-catalog';
+const bffPrefix = '/price-group-catalog-api';
 const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG',
-  cloudflareWorkerName,
+  cloudflareWorkerName: 'app-price-group-catalog',
   defaultPort: 4108,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,
   portEnvironmentVariable: 'VERTICAL_PRICE_GROUP_CATALOG_PORT',
 });
 
+// Headless unit: the workspace preset derives its delivery identity, port, output, dev CORS and Worker
+// identity from topology; OntOS adds its data plane, module contract and runtime externals.
 export default defineConfig(
-  presetUltramodern(
+  presetUltramodernWorkspace(
     {
-      ...createModernConfig({
-        apiOnly: true,
-        appId,
-        bffPrefix: '/price-group-catalog-api',
+      ...createHeadlessModernConfig({
         build,
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_PRICE_GROUP_CATALOG_LOADED_CHUNKS__',
-        cloudflareWorkerName,
         moduleUrl: import.meta.url,
         plugins: [ultramodernAppTools(), bffPlugin()],
-        rsdoctorEnabled: build.getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
         uniqueName: 'verticalPriceGroupCatalog',
       }),
       bff: {
@@ -45,17 +42,10 @@ export default defineConfig(
           openapi: { path: '/openapi.json' },
           strictEffectApproach: true,
         },
-        prefix: '/price-group-catalog-api',
+        prefix: bffPrefix,
         runtimeFramework: 'effect',
       },
     } satisfies AppToolsUserConfig,
-    {
-      appId,
-      deliveryUnit: {
-        buildMarker: '1844d569e65d1318',
-        unitId: 'app/price-group-catalog',
-        version: '0.1.0',
-      },
-    },
+    { appId, from: import.meta.url },
   ),
 );
