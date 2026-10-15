@@ -73,6 +73,7 @@
     "@app/shared-design-tokens": "workspace:*",
     "@effect/opentelemetry": "4.0.0",
     "@effect/sql-pg": "4.0.0",
+    "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
     "@modern-js/i18n-integration": "catalog:ultramodern",
