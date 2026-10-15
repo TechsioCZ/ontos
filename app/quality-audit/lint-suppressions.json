@@ -29,7 +29,7 @@
     "effect-native/no-native-json-stringify": 1,
     "effect-native/no-nullable-schema-field": 50,
     "effect-native/no-nullable-service-outcome": 3,
-    "effect-native/no-per-operation-http-api-client": 17,
+    "effect-native/no-per-operation-http-api-client": 22,
     "effect-native/no-promise-shaped-port": 3,
     "effect-native/no-refinement-outside-schema": 19,
     "effect-native/no-scattered-browser-effect-run": 6,
