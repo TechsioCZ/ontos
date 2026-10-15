@@ -291,12 +291,7 @@ export default defineConfig(
               .uniqueName('shellSuperApp')
               .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
           },
-          rspack: ((config, { environment, isServer, rspack }) => {
-            config.plugins.push(
-              new rspack.DefinePlugin({
-                __ONTOS_BROWSER_BUILD__: !(isServer || environment.name === 'workerSSR'),
-              }),
-            );
+          rspack: ((config, { environment, rspack }) => {
             if (!cloudflareDeployEnabled) {
               return;
             }
