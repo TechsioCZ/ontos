@@ -3,7 +3,7 @@
 // @ontos-action-http-slug change-principal-purchase-limit-override
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { commerceCustomerContextApi } from '../shared/api.ts';
 import { changePrincipalPurchaseLimitOverrideAction } from '../src/actions/change-principal-purchase-limit-override.action.ts';

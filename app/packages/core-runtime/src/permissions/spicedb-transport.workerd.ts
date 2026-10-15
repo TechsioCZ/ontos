@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { Effect, Redacted } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
-import type { HttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
+import type { HttpClient } from 'effect/http';
 
 import { SpiceDbConfigError } from './config-error.ts';
 import { spiceDbHttpRpc } from './spicedb-http-rpc.ts';

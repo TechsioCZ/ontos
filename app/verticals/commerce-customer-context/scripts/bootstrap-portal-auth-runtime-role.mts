@@ -2,7 +2,7 @@
 
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Console, Effect, Exit, Order, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { getTableName } from 'drizzle-orm';
 
 import { loadCommercePortalAuthDatabaseConfig } from './portal-auth-database-config.mts';

@@ -37,8 +37,8 @@ import { eq } from 'drizzle-orm';
 import { Clock, Config, ConfigProvider, DateTime, Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { HttpApi } from 'effect/unstable/httpapi';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { HttpApi } from 'effect/http-api';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { exportJWK, generateKeyPair } from 'jose';
 
 import {

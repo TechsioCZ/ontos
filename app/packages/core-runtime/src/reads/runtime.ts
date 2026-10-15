@@ -1,4 +1,4 @@
-import { SqlError, isSqlError } from 'effect/unstable/sql/SqlError';
+import { SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';

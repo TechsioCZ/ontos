@@ -3,7 +3,7 @@ import { Duplex } from 'node:stream';
 import { PgClient } from '@effect/sql-pg';
 import { Effect, Function as Fn, Predicate, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';

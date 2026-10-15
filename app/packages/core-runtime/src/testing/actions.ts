@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { DateTime, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import type { Connection } from 'effect/unstable/sql/SqlConnection';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import type { Connection } from 'effect/sql/SqlConnection';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import type { ActionRegistration, ActionServiceFactory, AnyActionRegistration } from '../actions/definition.ts';
 import { getActionServiceFactory } from '../actions/definition.ts';

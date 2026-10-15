@@ -2,7 +2,7 @@ import { GatewayContextApi, GatewayContextRequestSchema, shellGatewayContextCont
 import type { GatewayContextClientError, GatewayContextRequest, GatewayContextResponse } from './gateway-context.ts';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Option, Redacted, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 export interface ApiKeyGatewayContextClientOptions {
   readonly apiKey: Redacted.Redacted;

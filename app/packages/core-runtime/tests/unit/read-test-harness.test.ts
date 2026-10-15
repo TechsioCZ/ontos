@@ -1,7 +1,7 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { tenants } from '../../src/db/schema.ts';

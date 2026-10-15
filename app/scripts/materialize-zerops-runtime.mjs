@@ -4,8 +4,8 @@
 import { NodeServices } from '@effect/platform-node';
 import { transform } from 'esbuild';
 import { Config, Effect, FileSystem, Layer, Path, Predicate, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { lockedRegistryOverrides } from './locked-registry-overrides.mjs';
 

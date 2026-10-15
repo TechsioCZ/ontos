@@ -72,9 +72,9 @@ export interface NamespaceMember {
   readonly member: string;
 }
 
-/** Returns the trailing Effect submodule identifier, including unstable nested submodules. */
+/** Returns the trailing Effect submodule identifier, including nested submodules such as `effect/http-api`. */
 function effectSubmodule(source: string): string | null {
-  return /^effect\/(?:.*\/)?([A-Za-z][A-Za-z0-9_]*)$/u.exec(source)?.[1] ?? null;
+  return /^effect\/(?:.*\/)?([A-Za-z][A-Za-z0-9_-]*)$/u.exec(source)?.[1] ?? null;
 }
 
 function addDirectMembers(

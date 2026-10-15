@@ -6,8 +6,8 @@ import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess } from 'effect/unstable/process';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { ChildProcess } from 'effect/process';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';

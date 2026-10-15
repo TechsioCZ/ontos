@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { Cause, DateTime, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';

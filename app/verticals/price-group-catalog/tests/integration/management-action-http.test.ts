@@ -11,7 +11,7 @@ import {
 } from '../../shared/domain/price-group-errors.ts';
 import { Effect, Result } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { mapCreatePriceGroupActionProblem } from '../../api/create-price-group-action-problems.ts';
 import { mapCreatePriceGroupDefinitionRevisionActionProblem } from '../../api/create-price-group-definition-revision-action-problems.ts';

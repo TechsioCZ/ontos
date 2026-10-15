@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import nodePath from 'node:path';
 
 import { Effect, FileSystem, Layer, Match, Option, Path, Redacted, Schema } from 'effect';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
-import type { HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
+import type { HttpClientRequest } from 'effect/http';
 import { parse as parseYaml } from 'yaml';
 
 import { OpsCommandError } from '../ops/ops-command-error.mts';

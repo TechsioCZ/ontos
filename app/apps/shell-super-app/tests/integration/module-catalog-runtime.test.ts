@@ -13,7 +13,7 @@ import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { matchInstalledOutboxMessagesOnce } from '../../api/modules/installed-outbox-matcher.ts';

@@ -9,7 +9,7 @@ import {
 } from '@modern-js/bff-effect/effect-client';
 import { Predicate, Redacted, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 const RepresentativeConflictSchema = Schema.TaggedStruct('RepresentativeConflict', {
   detail: Schema.String,

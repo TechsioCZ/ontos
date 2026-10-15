@@ -16,7 +16,7 @@ import {
   Result,
   Schema,
 } from 'effect';
-import { Argument, Command } from 'effect/unstable/cli';
+import { Argument, Command } from 'effect/cli';
 
 const InventoryHashSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const SourceRevisionSchema = Schema.String.check(

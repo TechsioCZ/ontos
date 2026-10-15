@@ -3,7 +3,7 @@
 // @ontos-action-http-slug correct-sku
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { CorrectSkuPayloadSchema, CorrectSkuResultSchema } from '../actions/correct-sku.ts';
 
 export { CorrectSkuPayloadSchema } from '../actions/correct-sku.ts';

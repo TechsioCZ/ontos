@@ -3,7 +3,7 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Console, Effect, Order, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { STOREFRONT_REGISTRY_SCHEMA_NAME, STOREFRONT_REGISTRY_TABLES } from '../src/database/schema.ts';
 

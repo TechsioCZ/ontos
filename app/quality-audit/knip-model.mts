@@ -1252,9 +1252,7 @@ const nativeSubprocessEvidence = (
     }
   }
   const providers = new Set(
-    [...imports].flatMap(([name, origin]) =>
-      /^(?:child_process|effect\/unstable\/process):/u.test(origin) ? [name] : [],
-    ),
+    [...imports].flatMap(([name, origin]) => (/^(?:child_process|effect\/process):/u.test(origin) ? [name] : [])),
   );
   if (providers.size === 0) return [];
   const possibleFactory = (node: Node | undefined, seen = new Set<string>()): boolean => {
@@ -1339,11 +1337,7 @@ const nativeSubprocessEvidence = (
       return host === undefined || member === undefined ? undefined : `${host}.${member}`;
     };
     const factory = identity(call.callee);
-    if (
-      !['child_process:spawn', 'child_process:*.spawn', 'effect/unstable/process:ChildProcess.make'].includes(
-        factory ?? '',
-      )
-    )
+    if (!['child_process:spawn', 'child_process:*.spawn', 'effect/process:ChildProcess.make'].includes(factory ?? ''))
       return;
     if (!['global:process.execPath', 'process:*.execPath'].includes(identity(call.arguments[0]) ?? '')) return;
     const argv = immutableValue(call.arguments[1]);

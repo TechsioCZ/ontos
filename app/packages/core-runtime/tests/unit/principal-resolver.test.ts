@@ -1,6 +1,6 @@
 import { DateTime, Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import type { PrincipalResolutionRecord } from '../../src/auth/principal-resolver.ts';
 import {

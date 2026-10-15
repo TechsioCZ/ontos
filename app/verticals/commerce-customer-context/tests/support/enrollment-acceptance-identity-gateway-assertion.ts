@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { sql } from 'drizzle-orm';
 import { ConfigProvider, Effect, Layer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, KeyObject } from 'jose';
 

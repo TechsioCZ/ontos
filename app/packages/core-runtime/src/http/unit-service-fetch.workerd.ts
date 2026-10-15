@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off globalFetch:off -- Native Worker transport boundary: unit fetchers implement `typeof fetch`, and approved releases preserve the original streaming Response. remove-when: Effect exposes a native fetch transport preserving these contracts.
 import { env } from 'cloudflare:workers';
 import { Data, Duration, Effect, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { ApplicationCompositionBackendSchema } from '../modules/application-composition-backend.ts';
 import type { ApplicationCompositionModule } from '../modules/application-composition.ts';

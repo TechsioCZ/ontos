@@ -2,7 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { SetSupportedCurrenciesV2ResultSchema } from '@app/pricing-contracts/domain/currency-support';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const CurrencySupportActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('CurrencySupportActionInvocationId'),

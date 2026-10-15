@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { and, eq } from 'drizzle-orm';
 import { Cause, Clock, DateTime, Effect, Exit, Option, Predicate, Schema } from 'effect';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../src/actions/repository.ts';

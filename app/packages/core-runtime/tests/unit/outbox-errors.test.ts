@@ -1,7 +1,7 @@
 import { DateTime, Effect, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import {
   OutboxClaimLostError,

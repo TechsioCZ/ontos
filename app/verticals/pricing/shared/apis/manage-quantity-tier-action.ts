@@ -3,7 +3,7 @@
 // @ontos-action-http-slug manage-quantity-tier
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { QuantityTierScheduleAcknowledgementSchema } from '@app/pricing-contracts/domain/quantity-tier';
 import { ManageQuantityTierPayloadSchema, ManageQuantityTierResultSchema } from '../actions/manage-quantity-tier.ts';
 

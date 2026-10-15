@@ -15,9 +15,9 @@ import { brotliCompressSync, gzipSync } from 'node:zlib';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { DateTime, Duration, Effect, Match, Ref, Schema } from 'effect';
-import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
-import { ChildProcess } from 'effect/unstable/process';
+import { HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
+import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';

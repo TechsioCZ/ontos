@@ -2,7 +2,7 @@
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Console, Effect, Order, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import {
   PRICING_RUNTIME_ROUTINE_SIGNATURES,

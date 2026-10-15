@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { ConfigProvider, DateTime, Effect, Fiber, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';

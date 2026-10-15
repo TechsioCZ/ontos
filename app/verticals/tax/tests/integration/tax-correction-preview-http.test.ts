@@ -25,7 +25,7 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Context, DateTime, Effect, Layer, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import {
   TaxCorrectionPreviewApi,

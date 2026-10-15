@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 
 import { Layer, Result, Schema } from 'effect';
-import type { Command } from 'effect/unstable/cli';
+import type { Command } from 'effect/cli';
 
 export const loadCoreNodeServices = () => {
   const loadFromCoreRuntime = createRequire(new URL('../../packages/core-runtime/package.json', import.meta.url));

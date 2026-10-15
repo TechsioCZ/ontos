@@ -3,7 +3,7 @@
 // @ontos-action-http-slug remove-counterparty-price-group
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { commerceCustomerContextApi } from '../shared/api.ts';
 import { removeCounterpartyPriceGroupAction } from '../src/actions/remove-counterparty-price-group.action.ts';

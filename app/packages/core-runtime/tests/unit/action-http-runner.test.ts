@@ -1,5 +1,5 @@
 import { Effect, Redacted, Schema } from 'effect';
-import { Headers } from 'effect/unstable/http';
+import { Headers } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { defineAction } from '../../src/actions/definition.ts';

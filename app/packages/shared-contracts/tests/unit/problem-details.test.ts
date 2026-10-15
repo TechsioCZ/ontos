@@ -9,7 +9,7 @@ import {
 } from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect, Layer, Predicate, Schema, SchemaAST, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '../../src/problem-details.ts';
 import { ImportedUnconstrainedExtensionSchema } from '../fixtures/unconstrained-extension.ts';

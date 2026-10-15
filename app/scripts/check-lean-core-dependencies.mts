@@ -215,8 +215,12 @@ const allowedCoreExternalSpecifiers = new Set([
   'pg',
 ]);
 
+// Effect 4 platform modules (formerly `effect/unstable/*`) are published as top-level subpaths.
+const effectPlatformSubpath =
+  /^effect\/(?:ai|cli|cluster|devtools|encoding|eventlog|http|http-api|net|observability|persistence|process|reactivity|rpc|schema|socket|sql|workers|workflow)(?:\/|$)/u;
+
 const isAllowedCoreExternalSpecifier = (specifier: string): boolean =>
-  allowedCoreExternalSpecifiers.has(specifier) || specifier.startsWith('effect/unstable/');
+  allowedCoreExternalSpecifiers.has(specifier) || effectPlatformSubpath.test(specifier);
 
 const coreExternalDependencyReason = (specifier: string): string =>
   commerceVocabulary.test(specifier)

@@ -18,7 +18,7 @@ import {
   Schema,
 } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 
 import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { parseDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';

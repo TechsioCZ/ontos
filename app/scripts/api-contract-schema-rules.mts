@@ -22,8 +22,8 @@ const schemaProviderSpecifiers = new Set(['@modern-js/bff-effect/effect-client',
 const endpointProviderSpecifiers = new Set([
   '@modern-js/bff-effect/effect-client',
   '@modern-js/bff-effect/effect-edge',
-  'effect/unstable/httpapi',
-  'effect/unstable/httpapi/HttpApiEndpoint',
+  'effect/http-api',
+  'effect/http-api/HttpApiEndpoint',
 ]);
 const sharedContractsPath = /\/packages\/shared-contracts\//u;
 
@@ -40,7 +40,7 @@ const endpointPath = (value: GraphValue): readonly string[] | undefined => {
     return undefined;
   }
   const path = externalPath(value);
-  // `effect/unstable/httpapi/HttpApiEndpoint` exports the verbs directly.
+  // `effect/http-api/HttpApiEndpoint` exports the verbs directly.
   if (value.specifier.endsWith('/HttpApiEndpoint')) {
     return path;
   }

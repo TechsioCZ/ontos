@@ -4,7 +4,7 @@ import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
 import { Context, Deferred, Effect, Fiber, Function, Layer, Exit, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';

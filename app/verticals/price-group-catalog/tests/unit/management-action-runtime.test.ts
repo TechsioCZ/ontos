@@ -1,6 +1,6 @@
 import { Struct, Clock, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { TestClock } from 'effect/testing';
 
 import {

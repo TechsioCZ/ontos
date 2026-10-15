@@ -347,7 +347,7 @@ const renderApiContract = (name: string): string => {
   return `${generatedHeader(MODULE_API_KIND)}
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const ${type}RequestSchema = Schema.Struct({});
 export type ${type}Request = typeof ${type}RequestSchema.Type;
@@ -678,7 +678,7 @@ const renderProviderApiContract = (
   return `${generatedHeader(kind)}
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const ${type}ProviderRequestSchema = Schema.Struct({
   ${payloadField}: ${kind === REPORT_KIND ? 'Schema.Record(Schema.String, Schema.String)' : 'Schema.String'},

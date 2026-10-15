@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { isSqlError } from 'effect/sql/SqlError';
 
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';

@@ -6,7 +6,7 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { partyRegistryApi } from '../shared/api.ts';
 import type { PartySearchProjectionGateway } from '../shared/domain/search-projection-gateway.ts';

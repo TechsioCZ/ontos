@@ -49,7 +49,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate, Struct } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';

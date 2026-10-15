@@ -7,9 +7,9 @@ import { pathToFileURL } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { Effect, Exit, FileSystem, ManagedRuntime, Path, Predicate, Schema, Stream } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { HttpApi } from 'effect/unstable/httpapi';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { HttpApi } from 'effect/http-api';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,

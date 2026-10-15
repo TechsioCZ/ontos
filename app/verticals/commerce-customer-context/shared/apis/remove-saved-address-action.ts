@@ -3,7 +3,7 @@
 // @ontos-action-http-slug remove-saved-address
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { RemoveSavedAddressPayloadSchema, RemoveSavedAddressResultSchema } from '../actions/remove-saved-address.ts';
 
 export { RemoveSavedAddressPayloadSchema } from '../actions/remove-saved-address.ts';

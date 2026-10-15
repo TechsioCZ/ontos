@@ -4,7 +4,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { sql } from 'drizzle-orm';
 import { Context, Effect, Exit, Layer, Option, Match, Result, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import type { ProjectsTransaction } from '../../src/db/types.ts';
 import { projectsRelations } from '../../src/db/schema.ts';
 import { makeProjectPersistenceService } from '../../src/services/project-persistence.service.ts';

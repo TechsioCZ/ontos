@@ -1,7 +1,7 @@
 import { createCookieGetter, parseCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Clock, Context, Duration, Effect, Option, Result, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import type { Auth } from 'better-auth';
 
 import { commerceCustomerContextApi } from '../../../../shared/api.ts';

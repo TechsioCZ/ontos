@@ -2,8 +2,8 @@
 import nodePath from 'node:path';
 
 import { Array as EffectArray, Clock, Console, Effect, FileSystem, Order, Path, Result, Schema, Stream } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { importCloneEvidence } from '../quality-audit/import-clone-evidence.mts';
 import { buildKnipModel, KnipConfigSchema, KnipModelEvidenceSchema } from '../quality-audit/knip-model.mts';

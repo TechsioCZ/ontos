@@ -1,8 +1,8 @@
 import { NodeHttpServer } from '@effect/platform-node';
 import { ConfigProvider, Duration, Effect, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
+import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 import { expect, it, rstest } from 'effect-rstest';
 
 import {

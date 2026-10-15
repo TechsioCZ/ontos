@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { Crypto, Effect, Exit, FileSystem, Option } from 'effect';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { SqlError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';

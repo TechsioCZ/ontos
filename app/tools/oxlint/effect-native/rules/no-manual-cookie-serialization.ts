@@ -23,7 +23,7 @@
  * 2. **Writing a `set-cookie` header directly**: `headers.append('set-cookie', x)` /
  *    `.set(…)` / `.setHeader(…)` (header name matched case-insensitively), unless `x` is produced by
  *    a call into an Effect HTTP cookie binding (`Cookies.*` / `HttpServerResponse.*`, tracked through
- *    aliases and `effect/unstable/http` namespace imports).
+ *    aliases and `effect/http` namespace imports).
  * 3. **A `Set-Cookie` property in a headers object literal** whose value is hand-built — a string,
  *    a template literal, a `+` concatenation, or an array/conditional of those.
  * Raw string contracts are not serialization evidence: better-auth produces string headers and
@@ -39,7 +39,7 @@
  *   `headers.get('set-cookie')`: reading is blessed by the audit, only writing is reported.
  * - Every call into `Cookies` / `HttpServerResponse` (`HttpServerResponse.setCookie(…)`,
  *   `HttpServerResponse.mergeCookies(Cookies.fromSetCookie(…))`), including aliased and namespace
- *   imports (`import * as Cookies from "effect/unstable/http/Cookies"`).
+ *   imports (`import * as Cookies from "effect/http/Cookies"`).
  * - Test files (`ignoreTestFiles: true` by default) — the audit's D tier keeps hand-written cookie
  *   strings inside test fixtures and assertions.
  * - Anything outside `paths`, matching `allowPaths`, or matching `exclude` (generated output).
@@ -315,31 +315,31 @@ export const rule = defineRule({
         'Audit C1 (remove remaining hand-owned serialization: cookie construction): do not build ' +
         '`Set-Cookie` strings, `__Secure-`/`__Host-` names or cookie attribute lists by hand, and do not ' +
         'infer serialization from a string[] type alone. Build cookies with `Cookies` / ' +
-        '`HttpServerResponse.setCookie(s)` from `effect/unstable/http`. Cookie *parsing* stays as it is.',
+        '`HttpServerResponse.setCookie(s)` from `effect/http`. Cookie *parsing* stays as it is.',
     },
     messages: {
       cookieAttributeString:
         'Hand-built cookie string ({{fragment}}). Build cookies with `Cookies` / ' +
-        '`HttpServerResponse.setCookie(s)` from `effect/unstable/http` — e.g. ' +
+        '`HttpServerResponse.setCookie(s)` from `effect/http` — e.g. ' +
         "`yield* HttpServerResponse.setCookie('session_token', token, { httpOnly: true, path: '/', sameSite: 'lax', maxAge })` " +
         '— so attributes, `Expires`/`Max-Age` and escaping are encoded once instead of per call site.',
       cookieNamePrefix:
         'Hand-built `{{fragment}}` cookie name prefix. The prefix encodes a `Secure`/`Path`/`Domain` ' +
         'contract: build the cookie with `Cookies.makeCookie` / `HttpServerResponse.setCookie(name, value, ' +
-        "{ secure: true, path: '/' })` from `effect/unstable/http` and let the cookie module own the prefix " +
+        "{ secure: true, path: '/' })` from `effect/http` and let the cookie module own the prefix " +
         'and its attribute requirements.',
       setCookieHeaderWrite:
         "`{{method}}('{{header}}', …)` writes a serialized cookie header by hand. Merge an Effect cookie " +
         'value into the response instead — `HttpServerResponse.setCookie(response, name, value, options)` or ' +
-        '`HttpServerResponse.mergeCookies(response, cookies)` from `effect/unstable/http` — so serialization ' +
+        '`HttpServerResponse.mergeCookies(response, cookies)` from `effect/http` — so serialization ' +
         'happens in one place.',
       setCookieHeaderProperty:
         "`'{{header}}'` in a headers object is a hand-built cookie string. Return the cookie through " +
-        '`HttpServerResponse.setCookie(s)` / `Cookies` from `effect/unstable/http` and let the HTTP layer ' +
+        '`HttpServerResponse.setCookie(s)` / `Cookies` from `effect/http` and let the HTTP layer ' +
         'serialize the header, instead of writing the attribute list into a headers literal.',
       cookieStringContract:
         '`{{name}}` carries serialized `Set-Cookie` strings across a contract, which forces hand-built cookie ' +
-        'strings at the producer. Carry a `Cookies` value (`effect/unstable/http`) and apply it with ' +
+        'strings at the producer. Carry a `Cookies` value (`effect/http`) and apply it with ' +
         '`HttpServerResponse.mergeCookies` / `setCookie(s)` at the HTTP boundary instead of `string[]`.',
     },
     schema: [

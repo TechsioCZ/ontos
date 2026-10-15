@@ -5,7 +5,7 @@
  *   - **B3** "Convert consequential operational scripts into Effect programs" —
  *     "Approximately 79 of 103 scripts are primarily async/await […] Prioritize migration,
  *     bootstrap, authorization, topology, and scaffold scripts—not trivial wrappers. Use **scoped
- *     resources**, shared Layers, typed errors, Schema decoders, and `effect/unstable/cli`."
+ *     resources**, shared Layers, typed errors, Schema decoders, and `effect/cli`."
  *     Evidence sites that open files and spawn processes by hand:
  *     `scripts/migrate-contacts-authorization.mts`, `scripts/postgres/bootstrap-runtime-role.mts`,
  *     `scripts/initialize-local-development.mts`, `scripts/check-ontos-module-contracts.mts`,

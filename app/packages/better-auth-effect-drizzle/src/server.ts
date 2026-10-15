@@ -34,7 +34,7 @@ import type { AnyRelations, SQL, SQLWrapper } from 'drizzle-orm';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { Effect, flow, Predicate, Schema } from 'effect';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { SqlError } from 'effect/sql/SqlError';
 
 /** A Better Auth model or field that the Drizzle tables passed to the adapter do not declare. */
 export class EffectDrizzleAuthAdapterSchemaError extends Schema.TaggedError<EffectDrizzleAuthAdapterSchemaError>()(

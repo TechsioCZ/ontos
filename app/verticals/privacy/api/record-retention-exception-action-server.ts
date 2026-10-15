@@ -3,7 +3,7 @@
 // @ontos-action-http-slug record-retention-exception
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { privacyApi } from '../shared/api.ts';
 import { recordRetentionExceptionAction } from '../src/actions/record-retention-exception.action.ts';

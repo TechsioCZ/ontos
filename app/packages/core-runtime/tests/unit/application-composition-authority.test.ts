@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 
 import { ConfigProvider, DateTime, Effect, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ActiveApplicationCompositionSourceLive } from '../../src/modules/active-application-composition-source.node.ts';

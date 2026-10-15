@@ -620,7 +620,7 @@ it.live(
     );
     expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
     expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
-    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.0-rc.117');
+    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.0');
   }),
 );
 
@@ -1549,7 +1549,7 @@ it.live(
       { scope: 'app' },
     );
     const generatedRpcContractSource = `
-    import { RpcGroup } from 'effect/unstable/rpc';
+    import { RpcGroup } from 'effect/rpc';
     export const inventoryStockRpcGroup = RpcGroup.make();
   `;
     expect(

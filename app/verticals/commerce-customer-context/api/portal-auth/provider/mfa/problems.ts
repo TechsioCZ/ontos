@@ -1,7 +1,7 @@
 import { Effect, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Schema } from 'effect';
-import { HttpApiError } from 'effect/unstable/httpapi';
-import type { HttpServerResponse } from 'effect/unstable/http';
+import { HttpApiError } from 'effect/http-api';
+import type { HttpServerResponse } from 'effect/http';
 
 import {
   CommercePortalAuthMfaAuthenticationProblemSchema,

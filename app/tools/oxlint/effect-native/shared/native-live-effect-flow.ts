@@ -43,7 +43,7 @@ const effectTransforms = new Set([
   'timeoutOrElse',
 ]);
 const directTransforms = new Set(['asVoid', 'flip', 'orDie', 'scoped']);
-const processModule = 'effect/unstable/process';
+const processModule = 'effect/process';
 const rootNamespace = 'EffectRoot';
 const effectNamespaces = new Set(['Effect', 'Layer', 'Deferred']);
 const moduleBases = new Map<string, readonly string[]>([

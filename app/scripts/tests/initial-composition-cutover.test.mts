@@ -5,7 +5,7 @@ import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Effect, FileSystem, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 
 import {
   InitialCompositionCutoverReceiptSchema,

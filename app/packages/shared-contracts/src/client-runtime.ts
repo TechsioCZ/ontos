@@ -1,7 +1,7 @@
 import { Effect, Schema, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import type { EffectHttpApiClientOptions, HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { Redacted } from 'effect';
-import { Headers as HttpHeaders, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { Headers as HttpHeaders, HttpClient, HttpClientRequest } from 'effect/http';
 
 const EffectBffOperationContextSchema = Schema.Struct({
   method: Schema.String,

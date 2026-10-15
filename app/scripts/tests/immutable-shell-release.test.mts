@@ -23,7 +23,7 @@ import {
   Schema,
 } from 'effect';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';

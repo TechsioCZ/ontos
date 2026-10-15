@@ -617,7 +617,7 @@ it.live(
       root,
       `${core}/tests/unit/consumer.test.ts`,
       [
-        "import { ChildProcess as Process } from 'effect/unstable/process';",
+        "import { ChildProcess as Process } from 'effect/process';",
         "const start = (signal, file = 'tests/fixtures/worker.fixture.ts') => (() => Process.make(process.execPath, ['--experimental-strip-types', file], { cwd: new URL('../..', import.meta.url).pathname }))();",
         "const assertStopped = (signal, file = 'tests/fixtures/worker.fixture.ts') => start(signal, file);",
         "assertStopped('SIGTERM'); assertStopped('SIGINT', 'tests/fixtures/override.fixture.ts');",

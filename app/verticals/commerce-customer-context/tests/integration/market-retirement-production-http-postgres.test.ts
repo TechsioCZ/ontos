@@ -35,7 +35,7 @@ import type {
 } from '@app/customer-market-retirement-contracts';
 import { eq, sql } from 'drizzle-orm';
 import { Array as EffectArray, ConfigProvider, Effect, Layer, Order, Redacted, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { SignJWT } from 'jose';
 

@@ -16,8 +16,8 @@ import {
   Schedule,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { serviceIdVariable } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';

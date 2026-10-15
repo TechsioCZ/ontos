@@ -3,8 +3,8 @@ import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Context, DateTime, Duration, Effect, Option, Result, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
-import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
+import type { HttpServerRequest } from 'effect/http';
+import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
 
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CommerceSessionReferenceSchema } from '../../../shared/portal-auth-contracts.ts';

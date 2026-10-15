@@ -6,7 +6,7 @@ import {
 } from '@app/pricing-contracts/domain/commercial-fee';
 import { PricingInstantSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const CommercialFeeDefinitionRequestSchema = Schema.Struct({
   effectiveAt: Schema.optionalKey(PricingInstantSchema),

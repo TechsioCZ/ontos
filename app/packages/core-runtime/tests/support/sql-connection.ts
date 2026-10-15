@@ -1,6 +1,6 @@
 import { Effect, Stream } from 'effect';
-import type { Connection } from 'effect/unstable/sql/SqlConnection';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { Connection } from 'effect/sql/SqlConnection';
+import type { SqlError } from 'effect/sql/SqlError';
 
 export const testSqlConnection = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,

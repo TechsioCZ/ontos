@@ -21,7 +21,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
-import { Cookies, HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { Cookies, HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import {
   bindGatewayPrincipalVerifier,

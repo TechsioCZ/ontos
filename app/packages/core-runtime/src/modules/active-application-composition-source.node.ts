@@ -12,7 +12,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
-import { Headers, HttpClient } from 'effect/unstable/http';
+import { Headers, HttpClient } from 'effect/http';
 
 import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from './application-composition-limits.ts';
 import { ActiveApplicationCompositionSourceReadError } from './active-application-composition-source-errors.ts';
