@@ -71,7 +71,7 @@
     "perfectionist/sort-objects": 29,
     "prefer-destructuring": 1,
     "prefer-object-spread": 1,
-    "promise/prefer-await-to-callbacks": 8,
+    "promise/prefer-await-to-callbacks": 7,
     "promise/prefer-await-to-then": 4,
     "react-doctor/js-cache-property-access": 1,
     "react-doctor/js-combine-iterations": 1,
