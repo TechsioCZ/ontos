@@ -38,6 +38,7 @@ import {
 import type { MicroVerticalApiBaselineExpectation } from '@modern-js/code-tools/microvertical-api-boundary';
 import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
 import { moduleFederationBridgeViolation } from '../module-federation-bridge-boundary.mts';
+import { ReleaseUiSchema } from './release-envelope-ui.fixture.mts';
 
 const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
 
@@ -219,10 +220,14 @@ const BuildArtifactSchema = Schema.Struct({
       ...IdentitySchema.fields,
       surface: Schema.Literal('api'),
     }),
-    ui: Schema.Struct({
-      ...IdentitySchema.fields,
-      surface: Schema.Literal('ui'),
-    }),
+    // UltraModern 3.9.3 headless (API-only) units emit no UI surface.
+    ui: Schema.optionalKey(
+      Schema.Struct({
+        ...IdentitySchema.fields,
+        ...ReleaseUiSchema.fields,
+        surface: Schema.Literal('ui'),
+      }),
+    ),
   }),
 });
 
@@ -279,7 +284,7 @@ type CreateVerticalDescriptor = (appId: string, port: number) => WorkspaceAppFix
 
 type CreateLayout = (appId: typeof AppIdSchema.Type) => string;
 
-type CreateAppModernConfig = (applicationRoot: string, app: WorkspaceAppFixture) => string;
+type CreateAppModernConfig = (app: WorkspaceAppFixture) => string;
 
 type CreateBackendModuleFederationConfig = (app: WorkspaceAppFixture) => string;
 
@@ -505,7 +510,8 @@ const TopologySchema = Schema.Struct({
         }),
       }),
       id: AppIdSchema,
-      moduleFederation: Schema.Struct({ exposes: Schema.Array(Schema.String) }),
+      // UltraModern 3.9.3 headless (API-only) units have no Module Federation producer.
+      moduleFederation: Schema.optionalKey(Schema.Struct({ exposes: Schema.Array(Schema.String) })),
     }),
   ),
 });
@@ -1937,13 +1943,17 @@ const releaseFixture = Effect.fn(function* scenario5(moduleFormat: 'cjs' | 'esm'
     BuildArtifactSchema,
     path.join(workspaceRoot, 'verticals/party-registry/shared/ultramodern-build.json'),
   );
+  const baseUi = baseArtifact.surfaces.ui;
+  if (baseUi === undefined) {
+    throw new Error('Party build artifact has no UI surface');
+  }
   const sourceRevision = 'a'.repeat(40);
   const artifact = {
     ...baseArtifact,
     deliveryUnit: { ...baseArtifact.deliveryUnit, sourceRevision },
     surfaces: {
       api: { ...baseArtifact.surfaces.api, sourceRevision },
-      ui: { ...baseArtifact.surfaces.ui, sourceRevision },
+      ui: { ...baseUi, sourceRevision },
     },
   };
   const manifest = {
@@ -2452,8 +2462,8 @@ const evaluatedInfrastructureSource = Effect.fn(function* mergedScenario1(
   const result = yield* Effect.promise(() =>
     bundleSource({
       alias: {
-        '@modern-js/runtime-extensions/build-identity': createRequire(path.join(partyRoot, fileName)).resolve(
-          '@modern-js/runtime-extensions/build-identity',
+        '@modern-js/backend-federation-contracts': createRequire(path.join(partyRoot, fileName)).resolve(
+          '@modern-js/backend-federation-contracts',
         ),
       },
       bundle: true,
@@ -2508,6 +2518,7 @@ const framework = {
   moduleFederationPlugin: plugin('moduleFederation'), pluginTailwindcss: plugin('tailwind'),
   tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
   defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
+  presetUltramodernWorkspace: (value, workspace) => ({ ...value, workspace }),
   getBuildConfigEnvironment: name => environment[name],
   resolveDeployTarget: () => ({ explicit: true, target: ${JSON.stringify(cloudflare ? 'cloudflare' : 'node')} }),
   ultramodernLocalisedUrls: {},
@@ -2657,7 +2668,7 @@ it.live(
               createBackendModuleFederationConfig(app),
             ),
             [buildMarkerFile]: Schema.decodeUnknownSync(Schema.String)(createUltramodernBuildModule('app', app)),
-            [modernConfigFile]: Schema.decodeUnknownSync(Schema.String)(createAppModernConfig('app', app)),
+            [modernConfigFile]: Schema.decodeUnknownSync(Schema.String)(createAppModernConfig(app)),
             'src/routes/layout.tsx': Schema.decodeUnknownSync(Schema.String)(createLayout(app.id)),
           };
           yield* Effect.all(
@@ -2688,7 +2699,7 @@ it.live(
                     Effect.fn(function* evaluateInfrastructureInjection({ cloudflare, injection }) {
                       if (fileName === modernConfigFile) {
                         const canonicalSource = Schema.decodeUnknownSync(Schema.String)(
-                          canonical.createAppModernConfig('app', app),
+                          canonical.createAppModernConfig(app),
                         );
                         expect(
                           yield* evaluatedInfrastructureSource(fileName, source, cloudflare, injection),
@@ -3605,9 +3616,8 @@ for (const variant of ['cjs', 'esm', 'esm-node']) {
       const inspectionModule: unknown = yield* Effect.promise(
         () =>
           import(
-            pathToFileURL(
-              path.join(generatorRoot, `dist/${variant}/ultramodern-workspace/mf-validation/inspect.${extension}`),
-            ).href
+            pathToFileURL(path.join(generatorRoot, `dist/${variant}/ultramodern-workspace/mf-validation.${extension}`))
+              .href
           ),
       );
       const inspection = yield* Schema.decodeUnknownEffect(ModuleFederationInspectionModuleSchema)(inspectionModule);
@@ -3690,6 +3700,8 @@ it.live(
       BuildArtifactSchema,
       path.join(workspaceRoot, 'verticals/payment-term-catalog/shared/ultramodern-build.json'),
     );
+    // A headless unit's build artifact carries only its API surface.
+    expect(build.surfaces.ui).toBe(undefined);
     // A deployed Worker serves the release identity of the revision being proven,
     // which is only the generation marker for an uncommitted workspace.
     const releaseIdentity = resolveUltramodernReleaseIdentity({

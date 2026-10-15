@@ -51,6 +51,7 @@ import {
 import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsShell } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
+import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
 const BUILD_MARKER = '0123456789abcdef';
 const SOURCE_REVISION = 'a'.repeat(40);
@@ -429,6 +430,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
             Order.String,
           ),
         },
+        ui: releaseUiFor(APP_ID, plan.buildMarker),
       };
       return moduleEnvelope
         ? createMicroVerticalReleaseEnvelope({

@@ -47,6 +47,7 @@ import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-cont
 import { OpsShell, OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
+import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
 const APP_ID = 'party-registry';
 const GIT_COMMAND = 'git';
@@ -301,6 +302,7 @@ const writeNativeEnvelope = Effect.fn('test.writeNativeReleaseEnvelope')(functio
           uiClient: EffectArray.sort(browserPaths, Order.String),
         },
         target: 'cloudflare',
+        ui: releaseUiFor(plan.appId, plan.buildMarker),
       }),
   });
   const destination = nodePath.join(output, MICROVERTICAL_RELEASE_ENVELOPE_PATH);
