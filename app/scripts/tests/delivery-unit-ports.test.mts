@@ -161,7 +161,7 @@ it('serves each vertical development module contract the Shell discovers', () =>
       ...(dev.startsWith(`node ../../scripts/prepare-dev-module-contract.mts ${id} && `)
         ? []
         : [`${id} dev script does not prepare its module contract`]),
-      ...(/createModernConfig\(|createDevelopmentContractMiddleware\(|'\/\.well-known\/ontos-module-manifest\.json'/u.test(
+      ...(/createModernConfig\(|createHeadlessModernConfig\(|createDevelopmentContractMiddleware\(|'\/\.well-known\/ontos-module-manifest\.json'/u.test(
         config,
       )
         ? []
