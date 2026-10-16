@@ -1,6 +1,5 @@
 "use client";
 import { type ReactNode, useEffect } from "react";
-import localFont from "next/font/local";
 import { usePathname, useRouter } from "next/navigation";
 import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
@@ -10,14 +9,6 @@ import { CartSelector } from "@/features/cart/cart-selector";
 import { checkoutSteps, getReachableStep } from "@/mock-storefront/checkout";
 import { useCheckout } from "./checkout-provider";
 import { CheckoutSummary } from "./checkout-summary";
-
-const checkoutFont = localFont({
-  src: "../../fonts/InterVariable.woff2",
-  weight: "400 800",
-  style: "normal",
-  display: "swap",
-  variable: "--font-akros-checkout",
-});
 
 export function CheckoutLayout({
   children,
@@ -48,7 +39,7 @@ export function CheckoutLayout({
   return (
     <div
       data-akros-checkout
-      className={`${checkoutFont.variable} bg-(--color-fill-surface) px-(--akros-checkout-page-gutter) pt-(--akros-checkout-padding-top) pb-(--akros-checkout-padding-bottom) font-(family-name:--font-akros-checkout) font-medium leading-(--akros-checkout-body-leading) text-(--akros-checkout-ink)`}
+      className="bg-(--color-fill-surface) px-(--akros-checkout-page-gutter) pt-(--akros-checkout-padding-top) pb-(--akros-checkout-padding-bottom) font-medium leading-(--akros-checkout-body-leading) text-(--akros-checkout-ink)"
     >
       <Steps.RootProvider value={steps} size="md" variant="subtle">
         <div

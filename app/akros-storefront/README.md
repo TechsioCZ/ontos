@@ -41,8 +41,15 @@ App component mappings live under `src/tokens/components/`; checkout-specific ov
 are scoped to `[data-akros-checkout]`. They reuse UI-kit variables for component colors,
 typography and dimensions. Page composition uses inline Tailwind utilities.
 Reviewed checkout nodes additionally define scoped Figma values for typography, borders,
-control shapes and colors. Checkout loads the existing local Inter font; Aktiv Grotesk
+control shapes and colors. The root layout loads the existing local Inter font once
+and exposes it through `--font-akros` to the UI-kit font tokens. Pages and portalled
+surfaces inherit the same font. Aktiv Grotesk
 from the design is currently represented by Inter because its font asset is unavailable.
+
+With the storefront running, `npm run test:typography` verifies actual rendered Inter
+through Chrome DevTools across eleven routes at desktop and mobile widths, including the
+country/phone dropdowns, cart dialog and mobile search. `AKROS_FONT_SCREENSHOTS` can
+select a directory for screenshots and the measured font report.
 
 Footer social icons in `src/icons/akros/` are original SVG exports from Figma node `8:3333`.
 The Iconify Tailwind plugin loads them as the local `akros` collection, used through the
@@ -64,7 +71,7 @@ billing fields occupy 1159 px. Inter optical sizing is disabled to match the sou
 text widths. Original 24 px disclosure and 28 px select arrows use the UI-kit Icon.
 Account overrides are scoped in `_akros-account.css` and contain token declarations.
 The profile, overview, order history/detail, favorites, tracking and account claims
-share `AccountShell`, including its Inter font, wide content column and navigation.
+share `AccountShell`, the global Inter font, wide content column and navigation.
 The additional screens adapt this visual foundation; Figma 7:2085 defines the profile,
 not their page content. Overview shortcuts expose favorites and tracking without a
 second sidebar. Order history has working search, month and status filters; below
@@ -72,9 +79,9 @@ second sidebar. Order history has working search, month and status filters; belo
 demo order and does not reuse the first order's products for other orders.
 Account claims stays inside the account; the public `/reklamace` page remains available.
 `npm run test:account` covers profile behavior and the navigation between account screens.
-The installed UI kit hardcodes Button weight, checkbox borders and select indicators;
-local token scopes and the necessary slot utilities handle those API gaps. Header,
-footer and checkout keep their existing layout.
+Button and input weights use the UI kit's component font-weight tokens; checkbox
+borders use `--border-width-checkbox`. Select indicators keep their existing slot
+utilities. Header, footer and checkout keep their existing layout.
 
 Checkout demo shipping becomes free at a goods subtotal of CZK 2,000, matching the existing
 shipping-information page. The optional 60-day return service costs CZK 159, with the same

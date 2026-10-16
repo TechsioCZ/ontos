@@ -40,7 +40,6 @@
 }
 
 .akros-product-actions {
-  --font-sans: var(--font-akros-product-actions);
   --akros-product-actions-column-gap: var(--dimension-30);
   --akros-product-actions-min-height: var(--dimension-40);
   --akros-product-actions-offset: var(--dimension-0);

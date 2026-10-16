@@ -58,10 +58,14 @@ try {
       const checkout = document.querySelector("[data-akros-checkout]");
       const body = document.querySelector("[data-akros-checkout-body]").getBoundingClientRect();
       const root = checkout.getBoundingClientRect();
-      if (Math.abs(root.width - innerWidth) > 1)
+      const availableWidth = document.documentElement.getBoundingClientRect().width;
+      if (Math.abs(root.width - availableWidth) > 1)
         failures.push("Checkout background must span the viewport");
       if (innerWidth === 1920) {
-        if (Math.abs(body.left - 130) > 1 || Math.abs(body.width - 1660) > 1)
+        if (
+          Math.abs(body.left - (availableWidth - 1660) / 2) > 1 ||
+          Math.abs(body.width - 1660) > 1
+        )
           failures.push("Desktop checkout content width/gutter differs from Figma");
         if (Math.abs(cart.width - 1228) > 1)
           failures.push("Desktop cart column width differs from Figma");

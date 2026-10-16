@@ -17,10 +17,11 @@
     "lint": "oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin src tests",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "test:typography": "node tests/browser/global-typography.mjs"
   },
   "dependencies": {
-    "@techsio/ui-kit": "0.50.0",
+    "@techsio/ui-kit": "0.56.1",
     "next": "16.3.6",
     "react": "19.3.0",
     "react-dom": "19.3.0"

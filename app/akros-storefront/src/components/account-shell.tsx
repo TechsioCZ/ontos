@@ -1,6 +1,5 @@
 "use client";
 
-import localFont from "next/font/local";
 import NextLink from "next/link";
 import type { ReactNode } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
@@ -8,12 +7,6 @@ import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 
-const font = localFont({
-  src: "../fonts/InterVariable.woff2",
-  weight: "400 800",
-  display: "swap",
-  variable: "--font-akros-account",
-});
 const navigation = [
   { key: "overview", label: "Přehled účtu", href: "/muj-ucet/prehled" },
   { key: "profile", label: "Můj účet", href: "/muj-ucet" },
@@ -49,7 +42,7 @@ export function AccountShell({
       <SiteHeader />
       <main
         data-akros-account
-        className={`${font.variable} bg-(--akros-account-surface) px-(--dimension-16) pt-(--dimension-40) pb-(--dimension-80) font-(family-name:--font-body) text-(length:--akros-account-body-size) font-medium leading-(--akros-account-leading) text-fg-primary [font-optical-sizing:var(--akros-account-optical-sizing)]`}
+        className="bg-(--akros-account-surface) px-(--dimension-16) pt-(--dimension-40) pb-(--dimension-80) text-(length:--akros-account-body-size) font-medium leading-(--akros-account-leading) text-fg-primary [font-optical-sizing:var(--akros-account-optical-sizing)]"
       >
         <div data-akros-account-body className="mx-auto w-full max-w-(--akros-account-width)">
           <StorefrontBreadcrumbs

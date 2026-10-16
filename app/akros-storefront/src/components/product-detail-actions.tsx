@@ -2,17 +2,8 @@
 
 import { useState } from "react";
 import NextLink from "next/link";
-import localFont from "next/font/local";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
-
-const productActionsFont = localFont({
-  src: "../fonts/InterVariable.woff2",
-  weight: "500",
-  style: "normal",
-  display: "swap",
-  variable: "--font-akros-product-actions",
-});
 
 interface ProductDetailActionsProps {
   productId: string;
@@ -74,7 +65,7 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
 
   return (
     <div
-      className={`${productActionsFont.variable} akros-product-actions -mt-(--akros-product-actions-offset) flex flex-wrap gap-x-(--akros-product-actions-column-gap) gap-y-(--dimension-8) pt-(--dimension-4) font-sans [&>*]:min-h-(--akros-product-actions-min-height)`}
+      className="akros-product-actions -mt-(--akros-product-actions-offset) flex flex-wrap gap-x-(--akros-product-actions-column-gap) gap-y-(--dimension-8) pt-(--dimension-4) [&>*]:min-h-(--akros-product-actions-min-height)"
       aria-label="Další akce produktu"
     >
       <Button

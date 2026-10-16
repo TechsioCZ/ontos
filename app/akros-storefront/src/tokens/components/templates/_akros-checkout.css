@@ -1,7 +1,5 @@
 /* Scoped mappings for the checkout's existing UI-kit components. */
 [data-akros-checkout] {
-  --font-sans: var(--font-akros-checkout);
-  --font-body: var(--font-akros-checkout);
   --text-sm: var(--dimension-20);
   --text-xs: var(--dimension-16);
   --text-button-sm: var(--dimension-20);
@@ -129,6 +127,8 @@
 
 [data-akros-checkout-address] {
   --font-weight-normal: var(--font-weight-medium);
+  --font-weight-input: var(--font-weight-medium);
+  --font-weight-input-placeholder: var(--font-weight-medium);
 }
 
 [data-akros-checkout-review] {

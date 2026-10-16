@@ -21,9 +21,9 @@
   --akros-account-actions-gap: calc(var(--dimension-40) + var(--dimension-16));
   --akros-account-list-divider: #cccccc;
   --akros-account-action-height: 58px;
-  --font-body: var(--font-akros-account);
-  --font-sans: var(--font-akros-account);
   --font-weight-normal: var(--font-weight-medium);
+  --font-weight-input: var(--font-weight-medium);
+  --font-weight-input-placeholder: var(--font-weight-medium);
   --text-sm: var(--dimension-20);
   --text-xs: var(--dimension-16);
   --color-fg-primary: var(--akros-account-ink);
@@ -105,6 +105,8 @@
 
 [data-account-products] {
   --font-weight-normal: 400;
+  --font-weight-input: var(--font-weight-normal);
+  --font-weight-input-placeholder: var(--font-weight-normal);
   --text-sm: var(--dimension-16);
 }
 
@@ -115,18 +117,19 @@
 }
 
 [data-account-navigation] [aria-current="page"] {
-  --font-weight-medium: var(--font-weight-extrabold);
+  --font-weight-button: var(--font-weight-extrabold);
   --padding-button-sm: var(--dimension-16) var(--dimension-16)
     calc(var(--dimension-16) - var(--akros-account-tab-border));
 }
 
 [data-account-action] {
   --height-form-control-sm: var(--akros-account-action-height);
-  --font-weight-medium: var(--font-weight-bold);
+  --font-weight-button: var(--font-weight-bold);
 }
 
 [data-account-section-heading] {
-  --font-weight-medium: var(--font-weight-bold);
+  --font-weight-accordion-title: var(--font-weight-bold);
+  --font-weight-button: var(--font-weight-accordion-title);
 }
 
 [data-account-field][data-invalid] {

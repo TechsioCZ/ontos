@@ -38,7 +38,8 @@ try {
   const failures = await page.locator("[data-akros-account]").evaluate((root) => {
     const errors = [];
     const body = root.querySelector("[data-akros-account-body]").getBoundingClientRect();
-    if (Math.abs(body.left - 130) > 1 || Math.abs(body.width - 1660) > 1)
+    const availableWidth = document.documentElement.getBoundingClientRect().width;
+    if (Math.abs(body.left - (availableWidth - 1660) / 2) > 1 || Math.abs(body.width - 1660) > 1)
       errors.push("Desktop frame differs from Figma");
     const section = root.querySelector('section[aria-label="Můj účet"]').getBoundingClientRect();
     if (Math.abs(section.width - 1660) > 1) errors.push("Main column differs from Figma 7:2085");
