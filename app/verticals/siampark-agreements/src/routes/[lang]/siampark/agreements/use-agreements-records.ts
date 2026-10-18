@@ -13,6 +13,7 @@ import type { AgreementsCommand, Feedback } from '../../../../../shared/actions/
 import type { Contract, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
+import { rentalReferenceAccess } from './rental-reference-access.ts';
 
 const RecordsSearchSchema = Schema.Struct({ resourceId: Schema.optional(ContractRefSchema.fields.resourceId) });
 const DEFAULT_START_DATE = '2026-10-05';
@@ -139,6 +140,7 @@ export const useRecordsPage = () => {
           {
             customers: listCustomers({ includeArchived: false }),
             records: executeRecords({}, 'siampark-agreements.records'),
+            rentalReadable: rentalReferenceAccess,
           },
           { concurrency: 2 },
         ),
@@ -150,7 +152,7 @@ export const useRecordsPage = () => {
         }),
       ),
       Effect.tap((value) =>
-        value.records.contracts.some((record) => record.kind === 'LEASE')
+        value.rentalReadable && value.records.contracts.some((record) => record.kind === 'LEASE')
           ? loadRentalReferences().pipe(
               Effect.match({
                 onFailure: (error) => setRentalFeedback(failureFeedback(error)),
