@@ -98,6 +98,7 @@ const CustomerDetailView = ({
         closeOnInteractOutside={false}
         onOpenChange={requestClose}
         open
+        resizeLabel={t('party-registry.sidePanel.resize')}
         size="xl"
         title={name || t(`${KEY}.title`)}
       >

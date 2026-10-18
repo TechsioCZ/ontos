@@ -38,7 +38,9 @@ export const DocumentSchema = Schema.Struct({
   fileName: Schema.toEncoded(Schema.OptionFromNullOr(TextSchema)),
   kind: TextSchema,
   lifecycleState: Schema.Literals(['DRAFT', 'FINAL', 'ARCHIVED']),
+  signedBy: Schema.optionalKey(TextSchema),
   signedDocumentReference: Schema.toEncoded(Schema.OptionFromNullOr(TextSchema)),
+  signedOn: Schema.optionalKey(DemoDateSchema),
   title: TextSchema,
   updatedAt: Schema.toEncoded(Schema.DateTimeUtcFromString),
 });

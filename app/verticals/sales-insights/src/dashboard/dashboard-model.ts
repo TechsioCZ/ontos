@@ -2,7 +2,7 @@ import { computeMetric, computePipelineSummary } from '../../shared/metrics.ts';
 import type { CalendarDay, MetricInputs, MetricUnit } from '../../shared/metrics.ts';
 import { Schema } from 'effect';
 
-export const DashboardMetricSchema = Schema.Literals([
+const DashboardMetricSchema = Schema.Literals([
   'opportunities_open',
   'pipeline_open_value',
   'unpaid_amount',
@@ -10,13 +10,6 @@ export const DashboardMetricSchema = Schema.Literals([
   'tasks_overdue',
 ]);
 export type DashboardMetric = typeof DashboardMetricSchema.Type;
-export const DashboardDisplaySchema = Schema.Literals(['cards', 'list']);
-export const DashboardPreferencesSchema = Schema.Struct({
-  display: DashboardDisplaySchema,
-  metrics: Schema.Array(DashboardMetricSchema).check(Schema.isMaxLength(5)),
-  version: Schema.Literal(1),
-});
-export type DashboardPreferences = typeof DashboardPreferencesSchema.Type;
 export interface DashboardContext {
   readonly legalEntityId: string;
   readonly principalId: string;
@@ -34,13 +27,13 @@ export interface DashboardValue {
   readonly unit: MetricUnit;
   readonly value?: number;
 }
-export const defaultDashboardPreferences: DashboardPreferences = {
-  display: 'cards',
-  metrics: ['opportunities_open', 'pipeline_open_value', 'unpaid_amount', 'tasks_open', 'tasks_overdue'],
-  version: 1,
-};
-export const dashboardPreferencesKey = (context: DashboardContext): string =>
-  `ontos:crm-dashboard:v1:${encodeURIComponent(context.principalId)}:${encodeURIComponent(context.tenantId)}:${encodeURIComponent(context.legalEntityId)}`;
+const dashboardMetrics: readonly DashboardMetric[] = [
+  'opportunities_open',
+  'pipeline_open_value',
+  'unpaid_amount',
+  'tasks_open',
+  'tasks_overdue',
+];
 
 const metricSource = {
   opportunities_open: 'opportunities',
@@ -70,7 +63,7 @@ export const dashboardValues = (
     tasks_overdue: computeMetric('tasks_overdue', inputs, { ...range, groupBy: 'employee' }).total ?? 0,
     unpaid_amount: computeMetric('unpaid_amount', inputs, { ...range, groupBy: 'month' }).total ?? 0,
   };
-  return defaultDashboardPreferences.metrics.map((id) => {
+  return dashboardMetrics.map((id) => {
     const source = metricSource[id];
     const state = states[source];
     const base = {

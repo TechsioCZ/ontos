@@ -13,7 +13,7 @@ import {
 import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 import { Schema } from 'effect';
 
-import { demoId, demoLegalEntityId, demoTenantId } from './fixture-ids.mts';
+import { demoId, demoLegalEntityId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
 
 /**
  * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, siampark-work,
@@ -29,6 +29,9 @@ export const demoModuleIds = [
   'demo.sales-pipeline',
   'demo.merchandise',
   'demo.sales-insights',
+  'siampark.property',
+  'siampark.occupancy',
+  'siampark.agreements',
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
 export const ModuleAccessSchema = Schema.Literals(['read', 'write']);
@@ -65,9 +68,10 @@ const everything = {
   'demo.tagging': 'write',
   'demo.workforce': 'write',
   'party.registry': 'write',
+  'siampark.agreements': 'write',
   'siampark.billing-finance': 'write',
   'siampark.work': 'write',
-} as const satisfies Readonly<Record<DemoModuleId, ModuleAccess>>;
+} as const satisfies Readonly<Partial<Record<DemoModuleId, ModuleAccess>>>;
 
 export interface DemoRole {
   /** Tenant `identity_admin` plus the core identity Actions needed to create the bot and its API key. */
@@ -88,6 +92,7 @@ export const demoRoles = {
       // Customer lists show Štítky; without this read every tag cell fails to load for the accountant.
       'demo.tagging': 'read',
       'party.registry': 'read',
+      'siampark.agreements': 'read',
       'siampark.billing-finance': 'write',
     },
   },
@@ -102,6 +107,7 @@ export const demoRoles = {
       'demo.tagging': 'write',
       'demo.workforce': 'read',
       'party.registry': 'read',
+      'siampark.agreements': 'read',
       'siampark.billing-finance': 'read',
       'siampark.work': 'write',
     },
@@ -119,6 +125,7 @@ export const demoRoles = {
       'demo.tagging': 'write',
       'demo.workforce': 'read',
       'party.registry': 'write',
+      'siampark.agreements': 'write',
       'siampark.billing-finance': 'read',
       'siampark.work': 'write',
     },
@@ -160,6 +167,7 @@ export const agentBotPrincipal = {
 const identityAdminActionKeys = [
   'core.identity.bind-managed-api-key',
   'core.identity.create-non-human-principal',
+  'core.identity.configure-demo-companies',
   'core.identity.set-managed-api-key-binding-status',
 ] as const;
 
@@ -195,15 +203,15 @@ const partyRelations = (access: ModuleAccess) =>
       }
     : { legalEntity: ['counterparty_reader'], tenant: ['party_identity_reader'] };
 
-const legalEntityObject = toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '';
-const moduleAccessObject = (moduleId: string) =>
-  toModuleAccessObjectId(demoTenantId, demoLegalEntityId, moduleId) ?? '';
+const moduleAccessObject = (legalEntityId: string, moduleId: string) =>
+  toModuleAccessObjectId(demoTenantId, legalEntityId, moduleId) ?? '';
 
 /** Every relationship one principal needs for its role. `actions` is the current discovered Action set. */
 export const principalRelationships = (
   principalId: string,
   role: DemoRole,
   actions: readonly DemoAction[],
+  legalEntityId: string = demoLegalEntityId,
 ): readonly DemoRelationship[] => {
   const result: DemoRelationship[] = [];
   const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) =>
@@ -216,12 +224,12 @@ export const principalRelationships = (
     add('action', action, 'executor', 'principal', principalId);
   };
   const grantContextPermission = (moduleId: DemoModuleId, permission: string) => {
-    const objectId = toContextPermissionAccessObjectId(demoTenantId, demoLegalEntityId, { moduleId, permission }) ?? '';
+    const objectId = toContextPermissionAccessObjectId(demoTenantId, legalEntityId, { moduleId, permission }) ?? '';
     add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
     add('context_permission', objectId, 'grantee', 'principal', principalId);
   };
-  const legal = legalEntityObject;
-  const moduleAccess = moduleAccessObject;
+  const legal = toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '';
+  const moduleAccess = (moduleId: string) => moduleAccessObject(legalEntityId, moduleId);
   add('legal_entity', legal, 'tenant', 'tenant', demoTenantId);
   add('tenant', demoTenantId, 'member', 'principal', principalId);
   add('legal_entity', legal, 'member', 'principal', principalId);
@@ -269,6 +277,80 @@ export const principalRelationships = (
   return result;
 };
 
+/** Rental capabilities are granted independently from the trading company's modules. */
+export const rentalDemoRoles = {
+  accountant: {
+    identityAdmin: false,
+    label: 'Účetní pronájmů',
+    modules: {
+      'commerce.customer-context': 'read',
+      'demo.tagging': 'read',
+      'party.registry': 'read',
+      'siampark.agreements': 'read',
+      'siampark.billing-finance': 'write',
+      'siampark.property': 'read',
+    },
+  },
+  agentBot: {
+    identityAdmin: false,
+    label: 'Agent pronájmů',
+    modules: {
+      'commerce.customer-context': 'read',
+      'demo.sales-pipeline': 'write',
+      'demo.tagging': 'write',
+      'demo.workforce': 'read',
+      'party.registry': 'read',
+      'siampark.agreements': 'read',
+      'siampark.billing-finance': 'read',
+      'siampark.property': 'read',
+      'siampark.work': 'write',
+    },
+  },
+  headOfSales: {
+    identityAdmin: true,
+    label: 'Správce pronájmů',
+    modules: {
+      'commerce.customer-context': 'write',
+      'demo.sales-insights': 'read',
+      'demo.sales-pipeline': 'write',
+      'demo.tagging': 'write',
+      'demo.workforce': 'read',
+      'party.registry': 'write',
+      'siampark.agreements': 'write',
+      'siampark.billing-finance': 'write',
+      'siampark.occupancy': 'write',
+      'siampark.property': 'write',
+      'siampark.work': 'write',
+    },
+  },
+  salesRep: {
+    identityAdmin: false,
+    label: 'Obchodník pronájmů',
+    modules: {
+      'commerce.customer-context': 'write',
+      'demo.sales-insights': 'read',
+      'demo.sales-pipeline': 'write',
+      'demo.tagging': 'write',
+      'demo.workforce': 'read',
+      'party.registry': 'write',
+      'siampark.agreements': 'write',
+      'siampark.billing-finance': 'read',
+      'siampark.occupancy': 'read',
+      'siampark.property': 'read',
+      'siampark.work': 'write',
+    },
+  },
+} as const satisfies Readonly<Partial<Record<DemoRoleKey, DemoRole>>>;
+
+export const rentalPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => [
+  ...demoHumanAccounts.flatMap((account) =>
+    account.role === 'warehouse'
+      ? []
+      : principalRelationships(account.principalId, rentalDemoRoles[account.role], actions, rentalDemoLegalEntityId),
+  ),
+  ...principalRelationships(agentBotPrincipal.principalId, rentalDemoRoles.agentBot, actions, rentalDemoLegalEntityId),
+];
+
 const relationshipKey = (relationship: DemoRelationship) =>
   [
     relationship.resourceType,
@@ -285,6 +367,7 @@ export const demoPermissionRelationships = (actions: readonly DemoAction[]): rea
       principalRelationships(account.principalId, demoRoles[account.role], actions),
     ),
     ...principalRelationships(agentBotPrincipal.principalId, demoRoles[agentBotPrincipal.role], actions),
+    ...rentalPermissionRelationships(actions),
   ];
   return [...new Map(all.map((relationship) => [relationshipKey(relationship), relationship])).values()];
 };

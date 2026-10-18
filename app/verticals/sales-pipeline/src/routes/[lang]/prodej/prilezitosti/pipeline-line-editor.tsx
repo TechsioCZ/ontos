@@ -3,12 +3,26 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { Option, Schema } from 'effect';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { useRef, useState } from 'react';
-import { opportunityAmountMinor } from '../../../../../shared/model/opportunity.ts';
+import {
+  OpportunityLineSchema,
+  VatRateSchema,
+  opportunityAmountMinor,
+} from '../../../../../shared/model/opportunity.ts';
 import type { OpportunityLine } from '../../../../../shared/model/opportunity.ts';
 import { PickerCombobox } from './pipeline-combobox.tsx';
-import { MAX_LINE_QUANTITY, filterItemsByQuery, firstValue, isValidQuantity } from './pipeline-model.ts';
+import {
+  MAX_LINE_QUANTITY,
+  filterItemsByQuery,
+  firstValue,
+  isValidQuantity,
+  isSafeOpportunityAmount,
+  manualOpportunityLine,
+} from './pipeline-model.ts';
 import type { LoadState, ProductOption } from './pipeline-references.ts';
 
 const K = 'sales-pipeline.pages.records';
@@ -20,6 +34,7 @@ const K = 'sales-pipeline.pages.records';
 const quantityFormatOptions = { maximumFractionDigits: 3 };
 
 export interface LineEntry {
+  readonly invalidAmount?: boolean;
   /**
    * The number typed into the quantity field when it is not a whole number of at least 1. The field keeps showing
    * it and the line reports it; `line` keeps the last valid quantity.
@@ -30,11 +45,14 @@ export interface LineEntry {
 }
 
 interface PickState {
+  readonly description: string;
+  readonly price: number;
   readonly productId: string | null;
   readonly quantity: number;
+  readonly vat: OpportunityLine['vatRate'];
 }
 
-const emptyPick: PickState = { productId: null, quantity: 1 };
+const emptyPick: PickState = { description: '', price: 0, productId: null, quantity: 1, vat: 21 };
 
 interface LinesEditorProps {
   readonly lines: readonly LineEntry[];
@@ -50,8 +68,8 @@ interface LineRowProps {
 
 const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
   const { t } = useModernI18n();
-  const { invalidQuantity, line } = entry;
-  const quantityInvalid = invalidQuantity !== undefined;
+  const { invalidAmount, invalidQuantity, line } = entry;
+  const quantityInvalid = invalidQuantity !== undefined && invalidAmount !== true;
   return (
     <li className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
       <div className="flex items-center gap-150">
@@ -69,14 +87,14 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
           <NumericInput
             clampValueOnBlur={false}
             formatOptions={quantityFormatOptions}
-            invalid={quantityInvalid}
+            invalid={quantityInvalid || invalidAmount === true}
             locale="cs-CZ"
             max={MAX_LINE_QUANTITY}
             min={1}
             onChange={onQuantity}
             size="sm"
             step={1}
-            value={invalidQuantity ?? line.quantity}
+            {...(Number.isFinite(invalidQuantity ?? line.quantity) ? { value: invalidQuantity ?? line.quantity } : {})}
           >
             <NumericInput.Control>
               <NumericInput.Input aria-label={t(`${K}.create.fields.quantity`)} />
@@ -97,6 +115,11 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
           variant="secondary"
         />
       </div>
+      {invalidAmount === true && (
+        <StatusText showIcon size="sm" status="error">
+          {t(`${K}.create.errors.amountRange`)}
+        </StatusText>
+      )}
       {quantityInvalid && (
         <StatusText showIcon size="sm" status="error">
           {t(`${K}.create.errors.quantityRange`, { max: formatNumber(MAX_LINE_QUANTITY) })}
@@ -119,6 +142,7 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
   const keySequence = useRef(0);
 
   const activeProducts = products.status === 'ready' ? products.items.filter((item) => item.active) : [];
+  const manual = products.status === 'ready' && activeProducts.length === 0;
   const pickedProduct = activeProducts.find((item) => item.id === pick.productId);
   const productItems = activeProducts.map((product) => ({
     id: product.id,
@@ -137,24 +161,34 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
 
   /** Adds the picked product. A missing product says so here; an invalid quantity is already reported on its field. */
   const addLine = () => {
-    if (pickedProduct === undefined) {
-      setLineError(t(`${K}.create.errors.productRequired`));
+    if (!quantityValid) {
       return;
     }
-    if (!quantityValid) {
+    let line: Option.Option<OpportunityLine> = Option.none();
+    if (manual) {
+      line = manualOpportunityLine(pick.description, pick.quantity, pick.price, pick.vat);
+    } else if (pickedProduct !== undefined) {
+      line = Schema.decodeOption(OpportunityLineSchema)({
+        productId: pickedProduct.id,
+        productName: pickedProduct.name,
+        quantity: pick.quantity,
+        unitPriceMinor: pickedProduct.currentPriceMinor,
+        vatRate: pickedProduct.vatRate,
+      });
+    }
+    if (Option.isNone(line)) {
+      setLineError(t(`${K}.create.errors.${manual ? 'manualLine' : 'productRequired'}`));
+      return;
+    }
+    if (!isSafeOpportunityAmount([...lines.map((entry) => entry.line), line.value])) {
+      setLineError(t(`${K}.create.errors.amountRange`));
       return;
     }
     setLineError(undefined);
     keySequence.current += 1;
     const entry: LineEntry = {
       key: `line-${keySequence.current}`,
-      line: {
-        productId: pickedProduct.id,
-        productName: pickedProduct.name,
-        quantity: pick.quantity,
-        unitPriceMinor: pickedProduct.currentPriceMinor,
-        vatRate: pickedProduct.vatRate,
-      },
+      line: line.value,
     };
     onChange([...lines, entry]);
     setPick(emptyPick);
@@ -163,20 +197,22 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
 
   /**
    * A valid quantity updates the line; any other number stays as typed and is reported, never replaced. A field
-   * that is empty or mid-edit (not a number yet) changes nothing.
+   * that is empty or mid-edit remains invalid until a valid quantity is entered.
    */
   const setQuantity = (key: string, value: number) => {
-    if (!Number.isFinite(value)) {
-      return;
-    }
     onChange(
       lines.map((entry): LineEntry => {
         if (entry.key !== key) {
           return entry;
         }
-        return isValidQuantity(value)
-          ? { key: entry.key, line: { ...entry.line, quantity: value } }
-          : { ...entry, invalidQuantity: value };
+        if (!isValidQuantity(value)) {
+          return { invalidQuantity: value, key: entry.key, line: entry.line };
+        }
+        const nextLine = { ...entry.line, quantity: value };
+        const nextLines = lines.map((item) => (item.key === key ? nextLine : item.line));
+        return isSafeOpportunityAmount(nextLines)
+          ? { key: entry.key, line: nextLine }
+          : { invalidAmount: true, invalidQuantity: value, key: entry.key, line: entry.line };
       }),
     );
   };
@@ -190,22 +226,36 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
 
       <div className="grid grid-cols-[minmax(0,1fr)_7rem] items-end gap-150">
         <div className="min-w-0">
-          <PickerCombobox
-            error={products.status === 'error' ? t(`${K}.create.productsFailed`) : undefined}
-            filterBehavior="external"
-            items={shownProductItems}
-            label={t(`${K}.create.fields.product`)}
-            loading={products.status === 'loading'}
-            loadingMessage={t('sales-pipeline.loading')}
-            noResultsMessage={t(`${K}.create.noProductMatch`)}
-            onChange={(values) => {
-              setLineError(undefined);
-              setPick((current) => ({ ...current, productId: firstValue(values) ?? null }));
-            }}
-            onInputValueChange={setProductQuery}
-            placeholder={t(`${K}.create.productPlaceholder`)}
-            value={pick.productId === null ? [] : [pick.productId]}
-          />
+          {manual ? (
+            <FormInput
+              helpText={t(`${K}.create.rentHint`)}
+              id="opportunity-rent-description"
+              label={t(`${K}.create.fields.rentDescription`)}
+              maxLength={300}
+              onChange={(event) => {
+                const description = event.currentTarget.value;
+                setPick((current) => ({ ...current, description }));
+              }}
+              value={pick.description}
+            />
+          ) : (
+            <PickerCombobox
+              error={products.status === 'error' ? t(`${K}.create.productsFailed`) : undefined}
+              filterBehavior="external"
+              items={shownProductItems}
+              label={t(`${K}.create.fields.product`)}
+              loading={products.status === 'loading'}
+              loadingMessage={t('sales-pipeline.loading')}
+              noResultsMessage={t(`${K}.create.noProductMatch`)}
+              onChange={(values) => {
+                setLineError(undefined);
+                setPick((current) => ({ ...current, productId: firstValue(values) ?? null }));
+              }}
+              onInputValueChange={setProductQuery}
+              placeholder={t(`${K}.create.productPlaceholder`)}
+              value={pick.productId === null ? [] : [pick.productId]}
+            />
+          )}
         </div>
         <div className="min-w-0">
           <FormNumericInput
@@ -222,14 +272,10 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
             max={MAX_LINE_QUANTITY}
             min={1}
             name="lineQuantity"
-            onChange={(value) => {
-              if (Number.isFinite(value)) {
-                setPick((current) => ({ ...current, quantity: value }));
-              }
-            }}
+            onChange={(value) => setPick((current) => ({ ...current, quantity: value }))}
             step={1}
             validateStatus={quantityValid ? 'default' : 'error'}
-            value={pick.quantity}
+            {...(Number.isFinite(pick.quantity) ? { value: pick.quantity } : {})}
           >
             <NumericInput.Control>
               {/* Enter here adds the line rather than submitting the whole opportunity. The capture handler
@@ -246,6 +292,35 @@ export const LinesEditor = ({ lines, onChange, products }: LinesEditorProps) => 
           </FormNumericInput>
         </div>
       </div>
+      {manual && (
+        <div className="grid grid-cols-2 items-end gap-150">
+          <FormNumericInput
+            clampValueOnBlur={false}
+            formatOptions={{ maximumFractionDigits: 2 }}
+            id="opportunity-rent-price"
+            label={t(`${K}.create.fields.price`)}
+            locale="cs-CZ"
+            min={0}
+            onChange={(value) => setPick((current) => ({ ...current, price: value }))}
+            {...(Number.isFinite(pick.price) ? { value: pick.price } : {})}
+          >
+            <NumericInput.Control>
+              <NumericInput.Input />
+            </NumericInput.Control>
+          </FormNumericInput>
+          <SelectTemplate
+            items={[0, 12, 21].map((rate) => ({ label: `${rate} %`, value: String(rate) }))}
+            label={t(`${K}.create.fields.vat`)}
+            onValueChange={({ value }) => {
+              const parsed = Number(value[0]);
+              if (Schema.is(VatRateSchema)(parsed)) {
+                setPick((current) => ({ ...current, vat: parsed }));
+              }
+            }}
+            value={[String(pick.vat)]}
+          />
+        </div>
+      )}
       <div className="flex items-center justify-between gap-150">
         <p className="min-w-0 text-fg-secondary text-xs">
           {pickedProduct !== undefined &&

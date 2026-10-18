@@ -125,6 +125,9 @@
       "updated": "Štítek upraven",
       "selectPlaceholder": "Vyberte…",
       "loading": "Načítám…"
+    },
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
     }
   }
 }

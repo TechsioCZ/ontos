@@ -135,6 +135,9 @@
         }
       }
     },
-    "selectPlaceholder": "Vyberte…"
+    "selectPlaceholder": "Vyberte…",
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    }
   }
 }

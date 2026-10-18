@@ -140,6 +140,7 @@ export const OrderCreateDialog = ({
         }
       }}
       open={open}
+      resizeLabel={t('merchandise.sidePanel.resize')}
       size="lg"
       title={t(key('create.title'))}
     >

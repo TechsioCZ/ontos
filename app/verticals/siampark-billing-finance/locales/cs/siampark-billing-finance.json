@@ -25,7 +25,8 @@
     },
     "faktury": {
       "title": "Faktury",
-      "description": "Faktury z příležitostí a ručně vystavené. Výhra příležitosti založí koncept faktury.",
+      "description": "Faktury z katalogových položek vyhraných příležitostí a ručně vystavené koncepty.",
+      "rentalDescription": "Faktury za nájem nemovitostí a související služby. Budovu nebo jednotku a období uveďte při vystavení.",
       "newInvoice": "Nová faktura",
       "referencesError": "Názvy zákazníků, produktů nebo příležitostí se nepodařilo načíst.",
       "unknownCustomer": "Neznámý zákazník",
@@ -33,6 +34,8 @@
       "vatId": "DIČ",
       "city": "Město",
       "form": {
+        "rentalLineHint": "U nájmu uveďte do popisu budovu nebo jednotku a fakturované období. Cenu, množství a DPH vyplňte podle smlouvy.",
+        "rentalDescriptionPlaceholder": "Např. nájem budovy Parková, jednotka A101, říjen 2026",
         "customer": "Zákazník",
         "customerNoMatch": "Žádný zákazník neodpovídá.",
         "customerPlaceholder": "Začněte psát název nebo IČO…",
@@ -103,7 +106,7 @@
       "loadError": "Data se nepodařilo načíst.",
       "loadErrorDescription": "Zkontrolujte připojení a zkuste to znovu.",
       "emptyFirstTitle": "Zatím tu nejsou žádné faktury.",
-      "emptyFirstDescription": "Faktury se objeví po výhře příležitosti.",
+      "emptyFirstDescription": "První fakturu vystavte tlačítkem Nová faktura.",
       "noMatches": "Žádné faktury neodpovídají filtru.",
       "noMatchesDescription": "Zkuste upravit hledání nebo stav.",
       "filters": {
@@ -258,6 +261,9 @@
       },
       "newInvoice": "Přejít k nové faktuře"
     },
-    "selectPlaceholder": "Vyberte…"
+    "selectPlaceholder": "Vyberte…",
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    }
   }
 }

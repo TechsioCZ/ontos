@@ -890,3 +890,42 @@ it.effect(
       expect(calls.length).toBe(1);
     }),
 );
+
+it.effect('uses the selected legal entity for navigation and direct page authorization', () =>
+  Effect.gen(function* scopesCompanyModules() {
+    const rentalLegalEntityId = '20000000-0000-4000-8000-000000000002';
+    const composition = makeShellComposition({
+      catalog: catalog(),
+      contextAccess: {
+        ...contextAccess({}),
+        modules: ({ legalEntityId: selected, moduleIds }) =>
+          Effect.succeed(
+            moduleIds.map((key) => ({
+              decision: (key === (selected === rentalLegalEntityId ? 'property.registry' : 'documents.center')
+                ? 'allowed'
+                : 'denied') satisfies ContextAccessDecision,
+              key,
+            })),
+          ),
+      },
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+    });
+    const rentalContext = { ...context, legalEntityId: rentalLegalEntityId };
+    expect((yield* composition.compose(context)).navigation.map(({ moduleId }) => moduleId)).toEqual([
+      'documents.center',
+    ]);
+    expect((yield* composition.compose(rentalContext)).navigation.map(({ moduleId }) => moduleId)).toEqual([
+      'property.registry',
+    ]);
+    const hiddenTarget = yield* composition.resolveModuleTarget(rentalContext, { canonicalPath: '/documents-center' });
+    expect(hiddenTarget.outcome).toBe('forbidden');
+    expect(hiddenTarget).not.toHaveProperty('federation');
+    expect(hiddenTarget).not.toHaveProperty('page');
+    expect((yield* composition.resolveModuleTarget(context, { canonicalPath: '/documents-center' })).outcome).toBe(
+      'resolved',
+    );
+  }),
+);

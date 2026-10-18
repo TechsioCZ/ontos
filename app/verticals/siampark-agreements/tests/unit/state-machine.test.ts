@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { AgreementsConflict, AgreementsRejected } from '../../shared/actions/apply-command.ts';
 
 import type { AgreementsState, Contract, Document } from '../../shared/apis/records.ts';
@@ -98,6 +99,74 @@ const rejected = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
   Effect.exit(effect).pipe(Effect.tap((exit) => Effect.sync(() => expect(Exit.isFailure(exit)).toBe(true))));
 
 describe('Agreements state transitions', () => {
+  it.effect('creates a commercial agreement without property or occupancy access', () =>
+    Effect.gen(function* commercialContract() {
+      const commercial: Contract = { ...draft, kind: 'OTHER', unitRef: null };
+      const created = yield* transitionAgreements(
+        empty,
+        { _tag: 'CreateContract', record: commercial },
+        scope,
+        validators,
+      );
+      expect(created.snapshot.contracts).toEqual([commercial]);
+      const leaseWithoutUnit = yield* Effect.flip(
+        transitionAgreements(
+          empty,
+          { _tag: 'CreateContract', record: { ...commercial, kind: 'LEASE' } },
+          scope,
+          validators,
+        ),
+      );
+      expect(Schema.is(AgreementsRejected)(leaseWithoutUnit)).toBe(true);
+    }),
+  );
+  it.effect('records a manual signature and signed document without a simulated provider request', () =>
+    Effect.gen(function* manualSignature() {
+      yield* TestClock.setTime(Date.parse('2026-10-16T12:00:00.000Z'));
+      const commercial: Contract = { ...draft, kind: 'OTHER', lifecycleState: 'ACTIVE', unitRef: null };
+      const initial: AgreementsState = { ...empty, contracts: [commercial] };
+      const command = {
+        _tag: 'RecordSignedDocument',
+        contractRef,
+        document: { ...document, kind: 'OTHER', signedDocumentReference: 'archive://agreements/signed.pdf' },
+        signedBy: 'Jan Novák',
+        signedOn: '2026-01-01',
+      } as const;
+      const recorded = yield* transitionAgreements(initial, command, scope, validators);
+      expect(recorded.snapshot.contracts[0]).toMatchObject({ lifecycleState: 'ACTIVE', signatureState: 'SIGNED' });
+      expect(recorded.snapshot.documents[0]).toMatchObject({
+        lifecycleState: 'FINAL',
+        signedBy: 'Jan Novák',
+        signedDocumentReference: 'archive://agreements/signed.pdf',
+        signedOn: '2026-01-01',
+      });
+      expect(recorded.snapshot.signatureObservations).toEqual([]);
+      expect(
+        Schema.is(AgreementsConflict)(
+          yield* Effect.flip(transitionAgreements(recorded.snapshot, command, scope, validators)),
+        ),
+      ).toBe(true);
+      for (const invalid of [
+        { ...command, document: { ...command.document, fileName: null } },
+        { ...command, document: { ...command.document, signedDocumentReference: null } },
+        {
+          ...command,
+          document: { ...command.document, contractRef: { ...contractRef, resourceId: unitRef.resourceId } },
+        },
+        { ...command, document: { ...command.document, documentRef: { ...documentRef, tenantId: legalEntityId } } },
+        { ...command, signedOn: '2999-01-01' },
+      ]) {
+        expect(
+          Schema.is(AgreementsRejected)(yield* Effect.flip(transitionAgreements(initial, invalid, scope, validators))),
+        ).toBe(true);
+      }
+      const pending: AgreementsState = { ...initial, contracts: [{ ...commercial, signatureState: 'SENT' }] };
+      expect(
+        Schema.is(AgreementsConflict)(yield* Effect.flip(transitionAgreements(pending, command, scope, validators))),
+      ).toBe(true);
+    }),
+  );
+
   it.effect('edits only an unsigned draft period while retaining its anchors and existing metadata', () =>
     Effect.gen(function* updateDraftPeriod() {
       const previous: Contract = { ...draft, note: 'Keep the existing note', propertyRef };

@@ -43,7 +43,7 @@ type ChildEnvironment = typeof Environment.Type;
 const workspaceRoot = path.resolve(import.meta.dirname, '../..');
 const failureFileName = 'failure.txt';
 const defaults =
-  'party-registry siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights';
+  'party-registry siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights siampark-property siampark-occupancy siampark-agreements';
 const port = Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 }));
 const Toggle = Schema.Literals(['0', '1']);
 const configuration = Config.all({

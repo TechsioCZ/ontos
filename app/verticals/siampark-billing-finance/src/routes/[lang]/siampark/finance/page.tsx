@@ -58,6 +58,7 @@ const RecordsPageContent = () => {
                 canWrite ? (
                   <Button
                     className="whitespace-nowrap"
+                    disabled={references.productsReadable === undefined}
                     icon="icon-[mdi--plus]"
                     onClick={() => setCreateOpen(true)}
                     size="sm"
@@ -67,7 +68,7 @@ const RecordsPageContent = () => {
                   </Button>
                 ) : undefined
               }
-              description={t(`${ns}.description`)}
+              description={t(`${ns}.${references.productsReadable === false ? 'rentalDescription' : 'description'}`)}
               title={t(`${ns}.title`)}
             />
             {vm.relatedCustomer && (
@@ -106,7 +107,9 @@ const RecordsPageContent = () => {
           <FinanceInvoiceDetail invoice={selected} vm={vm} />
         )}
       </section>
-      <CreateInvoiceDialog onOpenChange={setCreateOpen} open={createOpen} vm={vm} />
+      {references.productsReadable !== undefined && (
+        <CreateInvoiceDialog onOpenChange={setCreateOpen} open={createOpen} vm={vm} />
+      )}
       <Dialog
         actions={
           <>

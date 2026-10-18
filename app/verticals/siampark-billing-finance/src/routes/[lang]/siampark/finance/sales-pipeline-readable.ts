@@ -1,10 +1,3 @@
-/**
- * Whether the signed-in role can read the sales pipeline at all, known before any opportunity read is sent.
- *
- * The shell composition lists a navigation entry for every module whose `module.access` the principal holds. When
- * the sales pipeline is missing from that list its read would answer 403, so the invoice references skip it. When
- * the composition cannot be read, or the shell is not in its `available` state, the read is sent as before.
- */
 import {
   Effect,
   HttpApi,
@@ -23,6 +16,7 @@ const SHELL_API_PREFIX = '/shell-super-app-api';
 const COMPOSITION_TIMEOUT = '3 seconds';
 
 const SALES_PIPELINE_MODULE = 'demo.sales-pipeline';
+const MERCHANDISE_MODULE = 'demo.merchandise';
 
 const ShellModuleIdSchema = Schema.String.pipe(Schema.brand('ShellModuleId'));
 
@@ -38,18 +32,30 @@ const ShellNavigationApi = HttpApi.make('FinanceShellNavigationApi').add(
   ),
 );
 
-const lookupSalesPipelineReadable = makeEffectHttpApiClient(ShellNavigationApi, { baseUrl: SHELL_API_PREFIX }).pipe(
+export const referenceAccessFromComposition = ({
+  navigation,
+  state,
+}: {
+  readonly navigation: readonly { readonly moduleId: string }[];
+  readonly state: string;
+}) => {
+  const modules = new Set(navigation.map(({ moduleId }) => moduleId));
+  // An unavailable composition is inconclusive. Keep the provider's own authorization and error handling.
+  return {
+    opportunitiesReadable: state !== 'available' || modules.has(SALES_PIPELINE_MODULE),
+    productsReadable: state !== 'available' || modules.has(MERCHANDISE_MODULE),
+  };
+};
+
+const lookupReferenceAccess = makeEffectHttpApiClient(ShellNavigationApi, { baseUrl: SHELL_API_PREFIX }).pipe(
   Effect.flatMap((client) => client.composition.shellComposition({})),
-  Effect.map(
-    ({ navigation, state }) =>
-      state !== 'available' || new Set<string>(navigation.map(({ moduleId }) => moduleId)).has(SALES_PIPELINE_MODULE),
-  ),
+  Effect.map(referenceAccessFromComposition),
   Effect.timeout(COMPOSITION_TIMEOUT),
-  Effect.orElseSucceed(() => true),
+  Effect.orElseSucceed(() => ({ opportunitiesReadable: true, productsReadable: true })),
 );
 
 /**
  * Read once per document: module access only changes with a sign-out or a legal entity switch, and both reload the
  * document. Concurrent callers share the one request.
  */
-export const salesPipelineReadable = financeBrowserRuntime.runSync(Effect.cached(lookupSalesPipelineReadable));
+export const financeReferenceAccess = financeBrowserRuntime.runSync(Effect.cached(lookupReferenceAccess));

@@ -314,6 +314,7 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
       description={t(`${K}.bulkByTag.description`)}
       onOpenChange={onOpenChange}
       open
+      resizeLabel={t('sales-pipeline.sidePanel.resize')}
       size="lg"
       title={t(`${K}.bulkByTag.title`)}
     >

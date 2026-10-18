@@ -25,7 +25,8 @@
     },
     "faktury": {
       "title": "Invoices",
-      "description": "Invoices from opportunities and manual invoices. Winning an opportunity creates an invoice draft.",
+      "description": "Invoices from catalog lines in won opportunities and manually created drafts.",
+      "rentalDescription": "Invoices for property rent and related services. Include the building or unit and the billing period when creating an invoice.",
       "newInvoice": "New invoice",
       "referencesError": "Customer, product or opportunity names could not be loaded.",
       "unknownCustomer": "Unknown customer",
@@ -33,6 +34,8 @@
       "vatId": "VAT ID (DIČ)",
       "city": "City",
       "form": {
+        "rentalLineHint": "For rent, include the building or unit and the billing period in the description. Enter the price, quantity and VAT according to the agreement.",
+        "rentalDescriptionPlaceholder": "E.g. rent for Parková building, unit A101, October 2026",
         "customer": "Customer",
         "customerNoMatch": "No customer matches.",
         "customerPlaceholder": "Start typing a name or IČO…",
@@ -103,7 +106,7 @@
       "loadError": "Couldn't load data.",
       "loadErrorDescription": "Check your connection and try again.",
       "emptyFirstTitle": "No invoices yet.",
-      "emptyFirstDescription": "Invoices appear when an opportunity is won.",
+      "emptyFirstDescription": "Create the first invoice using New invoice.",
       "noMatches": "No invoices match the filter.",
       "noMatchesDescription": "Try a different search or status.",
       "filters": {
@@ -258,6 +261,9 @@
       },
       "newInvoice": "Create a new invoice"
     },
-    "selectPlaceholder": "Select…"
+    "selectPlaceholder": "Select…",
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
   }
 }

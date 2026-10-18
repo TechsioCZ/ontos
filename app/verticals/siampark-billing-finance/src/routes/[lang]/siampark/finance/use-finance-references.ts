@@ -7,7 +7,7 @@ import { Effect, Predicate, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
 import { customerIndex } from './invoice-view.ts';
-import { salesPipelineReadable } from './sales-pipeline-readable.ts';
+import { financeReferenceAccess } from './sales-pipeline-readable.ts';
 
 const ReferenceSourceSchema = Schema.Literals(['customers', 'opportunities', 'products']);
 type ReferenceSource = typeof ReferenceSourceSchema.Type;
@@ -20,7 +20,8 @@ interface ReferenceFailure {
 /**
  * Names that the invoice list, detail and create form show instead of opaque ids. Each list loads on its own,
  * so one failing read leaves the others usable and sets `referencesFailed`. A role without access to the sales
- * pipeline (the accountant) is not a failure: `opportunitiesForbidden` lets the list mark those cells instead.
+ * pipeline is not a failure: `opportunitiesForbidden` lets the list mark those cells instead. A legal entity
+ * without merchandise access uses descriptive invoice lines and never requests the inaccessible catalog.
  */
 export const useFinanceReferences = () => {
   const [customers, setCustomers] = useState<readonly CustomerListItem[]>([]);
@@ -28,6 +29,7 @@ export const useFinanceReferences = () => {
   const [products, setProducts] = useState<readonly ProductRecord[]>([]);
   const [failures, setFailures] = useState<readonly ReferenceFailure[]>([]);
   const [opportunitiesForbidden, setOpportunitiesForbidden] = useState(false);
+  const [productsReadable, setProductsReadable] = useState<boolean>();
   /** True until the customer list answers, so rows do not read "Neznámý zákazník" while names are on the way. */
   const [customersLoading, setCustomersLoading] = useState(true);
 
@@ -78,21 +80,29 @@ export const useFinanceReferences = () => {
         },
       }),
     );
-    void financeBrowserRuntime.runPromise(
-      salesPipelineReadable.pipe(
-        // A role whose composition leaves out the sales pipeline is refused without a read, so it never sees a 403.
-        Effect.flatMap((readable) => (readable ? loadOpportunityTitles : Effect.sync(markOpportunitiesForbidden))),
-      ),
+    const loadProducts = listProducts('siampark-finance.products').pipe(
+      Effect.match({
+        onFailure: (cause) => recordFailure('products', cause),
+        onSuccess: (items) => {
+          if (active) {
+            setProducts(items);
+          }
+        },
+      }),
     );
     void financeBrowserRuntime.runPromise(
-      listProducts('siampark-finance.products').pipe(
-        Effect.match({
-          onFailure: (cause) => recordFailure('products', cause),
-          onSuccess: (items) => {
-            if (active) {
-              setProducts(items);
-            }
-          },
+      financeReferenceAccess.pipe(
+        Effect.flatMap((access) => {
+          if (active) {
+            setProductsReadable(access.productsReadable);
+          }
+          return Effect.all(
+            [
+              access.opportunitiesReadable ? loadOpportunityTitles : Effect.sync(markOpportunitiesForbidden),
+              access.productsReadable ? loadProducts : Effect.void,
+            ],
+            { concurrency: 2 },
+          );
         }),
       ),
     );
@@ -108,6 +118,7 @@ export const useFinanceReferences = () => {
     opportunitiesForbidden,
     opportunityTitles,
     products,
+    productsReadable,
     referencesFailed: failures.length > 0,
   };
 };

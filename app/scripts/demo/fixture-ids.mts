@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import { v5 } from 'uuid';
+import { rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 
 /**
  * Fixed UUIDv5 namespace for every sales-demo fixture identity. Never change it: seeds, tests and the
@@ -10,6 +11,7 @@ export const SALES_DEMO_NAMESPACE = '5a1e5d3e-0000-5000-8000-0000000d3e70' as co
 /** Demo tenant and legal entity shared with the Siampark baseline (`pnpm demo:reset`). */
 export const demoTenantId = '70000000-0000-4000-8000-000000000020' as const;
 export const demoLegalEntityId = '71000000-0000-4000-8000-000000000020' as const;
+export const rentalDemoLegalEntityId = rentalDemoCompany.legalEntityId;
 
 /** RFC 9562 UUIDv5 of `name` inside `namespace`. */
 export const uuidV5 = (namespace: string, name: string): string => v5(name, namespace);

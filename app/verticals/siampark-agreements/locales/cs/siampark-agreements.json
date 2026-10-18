@@ -35,7 +35,7 @@
       },
       "refresh": "Obnovit",
       "empty": "Žádné záznamy pro zvolený filtr.",
-      "unit": "Jednotka",
+      "unit": "Smlouva / jednotka",
       "period": "Období",
       "detail": "Detail",
       "openEnd": "Bez konce",
@@ -78,7 +78,7 @@
       "documents": "Dokumenty",
       "metadataOnly": "Pouze metadata dokumentu",
       "archive": "Archivovat",
-      "create": "Vytvořit smlouvu k nájmu",
+      "create": "Vytvořit smlouvu",
       "noUnit": "Bez jednotky",
       "signedDocumentTitle": "Podepsaná nájemní smlouva (simulace)",
       "list": "Smlouvy",
@@ -93,7 +93,19 @@
       "signer": "Podepisující",
       "editDraft": "Upravit období návrhu",
       "saveDraft": "Uložit období návrhu",
-      "newContract": "Přejít k nové smlouvě"
+      "newContract": "Přejít k nové smlouvě",
+      "contractKind": "Typ smlouvy",
+      "kinds": {
+        "OTHER": "Obchodní smlouva",
+        "LEASE": "Nájemní smlouva"
+      },
+      "manualSignedDocument": "Podepsaná smlouva",
+      "manualSignatureHint": "Zaevidujte podepisujícího, datum a odkaz nebo evidenční číslo podepsaného dokumentu.",
+      "signedBy": "Podepsal/a",
+      "signedFileName": "Název souboru",
+      "signedReference": "Odkaz nebo evidenční číslo podepsaného dokumentu",
+      "signedOn": "Datum podpisu",
+      "recordSignature": "Zaevidovat podpis a dokument"
     }
   }
 }

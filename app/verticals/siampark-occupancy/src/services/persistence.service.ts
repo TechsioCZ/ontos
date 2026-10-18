@@ -477,25 +477,37 @@ export const persistenceService = (
           Effect.mapError(unavailable),
           Effect.flatMap(([row]) =>
             row === undefined
-              ? Effect.fail(unavailable())
+              ? Effect.succeed({
+                  revision: 0,
+                  snapshot: { bookingObservations: [], occupancies: [] } satisfies OccupancyState,
+                })
               : Schema.decodeEffect(OccupancyStateSchema)(row.snapshot).pipe(
                   Effect.mapError(unavailable),
                   Effect.map((snapshot) => ({ revision: row.revision, snapshot })),
                 ),
           ),
         ),
-    save: (snapshot: OccupancyState, expectedRevision: number) =>
-      transaction
+    save: Effect.fn('OccupancyPersistence.save')(function* save(snapshot: OccupancyState, expectedRevision: number) {
+      const [updated] = yield* transaction
         .update(occupancyState)
         .set({ revision: expectedRevision + 1, snapshot })
         .where(and(scopeWhere, eq(occupancyState.revision, expectedRevision)))
         .returning({ revision: occupancyState.revision })
-        .pipe(
-          Effect.mapError(unavailable),
-          Effect.flatMap(([row]) =>
-            row === undefined ? Effect.fail(conflict('stale_revision')) : Effect.succeed(row.revision),
-          ),
-        ),
+        .pipe(Effect.mapError(unavailable));
+      if (updated !== undefined) {
+        return updated.revision;
+      }
+      if (expectedRevision !== 0) {
+        return yield* conflict('stale_revision');
+      }
+      const [created] = yield* transaction
+        .insert(occupancyState)
+        .values({ legalEntityId, revision: 1, snapshot, tenantId })
+        .onConflictDoNothing()
+        .returning({ revision: occupancyState.revision })
+        .pipe(Effect.mapError(unavailable));
+      return created === undefined ? yield* conflict('stale_revision') : created.revision;
+    }),
   });
 };
 

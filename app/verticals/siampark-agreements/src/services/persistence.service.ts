@@ -426,6 +426,49 @@ export const transitionAgreements = (
       }),
     ),
     Match.tag(
+      'RecordSignedDocument',
+      Effect.fn('Agreements.RecordSignedDocument')(function* recordSignedDocument({
+        contractRef,
+        document,
+        signedBy,
+        signedOn,
+      }: Extract<AgreementsCommand, { readonly _tag: 'RecordSignedDocument' }>) {
+        const record = yield* findContract(state, contractRef, scope);
+        if (
+          (record.lifecycleState !== 'DRAFT' && record.lifecycleState !== 'ACTIVE') ||
+          record.signatureState === 'SIGNED' ||
+          record.signatureState === 'SENT'
+        ) {
+          return yield* conflict('manual_signature_requires_unsigned_contract');
+        }
+        if (
+          document.contractRef === null ||
+          !refMatches(document.contractRef, contractRef) ||
+          document.lifecycleState !== 'FINAL' ||
+          document.signedDocumentReference === null ||
+          document.fileName === null
+        ) {
+          return yield* rejected('signed_result_requires_final_document');
+        }
+        yield* validateDocument(state, document, scope);
+        if (state.documents.some((value) => refMatches(value.documentRef, document.documentRef))) {
+          return yield* conflict('signed_document_already_exists');
+        }
+        const now = DateTime.formatIso(yield* DateTime.now);
+        if (signedOn > now.slice(0, 10)) {
+          return yield* rejected('signature_date_in_future');
+        }
+        const changed = replaceContract(state, { ...record, signatureState: 'SIGNED' });
+        return {
+          ...changed,
+          snapshot: {
+            ...changed.snapshot,
+            documents: [...state.documents, { ...document, createdAt: now, signedBy, signedOn, updatedAt: now }],
+          },
+        };
+      }),
+    ),
+    Match.tag(
       'ObserveSignature',
       Effect.fn('Agreements.ObserveSignature')(function* observeSignature({
         contractRef,
@@ -641,25 +684,41 @@ export const persistenceService = (
           Effect.mapError(unavailable),
           Effect.flatMap(([row]) =>
             row === undefined
-              ? Effect.fail(unavailable())
+              ? Effect.succeed({
+                  revision: 0,
+                  snapshot: { contracts: [], documents: [], signatureObservations: [] } satisfies AgreementsState,
+                })
               : Schema.decodeEffect(AgreementsStateSchema)(row.snapshot).pipe(
                   Effect.mapError(unavailable),
                   Effect.map((snapshot) => ({ revision: row.revision, snapshot })),
                 ),
           ),
         ),
-    save: (snapshot: AgreementsState, expectedRevision: number) =>
-      transaction
-        .update(agreementsState)
-        .set({ revision: expectedRevision + 1, snapshot })
-        .where(and(scopeWhere, eq(agreementsState.revision, expectedRevision)))
-        .returning({ revision: agreementsState.revision })
-        .pipe(
-          Effect.mapError(unavailable),
-          Effect.flatMap(([row]) =>
-            row === undefined ? Effect.fail(conflict('stale_revision')) : Effect.succeed(row.revision),
-          ),
+    save: (snapshot: AgreementsState, expectedRevision: number) => {
+      const values = { revision: expectedRevision + 1, snapshot };
+      const write =
+        expectedRevision === 0
+          ? transaction
+              .insert(agreementsState)
+              .values({ ...values, legalEntityId, tenantId })
+              .onConflictDoUpdate({
+                set: values,
+                setWhere: eq(agreementsState.revision, 0),
+                target: [agreementsState.tenantId, agreementsState.legalEntityId],
+              })
+              .returning({ revision: agreementsState.revision })
+          : transaction
+              .update(agreementsState)
+              .set(values)
+              .where(and(scopeWhere, eq(agreementsState.revision, expectedRevision)))
+              .returning({ revision: agreementsState.revision });
+      return write.pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap(([row]) =>
+          row === undefined ? Effect.fail(conflict('stale_revision')) : Effect.succeed(row.revision),
         ),
+      );
+    },
   });
 };
 

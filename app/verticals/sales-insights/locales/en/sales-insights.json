@@ -121,18 +121,7 @@
       "description": "Current opportunities, receivables and tasks.",
       "scope": "Values follow the selected tenant, legal entity and your permissions.",
       "refresh": "Refresh data",
-      "settings": "Overview settings",
-      "reset": "Restore defaults",
-      "metrics": "Visible metrics",
-      "display": "Display",
-      "view": {
-        "cards": "Cards",
-        "list": "List"
-      },
-      "browserOnly": "Metric and display choices are saved only in this browser, separately for your account, tenant and legal entity.",
-      "storageUnavailable": "Browser storage is unavailable. Choices apply until you leave this page.",
       "loading": "Loading sales overview…",
-      "noneSelected": "Select at least one metric.",
       "currentSnapshot": "Current snapshot",
       "openSource": "Open records: {{metric}}",
       "openRecords": "View records",

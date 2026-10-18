@@ -28,7 +28,12 @@ import {
   PAYMENT_TERM_DAYS,
   toInvoiceLine,
 } from '../../../../../shared/domain/invoice-draft.ts';
-import type { DraftLine, DraftLineIssue, PaymentTermDays } from '../../../../../shared/domain/invoice-draft.ts';
+import type {
+  DraftLine,
+  DraftLineIssue,
+  DraftLineKind,
+  PaymentTermDays,
+} from '../../../../../shared/domain/invoice-draft.ts';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
 import { InvoiceLineEditor } from './invoice-line-editor.tsx';
 import { formLabelProps } from './invoice-view.ts';
@@ -61,26 +66,31 @@ interface Draft {
 
 const CUSTOMER_COMBOBOX_ID = 'invoice-customer';
 
-const emptyDraft = (): Draft => ({
+const emptyDraft = (lineKind: DraftLineKind): Draft => ({
   customerId: '',
   issueDate: DateTime.formatIsoDateUtc(DateTime.nowUnsafe()),
-  lines: [newDraftLine('line-1', 'product')],
+  lines: [newDraftLine('line-1', lineKind)],
   paymentDays: 14,
   resumed: false,
 });
 
 /** True once the form holds input a fresh draft would not have, so closing it keeps something worth resuming. */
-const isLineEdited = (line: DraftLine): boolean =>
-  line.kind !== 'product' || line.productId !== null || line.description !== '' || line.quantity !== 1;
+const isLineEdited = (line: DraftLine, lineKind: DraftLineKind): boolean =>
+  line.kind !== lineKind ||
+  line.productId !== null ||
+  line.description !== '' ||
+  line.quantity !== 1 ||
+  line.unitPriceMinor !== 0 ||
+  line.vatRate !== 21;
 
-const isDraftEdited = (draft: Draft): boolean => {
-  const fresh = emptyDraft();
+const isDraftEdited = (draft: Draft, lineKind: DraftLineKind): boolean => {
+  const fresh = emptyDraft(lineKind);
   return (
     draft.customerId !== fresh.customerId ||
     draft.issueDate !== fresh.issueDate ||
     draft.paymentDays !== fresh.paymentDays ||
     draft.lines.length !== fresh.lines.length ||
-    draft.lines.some(isLineEdited)
+    draft.lines.some((line) => isLineEdited(line, lineKind))
   );
 };
 
@@ -214,9 +224,10 @@ const DraftTotalsSummary = ({ totals, zeroPriceWarning }: DraftTotalsSummaryProp
 
 export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogProps) => {
   const { confirmInvoice, createDraft, references, t } = vm;
+  const defaultLineKind = references.productsReadable === false ? 'free' : 'product';
   const toaster = useToast();
   const lineSequence = useRef(1);
-  const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [draft, setDraft] = useState<Draft>(() => emptyDraft(defaultLineKind));
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -265,8 +276,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   const addLine = () => {
     lineSequence.current += 1;
     const key = `line-${lineSequence.current}`;
-    // A new line starts as a product line like the first one, so it has its own Produkt picker right away.
-    setLines((lines) => [...lines, newDraftLine(key, 'product')]);
+    setLines((lines) => [...lines, newDraftLine(key, defaultLineKind)]);
   };
 
   const removeLine = (lineKey: string) => {
@@ -277,7 +287,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
 
   /** Starts a fresh draft. Used by Začít znovu, Zrušit and after a successful create. */
   const resetDraft = () => {
-    setDraft(emptyDraft());
+    setDraft(emptyDraft(defaultLineKind));
     setSubmitted(false);
     setServerError(null);
     setZeroPriceAcknowledged(false);
@@ -292,7 +302,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
   /** Escape and the close button hide the panel but keep an edited draft for the next open. */
   const handleOpenChange = (next: boolean) => {
     if (!next) {
-      setDraft((current) => ({ ...current, resumed: isDraftEdited(current) }));
+      setDraft((current) => ({ ...current, resumed: isDraftEdited(current, defaultLineKind) }));
     }
     onOpenChange(next);
   };
@@ -393,6 +403,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
       closeOnInteractOutside={false}
       onOpenChange={handleOpenChange}
       open={open}
+      resizeLabel={t('siampark-billing-finance.sidePanel.resize')}
       // xl leaves the line's Typ select room for "Volná položka" at the form's text size.
       size="xl"
       title={t(`${ns}.newInvoice`)}
@@ -478,6 +489,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
               onRemove={() => removeLine(line.key)}
               position={index + 1}
               products={products}
+              productsReadable={references.productsReadable !== false}
             />
           ))}
           <div>
@@ -492,7 +504,9 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
               {t(`${ns}.form.addLine`)}
             </Button>
           </div>
-          <p className="text-fg-secondary text-xs">{t(`${ns}.form.priceNote`)}</p>
+          <p className="text-fg-secondary text-xs">
+            {t(`${ns}.form.${references.productsReadable === false ? 'rentalLineHint' : 'priceNote'}`)}
+          </p>
         </div>
 
         <DraftTotalsSummary totals={totals} zeroPriceWarning={zeroPriceWarning} />

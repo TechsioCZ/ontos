@@ -59,7 +59,7 @@
     "pages": {
       "records": {
         "title": "Příležitosti",
-        "description": "Obchodní případy napříč zákazníky. Výhra automaticky vystaví fakturu.",
+        "description": "Příležitosti k obchodu i pronájmu. Z katalogových položek vyhrané příležitosti vznikne koncept faktury.",
         "newOpportunity": "Nová příležitost",
         "unavailable": "Data se nepodařilo načíst.",
         "forbidden": "K této sekci nemáte oprávnění.",
@@ -118,7 +118,7 @@
           "submit": "Vytvořit příležitost",
           "submitting": "Ukládám…",
           "title": "Nová příležitost",
-          "description": "Příležitost se založí v první fázi obchodu. Produkty se oceňují aktuální cenou.",
+          "description": "Zadejte předmět jednání, protistranu a očekávané uzavření.",
           "customerPlaceholder": "Vyhledejte zákazníka…",
           "noCustomerMatch": "Žádný zákazník neodpovídá hledání.",
           "unknownCustomer": "Neznámý zákazník",
@@ -146,7 +146,9 @@
             "noteTooLong": "Poznámka může mít nejvýše 2000 znaků.",
             "productRequired": "Vyberte produkt.",
             "quantityRange": "Množství musí být celé číslo od 1 do {{max}}.",
-            "titleRequired": "Vyplňte název příležitosti."
+            "titleRequired": "Vyplňte název příležitosti.",
+            "amountRange": "Součet položek je příliš vysoký. Snižte cenu nebo množství.",
+            "manualLine": "Vyplňte popis do 300 znaků a nezápornou cenu."
           },
           "fields": {
             "title": "Název",
@@ -156,8 +158,12 @@
             "note": "Poznámka",
             "lines": "Položky",
             "product": "Produkt",
-            "quantity": "Množství"
-          }
+            "quantity": "Množství",
+            "rentDescription": "Nájem nebo služba",
+            "price": "Cena za období bez DPH (Kč)",
+            "vat": "DPH (%)"
+          },
+          "rentHint": "Uveďte budovu nebo jednotku a období nájmu. Částka odpovídá zadanému počtu období; fakturu pro tyto položky založte ručně."
         },
         "stageDialog": {
           "cancel": "Zrušit",
@@ -167,7 +173,7 @@
           "submit": "Změnit fázi",
           "submitting": "Ukládám…",
           "title": "Změnit fázi",
-          "wonWarning": "Vyhráním příležitosti se automaticky vytvoří koncept faktury."
+          "wonWarning": "Z katalogových položek vznikne koncept faktury. Položky nájmu a služeb bez katalogu vyfakturujte ručně."
         },
         "owner": {
           "cancel": "Zrušit",
@@ -236,6 +242,9 @@
     },
     "selectPlaceholder": "Vyberte…",
     "loading": "Načítám…",
-    "noResults": "Nic nenalezeno"
+    "noResults": "Nic nenalezeno",
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    }
   }
 }

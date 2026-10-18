@@ -1,381 +1,33 @@
-import { failureFeedback } from '../../../../../shared/actions/apply-command.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { executeRecords as executePropertyRecords } from '@app/siampark-property/clients/records';
-import { executeRecords as executeOccupancyRecords } from '@app/siampark-occupancy/clients/records';
-import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { ContractRefSchema } from '../../../../../shared/resources/contract.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { Crypto, DateTime, Effect, Option, PlatformError, Schema } from 'effect';
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
-
-import type { AgreementsCommand, Feedback } from '../../../../../shared/actions/apply-command.ts';
-import type { Contract, RecordsResponse } from '../../../../../shared/apis/records.ts';
-import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../../api/records-client.ts';
+import { useRecordsPage } from './use-agreements-records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/siampark-agreements.json';
 import enResource from '../../../../../locales/en/siampark-agreements.json';
 import '../../../index.css';
 
-const RecordsSearchSchema = Schema.Struct({ resourceId: Schema.optional(ContractRefSchema.fields.resourceId) });
 const LABEL_DETAIL = 'siampark-agreements.demo.detail';
+const LABEL_OTHER = 'siampark-agreements.demo.kinds.OTHER';
 const LABEL_CREATE = 'siampark-agreements.demo.create';
-const DEFAULT_START_DATE = '2026-10-05';
-const DEFAULT_END_DATE = '2027-10-05';
 const siamparkAgreementsI18nResources = {
   cs: { 'siampark-agreements': csResource },
   en: { 'siampark-agreements': enResource },
 } as const;
-const browserCrypto = Crypto.make({
-  digest: (algorithm, data) =>
-    Effect.tryPromise({
-      catch: (cause) => PlatformError.systemError({ _tag: 'Unknown', cause, method: 'digest', module: 'WebCrypto' }),
-      try: globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle, algorithm, new Uint8Array(data)),
-    }).pipe(
-      Effect.map((buffer) => new Uint8Array(buffer)),
-      Effect.timeoutOrElse({
-        duration: '5 seconds',
-        orElse: () =>
-          Effect.fail(PlatformError.systemError({ _tag: 'TimedOut', method: 'digest', module: 'WebCrypto' })),
-      }),
-    ),
-  randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-});
-const newUuid = browserCrypto.randomUUIDv4;
-type Properties = Effect.Success<ReturnType<typeof executePropertyRecords>>;
-type Occupancies = Effect.Success<ReturnType<typeof executeOccupancyRecords>>;
-const useRecordsPage = () => {
-  const { language, t } = useModernI18n();
-  const { location } = useRouterState();
-  const linkedResourceId = Option.getOrUndefined(
-    Schema.decodeUnknownOption(RecordsSearchSchema)(location.search),
-  )?.resourceId;
-  const cancellation = useRef<AbortController | null>(null);
-  const run = <A, E>(effect: Effect.Effect<A, E>) => {
-    const controller = cancellation.current ?? new AbortController();
-    cancellation.current = controller;
-    void browserRuntime.runPromiseExit(effect, { signal: controller.signal });
-  };
-  const [snapshot, setSnapshot] = useState<RecordsResponse>();
-  const [properties, setProperties] = useState<Properties>();
-  const [occupancies, setOccupancies] = useState<Occupancies>();
-  const [feedback, setFeedback] = useState<Feedback>('loading');
-  const [selectedId, setSelectedId] = useState('');
-  const [signerContact, setSignerContact] = useState('');
-  const [occupancyId, setOccupancyId] = useState('');
-  const [startDate, setStartDate] = useState(DEFAULT_START_DATE);
-  const [endDate, setEndDate] = useState(DEFAULT_END_DATE);
-  const [editingDraft, setEditingDraft] = useState(false);
-  const [expiringOnly, setExpiringOnly] = useState(false);
-  const selected = snapshot?.contracts.find(
-    (record) => record.contractRef.resourceId === (selectedId || linkedResourceId),
-  );
-  const clearSensitiveState = () => {
-    setSnapshot(undefined);
-    setProperties(undefined);
-    setOccupancies(undefined);
-    setSelectedId('');
-    setSignerContact('');
-    setOccupancyId('');
-    setStartDate(DEFAULT_START_DATE);
-    setEndDate(DEFAULT_END_DATE);
-    setEditingDraft(false);
-  };
-  const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
-    const nextFeedback = failureFeedback(failure);
-    if (nextFeedback === 'forbidden' || nextFeedback === 'unavailable') {
-      cancellation.current?.abort();
-      cancellation.current = new AbortController();
-      clearSensitiveState();
-    }
-    setFeedback(nextFeedback);
-  };
-  const load = () =>
-    Effect.sync(clearSensitiveState).pipe(
-      Effect.flatMap(() =>
-        Effect.all(
-          {
-            occupancies: executeOccupancyRecords({}, 'siampark-agreements.occupancies'),
-            properties: executePropertyRecords({}, 'siampark-agreements.units'),
-            records: executeRecords({}, 'siampark-agreements.records'),
-          },
-          { concurrency: 3 },
-        ),
-      ),
-      Effect.tap((value) =>
-        Effect.sync(() => {
-          setSnapshot(value.records);
-          setProperties(value.properties);
-          setOccupancies(value.occupancies);
-        }),
-      ),
-    );
-  const refresh = () => {
-    cancellation.current?.abort();
-    cancellation.current = new AbortController();
-    clearSensitiveState();
-    setFeedback('loading');
-    run(
-      load().pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: () => setFeedback('ready'),
-        }),
-      ),
-    );
-  };
-  const loadOnMount = useEffectEvent(() => {
-    run(load().pipe(Effect.match({ onFailure: reportFailure, onSuccess: () => setFeedback('ready') })));
-  });
-  useEffect(() => {
-    loadOnMount();
-    return () => {
-      cancellation.current?.abort();
-    };
-  }, []);
-  const runCommand = (command: AgreementsCommand) => {
-    if (snapshot === undefined) {
-      return;
-    }
-    setFeedback('saving');
-    run(
-      Effect.all(
-        {
-          idempotencyKey: newUuid,
-          referenceCredentials: makeReferenceGatewayCredentials([
-            'party-registry',
-            'siampark-occupancy',
-            'siampark-property',
-            'siampark-property',
-          ]),
-        },
-        { concurrency: 2 },
-      ).pipe(
-        Effect.flatMap(({ idempotencyKey, referenceCredentials }) =>
-          executeApplyCommand({ command, expectedRevision: snapshot.revision }, 'siampark-agreements.command', {
-            idempotencyKey,
-            referenceCredentials,
-          }),
-        ),
-        Effect.flatMap((result) => load().pipe(Effect.map((value) => ({ records: value.records, result })))),
-        Effect.tap(({ records, result }) => {
-          setSelectedId(
-            records.contracts.find((record) => record.contractRef.resourceId === result.resourceRef?.resourceId)
-              ?.contractRef.resourceId ?? '',
-          );
-          return Effect.void;
-        }),
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: () => setFeedback('ready'),
-        }),
-      ),
-    );
-  };
-  const createContract = () => {
-    const occupancy = occupancies?.occupancies.find((record) => record.occupancyRef.resourceId === occupancyId);
-    const unit = properties?.units.find((record) => record.unitRef.resourceId === occupancy?.unitRef.resourceId);
-    if (occupancy === undefined || occupancy.customerCounterpartyRef === null || unit === undefined) {
-      setFeedback('validation');
-      return;
-    }
-    const customer = occupancy.customerCounterpartyRef;
-    run(
-      newUuid.pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: (resourceId) =>
-            runCommand({
-              _tag: 'CreateContract',
-              record: {
-                contractRef: {
-                  moduleId: 'siampark.agreements',
-                  resourceId,
-                  resourceType: 'siampark.agreements.contract',
-                  tenantId: occupancy.occupancyRef.tenantId,
-                },
-                counterpartyRef: customer,
-                endDate: endDate || null,
-                kind: 'LEASE',
-                lifecycleState: 'DRAFT',
-                note: null,
-                occupancyRef: occupancy.occupancyRef,
-                propertyRef: unit.propertyRef,
-                renewalNoticeDate: null,
-                signatureState: 'NOT_SENT',
-                startDate,
-                supersedesContractRef: null,
-                unitRef: occupancy.unitRef,
-              },
-            }),
-        }),
-      ),
-    );
-  };
-  const editDraft = () => {
-    if (selected?.lifecycleState !== 'DRAFT' || selected.signatureState !== 'NOT_SENT') {
-      return;
-    }
-    setStartDate(selected.startDate);
-    setEndDate(selected.endDate ?? '');
-    setEditingDraft(true);
-  };
-  const resetDraftForm = () => {
-    setEditingDraft(false);
-    setOccupancyId('');
-    setStartDate(DEFAULT_START_DATE);
-    setEndDate(DEFAULT_END_DATE);
-  };
-  const saveDraft = () => {
-    if (selected?.lifecycleState !== 'DRAFT' || selected.signatureState !== 'NOT_SENT') {
-      setFeedback('validation');
-      return;
-    }
-    runCommand({
-      _tag: 'UpdateContract',
-      record: {
-        contractRef: selected.contractRef,
-        counterpartyRef: selected.counterpartyRef,
-        endDate: endDate || null,
-        kind: selected.kind,
-        lifecycleState: selected.lifecycleState,
-        note: selected.note,
-        occupancyRef: selected.occupancyRef,
-        propertyRef: selected.propertyRef,
-        renewalNoticeDate: selected.renewalNoticeDate,
-        signatureState: selected.signatureState,
-        startDate,
-        supersedesContractRef: selected.supersedesContractRef,
-        unitRef: selected.unitRef,
-      },
-    });
-  };
-  const observeSignature = (record: Contract) => {
-    run(
-      Effect.all({ resourceId: newUuid, timestamp: DateTime.now }, { concurrency: 1 }).pipe(
-        Effect.map(({ resourceId, timestamp }): AgreementsCommand => {
-          const now = DateTime.formatIso(timestamp);
-          return {
-            _tag: 'ObserveSignature',
-            contractRef: record.contractRef,
-            document: {
-              contractRef: record.contractRef,
-              createdAt: now,
-              documentRef: {
-                moduleId: 'siampark.agreements',
-                resourceId,
-                resourceType: 'siampark.agreements.document',
-                tenantId: record.contractRef.tenantId,
-              },
-              fileName: `${record.contractRef.resourceId}.pdf`,
-              kind: 'LEASE',
-              lifecycleState: 'FINAL',
-              signedDocumentReference: `SIMULATED:signature:${record.contractRef.resourceId}`,
-              title: t('siampark-agreements.demo.signedDocumentTitle'),
-              updatedAt: now,
-            },
-            outcome: 'SIGNED',
-          };
-        }),
-        Effect.tap((command) => Effect.sync(() => runCommand(command))),
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: () => setFeedback('saving'),
-        }),
-      ),
-    );
-  };
-  const renew = (record: Contract) => {
-    run(
-      newUuid.pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: (resourceId) =>
-            runCommand({
-              _tag: 'RenewContract',
-              contractRef: record.contractRef,
-              successor: {
-                contractRef: { ...record.contractRef, resourceId },
-                counterpartyRef: record.counterpartyRef,
-                endDate: endDate || null,
-                kind: record.kind,
-                lifecycleState: 'DRAFT',
-                note: record.note,
-                occupancyRef: record.occupancyRef,
-                propertyRef: record.propertyRef,
-                renewalNoticeDate: null,
-                signatureState: 'NOT_SENT',
-                startDate: record.endDate ?? startDate,
-                supersedesContractRef: record.contractRef,
-                unitRef: record.unitRef,
-              },
-            }),
-        }),
-      ),
-    );
-  };
-  const unitName = (resourceId: string | undefined) =>
-    properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ??
-    resourceId ??
-    t('siampark-agreements.demo.noUnit');
-  const visible = snapshot?.contracts.filter((record) => !expiringOnly || record.expiringSoon) ?? [];
-  const busy = feedback === 'loading' || feedback === 'saving';
-  return {
-    busy,
-    createContract,
-    editDraft,
-    editingDraft,
-    endDate,
-    expiringOnly,
-    feedback,
-    language,
-    observeSignature,
-    occupancies,
-    occupancyId,
-    properties,
-    refresh,
-    renew,
-    resetDraftForm,
-    runCommand,
-    saveDraft,
-    selected,
-    setEndDate,
-    setExpiringOnly,
-
-    setOccupancyId,
-    setSelectedId: (value: string) => {
-      setSelectedId(value);
-      setSignerContact('');
-      resetDraftForm();
-    },
-    setSignerContact,
-    setStartDate,
-    signerContact,
-    snapshot,
-    startDate,
-    t,
-    unitName,
-    visible,
-  };
-};
 const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
   const {
     busy,
     editDraft,
     language,
-    observeSignature,
+    recordSignature,
     renew,
     runCommand,
     selected,
     setSelectedId,
-    setSignerContact,
-    signerContact,
     snapshot,
     t,
     unitName,
@@ -389,7 +41,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
       className="siamparkagreements:space-y-4 siamparkagreements:rounded-lg siamparkagreements:border siamparkagreements:border-(--color-border-muted) siamparkagreements:bg-(--color-surface) siamparkagreements:p-5"
     >
       <h2 className="siamparkagreements:text-lg siamparkagreements:font-semibold">
-        {unitName(selected.unitRef?.resourceId)}
+        {selected.kind === 'OTHER' ? t(LABEL_OTHER) : unitName(selected.unitRef?.resourceId)}
       </h2>
       <p className="siamparkagreements:break-words siamparkagreements:font-mono siamparkagreements:text-xs siamparkagreements:text-(--color-fg-secondary)">
         {selected.contractRef.resourceId}
@@ -420,7 +72,9 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
         {selected.startDate} → {selected.endDate ?? t('siampark-agreements.demo.openEnd')}
       </p>
       <p className="siamparkagreements:break-words siamparkagreements:text-sm siamparkagreements:text-(--color-fg-secondary)">
-        {t('siampark-agreements.demo.customer')}: {selected.counterpartyRef.resourceId}
+        {t('siampark-agreements.demo.customer')}:{' '}
+        {state.customers.find((customer) => customer.counterpartyRef.resourceId === selected.counterpartyRef.resourceId)
+          ?.displayName ?? selected.counterpartyRef.resourceId}
       </p>
       {selected.supersedesContractRef !== null && (
         <p>
@@ -441,51 +95,40 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             {t('siampark-agreements.demo.editDraft')}
           </Button>
         )}
-        {selected.lifecycleState === 'DRAFT' &&
+        {(selected.lifecycleState === 'DRAFT' || selected.lifecycleState === 'ACTIVE') &&
           (selected.signatureState === 'NOT_SENT' || selected.signatureState === 'DECLINED') && (
-            <div className="siamparkagreements:flex siamparkagreements:w-full siamparkagreements:flex-wrap siamparkagreements:items-end siamparkagreements:gap-3 siamparkagreements:rounded-lg siamparkagreements:bg-(--color-surface-subtle) siamparkagreements:p-4">
-              <div className="siamparkagreements:min-w-0 siamparkagreements:flex-1 siamparkagreements:basis-full">
-                <FormInput
-                  id="signature-contact"
-                  label={t('siampark-agreements.demo.signerContact')}
-                  onChange={(event) => setSignerContact(event.target.value)}
-                  placeholder={t('siampark-agreements.demo.signerContactPlaceholder')}
-                  value={signerContact}
-                />
-              </div>
-              <Button
-                disabled={busy || signerContact.trim().length === 0}
-                onClick={() => runCommand({ _tag: 'SendSignature', contractRef: selected.contractRef, signerContact })}
-                size="sm"
-                variant="warning"
-              >
-                {t('siampark-agreements.demo.sendSignature')}
-              </Button>
-            </div>
-          )}
-        {selected.lifecycleState === 'DRAFT' && selected.signatureState === 'SENT' && (
-          <>
-            <Button disabled={busy} onClick={() => observeSignature(selected)} size="sm" variant="warning">
-              {t('siampark-agreements.demo.simulateSigned')}
-            </Button>
-            <Button
-              disabled={busy}
-              onClick={() =>
-                runCommand({
-                  _tag: 'ObserveSignature',
-                  contractRef: selected.contractRef,
-                  document: null,
-                  outcome: 'DECLINED',
-                })
-              }
-              size="sm"
-              theme="outlined"
-              variant="danger"
+            <form
+              className="siamparkagreements:w-full siamparkagreements:space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                recordSignature(selected);
+              }}
             >
-              {t('siampark-agreements.demo.simulateDeclined')}
-            </Button>
-          </>
-        )}
+              <p className="siamparkagreements:text-sm">{t('siampark-agreements.demo.manualSignatureHint')}</p>
+              {(
+                [
+                  ['signedBy', state.signedBy, state.setSignedBy],
+                  ['signedFileName', state.signedFileName, state.setSignedFileName],
+                  ['signedReference', state.signedReference, state.setSignedReference],
+                  ['signedOn', state.signedOn, state.setSignedOn],
+                ] as const
+              ).map(([field, value, change]) => (
+                <FormInput
+                  disabled={busy}
+                  id={`contract-${field}`}
+                  key={field}
+                  label={t(`siampark-agreements.demo.${field}`)}
+                  onChange={(event) => change(event.target.value)}
+                  required
+                  type={field === 'signedOn' ? 'date' : 'text'}
+                  value={value}
+                />
+              ))}
+              <Button disabled={busy} size="sm" type="submit" variant="warning">
+                {t('siampark-agreements.demo.recordSignature')}
+              </Button>
+            </form>
+          )}
         {selected.lifecycleState === 'DRAFT' && (
           <Button
             disabled={busy}
@@ -517,12 +160,14 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             </Button>
           </>
         )}
-        <a
-          className="siamparkagreements:inline-flex siamparkagreements:items-center siamparkagreements:text-sm siamparkagreements:underline siamparkagreements:underline-offset-4"
-          href={`/${language}/siampark/occupancy`}
-        >
-          {t('siampark-agreements.demo.occupancy')}
-        </a>
+        {selected.occupancyRef !== null && (
+          <a
+            className="siamparkagreements:inline-flex siamparkagreements:items-center siamparkagreements:text-sm siamparkagreements:underline siamparkagreements:underline-offset-4"
+            href={`/${language}/siampark/occupancy`}
+          >
+            {t('siampark-agreements.demo.occupancy')}
+          </a>
+        )}
       </div>
       <h3 className="siamparkagreements:text-sm siamparkagreements:font-semibold">
         {t('siampark-agreements.demo.documents')}
@@ -538,7 +183,8 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
                 <Badge size="sm" variant={record.lifecycleState === 'FINAL' ? 'success' : 'outline'}>
                   {t(`siampark-agreements.demo.documentLabels.${record.lifecycleState}`)}
                 </Badge>{' '}
-                {record.signedDocumentReference ?? t('siampark-agreements.demo.metadataOnly')}
+                {record.signedDocumentReference ?? t('siampark-agreements.demo.metadataOnly')} {record.signedBy ?? ''}{' '}
+                {record.signedOn ?? ''}
                 {record.lifecycleState !== 'ARCHIVED' && (
                   <Button
                     disabled={busy}
@@ -615,6 +261,10 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
   const confirmedLeases = (occupancies?.occupancies ?? []).filter(
     (record) => record.kind === 'LONG_TERM_LEASE' && record.state === 'CONFIRMED',
   );
+  const commercialCustomers = state.customers.flatMap((item) =>
+    item.status === 'ACTIVE' ? [{ label: item.displayName ?? item.partyId, value: item.partyId }] : [],
+  );
+  const customerValues = state.customerId.length === 0 ? [] : [state.customerId];
   const formLabel = editingDraft ? 'siampark-agreements.demo.editDraft' : LABEL_CREATE;
   return (
     <section
@@ -622,9 +272,62 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
       className="siamparkagreements:space-y-4 siamparkagreements:rounded-lg siamparkagreements:border siamparkagreements:border-(--color-border-muted) siamparkagreements:bg-(--color-surface) siamparkagreements:p-5"
     >
       <h2 className="siamparkagreements:text-lg siamparkagreements:font-semibold">{t(formLabel)}</h2>
-      {editingDraft ? (
-        <p>{unitName(selected?.unitRef?.resourceId)}</p>
-      ) : (
+      {!editingDraft && (
+        <Select
+          items={(['OTHER', 'LEASE'] as const).map((value) => ({
+            label: t(`siampark-agreements.demo.kinds.${value}`),
+            value,
+          }))}
+          onValueChange={({ value }) => state.selectContractKind(value[0] === 'LEASE' ? 'LEASE' : 'OTHER')}
+          value={[state.contractKind]}
+        >
+          <Select.Label>{t('siampark-agreements.demo.contractKind')}</Select.Label>
+          <Select.Control>
+            <Select.Trigger>
+              <Select.ValueText />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {(['OTHER', 'LEASE'] as const).map((value) => (
+                <Select.Item item={{ label: t(`siampark-agreements.demo.kinds.${value}`), value }} key={value}>
+                  <Select.ItemText>{t(`siampark-agreements.demo.kinds.${value}`)}</Select.ItemText>
+                  <Select.ItemIndicator />
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select>
+      )}
+      {state.formView.showCommercialCustomer && (
+        <Select
+          items={commercialCustomers}
+          onValueChange={({ value }) => state.setCustomerId(value[0] ?? '')}
+          value={customerValues}
+        >
+          <Select.Label>{t('siampark-agreements.demo.customer')}</Select.Label>
+          <Select.Control>
+            <Select.Trigger>
+              <Select.ValueText placeholder={t('siampark-agreements.demo.choose')} />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {commercialCustomers.map((item) => (
+                <Select.Item item={item} key={item.value}>
+                  <Select.ItemText>{item.label}</Select.ItemText>
+                  <Select.ItemIndicator />
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select>
+      )}
+      {state.formView.showRentalFeedback && (
+        <output aria-live="polite">{t(`siampark-agreements.demo.feedback.${state.rentalFeedback}`)}</output>
+      )}
+      {editingDraft && <p>{selected?.kind === 'OTHER' ? t(LABEL_OTHER) : unitName(selected?.unitRef?.resourceId)}</p>}
+      {state.formView.showRentalSelector && (
         <Select
           items={confirmedLeases.map((record) => ({
             label: unitName(record.unitRef.resourceId),
@@ -785,7 +488,13 @@ const RecordsPageContent = () => {
               {visible.map((record) => (
                 <Table.Row key={record.contractRef.resourceId}>
                   <Table.Cell>
-                    <span className="siamparkagreements:font-medium">{unitName(record.unitRef?.resourceId)}</span>
+                    <span className="siamparkagreements:font-medium">
+                      {record.kind === 'OTHER'
+                        ? (state.customers.find(
+                            (customer) => customer.counterpartyRef.resourceId === record.counterpartyRef.resourceId,
+                          )?.displayName ?? t(LABEL_OTHER))
+                        : unitName(record.unitRef?.resourceId)}
+                    </span>
                   </Table.Cell>
                   <Table.Cell>
                     {record.startDate} → {record.endDate ?? t('siampark-agreements.demo.openEnd')}

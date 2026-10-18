@@ -34,7 +34,8 @@
           "tags": "Štítky",
           "selectHint": "Vyberte objednávky v tabulce pro hromadnou změnu stavu nebo štítků.",
           "selectionScope": "Akce se týkají vybraných objednávek v aktuálním filtru, včetně dalších stránek.",
-          "noCommonStatus": "Vybrané objednávky nemají společný další stav. Štítky můžete upravit společně."
+          "noCommonStatus": "Vybrané objednávky nemají společný další stav. Štítky můžete upravit společně.",
+          "finalStatus": "U doručených a zrušených objednávek už stav změnit nelze. Štítky můžete upravit společně."
         },
         "columns": {
           "createdAt": "Vytvořeno",
@@ -367,6 +368,9 @@
       "root": "Stránkování"
     },
     "selectPlaceholder": "Vyberte…",
-    "loading": "Načítám…"
+    "loading": "Načítám…",
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    }
   }
 }

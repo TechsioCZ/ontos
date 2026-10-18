@@ -553,6 +553,7 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
         }
       }}
       open={open}
+      resizeLabel={t('tagging.sidePanel.resize')}
       size={size}
       title={t('tagging.tags.bulk.title')}
     >

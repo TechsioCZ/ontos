@@ -433,6 +433,47 @@ export const visibleOpportunities = Effect.fn('SalesPipeline.visibleOpportunitie
   return opportunities.filter((_, index) => decisions[index]?.decision === 'allowed');
 });
 
+interface PipelineStatePersistence {
+  readonly insert: (
+    state: typeof SalesPipelineStateSchema.Encoded,
+  ) => Effect.Effect<readonly { readonly revision: number }[], SalesPipelinePersistenceUnavailable>;
+  readonly load: Effect.Effect<
+    { readonly revision: number; readonly state: unknown } | undefined,
+    SalesPipelinePersistenceUnavailable
+  >;
+  readonly update: (
+    state: typeof SalesPipelineStateSchema.Encoded,
+    revision: number,
+  ) => Effect.Effect<readonly { readonly revision: number }[], SalesPipelinePersistenceUnavailable>;
+}
+/** Reads stay side-effect free; the first successful Action creates revision one atomically. */
+export const salesPipelineStateRepository = (persistence: PipelineStatePersistence) => ({
+  load: Effect.fn('SalesPipeline.load')(function* load() {
+    const row = yield* persistence.load;
+    if (row === undefined) {
+      return { revision: 0, state: { opportunities: [] } satisfies SalesPipelineState };
+    }
+    const state = yield* Schema.decodeUnknownEffect(SalesPipelineStateSchema)(row.state).pipe(
+      Effect.mapError(unavailable),
+    );
+    return { revision: row.revision, state };
+  }),
+  save: Effect.fn('SalesPipeline.save')(function* save(expectedRevision: number, state: SalesPipelineState) {
+    const encoded = yield* Schema.encodeEffect(SalesPipelineStateSchema)(state).pipe(Effect.mapError(unavailable));
+    const updated = yield* persistence.update(encoded, expectedRevision);
+    if (updated.length === 1) {
+      return expectedRevision + 1;
+    }
+    if (expectedRevision === 0 && (yield* persistence.insert(encoded)).length === 1) {
+      return 1;
+    }
+    return yield* new SalesPipelineRevisionConflict({
+      code: 'sales_pipeline_revision_conflict',
+      reason: 'SalesPipeline changed; refresh before another operation',
+    });
+  }),
+});
+
 export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
     const { legalEntityId } = scope;
@@ -451,38 +492,44 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       eq(salesPipelineStates.tenantId, scope.tenantId),
       eq(salesPipelineStates.legalEntityId, legalEntityId),
     );
-    const load = Effect.fn('SalesPipeline.load')(function* load() {
-      const rows = yield* transaction
+    const { load, save } = salesPipelineStateRepository({
+      insert: (state) =>
+        DateTime.now.pipe(
+          Effect.flatMap((now) =>
+            transaction
+              .insert(salesPipelineStates)
+              .values({
+                legalEntityId,
+                revision: 1,
+                state,
+                tenantId: scope.tenantId,
+                updatedAt: DateTime.toDateUtc(now),
+              })
+              .onConflictDoNothing()
+              .returning({ revision: salesPipelineStates.revision })
+              .pipe(Effect.mapError(unavailable)),
+          ),
+        ),
+      load: transaction
         .select()
         .from(salesPipelineStates)
         .where(whereScope)
         .limit(1)
-        .pipe(Effect.mapError(unavailable));
-      const [row] = rows;
-      if (row === undefined) {
-        return yield* unavailable();
-      }
-      const state = yield* Schema.decodeUnknownEffect(SalesPipelineStateSchema)(row.state).pipe(
-        Effect.mapError(unavailable),
-      );
-      return { revision: row.revision, state };
-    });
-    const save = Effect.fn('SalesPipeline.save')(function* save(expectedRevision: number, state: SalesPipelineState) {
-      const encoded = yield* Schema.encodeEffect(SalesPipelineStateSchema)(state).pipe(Effect.mapError(unavailable));
-      const updatedAt = yield* DateTime.now;
-      const rows = yield* transaction
-        .update(salesPipelineStates)
-        .set({ revision: expectedRevision + 1, state: encoded, updatedAt: DateTime.toDateUtc(updatedAt) })
-        .where(and(whereScope, eq(salesPipelineStates.revision, expectedRevision)))
-        .returning({ revision: salesPipelineStates.revision })
-        .pipe(Effect.mapError(unavailable));
-      if (rows.length !== 1) {
-        return yield* new SalesPipelineRevisionConflict({
-          code: 'sales_pipeline_revision_conflict',
-          reason: 'SalesPipeline changed; refresh before another operation',
-        });
-      }
-      return expectedRevision + 1;
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map(([row]) => row),
+        ),
+      update: (state, revision) =>
+        DateTime.now.pipe(
+          Effect.flatMap((now) =>
+            transaction
+              .update(salesPipelineStates)
+              .set({ revision: revision + 1, state, updatedAt: DateTime.toDateUtc(now) })
+              .where(and(whereScope, eq(salesPipelineStates.revision, revision)))
+              .returning({ revision: salesPipelineStates.revision })
+              .pipe(Effect.mapError(unavailable)),
+          ),
+        ),
     });
     const apply = Effect.fn('SalesPipeline.apply')(function* apply(
       command: SalesPipelineCommand,

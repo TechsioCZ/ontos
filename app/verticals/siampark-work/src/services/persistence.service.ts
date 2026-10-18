@@ -444,22 +444,52 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
     const verifier = Option.getOrElse(injectedVerifier, () => makeWorkReferenceVerifier(source));
     const whereScope = and(eq(workStates.tenantId, scope.tenantId), eq(workStates.legalEntityId, legalEntityId));
     const load = Effect.fn('Work.load')(function* load() {
-      const rows = yield* transaction
-        .select()
-        .from(workStates)
-        .where(whereScope)
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
+      const rows = yield* transaction.select().from(workStates).where(whereScope).limit(1);
       const [row] = rows;
       if (row === undefined) {
-        return yield* unavailable();
+        const state = yield* Schema.decodeEffect(WorkStateSchema)({
+          collection: {
+            properties: {
+              dueDate: { locked: true, type: 'DATE' },
+              ownerPrincipalRef: { locked: true, type: 'PRINCIPAL' },
+              status: { groups: ['NOT_STARTED', 'IN_PROGRESS', 'DONE'], locked: true, type: 'STATUS' },
+              title: { locked: true, type: 'TEXT' },
+            },
+            ref: {
+              moduleId: 'siampark.work',
+              resourceId: `default:${legalEntityId}`,
+              resourceType: 'siampark.work.task-collection',
+              tenantId: scope.tenantId,
+            },
+            title: 'Tasks',
+          },
+          tasks: [],
+        });
+        return { revision: 0, state };
       }
-      const state = yield* Schema.decodeUnknownEffect(WorkStateSchema)(row.state).pipe(Effect.mapError(unavailable));
+      const state = yield* Schema.decodeUnknownEffect(WorkStateSchema)(row.state);
       return { revision: row.revision, state };
-    });
+    }, Effect.mapError(unavailable));
     const save = Effect.fn('Work.save')(function* save(expectedRevision: number, state: WorkState) {
       const encoded = yield* Schema.encodeEffect(WorkStateSchema)(state).pipe(Effect.mapError(unavailable));
       const updatedAt = yield* DateTime.now;
+      if (expectedRevision === 0) {
+        const inserted = yield* transaction
+          .insert(workStates)
+          .values({
+            legalEntityId,
+            revision: 1,
+            state: encoded,
+            tenantId: scope.tenantId,
+            updatedAt: DateTime.toDateUtc(updatedAt),
+          })
+          .onConflictDoNothing()
+          .returning({ revision: workStates.revision })
+          .pipe(Effect.mapError(unavailable));
+        if (inserted.length === 1) {
+          return 1;
+        }
+      }
       const rows = yield* transaction
         .update(workStates)
         .set({ revision: expectedRevision + 1, state: encoded, updatedAt: DateTime.toDateUtc(updatedAt) })

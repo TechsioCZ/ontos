@@ -122,18 +122,7 @@
       "description": "Aktuální příležitosti, pohledávky a úkoly.",
       "scope": "Údaje odpovídají právě vybranému tenantu a právnímu subjektu a vašim oprávněním.",
       "refresh": "Obnovit údaje",
-      "settings": "Nastavení přehledu",
-      "reset": "Obnovit výchozí nastavení",
-      "metrics": "Zobrazené ukazatele",
-      "display": "Zobrazení",
-      "view": {
-        "cards": "Karty",
-        "list": "Seznam"
-      },
-      "browserOnly": "Volba ukazatelů a zobrazení se ukládá pouze v tomto prohlížeči, zvlášť pro váš účet, tenant a právní subjekt.",
-      "storageUnavailable": "Prohlížeč neumožňuje uložit nastavení. Volby platí do opuštění stránky.",
       "loading": "Načítáme obchodní přehled…",
-      "noneSelected": "Vyberte alespoň jeden ukazatel.",
       "currentSnapshot": "Aktuální stav",
       "openSource": "Otevřít přehled záznamů: {{metric}}",
       "openRecords": "Zobrazit záznamy",

@@ -210,6 +210,7 @@ const TagEditorDialog = ({
           }
         }}
         open
+        resizeLabel={t('tagging.sidePanel.resize')}
         size="md"
         title={t(tag === null ? newTagKey : 'tagging.tags.edit')}
       >
@@ -517,6 +518,7 @@ const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagW
         }
       }}
       open
+      resizeLabel={t('tagging.sidePanel.resize')}
       size="md"
       title={t('tagging.tags.assigned.title', { name: tag.name })}
     >

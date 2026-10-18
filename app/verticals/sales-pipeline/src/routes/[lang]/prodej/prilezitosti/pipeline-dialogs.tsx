@@ -18,6 +18,7 @@ import {
 import type { PipelineCommand } from './pipeline-api.ts';
 import {
   MAX_LINE_QUANTITY,
+  isSafeOpportunityAmount,
   filterItemsByQuery,
   firstValue,
   isOpportunityStage,
@@ -28,6 +29,8 @@ import { PickerCombobox } from './pipeline-combobox.tsx';
 import { LinesEditor } from './pipeline-line-editor.tsx';
 import type { LineEntry } from './pipeline-line-editor.tsx';
 import type { CustomerOption, EmployeeOption, LoadState, ProductOption } from './pipeline-references.ts';
+
+const RESIZE_LABEL_KEY = 'sales-pipeline.sidePanel.resize';
 
 const SELECT_PLACEHOLDER = 'sales-pipeline.selectPlaceholder';
 
@@ -64,20 +67,29 @@ interface FormErrors {
   readonly title: string | undefined;
 }
 
-const formErrors = (draft: FormDraft, closeText: string, t: Translate): FormErrors => ({
-  close: Option.isNone(Schema.decodeOption(CalendarDateSchema)(closeText))
-    ? t(`${K}.create.errors.dateRequired`)
-    : undefined,
-  customer:
-    draft.customerId === null || Option.isNone(Schema.decodeOption(PartyIdSchema)(draft.customerId))
-      ? t(`${K}.create.errors.customerRequired`)
+const formErrors = (draft: FormDraft, closeText: string, t: Translate): FormErrors => {
+  let lines: string | undefined;
+  if (
+    draft.lines.some((entry) => entry.invalidAmount === true) ||
+    !isSafeOpportunityAmount(draft.lines.map((entry) => entry.line))
+  ) {
+    lines = t(`${K}.create.errors.amountRange`);
+  } else if (draft.lines.some((entry) => entry.invalidQuantity !== undefined)) {
+    lines = t(`${K}.create.errors.quantityRange`, { max: formatNumber(MAX_LINE_QUANTITY) });
+  }
+  return {
+    close: Option.isNone(Schema.decodeOption(CalendarDateSchema)(closeText))
+      ? t(`${K}.create.errors.dateRequired`)
       : undefined,
-  lines: draft.lines.some((entry) => entry.invalidQuantity !== undefined)
-    ? t(`${K}.create.errors.quantityRange`, { max: formatNumber(MAX_LINE_QUANTITY) })
-    : undefined,
-  note: isValidNote(draft.note.trim()) ? undefined : t(`${K}.create.errors.noteTooLong`),
-  title: isValidTitle(draft.title.trim()) ? undefined : t(`${K}.create.errors.titleRequired`),
-});
+    customer:
+      draft.customerId === null || Option.isNone(Schema.decodeOption(PartyIdSchema)(draft.customerId))
+        ? t(`${K}.create.errors.customerRequired`)
+        : undefined,
+    lines,
+    note: isValidNote(draft.note.trim()) ? undefined : t(`${K}.create.errors.noteTooLong`),
+    title: isValidTitle(draft.title.trim()) ? undefined : t(`${K}.create.errors.titleRequired`),
+  };
+};
 
 const emptyDraft: FormDraft = { customerId: null, lines: [], note: '', ownerId: null, title: '' };
 
@@ -249,6 +261,7 @@ export const OpportunityFormDialog = ({
         description={isEdit ? t(`${K}.edit.description`) : t(`${K}.create.description`)}
         onOpenChange={requestClose}
         open
+        resizeLabel={t(RESIZE_LABEL_KEY)}
         size="xl"
         title={isEdit ? t(`${K}.edit.title`) : t(`${K}.create.title`)}
       >
@@ -433,6 +446,7 @@ export const StageDialog = ({
       description={description}
       onOpenChange={onOpenChange}
       open
+      resizeLabel={t(RESIZE_LABEL_KEY)}
       size="lg"
       title={t(`${K}.stageDialog.title`)}
     >
@@ -552,6 +566,7 @@ export const OwnerDialog = ({
       description={description}
       onOpenChange={onOpenChange}
       open
+      resizeLabel={t(RESIZE_LABEL_KEY)}
       size="lg"
       title={t(`${K}.owner.title`)}
     >

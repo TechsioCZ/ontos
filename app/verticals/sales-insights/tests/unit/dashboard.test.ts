@@ -1,15 +1,9 @@
 import { DateTime, Deferred, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import {
-  dashboardPreferencesKey,
-  dashboardValues,
-  defaultDashboardPreferences,
-} from '../../src/dashboard/dashboard-model.ts';
-import { createDashboardPreferences, decodeDashboardPreferences } from '../../src/dashboard/dashboard-preferences.ts';
+import { dashboardValues } from '../../src/dashboard/dashboard-model.ts';
 import { createDashboardQuery, settleDashboardSource } from '../../src/dashboard/dashboard-query.ts';
 import type { MetricInputs } from '../../shared/metrics.ts';
 
-const context = { legalEntityId: 'le-a', principalId: 'principal-a', tenantId: 'tenant-a' };
 const inputs: MetricInputs = {
   employees: [],
   invoices: [],
@@ -19,65 +13,6 @@ const inputs: MetricInputs = {
   products: [],
   tasks: [],
 };
-it('isolates preferences by principal, tenant and legal entity without business values', () => {
-  const keys = [
-    context,
-    { ...context, legalEntityId: 'le-b' },
-    { ...context, principalId: 'principal-b' },
-    { ...context, tenantId: 'tenant-b' },
-  ].map(dashboardPreferencesKey);
-  expect(new Set(keys).size).toBe(4);
-  const writes = new Map<string, string>();
-  const store = createDashboardPreferences(context, () => ({
-    getItem: (key) => writes.get(key) ?? null,
-    removeItem: (key) => {
-      writes.delete(key);
-    },
-    setItem: (key, value) => {
-      writes.set(key, value);
-    },
-  }));
-  const unsubscribe = store.subscribe(() => {});
-  store.set({ display: 'list', metrics: ['tasks_open'], version: 1 });
-  expect(JSON.parse(writes.get(keys[0] ?? '') ?? '')).toEqual({ display: 'list', metrics: ['tasks_open'], version: 1 });
-  store.reset();
-  expect(writes.size).toBe(0);
-  expect(store.getSnapshot().preferences).toEqual(defaultDashboardPreferences);
-  unsubscribe();
-});
-it('falls back on malformed, unknown-version and unsupported preferences and deduplicates valid ids', () => {
-  for (const value of [
-    null,
-    '{',
-    '{"version":2}',
-    '{"version":1,"display":"script","metrics":[]}',
-    '{"version":1,"display":"cards","metrics":["admin"]}',
-  ]) {
-    expect(decodeDashboardPreferences(value)).toEqual(defaultDashboardPreferences);
-  }
-  expect(
-    decodeDashboardPreferences('{"version":1,"display":"list","metrics":["tasks_open","tasks_open"]}').metrics,
-  ).toEqual(['tasks_open']);
-});
-it('keeps settings usable when browser storage is denied and supports reload from browser storage', () => {
-  const persisted = '{"version":1,"display":"list","metrics":["tasks_open"]}';
-  const store = createDashboardPreferences(context, () => ({
-    getItem: () => persisted,
-    removeItem: () => {},
-    setItem: () => {},
-  }));
-  store.subscribe(() => {});
-  expect(store.getSnapshot().preferences.display).toBe('list');
-  const denied = createDashboardPreferences(context, () => {
-    throw new Error('storage denied');
-  });
-  denied.subscribe(() => {});
-  expect(denied.getSnapshot().storageAvailable).toBe(false);
-  denied.set({ display: 'list', metrics: [], version: 1 });
-  expect(denied.getSnapshot().preferences.metrics).toEqual([]);
-  denied.reset();
-  expect(denied.getSnapshot().preferences).toEqual(defaultDashboardPreferences);
-});
 it('preserves denied and unavailable source states as absent values, never zero', () => {
   const values = dashboardValues(
     inputs,

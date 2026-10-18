@@ -1,7 +1,7 @@
 import { failureFeedback } from '../../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { loadCounterpartiesClient, loadPartiesClient } from '@app/party-registry/api/client';
+import { listCustomers, loadPartiesClient } from '@app/party-registry/api/client';
 import { executeRecords as executePropertyRecords } from '@app/siampark-property/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/siampark-agreements/clients/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -53,15 +53,17 @@ const browserCrypto = Crypto.make({
 });
 const newUuid = browserCrypto.randomUUIDv4;
 type Guests = Effect.Success<ReturnType<typeof loadPartiesClient>>;
-type Customers = Effect.Success<ReturnType<typeof loadCounterpartiesClient>>;
+type Customers = Effect.Success<ReturnType<typeof listCustomers>>;
 type Properties = Effect.Success<ReturnType<typeof executePropertyRecords>>;
 type Agreements = Effect.Success<ReturnType<typeof executeAgreementsRecords>>;
 const useRecordsPage = () => {
   const { language, t } = useModernI18n();
   const { location } = useRouterState();
-  const linkedResourceId = Option.getOrUndefined(
-    Schema.decodeUnknownOption(RecordsSearchSchema)(location.search),
-  )?.resourceId;
+  const rawSearch: unknown = location.search;
+  const search = Schema.is(Schema.toEncoded(RecordsSearchSchema))(rawSearch)
+    ? Schema.decodeOption(RecordsSearchSchema)(rawSearch)
+    : Option.none();
+  const linkedResourceId = Option.getOrUndefined(search)?.resourceId;
   const cancellation = useRef<AbortController | null>(null);
   const run = <A, E>(effect: Effect.Effect<A, E>) => {
     const controller = cancellation.current ?? new AbortController();
@@ -196,7 +198,7 @@ const useRecordsPage = () => {
   };
   const createDraft = () => {
     const unit = properties?.units.find((record) => record.unitRef.resourceId === unitId);
-    const customer = customers.find((record) => record.ref.resourceId === customerId);
+    const customer = customers.find((record) => record.counterpartyRef.resourceId === customerId);
     if (unit === undefined || customer === undefined) {
       setFeedback('validation');
       return;
@@ -210,7 +212,7 @@ const useRecordsPage = () => {
               _tag: 'CreateDraft',
               record: {
                 contractRef: null,
-                customerCounterpartyRef: customer.ref,
+                customerCounterpartyRef: customer.counterpartyRef,
                 endDate: endDate || null,
                 externalBookingCorrelation: null,
                 guestPartyRef: null,
@@ -269,10 +271,19 @@ const useRecordsPage = () => {
       return;
     }
     run(
-      loadCounterpartiesClient(
-        { includeArchived: false, query: customerQuery, role: 'CUSTOMER' },
-        'siampark-occupancy.customer-picker',
-      ).pipe(
+      listCustomers({ includeArchived: false, limit: 500 }).pipe(
+        Effect.map((items) => {
+          const query = customerQuery.trim().normalize('NFKC').toLocaleLowerCase('cs');
+          return items.filter(
+            (item) =>
+              item.status === 'ACTIVE' &&
+              [item.displayName ?? item.partyId, item.companyId ?? '']
+                .join(' ')
+                .normalize('NFKC')
+                .toLocaleLowerCase('cs')
+                .includes(query),
+          );
+        }),
         Effect.match({
           onFailure: reportFailure,
           onSuccess: (values) => {
@@ -608,7 +619,10 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
             </Button>
           </div>
           <Select
-            items={customers.map((record) => ({ label: record.party.title, value: record.ref.resourceId }))}
+            items={customers.map((record) => ({
+              label: record.displayName ?? record.partyId,
+              value: record.counterpartyRef.resourceId,
+            }))}
             onValueChange={({ value }) => setCustomerId(value[0] ?? '')}
             value={customerId.length > 0 ? [customerId] : []}
           >
@@ -622,10 +636,10 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
               <Select.Content>
                 {customers.map((record) => (
                   <Select.Item
-                    item={{ label: record.party.title, value: record.ref.resourceId }}
-                    key={record.ref.resourceId}
+                    item={{ label: record.displayName ?? record.partyId, value: record.counterpartyRef.resourceId }}
+                    key={record.counterpartyRef.resourceId}
                   >
-                    <Select.ItemText>{record.party.title}</Select.ItemText>
+                    <Select.ItemText>{record.displayName ?? record.partyId}</Select.ItemText>
                     <Select.ItemIndicator />
                   </Select.Item>
                 ))}

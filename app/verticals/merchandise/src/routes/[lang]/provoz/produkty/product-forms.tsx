@@ -29,6 +29,7 @@ export interface FormDialogProps {
 export const UNITS: readonly ProductUnit[] = ['ks', 'bal', 'hod', 'lic'];
 export const VAT_RATES: readonly VatRate[] = [0, 10, 12, 21];
 
+const RESIZE_LABEL_KEY = 'merchandise.sidePanel.resize';
 const REQUIRED_KEY = 'validation.required';
 const KEY_PREFIX = 'merchandise.pages.products';
 
@@ -193,6 +194,7 @@ export const CreateProductDialog = ({
   revision,
 }: FormDialogProps & { readonly products: readonly ProductRecord[] }) => {
   const k = useProductLabel();
+  const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [sku, setSku] = useState('');
   const [name, setName] = useState('');
@@ -300,6 +302,7 @@ export const CreateProductDialog = ({
         closeOnInteractOutside={!dirty}
         onOpenChange={requestClose}
         open={open}
+        resizeLabel={t(RESIZE_LABEL_KEY)}
         size="md"
         title={k('create.title')}
       >
@@ -439,6 +442,7 @@ export const ReceiptDialog = ({
   revision,
 }: FormDialogProps & { readonly products: readonly ProductRecord[] }) => {
   const k = useProductLabel();
+  const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [productId, setProductId] = useState<ProductRecord['id'] | null>(null);
   const [quantity, setQuantity] = useState(1);
@@ -511,6 +515,7 @@ export const ReceiptDialog = ({
         description={k('receipt.description')}
         onOpenChange={requestClose}
         open={open}
+        resizeLabel={t(RESIZE_LABEL_KEY)}
         size="md"
         title={k('receipt.title')}
       >
@@ -650,6 +655,7 @@ export const PriceChangeDialog = ({
       description={k('priceDialog.description')}
       onOpenChange={onOpenChange}
       open={open}
+      resizeLabel={t(RESIZE_LABEL_KEY)}
       size="md"
       title={k('priceDialog.title')}
     >
@@ -704,6 +710,7 @@ export const CategoryDialog = ({
   revision,
 }: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
   const k = useProductLabel();
+  const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [category, setCategory] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -748,6 +755,7 @@ export const CategoryDialog = ({
       }
       onOpenChange={onOpenChange}
       open={open}
+      resizeLabel={t(RESIZE_LABEL_KEY)}
       size="md"
       title={k('category.title')}
     >

@@ -1,9 +1,11 @@
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import {
   MAX_LINE_QUANTITY,
+  manualOpportunityLine,
+  isSafeOpportunityAmount,
   filterItemsByQuery,
   isValidQuantity,
   skipTally,
@@ -89,4 +91,31 @@ it('caps one line quantity at the form maximum', () => {
     false,
     false,
   ]);
+});
+
+it('keeps a priced rental period without a catalog product identity', () => {
+  expect(Option.getOrUndefined(manualOpportunityLine(' Budova Parková, listopad 2026 ', 2, 12_500.25, 0))).toEqual({
+    productName: 'Budova Parková, listopad 2026',
+    quantity: 2,
+    unitPriceMinor: 1_250_025,
+    vatRate: 0,
+  });
+});
+it('rejects incomplete, negative, fractional-period and unsafe rental amounts', () => {
+  expect(Option.isNone(manualOpportunityLine(' ', 1, 200, 21))).toBe(true);
+  expect(Option.isNone(manualOpportunityLine('Rent', 1, -1, 21))).toBe(true);
+  expect(Option.isNone(manualOpportunityLine('Rent', 1, -0.001, 21))).toBe(true);
+  expect(Option.isNone(manualOpportunityLine('Rent', 1, Number.NaN, 21))).toBe(true);
+  expect(Option.isNone(manualOpportunityLine('Rent', 1, Number.POSITIVE_INFINITY, 21))).toBe(true);
+  expect(Option.isNone(manualOpportunityLine('Rent', Number.NaN, 200, 21))).toBe(true);
+  expect(Option.isNone(manualOpportunityLine('Rent', 1.5, 200, 21))).toBe(true);
+  expect(Option.isNone(manualOpportunityLine('Rent', 2, Number.MAX_SAFE_INTEGER / 100, 21))).toBe(true);
+});
+
+it('rejects an unsafe quantity edit and an unsafe sum of individually valid rent lines', () => {
+  const line = Option.getOrThrow(manualOpportunityLine('Rent', 1, 40_000_000_000_000, 0));
+  expect(isSafeOpportunityAmount([line, line])).toBe(true);
+  expect(isSafeOpportunityAmount([line, line, line])).toBe(false);
+  expect(isSafeOpportunityAmount([{ ...line, quantity: 3 }])).toBe(false);
+  expect(isSafeOpportunityAmount([{ ...line, quantity: 2 }])).toBe(true);
 });

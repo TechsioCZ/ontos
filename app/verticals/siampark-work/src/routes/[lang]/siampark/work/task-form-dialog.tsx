@@ -488,6 +488,7 @@ export const TaskFormDialog = ({
           }
         }}
         open
+        resizeLabel={t('siampark-work.sidePanel.resize')}
         size="lg"
         title={t(isEdit ? `${key}.edit` : `${key}.create`)}
       >

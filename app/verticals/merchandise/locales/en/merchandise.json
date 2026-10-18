@@ -34,7 +34,8 @@
           "tags": "Tags",
           "selectHint": "Select orders in the table to change their status or tags together.",
           "selectionScope": "Actions apply to the selected orders in the current filter, including other pages.",
-          "noCommonStatus": "The selected orders have no shared next status. You can still change their tags together."
+          "noCommonStatus": "The selected orders have no shared next status. You can still change their tags together.",
+          "finalStatus": "Delivered and cancelled orders cannot change status. You can still change their tags together."
         },
         "columns": {
           "createdAt": "Created",
@@ -367,6 +368,9 @@
       "root": "Pagination"
     },
     "selectPlaceholder": "Select…",
-    "loading": "Loading…"
+    "loading": "Loading…",
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
   }
 }

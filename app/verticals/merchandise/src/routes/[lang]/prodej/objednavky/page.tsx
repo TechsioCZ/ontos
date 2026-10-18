@@ -34,7 +34,13 @@ import { useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
-import { commonOrderTransitions, ordersPageSummary, orderStatuses, statusDoneKey } from './orders-model.ts';
+import {
+  commonOrderTransitions,
+  ordersPageSummary,
+  orderStatuses,
+  statusDoneKey,
+  transitionsFrom,
+} from './orders-model.ts';
 import { changeOrderStatuses, useOrders } from './orders-records.ts';
 import { ordersColumns, ordersTranslations } from './orders-table.tsx';
 
@@ -107,6 +113,7 @@ const OrdersPageContent = () => {
   );
   const selected = visible.filter((order) => selection[order.id] === true);
   const availableBulkStatuses = commonOrderTransitions(selected);
+  const selectedOrdersAreFinal = selected.every((order) => transitionsFrom(order.status).length === 0);
   const selectedStatusItems = availableBulkStatuses.map((value) => ({
     label: statusPresentation('order', value).label,
     value,
@@ -219,9 +226,6 @@ const OrdersPageContent = () => {
             <StatusText status="default">
               {t(key(selected.length === 0 ? 'bulk.selectHint' : 'bulk.selectionScope'))}
             </StatusText>
-            {selected.length > 0 && availableBulkStatuses.length === 0 && (
-              <StatusText status="default">{t(key('bulk.noCommonStatus'))}</StatusText>
-            )}
             <BulkActionBar onClear={() => setSelection({})} selectedCount={selected.length}>
               <Button
                 disabled={busy}
@@ -233,21 +237,29 @@ const OrdersPageContent = () => {
               >
                 {t(key('bulk.tags'))}
               </Button>
-              <SelectTemplate
-                disabled={busy || availableBulkStatuses.length === 0}
-                items={selectedStatusItems}
-                name="bulkStatus"
-                onValueChange={(details) => {
-                  const [next] = details.value;
-                  const status = availableBulkStatuses.find((candidate) => candidate === next);
-                  if (status !== undefined) {
-                    requestStatus(selected, status);
-                  }
-                }}
-                placeholder={t(key('bulk.statusPlaceholder'))}
-                size="sm"
-                value={[]}
-              />
+              {availableBulkStatuses.length > 0 ? (
+                <SelectTemplate
+                  disabled={busy}
+                  items={selectedStatusItems}
+                  label={t(key('bulk.changeStatus'))}
+                  labelProps={{ className: 'sr-only' }}
+                  name="bulkStatus"
+                  onValueChange={(details) => {
+                    const [next] = details.value;
+                    const status = availableBulkStatuses.find((candidate) => candidate === next);
+                    if (status !== undefined) {
+                      requestStatus(selected, status);
+                    }
+                  }}
+                  placeholder={t(key('bulk.statusPlaceholder'))}
+                  size="sm"
+                  value={[]}
+                />
+              ) : (
+                <StatusText showIcon status="default">
+                  {t(key(selectedOrdersAreFinal ? 'bulk.finalStatus' : 'bulk.noCommonStatus'))}
+                </StatusText>
+              )}
             </BulkActionBar>
           </>
         )}
