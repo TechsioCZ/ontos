@@ -463,6 +463,7 @@ it.layer(paymentTestDependencies)('Finance Action lifecycle', (suite) => {
           actionPermission: 'allowed',
           services: [
             bindActionTestServices(applyCommandAction, {
+              // @effect-diagnostics-next-line syncToSucceed:off
               loadDocument: () => Effect.sync((): undefined => undefined),
               writeDocument: () => Effect.void,
               load: () => Effect.succeed({ revision, state: storedState }),

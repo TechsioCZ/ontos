@@ -1,4 +1,5 @@
 /// <reference lib="es2023" />
+// @effect-diagnostics *:off
 // Sales demo v2 seed for Siampark finance (S07–S09): received invoices with a stored PDF, rent invoices with partial
 // payments, recurring rent templates, budgets, an opening balance and one accountant handover package.
 // It drives the owner's pure transitions (same rules as the Action) and writes the result with the admin role.
