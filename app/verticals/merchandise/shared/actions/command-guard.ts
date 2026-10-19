@@ -12,7 +12,11 @@ export const principalKindOf = (authMethod: TrustedPrincipalContext['authMethod'
   authMethod === 'session' || authMethod === 'support_impersonation' ? 'human' : 'non_human';
 
 /** Commands reserved for human users; non-human principals (API keys, system jobs) are rejected. */
-export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set(['BulkUpdateProducts', 'ChangePrice', 'EditOrder']);
+export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
+  'BulkUpdateProducts',
+  'ChangePrice',
+  'EditOrder',
+]);
 const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
 
 export const assertCommandAllowed = (

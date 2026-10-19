@@ -57,7 +57,9 @@ const seeded = Effect.gen(function* seedCoffee() {
   return stocked.state;
 });
 
-const guestOrder = (overrides: Partial<Extract<CommandInput, { _tag: 'PlaceStorefrontOrder' }>> = {}): CommandInput => ({
+const guestOrder = (
+  overrides: Partial<Extract<CommandInput, { _tag: 'PlaceStorefrontOrder' }>> = {},
+): CommandInput => ({
   _tag: 'PlaceStorefrontOrder',
   clientRequestId: 'client-request-0001',
   contact: { email: 'tereza@example.cz', name: 'Tereza Ukázková' },
@@ -72,7 +74,9 @@ it.effect('variants get identities, gross prices and their own availability', ()
     const state = yield* seeded;
     const [product] = state.products;
     const record = toProductRecord(product!, state.movements);
-    expect(record.variantRecords?.map((variant) => [variant.id, variant.grossPriceMinor, variant.availability])).toEqual([
+    expect(
+      record.variantRecords?.map((variant) => [variant.id, variant.grossPriceMinor, variant.availability]),
+    ).toEqual([
       ['u1-v1', 28_900, 'IN_STOCK'],
       ['u1-v2', 98_900, 'OUT_OF_STOCK'],
     ]);
@@ -153,10 +157,20 @@ it.effect('EditOrder recomputes totals and records before/after history; DELIVER
     expect(order.totalMinor).toBe(3 * 27_000 + 9_900);
     expect(order.history?.map((entry) => entry.kind)).toEqual(['CREATED', 'LINES', 'SHIPPING']);
     expect(order.history?.[1]?.reason).toBe('Telefonická změna');
-    const skip = yield* Effect.flip(apply(edited.state, { _tag: 'ChangeOrderStatus', id: orderId, status: 'DELIVERED' }, 'inv-3'));
+    const skip = yield* Effect.flip(
+      apply(edited.state, { _tag: 'ChangeOrderStatus', id: orderId, status: 'DELIVERED' }, 'inv-3'),
+    );
     expect(isConflict(skip)).toBe(true);
-    const confirmed = yield* apply(edited.state, { _tag: 'ChangeOrderStatus', id: orderId, status: 'CONFIRMED' }, 'inv-4');
-    const packing = yield* apply(confirmed.state, { _tag: 'ChangeOrderStatus', id: orderId, status: 'PACKING' }, 'inv-5');
+    const confirmed = yield* apply(
+      edited.state,
+      { _tag: 'ChangeOrderStatus', id: orderId, status: 'CONFIRMED' },
+      'inv-4',
+    );
+    const packing = yield* apply(
+      confirmed.state,
+      { _tag: 'ChangeOrderStatus', id: orderId, status: 'PACKING' },
+      'inv-5',
+    );
     const shipped = yield* apply(packing.state, { _tag: 'ChangeOrderStatus', id: orderId, status: 'SHIPPED' }, 'inv-6');
     const done = yield* apply(shipped.state, { _tag: 'ChangeOrderStatus', id: orderId, status: 'DELIVERED' }, 'inv-7');
     expect(done.state.orders[0]?.status).toBe('DELIVERED');
@@ -167,7 +181,11 @@ it.effect('EditOrder recomputes totals and records before/after history; DELIVER
 it.effect('ChangePrice on a variant appends its own price history', () =>
   Effect.gen(function* variantPrice() {
     const state = yield* seeded;
-    const changed = yield* apply(state, { _tag: 'ChangePrice', id: 'p1', priceMinor: 26_696, variantId: 'u1-v1' }, 'c1');
+    const changed = yield* apply(
+      state,
+      { _tag: 'ChangePrice', id: 'p1', priceMinor: 26_696, variantId: 'u1-v1' },
+      'c1',
+    );
     const record = toProductRecord(changed.state.products[0]!, changed.state.movements);
     const variant = record.variantRecords?.[0];
     expect(variant?.grossPriceMinor).toBe(29_900);

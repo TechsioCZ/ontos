@@ -44,7 +44,10 @@ export const netForGross = (grossMinor: number, vatRate: number): number => {
   const estimate = Math.round((grossMinor * 100) / (100 + vatRate));
   let best = estimate;
   for (let candidate = estimate - 3; candidate <= estimate + 3; candidate += 1) {
-    if (Math.abs(grossUnitPriceMinor(candidate, vatRate) - grossMinor) < Math.abs(grossUnitPriceMinor(best, vatRate) - grossMinor)) {
+    if (
+      Math.abs(grossUnitPriceMinor(candidate, vatRate) - grossMinor) <
+      Math.abs(grossUnitPriceMinor(best, vatRate) - grossMinor)
+    ) {
       best = candidate;
     }
   }
@@ -87,12 +90,30 @@ const DARKY = 'Dárkové balíčky';
 
 const beans = (prices: readonly [number, number, number?], stock: readonly [number, number, number?]) => {
   const variants: SeedVariant[] = [
-    { attributes: 'Hmotnost: 250 g; Forma: zrnková', gross: prices[0], key: '250g', name: '250 g / zrnková', stock: stock[0] },
+    {
+      attributes: 'Hmotnost: 250 g; Forma: zrnková',
+      gross: prices[0],
+      key: '250g',
+      name: '250 g / zrnková',
+      stock: stock[0],
+    },
   ];
   if (prices[2] !== undefined) {
-    variants.push({ attributes: 'Hmotnost: 500 g; Forma: zrnková', gross: prices[2], key: '500g', name: '500 g / zrnková', stock: stock[2] ?? 0 });
+    variants.push({
+      attributes: 'Hmotnost: 500 g; Forma: zrnková',
+      gross: prices[2],
+      key: '500g',
+      name: '500 g / zrnková',
+      stock: stock[2] ?? 0,
+    });
   }
-  variants.push({ attributes: 'Hmotnost: 1 kg; Forma: zrnková', gross: prices[1], key: '1kg', name: '1 kg / zrnková', stock: stock[1] });
+  variants.push({
+    attributes: 'Hmotnost: 1 kg; Forma: zrnková',
+    gross: prices[1],
+    key: '1kg',
+    name: '1 kg / zrnková',
+    stock: stock[1],
+  });
   return variants;
 };
 
@@ -193,8 +214,20 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-ESP-MLE',
     slug: 'espresso-mleta',
     variants: [
-      { attributes: 'Hmotnost: 250 g; Mletí: jemné', gross: 25_900, key: 'espresso', name: '250 g / mletá na espresso', stock: 34 },
-      { attributes: 'Hmotnost: 250 g; Mletí: střední', gross: 25_900, key: 'filtr', name: '250 g / mletá na filtr', stock: 21 },
+      {
+        attributes: 'Hmotnost: 250 g; Mletí: jemné',
+        gross: 25_900,
+        key: 'espresso',
+        name: '250 g / mletá na espresso',
+        stock: 34,
+      },
+      {
+        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        gross: 25_900,
+        key: 'filtr',
+        name: '250 g / mletá na filtr',
+        stock: 21,
+      },
     ],
     vatRate: 12,
   },
@@ -208,8 +241,20 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-DEC-MLE',
     slug: 'kolumbie-decaf-mleta',
     variants: [
-      { attributes: 'Hmotnost: 250 g; Mletí: střední', gross: 27_900, key: 'filtr', name: '250 g / mletá na filtr', stock: 16 },
-      { attributes: 'Hmotnost: 250 g; Mletí: jemné', gross: 27_900, key: 'espresso', name: '250 g / mletá na espresso', stock: 4 },
+      {
+        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        gross: 27_900,
+        key: 'filtr',
+        name: '250 g / mletá na filtr',
+        stock: 16,
+      },
+      {
+        attributes: 'Hmotnost: 250 g; Mletí: jemné',
+        gross: 27_900,
+        key: 'espresso',
+        name: '250 g / mletá na espresso',
+        stock: 4,
+      },
     ],
     vatRate: 12,
   },
@@ -237,8 +282,20 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-SNI-MLE',
     slug: 'snidanova-smes',
     variants: [
-      { attributes: 'Hmotnost: 250 g; Mletí: střední', gross: 22_900, key: '250g', name: '250 g / mletá na filtr', stock: 38 },
-      { attributes: 'Hmotnost: 500 g; Mletí: střední', gross: 41_900, key: '500g', name: '500 g / mletá na filtr', stock: 0 },
+      {
+        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        gross: 22_900,
+        key: '250g',
+        name: '250 g / mletá na filtr',
+        stock: 38,
+      },
+      {
+        attributes: 'Hmotnost: 500 g; Mletí: střední',
+        gross: 41_900,
+        key: '500g',
+        name: '500 g / mletá na filtr',
+        stock: 0,
+      },
     ],
     vatRate: 12,
   },
@@ -289,8 +346,7 @@ export const eshopCatalog: readonly SeedProduct[] = [
   },
   {
     category: CAJ,
-    description:
-      'Jihoafrický rooibos bez kofeinu s kousky vanilky. Přirozeně nasládlý, vhodný na večer i pro děti.',
+    description: 'Jihoafrický rooibos bez kofeinu s kousky vanilky. Přirozeně nasládlý, vhodný na večer i pro děti.',
     gross: 15_900,
     lowStockThreshold: 6,
     name: 'Rooibos s vanilkou',
@@ -327,7 +383,13 @@ export const eshopCatalog: readonly SeedProduct[] = [
     variants: [
       { attributes: 'Velikost: 01; Barva: bílá', gross: 54_900, key: '01-bila', name: 'Velikost 01 / bílá', stock: 11 },
       { attributes: 'Velikost: 02; Barva: bílá', gross: 64_900, key: '02-bila', name: 'Velikost 02 / bílá', stock: 8 },
-      { attributes: 'Velikost: 02; Barva: černá', gross: 64_900, key: '02-cerna', name: 'Velikost 02 / černá', stock: 2 },
+      {
+        attributes: 'Velikost: 02; Barva: černá',
+        gross: 64_900,
+        key: '02-cerna',
+        name: 'Velikost 02 / černá',
+        stock: 2,
+      },
     ],
     vatRate: 21,
   },
@@ -374,7 +436,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
   },
   {
     category: PRIPRAVA,
-    description: 'Papírové filtry Hario pro dripper V60 velikosti 02, bělené, 100 kusů v balení. Dočasně vyprodáno, další dodávka je na cestě.',
+    description:
+      'Papírové filtry Hario pro dripper V60 velikosti 02, bělené, 100 kusů v balení. Dočasně vyprodáno, další dodávka je na cestě.',
     gross: 14_900,
     images: [],
     lowStockThreshold: 10,
@@ -626,7 +689,12 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
     };
   });
   const method = shippingMethods[order.shipping];
-  const shipping = { label: method.label, method: order.shipping, priceMinor: method.grossPriceMinor, vatRate: 21 as const };
+  const shipping = {
+    label: method.label,
+    method: order.shipping,
+    priceMinor: method.grossPriceMinor,
+    vatRate: 21 as const,
+  };
   const totals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
   const createdAt = daysAgo(order.createdDaysAgo, 3);
   const history: EncodedOrder['history'] = [
@@ -725,7 +793,13 @@ const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshop
     const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(seed);
     yield* db
       .insert(merchandiseStates)
-      .values({ legalEntityId: eshopLegalEntityId, revision: 0, state: encoded, tenantId: demoTenantId, updatedAt: now })
+      .values({
+        legalEntityId: eshopLegalEntityId,
+        revision: 0,
+        state: encoded,
+        tenantId: demoTenantId,
+        updatedAt: now,
+      })
       .onConflictDoUpdate({
         set: { revision: 0, state: encoded, updatedAt: now },
         target: [merchandiseStates.tenantId, merchandiseStates.legalEntityId],

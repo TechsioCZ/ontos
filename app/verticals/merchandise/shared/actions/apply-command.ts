@@ -146,9 +146,7 @@ export const MerchandiseCommandSchema = Schema.Union([
     lines: Schema.optionalKey(Schema.Array(EditOrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200))),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
     reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
-    shipping: Schema.optionalKey(
-      Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema }),
-    ),
+    shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
   }),
 ]);
 export type MerchandiseCommand = typeof MerchandiseCommandSchema.Type;

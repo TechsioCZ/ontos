@@ -181,7 +181,9 @@ export const OrderDetailDialog = ({
           key={status}
           loadingText={t('merchandise.pages.orders.create.submitting')}
           onClick={() => onStatus(order, status)}
-          {...(index === 0 ? { variant: 'primary' as const } : { theme: 'outlined' as const, variant: 'secondary' as const })}
+          {...(index === 0
+            ? { variant: 'primary' as const }
+            : { theme: 'outlined' as const, variant: 'secondary' as const })}
         >
           {label(status)}
         </Button>
@@ -257,7 +259,9 @@ export const OrderDetailDialog = ({
                 : [
                     {
                       label: 'Kontakt',
-                      value: [order.contact.email, order.contact.phone].filter((part) => part !== undefined).join(' · '),
+                      value: [order.contact.email, order.contact.phone]
+                        .filter((part) => part !== undefined)
+                        .join(' · '),
                     },
                   ]),
               ...(order.deliveryAddress === undefined

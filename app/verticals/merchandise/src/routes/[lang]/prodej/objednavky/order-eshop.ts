@@ -28,8 +28,7 @@ export const workflowSteps: readonly { readonly label: string; readonly status: 
   { label: 'Dokončená', status: 'DELIVERED' },
 ];
 
-export const workflowIndex = (status: OrderStatus): number =>
-  workflowSteps.findIndex((step) => step.status === status);
+export const workflowIndex = (status: OrderStatus): number => workflowSteps.findIndex((step) => step.status === status);
 
 export const historyKindLabels: Readonly<Record<OrderHistoryKind, string>> = {
   ADDRESS: 'Doručovací adresa',

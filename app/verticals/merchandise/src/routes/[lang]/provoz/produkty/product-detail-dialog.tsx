@@ -534,76 +534,76 @@ const DetailForm = (props: DetailFormProps) => {
           </p>
         </div>
       ) : (
-      <div className="flex flex-col gap-200 lg:col-span-2">
-        <h2 className="font-semibold">{k('fields.variants')}</h2>
-        <p className="text-fg-secondary text-sm">{k('detail.variantsExplanation')}</p>
-        {draft.variants.map((variant) => (
-          <div className="grid grid-cols-1 items-end gap-150 sm:grid-cols-3" key={variant.key}>
-            <FormInput
-              disabled={disabled}
-              id={`variant-name-${variant.key}`}
-              label={k('fields.variantName')}
-              maxLength={100}
-              name={`variant-name-${variant.key}`}
-              onChange={(event) =>
-                onDraftChange({
-                  variants: draft.variants.map((current) =>
-                    current.key === variant.key ? { ...current, name: event.target.value } : current,
-                  ),
-                })
-              }
-              required
-              value={variant.name}
-              {...fieldError(submitted, variant.name.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : undefined)}
-            />
-            <FormInput
-              disabled={disabled}
-              id={`variant-attributes-${variant.key}`}
-              label={k('fields.variantAttributes')}
-              maxLength={1000}
-              name={`variant-attributes-${variant.key}`}
-              onChange={(event) =>
-                onDraftChange({
-                  variants: draft.variants.map((current) =>
-                    current.key === variant.key ? { ...current, attributes: event.target.value } : current,
-                  ),
-                })
-              }
-              value={variant.attributes}
-            />
-            {canWrite && (
-              <Button
-                disabled={busy}
-                onClick={() =>
-                  onDraftChange({ variants: draft.variants.filter((current) => current.key !== variant.key) })
+        <div className="flex flex-col gap-200 lg:col-span-2">
+          <h2 className="font-semibold">{k('fields.variants')}</h2>
+          <p className="text-fg-secondary text-sm">{k('detail.variantsExplanation')}</p>
+          {draft.variants.map((variant) => (
+            <div className="grid grid-cols-1 items-end gap-150 sm:grid-cols-3" key={variant.key}>
+              <FormInput
+                disabled={disabled}
+                id={`variant-name-${variant.key}`}
+                label={k('fields.variantName')}
+                maxLength={100}
+                name={`variant-name-${variant.key}`}
+                onChange={(event) =>
+                  onDraftChange({
+                    variants: draft.variants.map((current) =>
+                      current.key === variant.key ? { ...current, name: event.target.value } : current,
+                    ),
+                  })
                 }
-                theme="outlined"
-                type="button"
-                variant="secondary"
-              >
-                {k('detail.removeVariant')}
-              </Button>
-            )}
-          </div>
-        ))}
-        {canWrite && (
-          <Button
-            disabled={draft.variants.length >= 50 || busy}
-            onClick={() =>
-              onDraftChange({
-                nextVariantId: draft.nextVariantId + 1,
-                variants: [...draft.variants, { attributes: '', key: draft.nextVariantId, name: '' }],
-              })
-            }
-            theme="outlined"
-            type="button"
-            variant="secondary"
-          >
-            {k('detail.addVariant')}
-          </Button>
-        )}
-        {submitted && metadataError && <StatusText status="error">{k('validation.metadata')}</StatusText>}
-      </div>
+                required
+                value={variant.name}
+                {...fieldError(submitted, variant.name.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : undefined)}
+              />
+              <FormInput
+                disabled={disabled}
+                id={`variant-attributes-${variant.key}`}
+                label={k('fields.variantAttributes')}
+                maxLength={1000}
+                name={`variant-attributes-${variant.key}`}
+                onChange={(event) =>
+                  onDraftChange({
+                    variants: draft.variants.map((current) =>
+                      current.key === variant.key ? { ...current, attributes: event.target.value } : current,
+                    ),
+                  })
+                }
+                value={variant.attributes}
+              />
+              {canWrite && (
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    onDraftChange({ variants: draft.variants.filter((current) => current.key !== variant.key) })
+                  }
+                  theme="outlined"
+                  type="button"
+                  variant="secondary"
+                >
+                  {k('detail.removeVariant')}
+                </Button>
+              )}
+            </div>
+          ))}
+          {canWrite && (
+            <Button
+              disabled={draft.variants.length >= 50 || busy}
+              onClick={() =>
+                onDraftChange({
+                  nextVariantId: draft.nextVariantId + 1,
+                  variants: [...draft.variants, { attributes: '', key: draft.nextVariantId, name: '' }],
+                })
+              }
+              theme="outlined"
+              type="button"
+              variant="secondary"
+            >
+              {k('detail.addVariant')}
+            </Button>
+          )}
+          {submitted && metadataError && <StatusText status="error">{k('validation.metadata')}</StatusText>}
+        </div>
       )}
       <Switch checked={active} disabled={disabled} name="active" onCheckedChange={setActive}>
         {k('detail.active')}

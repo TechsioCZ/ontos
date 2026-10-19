@@ -23,7 +23,9 @@ import { useCommandFailure } from './product-forms.tsx';
 export const STOREFRONT_ORIGIN = 'http://localhost:3060';
 
 export const imageUrl = (reference: string): string =>
-  /^https?:\/\//u.test(reference) ? reference : `${STOREFRONT_ORIGIN}${reference.startsWith('/') ? '' : '/'}${reference}`;
+  /^https?:\/\//u.test(reference)
+    ? reference
+    : `${STOREFRONT_ORIGIN}${reference.startsWith('/') ? '' : '/'}${reference}`;
 
 const availabilityPresentation: Readonly<
   Record<Availability, { readonly label: string; readonly variant: 'danger' | 'outline' | 'success' | 'warning' }>
@@ -113,7 +115,9 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
     }
     const variants: ProductVariant[] = [
       ...drafts.map((draft): ProductVariant => {
-        const original = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
+        const original = (product.variants ?? []).find(
+          (variant) => variant.id !== undefined && variant.id === draft.id,
+        );
         return {
           active: draft.active,
           attributes: draft.attributes.trim(),
@@ -142,14 +146,14 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
   return (
     <div className="flex flex-col gap-250">
       <StatusText showIcon status="default">
-        Varianta má vlastní SKU, cenu, sklad a stav. Cena se zadává bez DPH, zákazník v e-shopu vidí cenu s DPH ({product.vatRate} %),
-        kterou spočítá server.
+        Varianta má vlastní SKU, cenu, sklad a stav. Cena se zadává bez DPH, zákazník v e-shopu vidí cenu s DPH (
+        {product.vatRate} %), kterou spočítá server.
       </StatusText>
       <SectionCard flush title={`Varianty (${drafts.length})`}>
         {drafts.length === 0 ? (
           <p className="p-200 text-fg-secondary text-sm">
-            Produkt zatím nemá prodejní varianty — v e-shopu se prodává jako jeden kus za cenu produktu. Přidejte variantu,
-            pokud se prodává například ve více gramážích nebo provedeních.
+            Produkt zatím nemá prodejní varianty — v e-shopu se prodává jako jeden kus za cenu produktu. Přidejte
+            variantu, pokud se prodává například ve více gramážích nebo provedeních.
           </p>
         ) : (
           <Table size="sm" variant="line">
@@ -182,7 +186,9 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                           placeholder="např. 250 g / zrnková"
                           size="sm"
                           value={draft.name}
-                          {...(submitted && error?.name === true ? { helpText: 'Zadejte název', validateStatus: 'error' as const } : {})}
+                          {...(submitted && error?.name === true
+                            ? { helpText: 'Zadejte název', validateStatus: 'error' as const }
+                            : {})}
                         />
                         <FormInput
                           disabled={!canWrite}
@@ -206,7 +212,9 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                           onChange={(event) => patchDraft(draft.key, { sku: event.target.value })}
                           size="sm"
                           value={draft.sku}
-                          {...(submitted && error?.sku === true ? { helpText: 'Zadejte SKU', validateStatus: 'error' as const } : {})}
+                          {...(submitted && error?.sku === true
+                            ? { helpText: 'Zadejte SKU', validateStatus: 'error' as const }
+                            : {})}
                         />
                       </div>
                     </Table.Cell>
@@ -223,7 +231,9 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                           onValueChange={(details) => patchDraft(draft.key, { priceText: details.value })}
                           size="sm"
                           value={draft.priceText}
-                          {...(submitted && error?.price === true ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
+                          {...(submitted && error?.price === true
+                            ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const }
+                            : {})}
                         >
                           <NumericInput.Control>
                             <NumericInput.Input />
@@ -235,10 +245,18 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                       {price === null ? '—' : formatMoney(grossUnitPriceMinor(price, product.vatRate))}
                     </Table.Cell>
                     <Table.Cell align="end" className="tabular-nums">
-                      {record === undefined ? <span className="text-fg-secondary">nová</span> : `${record.stockOnHand} ks`}
+                      {record === undefined ? (
+                        <span className="text-fg-secondary">nová</span>
+                      ) : (
+                        `${record.stockOnHand} ks`
+                      )}
                     </Table.Cell>
                     <Table.Cell>
-                      {record === undefined ? <span className="text-fg-secondary">—</span> : <AvailabilityBadge value={record.availability} />}
+                      {record === undefined ? (
+                        <span className="text-fg-secondary">—</span>
+                      ) : (
+                        <AvailabilityBadge value={record.availability} />
+                      )}
                     </Table.Cell>
                     <Table.Cell>
                       <Switch
@@ -297,7 +315,13 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
         </div>
       )}
       {(product.variantRecords ?? []).length > 0 && (
-        <VariantStockForm canWrite={canWrite} onCommitted={onCommitted} onReload={onReload} product={product} revision={revision} />
+        <VariantStockForm
+          canWrite={canWrite}
+          onCommitted={onCommitted}
+          onReload={onReload}
+          product={product}
+          revision={revision}
+        />
       )}
       {(product.variantRecords ?? []).length > 0 && <VariantPriceHistory product={product} />}
     </div>
@@ -325,7 +349,8 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
   }
   const variant = variants.find((entry) => entry.id === variantId);
   const quantity = Number(quantityText.replace(/\s/gu, '').replace(',', '.'));
-  const valid = variant !== undefined && Number.isInteger(quantity) && quantity !== 0 && (reason === 'ADJUSTMENT' || quantity > 0);
+  const valid =
+    variant !== undefined && Number.isInteger(quantity) && quantity !== 0 && (reason === 'ADJUSTMENT' || quantity > 0);
 
   const submit = () => {
     if (!valid || variant === undefined || busy) {
@@ -336,12 +361,23 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
     setBusy(true);
     setError(null);
     runCommand(
-      { _tag: 'RecordStockMovement', delta, note: `Varianta ${variant.name}`, productId: product.id, reason, variantId: variant.id },
+      {
+        _tag: 'RecordStockMovement',
+        delta,
+        note: `Varianta ${variant.name}`,
+        productId: product.id,
+        reason,
+        variantId: variant.id,
+      },
       revision,
       (outcome) => {
         setBusy(false);
         if (!outcome.ok) {
-          setError(outcome.reason === 'rejected' ? 'Sklad varianty nesmí klesnout pod nulu.' : failure(outcome.reason, onReload));
+          setError(
+            outcome.reason === 'rejected'
+              ? 'Sklad varianty nesmí klesnout pod nulu.'
+              : failure(outcome.reason, onReload),
+          );
           return;
         }
         onCommitted(`Pohyb zapsán: ${variant.name} ${delta > 0 ? '+' : ''}${delta} ks`);
@@ -362,7 +398,10 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
           value={variantId === '' ? [] : [variantId]}
         />
         <SelectTemplate
-          items={(Object.keys(reasonLabels) as MovementReason[]).map((value) => ({ label: reasonLabels[value], value }))}
+          items={(Object.keys(reasonLabels) as MovementReason[]).map((value) => ({
+            label: reasonLabels[value],
+            value,
+          }))}
           label="Typ pohybu"
           name="stockReason"
           onValueChange={(details) => {
@@ -389,7 +428,14 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
             <NumericInput.Input aria-valuemax={undefined} />
           </NumericInput.Control>
         </FormNumericInput>
-        <Button isLoading={busy} loadingText="Zapisuji…" onClick={submit} theme="outlined" type="button" variant="secondary">
+        <Button
+          isLoading={busy}
+          loadingText="Zapisuji…"
+          onClick={submit}
+          theme="outlined"
+          type="button"
+          variant="secondary"
+        >
           Zapsat pohyb
         </Button>
       </div>
@@ -496,7 +542,9 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
       <SectionCard title="Jak produkt vidí zákazník">
         <div className="flex flex-wrap items-center gap-150">
           <span className="font-semibold text-lg tabular-nums">
-            {product.grossPriceMinor === undefined ? 'cena není dostupná' : `${(product.variantRecords ?? []).length > 0 ? 'od ' : ''}${formatMoney(product.grossPriceMinor)}`}
+            {product.grossPriceMinor === undefined
+              ? 'cena není dostupná'
+              : `${(product.variantRecords ?? []).length > 0 ? 'od ' : ''}${formatMoney(product.grossPriceMinor)}`}
           </span>
           <span className="text-fg-secondary text-sm">s DPH</span>
           <AvailabilityBadge value={product.availability} />
@@ -526,7 +574,9 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
               <li className="flex flex-col gap-100" key={`${image}-${index}`}>
                 <div className="flex aspect-square items-center justify-center overflow-hidden rounded-md border border-border-primary bg-surface-subtle">
                   {broken.has(image) ? (
-                    <span className="p-100 text-center text-fg-secondary text-xs">Náhled se nenačetl (e-shop neběží?)</span>
+                    <span className="p-100 text-center text-fg-secondary text-xs">
+                      Náhled se nenačetl (e-shop neběží?)
+                    </span>
                   ) : (
                     <img
                       alt={`${product.name} – obrázek ${index + 1}`}
@@ -595,12 +645,24 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
             name="slug"
             onChange={(event) => setSlug(event.target.value)}
             value={slug}
-            {...(slugInvalid ? { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const } : {})}
+            {...(slugInvalid
+              ? { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const }
+              : {})}
           />
-          <Switch checked={published} disabled={!canWrite} name="published" onCheckedChange={(checked: boolean) => setPublished(checked)}>
+          <Switch
+            checked={published}
+            disabled={!canWrite}
+            name="published"
+            onCheckedChange={(checked: boolean) => setPublished(checked)}
+          >
             Zveřejnit v e-shopu
           </Switch>
-          <Switch checked={stockTracked} disabled={!canWrite} name="stockTracked" onCheckedChange={(checked: boolean) => setStockTracked(checked)}>
+          <Switch
+            checked={stockTracked}
+            disabled={!canWrite}
+            name="stockTracked"
+            onCheckedChange={(checked: boolean) => setStockTracked(checked)}
+          >
             Sklad je evidovaný (vypnuto = zákazník uvidí „dostupnost nyní nelze ověřit“ a nemůže objednat)
           </Switch>
         </div>

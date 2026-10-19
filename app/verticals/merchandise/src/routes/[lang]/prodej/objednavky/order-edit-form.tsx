@@ -172,7 +172,8 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
     price: parseCzk(line.priceText),
     quantity: parseQuantity(line.quantityText),
   }));
-  const linesInvalid = draft.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
+  const linesInvalid =
+    draft.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
   const shippingPrice = parseCzk(draft.shippingPriceText);
   const shippingInvalid = draft.shippingMethod !== null && shippingPrice === null;
   const addressTouched = !sameAddress(order, draft);
@@ -284,9 +285,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
     if (unit === undefined) {
       return;
     }
-    const existing = draft.lines.find(
-      (line) => line.productId === unit.productId && line.variantId === unit.variantId,
-    );
+    const existing = draft.lines.find((line) => line.productId === unit.productId && line.variantId === unit.variantId);
     if (existing !== undefined) {
       const quantity = parseQuantity(existing.quantityText) ?? 0;
       patchLine(existing.key, { quantityText: String(quantity + 1) });
@@ -370,7 +369,9 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
                       size="sm"
                       step={1}
                       value={line.quantityText}
-                      {...(submitted && quantity === null ? { helpText: '1–999 ks', validateStatus: 'error' as const } : {})}
+                      {...(submitted && quantity === null
+                        ? { helpText: '1–999 ks', validateStatus: 'error' as const }
+                        : {})}
                     >
                       <NumericInput.Control>
                         <NumericInput.Input aria-valuemax={undefined} />
@@ -390,7 +391,9 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
                       onValueChange={(details) => patchLine(line.key, { priceText: details.value })}
                       size="sm"
                       value={line.priceText}
-                      {...(submitted && price === null ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
+                      {...(submitted && price === null
+                        ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const }
+                        : {})}
                     >
                       <NumericInput.Control>
                         <NumericInput.Input />
@@ -401,7 +404,12 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
                 <Table.Cell align="end" className="tabular-nums">
                   {price === null || quantity === null
                     ? '—'
-                    : formatMoney(lineGrossMinor({ quantity, unitPriceMinor: price, vatRate: line.vatRate }, order.pricesIncludeVat))}
+                    : formatMoney(
+                        lineGrossMinor(
+                          { quantity, unitPriceMinor: price, vatRate: line.vatRate },
+                          order.pricesIncludeVat,
+                        ),
+                      )}
                 </Table.Cell>
                 <Table.Cell align="end">
                   <Button
@@ -433,7 +441,14 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
             translations={comboboxTranslations}
             value={pick === null ? [] : [pick]}
           />
-          <Button disabled={pick === null} icon="icon-[mdi--plus]" onClick={addLine} theme="outlined" type="button" variant="secondary">
+          <Button
+            disabled={pick === null}
+            icon="icon-[mdi--plus]"
+            onClick={addLine}
+            theme="outlined"
+            type="button"
+            variant="secondary"
+          >
             Přidat
           </Button>
         </div>
@@ -480,10 +495,34 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
 
       <SectionCard title="Doručovací adresa">
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <FormInput id="edit-street" label="Ulice a číslo" name="street" onChange={(event) => patch({ street: event.target.value })} value={draft.street} />
-          <FormInput id="edit-city" label="Město" name="city" onChange={(event) => patch({ city: event.target.value })} value={draft.city} />
-          <FormInput id="edit-postal" label="PSČ" name="postalCode" onChange={(event) => patch({ postalCode: event.target.value })} value={draft.postalCode} />
-          <FormInput id="edit-country" label="Země" name="country" onChange={(event) => patch({ country: event.target.value })} value={draft.country} />
+          <FormInput
+            id="edit-street"
+            label="Ulice a číslo"
+            name="street"
+            onChange={(event) => patch({ street: event.target.value })}
+            value={draft.street}
+          />
+          <FormInput
+            id="edit-city"
+            label="Město"
+            name="city"
+            onChange={(event) => patch({ city: event.target.value })}
+            value={draft.city}
+          />
+          <FormInput
+            id="edit-postal"
+            label="PSČ"
+            name="postalCode"
+            onChange={(event) => patch({ postalCode: event.target.value })}
+            value={draft.postalCode}
+          />
+          <FormInput
+            id="edit-country"
+            label="Země"
+            name="country"
+            onChange={(event) => patch({ country: event.target.value })}
+            value={draft.country}
+          />
         </div>
         {submitted && addressInvalid && (
           <StatusText showIcon status="error">
@@ -494,9 +533,28 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
 
       <SectionCard title="Kontakt zákazníka (fiktivní údaje)">
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
-          <FormInput id="edit-name" label="Jméno" name="name" onChange={(event) => patch({ name: event.target.value })} value={draft.name} />
-          <FormInput id="edit-email" label="E-mail" name="email" onChange={(event) => patch({ email: event.target.value })} type="email" value={draft.email} />
-          <FormInput id="edit-phone" label="Telefon" name="phone" onChange={(event) => patch({ phone: event.target.value })} value={draft.phone} />
+          <FormInput
+            id="edit-name"
+            label="Jméno"
+            name="name"
+            onChange={(event) => patch({ name: event.target.value })}
+            value={draft.name}
+          />
+          <FormInput
+            id="edit-email"
+            label="E-mail"
+            name="email"
+            onChange={(event) => patch({ email: event.target.value })}
+            type="email"
+            value={draft.email}
+          />
+          <FormInput
+            id="edit-phone"
+            label="Telefon"
+            name="phone"
+            onChange={(event) => patch({ phone: event.target.value })}
+            value={draft.phone}
+          />
         </div>
         {submitted && contactInvalid && (
           <StatusText showIcon status="error">
@@ -505,7 +563,14 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
         )}
       </SectionCard>
 
-      <FormTextarea id="edit-note" label="Poznámka k objednávce" maxLength={1000} name="note" onChange={(event) => patch({ note: event.target.value })} value={draft.note} />
+      <FormTextarea
+        id="edit-note"
+        label="Poznámka k objednávce"
+        maxLength={1000}
+        name="note"
+        onChange={(event) => patch({ note: event.target.value })}
+        value={draft.note}
+      />
       <FormInput
         id="edit-reason"
         label="Důvod změny (zapíše se do historie)"

@@ -66,7 +66,10 @@ export const fullOrderTotals = (order: {
 };
 
 /** Gross total of one line as shown to a customer or in the admin detail. */
-export const lineGrossMinor = (line: Pick<OrderLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>, pricesIncludeVat: boolean | undefined): number =>
+export const lineGrossMinor = (
+  line: Pick<OrderLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>,
+  pricesIncludeVat: boolean | undefined,
+): number =>
   pricesIncludeVat === true
     ? line.quantity * line.unitPriceMinor
     : line.quantity * line.unitPriceMinor + orderLineVatMinor(line);

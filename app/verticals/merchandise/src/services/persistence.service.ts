@@ -89,11 +89,7 @@ export const stockOnHandOf = (movements: readonly StockMovement[], productId: Pr
 };
 
 /** Stock of one variant: the signed sum of its ledger movements. */
-export const variantStockOf = (
-  movements: readonly StockMovement[],
-  productId: Product['id'],
-  variantId: string,
-) => {
+export const variantStockOf = (movements: readonly StockMovement[], productId: Product['id'], variantId: string) => {
   let onHand = 0;
   for (const movement of movements) {
     if (movement.productId === productId && movement.variantId === variantId) {
@@ -190,7 +186,9 @@ export const toProductRecord = (product: Product, movements: readonly StockMovem
     ...product,
     availability: product.active ? best : 'OUT_OF_STOCK',
     grossPriceMinor: Math.min(...grossPrices),
-    lowStock: sellable.some((variant) => variant.availability === 'LOW_STOCK' || variant.availability === 'OUT_OF_STOCK'),
+    lowStock: sellable.some(
+      (variant) => variant.availability === 'LOW_STOCK' || variant.availability === 'OUT_OF_STOCK',
+    ),
     stockOnHand,
     stockValueMinor:
       sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
@@ -336,13 +334,18 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
   incoming: readonly ProductVariant[],
   input: MerchandiseCommandInput,
 ) {
-  const existing = new Map((product.variants ?? []).flatMap((variant) => (variant.id === undefined ? [] : [[variant.id, variant] as const])));
+  const existing = new Map(
+    (product.variants ?? []).flatMap((variant) => (variant.id === undefined ? [] : [[variant.id, variant] as const])),
+  );
   const skus = new Set<string>();
   const ids = new Set<string>();
   const result: ProductVariant[] = [];
   for (const [index, variant] of incoming.entries()) {
     const id =
-      variant.id ?? (variant.priceMinor === undefined ? undefined : yield* mintId(VariantIdSchema, `${input.resourceId}-v${index + 1}`));
+      variant.id ??
+      (variant.priceMinor === undefined
+        ? undefined
+        : yield* mintId(VariantIdSchema, `${input.resourceId}-v${index + 1}`));
     if (id !== undefined) {
       if (ids.has(id)) {
         return yield* conflict('Variant ids must be unique');
@@ -814,7 +817,12 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       message: `Cena dopravy se změnila na ${czk(method.grossPriceMinor)}.`,
     });
   }
-  const shipping = { label: method.label, method: value.shippingMethod, priceMinor: method.grossPriceMinor, vatRate: 21 } as const;
+  const shipping = {
+    label: method.label,
+    method: value.shippingMethod,
+    priceMinor: method.grossPriceMinor,
+    vatRate: 21,
+  } as const;
   const draftTotals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
   const draftLines = lines.map((line) => ({
     lineTotalMinor: line.quantity * line.unitPriceMinor,
@@ -875,7 +883,10 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   };
 });
 
-const describeLines = (order: { readonly lines: readonly OrderLine[]; readonly pricesIncludeVat?: boolean | undefined }) =>
+const describeLines = (order: {
+  readonly lines: readonly OrderLine[];
+  readonly pricesIncludeVat?: boolean | undefined;
+}) =>
   order.lines
     .map(
       (line) =>
@@ -889,7 +900,9 @@ const describeAddress = (address: Order['deliveryAddress']) =>
     : `${address.street}, ${address.postalCode} ${address.city}${address.country === undefined || address.country === '' ? '' : `, ${address.country}`}`;
 
 const describeContact = (contact: Order['contact']) =>
-  contact === undefined ? 'bez kontaktu' : [contact.name, contact.email, contact.phone].filter((part) => part !== undefined && part !== '').join(', ');
+  contact === undefined
+    ? 'bez kontaktu'
+    : [contact.name, contact.email, contact.phone].filter((part) => part !== undefined && part !== '').join(', ');
 
 const describeShipping = (shipping: Order['shipping']) =>
   shipping === undefined ? 'bez dopravy' : `${shipping.label}, ${czk(shipping.priceMinor)}`;
@@ -926,7 +939,11 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
       seen.add(key);
       const kept = previous.get(key);
       if (kept !== undefined) {
-        nextLines.push({ ...kept, quantity: request.quantity, unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor });
+        nextLines.push({
+          ...kept,
+          quantity: request.quantity,
+          unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor,
+        });
         continue;
       }
       const product = yield* findProduct(state.products, request.productId);
@@ -935,7 +952,8 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
         return yield* conflict(`Choose a variant of ${product.sku}`);
       }
       const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
-      const currentPrice = existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, product.vatRate) : netPrice;
+      const currentPrice =
+        existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, product.vatRate) : netPrice;
       nextLines.push({
         productId: product.id,
         productName: product.name,
@@ -990,7 +1008,12 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
   }
   if (value.shipping !== undefined) {
     const method = shippingMethods[value.shipping.method];
-    const shipping = { label: method.label, method: value.shipping.method, priceMinor: value.shipping.priceMinor, vatRate: 21 } as const;
+    const shipping = {
+      label: method.label,
+      method: value.shipping.method,
+      priceMinor: value.shipping.priceMinor,
+      vatRate: 21,
+    } as const;
     const before = describeShipping(existing.shipping);
     const after = describeShipping(shipping);
     if (before !== after) {
@@ -1017,7 +1040,12 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
   if (value.note !== undefined && value.note !== (existing.note ?? '')) {
     order = { ...order, note: value.note };
     history.push(
-      historyEntry(input, { after: value.note === '' ? 'bez poznámky' : value.note, before: existing.note ?? 'bez poznámky', kind: 'NOTE', ...reason }),
+      historyEntry(input, {
+        after: value.note === '' ? 'bez poznámky' : value.note,
+        before: existing.note ?? 'bez poznámky',
+        kind: 'NOTE',
+        ...reason,
+      }),
     );
   }
   const entity = yield* entityIdOf(existing.id);

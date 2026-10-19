@@ -53,7 +53,13 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
   const product = products.find((item) => item.id === line.productId);
   const variant = product?.variantRecords?.find((entry) => entry.id === line.variantId);
   const selected =
-    line.productId === null ? [] : [line.variantId === undefined || line.variantId === null ? line.productId : `${line.productId}|${line.variantId}`];
+    line.productId === null
+      ? []
+      : [
+          line.variantId === undefined || line.variantId === null
+            ? line.productId
+            : `${line.productId}|${line.variantId}`,
+        ];
 
   return (
     <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
