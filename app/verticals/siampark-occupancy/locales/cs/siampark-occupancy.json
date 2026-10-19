@@ -74,7 +74,7 @@
       "bookingObservations": "Pozorování rezervační simulace",
       "list": "Nájmy a pobyty",
       "importBooking": "Import krátkodobého pobytu",
-      "bookingFormContext": "Použijte jednotku a termín z formuláře nájmu a vyberte hosta. Simulace pobytu je pro dvě osoby.",
+      "bookingFormContext": "Vyberte jednotku, termín a hosta. Simulace pobytu je pro dvě osoby.",
       "guestSearch": "Vyhledat hosta",
       "guest": "Host",
       "simulateImport": "Simulovat úspěšný import",
@@ -88,7 +88,26 @@
       "resultSummary": "Souhrn výsledku",
       "editDraft": "Upravit období návrhu",
       "saveDraft": "Uložit období návrhu",
-      "newDraft": "Přejít k novému nájmu"
+      "newDraft": "Přejít k novému nájmu",
+      "newLease": "Nový nájem",
+      "newBooking": "Nový pobyt",
+      "close": "Zavřít",
+      "resizePanel": "Změnit šířku panelu. Použijte šipky vlevo a vpravo.",
+      "customersLoading": "Načítání zákazníků…",
+      "customersEmpty": "Žádní odpovídající aktivní zákazníci.",
+      "customerPlaceholder": "Vyberte nebo vyhledejte zákazníka"
+    },
+    "detail": {
+      "back": "Zpět na nájmy a pobyty",
+      "lease": "Údaje nájmu",
+      "type": "Typ",
+      "customerName": "Jméno zákazníka",
+      "customerUnknown": "Jméno není dostupné",
+      "customerUnavailable": "Údaje zákazníka se nepodařilo načíst.",
+      "notFound": "Nájem nebyl nalezen nebo k němu nemáte přístup.",
+      "note": "Poznámka",
+      "noContract": "K nájmu zatím není přiřazena smlouva.",
+      "linkedContract": "K nájmu je přiřazena smlouva."
     }
   }
 }

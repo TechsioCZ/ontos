@@ -106,6 +106,19 @@
       "signedReference": "Odkaz nebo evidenční číslo podepsaného dokumentu",
       "signedOn": "Datum podpisu",
       "recordSignature": "Zaevidovat podpis a dokument"
+    },
+    "detail": {
+      "back": "Zpět na smlouvy",
+      "contract": "Údaje smlouvy",
+      "customerName": "Jméno zákazníka",
+      "customerUnknown": "Jméno není dostupné",
+      "notFound": "Smlouva nebyla nalezena nebo k ní nemáte přístup.",
+      "status": "Stav smlouvy a podpisu",
+      "note": "Poznámka",
+      "noDocuments": "Ke smlouvě zatím nejsou evidovány žádné dokumenty.",
+      "newContract": "Nová smlouva",
+      "close": "Zavřít",
+      "resizePanel": "Změnit šířku panelu. Použijte šipky vlevo a vpravo."
     }
   }
 }

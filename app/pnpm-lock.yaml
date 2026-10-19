@@ -2807,6 +2807,9 @@ importers:
 
   verticals/siampark-agreements:
     dependencies:
+      '@app/admin-ui':
+        specifier: workspace:*
+        version: link:../../packages/admin-ui
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
@@ -2877,8 +2880,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.25.1
-        version: 0.25.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.56.0
+        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -3109,6 +3112,9 @@ importers:
 
   verticals/siampark-occupancy:
     dependencies:
+      '@app/admin-ui':
+        specifier: workspace:*
+        version: link:../../packages/admin-ui
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
@@ -3179,8 +3185,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.25.1
-        version: 0.25.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.56.0
+        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)

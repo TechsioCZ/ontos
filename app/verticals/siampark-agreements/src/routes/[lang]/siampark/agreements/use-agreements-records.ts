@@ -1,7 +1,7 @@
 import { failureFeedback } from '../../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { listCustomers } from '@app/party-registry/api/client';
+import { executeCounterpartyRead, listCustomers } from '@app/party-registry/api/client';
 import { executeRecords as executePropertyRecords } from '@app/siampark-property/clients/records';
 import { executeRecords as executeOccupancyRecords } from '@app/siampark-occupancy/clients/records';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -60,7 +60,9 @@ export const useRecordsPage = () => {
   const [properties, setProperties] = useState<Properties>();
   const [occupancies, setOccupancies] = useState<Occupancies>();
   const [feedback, setFeedback] = useState<Feedback>('loading');
-  const [selectedId, setSelectedId] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [customerName, setCustomerName] = useState<string>();
+  const [customerNameFeedback, setCustomerNameFeedback] = useState<Feedback>();
   const [customers, setCustomers] = useState<Effect.Success<ReturnType<typeof listCustomers>>>([]);
   const [customerId, setCustomerId] = useState('');
   const [contractKind, setContractKind] = useState<Contract['kind']>('OTHER');
@@ -74,9 +76,7 @@ export const useRecordsPage = () => {
   const [endDate, setEndDate] = useState(DEFAULT_END_DATE);
   const [editingDraft, setEditingDraft] = useState(false);
   const [expiringOnly, setExpiringOnly] = useState(false);
-  const selected = snapshot?.contracts.find(
-    (record) => record.contractRef.resourceId === (selectedId || linkedResourceId),
-  );
+  const selected = snapshot?.contracts.find((record) => record.contractRef.resourceId === linkedResourceId);
   const clearSensitiveState = () => {
     setSnapshot(undefined);
     setCustomers([]);
@@ -84,7 +84,9 @@ export const useRecordsPage = () => {
     setRentalFeedback(undefined);
     setProperties(undefined);
     setOccupancies(undefined);
-    setSelectedId('');
+    setFormOpen(false);
+    setCustomerName(undefined);
+    setCustomerNameFeedback(undefined);
     setSignedReference('');
     setSignedFileName('');
     setSignedBy('');
@@ -151,6 +153,21 @@ export const useRecordsPage = () => {
           setCustomers(value.customers);
         }),
       ),
+      Effect.tap((value) => {
+        const record = value.records.contracts.find((item) => item.contractRef.resourceId === linkedResourceId);
+        if (record === undefined) {
+          return Effect.void;
+        }
+        return executeCounterpartyRead(
+          { counterpartyRef: record.counterpartyRef },
+          'siampark-agreements.customer-detail',
+        ).pipe(
+          Effect.match({
+            onFailure: (failure) => setCustomerNameFeedback(failureFeedback(failure)),
+            onSuccess: (customer) => setCustomerName(customer.party.displayName ?? undefined),
+          }),
+        );
+      }),
       Effect.tap((value) =>
         value.rentalReadable && value.records.contracts.some((record) => record.kind === 'LEASE')
           ? loadRentalReferences().pipe(
@@ -227,10 +244,14 @@ export const useRecordsPage = () => {
         ),
         Effect.flatMap((result) => load().pipe(Effect.map((value) => ({ records: value.records, result })))),
         Effect.tap(({ records, result }) => {
-          setSelectedId(
-            records.contracts.find((record) => record.contractRef.resourceId === result.resourceRef?.resourceId)
-              ?.contractRef.resourceId ?? '',
+          const record = records.contracts.find(
+            (item) => item.contractRef.resourceId === result.resourceRef?.resourceId,
           );
+          if (record !== undefined && linkedResourceId !== record.contractRef.resourceId) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('resourceId', record.contractRef.resourceId);
+            window.location.assign(url);
+          }
           return Effect.void;
         }),
         Effect.match({
@@ -293,8 +314,11 @@ export const useRecordsPage = () => {
     setStartDate(selected.startDate);
     setEndDate(selected.endDate ?? '');
     setEditingDraft(true);
+    setFormOpen(true);
   };
   const resetDraftForm = () => {
+    setFormOpen(true);
+    setCustomerId('');
     setEditingDraft(false);
     setOccupancyId('');
     setStartDate(DEFAULT_START_DATE);
@@ -402,19 +426,39 @@ export const useRecordsPage = () => {
     showRentalFeedback: rentalFeedback !== undefined && contractKind === 'LEASE',
     showRentalSelector: !editingDraft && contractKind === 'LEASE',
   };
+  const detailView = {
+    canActivate: selected?.lifecycleState === 'DRAFT',
+    canEdit: selected?.lifecycleState === 'DRAFT' && selected.signatureState === 'NOT_SENT',
+    canRecordSignature:
+      selected !== undefined &&
+      ['DRAFT', 'ACTIVE'].includes(selected.lifecycleState) &&
+      ['NOT_SENT', 'DECLINED'].includes(selected.signatureState),
+    canRenew: selected?.lifecycleState === 'ACTIVE',
+    documents:
+      snapshot?.documents.filter((record) => record.contractRef?.resourceId === selected?.contractRef.resourceId) ?? [],
+    signatureObservations:
+      snapshot?.signatureObservations.filter(
+        (record) => record.contractRef.resourceId === selected?.contractRef.resourceId,
+      ) ?? [],
+  };
   return {
     busy,
     contractKind,
     createContract,
     customerId,
+    customerName,
+    customerNameFeedback,
     customers,
+    detailView,
     editDraft,
     editingDraft,
     endDate,
     expiringOnly,
     feedback,
+    formOpen,
     formView,
     language,
+    linkedResourceId,
     occupancies,
     occupancyId,
     properties,
@@ -431,11 +475,8 @@ export const useRecordsPage = () => {
     setCustomerId,
     setEndDate,
     setExpiringOnly,
+    setFormOpen,
     setOccupancyId,
-    setSelectedId: (value: string) => {
-      setSelectedId(value);
-      resetDraftForm();
-    },
     setSignedBy,
     setSignedFileName,
     setSignedOn,

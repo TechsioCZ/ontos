@@ -106,6 +106,19 @@
       "signedReference": "Signed document link or reference number",
       "signedOn": "Signature date",
       "recordSignature": "Record signature and document"
+    },
+    "detail": {
+      "back": "Back to contracts",
+      "contract": "Contract details",
+      "customerName": "Customer name",
+      "customerUnknown": "Name unavailable",
+      "notFound": "The contract was not found or you do not have access to it.",
+      "status": "Contract and signature status",
+      "note": "Note",
+      "noDocuments": "No documents have been recorded for this contract yet.",
+      "newContract": "New contract",
+      "close": "Close",
+      "resizePanel": "Resize panel. Use the left and right arrow keys."
     }
   }
 }
