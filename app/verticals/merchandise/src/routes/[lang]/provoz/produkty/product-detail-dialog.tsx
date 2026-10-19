@@ -13,12 +13,17 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { dialogCloseLabel, formatDate, formatMoney, PageHeader } from '@app/admin-ui';
 import { DateTime, Option, Schema } from 'effect';
-import { ProductMetadataSchema } from '../../../../../shared/domain/merchandise-model.ts';
+import { isRealVariant, ProductMetadataSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useEffect, useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
-import type { ProductMetadata, ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
+import type {
+  ProductMetadata,
+  ProductUnit,
+  ProductVariant,
+  VatRate,
+} from '../../../../../shared/domain/merchandise-model.ts';
 import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
@@ -36,6 +41,7 @@ import {
   useProductLabel,
 } from './product-forms.tsx';
 import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirty } from './product-movements.tsx';
+import { AvailabilityBadge, EshopPanel, VariantsPanel } from './product-eshop.tsx';
 import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailViewProps {
@@ -103,6 +109,8 @@ interface DetailDraft {
   readonly priceCzk: number;
   /** The price input's text, kept as typed so the two-decimal display never fights the keyboard. */
   readonly priceText: string;
+  /** Real (sellable) variants are edited on the Varianty tab; the detail form passes them through unchanged. */
+  readonly realVariants: readonly ProductVariant[];
   readonly shortDescription: string;
   readonly unit: ProductUnit;
   readonly variants: readonly { readonly attributes: string; readonly key: number; readonly name: string }[];
@@ -126,9 +134,12 @@ const draftOf = (product: ProductRecord): DetailDraft => ({
   nextVariantId: product.variants?.length ?? 0,
   priceCzk: product.currentPriceMinor / 100,
   priceText: moneyInputText(product.currentPriceMinor / 100),
+  realVariants: (product.variants ?? []).filter(isRealVariant),
   shortDescription: product.shortDescription ?? '',
   unit: product.unit,
-  variants: (product.variants ?? []).map((variant, key) => ({ ...variant, key })),
+  variants: (product.variants ?? [])
+    .filter((variant) => !isRealVariant(variant))
+    .map((variant, key) => ({ attributes: variant.attributes, key, name: variant.name })),
   vatRate: product.vatRate,
   weightGrams: measurementText(product.weightGrams),
   widthMm: measurementText(product.widthMm),
@@ -140,7 +151,10 @@ const metadataOf = (draft: DetailDraft): ProductMetadata => ({
   heightMm: Option.fromNullOr(measurementOf(draft.heightMm)),
   lengthMm: Option.fromNullOr(measurementOf(draft.lengthMm)),
   shortDescription: draft.shortDescription.trim(),
-  variants: draft.variants.map(({ attributes, name }) => ({ attributes: attributes.trim(), name: name.trim() })),
+  variants: [
+    ...draft.realVariants,
+    ...draft.variants.map(({ attributes, name }) => ({ attributes: attributes.trim(), name: name.trim() })),
+  ],
   weightGrams: Option.fromNullOr(measurementOf(draft.weightGrams)),
   widthMm: Option.fromNullOr(measurementOf(draft.widthMm)),
 });
@@ -511,6 +525,15 @@ const DetailForm = (props: DetailFormProps) => {
           {...fieldError(submitted, measurementInvalid(draft[field]) ? k('validation.measurement') : undefined)}
         />
       ))}
+      {draft.realVariants.length > 0 ? (
+        <div className="flex flex-col gap-100 lg:col-span-2">
+          <h2 className="font-semibold">{k('fields.variants')}</h2>
+          <p className="text-fg-secondary text-sm">
+            Produkt má {draft.realVariants.length} prodejní varianty s vlastní cenou a skladem — upravte je na kartě
+            „Varianty a ceny“.
+          </p>
+        </div>
+      ) : (
       <div className="flex flex-col gap-200 lg:col-span-2">
         <h2 className="font-semibold">{k('fields.variants')}</h2>
         <p className="text-fg-secondary text-sm">{k('detail.variantsExplanation')}</p>
@@ -581,6 +604,7 @@ const DetailForm = (props: DetailFormProps) => {
         )}
         {submitted && metadataError && <StatusText status="error">{k('validation.metadata')}</StatusText>}
       </div>
+      )}
       <Switch checked={active} disabled={disabled} name="active" onCheckedChange={setActive}>
         {k('detail.active')}
       </Switch>
@@ -662,12 +686,23 @@ export const ProductDetailView = ({
               )}
             </div>
           }
-          description={`${product.sku} · ${formatMoney(product.currentPriceMinor)}`}
+          description={
+            <span className="flex flex-wrap items-center gap-100">
+              <span>{`${product.sku} · ${product.category} · ${
+                product.grossPriceMinor === undefined
+                  ? formatMoney(product.currentPriceMinor)
+                  : `${(product.variantRecords ?? []).length > 0 ? 'od ' : ''}${formatMoney(product.grossPriceMinor)} s DPH`
+              }`}</span>
+              <AvailabilityBadge value={product.availability} />
+            </span>
+          }
           title={product.name}
         />
         <Tabs onValueChange={setTab} value={tab} variant="line">
           <Tabs.List>
             <Tabs.Trigger value="detail">{k('detail.tab')}</Tabs.Trigger>
+            <Tabs.Trigger value="variants">Varianty a ceny</Tabs.Trigger>
+            <Tabs.Trigger value="eshop">E-shop a obrázky</Tabs.Trigger>
             <Tabs.Trigger value="prices">{k('prices.tab')}</Tabs.Trigger>
             <Tabs.Trigger value="movements">{k('movements.tab')}</Tabs.Trigger>
             <Tabs.Indicator />
@@ -685,6 +720,26 @@ export const ProductDetailView = ({
               product={product}
               revision={revision}
               setBusy={setBusy}
+            />
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="variants">
+            <VariantsPanel
+              canWrite={canWrite}
+              key={`variants-${DateTime.formatIso(product.updatedAt)}`}
+              onCommitted={onCommitted}
+              onReload={onReload}
+              product={product}
+              revision={revision}
+            />
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="eshop">
+            <EshopPanel
+              canWrite={canWrite}
+              key={`eshop-${DateTime.formatIso(product.updatedAt)}`}
+              onCommitted={onCommitted}
+              onReload={onReload}
+              product={product}
+              revision={revision}
             />
           </Tabs.Content>
           <Tabs.Content className="py-200" value="prices">
