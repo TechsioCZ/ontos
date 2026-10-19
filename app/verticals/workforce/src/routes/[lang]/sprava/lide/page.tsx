@@ -162,7 +162,9 @@ const auditText = (entry: AuditEntry, t: Translate): string => {
     return t(`${key}.audit.inactiveRejected`);
   }
   if (entry.outcome === 'denied') {
-    return t(`${key}.audit.rejected`, { code: entry.outcomeCode });
+    return t(`${key}.audit.rejected`, {
+      code: t(`${key}.audit.codes.${entry.outcomeCode}`, { defaultValue: entry.outcomeCode }),
+    });
   }
   if (details['operation'] === 'create') {
     return t(`${key}.audit.create`, { role: details['newRoleLabel'] ?? '—', target });

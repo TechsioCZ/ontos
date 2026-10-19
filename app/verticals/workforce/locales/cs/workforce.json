@@ -235,7 +235,11 @@
         "rejected": "pokus o správu účtu byl zamítnut ({{code}})",
         "reason": "Důvod: {{reason}}",
         "noPrevious": "bez role",
-        "inactiveRejected": "– deaktivovaný účet odeslal požadavek; Core jej odmítl"
+        "inactiveRejected": "– deaktivovaný účet odeslal požadavek; Core jej odmítl",
+        "codes": {
+          "company_administrator_required": "uživatel není správcem firmy",
+          "spicedb_permission_denied": "chybí oprávnění v Core"
+        }
       },
       "forbidden": {
         "title": "Správu lidí má jen správce firmy",

@@ -55,6 +55,22 @@ const coreAuditEvents = core.table('audit_events', {
   tenantId: uuid('tenant_id').notNull(),
 });
 
+/** Insert shape of `core.audit_events` for denials decided before the Core Action runs. */
+const coreAuditEventsWrite = core.table('audit_events', {
+  auditProfile: text('audit_profile').notNull(),
+  authBindingId: uuid('auth_binding_id'),
+  authMethod: text('auth_method').notNull(),
+  eventType: text('event_type').notNull(),
+  evidenceJson: jsonb('evidence_json').$type<Readonly<Record<string, unknown>>>().notNull(),
+  legalEntityId: uuid('legal_entity_id'),
+  outcome: text('outcome').notNull(),
+  outcomeCode: text('outcome_code').notNull(),
+  outcomeStage: text('outcome_stage').notNull(),
+  principalId: uuid('principal_id'),
+  targetModuleKey: text('target_module_key'),
+  tenantId: uuid('tenant_id').notNull(),
+});
+
 const ACTION_KEY = 'core.identity.manage-demo-account';
 const DEMO_PASSWORD = 'password1234';
 
@@ -488,13 +504,39 @@ const ensureBetterAuthUser = Effect.fn('DemoAccounts.ensureBetterAuthUser')(func
     .pipe(Effect.mapError(unavailable));
 });
 
+/** A non-administrator's attempt is denied before the Core Action runs; it is still written to the Core audit. */
+const auditForbiddenAttempt = (caller: DemoAccountCaller, operation: string) =>
+  AuthDatabase.pipe(
+    Effect.flatMap(({ executor }) =>
+      executor.insert(coreAuditEventsWrite).values({
+        auditProfile: 'sensitive',
+        authBindingId: caller.principal.authBindingId ?? null,
+        authMethod: caller.principal.authMethod,
+        eventType: 'action.rejected',
+        evidenceJson: { actionKey: ACTION_KEY, operation, reason: 'company_administrator_required' },
+        legalEntityId: caller.principal.legalEntityId,
+        outcome: 'denied',
+        outcomeCode: 'company_administrator_required',
+        outcomeStage: 'authz',
+        principalId: caller.principal.principalId,
+        targetModuleKey: 'core.identity',
+        tenantId: caller.principal.tenantId,
+      }),
+    ),
+    Effect.ignore,
+  );
+
 export const manageDemoAccount = Effect.fn('DemoAccounts.manage')(function* manageDemoAccount(
   caller: DemoAccountCaller,
   request: ManageDemoAccountRequest,
   transport: { readonly correlationId: string; readonly idempotencyKey: string },
 ) {
   const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
-  const { assigned, members, roles } = yield* requireAdministrator(caller, grants);
+  const { assigned, members, roles } = yield* requireAdministrator(caller, grants).pipe(
+    Effect.tapError((error) =>
+      error._tag === 'DemoAccountForbidden' ? auditForbiddenAttempt(caller, request.operation) : Effect.void,
+    ),
+  );
   const { legalEntityId, tenantId } = caller.principal;
   const runtime = yield* ActionRuntime;
   const run = (payload: ManageDemoAccountPayload) =>

@@ -235,7 +235,11 @@
         "rejected": "an account administration attempt was denied ({{code}})",
         "reason": "Reason: {{reason}}",
         "noPrevious": "no role",
-        "inactiveRejected": "– the deactivated account sent a request; Core rejected it"
+        "inactiveRejected": "– the deactivated account sent a request; Core rejected it",
+        "codes": {
+          "company_administrator_required": "the user is not a company administrator",
+          "spicedb_permission_denied": "missing permission in Core"
+        }
       },
       "forbidden": {
         "title": "Only the company administrator manages people",
