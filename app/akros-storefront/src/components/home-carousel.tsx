@@ -67,19 +67,24 @@ export function HomeCarousel() {
         slideCount={slides.length}
         translations={cs.home.carousel}
       >
-        <Carousel.Slides slides={slides} />
+        <div className="relative">
+          <Carousel.Slides slides={slides} />
+          <Carousel.Control
+            className="pointer-events-none absolute inset-0 items-center justify-between px-3 max-md:px-1"
+            controlPosition="unset"
+          >
+            <Carousel.Previous className="pointer-events-auto" />
+            <Carousel.Next className="pointer-events-auto" />
+          </Carousel.Control>
+        </div>
         <Carousel.Control
-          className="pointer-events-none absolute inset-0 items-center justify-between px-3 max-md:px-1"
+          className="pointer-events-none absolute inset-x-0 bottom-0 w-full max-[431px]:static"
           controlPosition="unset"
         >
-          <Carousel.Previous className="pointer-events-auto" />
-          <Carousel.Next className="pointer-events-auto" />
-        </Carousel.Control>
-        <Carousel.Control className="pointer-events-none w-full">
           <Carousel.Indicators className="pointer-events-none">
             {slides.map((slide, index) => (
               <Carousel.Indicator
-                className="pointer-events-auto max-md:items-end max-md:pb-1"
+                className="pointer-events-auto max-md:items-end max-md:pb-1 max-[431px]:items-center max-[431px]:pb-0"
                 index={index}
                 key={slide.id}
               />

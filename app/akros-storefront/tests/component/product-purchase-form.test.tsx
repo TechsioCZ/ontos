@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -131,10 +131,13 @@ describe("ProductPurchaseForm", () => {
     await user.type(maximum, "1");
     await user.tab();
     const sliders = screen.getAllByRole("slider", { name: /Průměr/ });
-    expect(Number(sliders[0].getAttribute("aria-valuenow"))).toBeLessThanOrEqual(
-      Number(sliders[1].getAttribute("aria-valuenow")),
-    );
-    expect(Number((maximum as HTMLInputElement).value)).toBeGreaterThanOrEqual(2);
+    // NumericInput synchronizes its displayed value on the next animation frame.
+    await waitFor(() => {
+      expect(Number(sliders[0].getAttribute("aria-valuenow"))).toBeLessThanOrEqual(
+        Number(sliders[1].getAttribute("aria-valuenow")),
+      );
+      expect(Number((maximum as HTMLInputElement).value)).toBeGreaterThanOrEqual(2);
+    });
   });
 
   it("keeps source SKU and the unit of the price in each responsive variant row", () => {

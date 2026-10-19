@@ -20,3 +20,11 @@
     --size-carousel-indicator-dot: var(--dimension-8);
   }
 }
+
+@media (width < 431px) {
+  [data-akros-home-carousel] {
+    /* Indicators sit below the banner on the page surface at this width. */
+    --color-carousel-indicator-bg-active: var(--color-base-dark);
+    --color-carousel-indicator-bg-base: color-mix(in srgb, var(--color-base-dark) 50%, transparent);
+  }
+}

@@ -143,7 +143,7 @@ export function ProductGrid({
                 </NextLink>
               </ProductCard.Name>
 
-              <div className="akros-product-card__stock-row flex items-center justify-between gap-2 py-1">
+              <div className="akros-product-card__stock-row flex flex-wrap items-center justify-between gap-2 py-1">
                 <ProductCard.Stock
                   className="akros-catalog-product-card__stock m-0 uppercase"
                   status={product.stock.status}

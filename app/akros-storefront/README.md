@@ -12,7 +12,13 @@ npm run dev
 
 Open <http://localhost:3000>.
 
-With the storefront running, `npm run test:responsive` checks variant-table text and controls
+With the storefront running, `npm run test:home` checks homepage overflow, product stock rows
+and reachable carousel controls at 34 widths from 320 to 2560 px, including breakpoint edges.
+It also exercises every mobile indicator, both arrows and keyboard navigation. Set
+`AKROS_HOME_SCREENSHOTS` to save screenshots. Below 431 px, carousel indicators sit beneath
+the banner so their 44 px targets do not overlap the arrows.
+
+`npm run test:responsive` includes this homepage check, then checks variant-table text and controls
 at 22 widths and cart/review rows at 23 widths from 320 to 1920 px. Variant checks also cover
 filter overflow, readable price endpoints and the price/submit group across four products.
 Cart fixtures include long

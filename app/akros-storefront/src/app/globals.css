@@ -988,6 +988,10 @@ body {
   .akros-footer__commerce > :last-child {
     grid-column: 1 / -1;
   }
+
+  .akros-footer__asset-row {
+    flex-wrap: wrap;
+  }
 }
 
 @media (max-width: 1023px) {
@@ -1165,10 +1169,6 @@ body {
     line-height: 1.5;
   }
 
-  .akros-footer__asset-row {
-    flex-wrap: wrap;
-  }
-
   .akros-footer__bottom-links {
     display: grid;
     grid-template-columns: 1fr;
@@ -1206,7 +1206,6 @@ body {
   }
 
   [data-akros-product-listing] .akros-product-card__stock-row {
-    flex-wrap: wrap;
     justify-content: flex-start;
     gap: var(--dimension-4) var(--dimension-8);
     padding-block: 0;
