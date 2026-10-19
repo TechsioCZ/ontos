@@ -26,7 +26,11 @@ export const VatRateSchema = Schema.Literals([0, 10, 12, 21]);
 export type VatRate = typeof VatRateSchema.Type;
 export const StockMovementReasonSchema = Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT', 'ORDER']);
 export type StockMovementReason = typeof StockMovementReasonSchema.Type;
-export const OrderStatusSchema = Schema.Literals(['NEW', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED']);
+/**
+ * Order workflow. PACKING („Balí se / Připravená k předání“) was added for the e-shop demo; SHIPPED is the
+ * simulated hand-over to a carrier („Předáno dopravci (simulace)“), DELIVERED is „Dokončená“.
+ */
+export const OrderStatusSchema = Schema.Literals(['NEW', 'CONFIRMED', 'PACKING', 'SHIPPED', 'DELIVERED', 'CANCELLED']);
 export type OrderStatus = typeof OrderStatusSchema.Type;
 
 /** Non-negative integer amount in CZK minor units (haléře). */
@@ -43,11 +47,36 @@ export const PriceHistoryEntrySchema = Schema.Struct({
 });
 export type PriceHistoryEntry = typeof PriceHistoryEntrySchema.Type;
 
-/** Informational variants never carry SKU, price or inventory identity. */
+export const VariantIdSchema = idOf('VariantId');
+export type VariantId = typeof VariantIdSchema.Type;
+
+/**
+ * Product variant. Legacy informational variants carry only name/attributes. A „real“ variant has its own
+ * identity (`id`), SKU, net price (`priceMinor`), stock (ledger movements with `variantId`) and `active` flag.
+ * `name` is the customer-facing label, e.g. „250 g / zrnková“.
+ */
 export const ProductVariantSchema = Schema.Struct({
+  active: Schema.optionalKey(Schema.Boolean),
   attributes: Schema.Trim.check(Schema.isMaxLength(1000)),
+  id: Schema.optionalKey(VariantIdSchema),
   name: TextSchema(100),
+  priceHistory: Schema.optionalKey(Schema.Array(PriceHistoryEntrySchema)),
+  priceMinor: Schema.optionalKey(MinorAmountSchema),
+  sku: Schema.optionalKey(TextSchema(64)),
 });
+export type ProductVariant = typeof ProductVariantSchema.Type;
+
+/** A variant with an identity and a price is a real sellable variant. */
+export const isRealVariant = (
+  variant: ProductVariant,
+): variant is ProductVariant & { readonly id: VariantId; readonly priceMinor: number } =>
+  variant.id !== undefined && variant.priceMinor !== undefined;
+
+export const AvailabilitySchema = Schema.Literals(['IN_STOCK', 'LOW_STOCK', 'OUT_OF_STOCK', 'UNKNOWN']);
+export type Availability = typeof AvailabilitySchema.Type;
+
+/** Image reference: relative storefront path (`/img/<slug>.svg`) or absolute http(s) URL. */
+export const ImageRefSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
 /** Optional keys preserve old JSONB snapshots; null and empty values explicitly clear metadata. */
 const MeasurementSchema = Schema.OptionFromNullOr(
@@ -57,7 +86,13 @@ export const ProductMetadataSchema = Schema.Struct({
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
   heightMm: Schema.optionalKey(MeasurementSchema),
   lengthMm: Schema.optionalKey(MeasurementSchema),
+  images: Schema.optionalKey(Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20))),
+  /** Storefront visibility; absent means published when active. */
+  published: Schema.optionalKey(Schema.Boolean),
   shortDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  slug: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
+  /** `false` means stock is not tracked here, so availability is reported as UNKNOWN („nelze ověřit“). */
+  stockTracked: Schema.optionalKey(Schema.Boolean),
   variants: Schema.optionalKey(Schema.Array(ProductVariantSchema).check(Schema.isMaxLength(50))),
   weightGrams: Schema.optionalKey(MeasurementSchema),
   widthMm: Schema.optionalKey(MeasurementSchema),
@@ -85,12 +120,34 @@ export type Product = typeof ProductSchema.Type;
 export const sameSku = (left: string, right: string): boolean =>
   left.trim().toLowerCase() === right.trim().toLowerCase();
 
+/** Unit price including VAT, rounded half-up per unit. The storefront shows this; it never computes VAT. */
+export const grossUnitPriceMinor = (netMinor: number, vatRate: number): number =>
+  netMinor + Math.floor((netMinor * vatRate + 50) / 100);
+
+/** Variant plus derived stock, availability and gross price. */
+export const VariantRecordSchema = Schema.Struct({
+  active: Schema.Boolean,
+  attributes: Schema.String,
+  availability: AvailabilitySchema,
+  grossPriceMinor: MinorAmountSchema,
+  id: VariantIdSchema,
+  name: Schema.String,
+  priceHistory: Schema.Array(PriceHistoryEntrySchema),
+  priceMinor: MinorAmountSchema,
+  sku: Schema.String,
+  stockOnHand: Schema.Int,
+});
+export type VariantRecord = typeof VariantRecordSchema.Type;
+
 /** Product plus values derived from the stock ledger and current price at read time. */
 export const ProductRecordSchema = Schema.Struct({
   ...ProductSchema.fields,
+  availability: Schema.optionalKey(AvailabilitySchema),
+  grossPriceMinor: Schema.optionalKey(MinorAmountSchema),
   lowStock: Schema.Boolean,
   stockOnHand: Schema.Int,
   stockValueMinor: Schema.Int,
+  variantRecords: Schema.optionalKey(Schema.Array(VariantRecordSchema)),
 });
 export type ProductRecord = typeof ProductRecordSchema.Type;
 
@@ -103,6 +160,7 @@ export const StockMovementSchema = Schema.Struct({
   productId: ProductIdSchema,
   reason: StockMovementReasonSchema,
   reference: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(200))),
+  variantId: Schema.optionalKey(VariantIdSchema),
 });
 export type StockMovement = typeof StockMovementSchema.Type;
 
@@ -112,17 +170,98 @@ export const OrderLineSchema = Schema.Struct({
   quantity: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   sku: TextSchema(64),
   unitPriceMinor: MinorAmountSchema,
+  variantId: Schema.optionalKey(VariantIdSchema),
+  variantName: Schema.optionalKey(Schema.String),
   vatRate: VatRateSchema,
 });
 export type OrderLine = typeof OrderLineSchema.Type;
 
+export const ShippingMethodSchema = Schema.Literals(['ZASILKOVNA', 'PPL', 'CESKA_POSTA', 'OSOBNI_ODBER']);
+export type ShippingMethod = typeof ShippingMethodSchema.Type;
+
+/** Simulated carriers. Prices are gross (incl. 21 % VAT). Nothing is ever sent to a real carrier. */
+export const shippingMethods: Readonly<
+  Record<ShippingMethod, { readonly grossPriceMinor: number; readonly label: string }>
+> = {
+  CESKA_POSTA: { grossPriceMinor: 11_900, label: 'Česká pošta – Balík Do ruky (simulace)' },
+  OSOBNI_ODBER: { grossPriceMinor: 0, label: 'Osobní odběr – Kavárna Doma, Brno (simulace)' },
+  PPL: { grossPriceMinor: 12_900, label: 'PPL – doručení na adresu (simulace)' },
+  ZASILKOVNA: { grossPriceMinor: 7_900, label: 'Zásilkovna – výdejní místo (simulace)' },
+};
+
+export const OrderShippingSchema = Schema.Struct({
+  label: Schema.String,
+  method: ShippingMethodSchema,
+  /** Gross shipping price (incl. VAT). */
+  priceMinor: MinorAmountSchema,
+  vatRate: VatRateSchema,
+});
+export type OrderShipping = typeof OrderShippingSchema.Type;
+
+export const OrderContactSchema = Schema.Struct({
+  email: Schema.Trim.check(
+    Schema.isMinLength(3),
+    Schema.isMaxLength(200),
+    Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u),
+  ),
+  name: TextSchema(200),
+  phone: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(40))),
+});
+export type OrderContact = typeof OrderContactSchema.Type;
+
+export const OrderAddressSchema = Schema.Struct({
+  city: TextSchema(120),
+  country: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(80))),
+  postalCode: Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(12)),
+  street: TextSchema(200),
+});
+export type OrderAddress = typeof OrderAddressSchema.Type;
+
+export const OrderHistoryKindSchema = Schema.Literals([
+  'CREATED',
+  'STATUS',
+  'LINES',
+  'SHIPPING',
+  'ADDRESS',
+  'CONTACT',
+  'NOTE',
+]);
+export type OrderHistoryKind = typeof OrderHistoryKindSchema.Type;
+
+/** One audited change of an order; `before`/`after` are human-readable Czech summaries. */
+export const OrderHistoryEntrySchema = Schema.Struct({
+  actor: Schema.optionalKey(PrincipalRefSchema),
+  actorLabel: Schema.optionalKey(Schema.String),
+  after: Schema.optionalKey(Schema.String),
+  at: Schema.DateTimeUtcFromString,
+  before: Schema.optionalKey(Schema.String),
+  kind: OrderHistoryKindSchema,
+  reason: Schema.optionalKey(Schema.String),
+});
+export type OrderHistoryEntry = typeof OrderHistoryEntrySchema.Type;
+
+export const OrderChannelSchema = Schema.Literals(['STAFF', 'STOREFRONT']);
+export type OrderChannel = typeof OrderChannelSchema.Type;
+
 export const OrderSchema = Schema.Struct({
+  channel: Schema.optionalKey(OrderChannelSchema),
+  /** Caller-supplied storefront submission id; one id maps to exactly one order. */
+  clientRequestId: Schema.optionalKey(Schema.String),
+  contact: Schema.optionalKey(OrderContactSchema),
   createdAt: Schema.DateTimeUtcFromString,
+  /** DEMO marker: a presentation order, never paid, reserved or shipped. */
+  demo: Schema.optionalKey(Schema.Boolean),
+  deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+  history: Schema.optionalKey(Schema.Array(OrderHistoryEntrySchema)),
   id: OrderIdSchema,
   lines: Schema.Array(OrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  note: Schema.optionalKey(Schema.String),
   number: TextSchema(40),
   opportunityId: Schema.optionalKey(OpportunityIdSchema),
   partyId: PartyIdSchema,
+  /** When true, line `unitPriceMinor` is gross (incl. VAT) and totals are summed from gross lines. */
+  pricesIncludeVat: Schema.optionalKey(Schema.Boolean),
+  shipping: Schema.optionalKey(OrderShippingSchema),
   status: OrderStatusSchema,
   totalMinor: MinorAmountSchema,
   totalVatMinor: MinorAmountSchema,

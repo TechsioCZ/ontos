@@ -4,7 +4,7 @@ import { labelOf, ORDER_STATUS_CS } from './labels.ts';
 import { czkFromMinor, defineTool, readRecordsOf, VERTICAL } from './shared.ts';
 import { MerchandiseRecordsWire } from './wire.ts';
 
-export const ORDER_STATUSES = ['NEW', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED'] as const;
+export const ORDER_STATUSES = ['NEW', 'CONFIRMED', 'PACKING', 'SHIPPED', 'DELIVERED', 'CANCELLED'] as const;
 
 export const listProductsInput = {
   lowStockOnly: z.boolean().optional().describe('Only products at or below their low-stock threshold.'),

@@ -33,7 +33,8 @@ export const ORDER_STATUS_CS = {
   CONFIRMED: 'potvrzena',
   DELIVERED: 'doručena',
   NEW: 'nová',
-  SHIPPED: 'odeslána',
+  PACKING: 'balí se',
+  SHIPPED: 'předána dopravci',
 };
 
 export const INVOICE_STATE_CS = {

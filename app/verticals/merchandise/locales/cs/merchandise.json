@@ -22,8 +22,9 @@
         "actions": {
           "cancel": "Zrušit",
           "confirm": "Potvrdit",
-          "deliver": "Doručeno",
-          "ship": "Odeslat"
+          "deliver": "Dokončit",
+          "ship": "Předat dopravci (simulace)",
+          "pack": "Začít balit"
         },
         "bulk": {
           "changeStatus": "Změnit stav",
@@ -149,9 +150,10 @@
           "cancelled": "Objednávka zrušena",
           "confirmed": "Objednávka potvrzena",
           "created": "Objednávka vytvořena",
-          "delivered": "Objednávka doručena",
-          "shipped": "Objednávka odeslána",
-          "statusFailed": "Stav se nepodařilo změnit."
+          "delivered": "Objednávka dokončena",
+          "shipped": "Předáno dopravci (simulace)",
+          "statusFailed": "Stav se nepodařilo změnit.",
+          "packing": "Objednávka se balí"
         },
         "customers": {
           "unknown": "Neznámý zákazník"

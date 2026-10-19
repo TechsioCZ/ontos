@@ -21,8 +21,12 @@ export const RecordsViewSchema = Schema.Struct({
   active: Schema.optionalKey(Schema.Boolean),
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   lowStockOnly: Schema.optionalKey(Schema.Boolean),
+  /** Storefront lookup of one guest order by its submission id (only with `storefront: true`). */
+  orderClientRequestId: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120))),
   orderStatus: Schema.optionalKey(OrderStatusSchema),
   productId: Schema.optionalKey(ProductIdSchema),
+  /** Customer projection: only published, active products; no movements; orders only by `orderClientRequestId`. */
+  storefront: Schema.optionalKey(Schema.Boolean),
 });
 export type RecordsView = typeof RecordsViewSchema.Type;
 

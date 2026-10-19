@@ -9,15 +9,20 @@ import { MerchandiseReferenceIneligible } from '../errors/merchandise-reference-
 import { MerchandisePermissionDenied } from '../errors/merchandise-permission-denied.ts';
 import { MerchandiseNotImplemented } from '../errors/merchandise-not-implemented.ts';
 import {
+  AvailabilitySchema,
   EntityIdSchema,
   MinorAmountSchema,
   OpportunityIdSchema,
+  OrderAddressSchema,
+  OrderContactSchema,
   OrderIdSchema,
   OrderStatusSchema,
   PartyIdSchema,
   ProductIdSchema,
   ProductMetadataSchema,
   ProductUnitSchema,
+  ShippingMethodSchema,
+  VariantIdSchema,
   VatRateSchema,
 } from '../domain/merchandise-model.ts';
 
@@ -43,6 +48,29 @@ export type BulkProductPatch = typeof BulkProductPatchSchema.Type;
 export const OrderLineRequestSchema = Schema.Struct({
   productId: ProductIdSchema,
   quantity: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  variantId: Schema.optionalKey(VariantIdSchema),
+});
+
+const QuantitySchema = Schema.Int.check(Schema.isBetween({ maximum: 999, minimum: 1 }));
+
+/** One storefront cart line: the gross unit price the customer saw is re-validated on the server. */
+export const StorefrontOrderLineRequestSchema = Schema.Struct({
+  expectedUnitPriceMinor: MinorAmountSchema,
+  productId: ProductIdSchema,
+  quantity: QuantitySchema,
+  variantId: Schema.optionalKey(VariantIdSchema),
+});
+
+/**
+ * One edited order line (admin). An existing line is matched by product+variant and keeps its snapshot unless
+ * `unitPriceMinor` overrides it; a new line snapshots the current product/variant. The unit price is in the
+ * order's price mode (gross for storefront orders, net for staff orders).
+ */
+export const EditOrderLineSchema = Schema.Struct({
+  productId: ProductIdSchema,
+  quantity: QuantitySchema,
+  unitPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  variantId: Schema.optionalKey(VariantIdSchema),
 });
 
 /**
@@ -70,6 +98,8 @@ export const MerchandiseCommandSchema = Schema.Union([
   Schema.TaggedStruct('ChangePrice', {
     id: ProductIdSchema,
     priceMinor: MinorAmountSchema,
+    /** When set, reprices only this variant (net price) and appends to the variant price history. */
+    variantId: Schema.optionalKey(VariantIdSchema),
   }),
   Schema.TaggedStruct('BulkUpdateProducts', {
     ids: Schema.Array(ProductIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(500)),
@@ -80,6 +110,7 @@ export const MerchandiseCommandSchema = Schema.Union([
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
     productId: ProductIdSchema,
     reason: Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT']),
+    variantId: Schema.optionalKey(VariantIdSchema),
   }),
   Schema.TaggedStruct('CreateOrder', {
     id: OrderIdSchema,
@@ -89,7 +120,35 @@ export const MerchandiseCommandSchema = Schema.Union([
   }),
   Schema.TaggedStruct('ChangeOrderStatus', {
     id: OrderIdSchema,
+    reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
     status: OrderStatusSchema,
+  }),
+  /**
+   * Guest DEMO order from the storefront. Idempotent by `clientRequestId`: a repeated id returns the stored order
+   * (outcome REPLAYED) and saves nothing. Prices and availability are re-validated on the server; any mismatch
+   * returns outcome REJECTED with readable issues and the current prices, and saves nothing. Never moves stock.
+   */
+  Schema.TaggedStruct('PlaceStorefrontOrder', {
+    clientRequestId: Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120)),
+    contact: OrderContactSchema,
+    deliveryAddress: OrderAddressSchema,
+    dryRun: Schema.optionalKey(Schema.Boolean),
+    expectedShippingPriceMinor: Schema.optionalKey(MinorAmountSchema),
+    lines: Schema.Array(StorefrontOrderLineRequestSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+    note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
+    shippingMethod: ShippingMethodSchema,
+  }),
+  /** Admin edit of an open order; each changed aspect appends a before/after history entry. */
+  Schema.TaggedStruct('EditOrder', {
+    contact: Schema.optionalKey(OrderContactSchema),
+    deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+    id: OrderIdSchema,
+    lines: Schema.optionalKey(Schema.Array(EditOrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
+    reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+    shipping: Schema.optionalKey(
+      Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema }),
+    ),
   }),
 ]);
 export type MerchandiseCommand = typeof MerchandiseCommandSchema.Type;
@@ -98,10 +157,59 @@ export const ApplyCommandPayloadSchema = Schema.Struct({
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
+export const StorefrontIssueCodeSchema = Schema.Literals([
+  'NOT_FOUND',
+  'NOT_AVAILABLE',
+  'VARIANT_REQUIRED',
+  'OUT_OF_STOCK',
+  'INSUFFICIENT_STOCK',
+  'AVAILABILITY_UNKNOWN',
+  'PRICE_CHANGED',
+  'SHIPPING_PRICE_CHANGED',
+]);
+export type StorefrontIssueCode = typeof StorefrontIssueCodeSchema.Type;
+
+export const StorefrontIssueSchema = Schema.Struct({
+  availability: Schema.optionalKey(AvailabilitySchema),
+  availableQuantity: Schema.optionalKey(Schema.Int),
+  code: StorefrontIssueCodeSchema,
+  currentUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  expectedUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  message: Schema.String,
+  productId: Schema.optionalKey(Schema.String),
+  variantId: Schema.optionalKey(Schema.String),
+});
+export type StorefrontIssue = typeof StorefrontIssueSchema.Type;
+
+export const StorefrontOrderLineResultSchema = Schema.Struct({
+  lineTotalMinor: MinorAmountSchema,
+  name: Schema.String,
+  productId: Schema.String,
+  quantity: Schema.Int,
+  sku: Schema.String,
+  unitPriceMinor: MinorAmountSchema,
+  variantId: Schema.optionalKey(Schema.String),
+  variantName: Schema.optionalKey(Schema.String),
+});
+
+export const StorefrontOrderResultSchema = Schema.Struct({
+  issues: Schema.Array(StorefrontIssueSchema),
+  lines: Schema.Array(StorefrontOrderLineResultSchema),
+  orderId: Schema.optionalKey(Schema.String),
+  orderNumber: Schema.optionalKey(Schema.String),
+  outcome: Schema.Literals(['PLACED', 'REPLAYED', 'REJECTED', 'VALID']),
+  shippingPriceMinor: Schema.optionalKey(MinorAmountSchema),
+  status: Schema.optionalKey(OrderStatusSchema),
+  totalMinor: Schema.optionalKey(MinorAmountSchema),
+  totalVatMinor: Schema.optionalKey(MinorAmountSchema),
+});
+export type StorefrontOrderResult = typeof StorefrontOrderResultSchema.Type;
+
 /** Identifiers of the entities the command created or changed, in command order. */
 export const ApplyCommandResultSchema = Schema.Struct({
   entityIds: Schema.Array(EntityIdSchema),
   revision: Schema.Int,
+  storefrontOrder: Schema.optionalKey(StorefrontOrderResultSchema),
 });
 export type ApplyCommandResult = typeof ApplyCommandResultSchema.Type;
 export const MerchandiseErrorSchema = Schema.Union([

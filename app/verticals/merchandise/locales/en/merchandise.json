@@ -22,8 +22,9 @@
         "actions": {
           "cancel": "Cancel",
           "confirm": "Confirm",
-          "deliver": "Delivered",
-          "ship": "Ship"
+          "deliver": "Complete",
+          "ship": "Hand over to carrier (simulation)",
+          "pack": "Start packing"
         },
         "bulk": {
           "changeStatus": "Change status",
@@ -149,9 +150,10 @@
           "cancelled": "Order cancelled",
           "confirmed": "Order confirmed",
           "created": "Order created",
-          "delivered": "Order delivered",
-          "shipped": "Order shipped",
-          "statusFailed": "The status could not be changed."
+          "delivered": "Order completed",
+          "shipped": "Handed over to carrier (simulation)",
+          "statusFailed": "The status could not be changed.",
+          "packing": "Order is being packed"
         },
         "customers": {
           "unknown": "Unknown customer"

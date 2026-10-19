@@ -19,20 +19,31 @@ import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState, RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import {
   EntityIdSchema,
+  OrderIdSchema,
+  PartyIdSchema,
   ProductIdSchema,
   StockMovementIdSchema,
+  VariantIdSchema,
+  grossUnitPriceMinor,
+  isRealVariant,
   sameSku,
+  shippingMethods,
 } from '../../shared/domain/merchandise-model.ts';
 import type {
+  Availability,
   EntityId,
   Order,
+  OrderHistoryEntry,
   OrderLine,
   OrderStatus,
   Product,
   ProductRecord,
+  ProductVariant,
   StockMovement,
+  VariantRecord,
 } from '../../shared/domain/merchandise-model.ts';
-import { nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
+import type { StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
+import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
 import { merchandiseStates } from '../database/schema.ts';
 
 const unavailable = (cause?: unknown) =>
@@ -56,7 +67,7 @@ const referenceUnavailable = (cause?: unknown) =>
   );
 
 /** Order statuses that count as open order value. DELIVERED and CANCELLED are closed. */
-const openOrderStatuses = new Set<OrderStatus>(['NEW', 'CONFIRMED', 'SHIPPED']);
+const openOrderStatuses = new Set<OrderStatus>(['NEW', 'CONFIRMED', 'PACKING', 'SHIPPED']);
 
 const sumOf = <T>(items: readonly T[], amount: (item: T) => number) => {
   let total = 0;
@@ -77,14 +88,114 @@ export const stockOnHandOf = (movements: readonly StockMovement[], productId: Pr
   return onHand;
 };
 
-/** Low stock means on hand is at or below the product threshold. */
+/** Stock of one variant: the signed sum of its ledger movements. */
+export const variantStockOf = (
+  movements: readonly StockMovement[],
+  productId: Product['id'],
+  variantId: string,
+) => {
+  let onHand = 0;
+  for (const movement of movements) {
+    if (movement.productId === productId && movement.variantId === variantId) {
+      onHand += movement.delta;
+    }
+  }
+  return onHand;
+};
+
+/** Availability for a sellable unit. Untracked stock is UNKNOWN (never silently „skladem“). */
+export const availabilityOf = (input: {
+  readonly active: boolean;
+  readonly stock: number;
+  readonly stockTracked: boolean;
+  readonly threshold: number;
+}): Availability => {
+  if (!input.active) {
+    return 'OUT_OF_STOCK';
+  }
+  if (!input.stockTracked) {
+    return 'UNKNOWN';
+  }
+  if (input.stock <= 0) {
+    return 'OUT_OF_STOCK';
+  }
+  return input.stock <= input.threshold ? 'LOW_STOCK' : 'IN_STOCK';
+};
+
+const availabilityRank: Readonly<Record<Availability, number>> = {
+  IN_STOCK: 3,
+  LOW_STOCK: 2,
+  OUT_OF_STOCK: 0,
+  UNKNOWN: 1,
+};
+
+export const realVariantsOf = (product: Product) => (product.variants ?? []).filter(isRealVariant);
+
+const toVariantRecord = (
+  product: Product,
+  variant: ProductVariant & { readonly id: VariantRecord['id']; readonly priceMinor: number },
+  movements: readonly StockMovement[],
+): VariantRecord => {
+  const stockOnHand = variantStockOf(movements, product.id, variant.id);
+  const active = product.active && variant.active !== false;
+  return {
+    active: variant.active !== false,
+    attributes: variant.attributes,
+    availability: availabilityOf({
+      active,
+      stock: stockOnHand,
+      stockTracked: product.stockTracked !== false,
+      threshold: product.lowStockThreshold,
+    }),
+    grossPriceMinor: grossUnitPriceMinor(variant.priceMinor, product.vatRate),
+    id: variant.id,
+    name: variant.name,
+    priceHistory: variant.priceHistory ?? [],
+    priceMinor: variant.priceMinor,
+    sku: variant.sku ?? `${product.sku}-${variant.id}`,
+    stockOnHand,
+  };
+};
+
+/**
+ * Low stock means on hand is at or below the product threshold. Products with real variants derive stock,
+ * value and availability from their variants; the product gross price is then the lowest active variant price.
+ */
 export const toProductRecord = (product: Product, movements: readonly StockMovement[]): ProductRecord => {
   const stockOnHand = stockOnHandOf(movements, product.id);
+  const variants = realVariantsOf(product).map((variant) => toVariantRecord(product, variant, movements));
+  if (variants.length === 0) {
+    return {
+      ...product,
+      availability: availabilityOf({
+        active: product.active,
+        stock: stockOnHand,
+        stockTracked: product.stockTracked !== false,
+        threshold: product.lowStockThreshold,
+      }),
+      grossPriceMinor: grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
+      lowStock: stockOnHand <= product.lowStockThreshold,
+      stockOnHand,
+      stockValueMinor: stockOnHand * product.currentPriceMinor,
+    };
+  }
+  const sellable = variants.filter((variant) => variant.active);
+  const best = sellable.reduce<Availability>(
+    (acc, variant) => (availabilityRank[variant.availability] > availabilityRank[acc] ? variant.availability : acc),
+    'OUT_OF_STOCK',
+  );
+  const variantStock = sumOf(variants, (variant) => variant.stockOnHand);
+  const grossPrices = (sellable.length > 0 ? sellable : variants).map((variant) => variant.grossPriceMinor);
   return {
     ...product,
-    lowStock: stockOnHand <= product.lowStockThreshold,
+    availability: product.active ? best : 'OUT_OF_STOCK',
+    grossPriceMinor: Math.min(...grossPrices),
+    lowStock: sellable.some((variant) => variant.availability === 'LOW_STOCK' || variant.availability === 'OUT_OF_STOCK'),
     stockOnHand,
-    stockValueMinor: stockOnHand * product.currentPriceMinor,
+    stockValueMinor:
+      sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
+      (stockOnHand - variantStock) * product.currentPriceMinor,
+    variantRecords: variants,
   };
 };
 
@@ -92,6 +203,7 @@ export const toProductRecord = (product: Product, movements: readonly StockMovem
 export interface MerchandiseChange {
   readonly entityIds: readonly EntityId[];
   readonly state: MerchandiseState;
+  readonly storefrontOrder?: StorefrontOrderResult;
 }
 
 /** Errors command logic raises from the state alone. Persistence adds its own around this. */
@@ -109,6 +221,23 @@ type OrderLineRequest = CommandOf<'CreateOrder'>['lines'][number];
 type BulkPatch = CommandOf<'BulkUpdateProducts'>['patch'];
 
 const notFound = (reason: string) => new MerchandiseNotFound({ code: 'merchandise_not_found', reason });
+
+const historyEntry = (
+  input: MerchandiseCommandInput,
+  entry: Omit<OrderHistoryEntry, 'actor' | 'at'>,
+): OrderHistoryEntry => ({ actor: input.actor, at: input.now, ...entry });
+
+const czk = (minor: number) =>
+  `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 0 })} Kč`;
+
+export const orderStatusLabels: Readonly<Record<OrderStatus, string>> = {
+  CANCELLED: 'Stornovaná',
+  CONFIRMED: 'Potvrzená / zpracovává se',
+  DELIVERED: 'Dokončená',
+  NEW: 'Nová',
+  PACKING: 'Balí se / připravená k předání',
+  SHIPPED: 'Předáno dopravci (simulace)',
+};
 
 const conflict = (reason: string) =>
   new MerchandiseLifecycleConflict({ code: 'merchandise_lifecycle_conflict', reason });
@@ -189,9 +318,72 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   input: MerchandiseCommandInput,
 ) {
   const product = yield* findProduct(state.products, value.id);
-  const updated: Product = { ...product, ...value.patch, updatedAt: input.now };
+  const { variants: patchVariants, ...patch } = value.patch;
+  const variants =
+    patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
+  const merged: Product = { ...product, ...patch, updatedAt: input.now };
+  const updated: Product = variants === undefined ? merged : { ...merged, variants };
   const entity = yield* entityIdOf(product.id);
   return { entityIds: [entity], state: withProduct(state, updated) };
+});
+
+/**
+ * Gives every priced variant a stable identity and keeps per-variant price history: an existing variant keeps
+ * its history and appends an entry when the price changes; a new one starts its history now.
+ */
+const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* normalizeVariants(
+  product: Product,
+  incoming: readonly ProductVariant[],
+  input: MerchandiseCommandInput,
+) {
+  const existing = new Map((product.variants ?? []).flatMap((variant) => (variant.id === undefined ? [] : [[variant.id, variant] as const])));
+  const skus = new Set<string>();
+  const ids = new Set<string>();
+  const result: ProductVariant[] = [];
+  for (const [index, variant] of incoming.entries()) {
+    const id =
+      variant.id ?? (variant.priceMinor === undefined ? undefined : yield* mintId(VariantIdSchema, `${input.resourceId}-v${index + 1}`));
+    if (id !== undefined) {
+      if (ids.has(id)) {
+        return yield* conflict('Variant ids must be unique');
+      }
+      ids.add(id);
+    }
+    if (variant.sku !== undefined) {
+      const key = variant.sku.trim().toLowerCase();
+      if (skus.has(key)) {
+        return yield* conflict('Variant SKUs must be unique within the product');
+      }
+      skus.add(key);
+    }
+    const previous = id === undefined ? undefined : existing.get(id);
+    const history =
+      variant.priceMinor === undefined
+        ? undefined
+        : previous?.priceMinor === variant.priceMinor
+          ? (previous.priceHistory ?? variant.priceHistory ?? [])
+          : [
+              ...(previous?.priceHistory ?? variant.priceHistory ?? []),
+              { changedBy: input.actor, effectiveFrom: input.now, priceMinor: variant.priceMinor },
+            ];
+    const { priceHistory: _ignored, id: _id, ...rest } = variant;
+    void _ignored;
+    void _id;
+    result.push({
+      ...rest,
+      ...(id === undefined ? {} : { id }),
+      ...(history === undefined ? {} : { priceHistory: history }),
+    });
+  }
+  return result;
+});
+
+const findVariant = Effect.fn('Merchandise.findVariant')(function* findVariant(product: Product, variantId: string) {
+  const variant = realVariantsOf(product).find((entry) => entry.id === variantId);
+  if (variant === undefined) {
+    return yield* notFound('Variant does not exist');
+  }
+  return variant;
 });
 
 const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
@@ -201,7 +393,26 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
 ) {
   const product = yield* findProduct(state.products, value.id);
   const entity = yield* entityIdOf(product.id);
-  return { entityIds: [entity], state: withProduct(state, repriced(product, value.priceMinor, input)) };
+  if (value.variantId === undefined) {
+    return { entityIds: [entity], state: withProduct(state, repriced(product, value.priceMinor, input)) };
+  }
+  const variant = yield* findVariant(product, value.variantId);
+  if (variant.priceMinor === value.priceMinor) {
+    return { entityIds: [entity], state };
+  }
+  const variants = (product.variants ?? []).map((entry) =>
+    entry.id === variant.id
+      ? {
+          ...entry,
+          priceHistory: [
+            ...(entry.priceHistory ?? []),
+            { changedBy: input.actor, effectiveFrom: input.now, priceMinor: value.priceMinor },
+          ],
+          priceMinor: value.priceMinor,
+        }
+      : entry,
+  );
+  return { entityIds: [entity], state: withProduct(state, { ...product, updatedAt: input.now, variants }) };
 });
 
 const editBulkProduct = Effect.fn('Merchandise.editBulkProduct')(function* editBulkProduct(
@@ -251,7 +462,14 @@ const recordStockMovement = Effect.fn('Merchandise.recordStockMovement')(functio
   if (value.reason === 'ISSUE' && value.delta > 0) {
     return yield* conflict('An issue must decrease stock');
   }
-  if (stockOnHandOf(state.movements, product.id) + value.delta < 0) {
+  if (value.variantId !== undefined) {
+    yield* findVariant(product, value.variantId);
+  }
+  const current =
+    value.variantId === undefined
+      ? stockOnHandOf(state.movements, product.id)
+      : variantStockOf(state.movements, product.id, value.variantId);
+  if (current + value.delta < 0) {
     return yield* conflict('Stock cannot go below zero');
   }
   const base: StockMovement = {
@@ -260,6 +478,7 @@ const recordStockMovement = Effect.fn('Merchandise.recordStockMovement')(functio
     id: yield* movementIdOf(input.resourceId),
     productId: product.id,
     reason: value.reason,
+    ...(value.variantId === undefined ? {} : { variantId: value.variantId }),
   };
   const movement = value.note === undefined ? base : { ...base, note: value.note };
   const entity = yield* entityIdOf(movement.id);
@@ -285,15 +504,24 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
   },
 ) {
   const product = yield* findProduct(context.products, request.productId);
-  if (stockOnHandOf(build.movements, product.id) < request.quantity) {
-    return yield* conflict(`Insufficient stock for ${product.sku}`);
+  const variant = request.variantId === undefined ? undefined : yield* findVariant(product, request.variantId);
+  if (variant === undefined && realVariantsOf(product).length > 0) {
+    return yield* conflict(`Choose a variant of ${product.sku}`);
+  }
+  const available =
+    variant === undefined
+      ? stockOnHandOf(build.movements, product.id)
+      : variantStockOf(build.movements, product.id, variant.id);
+  if (available < request.quantity) {
+    return yield* conflict(`Insufficient stock for ${variant?.sku ?? product.sku}`);
   }
   const line: OrderLine = {
     productId: product.id,
     productName: product.name,
     quantity: request.quantity,
-    sku: product.sku,
-    unitPriceMinor: product.currentPriceMinor,
+    sku: variant?.sku ?? product.sku,
+    unitPriceMinor: variant?.priceMinor ?? product.currentPriceMinor,
+    ...(variant === undefined ? {} : { variantId: variant.id, variantName: variant.name }),
     vatRate: product.vatRate,
   };
   const movement: StockMovement = {
@@ -303,6 +531,7 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
     productId: product.id,
     reason: 'ORDER',
     reference: context.number,
+    ...(variant === undefined ? {} : { variantId: variant.id }),
   };
   return { lines: [...build.lines, line], movements: [...build.movements, movement] };
 });
@@ -323,7 +552,9 @@ const placeOrder = Effect.fn('Merchandise.placeOrder')(function* placeOrder(
     (acc, request) => addOrderLine(acc, request, { input, number, products: state.products }),
   );
   const base: Order = {
+    channel: 'STAFF',
     createdAt: input.now,
+    history: [historyEntry(input, { after: orderStatusLabels.NEW, kind: 'CREATED' })],
     id: value.id,
     lines: build.lines,
     number,
@@ -340,13 +571,19 @@ const placeOrder = Effect.fn('Merchandise.placeOrder')(function* placeOrder(
   };
 });
 
-const orderTransitions = {
+/** DELIVERED („Dokončená“) is reachable only from SHIPPED („Předáno dopravci (simulace)“). */
+export const orderTransitions = {
   CANCELLED: [],
-  CONFIRMED: ['SHIPPED', 'CANCELLED'],
+  CONFIRMED: ['PACKING', 'SHIPPED', 'CANCELLED'],
   DELIVERED: [],
   NEW: ['CONFIRMED', 'CANCELLED'],
+  PACKING: ['SHIPPED', 'CANCELLED'],
   SHIPPED: ['DELIVERED'],
 } satisfies Readonly<Record<OrderStatus, readonly OrderStatus[]>>;
+
+/** ORDER movements this order wrote (storefront orders never move stock). */
+const orderMovesStock = (state: MerchandiseState, order: Order) =>
+  state.movements.some((movement) => movement.reason === 'ORDER' && movement.reference === order.number);
 
 /** Cancelling returns each snapshot line to stock with a positive compensating ORDER movement. */
 const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* changeOrderStatus(
@@ -362,10 +599,23 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
   if (!allowed.includes(value.status)) {
     return yield* conflict('The requested order transition is not allowed');
   }
-  const updated: Order = { ...existing, status: value.status, updatedAt: input.now };
+  const updated: Order = {
+    ...existing,
+    history: [
+      ...(existing.history ?? []),
+      historyEntry(input, {
+        after: orderStatusLabels[value.status],
+        before: orderStatusLabels[existing.status],
+        kind: 'STATUS',
+        ...(value.reason === undefined ? {} : { reason: value.reason }),
+      }),
+    ],
+    status: value.status,
+    updatedAt: input.now,
+  };
   const orders = state.orders.map((entry) => (entry.id === updated.id ? updated : entry));
   const entity = yield* entityIdOf(existing.id);
-  if (value.status !== 'CANCELLED') {
+  if (value.status !== 'CANCELLED' || !orderMovesStock(state, existing)) {
     return { entityIds: [entity], state: { ...state, orders } };
   }
   const restored = yield* Effect.forEach(
@@ -379,11 +629,411 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
           productId: line.productId,
           reason: 'ORDER',
           reference: existing.number,
+          ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
         })),
       ),
     { concurrency: 1 },
   );
   return { entityIds: [entity], state: { ...state, movements: [...state.movements, ...restored], orders } };
+});
+
+const storefrontPartyId = (state: MerchandiseState) => {
+  void state;
+  return mintId(PartyIdSchema, 'storefront-guest');
+};
+
+const availabilityMessage: Readonly<Record<Availability, string>> = {
+  IN_STOCK: 'Skladem',
+  LOW_STOCK: 'Poslední kusy',
+  OUT_OF_STOCK: 'Momentálně není skladem',
+  UNKNOWN: 'Dostupnost nyní nelze ověřit',
+};
+
+const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): StorefrontOrderResult => ({
+  issues: [],
+  lines: order.lines.map((line) => ({
+    lineTotalMinor: lineGrossMinor(line, order.pricesIncludeVat),
+    name: line.productName,
+    productId: line.productId,
+    quantity: line.quantity,
+    sku: line.sku,
+    unitPriceMinor: line.unitPriceMinor,
+    ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
+    ...(line.variantName === undefined ? {} : { variantName: line.variantName }),
+  })),
+  orderId: order.id,
+  orderNumber: order.number,
+  outcome,
+  ...(order.shipping === undefined ? {} : { shippingPriceMinor: order.shipping.priceMinor }),
+  status: order.status,
+  totalMinor: order.totalMinor,
+  totalVatMinor: order.totalVatMinor,
+});
+
+interface PricedUnit {
+  readonly availability: Availability;
+  readonly grossPriceMinor: number;
+  readonly name: string;
+  readonly stock: number;
+  readonly sku: string;
+  readonly variantId?: string;
+  readonly variantName?: string;
+}
+
+/** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
+const sellableUnitOf = (
+  products: readonly Product[],
+  movements: readonly StockMovement[],
+  line: CommandOf<'PlaceStorefrontOrder'>['lines'][number],
+): { readonly issue: StorefrontIssue } | { readonly unit: PricedUnit; readonly product: Product } => {
+  const product = products.find((entry) => entry.id === line.productId);
+  const ids = { productId: line.productId, ...(line.variantId === undefined ? {} : { variantId: line.variantId }) };
+  if (product === undefined || !product.active || product.published === false) {
+    return { issue: { ...ids, code: 'NOT_AVAILABLE', message: 'Produkt už není v nabídce.' } };
+  }
+  const record = toProductRecord(product, movements);
+  const variants = record.variantRecords ?? [];
+  if (variants.length > 0) {
+    const variant = variants.find((entry) => entry.id === line.variantId);
+    if (variant === undefined) {
+      return {
+        issue: { ...ids, code: 'VARIANT_REQUIRED', message: `Vyberte prosím variantu produktu ${product.name}.` },
+      };
+    }
+    if (!variant.active) {
+      return {
+        issue: { ...ids, code: 'NOT_AVAILABLE', message: `Varianta ${variant.name} už není v nabídce.` },
+      };
+    }
+    return {
+      product,
+      unit: {
+        availability: variant.availability,
+        grossPriceMinor: variant.grossPriceMinor,
+        name: product.name,
+        sku: variant.sku,
+        stock: variant.stockOnHand,
+        variantId: variant.id,
+        variantName: variant.name,
+      },
+    };
+  }
+  return {
+    product,
+    unit: {
+      availability: record.availability ?? 'UNKNOWN',
+      grossPriceMinor: record.grossPriceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
+      name: product.name,
+      sku: product.sku,
+      stock: record.stockOnHand,
+    },
+  };
+};
+
+const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(function* placeStorefrontOrder(
+  state: MerchandiseState,
+  value: CommandOf<'PlaceStorefrontOrder'>,
+  input: MerchandiseCommandInput,
+) {
+  const replay = state.orders.find((entry) => entry.clientRequestId === value.clientRequestId);
+  if (replay !== undefined) {
+    const entity = yield* entityIdOf(replay.id);
+    return { entityIds: [entity], state, storefrontOrder: storefrontResultOf(replay, 'REPLAYED') };
+  }
+  const issues: StorefrontIssue[] = [];
+  const lines: OrderLine[] = [];
+  const requested = new Map<string, number>();
+  for (const line of value.lines) {
+    const resolved = sellableUnitOf(state.products, state.movements, line);
+    if ('issue' in resolved) {
+      issues.push(resolved.issue);
+      continue;
+    }
+    const { product, unit } = resolved;
+    const ids = { productId: product.id, ...(unit.variantId === undefined ? {} : { variantId: unit.variantId }) };
+    const key = `${product.id}|${unit.variantId ?? ''}`;
+    const quantity = (requested.get(key) ?? 0) + line.quantity;
+    requested.set(key, quantity);
+    const label = unit.variantName === undefined ? unit.name : `${unit.name} (${unit.variantName})`;
+    if (unit.availability === 'UNKNOWN') {
+      issues.push({
+        ...ids,
+        availability: unit.availability,
+        code: 'AVAILABILITY_UNKNOWN',
+        message: `${label}: dostupnost nyní nelze ověřit, objednávku proto nelze dokončit.`,
+      });
+      continue;
+    }
+    if (unit.availability === 'OUT_OF_STOCK') {
+      issues.push({
+        ...ids,
+        availability: unit.availability,
+        availableQuantity: 0,
+        code: 'OUT_OF_STOCK',
+        message: `${label}: ${availabilityMessage.OUT_OF_STOCK.toLowerCase()}.`,
+      });
+      continue;
+    }
+    if (unit.stock < quantity) {
+      issues.push({
+        ...ids,
+        availability: unit.availability,
+        availableQuantity: unit.stock,
+        code: 'INSUFFICIENT_STOCK',
+        message: `${label}: k dispozici je jen ${unit.stock} ks.`,
+      });
+      continue;
+    }
+    if (unit.grossPriceMinor !== line.expectedUnitPriceMinor) {
+      issues.push({
+        ...ids,
+        code: 'PRICE_CHANGED',
+        currentUnitPriceMinor: unit.grossPriceMinor,
+        expectedUnitPriceMinor: line.expectedUnitPriceMinor,
+        message: `${label}: cena se změnila z ${czk(line.expectedUnitPriceMinor)} na ${czk(unit.grossPriceMinor)}. Potvrďte prosím novou cenu.`,
+      });
+      continue;
+    }
+    lines.push({
+      productId: product.id,
+      productName: product.name,
+      quantity: line.quantity,
+      sku: unit.sku,
+      unitPriceMinor: unit.grossPriceMinor,
+      ...(unit.variantId === undefined ? {} : { variantId: yield* mintId(VariantIdSchema, unit.variantId) }),
+      ...(unit.variantName === undefined ? {} : { variantName: unit.variantName }),
+      vatRate: product.vatRate,
+    });
+  }
+  const method = shippingMethods[value.shippingMethod];
+  if (value.expectedShippingPriceMinor !== undefined && value.expectedShippingPriceMinor !== method.grossPriceMinor) {
+    issues.push({
+      code: 'SHIPPING_PRICE_CHANGED',
+      currentUnitPriceMinor: method.grossPriceMinor,
+      expectedUnitPriceMinor: value.expectedShippingPriceMinor,
+      message: `Cena dopravy se změnila na ${czk(method.grossPriceMinor)}.`,
+    });
+  }
+  const shipping = { label: method.label, method: value.shippingMethod, priceMinor: method.grossPriceMinor, vatRate: 21 } as const;
+  const draftTotals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
+  const draftLines = lines.map((line) => ({
+    lineTotalMinor: line.quantity * line.unitPriceMinor,
+    name: line.productName,
+    productId: line.productId,
+    quantity: line.quantity,
+    sku: line.sku,
+    unitPriceMinor: line.unitPriceMinor,
+    ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
+    ...(line.variantName === undefined ? {} : { variantName: line.variantName }),
+  }));
+  if (issues.length > 0 || value.dryRun === true) {
+    const storefrontOrder: StorefrontOrderResult = {
+      issues,
+      lines: draftLines,
+      outcome: issues.length > 0 ? 'REJECTED' : 'VALID',
+      shippingPriceMinor: method.grossPriceMinor,
+      ...draftTotals,
+    };
+    return { entityIds: [], state, storefrontOrder };
+  }
+  const id = yield* mintId(OrderIdSchema, input.resourceId);
+  if (state.orders.some((entry) => entry.id === id)) {
+    return yield* conflict('Order id already exists');
+  }
+  const number = nextOrderNumber(state.orders);
+  const order: Order = {
+    channel: 'STOREFRONT',
+    clientRequestId: value.clientRequestId,
+    contact: value.contact,
+    createdAt: input.now,
+    deliveryAddress: value.deliveryAddress,
+    demo: true,
+    history: [
+      {
+        actorLabel: 'Zákazník – e-shop (DEMO)',
+        after: orderStatusLabels.NEW,
+        at: input.now,
+        kind: 'CREATED',
+      },
+    ],
+    id,
+    lines,
+    ...(value.note === undefined || value.note === '' ? {} : { note: value.note }),
+    number,
+    partyId: yield* storefrontPartyId(state),
+    pricesIncludeVat: true,
+    shipping,
+    status: 'NEW',
+    ...draftTotals,
+    updatedAt: input.now,
+  };
+  const entity = yield* entityIdOf(order.id);
+  return {
+    entityIds: [entity],
+    state: { ...state, orders: [...state.orders, order] },
+    storefrontOrder: storefrontResultOf(order, 'PLACED'),
+  };
+});
+
+const describeLines = (order: { readonly lines: readonly OrderLine[]; readonly pricesIncludeVat?: boolean | undefined }) =>
+  order.lines
+    .map(
+      (line) =>
+        `${line.quantity}× ${line.productName}${line.variantName === undefined ? '' : ` (${line.variantName})`} á ${czk(line.unitPriceMinor)}${order.pricesIncludeVat === true ? '' : ' bez DPH'}`,
+    )
+    .join('; ');
+
+const describeAddress = (address: Order['deliveryAddress']) =>
+  address === undefined
+    ? 'bez adresy'
+    : `${address.street}, ${address.postalCode} ${address.city}${address.country === undefined || address.country === '' ? '' : `, ${address.country}`}`;
+
+const describeContact = (contact: Order['contact']) =>
+  contact === undefined ? 'bez kontaktu' : [contact.name, contact.email, contact.phone].filter((part) => part !== undefined && part !== '').join(', ');
+
+const describeShipping = (shipping: Order['shipping']) =>
+  shipping === undefined ? 'bez dopravy' : `${shipping.label}, ${czk(shipping.priceMinor)}`;
+
+const lineKey = (line: { readonly productId: string; readonly variantId?: string | undefined }) =>
+  `${line.productId}|${line.variantId ?? ''}`;
+
+/** Edits an open order; stock-moving (staff) orders reconcile their ORDER movements for quantity changes. */
+const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
+  state: MerchandiseState,
+  value: CommandOf<'EditOrder'>,
+  input: MerchandiseCommandInput,
+) {
+  const existing = state.orders.find((entry) => entry.id === value.id);
+  if (existing === undefined) {
+    return yield* notFound('Order does not exist');
+  }
+  if (existing.status === 'DELIVERED' || existing.status === 'CANCELLED' || existing.status === 'SHIPPED') {
+    return yield* conflict('Only open orders before the carrier hand-over can be edited');
+  }
+  const history: OrderHistoryEntry[] = [];
+  const reason = value.reason === undefined || value.reason === '' ? {} : { reason: value.reason };
+  let order: Order = existing;
+  let movements = state.movements;
+  if (value.lines !== undefined) {
+    const previous = new Map(existing.lines.map((line) => [lineKey(line), line] as const));
+    const nextLines: OrderLine[] = [];
+    const seen = new Set<string>();
+    for (const request of value.lines) {
+      const key = lineKey(request);
+      if (seen.has(key)) {
+        return yield* conflict('Each product variant may appear only once in an order');
+      }
+      seen.add(key);
+      const kept = previous.get(key);
+      if (kept !== undefined) {
+        nextLines.push({ ...kept, quantity: request.quantity, unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor });
+        continue;
+      }
+      const product = yield* findProduct(state.products, request.productId);
+      const variant = request.variantId === undefined ? undefined : yield* findVariant(product, request.variantId);
+      if (variant === undefined && realVariantsOf(product).length > 0) {
+        return yield* conflict(`Choose a variant of ${product.sku}`);
+      }
+      const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
+      const currentPrice = existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, product.vatRate) : netPrice;
+      nextLines.push({
+        productId: product.id,
+        productName: product.name,
+        quantity: request.quantity,
+        sku: variant?.sku ?? product.sku,
+        unitPriceMinor: request.unitPriceMinor ?? currentPrice,
+        ...(variant === undefined ? {} : { variantId: variant.id, variantName: variant.name }),
+        vatRate: product.vatRate,
+      });
+    }
+    const before = describeLines(existing);
+    const after = describeLines({ lines: nextLines, pricesIncludeVat: existing.pricesIncludeVat });
+    if (before !== after) {
+      if (orderMovesStock(state, existing)) {
+        const quantities = new Map<string, { delta: number; line: OrderLine }>();
+        for (const line of existing.lines) {
+          quantities.set(lineKey(line), { delta: line.quantity, line });
+        }
+        for (const line of nextLines) {
+          const entry = quantities.get(lineKey(line));
+          quantities.set(lineKey(line), { delta: (entry?.delta ?? 0) - line.quantity, line });
+        }
+        let index = 0;
+        const added: StockMovement[] = [];
+        for (const { delta, line } of quantities.values()) {
+          if (delta === 0) {
+            continue;
+          }
+          const stock =
+            line.variantId === undefined
+              ? stockOnHandOf(movements, line.productId)
+              : variantStockOf(movements, line.productId, line.variantId);
+          if (stock + delta < 0) {
+            return yield* conflict(`Insufficient stock for ${line.sku}`);
+          }
+          added.push({
+            at: input.now,
+            delta,
+            id: yield* movementIdOf(input.resourceId, index),
+            productId: line.productId,
+            reason: 'ORDER',
+            reference: existing.number,
+            ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
+          });
+          index += 1;
+        }
+        movements = [...movements, ...added];
+      }
+      order = { ...order, lines: nextLines };
+      history.push(historyEntry(input, { after, before, kind: 'LINES', ...reason }));
+    }
+  }
+  if (value.shipping !== undefined) {
+    const method = shippingMethods[value.shipping.method];
+    const shipping = { label: method.label, method: value.shipping.method, priceMinor: value.shipping.priceMinor, vatRate: 21 } as const;
+    const before = describeShipping(existing.shipping);
+    const after = describeShipping(shipping);
+    if (before !== after) {
+      order = { ...order, shipping };
+      history.push(historyEntry(input, { after, before, kind: 'SHIPPING', ...reason }));
+    }
+  }
+  if (value.deliveryAddress !== undefined) {
+    const before = describeAddress(existing.deliveryAddress);
+    const after = describeAddress(value.deliveryAddress);
+    if (before !== after) {
+      order = { ...order, deliveryAddress: value.deliveryAddress };
+      history.push(historyEntry(input, { after, before, kind: 'ADDRESS', ...reason }));
+    }
+  }
+  if (value.contact !== undefined) {
+    const before = describeContact(existing.contact);
+    const after = describeContact(value.contact);
+    if (before !== after) {
+      order = { ...order, contact: value.contact };
+      history.push(historyEntry(input, { after, before, kind: 'CONTACT', ...reason }));
+    }
+  }
+  if (value.note !== undefined && value.note !== (existing.note ?? '')) {
+    order = { ...order, note: value.note };
+    history.push(
+      historyEntry(input, { after: value.note === '' ? 'bez poznámky' : value.note, before: existing.note ?? 'bez poznámky', kind: 'NOTE', ...reason }),
+    );
+  }
+  const entity = yield* entityIdOf(existing.id);
+  if (history.length === 0) {
+    return { entityIds: [entity], state };
+  }
+  const updated: Order = {
+    ...order,
+    ...fullOrderTotals(order),
+    history: [...(existing.history ?? []), ...history],
+    updatedAt: input.now,
+  };
+  return {
+    entityIds: [entity],
+    state: { ...state, movements, orders: state.orders.map((entry) => (entry.id === updated.id ? updated : entry)) },
+  };
 });
 
 /** Applies one command to the state. Pure: persistence decides when the result is saved. */
@@ -400,6 +1050,8 @@ export const evolveMerchandiseState = (
     Match.tag('RecordStockMovement', (value) => recordStockMovement(state, value, input)),
     Match.tag('CreateOrder', (value) => placeOrder(state, value, input)),
     Match.tag('ChangeOrderStatus', (value) => changeOrderStatus(state, value, input)),
+    Match.tag('PlaceStorefrontOrder', (value) => placeStorefrontOrder(state, value, input)),
+    Match.tag('EditOrder', (value) => editOrder(state, value, input)),
     Match.exhaustive,
   );
 
@@ -487,7 +1139,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         });
       }
       const snapshot = yield* load();
-      if (snapshot.revision !== expectedRevision) {
+      // Storefront guests cannot know the aggregate revision; their command re-validates against current state.
+      if (command._tag !== 'PlaceStorefrontOrder' && snapshot.revision !== expectedRevision) {
         return yield* new MerchandiseRevisionConflict({
           code: 'merchandise_revision_conflict',
           reason: 'Merchandise changed; refresh before another operation',
@@ -496,26 +1149,33 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const now = yield* DateTime.now;
       const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
       const change = yield* evolveMerchandiseState(snapshot.state, command, { actor, now, resourceId });
-      const revision = yield* save(expectedRevision, change.state);
-      return { entityIds: [...change.entityIds], revision };
+      const revision =
+        change.state === snapshot.state ? snapshot.revision : yield* save(snapshot.revision, change.state);
+      return change.storefrontOrder === undefined
+        ? { entityIds: [...change.entityIds], revision }
+        : { entityIds: [...change.entityIds], revision, storefrontOrder: change.storefrontOrder };
     });
     const records = Effect.fn('Merchandise.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();
       const view = request.view ?? {};
       const { movements, orders, products } = snapshot.state;
       const allProducts = products.map((product) => toProductRecord(product, movements));
+      const storefront = view.storefront === true;
       const filteredProducts = allProducts.filter(
         (record) =>
+          (!storefront || (record.active && record.published !== false)) &&
           (view.active === undefined || record.active === view.active) &&
           (view.category === undefined || record.category === view.category) &&
           (view.lowStockOnly !== true || record.lowStock),
       );
-      const filteredMovements = movements.filter(
-        (movement) => view.productId === undefined || movement.productId === view.productId,
-      );
-      const filteredOrders = orders.filter(
-        (order) => view.orderStatus === undefined || order.status === view.orderStatus,
-      );
+      const filteredMovements = storefront
+        ? []
+        : movements.filter((movement) => view.productId === undefined || movement.productId === view.productId);
+      const filteredOrders = storefront
+        ? view.orderClientRequestId === undefined
+          ? []
+          : orders.filter((order) => order.clientRequestId === view.orderClientRequestId)
+        : orders.filter((order) => view.orderStatus === undefined || order.status === view.orderStatus);
       const response: RecordsResponse = {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite: yield* contextGrant('write_all'),

@@ -6,6 +6,7 @@ import type { OrdersSnapshot } from './orders-records.ts';
 export const orderStatuses = [
   'NEW',
   'CONFIRMED',
+  'PACKING',
   'SHIPPED',
   'DELIVERED',
   'CANCELLED',
@@ -13,9 +14,10 @@ export const orderStatuses = [
 
 const nextStatuses = {
   CANCELLED: [],
-  CONFIRMED: ['SHIPPED', 'CANCELLED'],
+  CONFIRMED: ['PACKING', 'SHIPPED', 'CANCELLED'],
   DELIVERED: [],
   NEW: ['CONFIRMED', 'CANCELLED'],
+  PACKING: ['SHIPPED', 'CANCELLED'],
   SHIPPED: ['DELIVERED'],
 } satisfies Record<OrderStatus, readonly OrderStatus[]>;
 
@@ -33,6 +35,7 @@ const actionLabelKeys = {
   CONFIRMED: 'merchandise.pages.orders.actions.confirm',
   DELIVERED: 'merchandise.pages.orders.actions.deliver',
   NEW: null,
+  PACKING: 'merchandise.pages.orders.actions.pack',
   SHIPPED: 'merchandise.pages.orders.actions.ship',
 } satisfies Record<OrderStatus, string | null>;
 
@@ -44,6 +47,7 @@ const statusDoneKeys = {
   CONFIRMED: 'merchandise.pages.orders.toast.confirmed',
   DELIVERED: 'merchandise.pages.orders.toast.delivered',
   NEW: null,
+  PACKING: 'merchandise.pages.orders.toast.packing',
   SHIPPED: 'merchandise.pages.orders.toast.shipped',
 } satisfies Record<OrderStatus, string | null>;
 
@@ -60,7 +64,9 @@ const sameUtcMonth = (left: DateTime.Utc, right: DateTime.Utc) =>
  * the order carries no shipping timestamp yet.
  */
 export const orderStats = (orders: readonly Order[], now: DateTime.Utc) => {
-  const open = orders.filter((order) => order.status === 'NEW' || order.status === 'CONFIRMED');
+  const open = orders.filter(
+    (order) => order.status === 'NEW' || order.status === 'CONFIRMED' || order.status === 'PACKING',
+  );
   return {
     cancelled: orders.filter((order) => order.status === 'CANCELLED').length,
     openCount: open.length,

@@ -43,7 +43,8 @@ const vocabulary = {
     CONFIRMED: { label: 'Potvrzená', variant: 'info' },
     DELIVERED: { label: 'Doručená', variant: 'success' },
     NEW: { label: 'Nová', variant: 'warning' },
-    SHIPPED: { label: 'Odeslaná', variant: 'info' },
+    PACKING: { label: 'Balí se', variant: 'info' },
+    SHIPPED: { label: 'Předáno dopravci', variant: 'info' },
   },
   payment: {
     OVERDUE: { label: 'Po splatnosti', variant: 'danger' },
