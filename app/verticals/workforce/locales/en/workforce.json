@@ -234,7 +234,8 @@
         "enable": "reactivated account {{target}}",
         "rejected": "an account administration attempt was denied ({{code}})",
         "reason": "Reason: {{reason}}",
-        "noPrevious": "no role"
+        "noPrevious": "no role",
+        "inactiveRejected": "– the deactivated account sent a request; Core rejected it"
       },
       "forbidden": {
         "title": "Only the company administrator manages people",

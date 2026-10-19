@@ -77,7 +77,10 @@ const relationshipsOf = (rpc: SpiceDbRpc, principalId: string) =>
           v1.ReadRelationshipsRequest.create({
             consistency: fullyConsistent,
             relationshipFilter: v1.RelationshipFilter.create({
-              optionalSubjectFilter: v1.SubjectFilter.create({ optionalSubjectId: principalId, subjectType: 'principal' }),
+              optionalSubjectFilter: v1.SubjectFilter.create({
+                optionalSubjectId: principalId,
+                subjectType: 'principal',
+              }),
               resourceType,
             }),
           }),
@@ -124,7 +127,10 @@ const write = (
 
 export interface DemoAccountGrants {
   /** Principals with `member` on the company. */
-  readonly companyMembers: (tenantId: string, legalEntityId: string) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
+  readonly companyMembers: (
+    tenantId: string,
+    legalEntityId: string,
+  ) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
   /** Legal entities the principal is a member of (decoded from its `legal_entity#member` grants). */
   readonly companiesOf: (principalId: string) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
   /**
@@ -166,7 +172,10 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
             return belongsToCompany(relationship, input.legalEntityId);
           }
           // Tenant-wide grants stay while another company still needs them; tenant membership always stays.
-          return otherCompanies.length === 0 && !(relationship.resourceType === 'tenant' && relationship.relation === 'member');
+          return (
+            otherCompanies.length === 0 &&
+            !(relationship.resourceType === 'tenant' && relationship.relation === 'member')
+          );
         })
       : [];
     yield* write(rpc, v1.RelationshipUpdate_Operation.DELETE, input.principalId, revoke);

@@ -13,15 +13,11 @@ import { createHash } from 'node:crypto';
 import { ActionRuntime, manageDemoAccountAction, openDemoAccountGrants } from '@app/core-runtime';
 import type { DemoAccountGrants, ManageDemoAccountPayload, TrustedPrincipalContext } from '@app/core-runtime';
 import { hashPassword } from 'better-auth/crypto';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Data, DateTime, Effect } from 'effect';
 
-import type {
-  DemoAccountListResponse,
-  ManageDemoAccountRequest,
-  ManageDemoAccountResponse,
-} from '../../shared/api.ts';
+import type { DemoAccountListResponse, ManageDemoAccountRequest, ManageDemoAccountResponse } from '../../shared/api.ts';
 import { AuthDatabase } from './db/client.ts';
 import { account, user } from './db/schema.ts';
 
@@ -89,7 +85,12 @@ const companyRoles: Readonly<Record<string, CompanyRoles>> = {
   '71000000-0000-4000-8000-000000000020': {
     roles: [
       role('headOfSales', 'Vedoucí obchodu (správce)', 'obchod@demo.ontos', 'Celá agenda firmy a správa lidí.', true),
-      role('salesRep', 'Obchodník', 'obchodnik@demo.ontos', 'Zákazníci, objednávky a obchodní případy; faktury jen čte.'),
+      role(
+        'salesRep',
+        'Obchodník',
+        'obchodnik@demo.ontos',
+        'Zákazníci, objednávky a obchodní případy; faktury jen čte.',
+      ),
       role('accountant', 'Účetní', 'ucetni@demo.ontos', 'Faktury a platby; ostatní agendy jen čte.'),
       role('warehouse', 'Skladník', 'sklad@demo.ontos', 'Produkty, sklad a úkoly.'),
     ],
@@ -129,7 +130,13 @@ const companyRoles: Readonly<Record<string, CompanyRoles>> = {
   },
   '71000000-0000-4000-8000-000000000023': {
     roles: [
-      role('eshopAdmin', 'Správce e-shopu', 'eshop@kavarna.demo', 'Katalog, objednávky, zákazníci a správa lidí.', true),
+      role(
+        'eshopAdmin',
+        'Správce e-shopu',
+        'eshop@kavarna.demo',
+        'Katalog, objednávky, zákazníci a správa lidí.',
+        true,
+      ),
       role('fulfilment', 'Expedice', 'expedice@kavarna.demo', 'Vyřizování a odesílání objednávek.'),
     ],
     seeded: { 'eshop@kavarna.demo': 'eshopAdmin', 'expedice@kavarna.demo': 'fulfilment' },
@@ -312,7 +319,11 @@ const legalNames = Effect.fn('DemoAccounts.legalNames')(function* legalNames(ten
   return new Map(rows.map((row) => [row.legalEntityId, row.legalName]));
 });
 
-const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(tenantId: string, legalEntityId: string) {
+const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(
+  tenantId: string,
+  legalEntityId: string,
+  members: readonly string[],
+) {
   const { executor } = yield* AuthDatabase;
   const rows = yield* executor
     .select({
@@ -323,6 +334,7 @@ const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(ten
       occurredAt: coreAuditEvents.occurredAt,
       outcome: coreAuditEvents.outcome,
       outcomeCode: coreAuditEvents.outcomeCode,
+      principalId: coreAuditEvents.principalId,
     })
     .from(coreAuditEvents)
     .leftJoin(
@@ -335,16 +347,32 @@ const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(ten
     .where(
       and(
         eq(coreAuditEvents.tenantId, tenantId),
-        eq(coreAuditEvents.legalEntityId, legalEntityId),
-        sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${ACTION_KEY}`,
-        sql`${coreAuditEvents.eventType} in ('action.executed', 'action.rejected')`,
+        or(
+          and(
+            eq(coreAuditEvents.legalEntityId, legalEntityId),
+            sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${ACTION_KEY}`,
+            sql`${coreAuditEvents.eventType} in ('action.executed', 'action.rejected')`,
+          ),
+          // Requests of deactivated accounts of this company, rejected and audited by the principal resolver.
+          members.length === 0
+            ? sql`false`
+            : and(
+                eq(coreAuditEvents.eventType, 'authn.rejected'),
+                eq(coreAuditEvents.outcomeCode, 'principal_inactive'),
+                inArray(coreAuditEvents.principalId, [...members]),
+              ),
+        ),
       ),
     )
     .orderBy(desc(coreAuditEvents.occurredAt))
     .limit(80)
     .pipe(Effect.mapError(unavailable));
   const targets = [
-    ...new Set(rows.flatMap(({ evidence }) => (typeof evidence['targetPrincipalId'] === 'string' ? [evidence['targetPrincipalId']] : []))),
+    ...new Set(
+      rows.flatMap(({ evidence }) =>
+        typeof evidence['targetPrincipalId'] === 'string' ? [evidence['targetPrincipalId']] : [],
+      ),
+    ),
   ];
   const people = yield* loadPeople(tenantId, targets);
   const names = new Map(people.map((person) => [person.principalId, person.displayName]));
@@ -355,7 +383,10 @@ const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(ten
         details[key] = value;
       }
     }
-    const target = row.evidence['targetPrincipalId'];
+    if (row.eventType === 'authn.rejected' && row.principalId !== null) {
+      details['targetPrincipalId'] = row.principalId;
+    }
+    const target = details['targetPrincipalId'];
     return {
       actorName: row.actorName,
       auditEventId: row.auditEventId,
@@ -365,7 +396,9 @@ const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(ten
       outcome: row.outcome,
       outcomeCode: row.outcomeCode,
       targetName:
-        typeof target === 'string' ? (names.get(target) ?? (typeof details['displayName'] === 'string' ? details['displayName'] : null)) : null,
+        typeof target === 'string'
+          ? (names.get(target) ?? (typeof details['displayName'] === 'string' ? details['displayName'] : null))
+          : null,
     };
   });
 });
@@ -401,7 +434,7 @@ export const listDemoAccounts = Effect.fn('DemoAccounts.list')(function* listDem
       ),
     { concurrency: 4 },
   );
-  const audit = yield* auditTrail(tenantId, legalEntityId);
+  const audit = yield* auditTrail(tenantId, legalEntityId, members);
   const response: DemoAccountListResponse = {
     accounts: accounts.toSorted(
       (left, right) =>
@@ -411,7 +444,12 @@ export const listDemoAccounts = Effect.fn('DemoAccounts.list')(function* listDem
     audit,
     canManage: true,
     company: { legalEntityId, legalName: caller.legalName },
-    roles: roles.roles.map(({ administrator, description, key, label }) => ({ administrator, description, key, label })),
+    roles: roles.roles.map(({ administrator, description, key, label }) => ({
+      administrator,
+      description,
+      key,
+      label,
+    })),
   };
   return response;
 }, Effect.scoped);
@@ -513,9 +551,7 @@ export const manageDemoAccount = Effect.fn('DemoAccounts.manage')(function* mana
     const target = yield* findRole(request.roleKey);
     const [person] = yield* loadPeople(tenantId, [request.principalId]);
     const previous =
-      person === undefined
-        ? undefined
-        : roles.roles.find((entry) => entry.key === roleKeyOf(person, assigned, roles));
+      person === undefined ? undefined : roles.roles.find((entry) => entry.key === roleKeyOf(person, assigned, roles));
     const templatePrincipalId = yield* principalByEmail(tenantId, target.templateEmail);
     const result = yield* run({
       operation: 'change-role',

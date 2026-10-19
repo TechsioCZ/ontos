@@ -121,16 +121,18 @@ const failed = (reason: PeopleFailure): { readonly reason: PeopleFailure; readon
   status: 'failed',
 });
 
-export const loadPeopleOverview: Effect.Effect<PeopleOutcome<PeopleOverview>, never, HttpClient.HttpClient> = Effect.gen(
-  function* loadOverview() {
-    const answer = yield* post('/list', {});
-    if (answer.status === 'failed') {
-      return failed(answer.reason);
-    }
-    const value = yield* decodeOverview(answer.json);
-    return { status: 'ok' as const, value };
-  },
-).pipe(Effect.orElseSucceed(() => failed('error')));
+export const loadPeopleOverview: Effect.Effect<
+  PeopleOutcome<PeopleOverview>,
+  never,
+  HttpClient.HttpClient
+> = Effect.gen(function* loadOverview() {
+  const answer = yield* post('/list', {});
+  if (answer.status === 'failed') {
+    return failed(answer.reason);
+  }
+  const value = yield* decodeOverview(answer.json);
+  return { status: 'ok' as const, value };
+}).pipe(Effect.orElseSucceed(() => failed('error')));
 
 export const runPeopleCommand = (
   command: PeopleCommand,

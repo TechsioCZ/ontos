@@ -84,7 +84,9 @@ const Avatar = ({ name, muted }: { readonly muted: boolean; readonly name: strin
 );
 
 const runCommand = (command: PeopleCommand): Promise<PeopleOutcome<ManageResult>> =>
-  browserRuntime.runPromise(newRequestToken.pipe(Effect.flatMap((token) => runPeopleCommand(command, `people-${token}`))));
+  browserRuntime.runPromise(
+    newRequestToken.pipe(Effect.flatMap((token) => runPeopleCommand(command, `people-${token}`))),
+  );
 
 const columnsOf = (t: Translate): ColumnDef<Person>[] => [
   {
@@ -103,9 +105,7 @@ const columnsOf = (t: Translate): ColumnDef<Person>[] => [
                 </Badge>
               )}
             </span>
-            <span className="truncate text-fg-secondary text-xs">
-              {person.email ?? t(`${key}.table.emailMissing`)}
-            </span>
+            <span className="truncate text-fg-secondary text-xs">{person.email ?? t(`${key}.table.emailMissing`)}</span>
           </span>
         </span>
       );
@@ -158,6 +158,9 @@ const columnsOf = (t: Translate): ColumnDef<Person>[] => [
 const auditText = (entry: AuditEntry, t: Translate): string => {
   const details = entry.details;
   const target = entry.targetName ?? details['displayName'] ?? '—';
+  if (entry.eventType === 'authn.rejected') {
+    return t(`${key}.audit.inactiveRejected`);
+  }
   if (entry.outcome === 'denied') {
     return t(`${key}.audit.rejected`, { code: entry.outcomeCode });
   }
@@ -244,16 +247,14 @@ const CreateAccountPanel = ({
     }
     setBusy(true);
     setServerError(null);
-    void runCommand({ displayName: name.trim(), email: email.trim(), operation: 'create', roleKey }).then(
-      (outcome) => {
-        setBusy(false);
-        if (outcome.status === 'ok') {
-          onCreated(name.trim(), outcome.value);
-        } else {
-          setServerError(failureMessage(outcome.reason, t));
-        }
-      },
-    );
+    void runCommand({ displayName: name.trim(), email: email.trim(), operation: 'create', roleKey }).then((outcome) => {
+      setBusy(false);
+      if (outcome.status === 'ok') {
+        onCreated(name.trim(), outcome.value);
+      } else {
+        setServerError(failureMessage(outcome.reason, t));
+      }
+    });
   };
 
   return (
@@ -388,7 +389,11 @@ const PersonPanel = ({
       setServerError(t(`${key}.panel.roleUnchanged`));
       return;
     }
-    execute('role', { operation: 'change-role', principalId: person.principalId, roleKey }, t(`${key}.toast.roleChanged`));
+    execute(
+      'role',
+      { operation: 'change-role', principalId: person.principalId, roleKey },
+      t(`${key}.toast.roleChanged`),
+    );
   };
 
   const changeStatus = () => {
@@ -406,7 +411,12 @@ const PersonPanel = ({
             principalId: person.principalId,
             reason: reason.trim(),
           }
-        : { expectedStatus: 'disabled', newStatus: 'active', operation: 'change-status', principalId: person.principalId },
+        : {
+            expectedStatus: 'disabled',
+            newStatus: 'active',
+            operation: 'change-status',
+            principalId: person.principalId,
+          },
       t(active ? `${key}.toast.disabled` : `${key}.toast.enabled`),
     );
   };
@@ -476,9 +486,7 @@ const PersonPanel = ({
                 value={roleKey === null ? [] : [roleKey]}
               />
               {roleKey !== null && (
-                <p className="text-fg-secondary text-sm">
-                  {roles.find((role) => role.key === roleKey)?.description}
-                </p>
+                <p className="text-fg-secondary text-sm">{roles.find((role) => role.key === roleKey)?.description}</p>
               )}
               <div>
                 <Button
@@ -588,9 +596,9 @@ const PeoplePageContent = () => {
   const [openId, setOpenId] = useState<string | null>(null);
 
   const reload = () => {
-    void browserRuntime.runPromise(loadPeopleOverview).then((outcome) =>
-      setState(outcome.status === 'ok' ? { data: outcome.value, status: 'ready' } : outcome),
-    );
+    void browserRuntime
+      .runPromise(loadPeopleOverview)
+      .then((outcome) => setState(outcome.status === 'ok' ? { data: outcome.value, status: 'ready' } : outcome));
   };
   useEffect(reload, []);
 

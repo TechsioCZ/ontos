@@ -31,7 +31,11 @@ interface Administrator {
 }
 
 const administrators: readonly Administrator[] = [
-  { extraModules: [], legalEntityId: '71000000-0000-4000-8000-000000000020', principalId: demoId('core.principal', 'obchod') },
+  {
+    extraModules: [],
+    legalEntityId: '71000000-0000-4000-8000-000000000020',
+    principalId: demoId('core.principal', 'obchod'),
+  },
   {
     extraModules: ['demo.workforce'],
     legalEntityId: '71000000-0000-4000-8000-000000000021',
@@ -76,7 +80,13 @@ const allRelationships = administrators.flatMap(({ extraModules, legalEntityId, 
 const relationships = [
   ...new Map(
     allRelationships.map((relationship) => [
-      [relationship.resourceType, relationship.resourceId, relationship.relation, relationship.subjectType, relationship.subjectId].join('|'),
+      [
+        relationship.resourceType,
+        relationship.resourceId,
+        relationship.relation,
+        relationship.subjectType,
+        relationship.subjectId,
+      ].join('|'),
       relationship,
     ]),
   ).values(),
@@ -126,7 +136,9 @@ try {
     console.error('accounts-admin grants: Core development bootstrap port failed');
     process.exitCode = 1;
   } else {
-    console.log(`accounts-admin grants: ${relationships.length} relationships for ${administrators.length} administrators`);
+    console.log(
+      `accounts-admin grants: ${relationships.length} relationships for ${administrators.length} administrators`,
+    );
   }
 } finally {
   rmSync(directory, { force: true, recursive: true });

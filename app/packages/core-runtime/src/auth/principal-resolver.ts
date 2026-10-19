@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, Schema } from 'effect';
 
 import { CoreDatabase } from '../db/client.ts';
 import type { PrincipalKind } from '../db/schema.ts';
@@ -276,6 +276,9 @@ export interface PrincipalResolverConfiguration {
   readonly authenticationNamespaceId: string;
 }
 
+/** Last audited denial per deactivated principal (process-local rate limit for the denial audit). */
+const inactiveDenialAuditedAt = new Map<string, number>();
+
 export const makePrincipalResolver = (
   database: {
     readonly executor: CoreDatabaseExecutor;
@@ -318,8 +321,54 @@ export const makePrincipalResolver = (
           ),
         ),
   };
+  /**
+   * Sales-demo people administration (accounts-admin lane): a request of a deactivated human account is rejected
+   * below with `PrincipalInactiveError`; record that denial once per principal and minute in `core.audit_events`
+   * so the administrator sees the rejected attempt in the audit trail. Failures to audit never change the outcome.
+   */
+  const recordInactiveHumanDenials = (records: readonly PrincipalResolutionRecord[], subject: ProviderSubject) =>
+    Effect.forEach(
+      records.filter(
+        (record) =>
+          record.principalKind === 'human' &&
+          record.principalStatus === 'disabled' &&
+          record.bindingStatus === 'active' &&
+          record.bindingRevokedAt === null,
+      ),
+      (record) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) => {
+            const last = inactiveDenialAuditedAt.get(record.principalId) ?? 0;
+            if (now - last < 60_000) {
+              return Effect.void;
+            }
+            inactiveDenialAuditedAt.set(record.principalId, now);
+            return database.executor
+          .insert(auditEvents)
+          .values({
+            auditProfile: 'sensitive',
+            authBindingId: record.authBindingId,
+            authMethod: subject.subjectType === 'api_key' ? 'api_key' : 'session',
+            eventType: 'authn.rejected',
+            evidenceJson: { reason: 'principal_disabled', subjectType: subject.subjectType },
+            outcome: 'denied',
+            outcomeCode: 'principal_inactive',
+            outcomeStage: 'authn',
+            principalId: record.principalId,
+            targetModuleKey: 'core.identity',
+            targetResourceId: record.principalId,
+            targetResourceType: 'principal',
+            tenantId: record.tenantId,
+          })
+          .pipe(Effect.ignore);
+          }),
+        ),
+      { discard: true },
+    );
   const loadRecords = (subject: ProviderSubject, tenantId?: string) =>
-    loadPrincipalResolutionRecords(recordRepository, subject, tenantId);
+    loadPrincipalResolutionRecords(recordRepository, subject, tenantId).pipe(
+      Effect.tap((records) => recordInactiveHumanDenials(records, subject)),
+    );
   const loadApiKeyBindingSubject = (input: {
     readonly authBindingId: string;
     readonly principalId: string;

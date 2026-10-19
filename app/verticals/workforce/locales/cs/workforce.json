@@ -234,7 +234,8 @@
         "enable": "znovu aktivoval(a) účet {{target}}",
         "rejected": "pokus o správu účtu byl zamítnut ({{code}})",
         "reason": "Důvod: {{reason}}",
-        "noPrevious": "bez role"
+        "noPrevious": "bez role",
+        "inactiveRejected": "– deaktivovaný účet odeslal požadavek; Core jej odmítl"
       },
       "forbidden": {
         "title": "Správu lidí má jen správce firmy",
