@@ -288,6 +288,8 @@ export const rentalDemoRoles = {
       'party.registry': 'read',
       'siampark.agreements': 'read',
       'siampark.billing-finance': 'write',
+      // S10-03: the accountant opens the lease and sees the agreed rent and its contract.
+      'siampark.occupancy': 'read',
       'siampark.property': 'read',
     },
   },
