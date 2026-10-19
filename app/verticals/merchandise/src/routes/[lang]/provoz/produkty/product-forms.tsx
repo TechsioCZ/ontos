@@ -12,7 +12,7 @@ import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
-import { MONEY_FORMAT, NO_ARIA_MAX, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { FailureReason } from './products-api.ts';
 
@@ -29,6 +29,7 @@ export interface FormDialogProps {
 export const UNITS: readonly ProductUnit[] = ['ks', 'bal', 'hod', 'lic'];
 export const VAT_RATES: readonly VatRate[] = [0, 10, 12, 21];
 
+const RESIZE_LABEL_KEY = 'merchandise.sidePanel.resize';
 const REQUIRED_KEY = 'validation.required';
 const KEY_PREFIX = 'merchandise.pages.products';
 
@@ -193,6 +194,7 @@ export const CreateProductDialog = ({
   revision,
 }: FormDialogProps & { readonly products: readonly ProductRecord[] }) => {
   const k = useProductLabel();
+  const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [sku, setSku] = useState('');
   const [name, setName] = useState('');
@@ -300,6 +302,7 @@ export const CreateProductDialog = ({
         closeOnInteractOutside={!dirty}
         onOpenChange={requestClose}
         open={open}
+        resizeLabel={t(RESIZE_LABEL_KEY)}
         size="md"
         title={k('create.title')}
       >
@@ -389,7 +392,7 @@ export const CreateProductDialog = ({
               {...fieldError(submitted, priceError)}
             >
               <NumericInput.Control>
-                <NumericInput.Input {...NO_ARIA_MAX} />
+                <NumericInput.Input aria-valuemax={undefined} />
               </NumericInput.Control>
             </FormNumericInput>
             <FormNumericInput
@@ -409,7 +412,7 @@ export const CreateProductDialog = ({
               {...fieldError(submitted, lowStockError)}
             >
               <NumericInput.Control>
-                <NumericInput.Input {...NO_ARIA_MAX} />
+                <NumericInput.Input aria-valuemax={undefined} />
               </NumericInput.Control>
             </FormNumericInput>
           </div>
@@ -439,6 +442,7 @@ export const ReceiptDialog = ({
   revision,
 }: FormDialogProps & { readonly products: readonly ProductRecord[] }) => {
   const k = useProductLabel();
+  const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [productId, setProductId] = useState<ProductRecord['id'] | null>(null);
   const [quantity, setQuantity] = useState(1);
@@ -511,6 +515,7 @@ export const ReceiptDialog = ({
         description={k('receipt.description')}
         onOpenChange={requestClose}
         open={open}
+        resizeLabel={t(RESIZE_LABEL_KEY)}
         size="md"
         title={k('receipt.title')}
       >
@@ -560,7 +565,7 @@ export const ReceiptDialog = ({
             {...fieldError(submitted, quantityError)}
           >
             <NumericInput.Control>
-              <NumericInput.Input {...NO_ARIA_MAX} />
+              <NumericInput.Input aria-valuemax={undefined} />
             </NumericInput.Control>
           </FormNumericInput>
           <FormInput
@@ -650,6 +655,7 @@ export const PriceChangeDialog = ({
       description={k('priceDialog.description')}
       onOpenChange={onOpenChange}
       open={open}
+      resizeLabel={t(RESIZE_LABEL_KEY)}
       size="md"
       title={k('priceDialog.title')}
     >
@@ -704,6 +710,7 @@ export const CategoryDialog = ({
   revision,
 }: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
   const k = useProductLabel();
+  const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [category, setCategory] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -748,6 +755,7 @@ export const CategoryDialog = ({
       }
       onOpenChange={onOpenChange}
       open={open}
+      resizeLabel={t(RESIZE_LABEL_KEY)}
       size="md"
       title={k('category.title')}
     >

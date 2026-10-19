@@ -154,9 +154,15 @@
           "LOW": "Low",
           "NORMAL": "Normal",
           "HIGH": "High"
-        }
+        },
+        "invalidFilter": "The customer filter in the page URL is invalid.",
+        "relatedFilter": "Showing this customer’s records in the selected legal entity.",
+        "clearRelatedFilter": "Show all customers"
       }
     },
-    "selectPlaceholder": "Select…"
+    "selectPlaceholder": "Select…",
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
   }
 }

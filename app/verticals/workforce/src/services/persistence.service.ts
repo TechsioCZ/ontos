@@ -291,24 +291,34 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
       eq(workforceStates.legalEntityId, legalEntityId),
     );
     const load = Effect.fn('Workforce.load')(function* load() {
-      const rows = yield* transaction
-        .select()
-        .from(workforceStates)
-        .where(whereScope)
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
+      const rows = yield* transaction.select().from(workforceStates).where(whereScope).limit(1);
       const [row] = rows;
       if (row === undefined) {
-        return yield* unavailable();
+        return { revision: 0, state: { employees: [] } satisfies WorkforceState };
       }
-      const state = yield* Schema.decodeUnknownEffect(WorkforceStateSchema)(row.state).pipe(
-        Effect.mapError(unavailable),
-      );
+      const state = yield* Schema.decodeUnknownEffect(WorkforceStateSchema)(row.state);
       return { revision: row.revision, state };
-    });
+    }, Effect.mapError(unavailable));
     const save = Effect.fn('Workforce.save')(function* save(expectedRevision: number, state: WorkforceState) {
       const encoded = yield* Schema.encodeEffect(WorkforceStateSchema)(state).pipe(Effect.mapError(unavailable));
       const updatedAt = yield* DateTime.now;
+      if (expectedRevision === 0) {
+        const inserted = yield* transaction
+          .insert(workforceStates)
+          .values({
+            legalEntityId,
+            revision: 1,
+            state: encoded,
+            tenantId: scope.tenantId,
+            updatedAt: DateTime.toDateUtc(updatedAt),
+          })
+          .onConflictDoNothing()
+          .returning({ revision: workforceStates.revision })
+          .pipe(Effect.mapError(unavailable));
+        if (inserted.length === 1) {
+          return 1;
+        }
+      }
       const rows = yield* transaction
         .update(workforceStates)
         .set({ revision: expectedRevision + 1, state: encoded, updatedAt: DateTime.toDateUtc(updatedAt) })

@@ -79,7 +79,8 @@
     "@modern-js/federation-runtime": "catalog:ultramodern",
     "@modern-js/runtime-renderer-extensions": "catalog:ultramodern",
     "@app/admin-ui": "workspace:*",
-    "@techsio/ui-kit": "0.56.0"
+    "@techsio/ui-kit": "0.56.0",
+    "uuid": "14.0.3"
   },
   "devDependencies": {
     "@effect/tsgo": "0.41.0",

@@ -141,7 +141,7 @@ index 84bc61cba26a57afe68b4dda0e93e175f1a82ba5..f4d5b10c50ab5bd2457a1018b085c20e
          className: styles.trigger({
              className
 diff --git a/dist/molecules/dialog.js b/dist/molecules/dialog.js
-index 676e8e2e61f94e483fcdcce57c530b2d5b1d004a..67e733ee7f87c71f6fa327926c8cc08e62856fe4 100644
+index 676e8e2e61f94e483fcdcce57c530b2d5b1d004a..0605b52ddad0380578c6b1608134bbc3b134d1a7 100644
 --- a/dist/molecules/dialog.js
 +++ b/dist/molecules/dialog.js
 @@ -224,7 +224,7 @@ const dialogVariants = tv({
@@ -149,11 +149,20 @@ index 676e8e2e61f94e483fcdcce57c530b2d5b1d004a..67e733ee7f87c71f6fa327926c8cc08e
      }
  });
 -function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "dialog", placement = "center", position = "fixed", size = "md", behavior = "modal", closeOnEscape = true, closeOnInteractOutside = true, preventScroll = true, trapFocus = true, customTrigger = false, triggerText = "Open", title, description, children, hideCloseButton = false, actions, className, modal = true, portal = true }) {
-+function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "dialog", placement = "center", position = "fixed", size = "md", behavior = "modal", closeOnEscape = true, closeOnInteractOutside = true, preventScroll = true, trapFocus = true, customTrigger = false, triggerText = "Open", title, description, children, hideCloseButton = false, closeLabel = "Close dialog", actions, className, modal = true, portal = true }) {
++function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "dialog", placement = "center", position = "fixed", size = "md", behavior = "modal", closeOnEscape = true, closeOnInteractOutside = true, preventScroll = true, trapFocus = true, customTrigger = false, triggerText = "Open", title, description, children, hideCloseButton = false, closeLabel = "Close dialog", actions, className, contentRef, contentStyle, modal = true, portal = true }) {
      const generatedId = useId();
      const uniqueId = id || generatedId;
      const service = useMachine(__rspack_external__zag_js_dialog_5c81bb31.machine, {
-@@ -270,7 +270,7 @@ function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "
+@@ -263,6 +263,8 @@ function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "
+                             className
+                         }),
+                         ...api.getContentProps(),
++                        ref: contentRef,
++                        style: { ...api.getContentProps().style, ...contentStyle },
+                         children: [
+                             !hideCloseButton && /*#__PURE__*/ jsx(ActionIcon, {
+                                 className: closeTrigger(),
+@@ -270,7 +272,7 @@ function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role = "
                                  size: "md",
                                  tone: "neutral",
                                  ...api.getCloseTriggerProps(),
@@ -243,7 +252,7 @@ index 6681008502fd8d24452bd44e550c015a05af9de8..78cd1dbbd3c24362f6d351eaa4120212
                  }, toast.id))
          })
 diff --git a/dist/organisms/data-table.fields.js b/dist/organisms/data-table.fields.js
-index 57bef4a7df1775110dbb9cd897ff34885ef72ae3..1e20718 100644
+index 57bef4a7df1775110dbb9cd897ff34885ef72ae3..1e2071865cbc42c2b3e105662a3e437295b29b2b 100644
 --- a/dist/organisms/data-table.fields.js
 +++ b/dist/organisms/data-table.fields.js
 @@ -130,6 +130,9 @@ function FieldSelect({ items, value, ariaLabel, placeholder, disabled, size = "s
@@ -384,21 +393,31 @@ index 837f253c047f25c64b0e2abd9df2889a7702a989..bfd53d379853d0fab4e22902ca938a87
  };
  type DatePickerSingleRootFields = {
 diff --git a/dist/src/molecules/dialog.d.ts b/dist/src/molecules/dialog.d.ts
-index 7f5627826e740db3de45a4a03c3d2e13fe20c933..9b40877b3ff8bf4198e321647e83a72cdd53199e 100644
+index 7f5627826e740db3de45a4a03c3d2e13fe20c933..568309f671aa150d6b5a0110f9f378b8bc5a36a0 100644
 --- a/dist/src/molecules/dialog.d.ts
 +++ b/dist/src/molecules/dialog.d.ts
-@@ -225,10 +225,12 @@ export interface DialogProps extends VariantProps<typeof dialogVariants> {
+@@ -1,4 +1,4 @@
+-import { type ReactNode } from "react";
++import { type CSSProperties, type Ref, type ReactNode } from "react";
+ import { type VariantProps } from "tailwind-variants";
+ declare const dialogVariants: import("tailwind-variants").TVReturnType<{
+     placement: {
+@@ -225,10 +225,16 @@ export interface DialogProps extends VariantProps<typeof dialogVariants> {
      children?: ReactNode;
      actions?: ReactNode;
      hideCloseButton?: boolean;
 +    /** Accessible name of the built-in close button. Defaults to "Close dialog". */
 +    closeLabel?: string;
      className?: string;
++    /** Ref to the actual dialog content element. */
++    contentRef?: Ref<HTMLDivElement>;
++    /** Inline layout overrides, merged with the dialog machine styles. */
++    contentStyle?: CSSProperties;
      modal?: boolean;
      portal?: boolean;
  }
 -export declare function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role, placement, position, size, behavior, closeOnEscape, closeOnInteractOutside, preventScroll, trapFocus, customTrigger, triggerText, title, description, children, hideCloseButton, actions, className, modal, portal, }: DialogProps): import("react").JSX.Element;
-+export declare function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role, placement, position, size, behavior, closeOnEscape, closeOnInteractOutside, preventScroll, trapFocus, customTrigger, triggerText, title, description, children, hideCloseButton, closeLabel, actions, className, modal, portal, }: DialogProps): import("react").JSX.Element;
++export declare function Dialog({ id, open, onOpenChange, initialFocusEl, finalFocusEl, role, placement, position, size, behavior, closeOnEscape, closeOnInteractOutside, preventScroll, trapFocus, customTrigger, triggerText, title, description, children, hideCloseButton, closeLabel, actions, className, contentRef, contentStyle, modal, portal, }: DialogProps): import("react").JSX.Element;
  export {};
  //# sourceMappingURL=dialog.d.ts.map
 \ No newline at end of file

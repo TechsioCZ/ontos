@@ -125,6 +125,9 @@
       "updated": "Tag updated",
       "selectPlaceholder": "Select…",
       "loading": "Loading…"
+    },
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
     }
   }
 }

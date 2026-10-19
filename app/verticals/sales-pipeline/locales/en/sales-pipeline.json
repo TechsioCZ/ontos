@@ -59,7 +59,7 @@
     "pages": {
       "records": {
         "title": "Opportunities",
-        "description": "Sales opportunities across customers. Winning one automatically issues an invoice.",
+        "description": "Sales and rental opportunities. Catalog lines in a won opportunity create a draft invoice.",
         "newOpportunity": "New opportunity",
         "unavailable": "Data could not be loaded.",
         "forbidden": "You do not have access to this section.",
@@ -118,7 +118,7 @@
           "submit": "Create opportunity",
           "submitting": "Saving…",
           "title": "New opportunity",
-          "description": "The opportunity starts in the Lead stage. Products are priced at the current price.",
+          "description": "Enter the subject, counterparty and expected closing date.",
           "customerPlaceholder": "Search for a customer…",
           "noCustomerMatch": "No customer matches the search.",
           "unknownCustomer": "Unknown customer",
@@ -146,7 +146,9 @@
             "noteTooLong": "The note can have at most 2000 characters.",
             "productRequired": "Choose a product.",
             "quantityRange": "Quantity must be a whole number from 1 to {{max}}.",
-            "titleRequired": "Enter the opportunity name."
+            "titleRequired": "Enter the opportunity name.",
+            "amountRange": "The line total is too large. Reduce the price or quantity.",
+            "manualLine": "Enter a description up to 300 characters and a non-negative price."
           },
           "fields": {
             "title": "Name",
@@ -156,8 +158,12 @@
             "note": "Note",
             "lines": "Lines",
             "product": "Product",
-            "quantity": "Quantity"
-          }
+            "quantity": "Quantity",
+            "rentDescription": "Rent or service",
+            "price": "Price per period excluding VAT (CZK)",
+            "vat": "VAT (%)"
+          },
+          "rentHint": "Include the building or unit and rental period. The amount covers the entered number of periods; create an invoice for these lines manually."
         },
         "stageDialog": {
           "cancel": "Cancel",
@@ -167,7 +173,7 @@
           "submit": "Change stage",
           "submitting": "Saving…",
           "title": "Change stage",
-          "wonWarning": "Winning the opportunity automatically creates an invoice draft."
+          "wonWarning": "Catalog lines create a draft invoice. Invoice rental and service lines without catalog products manually."
         },
         "owner": {
           "cancel": "Cancel",
@@ -195,7 +201,8 @@
         "errors": {
           "conflict": "Someone else changed the record in the meantime. Reload it and repeat your change.",
           "forbidden": "You are not allowed to do this.",
-          "generic": "The change could not be saved. Try again."
+          "generic": "The change could not be saved. Try again.",
+          "invalidFilter": "The customer filter in the page URL is invalid."
         },
         "bulkByTag": {
           "title": "Bulk by tag",
@@ -235,6 +242,9 @@
     },
     "selectPlaceholder": "Select…",
     "loading": "Loading…",
-    "noResults": "No results"
+    "noResults": "No results",
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
   }
 }

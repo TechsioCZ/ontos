@@ -65,6 +65,7 @@ export const OrderDetailDialog = ({ busy, canWrite, customers, onClose, onStatus
         }
       }}
       open
+      resizeLabel={t('merchandise.sidePanel.resize')}
       size="lg"
       title={t('merchandise.pages.orders.detail.title', { number: order.number })}
     >

@@ -186,6 +186,7 @@ export const CustomerBulkEditDialog = ({
         }
       }}
       open={open}
+      resizeLabel={t('party-registry.sidePanel.resize')}
       size="md"
       title={t(`${KEY}.title`)}
     >

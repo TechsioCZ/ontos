@@ -73,7 +73,10 @@
           "employees": "Zaměstnanci",
           "products": "Produkty a sklad",
           "statistics": "Statistiky",
-          "tags": "Štítky"
+          "tags": "Štítky",
+          "agreements": "Smlouvy a podpisy",
+          "properties": "Nemovitosti",
+          "occupancy": "Nájmy a pobyty"
         }
       },
       "sidebar": {

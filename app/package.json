@@ -132,6 +132,7 @@
     "dev:privacy": "pnpm --filter @app/privacy dev",
     "demo:reset": "node scripts/siampark/reset-demo-entry.mts",
     "demo:reset:sales": "node scripts/demo/reset-demo.mts",
+    "demo:seed:rental": "node scripts/demo/seed-rental-demo.mts",
     "demo:composition": "node scripts/siampark/development-composition.mts --environment development",
     "demo:serve": "node scripts/siampark/serve-demo.mts"
   },
@@ -150,13 +151,9 @@
     "@app/siampark-occupancy": "workspace:*",
     "@app/siampark-agreements": "workspace:*",
     "@app/siampark-work": "workspace:*",
-    "@app/workforce": "workspace:*",
-    "@app/tagging": "workspace:*",
-    "@app/sales-pipeline": "workspace:*",
-    "@app/merchandise": "workspace:*",
-    "@app/sales-insights": "workspace:*",
     "@app/siampark-billing-finance": "workspace:*",
-    "@app/siampark-relationships": "workspace:*"
+    "@app/siampark-relationships": "workspace:*",
+    "uuid": "14.0.3"
   },
   "devDependencies": {
     "@babel/types": "8.0.6",

@@ -358,26 +358,36 @@ export const persistenceService = Effect.fn('Tagging.persistenceService')(
     const whereScope = and(eq(taggingStates.tenantId, scope.tenantId), eq(taggingStates.legalEntityId, legalEntityId));
     const actor: PrincipalRef = { principalId: scope.principalId, tenantId: scope.tenantId };
     const load = Effect.fn('Tagging.load')(function* load() {
-      const rows = yield* transaction
-        .select()
-        .from(taggingStates)
-        .where(whereScope)
-        .limit(1)
-        .pipe(Effect.mapError((cause) => unavailable(cause)));
+      const rows = yield* transaction.select().from(taggingStates).where(whereScope).limit(1);
       const [row] = rows;
       if (row === undefined) {
-        return yield* unavailable();
+        return { revision: 0, state: { assignments: [], tags: [] } satisfies TaggingState };
       }
-      const state = yield* Schema.decodeUnknownEffect(TaggingStateSchema)(row.state).pipe(
-        Effect.mapError((cause) => unavailable(cause)),
-      );
+      const state = yield* Schema.decodeUnknownEffect(TaggingStateSchema)(row.state);
       return { revision: row.revision, state };
-    });
+    }, Effect.mapError(unavailable));
     const save = Effect.fn('Tagging.save')(function* save(expectedRevision: number, state: TaggingState) {
       const encoded = yield* Schema.encodeEffect(TaggingStateSchema)(state).pipe(
         Effect.mapError((cause) => unavailable(cause)),
       );
       const updatedAt = yield* DateTime.now;
+      if (expectedRevision === 0) {
+        const inserted = yield* transaction
+          .insert(taggingStates)
+          .values({
+            legalEntityId,
+            revision: 1,
+            state: encoded,
+            tenantId: scope.tenantId,
+            updatedAt: DateTime.toDateUtc(updatedAt),
+          })
+          .onConflictDoNothing()
+          .returning({ revision: taggingStates.revision })
+          .pipe(Effect.mapError((cause) => unavailable(cause)));
+        if (inserted.length === 1) {
+          return 1;
+        }
+      }
       const rows = yield* transaction
         .update(taggingStates)
         .set({ revision: expectedRevision + 1, state: encoded, updatedAt: DateTime.toDateUtc(updatedAt) })

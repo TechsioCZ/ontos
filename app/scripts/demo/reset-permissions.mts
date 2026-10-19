@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
 import { hashPassword } from 'better-auth/crypto';
+import { commercialDemoCompany, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { eq } from 'drizzle-orm';
 import {
   Config,
@@ -56,11 +57,10 @@ class DemoPermissionsError extends Schema.TaggedError<DemoPermissionsError>()('D
 }) {}
 const fail = (reason: string) => new DemoPermissionsError({ reason });
 
-// oxlint-disable-next-line sonarjs/no-hardcoded-passwords -- documented local demo credential (README, brief).
-const DEMO_PASSWORD = 'password1234';
+const demoPassword = Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234')));
 const ENV_FILE = '.env.demo.local';
+const readinessTimeout = '10 seconds';
 const BOT_KEY_AUDIENCE = 'siampark-work';
-// oxlint-disable-next-line effect-native/no-manual-cookie-serialization -- reads the shell's existing cookie name; builds no cookie.
 const SECURE_COOKIE_PREFIX = '__Secure-';
 const [headOfSales] = demoHumanAccounts;
 
@@ -77,9 +77,10 @@ const demoAgentConfig = Config.all({
 const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
   const { executor } = yield* AuthDatabase;
   const now = yield* DateTime.nowAsDate;
+  const credential = yield* demoPassword;
   const password = yield* Effect.tryPromise({
     catch: () => fail('Unable to hash the demo password'),
-    try: async () => await hashPassword(DEMO_PASSWORD),
+    try: async () => await hashPassword(Redacted.value(credential)),
   });
   yield* executor.transaction((transaction) =>
     Effect.gen(function* writeIdentityRows() {
@@ -187,7 +188,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
     })),
     legalEntity: {
       legalEntityId: demoLegalEntityId,
-      legalName: 'Siampark DEMO s.r.o.',
+      legalName: 'Obchodní firma',
       registrationCountry: 'CZ',
       registrationNumber: 'DEMO-SIAMPARK',
     },
@@ -231,6 +232,10 @@ const GatewayBodySchema = Schema.Struct({
 });
 const CompositionSchema = Schema.Struct({ composition: Schema.Struct({ revision: Schema.String }) });
 const IssuedKeySchema = Schema.Struct({ secret: Schema.Redacted(Schema.String.check(Schema.isMinLength(1))) });
+const DemoCompaniesPayload = Schema.Struct({ configuration: Schema.Literal('sales-rental-v1') });
+const DemoCompaniesResult = Schema.Struct({
+  companies: Schema.Array(Schema.Struct({ legalEntityId: LegalEntityIdSchema, legalName: Schema.String })),
+});
 
 const postJson = <S extends Schema.Top>(
   url: string,
@@ -250,7 +255,7 @@ const postJson = <S extends Schema.Top>(
 const compositionRevision = (url: string) =>
   Effect.gen(function* readCompositionRevision() {
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.get(url).pipe(Effect.timeout('10 seconds'));
+    const response = yield* client.get(url).pipe(Effect.timeout(readinessTimeout));
     const { composition } = yield* HttpClientResponse.schemaBodyJson(CompositionSchema)(response);
     return composition.revision;
   }).pipe(Effect.option);
@@ -278,11 +283,61 @@ const sessionCookieHeader = (cookies: Cookies.Cookies) => {
   return Cookies.toCookieHeader(Cookies.setAllUnsafe(cookies, aliases));
 };
 
+/** Operator-invoked demo setup uses the normal audited Core Action after its grants exist. */
+export const ensureDemoCompanies = Effect.fn('DemoPermissions.ensureCompanies')(function* ensureDemoCompanies(
+  shellUrl: string,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const available = yield* client.get(`${shellUrl}/.well-known/ontos-shell-runtime.json`).pipe(
+    Effect.timeout(readinessTimeout),
+    Effect.map(({ status }) => status === 200),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!available) {
+    return yield* Console.log(
+      'sales-demo companies: shell is not running; configuration will run after server startup',
+    );
+  }
+  const signIn = yield* postJson(
+    `${shellUrl}/shell-super-app-api/auth/sign-in`,
+    SignInBodySchema,
+    { email: headOfSales.email, password: yield* demoPassword },
+    { origin: shellUrl },
+  );
+  if (signIn.status !== 200) {
+    return yield* fail(`Company operator sign-in failed with HTTP ${signIn.status}`);
+  }
+  const response = yield* postJson(
+    `${shellUrl}/shell-super-app-api/auth/identity/demo-companies`,
+    DemoCompaniesPayload,
+    { configuration: 'sales-rental-v1' },
+    {
+      cookie: sessionCookieHeader(signIn.cookies),
+      'idempotency-key': `sales-demo-companies-${randomUUID()}`,
+      origin: shellUrl,
+    },
+  );
+  if (response.status !== 200) {
+    return yield* fail(`Company configuration Action failed with HTTP ${response.status}`);
+  }
+  const { companies } = yield* HttpClientResponse.schemaBodyJson(DemoCompaniesResult)(response);
+  for (const expected of [commercialDemoCompany, rentalDemoCompany]) {
+    if (
+      !companies.some(
+        (company) => company.legalEntityId === expected.legalEntityId && company.legalName === expected.legalName,
+      )
+    ) {
+      return yield* fail('Company configuration did not return the fixed demo companies');
+    }
+  }
+  return yield* Console.log('sales-demo companies: Obchodní firma and Siampark configured through audited Core Action');
+});
+
 const issueBotKey = Effect.fn('DemoPermissions.issueBotKey')(function* issueBotKey(shellUrl: string) {
   const signIn = yield* postJson(
     `${shellUrl}/shell-super-app-api/auth/sign-in`,
     SignInBodySchema,
-    { email: headOfSales.email, password: Redacted.make(DEMO_PASSWORD) },
+    { email: headOfSales.email, password: yield* demoPassword },
     { origin: shellUrl },
   );
   if (signIn.status !== 200) {
@@ -326,7 +381,7 @@ const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureB
     ? readEnvFile(yield* fs.readFileString(envFile))
     : new Map<string, string>();
   const shellUp = yield* client.get(`${shellUrl}/.well-known/ontos-shell-runtime.json`).pipe(
-    Effect.timeout('10 seconds'),
+    Effect.timeout(readinessTimeout),
     Effect.map(({ status }) => status === 200),
     Effect.orElseSucceed(() => false),
   );
@@ -379,6 +434,8 @@ const main = (skipBot: boolean) =>
     yield* validateResetEnvironment(environment);
     yield* upsertIdentityRows;
     yield* runBootstrapPort(root, environment);
+    const { shellUrl } = yield* demoAgentConfig;
+    yield* ensureDemoCompanies(shellUrl);
     if (!skipBot) {
       yield* liftBotKeyRateLimit;
       yield* ensureBotKey(root);
@@ -425,5 +482,7 @@ const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' 
   Layer.provide(environmentLive),
   Layer.provide(NodeServices.layer),
 );
-const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
-process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
+  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+}

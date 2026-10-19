@@ -221,6 +221,61 @@ const insertSortedSlotIdempotently = (
   return insertSortedSlot(content, start, end, [entry], validateEntry);
 };
 
+const governedHttpSupportImports = [
+  {
+    binding: 'ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive',
+    module: './auth/action-principal.ts',
+  },
+  {
+    binding: 'GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive',
+    module: './auth/gateway-assertion-redemption.ts',
+  },
+] as const;
+
+/** Formatter-merged imports retain the exact generated binding and its owning module. */
+const governedHttpSupportImport = (candidate: string): (typeof governedHttpSupportImports)[number] | undefined => {
+  const match = /^import\s*\{(?<bindings>[^}]+)\}\s*from\s*['"](?<module>[^'"]+)['"]\s*;$/u.exec(candidate);
+  if (match?.groups === undefined) {
+    return undefined;
+  }
+  const bindings = (match.groups['bindings'] ?? '')
+    .split(',')
+    .map((binding) => binding.trim().replaceAll(/\s+/gu, ' '))
+    .filter(Boolean);
+  if (bindings.some((binding) => !/^[A-Za-z_$][\w$]*(?: as [A-Za-z_$][\w$]*)?$/u.test(binding))) {
+    return undefined;
+  }
+  return governedHttpSupportImports.find(
+    (expected) => expected.module === match.groups?.['module'] && bindings.includes(expected.binding),
+  );
+};
+
+const insertGovernedHttpSupportImport = (
+  content: string,
+  expected: (typeof governedHttpSupportImports)[number],
+): string => {
+  const entries = readGeneratedSlotEntries(
+    content,
+    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+  );
+  if (entries.some((candidate) => governedHttpSupportImport(candidate) === undefined)) {
+    return raiseScaffoldFailure(
+      `generated owner slot contains unsupported developer content: ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}`,
+    );
+  }
+  if (entries.some((candidate) => governedHttpSupportImport(candidate) === expected)) {
+    return content;
+  }
+  return insertSortedSlotIdempotently(
+    content,
+    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+    `import { ${expected.binding} } from '${expected.module}';`,
+    (candidate) => governedHttpSupportImport(candidate) !== undefined,
+  );
+};
+
 const isGovernedHttpHandlerLayerSlotEntry = (candidate: string): boolean => {
   const isRead =
     /^[A-Za-z][A-Za-z0-9]*ReadApiLive\.pipe\(/u.test(candidate) &&
@@ -882,17 +937,8 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         isGovernedHttpHandlerLayerSlotEntry,
       );
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
-        for (const supportImport of [
-          "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';",
-          "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';",
-        ]) {
-          next = insertSortedSlotIdempotently(
-            next,
-            GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
-            GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
-            supportImport,
-            (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
-          );
+        for (const supportImport of governedHttpSupportImports) {
+          next = insertGovernedHttpSupportImport(next, supportImport);
         }
       }
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START)) {

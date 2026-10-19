@@ -16,11 +16,13 @@ import {
   OrderStatusSchema,
   PartyIdSchema,
   ProductIdSchema,
+  ProductMetadataSchema,
   ProductUnitSchema,
   VatRateSchema,
 } from '../domain/merchandise-model.ts';
 
 export const ProductPatchSchema = Schema.Struct({
+  ...ProductMetadataSchema.fields,
   active: Schema.optionalKey(Schema.Boolean),
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   lowStockThreshold: Schema.optionalKey(MinorAmountSchema),
@@ -51,6 +53,7 @@ export const OrderLineRequestSchema = Schema.Struct({
  */
 export const MerchandiseCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateProduct', {
+    ...ProductMetadataSchema.fields,
     active: Schema.Boolean,
     category: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
     lowStockThreshold: MinorAmountSchema,

@@ -12,6 +12,7 @@ import {
   bindSelfApiKeyAction,
   changePrincipalStatusAction,
   createNonHumanPrincipalAction,
+  configureDemoCompaniesAction,
   IdentityLifecycleConflictError,
   PrincipalResolver,
   setManagedApiKeyBindingStatusAction,
@@ -329,6 +330,15 @@ export const makeIdentityLifecycleService = (
         payload: input.payload,
         principal: input.principal,
         registration: changePrincipalStatusAction,
+        transport: transport(input),
+      }),
+    configureDemoCompanies: (
+      input: RequestIdentity & { readonly payload: unknown; readonly principal: TrustedPrincipalContext },
+    ) =>
+      actionRuntime.runAction({
+        payload: input.payload,
+        principal: input.principal,
+        registration: configureDemoCompaniesAction,
         transport: transport(input),
       }),
     createNonHumanPrincipal: (

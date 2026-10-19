@@ -95,7 +95,7 @@
           "createdAt": "Created",
           "discard": {
             "confirm": "Discard changes",
-            "description": "The unsaved name change will be lost.",
+            "description": "Unsaved changes will be lost. Sections already saved will remain saved.",
             "keep": "Keep editing",
             "title": "Discard unsaved changes?"
           },
@@ -110,7 +110,59 @@
           "status": "Status",
           "title": "Customer",
           "toastRenamed": "Changes saved",
-          "vatId": "DIČ"
+          "vatId": "DIČ",
+          "loading": "Loading detail…",
+          "forbidden": "You do not have permission to view or change these details.",
+          "unavailable": "Details are unavailable. Reload and try again.",
+          "validation": "Check the values and provide a change reason and evidence reference.",
+          "savedReloadFailed": "This section was saved, but its latest details could not be loaded. Reload before making another change. {{reason}}",
+          "restoreBlocked": "An identity case must be resolved before restoration. The customer remains archived.",
+          "separateSaves": "Save each section separately. Confirmed changes remain saved if another section fails.",
+          "evidence": "Supporting evidence (link or reference)",
+          "reason": "Reason for change",
+          "reload": "Reload detail",
+          "partyId": "Party identity",
+          "counterpartyId": "Commercial context",
+          "saveName": "Save name",
+          "saveIdentifier": "Save identifier",
+          "saveContact": "Save contact",
+          "sharedIdentity": "Name, identifiers, contacts and archive state belong to the shared Party. Changes affect its other commercial contexts too.",
+          "archive": "Archive Party",
+          "restore": "Restore Party",
+          "identifiers": "Official identifiers",
+          "contacts": "Contact details",
+          "newContact": "(new)",
+          "contactTypes": {
+            "EMAIL": "E-mail",
+            "PHONE": "Phone",
+            "ADDRESS": "Address"
+          },
+          "address": {
+            "addressLine1": "Street and number",
+            "addressLine2": "Address line 2",
+            "city": "City",
+            "postalCode": "Postal code",
+            "region": "Region",
+            "countryCode": "Country code"
+          },
+          "registeredAddress": "A registered address requires a correction backed by an authoritative registry source. Manual replacement is unavailable here.",
+          "history": "Contact and identifier history",
+          "states": {
+            "ACTIVE": "Active",
+            "ENDED": "Ended",
+            "SUPERSEDED": "Superseded",
+            "RETRACTED": "Retracted",
+            "DISPUTED": "Disputed"
+          },
+          "related": "Related records",
+          "relatedContext": "Lists open for this customer in the selected legal entity. Each module independently checks access.",
+          "relatedLinks": {
+            "opportunities": "Opportunities",
+            "tasks": "Tasks",
+            "invoices": "Invoices"
+          },
+          "endContact": "End contact",
+          "endIdentifier": "End identifier validity"
         },
         "filters": {
           "allSegments": "All segments",
@@ -161,6 +213,9 @@
         "title": "Customers"
       }
     },
-    "selectPlaceholder": "Select…"
+    "selectPlaceholder": "Select…",
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
   }
 }

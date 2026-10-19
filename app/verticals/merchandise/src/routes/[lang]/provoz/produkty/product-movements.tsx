@@ -11,7 +11,7 @@ import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { StockMovementReason } from '../../../../../shared/domain/merchandise-model.ts';
-import { NO_ARIA_MAX, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { formatDelta } from './products-format.ts';
 import {
@@ -228,7 +228,7 @@ export const MovementForm = ({
           {...fieldError(submitted, errorKey === undefined ? undefined : k(errorKey))}
         >
           <NumericInput.Control>
-            <NumericInput.Input {...NO_ARIA_MAX} />
+            <NumericInput.Input aria-valuemax={undefined} />
           </NumericInput.Control>
         </FormNumericInput>
       </div>

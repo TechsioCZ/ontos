@@ -62,6 +62,7 @@ import {
   AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
   CurrentSessionSchema,
+  ConfigureDemoCompaniesResponseSchema,
   ManagedApiKeyListResponseSchema,
   MediaAttachmentResponseSchema,
   PrincipalMutationResponseSchema,
@@ -1299,6 +1300,18 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
     };
   });
   return handlers
+    .handle('configureDemoCompanies', ({ headers, payload, request }) =>
+      safeIdentity(
+        request,
+        Effect.gen(function* configureDemoCompaniesHandler() {
+          const { context, service } = yield* mutationContext(request, headers);
+          const response = yield* service
+            .configureDemoCompanies({ ...context, payload })
+            .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+          return yield* decodeResponse(ConfigureDemoCompaniesResponseSchema, response, shellInternalProblem);
+        }),
+      ),
+    )
     .handle('createNonHumanPrincipal', ({ headers, payload, request }) =>
       safeIdentity(
         request,

@@ -720,7 +720,7 @@ const EmployeesPageContent = () => {
   );
 };
 
-export const EmployeesPage = () => {
+const EmployeesPage = () => {
   const location = useRouterState({ select: (routerState) => routerState.location.href });
   return (
     <FederatedI18nBoundary

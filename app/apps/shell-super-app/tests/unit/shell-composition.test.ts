@@ -784,3 +784,148 @@ it.effect.each(['active', 'read_only', 'deprecated'] as const)(
       expect(crossOwnedPage.outcome).toBe('not_found');
     }),
 );
+
+const publicComponentCatalog = () => {
+  const owner = deployment('property-registry', 'property.registry', 'Property', 20);
+  return makeInstalledModuleCatalogLoader(
+    makeCompositionSnapshot([
+      {
+        ...owner,
+        manifest: {
+          ...owner.manifest,
+          publicSurface: {
+            ...owner.manifest.publicSurface,
+            components: [
+              ...owner.manifest.publicSurface.components,
+              { expose: './Overview', key: 'property.registry.overview', mfBoundaryId: 'verticalpropertyregistry' },
+            ],
+            shellContributions: {
+              ...owner.manifest.publicSurface.shellContributions,
+              publicComponents: [
+                {
+                  componentKey: 'property.registry.overview',
+                  contributionKey: 'property.registry.component.overview',
+                  entrypoint: {
+                    access: 'read',
+                    authorization: { kind: 'context_permission', permission: 'property.overview.read' },
+                    entrypointKey: 'property.registry.component.overview',
+                    moduleKey: 'property.registry',
+                    role: 'public_component',
+                    scope: 'tenant',
+                  },
+                  expose: './Overview',
+                },
+              ],
+            },
+          },
+        },
+      },
+    ]),
+  );
+};
+
+it.effect(
+  'resolves only exact declared public components after fresh module, lifecycle and descriptor permission gates',
+  () =>
+    Effect.gen(function* publicComponentAuthorizationGate() {
+      const approvedCatalog = yield* publicComponentCatalog();
+      const calls: unknown[] = [];
+      const source = {
+        catalog: Effect.succeed(approvedCatalog),
+        contextAccess: {
+          ...contextAccess({ 'property.registry': 'allowed' }),
+          contextPermissions: (input: Parameters<NonNullable<ContextAccessService['contextPermissions']>>[0]) => {
+            calls.push(input);
+            return Effect.succeed([{ decision: 'allowed' as const, key: 'property.registry:property.overview.read' }]);
+          },
+        },
+        moduleStates: {
+          getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' as const }]),
+        },
+      };
+      const composition = makeShellComposition(source);
+      const selector = { entrypointKey: 'property.registry.component.overview', moduleId: 'property.registry' };
+      const result = yield* composition.resolveModuleTarget(context, selector);
+      expect(result.outcome).toBe('resolved');
+      expect(calls).toEqual([
+        { ...context, targets: [{ moduleId: 'property.registry', permission: 'property.overview.read' }] },
+      ]);
+      expect(
+        (yield* composition.resolveModuleTarget(context, {
+          ...selector,
+          entrypointKey: 'property.registry.component.undeclared',
+        })).outcome,
+      ).toBe('not_found');
+      expect((yield* composition.resolveModuleTarget(context, { canonicalPath: '/Overview' })).outcome).toBe(
+        'not_found',
+      );
+      expect((yield* composition.resolveModuleTarget({ principalId, tenantId }, selector)).outcome).toBe(
+        'selection_required',
+      );
+      expect(calls.length).toBe(1);
+      const noAdapter = makeShellComposition({
+        ...source,
+        contextAccess: contextAccess({ 'property.registry': 'allowed' }),
+      });
+      expect((yield* noAdapter.resolveModuleTarget(context, selector)).outcome).toBe('unavailable');
+      for (const decision of ['denied', 'unavailable'] as const) {
+        const gated = makeShellComposition({
+          ...source,
+          contextAccess: {
+            ...source.contextAccess,
+            contextPermissions: () => Effect.succeed([{ decision, key: 'property.registry:property.overview.read' }]),
+          },
+        });
+        expect((yield* gated.resolveModuleTarget(context, selector)).outcome).toBe(
+          decision === 'denied' ? 'forbidden' : 'unavailable',
+        );
+      }
+      const inactive = makeShellComposition({
+        ...source,
+        moduleStates: {
+          getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'inactive' as const }]),
+        },
+      });
+      expect((yield* inactive.resolveModuleTarget(context, selector)).outcome).toBe('not_found');
+      expect(calls.length).toBe(1);
+    }),
+);
+
+it.effect('uses the selected legal entity for navigation and direct page authorization', () =>
+  Effect.gen(function* scopesCompanyModules() {
+    const rentalLegalEntityId = '20000000-0000-4000-8000-000000000002';
+    const composition = makeShellComposition({
+      catalog: catalog(),
+      contextAccess: {
+        ...contextAccess({}),
+        modules: ({ legalEntityId: selected, moduleIds }) =>
+          Effect.succeed(
+            moduleIds.map((key) => ({
+              decision: (key === (selected === rentalLegalEntityId ? 'property.registry' : 'documents.center')
+                ? 'allowed'
+                : 'denied') satisfies ContextAccessDecision,
+              key,
+            })),
+          ),
+      },
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+    });
+    const rentalContext = { ...context, legalEntityId: rentalLegalEntityId };
+    expect((yield* composition.compose(context)).navigation.map(({ moduleId }) => moduleId)).toEqual([
+      'documents.center',
+    ]);
+    expect((yield* composition.compose(rentalContext)).navigation.map(({ moduleId }) => moduleId)).toEqual([
+      'property.registry',
+    ]);
+    const hiddenTarget = yield* composition.resolveModuleTarget(rentalContext, { canonicalPath: '/documents-center' });
+    expect(hiddenTarget.outcome).toBe('forbidden');
+    expect(hiddenTarget).not.toHaveProperty('federation');
+    expect(hiddenTarget).not.toHaveProperty('page');
+    expect((yield* composition.resolveModuleTarget(context, { canonicalPath: '/documents-center' })).outcome).toBe(
+      'resolved',
+    );
+  }),
+);

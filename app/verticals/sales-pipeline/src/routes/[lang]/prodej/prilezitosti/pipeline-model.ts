@@ -1,7 +1,8 @@
 import { foldSearchText, formatMoney, formatNumber } from '@app/admin-ui';
-import { Array as Arr, DateTime, Order, Schema } from 'effect';
+import { Array as Arr, DateTime, Order, Option, Schema } from 'effect';
 import type { ApplyCommandResult, BulkSkipReason } from '../../../../../shared/actions/apply-command.ts';
-import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
+import { OpportunityLineSchema, opportunityAmountMinor } from '../../../../../shared/model/opportunity.ts';
+import type { Opportunity, OpportunityLine } from '../../../../../shared/model/opportunity.ts';
 import { OpportunityStageSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import type { EmployeeIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 
@@ -100,3 +101,27 @@ export const filterItemsByQuery = <T extends { readonly label: string }>(
   }
   return items.filter((item) => containsFolded(item.label, needle));
 };
+
+/** Converts a manually priced rental/service line to the same snapshot used by catalog lines. */
+export const manualOpportunityLine = (
+  description: string,
+  quantity: number,
+  priceCzk: number,
+  vatRate: OpportunityLine['vatRate'],
+) => {
+  const unitPriceMinor = Math.round(priceCzk * 100);
+  if (
+    !isValidQuantity(quantity) ||
+    priceCzk < 0 ||
+    !Number.isSafeInteger(unitPriceMinor) ||
+    !Number.isSafeInteger(unitPriceMinor * quantity)
+  ) {
+    return Option.none<OpportunityLine>();
+  }
+  return Schema.decodeOption(OpportunityLineSchema)({ productName: description, quantity, unitPriceMinor, vatRate });
+};
+
+/** Reject imprecise line products and totals before an editable monetary value reaches a command. */
+export const isSafeOpportunityAmount = (lines: readonly OpportunityLine[]): boolean =>
+  lines.every((line) => Number.isSafeInteger(line.quantity * line.unitPriceMinor)) &&
+  Number.isSafeInteger(opportunityAmountMinor(lines));

@@ -74,7 +74,7 @@
       "bookingObservations": "Booking simulation observations",
       "list": "Leases and stays",
       "importBooking": "Import a short stay",
-      "bookingFormContext": "Use the unit and dates from the lease form, then choose a guest. The simulated stay is for two people.",
+      "bookingFormContext": "Select a unit, dates and a guest. The stay simulation is for two people.",
       "guestSearch": "Find a guest",
       "guest": "Guest",
       "simulateImport": "Simulate a successful import",
@@ -88,7 +88,26 @@
       "resultSummary": "Result summary",
       "editDraft": "Edit draft period",
       "saveDraft": "Save draft period",
-      "newDraft": "Start a new lease"
+      "newDraft": "Start a new lease",
+      "newLease": "New lease",
+      "newBooking": "New stay",
+      "close": "Close",
+      "resizePanel": "Resize panel. Use the left and right arrow keys.",
+      "customersLoading": "Loading customers…",
+      "customersEmpty": "No matching active customers.",
+      "customerPlaceholder": "Select or search for a customer"
+    },
+    "detail": {
+      "back": "Back to leases and stays",
+      "lease": "Lease details",
+      "type": "Type",
+      "customerName": "Customer name",
+      "customerUnknown": "Name unavailable",
+      "customerUnavailable": "Customer details could not be loaded.",
+      "notFound": "The lease was not found or you do not have access to it.",
+      "note": "Note",
+      "noContract": "No contract has been assigned to this lease yet.",
+      "linkedContract": "A contract is assigned to this lease."
     }
   }
 }

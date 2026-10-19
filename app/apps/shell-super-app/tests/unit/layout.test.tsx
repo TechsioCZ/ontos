@@ -102,12 +102,15 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.navigation.groups.settings': 'Settings',
         'shell.dashboard.navigation.home': 'Home',
         'shell.dashboard.navigation.inactive': 'Inactive',
+        'shell.dashboard.navigation.items.agreements': 'Contracts and signatures',
         'shell.dashboard.navigation.items.customers': 'Customers',
         'shell.dashboard.navigation.items.employees': 'Employees',
         'shell.dashboard.navigation.items.invoices': 'Invoices',
+        'shell.dashboard.navigation.items.occupancy': 'Leases and stays',
         'shell.dashboard.navigation.items.opportunities': 'Opportunities',
         'shell.dashboard.navigation.items.orders': 'Orders',
         'shell.dashboard.navigation.items.products': 'Products and stock',
+        'shell.dashboard.navigation.items.properties': 'Properties',
         'shell.dashboard.navigation.items.statistics': 'Statistics',
         'shell.dashboard.navigation.items.tags': 'Tags',
         'shell.dashboard.navigation.items.tasks': 'Tasks',
@@ -657,7 +660,7 @@ const demoEntry = (moduleId: string, href: string, enabled = true) => ({
   unavailable: false,
 });
 
-test('groups module-contributed entries into the demo navigation and hides Siampark-only modules', () => {
+test('groups permitted commercial and rental destinations from the composition', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
@@ -666,8 +669,8 @@ test('groups module-contributed entries into the demo navigation and hides Siamp
       identity={identity}
       logoutPending={false}
       navigation={[
-        demoEntry('siampark.property', '/siampark/integrations'),
-        demoEntry('siampark.property', '/siampark/overview'),
+        demoEntry('siampark.property', '/siampark/properties'),
+        demoEntry('siampark.agreements', '/siampark/agreements'),
         demoEntry('siampark.occupancy', '/siampark/occupancy'),
         ...navigation,
         demoEntry('demo.merchandise', '/provoz/produkty'),
@@ -686,6 +689,9 @@ test('groups module-contributed entries into the demo navigation and hides Siamp
     'Home',
     'Customers',
     'Orders',
+    'Contracts and signatures',
+    'Properties',
+    'Leases and stays',
     'Tasks',
     'Products and stock',
     'Future generated',
@@ -695,6 +701,9 @@ test('groups module-contributed entries into the demo navigation and hides Siamp
     '/en/',
     '/en/contacts',
     '/en/prodej/objednavky',
+    '/en/siampark/agreements',
+    '/en/siampark/properties',
+    '/en/siampark/occupancy',
     '/en/siampark/work',
     '/en/provoz/produkty',
     '/en/modules/future-generated',
@@ -715,16 +724,51 @@ test('groups module-contributed entries into the demo navigation and hides Siamp
   expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('OperationsProducts and stock');
 });
 
+const navigationText = () => screen.getByRole('navigation', { name: 'Dashboard navigation' }).textContent;
+
+test('replaces commercial destinations with rental destinations when the selected entity composition changes', () => {
+  const props = { ...tenantProps, identity, logoutPending: false, onLogout: noopLogout };
+  const { rerender } = render(
+    <AuthenticatedDashboardLayout
+      {...props}
+      navigation={[
+        demoEntry('demo.merchandise', '/prodej/objednavky'),
+        demoEntry('demo.merchandise', '/provoz/produkty'),
+        demoEntry('siampark.agreements', '/siampark/agreements'),
+      ]}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+  expect(navigationText()).toContain('Products and stock');
+  expect(navigationText()).not.toContain('Properties');
+  rerender(
+    <AuthenticatedDashboardLayout
+      {...props}
+      currentLegalEntityId="legal-entity-rental"
+      navigation={[
+        demoEntry('siampark.property', '/siampark/properties'),
+        demoEntry('siampark.agreements', '/siampark/agreements'),
+        demoEntry('siampark.billing-finance', '/siampark/finance'),
+      ]}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+  expect(navigationText()).toContain('Properties');
+  expect(navigationText()).toContain('Contracts and signatures');
+  expect(navigationText()).toContain('Invoices');
+  expect(navigationText()).not.toContain('Products and stock');
+  expect(navigationText()).not.toContain('Orders');
+});
+
 test('hides destinations the composition omits and keeps unavailable ones visible without links', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
       logoutPending={false}
-      navigation={[
-        demoEntry('siampark.billing-finance', '/siampark/finance', false),
-        demoEntry('siampark.property', '/siampark/overview', false),
-      ]}
+      navigation={[demoEntry('siampark.billing-finance', '/siampark/finance', false)]}
       onLogout={noopLogout}
     >
       <section>Current content</section>

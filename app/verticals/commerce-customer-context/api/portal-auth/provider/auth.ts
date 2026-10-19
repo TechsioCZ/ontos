@@ -27,18 +27,10 @@ import { COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH } from '../../../shared/deploymen
  */
 export interface CommercePortalAuthEmailDelivery {
   readonly sendOTP: NonNullable<OTPOptions['sendOTP']>;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Better Auth owns this callback boundary.
-  readonly sendResetPassword: (data: {
-    readonly token: string;
-    readonly url: string;
-    readonly user: User;
-  }) => Promise<void>;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Better Auth owns this callback boundary.
-  readonly sendVerificationEmail: (data: {
-    readonly token: string;
-    readonly url: string;
-    readonly user: User;
-  }) => Promise<void>;
+  readonly sendResetPassword: NonNullable<NonNullable<BetterAuthOptions['emailAndPassword']>['sendResetPassword']>;
+  readonly sendVerificationEmail: NonNullable<
+    NonNullable<BetterAuthOptions['emailVerification']>['sendVerificationEmail']
+  >;
 }
 
 export interface CommercePortalAuthOptionsInput {

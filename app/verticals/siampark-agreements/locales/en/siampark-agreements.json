@@ -35,7 +35,7 @@
       },
       "refresh": "Refresh",
       "empty": "No records match the filter.",
-      "unit": "Unit",
+      "unit": "Contract / unit",
       "period": "Period",
       "detail": "Detail",
       "openEnd": "Open ended",
@@ -78,7 +78,7 @@
       "documents": "Documents",
       "metadataOnly": "Document metadata only",
       "archive": "Archive",
-      "create": "Create a lease contract",
+      "create": "Create contract",
       "noUnit": "No unit",
       "signedDocumentTitle": "Signed lease contract (simulation)",
       "list": "Contracts",
@@ -93,7 +93,32 @@
       "signer": "Signer",
       "editDraft": "Edit draft period",
       "saveDraft": "Save draft period",
-      "newContract": "Create a new contract"
+      "newContract": "Create a new contract",
+      "contractKind": "Contract type",
+      "kinds": {
+        "OTHER": "Commercial agreement",
+        "LEASE": "Lease agreement"
+      },
+      "manualSignedDocument": "Signed contract",
+      "manualSignatureHint": "Record the signer, date and link or reference number of the signed document.",
+      "signedBy": "Signed by",
+      "signedFileName": "File name",
+      "signedReference": "Signed document link or reference number",
+      "signedOn": "Signature date",
+      "recordSignature": "Record signature and document"
+    },
+    "detail": {
+      "back": "Back to contracts",
+      "contract": "Contract details",
+      "customerName": "Customer name",
+      "customerUnknown": "Name unavailable",
+      "notFound": "The contract was not found or you do not have access to it.",
+      "status": "Contract and signature status",
+      "note": "Note",
+      "noDocuments": "No documents have been recorded for this contract yet.",
+      "newContract": "New contract",
+      "close": "Close",
+      "resizePanel": "Resize panel. Use the left and right arrow keys."
     }
   }
 }

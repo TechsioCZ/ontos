@@ -30,6 +30,7 @@ interface InvoiceLineEditorProps {
   readonly position: number;
   /** Active products only; the caller filters them. */
   readonly products: readonly ProductRecord[];
+  readonly productsReadable: boolean;
 }
 
 const priceFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2, minimumFractionDigits: 0 };
@@ -46,6 +47,7 @@ export const InvoiceLineEditor = ({
   onRemove,
   position,
   products,
+  productsReadable,
 }: InvoiceLineEditorProps) => {
   const { t } = useModernI18n();
   const [productQuery, setProductQuery] = useState('');
@@ -61,7 +63,9 @@ export const InvoiceLineEditor = ({
   const zeroPriceLine = line.unitPriceMinor === 0 && filledIn;
   // `displayValue` names the hidden native option too; without it the option reads as the raw value.
   const kindItems = [
-    { displayValue: t(`${ns}.form.kindProduct`), label: t(`${ns}.form.kindProduct`), value: 'product' },
+    ...(productsReadable
+      ? [{ displayValue: t(`${ns}.form.kindProduct`), label: t(`${ns}.form.kindProduct`), value: 'product' }]
+      : []),
     { displayValue: t(`${ns}.form.kindFree`), label: t(`${ns}.form.kindFree`), value: 'free' },
   ];
   const vatItems = VAT_RATE_CHOICES.map((rate) => ({
@@ -122,6 +126,7 @@ export const InvoiceLineEditor = ({
               label={t(`${ns}.form.description`)}
               name="description"
               onChange={(event) => onChange({ ...line, description: event.target.value })}
+              placeholder={productsReadable ? undefined : t(`${ns}.form.rentalDescriptionPlaceholder`)}
               value={line.description}
             />
           )}

@@ -149,6 +149,7 @@ export const FinanceStateSchema = Schema.Struct({
 });
 export type FinanceState = typeof FinanceStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
+  counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
   opportunityId: Schema.optionalKey(FinanceOpportunityIdSchema),
   partyId: Schema.optionalKey(FinancePartyIdSchema),
   propertyId: Schema.optionalKey(FinancePropertyIdSchema),

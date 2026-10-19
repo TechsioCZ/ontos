@@ -580,3 +580,37 @@ it.layer(
     }),
   );
 });
+
+it('filters related invoices by the exact Counterparty ref, including invoices without a Party snapshot', () => {
+  const otherContext = { ...counterpartyRef, resourceId: 'other-counterparty' };
+  const otherTenant = { ...counterpartyRef, tenantId: 'a0000000-0000-4000-8000-000000000099' };
+  const fixture: FinanceState = {
+    ...state,
+    invoices: [
+      invoice,
+      { ...invoice, counterpartyRef: otherContext, ref: { ...ref, resourceId: 'unrelated-context' } },
+      { ...invoice, counterpartyRef: otherTenant, ref: { ...ref, resourceId: 'unrelated-tenant' } },
+    ],
+  };
+  expect(
+    projectFinanceRecords(fixture, 0, { counterpartyRef }).state.invoices.map((item) => item.ref.resourceId),
+  ).toEqual([ref.resourceId]);
+  expect(
+    projectFinanceRecords(fixture, 0, { counterpartyRef: otherContext }).state.invoices.map(
+      (item) => item.ref.resourceId,
+    ),
+  ).toEqual(['unrelated-context']);
+  expect(projectFinanceRecords(fixture, 0, {}).state.invoices).toHaveLength(3);
+});
+
+it('never substitutes a Counterparty ID for a missing Party ID in related invoice filters', () => {
+  const partyId = 'party-different-from-counterparty';
+  const fixture: FinanceState = {
+    ...state,
+    invoices: [invoice, { ...invoice, partyId, ref: { ...ref, resourceId: 'with-party' } }],
+  };
+  expect(projectFinanceRecords(fixture, 0, { partyId: counterpartyRef.resourceId }).state.invoices).toEqual([]);
+  expect(projectFinanceRecords(fixture, 0, { partyId }).state.invoices.map((item) => item.ref.resourceId)).toEqual([
+    'with-party',
+  ]);
+});

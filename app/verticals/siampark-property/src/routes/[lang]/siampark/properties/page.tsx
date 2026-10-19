@@ -10,7 +10,9 @@ import { executeRecords as readOccupancy } from '@app/siampark-occupancy/clients
 import { executeRecords as readFinance } from '@app/siampark-billing-finance/clients/records';
 import { executeRecords as readWork } from '@app/siampark-work/clients/records';
 import { Effect, Match, Option, Random, Result, Schema } from 'effect';
-import { useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
+import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { usePropertyEditor } from './use-property-editor.ts';
 import { executeRecords } from '../../../../api/records-client';
 import type { RecordsResponse } from '../../../../../shared/apis/records';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
@@ -120,7 +122,10 @@ export const projectPropertyRelatedRecords = ({
 };
 const usePropertyRecords = () => {
   const { language, t } = useModernI18n();
-  const search = Schema.decodeUnknownOption(searchSchema)(useRouterState().location.search);
+  const rawSearch: unknown = useRouterState().location.search;
+  const search = Schema.is(Schema.toEncoded(searchSchema))(rawSearch)
+    ? Schema.decodeOption(searchSchema)(rawSearch)
+    : Option.none();
   const resourceId = Option.getOrUndefined(search)?.resourceId;
   const key = 'siampark-property.pages.records';
   const [records, setRecords] = useState<RecordsResponse>();
@@ -310,6 +315,41 @@ const usePropertyRecords = () => {
       title: t(`${key}.tasks`),
     },
   ];
+  const tables = [
+    {
+      kind: 'properties',
+      rows: (records?.properties ?? []).map((item) => ({
+        code: item.code,
+        id: item.propertyRef.resourceId,
+        name: item.name,
+        property: item,
+        state: item.lifecycleState,
+      })),
+      select: selectProperty,
+    },
+    {
+      kind: 'units',
+      rows: units.map((item) => ({
+        code: item.code,
+        id: item.unitRef.resourceId,
+        name: item.name,
+        property: null,
+        state: item.lifecycleState,
+      })),
+      select: setUnitId,
+    },
+    {
+      kind: 'assets',
+      rows: assets.map((item) => ({
+        code: item.code,
+        id: item.assetRef.resourceId,
+        name: item.name,
+        property: null,
+        state: item.lifecycleState,
+      })),
+      select: setAssetId,
+    },
+  ];
   return {
     agreements,
     asset,
@@ -332,6 +372,7 @@ const usePropertyRecords = () => {
     setUnitId,
     summaryMessage,
     t,
+    tables,
     unit,
     units,
     work,
@@ -348,6 +389,11 @@ const tableWrapperClass =
 const messageClass = 'siamparkproperty:block siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)';
 const RecordsPageContent = () => {
   const model = usePropertyRecords();
+  const editor = usePropertyEditor(model.records, model.refresh);
+  const refreshOnMount = useEffectEvent(model.refresh);
+  useEffect(() => {
+    refreshOnMount();
+  }, []);
   const { asset, key, relatedSections, t, unit } = model;
   const handleRefresh = model.refresh;
   const handleLoadSummary = model.loadSummary;
@@ -360,6 +406,7 @@ const RecordsPageContent = () => {
     }
     return t(`${key}.outOfService`);
   };
+  const handleCancelEditor = editor.cancel;
   return (
     <>
       <UltramodernRouteHead />
@@ -377,7 +424,7 @@ const RecordsPageContent = () => {
             </h1>
             <p className={secondaryTextClass}>{t(`${key}.description`)}</p>
           </div>
-          <Button disabled={model.pending} onClick={handleRefresh} size="sm" variant="warning">
+          <Button disabled={model.pending || editor.busy} onClick={handleRefresh} size="sm" variant="warning">
             {t(`${key}.refresh`)}
           </Button>
         </header>
@@ -386,46 +433,100 @@ const RecordsPageContent = () => {
         </output>
         {model.records !== undefined && (
           <>
-            <div className={tableWrapperClass}>
-              <Table className="siamparkproperty:w-full" size="sm" variant="outline">
-                <Table.Caption>{t(`${key}.properties`)}</Table.Caption>
-                <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
-                  <Table.Row>
-                    {['code', 'name', 'state', 'detail'].map((column) => (
-                      <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
-                    ))}
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {model.records.properties.map((item) => (
-                    <Table.Row key={item.propertyRef.resourceId}>
-                      <Table.Cell className="siamparkproperty:font-medium siamparkproperty:whitespace-nowrap">
-                        {item.code}
-                      </Table.Cell>
-                      <Table.Cell className="siamparkproperty:font-medium">{item.name}</Table.Cell>
-                      <Table.Cell>
-                        <Badge size="sm" variant={item.lifecycleState === 'ACTIVE' ? 'success' : 'outline'}>
-                          {t(`${key}.states.${item.lifecycleState}`)}
-                        </Badge>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Button
-                          disabled={model.pending}
-                          onClick={() => {
-                            model.selectProperty(item.propertyRef.resourceId);
-                          }}
-                          size="sm"
-                          theme="outlined"
-                          variant="secondary"
-                        >
-                          {t(`${key}.detail`)}
-                        </Button>
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table>
-            </div>
+            <Button disabled={editor.busy} onClick={() => editor.begin()} size="sm" variant="warning">
+              {t(`${key}.editor.create`)}
+            </Button>
+            {editor.feedback !== undefined && (
+              <output aria-live="polite" className={messageClass}>
+                {t(`${key}.editor.${editor.feedback}`)}
+              </output>
+            )}
+            {editor.draft !== undefined && (
+              <form
+                className={detailCardClass}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  editor.save();
+                }}
+              >
+                <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">
+                  {t(`${key}.editor.${editor.title}`)}
+                </h2>
+                {editor.fields.map((field) => (
+                  <FormInput
+                    disabled={editor.busy || (field === 'code' && editor.draft?.property !== undefined)}
+                    id={`property-${field}`}
+                    key={field}
+                    label={t(`${key}.editor.${field}`)}
+                    onChange={(event) => editor.change(field, event.target.value)}
+                    required={field !== 'note'}
+                    value={editor.draft?.[field] ?? ''}
+                  />
+                ))}
+                <div className="siamparkproperty:flex siamparkproperty:gap-3">
+                  <Button disabled={editor.busy} type="submit" variant="warning">
+                    {t(`${key}.editor.save`)}
+                  </Button>
+                  <Button disabled={editor.busy} onClick={handleCancelEditor} theme="outlined" variant="secondary">
+                    {t(`${key}.editor.cancel`)}
+                  </Button>
+                </div>
+              </form>
+            )}
+            {model.tables.flatMap((group) =>
+              group.kind !== 'properties' && model.property === undefined
+                ? []
+                : [
+                    <div className={tableWrapperClass} key={group.kind}>
+                      <Table className="siamparkproperty:w-full" size="sm" variant="outline">
+                        <Table.Caption>{t(`${key}.${group.kind}`)}</Table.Caption>
+                        <Table.Header>
+                          <Table.Row>
+                            {['code', 'name', 'state', 'detail'].map((column) => (
+                              <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
+                            ))}
+                          </Table.Row>
+                        </Table.Header>
+                        <Table.Body>
+                          {group.rows.map((item) => (
+                            <Table.Row key={item.id}>
+                              <Table.Cell>{item.code}</Table.Cell>
+                              <Table.Cell>{item.name}</Table.Cell>
+                              <Table.Cell>
+                                <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
+                                  {t(`${key}.states.${item.state}`)}
+                                </Badge>
+                                {group.kind === 'units' && <span>{availabilityLabel(item.id, item.state)}</span>}
+                              </Table.Cell>
+                              <Table.Cell>
+                                <Button
+                                  disabled={model.pending || editor.busy}
+                                  onClick={() => group.select(item.id)}
+                                  size="sm"
+                                  theme="outlined"
+                                  variant="secondary"
+                                >
+                                  {t(`${key}.detail`)}
+                                </Button>
+                                {item.property !== null && (
+                                  <Button
+                                    disabled={editor.busy}
+                                    onClick={() => editor.begin(item.property)}
+                                    size="sm"
+                                    theme="outlined"
+                                    variant="secondary"
+                                  >
+                                    {t(`${key}.editor.edit`)}
+                                  </Button>
+                                )}
+                              </Table.Cell>
+                            </Table.Row>
+                          ))}
+                        </Table.Body>
+                      </Table>
+                    </div>,
+                  ],
+            )}
             {model.property !== undefined && (
               <article aria-label={t(`${key}.detail`)} className={detailCardClass}>
                 <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">
@@ -433,6 +534,31 @@ const RecordsPageContent = () => {
                 </h2>
                 <p className={secondaryTextClass}>{model.property.address}</p>
                 <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
+                <Button
+                  disabled={editor.busy}
+                  onClick={() => {
+                    if (model.property !== undefined) {
+                      editor.toggleLifecycle(model.property);
+                    }
+                  }}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
+                </Button>
+                <Button
+                  disabled={editor.busy}
+                  onClick={() => {
+                    if (model.property !== undefined) {
+                      editor.beginUnit(model.property);
+                    }
+                  }}
+                  size="sm"
+                  variant="warning"
+                >
+                  {t(`${key}.editor.createUnit`)}
+                </Button>
                 <Button
                   disabled={model.pending}
                   onClick={handleLoadSummary}
@@ -487,45 +613,6 @@ const RecordsPageContent = () => {
                       : [],
                   )}
                 </div>
-                <div className={tableWrapperClass}>
-                  <Table className="siamparkproperty:w-full" size="sm" variant="outline">
-                    <Table.Caption>{t(`${key}.units`)}</Table.Caption>
-                    <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
-                      <Table.Row>
-                        {['code', 'name', 'state', 'availabilityLabel', 'detail'].map((column) => (
-                          <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
-                        ))}
-                      </Table.Row>
-                    </Table.Header>
-                    <Table.Body>
-                      {model.units.map((item) => (
-                        <Table.Row key={item.unitRef.resourceId}>
-                          <Table.Cell className="siamparkproperty:font-medium siamparkproperty:whitespace-nowrap">
-                            {item.code}
-                          </Table.Cell>
-                          <Table.Cell className="siamparkproperty:font-medium">{item.name}</Table.Cell>
-                          <Table.Cell>
-                            <Badge size="sm" variant={item.lifecycleState === 'ACTIVE' ? 'success' : 'outline'}>
-                              {t(`${key}.states.${item.lifecycleState}`)}
-                            </Badge>
-                          </Table.Cell>
-                          <Table.Cell>{availabilityLabel(item.unitRef.resourceId, item.lifecycleState)}</Table.Cell>
-                          <Table.Cell>
-                            <Button
-                              disabled={model.pending}
-                              onClick={() => model.setUnitId(item.unitRef.resourceId)}
-                              size="sm"
-                              theme="outlined"
-                              variant="secondary"
-                            >
-                              {t(`${key}.detail`)}
-                            </Button>
-                          </Table.Cell>
-                        </Table.Row>
-                      ))}
-                    </Table.Body>
-                  </Table>
-                </div>
                 {unit !== undefined && (
                   <aside className={relatedCardClass}>
                     <h3 className={detailHeadingClass}>
@@ -555,44 +642,6 @@ const RecordsPageContent = () => {
                     )}
                   </aside>
                 )}
-                <div className={tableWrapperClass}>
-                  <Table className="siamparkproperty:w-full" size="sm" variant="outline">
-                    <Table.Caption>{t(`${key}.assets`)}</Table.Caption>
-                    <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
-                      <Table.Row>
-                        {['code', 'name', 'state', 'detail'].map((column) => (
-                          <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
-                        ))}
-                      </Table.Row>
-                    </Table.Header>
-                    <Table.Body>
-                      {model.assets.map((item) => (
-                        <Table.Row key={item.assetRef.resourceId}>
-                          <Table.Cell className="siamparkproperty:font-medium siamparkproperty:whitespace-nowrap">
-                            {item.code}
-                          </Table.Cell>
-                          <Table.Cell className="siamparkproperty:font-medium">{item.name}</Table.Cell>
-                          <Table.Cell>
-                            <Badge size="sm" variant={item.lifecycleState === 'ACTIVE' ? 'success' : 'outline'}>
-                              {t(`${key}.states.${item.lifecycleState}`)}
-                            </Badge>
-                          </Table.Cell>
-                          <Table.Cell>
-                            <Button
-                              disabled={model.pending}
-                              onClick={() => model.setAssetId(item.assetRef.resourceId)}
-                              size="sm"
-                              theme="outlined"
-                              variant="secondary"
-                            >
-                              {t(`${key}.detail`)}
-                            </Button>
-                          </Table.Cell>
-                        </Table.Row>
-                      ))}
-                    </Table.Body>
-                  </Table>
-                </div>
                 {asset !== undefined && (
                   <aside className={relatedCardClass}>
                     <h3 className={detailHeadingClass}>

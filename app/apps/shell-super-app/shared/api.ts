@@ -61,6 +61,16 @@ export const TimelineEntryIdSchema = Schema.String.check(Schema.isMinLength(1), 
 export const IdentityRequestHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
+export const ConfigureDemoCompaniesPayloadSchema = Schema.Struct({ configuration: Schema.Literal('sales-rental-v1') });
+export const ConfigureDemoCompaniesResponseSchema = Schema.Struct({
+  companies: Schema.Array(
+    Schema.Struct({
+      legalEntityId: LegalEntityIdSchema,
+      legalName: Schema.String,
+    }),
+  ),
+});
+
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   kind: Schema.Literals(['service', 'integration', 'system']),
@@ -615,6 +625,14 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   .add(
     HttpApiGroup.make('identity')
+      .add(
+        HttpApiEndpoint.post('configureDemoCompanies', '/auth/identity/demo-companies', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: ConfigureDemoCompaniesPayloadSchema,
+          success: ConfigureDemoCompaniesResponseSchema,
+        }),
+      )
       .add(
         HttpApiEndpoint.post('createNonHumanPrincipal', '/auth/identity/principals', {
           error: identityErrors,

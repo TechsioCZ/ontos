@@ -28,6 +28,8 @@ import {
 } from './employee-model.ts';
 import type { CommitOutcome, DraftField, EmployeeDraft } from './employee-model.ts';
 
+const RESIZE_LABEL_KEY = 'workforce.sidePanel.resize';
+
 const key = 'workforce.pages.employees';
 const employeeFormId = 'employee-form';
 
@@ -191,6 +193,7 @@ export const EmployeeFormDialog = ({
           }
         }}
         open
+        resizeLabel={t(RESIZE_LABEL_KEY)}
         size="md"
         title={t(employee === null ? `${key}.form.createTitle` : `${key}.form.editTitle`)}
       >
@@ -361,6 +364,7 @@ export const BulkDepartmentDialog = ({
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#bulk-department')}
       onOpenChange={closeWhenDismissed(onClose)}
       open
+      resizeLabel={t(RESIZE_LABEL_KEY)}
       size="md"
       title={t(`${key}.bulk.departmentTitle`)}
     >
@@ -447,6 +451,7 @@ export const BulkRoleDialog = ({
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="select:bulk-role:trigger"]')}
       onOpenChange={closeWhenDismissed(onClose)}
       open
+      resizeLabel={t(RESIZE_LABEL_KEY)}
       size="md"
       title={t(`${key}.bulk.roleTitle`)}
     >

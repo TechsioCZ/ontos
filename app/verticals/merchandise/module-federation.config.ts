@@ -30,6 +30,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   },
   exposes: {
     './PageOrders': './src/routes/[lang]/prodej/objednavky/page.tsx',
+    './PageProductDetail': './src/routes/[lang]/provoz/produkty/[id]/page.tsx',
     './PageRecords': './src/routes/[lang]/provoz/produkty/page.tsx',
     './Route': './src/federation-entry.tsx',
   },

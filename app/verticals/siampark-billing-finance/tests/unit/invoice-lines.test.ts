@@ -259,9 +259,11 @@ describe('CreateInvoiceFromOpportunity', () => {
       expect(records.indicators.draftCount).toBe(1);
       expect(Schema.is(RecordsResponseSchema)({ ...records, canWrite: true })).toBe(true);
       expect(projectFinanceRecords(defaultDate.state, 3, { partyId }).state.invoices).toHaveLength(2);
-      expect(projectFinanceRecords(defaultDate.state, 3, { partyId: 'legacy-party' }).state.invoices).toEqual([
-        legacyInvoice,
-      ]);
+      // Legacy counterparty references are not Party snapshots. They have their own scoped filter.
+      expect(projectFinanceRecords(defaultDate.state, 3, { partyId: 'legacy-party' }).state.invoices).toEqual([]);
+      expect(
+        projectFinanceRecords(defaultDate.state, 3, { counterpartyRef: legacyInvoice.counterpartyRef }).state.invoices,
+      ).toEqual([legacyInvoice]);
       const all = projectFinanceRecords(defaultDate.state, 3, {});
       expect(all.indicators).toMatchObject({ draftCount: 2, revenueMinor: 500_000 });
     }),

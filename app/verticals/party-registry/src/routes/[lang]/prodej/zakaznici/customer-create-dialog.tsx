@@ -466,6 +466,7 @@ export const CustomerCreateDialog = ({
         initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#customer-ico')}
         onOpenChange={requestClose}
         open={open}
+        resizeLabel={t('party-registry.sidePanel.resize')}
         size="md"
         title={t(`${KEY}.title`)}
       >

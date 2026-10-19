@@ -4,6 +4,7 @@ import { Schema } from 'effect';
 import { useEffect, useId, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { isPanelEscape, panelContentId, readEscapeSnapshot } from './side-panel-escape.ts';
+import { useSidePanelResize } from './use-side-panel-resize.ts';
 
 const sidePanelSizeSchema = Schema.Literals(['sm', 'md', 'lg', 'xl']);
 export type SidePanelSize = typeof sidePanelSizeSchema.Type;
@@ -26,6 +27,8 @@ export interface SidePanelProps {
   /** Receives `false` on Escape, the close button or an outside click. The parent owns `open`. */
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
+  /** Localized accessible name and keyboard instructions for the resize handle. */
+  readonly resizeLabel: string;
   readonly size?: SidePanelSize;
   readonly title: ReactNode;
 }
@@ -88,19 +91,23 @@ export const SidePanel = ({
   initialFocusEl,
   onOpenChange,
   open,
+  resizeLabel,
   size = 'md',
   title,
 }: SidePanelProps) => {
   const id = useId();
+  const resize = useSidePanelResize();
   useEscapeFallback(open, panelContentId(id), onOpenChange);
 
   return (
     <Dialog
-      {...(className === undefined ? {} : { className })}
+      className={`min-w-0 sm:min-w-(--container-dialog-sm) ${className ?? ''}`}
       {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
       {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
       actions={actions}
       closeOnInteractOutside={closeOnInteractOutside}
+      contentRef={resize.contentRef}
+      contentStyle={{ maxWidth: '100vw', width: resize.width }}
       customTrigger
       description={description}
       hideCloseButton
@@ -122,6 +129,15 @@ export const SidePanel = ({
           onOpenChange(false);
         }}
         size="md"
+        tone="neutral"
+      />
+      <ActionIcon
+        {...resize.handleProps}
+        aria-controls={panelContentId(id)}
+        aria-label={resizeLabel}
+        className="absolute inset-y-0 left-0 hidden h-full w-200 touch-none cursor-col-resize select-none rounded-none sm:flex"
+        icon="icon-[mdi--drag-vertical]"
+        size="sm"
         tone="neutral"
       />
       {/* The body scrolls on its own, so the footer actions stay visible at the bottom of a tall panel. The

@@ -73,7 +73,10 @@
           "employees": "Employees",
           "products": "Products and stock",
           "statistics": "Statistics",
-          "tags": "Tags"
+          "tags": "Tags",
+          "agreements": "Contracts and signatures",
+          "properties": "Properties",
+          "occupancy": "Leases and stays"
         }
       },
       "sidebar": {

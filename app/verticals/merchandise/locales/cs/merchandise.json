@@ -31,7 +31,11 @@
           "result": "Změněno: {{changed}}, nepodařilo se: {{failed}}",
           "statusPlaceholder": "Změnit stav…",
           "success": "Stav objednávek změněn",
-          "tags": "Štítky"
+          "tags": "Štítky",
+          "selectHint": "Vyberte objednávky v tabulce pro hromadnou změnu stavu nebo štítků.",
+          "selectionScope": "Akce se týkají vybraných objednávek v aktuálním filtru, včetně dalších stránek.",
+          "noCommonStatus": "Vybrané objednávky nemají společný další stav. Štítky můžete upravit společně.",
+          "finalStatus": "U doručených a zrušených objednávek už stav změnit nelze. Štítky můžete upravit společně."
         },
         "columns": {
           "createdAt": "Vytvořeno",
@@ -153,6 +157,10 @@
           "unknown": "Neznámý zákazník"
         }
       },
+      "productDetail": {
+        "description": "Tato stránka je připravena k implementaci.",
+        "title": "Nová stránka"
+      },
       "products": {
         "actions": {
           "newProduct": "Nový produkt",
@@ -202,7 +210,12 @@
           "discardDescription": "Neuložené změny v tomto formuláři se ztratí.",
           "discardKeep": "Pokračovat v úpravách",
           "discardTitle": "Zahodit neuložené změny u produktu {{name}}?",
-          "tab": "Detail"
+          "tab": "Detail",
+          "back": "Zpět na produkty",
+          "priceExplanation": "Upravujete cenu bez DPH. Cena s DPH se vypočítá podle zvolené sazby DPH.",
+          "variantsExplanation": "Evidenční varianty sdílejí SKU, cenu a sklad produktu.",
+          "addVariant": "Přidat variantu",
+          "removeVariant": "Odebrat variantu"
         },
         "fields": {
           "category": "Kategorie",
@@ -214,7 +227,18 @@
           "quantity": "Množství",
           "sku": "SKU",
           "unit": "Jednotka",
-          "vat": "DPH (%)"
+          "vat": "DPH (%)",
+          "priceNet": "Cena bez DPH (Kč)",
+          "priceGross": "Cena s DPH (Kč)",
+          "shortDescription": "Krátký popis",
+          "description": "Popis",
+          "weightGrams": "Hmotnost (g)",
+          "lengthMm": "Délka (mm)",
+          "widthMm": "Šířka (mm)",
+          "heightMm": "Výška (mm)",
+          "variants": "Varianty",
+          "variantName": "Název varianty",
+          "variantAttributes": "Vlastnosti"
         },
         "filters": {
           "allCategories": "Všechny kategorie",
@@ -232,7 +256,8 @@
           "receiptRecorded": "Příjem zaznamenán",
           "rejected": "Akci nelze provést v aktuálním stavu, například kvůli nedostatečné zásobě. Zkontrolujte zadané hodnoty.",
           "saving": "Ukládám změny…",
-          "updated": "Produkt uložen"
+          "updated": "Produkt uložen",
+          "navigationTimeout": "Otevření stránky trvá příliš dlouho. Zkuste to znovu."
         },
         "movements": {
           "columnDate": "Datum",
@@ -273,7 +298,10 @@
           "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
           "forbidden": "K této sekci nemáte oprávnění.",
           "noResults": "Filtrům neodpovídá žádný produkt.",
-          "tagFilterFailed": "Štítky se nepodařilo načíst. Zkuste to znovu."
+          "tagFilterFailed": "Štítky se nepodařilo načíst. Zkuste to znovu.",
+          "notFound": "Produkt nebyl nalezen",
+          "invalidId": "Adresa produktu je neplatná.",
+          "loading": "Načítám produkt…"
         },
         "stats": {
           "lowStock": "Pod minimem",
@@ -321,7 +349,9 @@
           "required": "Vyplňte toto pole.",
           "skuTaken": "Produkt s tímto SKU už existuje.",
           "stock": "Množství převyšuje zásobu na skladě.",
-          "tooLong": "Zadejte nejvýše {{max}} znaků."
+          "tooLong": "Zadejte nejvýše {{max}} znaků.",
+          "measurement": "Zadejte celé číslo od 1 do 1 000 000 000 nebo ponechte prázdné.",
+          "metadata": "Zkontrolujte popisy, názvy variant a rozměry."
         },
         "selectPlaceholder": "Vyberte…"
       },
@@ -338,6 +368,9 @@
       "root": "Stránkování"
     },
     "selectPlaceholder": "Vyberte…",
-    "loading": "Načítám…"
+    "loading": "Načítám…",
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    }
   }
 }

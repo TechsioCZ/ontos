@@ -43,7 +43,29 @@ export const PriceHistoryEntrySchema = Schema.Struct({
 });
 export type PriceHistoryEntry = typeof PriceHistoryEntrySchema.Type;
 
+/** Informational variants never carry SKU, price or inventory identity. */
+export const ProductVariantSchema = Schema.Struct({
+  attributes: Schema.Trim.check(Schema.isMaxLength(1000)),
+  name: TextSchema(100),
+});
+
+/** Optional keys preserve old JSONB snapshots; null and empty values explicitly clear metadata. */
+const MeasurementSchema = Schema.OptionFromNullOr(
+  Schema.Int.check(Schema.isBetween({ maximum: 1_000_000_000, minimum: 1 })),
+);
+export const ProductMetadataSchema = Schema.Struct({
+  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
+  heightMm: Schema.optionalKey(MeasurementSchema),
+  lengthMm: Schema.optionalKey(MeasurementSchema),
+  shortDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  variants: Schema.optionalKey(Schema.Array(ProductVariantSchema).check(Schema.isMaxLength(50))),
+  weightGrams: Schema.optionalKey(MeasurementSchema),
+  widthMm: Schema.optionalKey(MeasurementSchema),
+});
+export type ProductMetadata = typeof ProductMetadataSchema.Type;
+
 export const ProductSchema = Schema.Struct({
+  ...ProductMetadataSchema.fields,
   active: Schema.Boolean,
   category: TextSchema(120),
   createdAt: Schema.DateTimeUtcFromString,

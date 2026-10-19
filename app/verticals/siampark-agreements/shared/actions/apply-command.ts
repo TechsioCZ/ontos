@@ -4,7 +4,7 @@ import { AgreementsConflict } from './errors/agreements-conflict.ts';
 import { AgreementsRejected } from './errors/agreements-rejected.ts';
 import { Match, Schema } from 'effect';
 
-import { ContractSchema, DocumentSchema } from '../apis/records.ts';
+import { ContractSchema, DemoDateSchema, DocumentSchema } from '../apis/records.ts';
 import { ContractRefSchema } from '../resources/contract.ts';
 import { DocumentRefSchema } from '../resources/document.ts';
 
@@ -22,6 +22,12 @@ export const AgreementsCommandSchema = Schema.Union([
     contractRef: ContractRefSchema,
     document: Schema.toEncoded(Schema.OptionFromNullOr(DocumentSchema)),
     outcome: Schema.Literals(['SIGNED', 'DECLINED']),
+  }),
+  Schema.TaggedStruct('RecordSignedDocument', {
+    contractRef: ContractRefSchema,
+    document: DocumentSchema,
+    signedBy: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+    signedOn: DemoDateSchema,
   }),
   Schema.TaggedStruct('CreateDocument', { record: DocumentSchema }),
   Schema.TaggedStruct('UpdateDocument', { record: DocumentSchema }),

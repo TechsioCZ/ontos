@@ -1,5 +1,5 @@
 import { Option, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 import { isClosedTaskState } from '../../shared/actions/task-transitions.ts';
 import {
   commonTransitionTargets,
@@ -9,6 +9,11 @@ import {
   initialTaskFilters,
   newerTaskList,
   opportunityOptionItems,
+  storedTaskViewServerSnapshot,
+  storedTaskViewSnapshot,
+  subscribeStoredTaskView,
+  taskViewFromSnapshot,
+  writeStoredTaskView,
   withBulkResult,
   withSavedTask,
 } from '../../src/routes/[lang]/siampark/work/tasks-model.ts';
@@ -169,4 +174,52 @@ it('applies only the changed rows of a bulk command, as the server did', () => {
     4,
   );
   expect(assigned.items[0]?.assigneeEmployeeId).toBe(employeeId);
+});
+
+it('hydrates the saved task view from stable external snapshots and unsubscribes from changes', () => {
+  const events = new EventTarget();
+  const values = new Map<string, string>();
+  rstest.stubGlobal('sessionStorage', {
+    getItem: (name: string) => values.get(name) ?? null,
+    setItem: (name: string, value: string) => values.set(name, value),
+  });
+  rstest.stubGlobal('addEventListener', events.addEventListener.bind(events));
+  rstest.stubGlobal('removeEventListener', events.removeEventListener.bind(events));
+  rstest.stubGlobal('dispatchEvent', events.dispatchEvent.bind(events));
+  try {
+    let notifications = 0;
+    const unsubscribe = subscribeStoredTaskView(() => {
+      notifications += 1;
+    });
+    expect(storedTaskViewServerSnapshot()).toBeNull();
+    expect(storedTaskViewSnapshot()).toBeNull();
+    const view = { filters: { ...initialTaskFilters, search: 'Praha' }, tab: 'all' } as const;
+    writeStoredTaskView(view);
+    const snapshot = storedTaskViewSnapshot();
+    expect(snapshot).toBe(storedTaskViewSnapshot());
+    expect(taskViewFromSnapshot(snapshot)).toEqual(view);
+    expect(storedTaskViewServerSnapshot()).toBeNull();
+    expect(notifications).toBe(1);
+    unsubscribe();
+    writeStoredTaskView({ ...view, tab: 'mine' });
+    expect(notifications).toBe(1);
+  } finally {
+    rstest.unstubAllGlobals();
+  }
+});
+
+it('keeps default task view when storage is blocked or a snapshot is malformed', () => {
+  rstest.stubGlobal('sessionStorage', {
+    getItem: () => {
+      throw new Error('blocked');
+    },
+  });
+  try {
+    expect(storedTaskViewSnapshot()).toBeNull();
+    expect(taskViewFromSnapshot(null)).toBeUndefined();
+    expect(taskViewFromSnapshot('malformed')).toBeUndefined();
+    expect(taskViewFromSnapshot('{}')).toBeUndefined();
+  } finally {
+    rstest.unstubAllGlobals();
+  }
 });

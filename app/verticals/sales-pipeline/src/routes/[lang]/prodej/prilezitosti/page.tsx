@@ -7,12 +7,12 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Match } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
-import { useState } from 'react';
+import { useReducer, useState } from 'react';
 import type { ApplyCommandResult } from '../../../../../shared/actions/apply-command.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
-import type { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import csResource from '../../../../../locales/cs/sales-pipeline.json';
 import enResource from '../../../../../locales/en/sales-pipeline.json';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -261,18 +261,43 @@ const buildLookups = ({
   tagsBySubject,
 });
 
-const RecordsPageContent = () => {
+type PipelineViewFilters = Parameters<typeof hasActiveFilters>[0];
+const emptyViewFilters: PipelineViewFilters = {
+  customerFilter: '',
+  ownerFilter: '',
+  search: '',
+  stageFilter: '',
+  tagFilter: null,
+  unassignedOnly: false,
+};
+const reduceViewFilters = (current: PipelineViewFilters, patch: Partial<PipelineViewFilters>): PipelineViewFilters => ({
+  ...current,
+  ...patch,
+});
+
+const RecordsPageContent = ({
+  initialPartyId,
+  invalidFilter,
+}: {
+  readonly initialPartyId: PartyId | undefined;
+  readonly invalidFilter: boolean;
+}) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const { customers, employees, products } = usePipelineReferences();
   const [reloadKey, setReloadKey] = useState(0);
   const [tagVersion, setTagVersion] = useState(0);
-  const [search, setSearch] = useState('');
-  const [stageFilter, setStageFilter] = useState<OpportunityStage | ''>('');
-  const [ownerFilter, setOwnerFilter] = useState<EmployeeId | ''>('');
-  const [customerFilter, setCustomerFilter] = useState<PartyId | ''>('');
-  const [tagFilter, setTagFilter] = useState<TagId | null>(null);
-  const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [filters, updateFilters] = useReducer(reduceViewFilters, {
+    ...emptyViewFilters,
+    customerFilter: initialPartyId ?? '',
+  });
+  const { customerFilter, ownerFilter, search, stageFilter, tagFilter, unassignedOnly } = filters;
+  const setSearch = (next: string) => updateFilters({ search: next });
+  const setStageFilter = (next: OpportunityStage | '') => updateFilters({ stageFilter: next });
+  const setOwnerFilter = (next: EmployeeId | '') => updateFilters({ ownerFilter: next });
+  const setCustomerFilter = (next: PartyId | '') => updateFilters({ customerFilter: next });
+  const setTagFilter = (next: TagId | null) => updateFilters({ tagFilter: next });
+  const setUnassignedOnly = (next: boolean) => updateFilters({ unassignedOnly: next });
   const [selection, setSelection] = useState<Selection>({});
   const [dialog, setDialog] = useState<DialogState>();
   const [busy, setBusy] = useState(false);
@@ -281,6 +306,7 @@ const RecordsPageContent = () => {
   const { loadError, pending, response } = usePipelineRecords(
     { customer: customerFilter, owner: ownerFilter, stage: stageFilter },
     reloadKey,
+    !invalidFilter,
   );
   const canWrite = response?.canWrite === true;
   const revision = response?.revision ?? 0;
@@ -306,14 +332,8 @@ const RecordsPageContent = () => {
   const unknownCustomer = t(`${K}.create.unknownCustomer`);
   const customerLabel = (partyId: string) => customerById.get(partyId)?.name ?? unknownCustomer;
 
-  const clearFilters = () => {
-    setSearch('');
-    setStageFilter('');
-    setOwnerFilter('');
-    setCustomerFilter('');
-    setTagFilter(null);
-    setUnassignedOnly(false);
-  };
+  const clearFilters = () => updateFilters(emptyViewFilters);
+
   const openDialog = (next: DialogState) => {
     setDialogError(undefined);
     setDialog(next);
@@ -427,6 +447,10 @@ const RecordsPageContent = () => {
   const openStage = (target: Target) => openDialog({ kind: 'stage', target });
   const openOwner = (target: Target) => openDialog({ kind: 'owner', target });
 
+  if (invalidFilter) {
+    return <StatusText status="error">{t(`${K}.errors.invalidFilter`)}</StatusText>;
+  }
+
   return (
     <>
       <UltramodernRouteHead />
@@ -533,8 +557,23 @@ const RecordsPageContent = () => {
   );
 };
 
+const customerSearchSchema = Schema.Struct({ partyId: Schema.optional(PartyIdSchema) });
+
 export const RecordsPage = () => {
   const location = useRouterState({ select: (state) => state.location.href });
+  const search = useRouterState({
+    select: (state) => {
+      const rawSearch: unknown = state.location.search;
+      return Schema.decodeUnknownOption(Schema.toEncoded(customerSearchSchema))(rawSearch).pipe(
+        Option.map((value) => ({ partyId: value.partyId ?? null })),
+        Option.getOrElse(() => null),
+      );
+    },
+  });
+  const requested =
+    search === null
+      ? Option.none()
+      : Schema.decodeOption(customerSearchSchema)(search.partyId === null ? {} : { partyId: search.partyId });
   return (
     <FederatedI18nBoundary
       defaultNamespace="sales-pipeline"
@@ -542,7 +581,11 @@ export const RecordsPage = () => {
       resources={salesPipelineI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={location} />
+      <RecordsPageContent
+        initialPartyId={Option.getOrUndefined(requested)?.partyId}
+        invalidFilter={Option.isNone(requested)}
+        key={location}
+      />
     </FederatedI18nBoundary>
   );
 };

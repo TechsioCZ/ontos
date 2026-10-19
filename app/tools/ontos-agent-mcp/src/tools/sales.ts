@@ -33,11 +33,7 @@ export const createOpportunityInput = {
   lines: z
     .array(
       z.object({
-        productId: z
-          .string()
-          .uuid()
-          .optional()
-          .describe('Product id from merchandise, when the line is a catalogue product.'),
+        productId: z.uuid().optional().describe('Product id from merchandise, when the line is a catalogue product.'),
         productName: z.string().min(1).max(300),
         quantity: z.number().int().min(1),
         unitPriceCzk: z.number().min(0).describe('Unit price in CZK without VAT (number, not minor units).'),

@@ -161,14 +161,6 @@ const siamparkNavigationPresentation = [
   },
 ] as const;
 
-/** Siampark-only verticals stay installed but never appear in the sales demo navigation. */
-const hiddenNavigationModuleIds: ReadonlySet<string> = new Set([
-  propertyModuleId,
-  'siampark.occupancy',
-  'siampark.agreements',
-  'siampark.relationships',
-]);
-
 interface DemoNavigationItemPresentation {
   /** Page entrypoint keys that mark this destination as current. */
   readonly entrypoints: readonly string[];
@@ -216,6 +208,13 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         moduleId: 'demo.merchandise',
       },
       {
+        entrypoints: ['siampark.agreements.page.records'],
+        hrefs: ['/siampark/agreements'],
+        icon: 'icon-[mdi--file-sign]',
+        key: 'agreements',
+        moduleId: 'siampark.agreements',
+      },
+      {
         entrypoints: ['siampark.billing-finance.page.records'],
         hrefs: ['/siampark/finance', '/prodej/faktury'],
         icon: 'icon-[mdi--receipt-text-outline]',
@@ -228,6 +227,20 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
   {
     icon: 'icon-[mdi--cog-transfer-outline]',
     items: [
+      {
+        entrypoints: ['siampark.property.page.records'],
+        hrefs: ['/siampark/properties'],
+        icon: 'icon-[mdi--office-building-outline]',
+        key: 'properties',
+        moduleId: propertyModuleId,
+      },
+      {
+        entrypoints: ['siampark.occupancy.page.records'],
+        hrefs: ['/siampark/occupancy'],
+        icon: 'icon-[mdi--home-account]',
+        key: 'occupancy',
+        moduleId: 'siampark.occupancy',
+      },
       {
         entrypoints: ['siampark.work.page.records'],
         hrefs: ['/siampark/work', '/provoz/ukoly'],
@@ -354,7 +367,7 @@ const buildShellNavigation = (
   t: Translate,
 ): ShellNavigationModel => {
   const { currentEntrypointKey, currentModuleId, homeCurrent = true, pendingHref } = props;
-  const visible = props.navigation.filter((entry) => !hiddenNavigationModuleIds.has(entry.moduleId));
+  const visible = props.navigation;
   const demoItems = demoNavigationPresentation.flatMap((group) => group.items);
   const claimed = new Map<DemoNavigationItemPresentation, DashboardNavigationItem>();
   const isClaimed = (entry: DashboardNavigationItem) => [...claimed.values()].includes(entry);

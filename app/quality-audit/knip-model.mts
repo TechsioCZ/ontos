@@ -1492,48 +1492,153 @@ const nativeSubprocessEvidence = (
     },
   }).visit(facts.program);
   const parameters = new Map<Node, { index: number; name: string; owner: Node }>();
-  for (const [name, owner] of facts.variables) {
+  const loops: {
+    readonly binding: Extract<Node, { type: 'Identifier' }>;
+    readonly body: Node;
+    readonly iterable: Node;
+  }[] = [];
+  const functions = new Map<string, Extract<Node, { type: 'ArrowFunctionExpression' }>>();
+  new Visitor({
+    VariableDeclarator: (node) => {
+      if (node.id.type === 'Identifier' && node.init?.type === 'ArrowFunctionExpression') {
+        functions.set(node.id.name, node.init);
+      }
+    },
+    ForOfStatement: (node) => {
+      if (node.left.type !== 'VariableDeclaration' || node.left.kind !== 'const') {
+        return;
+      }
+      const [declaration] = node.left.declarations;
+      if (declaration?.id.type === 'Identifier') {
+        loops.push({ binding: declaration.id, body: node.body, iterable: node.right });
+      }
+    },
+  }).visit(facts.program);
+  for (const [name, owner] of functions) {
     if (owner.type !== 'ArrowFunctionExpression' || mutable.has(name)) {
       continue;
     }
-    owner.params.forEach((parameter, index) => {
-      if (parameter.type === 'AssignmentPattern') {
-        parameters.set(parameter, { name, owner, index });
+    for (const [index, parameter] of owner.params.entries()) {
+      if (parameter.type === 'AssignmentPattern' || parameter.type === 'Identifier') {
+        parameters.set(parameter, { index, name, owner });
       }
-    });
+    }
   }
   const values = (raw: Node | undefined, variables: ReadonlyMap<string, Node>, seen = new Set<Node>()): Node[] => {
     if (raw === undefined || seen.has(raw)) {
       return [];
     }
     const visited = new Set(seen).add(raw);
+    if (raw.type === 'Identifier' && mutable.has(raw.name)) {
+      return [];
+    }
+    const parameter = parameters.get(raw);
+    if (parameter !== undefined) {
+      return calls.flatMap((call) => {
+        if (call.callee.type !== 'Identifier' || call.callee.name !== parameter.name) {
+          return [];
+        }
+        const scope = scopedVariables(facts, call.start);
+        if (scope.get(parameter.name) !== parameter.owner) {
+          return [];
+        }
+        const argument = call.arguments[parameter.index];
+        if (argument !== undefined) {
+          return values(argument, scope, visited);
+        }
+        return raw.type === 'AssignmentPattern' ? values(raw.right, facts.variables, visited) : [];
+      });
+    }
+    const iterable =
+      raw.type === 'Identifier'
+        ? loops.find(
+            (loop) =>
+              loop.binding.name === raw.name &&
+              loop.body.start <= raw.start &&
+              raw.end <= loop.body.end &&
+              (!variables.has(raw.name) || variables.get(raw.name) === raw),
+          )?.iterable
+        : undefined;
+    if (iterable !== undefined) {
+      if (iterable.type === 'Identifier' && !immutableModelBinding(facts, iterable.name)) {
+        return [];
+      }
+      return values(iterable, variables, visited).flatMap((array) =>
+        array.type === 'ArrayExpression'
+          ? array.elements.flatMap((element) => values(element ?? undefined, variables, visited))
+          : [],
+      );
+    }
     if (raw.type === 'Identifier') {
       return mutable.has(raw.name) ? [] : values(variables.get(raw.name), variables, visited);
     }
-    if (raw.type === 'TSAsExpression' || raw.type === 'TSSatisfiesExpression' || raw.type === 'TSNonNullExpression') {
-      return values(raw.expression, variables, visited);
+    if (
+      raw.type === 'TSAsExpression' ||
+      raw.type === 'TSSatisfiesExpression' ||
+      raw.type === 'TSNonNullExpression' ||
+      raw.type === 'YieldExpression' ||
+      raw.type === 'AwaitExpression'
+    ) {
+      return values(
+        raw.type === 'YieldExpression' || raw.type === 'AwaitExpression' ? (raw.argument ?? undefined) : raw.expression,
+        variables,
+        visited,
+      );
     }
-    if (raw.type !== 'AssignmentPattern') {
-      return [raw];
-    }
-    const parameter = parameters.get(raw);
-    if (parameter === undefined) {
-      return [];
-    }
-    return calls.flatMap((call) => {
-      if (call.callee.type !== 'Identifier' || call.callee.name !== parameter.name) {
-        return [];
-      }
-      const scope = scopedVariables(facts, call.start);
-      if (scope.get(parameter.name) !== parameter.owner) {
-        return [];
-      }
-      const argument = call.arguments[parameter.index];
-      const candidates =
-        argument === undefined ? values(raw.right, facts.variables, visited) : values(argument, scope, visited);
-      return candidates.filter((candidate) => staticString(candidate, new Map()) !== undefined);
-    });
+    return [raw];
   };
+  const strings = (raw: Node | undefined, variables: ReadonlyMap<string, Node>, seen = new Set<Node>()): string[] =>
+    values(raw, variables).flatMap((value) => {
+      if (seen.has(value)) {
+        return [];
+      }
+      const visited = new Set(seen).add(value);
+      const literal = staticString(value, new Map());
+      if (literal !== undefined) {
+        return [literal];
+      }
+      if (value.type === 'TemplateLiteral') {
+        let result = [value.quasis[0]?.value.cooked ?? ''];
+        for (const [index, expression] of value.expressions.entries()) {
+          const options = strings(expression, variables, visited);
+          if (
+            options.length === 0 ||
+            (options.length > 1 && result.length > 1) ||
+            options.length * result.length > 100
+          ) {
+            return [];
+          }
+          result = result.flatMap((prefix) =>
+            options.map((option) => prefix + option + (value.quasis[index + 1]?.value.cooked ?? '')),
+          );
+        }
+        return result;
+      }
+      if (value.type !== 'CallExpression' || value.callee.type !== 'Identifier') {
+        return [];
+      }
+      const owner = functions.get(value.callee.name);
+      if (
+        owner === undefined ||
+        owner.body.type === 'BlockStatement' ||
+        mutable.has(value.callee.name) ||
+        variables.get(value.callee.name) !== owner
+      ) {
+        return [];
+      }
+      const scope = new Map(variables);
+      for (const [index, parameter] of owner.params.entries()) {
+        if (parameter.type !== 'Identifier') {
+          return [];
+        }
+        const argument = value.arguments[index];
+        if (argument === undefined) {
+          return [];
+        }
+        scope.set(parameter.name, argument);
+      }
+      return strings(owner.body, scope, visited);
+    });
   const ownerRoot = path.resolve(appRoot, workspace === '.' ? '' : workspace);
   const sourceFile = path.resolve(appRoot, facts.file);
   const evidence: KnipModelEvidence[] = [];
@@ -1546,12 +1651,15 @@ const nativeSubprocessEvidence = (
       const candidates = values(raw, variables);
       return candidates.length === 1 ? candidates[0] : undefined;
     };
-    const literalStrings = (raw: Node | undefined): string[] =>
-      values(raw, variables).flatMap((value) => {
-        const literal = staticString(value, new Map());
-        return literal === undefined ? [] : [literal];
-      });
+    const literalStrings = (raw: Node | undefined): string[] => strings(raw, variables);
     const identity = (raw: Node | undefined, seen = new Set<string>()): string | undefined => {
+      if (
+        raw?.type === 'YieldExpression' &&
+        raw.delegate &&
+        identity(raw.argument ?? undefined, seen) === 'effect:Path.Path'
+      ) {
+        return 'effect:Path.service';
+      }
       if (raw?.type === 'Identifier') {
         if (mutable.has(raw.name) || seen.has(raw.name)) {
           return undefined;
@@ -1590,9 +1698,9 @@ const nativeSubprocessEvidence = (
           return [];
         }
         const visited = new Set(seen).add(value);
-        const literal = staticString(value, new Map());
-        if (literal !== undefined) {
-          return [path.resolve(cwd, literal)];
+        const literals = strings(value, variables);
+        if (literals.length > 0) {
+          return literals.map((literal) => path.resolve(cwd, literal));
         }
         if (importedDirectoryBase(value)) {
           return [path.dirname(sourceFile)];
@@ -1608,9 +1716,27 @@ const nativeSubprocessEvidence = (
           }
           return literalStrings(url.arguments[0]).map((target) => path.resolve(path.dirname(sourceFile), target));
         }
+        if (value.type === 'CallExpression' && identity(value.callee) === 'effect:Path.service.fromFileUrl') {
+          const [url] = value.arguments;
+          if (
+            url?.type !== 'NewExpression' ||
+            identity(url.callee) !== 'global:URL' ||
+            !importedUrlBase(url.arguments[1])
+          ) {
+            return [];
+          }
+          return literalStrings(url.arguments[0]).map((target) => path.resolve(path.dirname(sourceFile), target));
+        }
         if (
           value.type !== 'CallExpression' ||
-          !['path:*.resolve', 'path:resolve', 'path:*.join', 'path:join'].includes(identity(value.callee) ?? '')
+          ![
+            'path:*.resolve',
+            'path:resolve',
+            'path:*.join',
+            'path:join',
+            'effect:Path.service.resolve',
+            'effect:Path.service.join',
+          ].includes(identity(value.callee) ?? '')
         ) {
           return [];
         }
@@ -1618,16 +1744,23 @@ const nativeSubprocessEvidence = (
           const literals = literalStrings(argument);
           return literals.length === 0 ? resolvePaths(argument, cwd, visited) : literals;
         });
-        if (!segments.every((segment) => segment.length === 1)) {
-          return [];
+        let combinations: string[][] = [[]];
+        for (const segment of segments) {
+          if (
+            segment.length === 0 ||
+            (segment.length > 1 && combinations.length > 1) ||
+            segment.length * combinations.length > 100
+          ) {
+            return [];
+          }
+          combinations = combinations.flatMap((parts) => segment.map((part) => [...parts, part]));
         }
-        const parts = segments.flat();
         const operation = identity(value.callee);
-        return [
+        return combinations.map((parts) =>
           operation?.endsWith('.join') || operation === 'path:join'
             ? path.resolve(cwd, path.join(...parts))
             : path.resolve(cwd, ...parts),
-        ];
+        );
       });
     const optionsValue = immutableValue(call.arguments[2]);
     const options = optionsValue?.type === 'ObjectExpression' ? optionsValue : undefined;

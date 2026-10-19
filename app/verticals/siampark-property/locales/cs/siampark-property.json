@@ -175,7 +175,25 @@
           "TERMINATED": "Ukončená",
           "EXPIRED": "Vypršela"
         },
-        "description": "Provozní a finanční souvislosti nemovitostí, jejich jednotek a vybavení."
+        "description": "Provozní a finanční souvislosti nemovitostí, jejich jednotek a vybavení.",
+        "editor": {
+          "create": "Přidat nemovitost",
+          "edit": "Upravit nemovitost",
+          "code": "Kód",
+          "name": "Název",
+          "address": "Adresa",
+          "note": "Poznámka",
+          "save": "Uložit",
+          "cancel": "Zrušit",
+          "saved": "Nemovitost byla uložena.",
+          "validation": "Vyplňte kód, název a adresu (nejvýše 300 znaků).",
+          "conflict": "Data se změnila nebo je kód již použitý. Obnovte nemovitosti a zkuste to znovu.",
+          "forbidden": "Pro úpravu nemovitosti nemáte oprávnění.",
+          "unavailable": "Nemovitost se nepodařilo uložit. Zkuste to znovu.",
+          "createUnit": "Přidat jednotku",
+          "activate": "Aktivovat nemovitost",
+          "deactivate": "Deaktivovat nemovitost"
+        }
       }
     }
   }

@@ -64,6 +64,29 @@ describe('Invoice create form lines', () => {
     });
   });
 
+  it('creates a descriptive rent line without a catalog identity and retains the chosen VAT rate', () => {
+    const rent = {
+      ...newDraftLine('rent-line', 'free'),
+      description: '  Nájem budovy Parková, jednotka A101, říjen 2026  ',
+      unitPriceMinor: 1_800_000,
+      vatRate: 0 as const,
+    };
+
+    expect(lineIssue(rent)).toBeUndefined();
+    expect(toInvoiceLine(rent)).toEqual({
+      description: 'Nájem budovy Parková, jednotka A101, říjen 2026',
+      quantity: 1,
+      unitPriceMinor: 1_800_000,
+      vatRate: 0,
+    });
+    expect(draftTotals([rent])).toEqual({ subtotalMinor: 1_800_000, totalMinor: 1_800_000, vatMinor: 0 });
+    expect(draftTotals([{ ...rent, vatRate: 21 }])).toEqual({
+      subtotalMinor: 1_800_000,
+      totalMinor: 2_178_000,
+      vatMinor: 378_000,
+    });
+  });
+
   it('converts a decimal CZK price to haléře and reports a price that is not a number', () => {
     expect(czkToMinor(1234.5)).toBe(123_450);
     expect(Number.isNaN(czkToMinor(Number.NaN))).toBe(true);

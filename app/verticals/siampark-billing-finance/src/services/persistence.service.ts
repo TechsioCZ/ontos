@@ -509,13 +509,20 @@ export const projectFinanceRecords = (
     (record) =>
       (request.resourceId === undefined || record.ref.resourceId === request.resourceId) &&
       (request.propertyId === undefined || record.propertyRef?.resourceId === request.propertyId) &&
-      // Legacy invoices carry the customer only as their party-registry counterparty reference.
-      (request.partyId === undefined || (record.partyId ?? record.counterpartyRef.resourceId) === request.partyId) &&
+      // Party snapshots and commercial Counterparty refs are distinct identities.
+      (request.partyId === undefined || record.partyId === request.partyId) &&
+      (request.counterpartyRef === undefined ||
+        (record.counterpartyRef.tenantId === request.counterpartyRef.tenantId &&
+          record.counterpartyRef.moduleId === request.counterpartyRef.moduleId &&
+          record.counterpartyRef.resourceType === request.counterpartyRef.resourceType &&
+          record.counterpartyRef.resourceId === request.counterpartyRef.resourceId)) &&
       (request.opportunityId === undefined || record.opportunityId === request.opportunityId),
   );
   const selected = new Set(invoices.map((record) => record.ref.resourceId));
   const financialPlanEntries = state.financialPlanEntries.filter(
     (record) =>
+      request.partyId === undefined &&
+      request.counterpartyRef === undefined &&
       (request.propertyId === undefined || record.propertyRef.resourceId === request.propertyId) &&
       (request.resourceId === undefined || record.ref.resourceId === request.resourceId),
   );

@@ -58,6 +58,69 @@ The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 | 5433            | Postgres (`siampark_demo` database, admin `ontos_admin`)                                               |
 | 50051 / 8443    | SpiceDB gRPC / HTTP (TLS)                                                                              |
 
+## Portable rental data seeder
+
+Run `mise exec -- pnpm demo:seed:rental` from `app/` against a running local or server deployment.
+It uses authenticated public APIs and audited Actions, with the same permissions and validation as
+the UI. It needs no database administrator connection, localhost-only fixture port, or private
+composition URL. Remote targets require HTTPS.
+
+The target Tenant and Legal Entity must already exist, the rental modules must be active in the
+composition, and the operator account must have read/write access to Party Registry, property,
+occupancy, agreements, opportunities and finance, plus Party identity review for a new demo customer.
+Provision server accounts through the normal environment-specific operator workflow first. This
+command does not create accounts, grant permissions, rename companies or bootstrap a server.
+The development companies are `Obchodní firma` and `Siampark`; server IDs may differ.
+
+Example in Bash, using the IDs of the intended server company:
+
+```bash
+export ONTOS_DEMO_SEED_URL=https://demo.example.com
+export ONTOS_DEMO_SEED_TENANT_ID='replace-with-tenant-uuid'
+export ONTOS_DEMO_SEED_LEGAL_ENTITY_ID='replace-with-siampark-legal-entity-uuid'
+export ONTOS_DEMO_SEED_EMAIL=operator@example.com
+read -r -s -p 'Seeder password: ' ONTOS_DEMO_SEED_PASSWORD
+export ONTOS_DEMO_SEED_PASSWORD
+
+# Authentication, target selection and owner-read checks, no business writes:
+mise exec -- pnpm demo:seed:rental
+
+# Seed the selected company:
+mise exec -- pnpm demo:seed:rental --apply
+
+# Optionally add an explicitly labelled synthetic signature/document example:
+mise exec -- pnpm demo:seed:rental --apply --demo-signature
+unset ONTOS_DEMO_SEED_PASSWORD
+```
+
+Replace the UUID placeholders before running. Export the password through the server's secret
+manager for unattended use. No configuration file or password is checked into source control.
+
+The fixture contains Rezidence Parková at Parková 12 in Prague, active unit Byt A102, an active
+`Ukázkový nájemce Siampark` customer, a rent opportunity, a confirmed long-term lease for
+2026-11-01 through 2027-10-31, its draft contract, and a draft invoice for November rent of
+12,500.25 CZK excluding 21% VAT. It does not confirm invoices or contact an accounting/signature
+provider. `--demo-signature` records a `demo://` reference and a clearly labelled DEMO signer and
+filename. No signed PDF exists or is uploaded by this command.
+
+Repeated runs reuse matching records and preserve their IDs. Keys are property code, unit code
+within the property, exact synthetic customer name, opportunity title, lease unit/period, contract
+lease reference and invoice document number or matching rental line. Colliding identities, mismatching
+rental amounts, references or incompatible lifecycle states stop the run instead of being overwritten.
+Other existing metadata is retained. Each write uses the revision of the inspected snapshot;
+conflicts and uncertain responses are not automatically retried. Earlier completed steps remain and
+the command can be rerun after resolving the failure.
+
+After creating a Party, its reference is stored with the exact server/Tenant/Legal Entity in
+`.scratch/demo-seed/<target-hash>/customer.json`, with owner-only permissions. Keep that ignored
+checkpoint when resuming an interrupted customer onboarding. If execution stops after Party
+creation but before the checkpoint is durable, the next attempt may require identity review. It
+refuses to create another Party when candidates exist. Do not copy a checkpoint to another target.
+
+The earlier commercial dataset remains under `demo:reset:sales`, a destructive local-only reset.
+Do not use that reset to populate a server. This portable command adds the rental sample without
+resetting the commercial company or replacing existing company data.
+
 ## Accounts
 
 Every account uses the password `password1234`. Sign in at http://localhost:3020/cs/login.
@@ -76,6 +139,13 @@ Every account uses the password `password1234`. Sign in at http://localhost:3020
 at the end of `up.sh` and inside `pnpm demo:reset:sales` (after `workforce`). Re-run it alone at any
 time with `node --env-file=.env scripts/demo/reset-permissions.mts` (`--skip-bot` skips the API key).
 SpiceDB is in-memory, so re-run it after a container restart.
+
+Once the Shell is running, the same operator command calls the restricted
+`core.identity.configure-demo-companies` Action. It renames the fixed commercial demo company to
+Obchodní firma and ensures the separate Siampark company and rental module states exist. This runs
+at the end of the local launcher after grants have been installed; when the Shell is offline it is
+deferred. Conflicting company identity or an Action denial fails setup. Existing business rows are
+retained. Rental example data is added separately with `demo:seed:rental --apply`.
 
 | Login / principal      | Role            | Write                                                 | Read only                                 |
 | ---------------------- | --------------- | ----------------------------------------------------- | ----------------------------------------- |
@@ -111,14 +181,6 @@ and the bot creates one task. The MCP session `tools/ontos-agent-mcp/scripts/dem
 
 Pages: `/cs/siampark/work` (Úkoly) and `/cs/siampark/finance` (Faktury a finance). The business
 date is 2026-10-05.
-
-## Build identity
-
-Each native build marker includes the clean Git HEAD. A commit made while the stack runs would
-therefore make the composition publisher reject the running builds. To prevent that, builds and the
-publisher run with a failing `git` stub (`.scratch/demo-bin/git`), which pins every demo build to the
-unpromotable `workspace` identity. The demo build also skips the `modern deploy` step: that step
-emits a promotable release envelope, and `modern serve` only needs `dist/`.
 
 ## Known issues
 

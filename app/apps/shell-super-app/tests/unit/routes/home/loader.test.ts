@@ -11,12 +11,14 @@ const {
   availableTenantsMock,
   browserConfigValuesMock,
   currentSessionMock,
+  resolveModuleTargetMock,
   shellCompositionMock,
 } = rstest.hoisted(() => ({
   availableLegalEntitiesMock: rstest.fn(),
   availableTenantsMock: rstest.fn(),
   browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
   currentSessionMock: rstest.fn(),
+  resolveModuleTargetMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
 }));
 
@@ -25,6 +27,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   availableLegalEntities: availableLegalEntitiesMock,
   availableTenants: availableTenantsMock,
   currentSession: currentSessionMock,
+  resolveModuleTarget: resolveModuleTargetMock,
   shellComposition: shellCompositionMock,
 }));
 
@@ -72,6 +75,7 @@ const withBetterAuthUrl = <Value, Failure>(baseUrl: string, operation: () => Eff
 
 beforeEach(() => {
   browserConfigValuesMock.mockReturnValue({});
+  resolveModuleTargetMock.mockReturnValue(Effect.fail({ _tag: 'ShellTargetForbiddenProblem' }));
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
   availableLegalEntitiesMock.mockReturnValue(
     Effect.succeed({
@@ -103,6 +107,7 @@ it.effect('resolves trusted context before returning one serializable compositio
     expect(yield* loadModel({ request: request() })).toEqual({
       compositionRevision,
       contextState: 'authenticated',
+      homeContribution: { state: 'forbidden' },
       identity,
       legalEntities: {
         items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
@@ -305,5 +310,30 @@ it.effect('shares one composition, tenant and legal-entity read across concurren
     yield* load;
     yield* load;
     expect(availableTenantsMock).toHaveBeenCalledTimes(3);
+  }),
+);
+
+it.effect('rechecks Home contribution permissions on every visit even when navigation composition is reused', () =>
+  Effect.gen(function* freshHomeContributionPermission() {
+    yield* loadModel({ request: request() });
+    yield* loadHomePageModel(request());
+    expect(resolveModuleTargetMock).toHaveBeenCalledTimes(2);
+    expect(resolveModuleTargetMock.mock.calls[0]?.[0]).toEqual({
+      compositionRevision,
+      entrypointKey: 'demo.sales-insights.component.crm-dashboard',
+      moduleId: 'demo.sales-insights',
+    });
+    resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }));
+    expect(yield* loadHomePageModel(request())).toMatchObject({ homeContribution: { state: 'unavailable' } });
+  }),
+);
+
+it.effect('does not resolve the Home component from anonymous, selection-required or non-Home routes', () =>
+  Effect.gen(function* homeContributionContextGate() {
+    yield* loadModel({ request: new Request('https://shell.example.test/en/siampark/work') });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' }));
+    yield* loadModel({ request: request() });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
   }),
 );
