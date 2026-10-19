@@ -79,6 +79,10 @@ const STOREFRONT_KEY_AUDIENCE = 'merchandise';
 const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts] as const;
 /** `demo.crm` is tenant-activated here so the CRM company works whatever the Siampark reset lists. */
 const crmModuleState = { moduleId: 'demo.crm', stateId: '78000000-0000-4000-8000-000000000201' } as const;
+const siamparkOpsModuleState = {
+  moduleId: 'demo.siampark-ops',
+  stateId: '78000000-0000-4000-8000-000000000202',
+} as const;
 /** Managed API keys that run unlimited (each request exchanges the key for a single-use gateway assertion). */
 const unlimitedKeyNames = [agentBotPrincipal.displayName, storefrontPrincipal.displayName];
 const SECURE_COOKIE_PREFIX = '__Secure-';
@@ -239,7 +243,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
       registrationCountry: 'CZ',
       registrationNumber: 'DEMO-SIAMPARK',
     },
-    modules: [crmModuleState],
+    modules: [crmModuleState, siamparkOpsModuleState],
     relationships,
     tenant: { defaultLocale: 'cs', displayName: 'Siampark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
   });

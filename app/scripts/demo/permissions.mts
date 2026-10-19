@@ -40,6 +40,7 @@ export const demoModuleIds = [
   'siampark.occupancy',
   'siampark.agreements',
   'demo.crm',
+  'demo.siampark-ops',
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
 export const ModuleAccessSchema = Schema.Literals(['read', 'write']);
@@ -57,6 +58,7 @@ const contextPermissionModules: ReadonlySet<DemoModuleId> = new Set([
   'demo.tagging',
   'demo.workforce',
   'siampark.work',
+  'demo.siampark-ops',
 ]);
 export const contextPermissionKey = (moduleId: DemoModuleId, access: ModuleAccess) =>
   `${moduleId.replaceAll('-', '_')}.${access === 'read' ? 'read_all' : 'write_all'}`;
@@ -88,6 +90,8 @@ export interface DemoRole {
   readonly identityAdmin: boolean;
   readonly label: string;
   readonly modules: Readonly<Partial<Record<DemoModuleId, ModuleAccess>>>;
+  /** Modules opened without the generic read_all/write_all grants (only `contextPermissions` apply). */
+  readonly restrictedModules?: readonly DemoModuleId[];
 }
 
 export const demoRoles = {
@@ -254,7 +258,7 @@ export const principalRelationships = (
     }
     add('module_access', moduleAccess(moduleId), 'legal_entity', 'legal_entity', legal);
     add('module_access', moduleAccess(moduleId), 'accessor', 'principal', principalId);
-    if (contextPermissionModules.has(moduleId)) {
+    if (contextPermissionModules.has(moduleId) && !(role.restrictedModules ?? []).includes(moduleId)) {
       for (const level of access === 'write' ? (['read', 'write'] as const) : (['read'] as const)) {
         grantContextPermission(moduleId, contextPermissionKey(moduleId, level));
       }
@@ -354,6 +358,44 @@ export const rentalDemoRoles = {
   },
 } as const satisfies Readonly<Partial<Record<DemoRoleKey, DemoRole>>>;
 
+/**
+ * The original Siampark accounts (`scripts/siampark/fixtures.mts` demoAccounts, created by `pnpm demo:reset`) in the
+ * Siampark company 0021, each with the `demo.siampark-ops` agendas. The external agent sees operational agendas only.
+ */
+const withSiamparkOps = (role: DemoRole): DemoRole => ({
+  ...role,
+  identityAdmin: false,
+  modules: { ...role.modules, 'demo.siampark-ops': 'write' },
+});
+export const siamparkRentalPersonas = [
+  {
+    email: 'management@siampark.demo',
+    principalId: '72000000-0000-4000-8000-000000000021',
+    role: withSiamparkOps(rentalDemoRoles.headOfSales),
+  },
+  {
+    email: 'operations@siampark.demo',
+    principalId: '72000000-0000-4000-8000-000000000022',
+    role: withSiamparkOps(rentalDemoRoles.salesRep),
+  },
+  {
+    email: 'finance@siampark.demo',
+    principalId: '72000000-0000-4000-8000-000000000023',
+    role: withSiamparkOps(rentalDemoRoles.accountant),
+  },
+  {
+    email: 'external@siampark.demo',
+    principalId: '72000000-0000-4000-8000-000000000024',
+    role: {
+      contextPermissions: { 'demo.siampark-ops': ['demo.siampark_ops.read_operational'] },
+      identityAdmin: false,
+      label: 'Externí partner',
+      modules: { 'demo.siampark-ops': 'read' },
+      restrictedModules: ['demo.siampark-ops'],
+    },
+  },
+] as const satisfies readonly { readonly email: string; readonly principalId: string; readonly role: DemoRole }[];
+
 export const rentalPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => [
   ...demoHumanAccounts.flatMap((account) =>
     account.role === 'warehouse'
@@ -361,6 +403,9 @@ export const rentalPermissionRelationships = (actions: readonly DemoAction[]): r
       : principalRelationships(account.principalId, rentalDemoRoles[account.role], actions, rentalDemoLegalEntityId),
   ),
   ...principalRelationships(agentBotPrincipal.principalId, rentalDemoRoles.agentBot, actions, rentalDemoLegalEntityId),
+  ...siamparkRentalPersonas.flatMap((persona) =>
+    principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId),
+  ),
 ];
 
 /**

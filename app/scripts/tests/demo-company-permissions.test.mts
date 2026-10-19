@@ -20,6 +20,7 @@ import {
   crmPersonaPrincipalIds,
   demoHumanAccounts,
   demoPermissionRelationships,
+  siamparkRentalPersonas,
   storefrontPrincipal,
 } from '../demo/permissions.mts';
 import { ensureDemoCompanies } from '../demo/reset-permissions.mts';
@@ -169,3 +170,26 @@ it.effect('fails demo startup when the company Action is denied instead of decla
     expect(Predicate.isTagged(failure, 'DemoPermissionsError')).toBe(true);
   }),
 );
+
+it('gives the Siampark accounts their 0021 roles and limits the external agent to operational agendas', () => {
+  const opsPermission = (principalId: string, permission: string) =>
+    relationships.some(
+      (row) =>
+        row.resourceType === 'context_permission' &&
+        row.relation === 'grantee' &&
+        row.subjectId === principalId &&
+        row.resourceId ===
+          toContextPermissionAccessObjectId(demoTenantId, rentalDemoLegalEntityId, {
+            moduleId: 'demo.siampark-ops',
+            permission,
+          }),
+    );
+  const [management, , finance, external] = siamparkRentalPersonas;
+  expect(hasModule(management.principalId, rentalDemoLegalEntityId, 'siampark.property')).toBe(true);
+  expect(opsPermission(management.principalId, 'demo.siampark_ops.write_all')).toBe(true);
+  expect(hasModule(finance.principalId, rentalDemoLegalEntityId, 'siampark.billing-finance')).toBe(true);
+  expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'demo.siampark-ops')).toBe(true);
+  expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'siampark.billing-finance')).toBe(false);
+  expect(opsPermission(external.principalId, 'demo.siampark_ops.read_operational')).toBe(true);
+  expect(opsPermission(external.principalId, 'demo.siampark_ops.read_all')).toBe(false);
+});
