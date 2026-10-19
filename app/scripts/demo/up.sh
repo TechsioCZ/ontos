@@ -121,6 +121,8 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-reset pnpm_ demo:reset
   # Sales-demo owners seed after the Siampark baseline; the bot API key is issued later (needs the shell).
   step demo-reset-sales pnpm_ demo:reset:sales
+  # E-shop company (Kavárna Doma, LE …023): merges the seed, keeps live demo orders (use --reset to wipe).
+  step demo-seed-eshop pnpm_ demo:seed:eshop
 fi
 # Verifiers of owners whose sales seed is still a placeholder report a missing seeded aggregate; that must
 # not block the demo. DEMO_STRICT_VERIFY=1 makes the verification fatal again.
