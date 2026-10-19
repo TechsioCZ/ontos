@@ -13,6 +13,7 @@ import { Effect, Match, Option, Random, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { usePropertyEditor } from './use-property-editor.ts';
+import { UnitStory, pragueToday } from './unit-story.tsx';
 import { executeRecords } from '../../../../api/records-client';
 import type { RecordsResponse } from '../../../../../shared/apis/records';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
@@ -251,7 +252,7 @@ const usePropertyRecords = () => {
       ),
     );
   };
-  const referenceDate = '2026-10-05';
+  const referenceDate = pragueToday();
   const availability = (id: string) => {
     const covering =
       occupancy?.occupancies.filter(
@@ -352,6 +353,7 @@ const usePropertyRecords = () => {
   ];
   return {
     agreements,
+    language: language ?? 'cs',
     asset,
     assets,
     availability,
@@ -394,6 +396,14 @@ const RecordsPageContent = () => {
   useEffect(() => {
     refreshOnMount();
   }, []);
+  // Building detail shows its leases, contracts and tasks at once; the explicit button stays for a manual reload.
+  const loadSummaryOnSelect = useEffectEvent(model.loadSummary);
+  const selectedPropertyId = model.property?.propertyRef.resourceId;
+  useEffect(() => {
+    if (selectedPropertyId !== undefined) {
+      loadSummaryOnSelect();
+    }
+  }, [selectedPropertyId]);
   const { asset, key, relatedSections, t, unit } = model;
   const handleRefresh = model.refresh;
   const handleLoadSummary = model.loadSummary;
@@ -614,32 +624,23 @@ const RecordsPageContent = () => {
                   )}
                 </div>
                 {unit !== undefined && (
-                  <aside className={relatedCardClass}>
+                  <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
                     <h3 className={detailHeadingClass}>
                       {unit.code} · {unit.name}
                     </h3>
                     <p className={secondaryTextClass}>
-                      {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'}
+                      {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'} ·{' '}
+                      {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
                     </p>
-                    <p className={secondaryTextClass}>{unit.note ?? '—'}</p>
-                    {model.occupancy !== undefined && (
-                      <ul className="siamparkproperty:space-y-2 siamparkproperty:text-sm">
-                        {model.occupancy.occupancies.flatMap((item) =>
-                          item.unitRef.resourceId === unit.unitRef.resourceId
-                            ? [
-                                <li key={item.occupancyRef.resourceId}>
-                                  <Link href={model.ownerHref('occupancy', item.occupancyRef.resourceId)}>
-                                    {t(`${key}.occupancyRecord`, {
-                                      end: item.endDate ?? '—',
-                                      start: item.startDate,
-                                    })}
-                                  </Link>
-                                </li>,
-                              ]
-                            : [],
-                        )}
-                      </ul>
-                    )}
+                    {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
+                    <UnitStory
+                      agreements={model.agreements}
+                      language={model.language}
+                      occupancy={model.occupancy}
+                      t={t}
+                      tasks={model.work?.items}
+                      unit={unit}
+                    />
                   </aside>
                 )}
                 {asset !== undefined && (

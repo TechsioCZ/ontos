@@ -193,6 +193,32 @@
           "createUnit": "Add unit",
           "activate": "Activate property",
           "deactivate": "Deactivate property"
+        },
+        "unitStory": {
+          "newLease": "New lease",
+          "leases": "Unit leases and stays",
+          "contracts": "Unit contracts",
+          "tasks": "Unit service tasks",
+          "openTasks": "Tasks",
+          "notLoaded": "Loading summary…",
+          "noLeases": "No lease or stay yet – the unit is free to let.",
+          "noContracts": "No contract is recorded for this unit.",
+          "noTasks": "No tasks are recorded for this unit.",
+          "openEnd": "open-ended",
+          "noRent": "rent not provided",
+          "rent": "{{amount}} per month",
+          "openLease": "Lease",
+          "openContract": "Contract",
+          "contract": "Contract",
+          "expiring": "Ending soon",
+          "due": "due {{date}}",
+          "taskStates": {
+            "NEW": "New",
+            "IN_PROGRESS": "In progress",
+            "WAITING": "Waiting",
+            "DONE": "Done",
+            "CANCELLED": "Cancelled"
+          }
         }
       }
     }

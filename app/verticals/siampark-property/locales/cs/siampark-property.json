@@ -193,6 +193,32 @@
           "createUnit": "Přidat jednotku",
           "activate": "Aktivovat nemovitost",
           "deactivate": "Deaktivovat nemovitost"
+        },
+        "unitStory": {
+          "newLease": "Nový nájem",
+          "leases": "Nájmy a pobyty jednotky",
+          "contracts": "Smlouvy jednotky",
+          "tasks": "Servisní úkoly jednotky",
+          "openTasks": "Úkoly",
+          "notLoaded": "Souhrn se načítá…",
+          "noLeases": "Jednotka zatím nemá žádný nájem ani pobyt – je volná k pronájmu.",
+          "noContracts": "K jednotce není evidovaná smlouva.",
+          "noTasks": "K jednotce nejsou evidované úkoly.",
+          "openEnd": "bez konce",
+          "noRent": "nájemné neuvedeno",
+          "rent": "{{amount}} měsíčně",
+          "openLease": "Nájem",
+          "openContract": "Smlouva",
+          "contract": "Smlouva",
+          "expiring": "Brzy končí",
+          "due": "termín {{date}}",
+          "taskStates": {
+            "NEW": "Nový",
+            "IN_PROGRESS": "Rozpracovaný",
+            "WAITING": "Čeká",
+            "DONE": "Hotovo",
+            "CANCELLED": "Zrušený"
+          }
         }
       }
     }
