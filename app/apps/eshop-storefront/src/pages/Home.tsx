@@ -6,6 +6,8 @@ import { plural } from '../shared/text.ts';
 
 const CATEGORY_COPY: Record<string, string> = {
   'kategorie-caj': 'Zelené, černé i bylinné čaje z malých zahrad.',
+  'kategorie-darky': 'Sady a kazety pro radost – i pro sebe.',
+  'kategorie-mleta': 'Namleto přesně pro váš překapávač, moka konvičku i džezvu.',
   'kategorie-kava': 'Výběrová zrna pražená v Brně pro filtr i espresso.',
   'kategorie-vybaveni': 'Drippery, konvice a mlýnky pro domácí baristy.',
 };

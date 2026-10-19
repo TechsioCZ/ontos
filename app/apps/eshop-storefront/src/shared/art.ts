@@ -45,13 +45,13 @@ const esc = (value: string): string => value.replace(/&/gu, '&amp;').replace(/</
 const kindOf = (text: string): Kind => {
   if (/(konvic|kettle)/u.test(text)) return 'kettle';
   if (/(mlynek|grinder)/u.test(text)) return 'grinder';
-  if (/(french|press|presovac)/u.test(text)) return 'press';
   if (/(moka|bialetti|konvick)/u.test(text)) return 'moka';
+  if (/(french|aeropress|presovac|(^|[\s-])press)/u.test(text)) return 'press';
   if (/(filtr|filter)/u.test(text)) return 'filters';
   if (/(dripper|v60|prekapav|chemex|kalita)/u.test(text)) return 'dripper';
   if (/(hrnek|salek|mug|cup|sklenic)/u.test(text)) return 'mug';
   if (/(vaha|scale)/u.test(text)) return 'scale';
-  if (/(darkov|sada|box|gift|predplat)/u.test(text)) return 'gift';
+  if (/(darkov|sada|box|gift|predplat|kazet)/u.test(text)) return 'gift';
   if (/(caj|tea|sencha|earl|matcha|rooibos|oolong|darjeel|assam|chai|jasmin|puerh|pu-erh|mate|genmai|gyokuro|bylin|ovocn)/u.test(text)) return 'tin';
   return 'bag';
 };
@@ -67,8 +67,10 @@ const ORIGIN_ACCENT: readonly (readonly [RegExp, string])[] = [
   [/rwand|burund/u, '#b0563c'],
   [/espresso|blend|smes/u, '#8a4b2a'],
   [/sencha|matcha|gyokuro|genmai|zelen/u, '#5f8f3e'],
-  [/earl|assam|cern|darjeel/u, '#2f3e6b'],
+  [/earl|assam|cern/u, '#2f3e6b'],
   [/rooibos|ovocn/u, '#b5532f'],
+  [/darjeel/u, '#7a4a6d'],
+  [/kazet/u, '#7a2e2e'],
 ];
 
 const BAGS = ['#c9a27a', '#2a2420', '#efe4d2', '#b5532f', '#2f4a3a', '#23314a', '#4a2b3c'];
@@ -85,10 +87,11 @@ const BGS: readonly (readonly [string, string])[] = [
 const paletteOf = (key: string, text: string, kind: Kind): Palette => {
   const h = hash(key);
   const [bg, bg2] = BGS[h % BGS.length];
-  const accent = ORIGIN_ACCENT.find(([pattern]) => pattern.test(text))?.[1] ?? ['#c07a3a', '#b5532f', '#3c8d6a', '#6d4f96', '#2f3e6b'][h % 5];
+  const origin = ORIGIN_ACCENT.find(([pattern]) => pattern.test(text))?.[1];
+  const accent = origin ?? ['#c07a3a', '#b5532f', '#3c8d6a', '#6d4f96', '#2f3e6b'][h % 5];
   const pool = kind === 'bag' ? BAGS : kind === 'tin' ? TINS : CERAMICS;
-  const body = pool[(h >>> 3) % pool.length];
-  const dark = ['#2a2420', '#23314a', '#2f4a3a', '#4a2b3c', '#3b3b3b', '#2b2522', '#7a2e2e', '#5a3e2b', '#b5532f'].includes(body);
+  const body = kind === 'tin' && origin !== undefined ? shade(origin, -0.3) : pool[(h >>> 3) % pool.length];
+  const dark = (kind === 'tin' && origin !== undefined) || ['#2a2420', '#23314a', '#2f4a3a', '#4a2b3c', '#3b3b3b', '#2b2522', '#7a2e2e', '#5a3e2b', '#b5532f'].includes(body);
   return {
     accent,
     bg,
@@ -114,11 +117,17 @@ function shade(hex: string, amount: number): string {
 
 /** Splits a product name into a big title and a smaller subtitle that fit a label. */
 const labelLines = (name: string | undefined, fallback: string): { title: string; sub: string } => {
-  const clean = (name ?? fallback).replace(/\s*[–-]\s*\d.*$/u, '').trim();
-  const words = clean.split(/\s+/u);
+  const clean = (name ?? fallback).replace(/\s*[–-]\s*\d.*$/u, '').replace(/\s*\(.*\)\s*/gu, ' ').trim();
+  let words = clean.split(/\s+/u);
+  // „Japonská Sencha Kagoshima“ → title „Sencha“, sub „Japonská · Kagoshima“
+  if (words.length > 1 && /[áýé]$/u.test(words[0]) && /^\p{Lu}/u.test(words[1])) {
+    words = [words[1], words[0], ...words.slice(2)];
+  }
   if (words.length === 1) return { sub: '', title: words[0] };
-  if (words[0].length <= 3 && words.length > 2) return { sub: words.slice(2).join(' '), title: `${words[0]} ${words[1]}` };
-  return { sub: words.slice(1).join(' '), title: words[0] };
+  const pair = `${words[0]} ${words[1]}`;
+  const take = /^\p{Lu}/u.test(words[1]) && pair.length <= 10 ? 2 : 1;
+  const sub = words.slice(take).join(' ');
+  return { sub: sub.length > 26 ? `${sub.slice(0, 25).trimEnd()}…` : sub, title: words.slice(0, take).join(' ') };
 };
 
 const fit = (text: string, width: number, max: number, ratio = 0.56): number =>
@@ -408,6 +417,17 @@ const categoryScene = (key: string): string => {
     return `${sceneBackground(p, id)}<g transform="translate(-150 40) scale(0.8)">${drawKettle(paletteOf('kettle', 'kettle', 'kettle'), `${id}2`)}</g>
       <g transform="translate(220 120) scale(0.72)">${drawDripper(p, id)}</g>`;
   }
+  if (key === 'kategorie-darky') {
+    const p = paletteOf('darky', 'darkova', 'gift');
+    return `${sceneBackground(p, id)}<g transform="translate(-120 50) scale(0.8)">${drawGift(p, id)}</g>
+      <g transform="translate(250 90) scale(0.74)">${drawBag(paletteOf('kava2', 'kolumbie', 'bag'), `${id}2`, 'Objevitel', 'tři země původu')}</g>`;
+  }
+  if (key === 'kategorie-mleta') {
+    const p = paletteOf('mleta', 'espresso', 'bag');
+    return `${sceneBackground(p, id)}<g transform="translate(-130 30) scale(0.82)">${drawBag(p, id, 'Espresso', 'mletá káva')}</g>
+      <g transform="translate(260 170) scale(0.66)">${drawMug(paletteOf('mug', 'hrnek', 'mug'), `${id}2`)}</g>
+      <ellipse cx="400" cy="700" rx="200" ry="26" fill="#4a2a17" opacity="0.85"/><ellipse cx="400" cy="692" rx="150" ry="16" fill="#6b3f22"/>`;
+  }
   const p = paletteOf('kava', 'etiopie', 'bag');
   return `${sceneBackground(p, id)}<g transform="translate(-130 30) scale(0.82)">${drawBag(p, id, 'Etiopie', 'Yirgacheffe')}</g>
     <g transform="translate(240 70) scale(0.78)">${drawBag(paletteOf('kava2', 'kolumbie', 'bag'), `${id}2`, 'Kolumbie', 'Huila')}</g>
@@ -424,20 +444,36 @@ const heroScene = (): string => {
     <g transform="translate(300 160) scale(0.68)">${drawMug(paletteOf('mug', 'hrnek', 'mug'), 'h2')}</g>`;
 };
 
+const CATEGORY_PALETTES: Record<string, readonly [Palette, Palette]> = {
+  'kategorie-caj': [paletteOf('caj', 'sencha', 'tin'), paletteOf('earl', 'earl grey', 'tin')],
+  'kategorie-darky': [paletteOf('darky', 'darkova', 'gift'), paletteOf('kava2', 'kolumbie', 'bag')],
+  'kategorie-mleta': [paletteOf('mleta', 'espresso', 'bag'), paletteOf('mug', 'hrnek', 'mug')],
+  'kategorie-vybaveni': [paletteOf('vybaveni', 'dripper', 'dripper'), paletteOf('kettle', 'kettle', 'kettle')],
+};
+
 const wrap = (inner: string, extraDefs: string): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800" role="img">
   <defs>${extraDefs}<radialGradient id="beanShine" cx="0.35" cy="0.3" r="0.7"><stop offset="0" stop-color="#a26a40"/><stop offset="1" stop-color="#a26a40" stop-opacity="0"/></radialGradient></defs>
   ${inner}</svg>`;
 
+const placeholder = (): string => `
+  <rect width="800" height="800" fill="#f3ebe0"/>
+  <rect x="40" y="40" width="720" height="720" rx="36" fill="none" stroke="#d4c0a8" stroke-width="4" stroke-dasharray="14 14"/>
+  <g transform="translate(400 360)" fill="none" stroke="#b49a80" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="-110" y="-80" width="220" height="160" rx="18"/><circle cx="-40" cy="-22" r="22"/><path d="M-110 60 L-30 -10 L30 40 L60 15 L110 60"/>
+  </g>
+  <text x="400" y="540" text-anchor="middle" font-family="Georgia, serif" font-size="40" fill="#7a6556">Bez obrázku</text>
+  <text x="400" y="584" text-anchor="middle" font-family="system-ui, sans-serif" font-size="20" fill="#9c8571">Katalog k produktu žádný obrázek neposkytl</text>`;
+
 export const renderArtwork = (rawKey: string, hint: ArtHint = {}): string => {
   const [base, view] = rawKey.split('--');
+  if (base === 'bez-obrazku') return wrap(placeholder(), '');
   if (base === 'hero') return wrap(heroScene(), defs(paletteOf('hero', 'etiopie', 'bag'), 'h') + defs(paletteOf('mug', 'hrnek', 'mug'), 'h2'));
   if (base.startsWith('kategorie-')) {
     const p1 = paletteOf('kava', 'etiopie', 'bag');
     return wrap(
       categoryScene(base),
-      defs(base === 'kategorie-caj' ? paletteOf('caj', 'sencha', 'tin') : base === 'kategorie-vybaveni' ? paletteOf('vybaveni', 'dripper', 'dripper') : p1, 'c') +
-        defs(base === 'kategorie-caj' ? paletteOf('earl', 'earl grey', 'tin') : base === 'kategorie-vybaveni' ? paletteOf('kettle', 'kettle', 'kettle') : paletteOf('kava2', 'kolumbie', 'bag'), 'c2'),
+      defs(CATEGORY_PALETTES[base]?.[0] ?? p1, 'c') + defs(CATEGORY_PALETTES[base]?.[1] ?? paletteOf('kava2', 'kolumbie', 'bag'), 'c2'),
     );
   }
   const text = fold(`${base} ${hint.name ?? ''} ${hint.category ?? ''}`);

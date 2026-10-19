@@ -42,7 +42,7 @@ export const loadRecords = async (fresh = false): Promise<RecordsSnapshot> => {
   if (!fresh && cache !== undefined && Date.now() - cache.at < CACHE_MS) return cache.value;
   if (!fresh && inflight !== undefined) return await inflight;
   const run = (async () => {
-    const body = (useFixture() ? loadFixtureRecords() : await readRecords('merchandise', 'records', {})) as Raw;
+    const body = (useFixture() ? loadFixtureRecords() : await readRecords('merchandise', 'records', { view: { storefront: true } })) as Raw;
     const value: RecordsSnapshot = {
       fetchedAt: new Date().toISOString(),
       orders: arr(body.orders),
@@ -58,6 +58,13 @@ export const loadRecords = async (fresh = false): Promise<RecordsSnapshot> => {
   } finally {
     if (inflight === run) inflight = undefined;
   }
+};
+
+/** Storefront lookup of the one guest order stored under `clientRequestId` (owner-side filter). */
+export const loadStoredOrder = async (clientRequestId: string): Promise<Raw | undefined> => {
+  if (useFixture()) return arr(loadFixtureRecords().orders).find((order) => order.clientRequestId === clientRequestId);
+  const body = (await readRecords('merchandise', 'records', { view: { orderClientRequestId: clientRequestId, storefront: true } })) as Raw;
+  return arr(body.orders).find((order) => order.clientRequestId === clientRequestId);
 };
 
 export const invalidateRecords = (): void => {
@@ -99,7 +106,9 @@ const imagesOf = (raw: Raw, slug: string): string[] => {
     .map((item) => (typeof item === 'string' ? item : str((item as Raw | null)?.url) ?? str((item as Raw | null)?.src)))
     .filter((item): item is string => item !== undefined)
     .map(imageUrl);
-  return urls.length > 0 ? urls : [`/img/${slug}.svg`];
+  if (urls.length > 0) return urls;
+  // An explicit empty list is the owner's „bez obrázku“; a missing list (legacy product) gets generated artwork.
+  return Array.isArray(raw.images) ? [] : [`/img/${slug}.svg`];
 };
 
 const variantsOf = (raw: Raw, productId: string): StoreVariant[] => {
@@ -159,6 +168,8 @@ const factsOf = (raw: Raw): { label: string; value: string }[] => {
   return facts;
 };
 
+const CATEGORY_ORDER = ['kategorie-kava', 'kategorie-mleta', 'kategorie-caj', 'kategorie-vybaveni', 'kategorie-darky'];
+
 const isPublished = (raw: Raw): boolean => raw.active !== false && raw.published !== false;
 
 export interface ProjectedCatalog {
@@ -188,7 +199,7 @@ export const projectCatalog = (snapshot: RecordsSnapshot): ProjectedCatalog => {
       description: str(raw.description) ?? null,
       facts: factsOf(raw),
       id,
-      image: images[0],
+      image: images[0] ?? '/img/bez-obrazku.svg',
       images,
       name,
       priceFromMinor: prices.length > 0 ? Math.min(...prices) : null,
@@ -211,7 +222,8 @@ export const projectCatalog = (snapshot: RecordsSnapshot): ProjectedCatalog => {
       slug: product.category.slug,
     });
   }
-  const categories = [...byCategory.values()].sort((a, b) => b.productCount - a.productCount || a.name.localeCompare(b.name, 'cs'));
+  const rank = (category: StoreCategory) => CATEGORY_ORDER.indexOf(category.art);
+  const categories = [...byCategory.values()].sort((a, b) => rank(a) - rank(b) || b.productCount - a.productCount || a.name.localeCompare(b.name, 'cs'));
   return { categories, products, snapshot };
 };
 
@@ -291,7 +303,7 @@ export const homeOf = (catalog: ProjectedCatalog): HomeResponse => {
   }
   const purchasable = catalog.products.filter((product) => product.priceFromMinor !== null);
   const bestsellers = [...purchasable]
-    .sort((a, b) => (sold.get(b.id) ?? 0) - (sold.get(a.id) ?? 0) || Number(inStock(b.availability)) - Number(inStock(a.availability)) || a.name.localeCompare(b.name, 'cs'))
+    .sort((a, b) => (sold.get(b.id) ?? 0) - (sold.get(a.id) ?? 0) || Number(inStock(b.availability)) - Number(inStock(a.availability)) || b.variantCount - a.variantCount || a.name.localeCompare(b.name, 'cs'))
     .slice(0, 8);
   const created = new Map(catalog.snapshot.products.map((raw) => [str(raw.id) ?? '', str(raw.createdAt) ?? '']));
   const newest = [...purchasable]

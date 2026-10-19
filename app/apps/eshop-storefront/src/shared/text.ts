@@ -13,7 +13,9 @@ const fold = (value: string): string => value.normalize('NFD').replace(/\p{Diacr
 /** Artwork key of a category name (coffee, tea, gear). */
 export const categoryArtKey = (name: string): string => {
   const text = fold(name);
+  if (/darkov|dark|sada|box/u.test(text)) return 'kategorie-darky';
   if (/caj|tea|matcha|bylin/u.test(text)) return 'kategorie-caj';
+  if (/mlet/u.test(text) && /kav/u.test(text)) return 'kategorie-mleta';
   if (/kav|coffee|espresso|zrn/u.test(text) && !/prisl|priprav|nacin|vybav|pomuck/u.test(text)) return 'kategorie-kava';
   return 'kategorie-vybaveni';
 };

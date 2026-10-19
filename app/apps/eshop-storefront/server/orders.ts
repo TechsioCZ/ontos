@@ -13,8 +13,8 @@ import type {
   PlacedOrder,
   ShippingOption,
 } from '../src/shared/types.ts';
-import { invalidateRecords, loadRecords, projectCatalog, useFixture } from './catalog.ts';
-import type { ProjectedCatalog, RecordsSnapshot } from './catalog.ts';
+import { invalidateRecords, loadRecords, loadStoredOrder, projectCatalog, useFixture } from './catalog.ts';
+import type { ProjectedCatalog } from './catalog.ts';
 import { callAction, OntosError } from './ontos.ts';
 import { placeFixtureOrder } from './dev-fixture.ts';
 
@@ -199,12 +199,8 @@ const fromStoredOrder = (submissionId: string, order: Raw, replayed: boolean): P
   };
 };
 
-const findStored = (snapshot: RecordsSnapshot, submissionId: string): Raw | undefined =>
-  snapshot.orders.find((order) => order.clientRequestId === submissionId);
-
 export const lookupOrder = async (submissionId: string): Promise<PlacedOrder | undefined> => {
-  const snapshot = await loadRecords(true);
-  const stored = findStored(snapshot, submissionId);
+  const stored = await loadStoredOrder(submissionId);
   if (stored !== undefined) return remember(fromStoredOrder(submissionId, stored, true));
   return placed.get(submissionId);
 };
@@ -269,7 +265,7 @@ const submitOnce = async (request: OrderRequest): Promise<PlacedOrder> => {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const snapshot = await loadRecords(true);
-    const stored = findStored(snapshot, request.submissionId);
+    const stored = await loadStoredOrder(request.submissionId);
     if (stored !== undefined) return remember(fromStoredOrder(request.submissionId, stored, true));
 
     // Pre-flight with the same owner projection the customer saw: a stale cart never reaches the owner.
@@ -310,8 +306,7 @@ const submitOnce = async (request: OrderRequest): Promise<PlacedOrder> => {
     const order = (result.storefrontOrder ?? undefined) as Raw | undefined;
     if (order === undefined) {
       // Owner without the storefront result shape: resolve the stored order by a read.
-      const after = await loadRecords(true);
-      const found = findStored(after, request.submissionId);
+      const found = await loadStoredOrder(request.submissionId);
       if (found !== undefined) return remember(fromStoredOrder(request.submissionId, found, false));
       throw new HttpProblem(502, { code: 'order_unconfirmed', message: 'Uložení objednávky nebylo potvrzeno. Zkuste to prosím znovu – objednávka nevznikne dvakrát.' });
     }
@@ -321,7 +316,7 @@ const submitOnce = async (request: OrderRequest): Promise<PlacedOrder> => {
     if (order.outcome !== 'PLACED' && order.outcome !== 'REPLAYED') {
       throw new HttpProblem(502, { code: 'order_unconfirmed', message: 'Uložení objednávky nebylo potvrzeno.' });
     }
-    const after = useFixture() ? undefined : findStored(await loadRecords(true).catch(() => snapshot), request.submissionId);
+    const after = useFixture() ? undefined : await loadStoredOrder(request.submissionId).catch(() => undefined);
     return remember(
       after === undefined
         ? fromResult(request, order, new Date().toISOString())
