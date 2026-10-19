@@ -859,8 +859,8 @@ p {
 }
 
 .product-card__flag--out {
-  left: auto;
-  right: 10px;
+  top: auto;
+  bottom: 10px;
   background: var(--espresso);
   color: var(--foam);
 }

@@ -227,7 +227,11 @@ export const CheckoutPage = () => {
               <h2>
                 <span className="step-number">1</span> Kontakt
               </h2>
-              <button className="text-link" onClick={() => setForm(SAMPLE)} type="button">
+              <button className="text-link" onClick={() => {
+                  setForm(SAMPLE);
+                  setErrors({});
+                  setFailure(undefined);
+                }} type="button">
                 Vyplnit ukázkové údaje
               </button>
             </div>

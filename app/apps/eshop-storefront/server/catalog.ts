@@ -157,10 +157,10 @@ const rollupAvailability = (variants: readonly StoreVariant[]): Availability => 
 
 const UNIT_LABEL: Record<string, string> = { bal: 'balení', hod: 'hodina', ks: 'ks', lic: 'licence' };
 
-const factsOf = (raw: Raw): { label: string; value: string }[] => {
+const factsOf = (raw: Raw, variantCount: number): { label: string; value: string }[] => {
   const facts: { label: string; value: string }[] = [];
   const weight = num(raw.weightGrams);
-  if (weight !== undefined) facts.push({ label: 'Hmotnost', value: weight >= 1000 ? `${(weight / 1000).toLocaleString('cs-CZ')} kg` : `${weight} g` });
+  if (weight !== undefined && variantCount <= 1) facts.push({ label: 'Hmotnost', value: weight >= 1000 ? `${(weight / 1000).toLocaleString('cs-CZ')} kg` : `${weight} g` });
   const [l, w, h] = [num(raw.lengthMm), num(raw.widthMm), num(raw.heightMm)];
   if (l !== undefined && w !== undefined && h !== undefined) facts.push({ label: 'Rozměry', value: `${l / 10} × ${w / 10} × ${h / 10} cm` });
   const vat = num(raw.vatRate);
@@ -197,7 +197,7 @@ export const projectCatalog = (snapshot: RecordsSnapshot): ProjectedCatalog => {
       availability: rollupAvailability(variants),
       category: { name: categoryName, slug: slugify(categoryName) },
       description: str(raw.description) ?? null,
-      facts: factsOf(raw),
+      facts: factsOf(raw, variants.length),
       id,
       image: images[0] ?? '/img/bez-obrazku.svg',
       images,

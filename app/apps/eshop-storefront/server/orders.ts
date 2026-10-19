@@ -191,7 +191,7 @@ const fromStoredOrder = (submissionId: string, order: Raw, replayed: boolean): P
     }),
     orderNumber: str(order.number) ?? '',
     replayed,
-    shipping: shipping === undefined ? null : { label: str(shipping.label) ?? shippingLabel(shipping.method), priceMinor: num(shipping.priceMinor) ?? 0 },
+    shipping: shipping === undefined ? null : { label: SHIPPING_OPTIONS.some((option) => option.id === shipping.method) ? shippingLabel(shipping.method) : (str(shipping.label) ?? shippingLabel(shipping.method)), priceMinor: num(shipping.priceMinor) ?? 0 },
     status: str(order.status) ?? 'NEW',
     submissionId,
     totalMinor: num(order.totalMinor) ?? null,

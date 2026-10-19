@@ -8,11 +8,11 @@ import { DEMO_DISCLAIMER } from '../shared/types.ts';
 import { formatCzk, formatDateTime } from '../shared/text.ts';
 
 const STATUS: Record<string, string> = {
-  CANCELLED: 'Stornována',
-  CONFIRMED: 'Zpracovává se',
-  DELIVERED: 'Dokončena',
+  CANCELLED: 'Stornovaná',
+  CONFIRMED: 'Potvrzená',
+  DELIVERED: 'Dokončená',
   NEW: 'Nová',
-  PACKING: 'Připravená k předání',
+  PACKING: 'Balí se',
   SHIPPED: 'Předáno dopravci (simulace)',
 };
 
@@ -148,7 +148,7 @@ export const ConfirmationPage = ({ submissionId }: { readonly submissionId: stri
           <h2>Co bude dál?</h2>
           <ol>
             <li>Objednávka je teď ve stavu „Nová“ v administraci OntOS pod číslem {order.orderNumber}.</li>
-            <li>Správce ji může upravit a provést stavy až po „Předáno dopravci (simulace)“ a „Dokončena“.</li>
+            <li>Správce ji může upravit a provést stavy až po „Předáno dopravci (simulace)“ a „Dokončená“.</li>
             <li>Nic se vám neodešle – žádný e-mail, SMS, platba ani zásilka.</li>
           </ol>
           <p className="muted">Po obnovení stránky uvidíte stejné číslo objednávky – načítá se z uloženého záznamu.</p>
