@@ -63,7 +63,8 @@
           "insights": "Insights",
           "settings": "Settings",
           "other": "Other modules",
-          "crm": "CRM"
+          "crm": "CRM",
+          "siamparkOps": "Site operations"
         },
         "items": {
           "opportunities": "Opportunities",
@@ -83,7 +84,14 @@
           "crmVisits": "Visits",
           "crmImports": "Order imports",
           "crmPairing": "Matching",
-          "crmReports": "Sales overview"
+          "crmReports": "Sales overview",
+          "opsOverview": "Operations overview",
+          "opsAgenda": "My agenda",
+          "opsAssets": "Assets",
+          "opsMeters": "Meters and energy",
+          "opsPurchasing": "Stock and purchasing",
+          "opsSecurity": "Security",
+          "opsDocuments": "Documents"
         }
       },
       "sidebar": {

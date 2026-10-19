@@ -75,6 +75,7 @@ const bootstrapRuntimeRole = (
         'demo_tagging',
         'demo_sales_pipeline',
         'demo_merchandise',
+        'demo_siampark_ops',
         'demo_sales_insights',
         'siampark_billing_finance',
         'siampark_relationships',

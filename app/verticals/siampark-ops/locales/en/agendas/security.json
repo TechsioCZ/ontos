@@ -1,0 +1,17 @@
+{
+  "title": "Security devices",
+  "description": "Security devices and inspection dates (S11).",
+  "fields": {
+    "name": "Name",
+    "deviceType": "Device type",
+    "nextInspectionDate": "Next inspection"
+  },
+  "create": {
+    "title": "New device",
+    "submit": "Create device"
+  },
+  "created": "Device created",
+  "stats": {
+    "count": "Devices"
+  }
+}

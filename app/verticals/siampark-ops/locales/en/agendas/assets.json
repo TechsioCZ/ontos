@@ -1,0 +1,17 @@
+{
+  "title": "Assets",
+  "description": "Site assets, inventory numbers, locations and values (S02, S03).",
+  "fields": {
+    "inventoryNumber": "Inventory number",
+    "name": "Name",
+    "category": "Category"
+  },
+  "create": {
+    "title": "New asset",
+    "submit": "Create asset"
+  },
+  "created": "Asset created",
+  "stats": {
+    "count": "Assets"
+  }
+}

@@ -12,7 +12,7 @@ set -euo pipefail
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP"
 
-DEFAULT_VERTICALS="party-registry siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights"
+DEFAULT_VERTICALS="party-registry siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights siampark-ops"
 read -r -a VERTICALS <<<"$(printf '%s' "${DEMO_VERTICALS:-$DEFAULT_VERTICALS}" | tr ',' ' ')"
 SCRATCH="$APP/.scratch"
 LOG_DIR="$SCRATCH/demo-logs"

@@ -1,0 +1,23 @@
+{
+  "title": "Meters and energy",
+  "description": "Utility meters, readings and energy consumption (S04).",
+  "fields": {
+    "serialNumber": "Serial number",
+    "medium": "Medium",
+    "unit": "Unit"
+  },
+  "medium": {
+    "ELECTRICITY": "Electricity",
+    "WATER": "Water",
+    "GAS": "Gas",
+    "HEAT": "Heat"
+  },
+  "create": {
+    "title": "New meter",
+    "submit": "Create meter"
+  },
+  "created": "Meter created",
+  "stats": {
+    "count": "Meters"
+  }
+}

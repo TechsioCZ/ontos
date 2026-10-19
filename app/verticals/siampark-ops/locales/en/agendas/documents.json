@@ -1,0 +1,21 @@
+{
+  "title": "Documents",
+  "description": "Contracts, inspection reports and other documents with versions and comments (S12, S14).",
+  "fields": {
+    "title": "Document title",
+    "category": "Category",
+    "file": "File",
+    "versions": "Versions"
+  },
+  "create": {
+    "title": "New document",
+    "submit": "Save document"
+  },
+  "created": "Document saved",
+  "download": "Download",
+  "uploading": "Uploading file…",
+  "tooLarge": "The file is larger than 5 MB.",
+  "stats": {
+    "count": "Documents"
+  }
+}

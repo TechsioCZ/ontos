@@ -1,0 +1,17 @@
+{
+  "title": "Sklad a nákupy",
+  "description": "Skladové položky, zásoby a nákupní objednávky (S05, S06).",
+  "fields": {
+    "sku": "Kód položky",
+    "name": "Název",
+    "unit": "Měrná jednotka"
+  },
+  "create": {
+    "title": "Nová skladová položka",
+    "submit": "Založit položku"
+  },
+  "created": "Položka založena",
+  "stats": {
+    "count": "Skladových položek"
+  }
+}

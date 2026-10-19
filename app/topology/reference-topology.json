@@ -26,7 +26,8 @@
       "merchandise",
       "sales-insights",
       "siampark-billing-finance",
-      "siampark-relationships"
+      "siampark-relationships",
+      "siampark-ops"
     ],
     "authentication": {
       "kind": "shell-core-capability",
@@ -112,6 +113,11 @@
           "id": "merchandise",
           "name": "verticalMerchandise",
           "manifestUrl": "http://localhost:4123/mf-manifest.json"
+        },
+        {
+          "id": "siampark-ops",
+          "name": "verticalSiamparkOps",
+          "manifestUrl": "http://localhost:4126/mf-manifest.json"
         },
         {
           "id": "sales-insights",
@@ -6175,6 +6181,294 @@
         "blastRadius": {
           "tier": "tier-2-vertical",
           "references": ["docs/super-app-rfc-adr/blast-radius.md#merchandise"]
+        }
+      }
+    },
+    {
+      "id": "siampark-ops",
+      "kind": "vertical",
+      "domain": "siampark-ops",
+      "package": "@app/siampark-ops",
+      "path": "verticals/siampark-ops",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalSiamparkOps",
+        "manifestUrl": "http://localhost:4126/mf-manifest.json",
+        "exposes": ["./Route", "./Widget"],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalSiamparkOpsBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/siampark-ops",
+          "packageName": "@app/siampark-ops",
+          "version": "0.1.0",
+          "buildMarker": "5af5cbe964140fbe",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/siampark-ops/shared/api.ts",
+            "runtime": "verticals/siampark-ops/api/index.ts",
+            "client": "verticals/siampark-ops/src/api/siampark-ops-client.ts",
+            "openapi": "/siampark-ops-api/openapi.json",
+            "readiness": "/siampark-ops-api/siampark-ops/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/siampark-ops",
+          "ui": {
+            "manifestEnv": "VERTICAL_SIAMPARK_OPS_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4126/mf-manifest.json",
+            "buildMarker": "verticals/siampark-ops/src/routes/ultramodern-route-metadata.ts"
+          },
+          "api": {
+            "readiness": "/siampark-ops-api/siampark-ops/readiness",
+            "buildMarker": "verticals/siampark-ops/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_OPS"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-siampark-ops",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_OPS",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_SIAMPARK_OPS_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_SIAMPARK_OPS_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_SIAMPARK_OPS_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_SIAMPARK_OPS_WORKER",
+              "serviceBindingEnv": "VERTICAL_SIAMPARK_OPS_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_OPS_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_OPS_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalSiamparkOpsBackend",
+            "manifestEnv": "VERTICAL_SIAMPARK_OPS_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4126/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4126/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/siampark-ops",
+              "buildMarker": "5af5cbe964140fbe"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/siampark-ops",
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/siampark-ops",
+        "packageName": "@app/siampark-ops",
+        "version": "0.1.0",
+        "buildMarker": "5af5cbe964140fbe",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/siampark-ops-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/siampark-ops/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/siampark-ops/src/api/siampark-ops-client.ts"
+        },
+        "serverEntry": "verticals/siampark-ops/api/index.ts",
+        "basePath": "/siampark-ops-api/siampark-ops",
+        "consumedBy": ["shell-super-app", "siampark-ops"],
+        "readiness": {
+          "endpoint": "/siampark-ops/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listSiamparkOps",
+            "method": "GET",
+            "path": "/siampark-ops",
+            "resource": "workspace-items",
+            "owner": "siampark-ops"
+          },
+          "workspaceDetail": {
+            "client": "getSiamparkOps",
+            "method": "GET",
+            "path": "/siampark-ops/:id",
+            "resource": "workspace-item",
+            "owner": "siampark-ops"
+          },
+          "workspaceCreate": {
+            "client": "createSiamparkOps",
+            "method": "POST",
+            "path": "/siampark-ops",
+            "resource": "siampark-ops",
+            "owner": "siampark-ops"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-siampark-ops",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_OPS",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/siampark-ops.json",
+          "apiReadiness": "/siampark-ops-api/siampark-ops/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "http:", "blob:"],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "siampark-ops-readiness-smoke",
+            "route": "/siampark-ops-api/siampark-ops/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/siampark-ops.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#siampark-ops",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-ops"]
         }
       }
     },

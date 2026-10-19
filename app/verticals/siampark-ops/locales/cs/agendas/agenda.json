@@ -1,0 +1,27 @@
+{
+  "title": "Moje agenda",
+  "description": "Kalendář termínů, revizí a připomínek (S13).",
+  "fields": {
+    "title": "Název",
+    "date": "Datum",
+    "kind": "Druh"
+  },
+  "kind": {
+    "DEADLINE": "Termín",
+    "INSPECTION": "Revize",
+    "MEETING": "Schůzka",
+    "REMINDER": "Připomínka"
+  },
+  "create": {
+    "title": "Nová událost",
+    "submit": "Uložit událost"
+  },
+  "created": "Událost uložena",
+  "stats": {
+    "count": "Událostí"
+  },
+  "overview": {
+    "title": "Přehled provozu",
+    "description": "Souhrn agend provozu areálu, vyhledávání a export (S15)."
+  }
+}

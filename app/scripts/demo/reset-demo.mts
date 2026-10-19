@@ -28,6 +28,7 @@ const SALES_DEMO_OWNERS = [
   'sales-pipeline',
   'siampark-billing-finance',
   'siampark-work',
+  'siampark-ops',
 ] as const;
 
 const ownerScript = (owner: (typeof SALES_DEMO_OWNERS)[number]) => `verticals/${owner}/scripts/reset-demo.mts`;

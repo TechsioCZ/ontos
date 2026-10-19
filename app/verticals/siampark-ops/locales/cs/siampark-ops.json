@@ -1,0 +1,68 @@
+{
+  "siampark-ops": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Provoz areálu Siampark: majetek, měřidla, bezpečnost, dokumenty, agenda a nákupy."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Modul Siampark provoz je nedostupný",
+    "role": "siampark-ops",
+    "routeSurface": "Provoz areálu Siampark.",
+    "title": "Siampark provoz",
+    "widgetBody": "Provoz areálu Siampark.",
+    "common": {
+      "new": "Nový záznam",
+      "save": "Uložit",
+      "saving": "Ukládám…",
+      "cancel": "Zrušit",
+      "close": "Zavřít",
+      "retry": "Zkusit znovu",
+      "loading": "Načítám…",
+      "noData": "bez dat",
+      "notProvided": "údaj neposkytnut",
+      "createdAt": "Vytvořeno",
+      "createdBy": "Vytvořil",
+      "updatedAt": "Změněno",
+      "location": "Umístění",
+      "locationPlaceholder": "Budova, jednotka nebo zařízení",
+      "note": "Poznámka",
+      "simulation": "Simulace",
+      "demo": "DEMO",
+      "readOnly": "Jen pro čtení",
+      "revision": "Revize {{revision}}",
+      "required": "Vyplňte toto pole.",
+      "saved": "Uloženo",
+      "you": "vy",
+      "states": {
+        "errorTitle": "Data se nepodařilo načíst.",
+        "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
+        "forbiddenTitle": "K této agendě nemáte oprávnění.",
+        "forbiddenDescription": "Údaje této agendy jsou dostupné jen interním rolím Siamparku.",
+        "emptyTitle": "Zatím tu nejsou žádné záznamy.",
+        "emptyDescription": "Založte první záznam."
+      },
+      "errors": {
+        "conflict": "Záznam mezitím upravil někdo jiný. Data jsme načetli znovu, změnu zopakujte.",
+        "forbidden": "Na tuto změnu nemáte oprávnění.",
+        "invalid": "Zkontrolujte zadané hodnoty.",
+        "rejected": "Změnu nelze v aktuálním stavu provést.",
+        "unavailable": "Služba je dočasně nedostupná. Zkuste to znovu."
+      }
+    },
+    "property": {
+      "property": "Nemovitost",
+      "unit": "Jednotka",
+      "asset": "Zařízení",
+      "none": "Bez vazby",
+      "loadFailed": "Seznam nemovitostí se nepodařilo načíst.",
+      "pick": "Vyberte nemovitost nebo jednotku"
+    }
+  }
+}

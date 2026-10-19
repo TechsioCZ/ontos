@@ -1,0 +1,17 @@
+{
+  "title": "Bezpečnostní zařízení",
+  "description": "Evidence bezpečnostních zařízení a termínů revizí (S11).",
+  "fields": {
+    "name": "Název",
+    "deviceType": "Typ zařízení",
+    "nextInspectionDate": "Příští revize"
+  },
+  "create": {
+    "title": "Nové zařízení",
+    "submit": "Založit zařízení"
+  },
+  "created": "Zařízení založeno",
+  "stats": {
+    "count": "Zařízení"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "title": "Dokumenty",
+  "description": "Smlouvy, revize a další dokumenty s verzemi a komentáři (S12, S14).",
+  "fields": {
+    "title": "Název dokumentu",
+    "category": "Kategorie",
+    "file": "Soubor",
+    "versions": "Verze"
+  },
+  "create": {
+    "title": "Nový dokument",
+    "submit": "Uložit dokument"
+  },
+  "created": "Dokument uložen",
+  "download": "Stáhnout",
+  "uploading": "Nahrávám soubor…",
+  "tooLarge": "Soubor je větší než 5 MB.",
+  "stats": {
+    "count": "Dokumentů"
+  }
+}

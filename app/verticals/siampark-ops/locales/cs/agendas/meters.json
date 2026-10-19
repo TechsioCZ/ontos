@@ -1,0 +1,23 @@
+{
+  "title": "Měřidla a energie",
+  "description": "Měřidla médií, odečty a spotřeba energií (S04).",
+  "fields": {
+    "serialNumber": "Výrobní číslo",
+    "medium": "Médium",
+    "unit": "Jednotka"
+  },
+  "medium": {
+    "ELECTRICITY": "Elektřina",
+    "WATER": "Voda",
+    "GAS": "Plyn",
+    "HEAT": "Teplo"
+  },
+  "create": {
+    "title": "Nové měřidlo",
+    "submit": "Založit měřidlo"
+  },
+  "created": "Měřidlo založeno",
+  "stats": {
+    "count": "Měřidel"
+  }
+}

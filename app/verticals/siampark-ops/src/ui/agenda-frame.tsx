@@ -1,0 +1,73 @@
+// Page frame shared by all Siampark provoz pages (owned by ops-scaffold).
+import { EmptyState, Toaster } from '@app/admin-ui';
+import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import type { ReactNode } from 'react';
+import { siamparkOpsI18nResources } from '../i18n/resources.ts';
+import type { LoadStatus } from './use-agenda.ts';
+import '../routes/index.css';
+
+/** i18n boundary + one Toaster per page tree (the shell mounts none, ui-kit's toast store is per remote). */
+export const AgendaFrame = ({ children }: { readonly children: ReactNode }) => (
+  <FederatedI18nBoundary
+    defaultNamespace="siampark-ops"
+    fallbackLanguage="en"
+    resources={siamparkOpsI18nResources}
+    supportedLanguages={['en', 'cs']}
+  >
+    <Toaster />
+    <div className="flex flex-col gap-300">{children}</div>
+  </FederatedI18nBoundary>
+);
+
+/** Visible marker for simulated features (brief: be truthful in the UI). */
+export const SimulationBadge = () => {
+  const { t } = useModernI18n();
+  return (
+    <Badge size="sm" variant="warning">
+      {t('siampark-ops.common.simulation')}
+    </Badge>
+  );
+};
+
+/** Loading / forbidden / error gate. Renders children only when data is ready. */
+export const AgendaGate = ({
+  children,
+  onRetry,
+  readable,
+  status,
+}: {
+  readonly children: ReactNode;
+  readonly onRetry: () => void;
+  /** `false` when the server returned no state for this agenda (no read permission). */
+  readonly readable: boolean;
+  readonly status: LoadStatus;
+}) => {
+  const { t } = useModernI18n();
+  if (status === 'loading') {
+    return <p className="text-fg-secondary text-sm">{t('siampark-ops.common.loading')}</p>;
+  }
+  if (status === 'forbidden' || (status === 'ready' && !readable)) {
+    return (
+      <EmptyState
+        description={t('siampark-ops.common.states.forbiddenDescription')}
+        title={t('siampark-ops.common.states.forbiddenTitle')}
+      />
+    );
+  }
+  if (status === 'error') {
+    return (
+      <EmptyState
+        action={
+          <Button onClick={onRetry} size="sm" theme="outlined" variant="secondary">
+            {t('siampark-ops.common.retry')}
+          </Button>
+        }
+        description={t('siampark-ops.common.states.errorDescription')}
+        title={t('siampark-ops.common.states.errorTitle')}
+      />
+    );
+  }
+  return <>{children}</>;
+};

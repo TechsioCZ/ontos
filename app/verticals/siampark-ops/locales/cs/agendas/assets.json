@@ -1,0 +1,17 @@
+{
+  "title": "Majetek",
+  "description": "Evidence majetku areálu, inventární čísla, umístění a hodnoty (S02, S03).",
+  "fields": {
+    "inventoryNumber": "Inventární číslo",
+    "name": "Název",
+    "category": "Kategorie"
+  },
+  "create": {
+    "title": "Nový majetek",
+    "submit": "Založit majetek"
+  },
+  "created": "Majetek založen",
+  "stats": {
+    "count": "Položek majetku"
+  }
+}

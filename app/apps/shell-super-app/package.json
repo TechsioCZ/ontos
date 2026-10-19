@@ -45,6 +45,7 @@
     "@app/tagging": "workspace:*",
     "@app/sales-pipeline": "workspace:*",
     "@app/merchandise": "workspace:*",
+    "@app/siampark-ops": "workspace:*",
     "@app/sales-insights": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@better-auth/api-key": "1.7.6",
@@ -119,6 +120,7 @@
     "tagging": "@app/tagging@workspace:*",
     "salesPipeline": "@app/sales-pipeline@workspace:*",
     "merchandise": "@app/merchandise@workspace:*",
+    "siamparkOps": "@app/siampark-ops@workspace:*",
     "salesInsights": "@app/sales-insights@workspace:*",
     "siamparkBillingFinance": "@app/siampark-billing-finance@workspace:*",
     "siamparkRelationships": "@app/siampark-relationships@workspace:*"

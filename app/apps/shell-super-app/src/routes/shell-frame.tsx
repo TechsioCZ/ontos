@@ -315,6 +315,62 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
     key: 'operations',
   },
   {
+    // Siampark provoz (demo.siampark-ops): one destination per agenda; restricted agendas are listed only with read_all.
+    icon: 'icon-[mdi--home-city-outline]',
+    items: [
+      {
+        entrypoints: ['demo.siampark-ops.page.overview'],
+        hrefs: ['/siampark/provoz/prehled'],
+        icon: 'icon-[mdi--view-dashboard-variant-outline]',
+        key: 'opsOverview',
+        moduleId: 'demo.siampark-ops',
+      },
+      {
+        entrypoints: ['demo.siampark-ops.page.agenda'],
+        hrefs: ['/siampark/provoz/agenda'],
+        icon: 'icon-[mdi--calendar-account-outline]',
+        key: 'opsAgenda',
+        moduleId: 'demo.siampark-ops',
+      },
+      {
+        entrypoints: ['demo.siampark-ops.page.assets'],
+        hrefs: ['/siampark/provoz/majetek'],
+        icon: 'icon-[mdi--archive-outline]',
+        key: 'opsAssets',
+        moduleId: 'demo.siampark-ops',
+      },
+      {
+        entrypoints: ['demo.siampark-ops.page.meters'],
+        hrefs: ['/siampark/provoz/meridla'],
+        icon: 'icon-[mdi--gauge]',
+        key: 'opsMeters',
+        moduleId: 'demo.siampark-ops',
+      },
+      {
+        entrypoints: ['demo.siampark-ops.page.purchasing'],
+        hrefs: ['/siampark/provoz/nakupy'],
+        icon: 'icon-[mdi--truck-delivery-outline]',
+        key: 'opsPurchasing',
+        moduleId: 'demo.siampark-ops',
+      },
+      {
+        entrypoints: ['demo.siampark-ops.page.security'],
+        hrefs: ['/siampark/provoz/bezpecnost'],
+        icon: 'icon-[mdi--shield-check-outline]',
+        key: 'opsSecurity',
+        moduleId: 'demo.siampark-ops',
+      },
+      {
+        entrypoints: ['demo.siampark-ops.page.documents'],
+        hrefs: ['/siampark/provoz/dokumenty'],
+        icon: 'icon-[mdi--folder-file-outline]',
+        key: 'opsDocuments',
+        moduleId: 'demo.siampark-ops',
+      },
+    ],
+    key: 'siamparkOps',
+  },
+  {
     icon: 'icon-[mdi--chart-box-outline]',
     items: [
       {

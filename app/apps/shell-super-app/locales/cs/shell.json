@@ -63,7 +63,8 @@
           "insights": "Přehledy",
           "settings": "Nastavení",
           "other": "Další moduly",
-          "crm": "CRM"
+          "crm": "CRM",
+          "siamparkOps": "Provoz areálu"
         },
         "items": {
           "opportunities": "Příležitosti",
@@ -83,7 +84,14 @@
           "crmVisits": "Návštěvy",
           "crmImports": "Importy objednávek",
           "crmPairing": "Párování",
-          "crmReports": "Přehled prodejů"
+          "crmReports": "Přehled prodejů",
+          "opsOverview": "Přehled provozu",
+          "opsAgenda": "Moje agenda",
+          "opsAssets": "Majetek",
+          "opsMeters": "Měřidla a energie",
+          "opsPurchasing": "Sklad a nákupy",
+          "opsSecurity": "Bezpečnost",
+          "opsDocuments": "Dokumenty"
         }
       },
       "sidebar": {

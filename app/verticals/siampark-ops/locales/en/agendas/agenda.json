@@ -1,0 +1,27 @@
+{
+  "title": "My agenda",
+  "description": "Calendar of deadlines, inspections and reminders (S13).",
+  "fields": {
+    "title": "Title",
+    "date": "Date",
+    "kind": "Kind"
+  },
+  "kind": {
+    "DEADLINE": "Deadline",
+    "INSPECTION": "Inspection",
+    "MEETING": "Meeting",
+    "REMINDER": "Reminder"
+  },
+  "create": {
+    "title": "New event",
+    "submit": "Save event"
+  },
+  "created": "Event saved",
+  "stats": {
+    "count": "Events"
+  },
+  "overview": {
+    "title": "Operations overview",
+    "description": "Summary of site operation agendas, search and export (S15)."
+  }
+}

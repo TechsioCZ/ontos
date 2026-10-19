@@ -90,6 +90,7 @@ export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze([
   'sales-pipeline',
   'merchandise',
   'sales-insights',
+  'siampark-ops',
 ] as const);
 
 export interface LocalDevelopmentConfiguration {

@@ -1,0 +1,17 @@
+{
+  "title": "Stock and purchasing",
+  "description": "Stock items, inventory and purchase orders (S05, S06).",
+  "fields": {
+    "sku": "Item code",
+    "name": "Name",
+    "unit": "Unit of measure"
+  },
+  "create": {
+    "title": "New stock item",
+    "submit": "Create item"
+  },
+  "created": "Item created",
+  "stats": {
+    "count": "Stock items"
+  }
+}
