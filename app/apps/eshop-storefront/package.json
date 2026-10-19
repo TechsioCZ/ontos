@@ -1,0 +1,26 @@
+{
+  "name": "@app/eshop-storefront",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Kavárna Doma: customer-facing DEMO storefront with a server-side BFF over OntOS (port 3060).",
+  "scripts": {
+    "dev": "rsbuild dev",
+    "build": "rsbuild build",
+    "start": "node server/server.ts",
+    "serve": "pnpm run build && node server/server.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@rsbuild/core": "2.2.9",
+    "@rsbuild/plugin-react": "2.1.0",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "typescript": "7.0.2"
+  }
+}

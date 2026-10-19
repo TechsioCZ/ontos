@@ -414,6 +414,34 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
+  apps/eshop-storefront:
+    dependencies:
+      react:
+        specifier: 19.2.8
+        version: 19.2.8
+      react-dom:
+        specifier: 19.2.8
+        version: 19.2.8(react@19.2.8)
+    devDependencies:
+      '@rsbuild/core':
+        specifier: 2.2.9
+        version: 2.2.9(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)
+      '@rsbuild/plugin-react':
+        specifier: 2.1.0
+        version: 2.1.0(@rsbuild/core@2.2.9(core-js@3.50.0))(@rspack/core@2.2.8(@swc/helpers@0.5.23))
+      '@types/node':
+        specifier: ^26.4.1
+        version: 26.6.3
+      '@types/react':
+        specifier: ^19.2.18
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.2.7
+        version: 19.3.0(@types/react@19.3.0)
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   apps/shell-super-app:
     dependencies:
       '@app/assortment':
