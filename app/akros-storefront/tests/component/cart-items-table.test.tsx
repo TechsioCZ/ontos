@@ -101,7 +101,7 @@ describe("checkout cart quantity", () => {
     await waitFor(() => expect(storedQuantity()).toBe(2010));
     await user.click(screen.getByRole("button", { name: "Snížit množství: Vrut" }));
     await waitFor(() => expect(storedQuantity()).toBe(2000));
-    expect(screen.getByDisplayValue(/^2\s000$/)).toBe(input);
+    expect(await screen.findByDisplayValue(/^2\s000$/)).toBe(input);
   });
 
   it("lets a shopper type a multi-digit quantity without clamping the first digit", async () => {

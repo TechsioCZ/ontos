@@ -104,7 +104,7 @@ export function MiniCart() {
           aria-expanded={open}
           aria-haspopup="dialog"
           aria-label={triggerLabel}
-          className="akros-header__cart-trigger inline-flex h-(--akros-header-control-height) w-(--akros-header-cart-width) shrink-0 cursor-pointer items-center justify-center gap-5 rounded-sm border-0 bg-(--color-primary) px-4 text-(--color-fg-primary) hover:bg-(--color-primary-hover) data-[state=open]:bg-(--color-primary-hover) max-lg:w-16 max-lg:px-2"
+          className="akros-header__cart-trigger w-(--akros-header-cart-width) shrink-0 max-lg:w-16"
           data-state={open ? "open" : "closed"}
           href="/kosik"
           id={`${id}-trigger`}
@@ -120,8 +120,8 @@ export function MiniCart() {
           }}
           onPointerLeave={scheduleClose}
           ref={triggerRef}
-          size="current"
-          theme="unstyled"
+          size="sm"
+          variant="primary"
         >
           <strong className="shrink-0 whitespace-nowrap text-md leading-tight font-medium uppercase max-lg:hidden">
             {formatPrice(subtotal)}
@@ -140,7 +140,8 @@ export function MiniCart() {
 
       <Popover.Positioner className="z-70 max-w-[calc(100vw-var(--dimension-32))]">
         <Popover.Content
-          className="max-h-[min(70vh,540px)] w-[min(var(--dimension-container-3xl),calc(100vw-var(--dimension-32)))] overflow-y-auto rounded-sm bg-(--color-primary) text-(--color-fg-primary) shadow-md [--padding-popover-md:0px] max-md:w-[calc(100vw-var(--dimension-32))]"
+          data-akros-mini-cart
+          className="max-h-[min(70vh,540px)] w-[min(var(--dimension-container-3xl),calc(100vw-var(--dimension-32)))] overflow-y-auto shadow-md max-md:w-[calc(100vw-var(--dimension-32))]"
           onBlur={(event) => {
             if (
               !event.currentTarget.contains(event.relatedTarget) &&

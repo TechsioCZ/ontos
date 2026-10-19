@@ -1,0 +1,5 @@
+[data-akros-mini-cart] {
+  --color-popover-bg: var(--color-primary);
+  --color-popover-fg: var(--color-fg-primary);
+  --padding-popover-md: var(--dimension-0);
+}

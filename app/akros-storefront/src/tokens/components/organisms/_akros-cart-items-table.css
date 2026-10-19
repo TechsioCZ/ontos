@@ -40,8 +40,20 @@
 }
 
 [data-akros-cart-quantity] {
+  --color-form-control-bg: var(--color-transparent);
+  --color-numeric-input-input-bg-hover: var(--color-transparent);
+  --color-numeric-input-input-bg-focus: var(--color-transparent);
   --akros-cart-control-width: calc(
     max(58px, var(--akros-cart-quantity-characters, 2) * 1ch + var(--dimension-16)) +
       var(--akros-cart-trigger-width) * 2 + var(--akros-cart-control-gap) * 2
   );
+}
+
+[data-akros-cart-quantity] [data-part="input"] {
+  --color-numeric-input-input-bg: var(--color-base);
+  --color-numeric-input-input-bg-hover: var(--color-base);
+  --color-numeric-input-input-bg-focus: var(--color-base);
+  --font-weight-input: var(--font-weight-bold);
+  --padding-input-md: var(--spacing-150) var(--dimension-4);
+  --padding-numeric-input-input-sm: var(--dimension-4);
 }

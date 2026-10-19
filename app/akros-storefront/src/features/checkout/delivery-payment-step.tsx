@@ -196,7 +196,8 @@ export function DeliveryPaymentStep() {
           href="/kosik"
           variant="secondary"
           size="sm"
-          className="leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
+          data-akros-checkout-action
+          className="leading-(--akros-checkout-heading-leading)"
           uppercase
         >
           Vrátit se o krok zpět
@@ -205,7 +206,8 @@ export function DeliveryPaymentStep() {
           type="submit"
           variant="primary"
           size="sm"
-          className="leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
+          data-akros-checkout-action
+          className="leading-(--akros-checkout-heading-leading)"
           uppercase
         >
           Dodací údaje

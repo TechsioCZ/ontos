@@ -55,6 +55,21 @@ Footer social icons in `src/icons/akros/` are original SVG exports from Figma no
 The Iconify Tailwind plugin loads them as the local `akros` collection, used through the
 UI-kit `Icon` component. Keep their paths, view boxes and internal padding from the design.
 
+With the storefront running, `npm run test:theme` checks that carousel dots and controls,
+product CTA weights, the mini-cart trigger and portalled preview, checkout actions and cart
+quantity inputs respond to their UI-kit tokens. It also checks the quantity input's hover/focus
+surfaces. Run it alongside the responsive, account and typography browser suites when changing
+token mappings; these browser checks are separate from `npm run check`.
+
+Keep remaining appearance utilities tied to a verified kit limitation. In UI kit `0.56.1`,
+ProductCard uses a static `shadow-sm`, so its app shadow still needs an explicit variable utility.
+Popover's shadow alias is also resolved during compilation, so the mini-cart keeps `shadow-md`.
+NumericInput hardcodes a borderless, square input and a transparent trigger; the cart's separate
+input border/radius and trigger surface still need slot utilities. Button has a font-weight token
+but no component line-height token, so checkout actions retain their line-height utility.
+Colors, input padding and font weights use scoped kit tokens. Layout and runtime measurements
+(such as the quantity's character count) remain app composition.
+
 ## Prototype boundary
 
 `/muj-ucet` presents the Figma profile form. Changes are stored locally under

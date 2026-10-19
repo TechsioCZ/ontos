@@ -51,7 +51,7 @@ export function CartNavigation() {
         href="/"
         variant="secondary"
         size="sm"
-        className="w-full font-bold sm:w-(--akros-checkout-back-width)"
+        className="w-full sm:w-(--akros-checkout-back-width)"
         uppercase
       >
         Zpět do obchodu
@@ -61,7 +61,7 @@ export function CartNavigation() {
         href="/kosik/doprava-platba"
         variant="primary"
         size="sm"
-        className="w-full font-bold sm:w-(--akros-checkout-continue-width)"
+        className="w-full sm:w-(--akros-checkout-continue-width)"
         uppercase
       >
         Vybrat dopravu a platbu

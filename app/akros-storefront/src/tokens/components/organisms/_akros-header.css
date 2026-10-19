@@ -21,6 +21,23 @@
   --color-button-fg-secondary-borderless: var(--color-fg-primary);
 }
 
+.akros-header__cart-trigger {
+  --height-form-control-sm: var(--akros-header-control-height);
+  --padding-button-sm: var(--dimension-0) var(--dimension-16);
+  --radius-button-sm: var(--radius-sm);
+  --spacing-button-sm: var(--dimension-20);
+  --text-button-sm: var(--text-base);
+  --color-button-bg-primary-base: var(--color-primary);
+  --color-button-bg-primary-hover: var(--color-primary-hover);
+  --color-button-bg-primary-active: var(--color-primary);
+  --color-button-fg-primary: var(--color-fg-primary);
+}
+
+.akros-header__cart-trigger[data-state="open"] {
+  --color-button-bg-primary-base: var(--color-button-bg-primary-hover);
+  --color-button-bg-primary-active: var(--color-button-bg-primary-hover);
+}
+
 [data-akros-mobile-menu] {
   --color-drawer-content-bg: var(--color-base);
   --padding-drawer-header: var(--dimension-16);
@@ -180,5 +197,6 @@
 
   .akros-header__cart-trigger {
     --text-icon-2xl: var(--text-xl);
+    --padding-button-sm: var(--dimension-0) var(--dimension-8);
   }
 }

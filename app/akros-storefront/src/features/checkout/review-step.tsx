@@ -116,7 +116,8 @@ export function ReviewStep() {
         <LinkButton
           as={NextLink}
           href="/kosik/dodaci-udaje"
-          className="leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
+          data-akros-checkout-action
+          className="leading-(--akros-checkout-heading-leading)"
           variant="secondary"
           size="sm"
           uppercase
@@ -126,7 +127,8 @@ export function ReviewStep() {
         <div className="grid max-w-sm gap-3">
           <Button
             type="submit"
-            className="leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
+            data-akros-checkout-action
+            className="leading-(--akros-checkout-heading-leading)"
             variant="primary"
             size="sm"
             uppercase

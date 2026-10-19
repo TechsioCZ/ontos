@@ -268,8 +268,7 @@
 }
 
 .akros-option-list__heading strong,
-.akros-free-shipping span,
-.akros-discount {
+.akros-free-shipping span {
   color: var(--color-fg-accent-danger);
 }
 
@@ -611,44 +610,6 @@
   display: grid;
   justify-items: start;
   gap: 20px;
-}
-
-.akros-countdown {
-  display: grid;
-  gap: 20px;
-  border-radius: var(--akros-radius-lg);
-  padding: 28px;
-  background: var(--color-base);
-  color: var(--color-fg-primary);
-}
-
-.akros-countdown > strong {
-  font-size: 12px;
-}
-
-.akros-countdown > div {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-}
-
-.akros-countdown span {
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  color: var(--color-fg-secondary);
-  font-size: 11px;
-}
-
-.akros-countdown b {
-  color: var(--color-fg-primary);
-  font-size: 28px;
-}
-
-.akros-countdown p {
-  color: var(--color-fg-status-success);
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .akros-news-section {

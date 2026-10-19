@@ -24,7 +24,6 @@
   --akros-checkout-progress-radius: var(--dimension-4);
   --akros-checkout-progress-track: #ededed;
   --font-weight-label: var(--font-weight-medium);
-  --akros-checkout-button-weight: var(--font-weight-bold);
   --color-fill-surface: #f8f9fa;
   --color-button-bg-primary-base: #fdc533;
   --color-button-fg-primary: var(--akros-checkout-ink);
@@ -133,6 +132,10 @@
 
 [data-akros-checkout-review] {
   --font-weight-table-header: var(--font-weight-medium);
+}
+
+[data-akros-checkout-action] {
+  --font-weight-button: var(--font-weight-bold);
 }
 
 [data-akros-cart-selector],

@@ -18,7 +18,8 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
-    "test:typography": "node tests/browser/global-typography.mjs"
+    "test:typography": "node tests/browser/global-typography.mjs",
+    "test:theme": "node tests/browser/ui-kit-theme.mjs"
   },
   "dependencies": {
     "@techsio/ui-kit": "0.56.1",

@@ -63,16 +63,16 @@ function CartQuantity({ line }: { line: CartLine }) {
               ),
             } as CSSProperties
           }
-          className="w-(--akros-cart-control-width) shrink-0 gap-(--akros-cart-control-gap) border-0! bg-transparent! overflow-visible"
+          className="w-(--akros-cart-control-width) shrink-0 gap-(--akros-cart-control-gap) overflow-visible"
         >
           <NumericInput.DecrementTrigger
             aria-label={`Snížit množství: ${line.variantLabel ?? line.name}`}
-            className="h-full! w-(--akros-cart-trigger-width) flex-none justify-center rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
+            className="h-full w-(--akros-cart-trigger-width) flex-none rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
             icon="token-icon-minus"
           />
           <NumericInput.Input
             aria-label={`Množství: ${line.variantLabel ?? line.name}`}
-            className="min-w-0 flex-1 rounded-(--akros-cart-control-radius)! border-solid! border-(length:--akros-cart-value-border-width)! border-(--akros-cart-value-border-color)! bg-base! px-(--dimension-4)! text-center leading-(--akros-checkout-heading-leading) font-bold"
+            className="min-w-0 flex-1 rounded-(--akros-cart-control-radius)! border-solid! border-(length:--akros-cart-value-border-width)! border-(--akros-cart-value-border-color)! text-center leading-(--akros-checkout-heading-leading)"
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
@@ -82,7 +82,7 @@ function CartQuantity({ line }: { line: CartLine }) {
           />
           <NumericInput.IncrementTrigger
             aria-label={`Zvýšit množství: ${line.variantLabel ?? line.name}`}
-            className="h-full! w-(--akros-cart-trigger-width) flex-none justify-center rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
+            className="h-full w-(--akros-cart-trigger-width) flex-none rounded-(--akros-cart-control-radius) bg-(--akros-cart-trigger-bg)"
             icon="token-icon-plus"
           />
         </NumericInput.Control>

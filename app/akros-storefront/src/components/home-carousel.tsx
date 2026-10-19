@@ -72,22 +72,17 @@ export function HomeCarousel() {
           className="pointer-events-none absolute inset-0 items-center justify-between px-3 max-md:px-1"
           controlPosition="unset"
         >
-          <Carousel.Previous className="pointer-events-auto size-(--dimension-44) text-(length:--text-carousel-trigger) text-carousel-trigger-fg-base" />
-          <Carousel.Next className="pointer-events-auto size-(--dimension-44) text-(length:--text-carousel-trigger) text-carousel-trigger-fg-base" />
+          <Carousel.Previous className="pointer-events-auto" />
+          <Carousel.Next className="pointer-events-auto" />
         </Carousel.Control>
         <Carousel.Control className="pointer-events-none w-full">
           <Carousel.Indicators className="pointer-events-none">
             {slides.map((slide, index) => (
               <Carousel.Indicator
-                className="group pointer-events-auto flex items-center justify-center bg-transparent data-current:bg-transparent max-md:items-end max-md:pb-1"
+                className="pointer-events-auto max-md:items-end max-md:pb-1"
                 index={index}
                 key={slide.id}
-              >
-                <span
-                  aria-hidden="true"
-                  className="size-(--size-carousel-indicator) rounded-carousel-indicator bg-carousel-indicator-bg-base group-data-current:bg-carousel-indicator-bg-active"
-                />
-              </Carousel.Indicator>
+              />
             ))}
           </Carousel.Indicators>
         </Carousel.Control>

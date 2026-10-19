@@ -13,6 +13,7 @@
 
 .akros-product-card {
   --border-product-card-width: var(--dimension-0);
+  /* ProductCard's static shadow-sm needs the explicit variable utility at its callsite. */
   --shadow-sm: 0 2px 6px rgb(0 0 0 / 20%);
   /* Close to Figma's #28a745, with AA contrast for small text on white. */
   --color-product-card-stock-fg-in-stock: #218838;
@@ -28,9 +29,8 @@
   --color-badge-bg-discount: #e30400;
 }
 
-/* Button uses font-medium directly; keep this alias confined to card CTAs. */
 .akros-product-card [data-akros-product-actions] {
-  --font-weight-medium: var(--font-weight-bold);
+  --font-weight-button: var(--font-weight-bold);
 }
 
 @media (max-width: 760px) {

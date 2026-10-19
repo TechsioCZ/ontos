@@ -7,6 +7,7 @@
 /* Homepage carousel color and icon-size mappings stay scoped to its wrapper. */
 @import "../tokens/components/molecules/_akros-carousel.css";
 @import "../tokens/components/molecules/_akros-pagination.css";
+@import "../tokens/components/molecules/_akros-popover.css";
 @import "../tokens/components/molecules/_akros-product-card.css";
 @import "../tokens/components/molecules/_akros-steps.css";
 @import "../tokens/components/molecules/_akros-toast.css";
@@ -156,29 +157,6 @@ body {
   width: 100%;
 }
 
-.akros-header__quick-select {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  gap: var(--dimension-8);
-  color: var(--color-fg-primary);
-  text-decoration: none;
-}
-
-.akros-header__cart {
-  position: relative;
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-fg-primary);
-  text-decoration: none;
-}
-
-.akros-header__cart-copy {
-  display: inline-flex;
-}
-
 .akros-header__mobile-menu {
   display: none;
 }
@@ -218,9 +196,7 @@ body {
   }
 }
 
-.akros-brand:focus-visible,
-.akros-header__cart:focus-visible,
-.akros-promo-card:focus-visible {
+.akros-brand:focus-visible {
   outline: var(--default-ring-width) var(--default-ring-style) var(--color-ring);
   outline-offset: var(--default-ring-offset);
 }
@@ -320,8 +296,7 @@ body {
   gap: 8px;
 }
 
-.akros-category-heading p,
-.akros-page-heading h1 {
+.akros-category-heading p {
   margin: 0;
 }
 
@@ -365,13 +340,6 @@ body {
   border-radius: var(--akros-radius-lg);
   padding: 32px;
   background: var(--color-base);
-}
-
-.akros-empty-state--cart {
-  display: grid;
-  align-self: start;
-  justify-items: start;
-  gap: 20px;
 }
 
 .akros-product-detail {
@@ -488,11 +456,6 @@ body {
 .akros-product-detail__surface h2 {
   font-size: 28px;
   line-height: 1.15;
-}
-
-.akros-product-detail__section {
-  display: grid;
-  gap: 16px;
 }
 
 .akros-product-detail__stock {
@@ -811,141 +774,6 @@ body {
   margin: 0;
 }
 
-.akros-visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.akros-cart-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 390px;
-  gap: 32px;
-  align-items: start;
-}
-
-.akros-cart-card,
-.akros-cart-summary {
-  border-radius: 12px;
-  background: var(--color-base);
-  box-shadow: 0 1px 1px rgb(0 0 0 / 5%);
-}
-
-.akros-cart-card {
-  padding: 24px;
-}
-
-.akros-cart-table-heading,
-.akros-cart-line {
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) 120px 100px 120px 44px;
-  gap: 16px;
-  align-items: center;
-}
-
-.akros-cart-table-heading {
-  padding-bottom: 12px;
-  color: var(--color-fg-secondary);
-  font-size: 12px;
-}
-
-.akros-cart-lines {
-  display: grid;
-}
-
-.akros-cart-line {
-  grid-template-columns: 80px minmax(180px, 1fr) 120px 100px 120px 44px;
-  border-top: 1px solid var(--color-border-primary);
-  padding-block: 16px;
-}
-
-.akros-cart-line__details {
-  display: grid;
-  gap: 4px;
-}
-
-.akros-cart-line__details a {
-  color: var(--color-fg-primary);
-  text-decoration: none;
-}
-
-.akros-cart-line__details a:hover {
-  text-decoration: underline;
-}
-
-.akros-cart-line__details small {
-  color: var(--color-fg-secondary);
-  line-height: 1.4;
-}
-
-.akros-cart-line__unit-price,
-.akros-cart-line__total {
-  text-align: right;
-}
-
-.akros-cart-summary {
-  display: grid;
-  gap: 20px;
-  padding: 24px;
-}
-
-.akros-cart-summary h2,
-.akros-cart-summary p {
-  margin: 0;
-}
-
-.akros-cart-summary h2 {
-  font-size: 18px;
-}
-
-.akros-cart-summary dl {
-  display: grid;
-  gap: 12px;
-  margin: 0;
-}
-
-.akros-cart-summary dl div {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.akros-cart-summary dt,
-.akros-cart-summary dd {
-  margin: 0;
-}
-
-.akros-cart-summary dt {
-  color: var(--color-fg-secondary);
-}
-
-.akros-cart-summary dd {
-  font-weight: 600;
-}
-
-.akros-cart-summary .akros-cart-summary__total {
-  border-top: 1px solid var(--color-border-primary);
-  padding-top: 16px;
-  font-size: 18px;
-}
-
-.akros-cart-summary .akros-cart-summary__total dt,
-.akros-cart-summary .akros-cart-summary__total dd {
-  color: var(--color-fg-primary);
-  font-weight: 800;
-}
-
-.akros-cart-summary p {
-  color: var(--color-fg-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: center;
-}
-
 .akros-product-card__name-link {
   color: inherit;
   text-decoration: none;
@@ -978,7 +806,6 @@ body {
 }
 
 .akros-footer {
-  background: var(--color-base);
   box-shadow: var(--akros-footer-shadow);
 }
 
@@ -1097,7 +924,6 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: var(--dimension-24);
-  border-top: 0;
 }
 
 .akros-footer__bottom-links {
@@ -1117,8 +943,7 @@ body {
     --akros-sidebar-width: 240px;
   }
 
-  .akros-header__utility-links a:nth-child(n + 7),
-  .akros-header__quick-select {
+  .akros-header__utility-links a:nth-child(n + 7) {
     display: none;
   }
 
@@ -1134,36 +959,8 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .akros-product-detail__lead {
-    grid-template-columns: 1fr;
-  }
-
-  .akros-product-detail__sales {
-    width: 100%;
-  }
-
   .akros-category-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .akros-cart-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .akros-cart-summary {
-    width: min(100%, 520px);
-  }
-
-  .akros-cart-table-heading {
-    display: none;
-  }
-
-  .akros-cart-line {
-    grid-template-columns: 80px minmax(180px, 1fr) 120px 100px 44px;
-  }
-
-  .akros-cart-line__details {
-    grid-column: 2 / -1;
   }
 
   .akros-footer__inner {
@@ -1266,25 +1063,6 @@ body {
     --akros-section-gap: 32px;
   }
 
-  .akros-header__quick-select {
-    display: none;
-  }
-
-  .akros-header__cart-copy {
-    min-width: 20px;
-    display: inline-block;
-    border-radius: 999px;
-    background: var(--color-primary);
-    font-size: var(--text-xs);
-    font-weight: var(--font-weight-bold);
-    line-height: 20px;
-    text-align: center;
-  }
-
-  .akros-header__cart-label {
-    display: none;
-  }
-
   .akros-page-grid {
     display: block;
   }
@@ -1351,32 +1129,6 @@ body {
   .akros-variant-table__buy-button,
   .akros-variant-table__quantity-control {
     min-height: 44px;
-  }
-
-  .akros-cart-card {
-    padding: 16px;
-  }
-
-  .akros-cart-line {
-    grid-template-columns: 72px 1fr auto;
-  }
-
-  .akros-cart-line > img {
-    grid-row: span 2;
-    width: 72px;
-    height: 72px;
-  }
-
-  .akros-cart-line__details {
-    grid-column: 2 / -1;
-  }
-
-  .akros-cart-line__unit-price {
-    display: none;
-  }
-
-  .akros-cart-line__total {
-    text-align: left;
   }
 
   .akros-footer__inner {
@@ -1538,10 +1290,6 @@ body {
 
   #product-variants {
     scroll-margin-top: calc(var(--akros-header-height) + var(--dimension-16));
-  }
-
-  .akros-variant-purchase__filter-group--slider [data-part="control"] {
-    margin-inline: var(--dimension-8);
   }
 
   .akros-product-detail__purchase-row {

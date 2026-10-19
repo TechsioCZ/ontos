@@ -85,7 +85,7 @@ export function CartSelector() {
         variant="secondary"
         theme="outlined"
         size="sm"
-        className="mt-(--dimension-32) w-full leading-(--akros-checkout-heading-leading) font-bold"
+        className="mt-(--dimension-32) w-full leading-(--akros-checkout-heading-leading)"
         uppercase
         disabled={!ready}
         onClick={() => {

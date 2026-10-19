@@ -144,7 +144,8 @@ export function AddressStep() {
             theme="outlined"
             variant="secondary"
             uppercase
-            className="w-fit min-w-40 leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
+            data-akros-checkout-action
+            className="w-fit min-w-40 leading-(--akros-checkout-heading-leading)"
             aria-label={editing ? "Uložit údaje" : "Změnit fakturační údaje"}
             onClick={() => (editing ? saveBilling() : setEditing(true))}
           >
@@ -178,7 +179,8 @@ export function AddressStep() {
         <LinkButton
           as={NextLink}
           href="/kosik/doprava-platba"
-          className="leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
+          data-akros-checkout-action
+          className="leading-(--akros-checkout-heading-leading)"
           variant="secondary"
           size="sm"
           uppercase
@@ -189,7 +191,8 @@ export function AddressStep() {
           type="submit"
           variant="primary"
           size="sm"
-          className="leading-(--akros-checkout-heading-leading) font-(weight:--akros-checkout-button-weight)"
+          data-akros-checkout-action
+          className="leading-(--akros-checkout-heading-leading)"
           uppercase
         >
           Souhrn objednávky
