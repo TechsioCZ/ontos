@@ -32,6 +32,18 @@ const fixture = (initial: readonly DemoCompanyRecord[]) => {
   const calls: string[] = [];
   const modules = new Map([['siampark.agreements', 'disabled']]);
   const persistence: DemoCompanyConfigurationPersistence = {
+    createCompany: ({ legalEntityId, legalName, registrationNumber }) =>
+      Effect.sync(() => {
+        calls.push(`create:${registrationNumber}`);
+        rows.push({
+          legalEntityId,
+          legalName,
+          registrationCountry: 'CZ',
+          registrationNumber,
+          status: 'active',
+          tenantId: demoCompanyTenantId,
+        });
+      }),
     createRental: Effect.sync(() => {
       calls.push('create');
       rows.push(rental);
@@ -98,9 +110,22 @@ it.effect(
       const first = yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
       const second = yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
       expect(first.previousCompanyCount).toBe(1);
-      expect(second.previousCompanyCount).toBe(2);
-      expect(state.rows).toEqual([{ ...commercial, legalName: commercialDemoCompany.legalName }, rental]);
-      expect(state.calls).toEqual(['load', 'rename', 'create', 'modules', 'load', 'modules']);
+      expect(second.previousCompanyCount).toBe(4);
+      expect(state.rows.slice(0, 2)).toEqual([{ ...commercial, legalName: commercialDemoCompany.legalName }, rental]);
+      expect(state.rows.map((row) => row.legalName).slice(2)).toEqual([
+        'Velkoobchod Hanák s.r.o.',
+        'Kavárna Doma s.r.o.',
+      ]);
+      expect(state.calls).toEqual([
+        'load',
+        'rename',
+        'create',
+        'create:DEMO-HANAK-CRM',
+        'create:DEMO-KAVARNA-ESHOP',
+        'modules',
+        'load',
+        'modules',
+      ]);
       expect(state.modules.get('siampark.agreements')).toBe('disabled');
       expect(state.modules.get('siampark.property')).toBe('active');
       expect(second.companies).toEqual(first.companies);

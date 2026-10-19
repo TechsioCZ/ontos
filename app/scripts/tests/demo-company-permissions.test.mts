@@ -1,11 +1,27 @@
-import { toLegalEntityAccessObjectId, toModuleAccessObjectId } from '@app/core-runtime';
+import {
+  toContextPermissionAccessObjectId,
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+} from '@app/core-runtime';
 import { commercialDemoCompany, demoCompanyTenantId, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { expect, it } from 'effect-rstest';
 import { Effect, Predicate } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
 
-import { demoLegalEntityId, demoTenantId, rentalDemoLegalEntityId } from '../demo/fixture-ids.mts';
-import { demoHumanAccounts, demoPermissionRelationships } from '../demo/permissions.mts';
+import {
+  crmDemoLegalEntityId,
+  demoLegalEntityId,
+  demoTenantId,
+  eshopDemoLegalEntityId,
+  rentalDemoLegalEntityId,
+} from '../demo/fixture-ids.mts';
+import {
+  companyHumanAccounts,
+  crmPersonaPrincipalIds,
+  demoHumanAccounts,
+  demoPermissionRelationships,
+  storefrontPrincipal,
+} from '../demo/permissions.mts';
 import { ensureDemoCompanies } from '../demo/reset-permissions.mts';
 
 const companySuffix = '/demo-companies';
@@ -55,8 +71,39 @@ it('keeps the warehouse account out of the rental company and limits identity ad
   const identityAdministrators = relationships
     .filter((row) => row.resourceType === 'tenant' && row.relation === 'identity_admin')
     .map((row) => row.subjectId);
-  expect(identityAdministrators).toEqual([administrator.principalId]);
+  expect(identityAdministrators).toEqual([administrator.principalId, crmPersonaPrincipalIds.spravce]);
   expect(new Set(relationships.map((row) => JSON.stringify(row))).size).toBe(relationships.length);
+});
+
+const memberOf = (principalId: string) =>
+  relationships
+    .filter((row) => row.resourceType === 'legal_entity' && row.relation === 'member' && row.subjectId === principalId)
+    .map((row) => row.resourceId);
+const hasCrmPermission = (principalId: string, permission: string) =>
+  relationships.some(
+    (row) =>
+      row.resourceType === 'context_permission' &&
+      row.relation === 'grantee' &&
+      row.subjectId === principalId &&
+      row.resourceId ===
+        toContextPermissionAccessObjectId(demoTenantId, crmDemoLegalEntityId, { moduleId: 'demo.crm', permission }),
+  );
+
+it('keeps CRM and e-shop personas inside their own company with role-specific CRM visibility', () => {
+  for (const account of companyHumanAccounts) {
+    expect(memberOf(account.principalId)).toEqual([toLegalEntityAccessObjectId(demoTenantId, account.legalEntityId)]);
+  }
+  expect(memberOf(storefrontPrincipal.principalId)).toEqual([
+    toLegalEntityAccessObjectId(demoTenantId, eshopDemoLegalEntityId),
+  ]);
+  expect(hasModule(crmPersonaPrincipalIds.repA, crmDemoLegalEntityId, 'demo.crm')).toBe(true);
+  expect(hasModule(crmPersonaPrincipalIds.repA, crmDemoLegalEntityId, 'party.registry')).toBe(false);
+  expect(hasModule(storefrontPrincipal.principalId, eshopDemoLegalEntityId, 'demo.merchandise')).toBe(true);
+  expect(hasModule(storefrontPrincipal.principalId, eshopDemoLegalEntityId, 'party.registry')).toBe(false);
+  expect(hasModule(administrator.principalId, crmDemoLegalEntityId, 'demo.crm')).toBe(false);
+  expect(hasCrmPermission(crmPersonaPrincipalIds.manager, 'demo.crm.read_all')).toBe(true);
+  expect(hasCrmPermission(crmPersonaPrincipalIds.repA, 'demo.crm.read_all')).toBe(false);
+  expect(hasCrmPermission(crmPersonaPrincipalIds.repB, 'demo.crm.read_assigned')).toBe(true);
 });
 
 it.effect('defers company setup while the demo shell is offline, then uses its audited Core Action', () =>

@@ -22,8 +22,13 @@ import { randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
 import { hashPassword } from 'better-auth/crypto';
-import { commercialDemoCompany, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
-import { eq } from 'drizzle-orm';
+import {
+  additionalDemoCompanies,
+  commercialDemoCompany,
+  demoCompanyTenantId,
+  rentalDemoCompany,
+} from '@app/core-runtime/demo-company-profiles';
+import { inArray } from 'drizzle-orm';
 import {
   Config,
   ConfigProvider,
@@ -43,14 +48,20 @@ import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResp
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { principals } from '../../packages/core-runtime/src/db/schema.ts';
+import { legalEntities, principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { account, apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
-import { demoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { agentBotPrincipal, demoHumanAccounts, demoPermissionRelationships } from './permissions.mts';
+import { demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
+import {
+  agentBotPrincipal,
+  companyHumanAccounts,
+  demoHumanAccounts,
+  demoPermissionRelationships,
+  storefrontPrincipal,
+} from './permissions.mts';
 
 class DemoPermissionsError extends Schema.TaggedError<DemoPermissionsError>()('DemoPermissionsError', {
   reason: Schema.String,
@@ -61,6 +72,14 @@ const demoPassword = Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefa
 const ENV_FILE = '.env.demo.local';
 const readinessTimeout = '10 seconds';
 const BOT_KEY_AUDIENCE = 'siampark-work';
+/** The storefront BFF exchanges its key for merchandise gateway assertions in the e-shop company. */
+const STOREFRONT_KEY_AUDIENCE = 'merchandise';
+/** Every human account: the Obchodní firma / Siampark accounts plus the CRM and e-shop company personas. */
+const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts] as const;
+/** `demo.crm` is tenant-activated here so the CRM company works whatever the Siampark reset lists. */
+const crmModuleState = { moduleId: 'demo.crm', stateId: '78000000-0000-4000-8000-000000000201' } as const;
+/** Managed API keys that run unlimited (each request exchanges the key for a single-use gateway assertion). */
+const unlimitedKeyNames = [agentBotPrincipal.displayName, storefrontPrincipal.displayName];
 const SECURE_COOKIE_PREFIX = '__Secure-';
 const [headOfSales] = demoHumanAccounts;
 
@@ -84,7 +103,22 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
   });
   yield* executor.transaction((transaction) =>
     Effect.gen(function* writeIdentityRows() {
-      for (const row of demoHumanAccounts) {
+      // The CRM and e-shop companies exist before their personas' grants; the audited Core Action
+      // (`core.identity.configure-demo-companies`) creates the same rows when the shell is newer than this script.
+      for (const company of additionalDemoCompanies) {
+        yield* transaction
+          .insert(legalEntities)
+          .values({
+            legalEntityId: company.legalEntityId,
+            legalName: company.legalName,
+            registrationCountry: 'CZ',
+            registrationNumber: company.registrationNumber,
+            status: 'active',
+            tenantId: demoCompanyTenantId,
+          })
+          .onConflictDoNothing();
+      }
+      for (const row of allHumanAccounts) {
         yield* transaction
           .insert(user)
           .values({ banned: false, email: row.email, emailVerified: true, id: row.authUserId, name: row.displayName })
@@ -114,6 +148,16 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
           tenantId: demoTenantId,
         })
         .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
+      yield* transaction
+        .insert(principals)
+        .values({
+          displayName: storefrontPrincipal.displayName,
+          kind: storefrontPrincipal.kind,
+          principalId: storefrontPrincipal.principalId,
+          status: 'active',
+          tenantId: demoTenantId,
+        })
+        .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
     }),
   );
 });
@@ -127,9 +171,11 @@ const liftBotKeyRateLimit = Effect.gen(function* liftBotKeyRateLimit() {
   const lifted = yield* executor
     .update(apikey)
     .set({ rateLimitEnabled: false, requestCount: 0 })
-    .where(eq(apikey.name, agentBotPrincipal.displayName))
+    .where(inArray(apikey.name, unlimitedKeyNames))
     .returning({ id: apikey.id });
-  return yield* Console.log(`sales-demo permissions: rate limit lifted on ${lifted.length} agent-bot API key(s)`);
+  return yield* Console.log(
+    `sales-demo permissions: rate limit lifted on ${lifted.length} agent-bot/storefront API key(s)`,
+  );
 });
 
 const Text = Schema.String;
@@ -180,7 +226,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
   const actions = yield* discoverCurrentActions(root);
   const relationships = demoPermissionRelationships(actions);
   const fixture = yield* Schema.encodeEffect(Schema.fromJsonString(ContextFixtureSchema))({
-    accounts: demoHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({
+    accounts: allHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({
       authBindingId,
       authUserId,
       displayName,
@@ -192,7 +238,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
       registrationCountry: 'CZ',
       registrationNumber: 'DEMO-SIAMPARK',
     },
-    modules: [],
+    modules: [crmModuleState],
     relationships,
     tenant: { defaultLocale: 'cs', displayName: 'Siampark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
   });
@@ -217,7 +263,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
     return yield* fail('Core development bootstrap port failed');
   }
   return yield* Console.log(
-    `sales-demo permissions: ${demoHumanAccounts.length} accounts + agent-bot, ${relationships.length} relationships over ${actions.length} Actions`,
+    `sales-demo permissions: ${allHumanAccounts.length} accounts + agent-bot + storefront, ${relationships.length} relationships over ${actions.length} Actions`,
   );
 });
 
@@ -260,11 +306,19 @@ const compositionRevision = (url: string) =>
     return composition.revision;
   }).pipe(Effect.option);
 
-const keyWorks = (shellUrl: string, apiKey: Redacted.Redacted, revision: string) =>
+const keyWorks = (
+  shellUrl: string,
+  apiKey: Redacted.Redacted,
+  revision: string,
+  target: { readonly audience: string; readonly legalEntityId: string } = {
+    audience: BOT_KEY_AUDIENCE,
+    legalEntityId: demoLegalEntityId,
+  },
+) =>
   postJson(
     `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,
     GatewayBodySchema,
-    { audience: BOT_KEY_AUDIENCE, compositionRevision: revision, legalEntityId: demoLegalEntityId },
+    { audience: target.audience, compositionRevision: revision, legalEntityId: target.legalEntityId },
     { 'x-api-key': Redacted.value(apiKey) },
   ).pipe(
     Effect.map(({ status }) => status === 200),
@@ -330,10 +384,17 @@ export const ensureDemoCompanies = Effect.fn('DemoPermissions.ensureCompanies')(
       return yield* fail('Company configuration did not return the fixed demo companies');
     }
   }
-  return yield* Console.log('sales-demo companies: Obchodní firma and Siampark configured through audited Core Action');
+  const names = companies.map((company) => company.legalName).join(', ');
+  return yield* Console.log(`sales-demo companies: ${names} configured through audited Core Action`);
 });
 
-const issueBotKey = Effect.fn('DemoPermissions.issueBotKey')(function* issueBotKey(shellUrl: string) {
+const issueBotKey = Effect.fn('DemoPermissions.issueBotKey')(function* issueBotKey(
+  shellUrl: string,
+  key: { readonly name: string; readonly principalId: string } = {
+    name: 'agent-bot',
+    principalId: agentBotPrincipal.principalId,
+  },
+) {
   const signIn = yield* postJson(
     `${shellUrl}/shell-super-app-api/auth/sign-in`,
     SignInBodySchema,
@@ -346,10 +407,10 @@ const issueBotKey = Effect.fn('DemoPermissions.issueBotKey')(function* issueBotK
   const issued = yield* postJson(
     `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
     IssueKeyBodySchema,
-    { name: 'agent-bot', principalId: agentBotPrincipal.principalId },
+    { name: key.name, principalId: key.principalId },
     {
       cookie: sessionCookieHeader(signIn.cookies),
-      'idempotency-key': `sales-demo-agent-bot-${randomUUID()}`,
+      'idempotency-key': `sales-demo-${key.name}-${randomUUID()}`,
       origin: shellUrl,
     },
   );
@@ -401,8 +462,28 @@ const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureB
       keyWorks(shellUrl, key, current).pipe(Effect.map((works) => (works ? Option.some(key) : Option.none()))),
   });
   const apiKey = yield* Option.match(reusable, { onNone: () => issueBotKey(shellUrl), onSome: Effect.succeed });
+  const storefrontTarget = { audience: STOREFRONT_KEY_AUDIENCE, legalEntityId: eshopDemoLegalEntityId };
+  const previousStorefront = Option.fromNullishOr(existing.get('ONTOS_STOREFRONT_API_KEY')).pipe(
+    Option.filter((value) => value.length > 0),
+    Option.map((value) => Redacted.make(value)),
+  );
+  const reusableStorefront = yield* Option.match(Option.all([previousStorefront, revision]), {
+    onNone: () => Effect.succeed(Option.none<Redacted.Redacted>()),
+    onSome: ([key, current]) =>
+      keyWorks(shellUrl, key, current, storefrontTarget).pipe(
+        Effect.map((works) => (works ? Option.some(key) : Option.none())),
+      ),
+  });
+  const storefrontKey = yield* Option.match(reusableStorefront, {
+    onNone: () =>
+      issueBotKey(shellUrl, { name: storefrontPrincipal.displayName, principalId: storefrontPrincipal.principalId }),
+    onSome: Effect.succeed,
+  });
   const values = new Map([
     ...existing,
+    ['ONTOS_STOREFRONT_API_KEY', Redacted.value(storefrontKey)],
+    ['ONTOS_STOREFRONT_PRINCIPAL_ID', storefrontPrincipal.principalId],
+    ['ONTOS_STOREFRONT_LEGAL_ENTITY_ID', eshopDemoLegalEntityId],
     ['ONTOS_AGENT_API_KEY', Redacted.value(apiKey)],
     ['ONTOS_SHELL_URL', shellUrl],
     ['ONTOS_LEGAL_ENTITY_ID', demoLegalEntityId],
@@ -423,7 +504,18 @@ const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureB
       ),
   });
   const outcome = Option.match(reusable, { onNone: () => 'issued', onSome: () => 'reused' });
-  return yield* Console.log(`sales-demo permissions: agent-bot API key ${outcome} -> app/${ENV_FILE} (${verified})`);
+  yield* Console.log(`sales-demo permissions: agent-bot API key ${outcome} -> app/${ENV_FILE} (${verified})`);
+  const storefrontVerified = yield* Option.match(revision, {
+    onNone: () => Effect.succeed('no composition revision'),
+    onSome: (current) =>
+      keyWorks(shellUrl, storefrontKey, current, storefrontTarget).pipe(
+        Effect.map((works) => `gateway assertion for ${STOREFRONT_KEY_AUDIENCE}: ${works ? 'ok' : 'FAILED'}`),
+      ),
+  });
+  const storefrontOutcome = Option.match(reusableStorefront, { onNone: () => 'issued', onSome: () => 'reused' });
+  return yield* Console.log(
+    `sales-demo permissions: storefront API key ${storefrontOutcome} -> app/${ENV_FILE} ONTOS_STOREFRONT_API_KEY (${storefrontVerified})`,
+  );
 });
 
 const main = (skipBot: boolean) =>

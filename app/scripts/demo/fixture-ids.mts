@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { v5 } from 'uuid';
-import { rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
+import { crmDemoCompany, eshopDemoCompany, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 
 /**
  * Fixed UUIDv5 namespace for every sales-demo fixture identity. Never change it: seeds, tests and the
@@ -12,6 +12,9 @@ export const SALES_DEMO_NAMESPACE = '5a1e5d3e-0000-5000-8000-0000000d3e70' as co
 export const demoTenantId = '70000000-0000-4000-8000-000000000020' as const;
 export const demoLegalEntityId = '71000000-0000-4000-8000-000000000020' as const;
 export const rentalDemoLegalEntityId = rentalDemoCompany.legalEntityId;
+/** CRM demo company „Velkoobchod Hanák s.r.o.“ and e-shop company „Kavárna Doma s.r.o.“ (same tenant). */
+export const crmDemoLegalEntityId = crmDemoCompany.legalEntityId;
+export const eshopDemoLegalEntityId = eshopDemoCompany.legalEntityId;
 
 /** RFC 9562 UUIDv5 of `name` inside `namespace`. */
 export const uuidV5 = (namespace: string, name: string): string => v5(name, namespace);

@@ -8,10 +8,21 @@ import {
 } from '../auth/principal-management-errors.ts';
 import { legalEntities, tenantModuleStates } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import { commercialDemoCompany, demoCompanyTenantId, rentalDemoCompany } from './demo-company-profiles.ts';
+import {
+  additionalDemoCompanies,
+  commercialDemoCompany,
+  demoCompanyTenantId,
+  rentalDemoCompany,
+} from './demo-company-profiles.ts';
 
 const rentalRegistrationNumber = 'DEMO-SIAMPARK-RENTAL';
 const commercialRegistrationNumber = 'DEMO-SIAMPARK';
+type AdditionalDemoCompany = (typeof additionalDemoCompanies)[number];
+const knownCompanyIds: ReadonlySet<string> = new Set([
+  commercialDemoCompany.legalEntityId,
+  rentalDemoCompany.legalEntityId,
+  ...additionalDemoCompanies.map((company) => company.legalEntityId),
+]);
 const companyFields = {
   legalEntityId: legalEntities.legalEntityId,
   legalName: legalEntities.legalName,
@@ -29,6 +40,7 @@ export interface DemoCompanyRecord {
   readonly tenantId: string;
 }
 export interface DemoCompanyConfigurationPersistence {
+  readonly createCompany: (company: AdditionalDemoCompany) => Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly createRental: Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly ensureModules: Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly load: Effect.Effect<readonly DemoCompanyRecord[], IdentityPersistenceUnavailableError>;
@@ -66,11 +78,14 @@ export const configureDemoCompanies = Effect.fn('DemoCompanyConfiguration.config
     commercial === undefined ||
     !validCompany(commercial, commercialDemoCompany.legalEntityId, commercialRegistrationNumber) ||
     !['Siampark DEMO s.r.o.', commercialDemoCompany.legalName].includes(commercial.legalName) ||
-    rows.some(
-      (row) =>
-        row.legalEntityId !== commercialDemoCompany.legalEntityId &&
-        row.legalEntityId !== rentalDemoCompany.legalEntityId,
-    ) ||
+    rows.some((row) => !knownCompanyIds.has(row.legalEntityId)) ||
+    additionalDemoCompanies.some((company) => {
+      const row = rows.find((candidate) => candidate.legalEntityId === company.legalEntityId);
+      return (
+        row !== undefined &&
+        (!validCompany(row, company.legalEntityId, company.registrationNumber) || row.legalName !== company.legalName)
+      );
+    }) ||
     (rental !== undefined &&
       (!validCompany(rental, rentalDemoCompany.legalEntityId, rentalRegistrationNumber) ||
         rental.legalName !== rentalDemoCompany.legalName))
@@ -86,13 +101,37 @@ export const configureDemoCompanies = Effect.fn('DemoCompanyConfiguration.config
   if (rental === undefined) {
     yield* persistence.createRental;
   }
+  for (const company of additionalDemoCompanies) {
+    if (!rows.some((row) => row.legalEntityId === company.legalEntityId)) {
+      yield* persistence.createCompany(company);
+    }
+  }
   yield* persistence.ensureModules;
-  return { companies: [commercialDemoCompany, rentalDemoCompany], previousCompanyCount: rows.length };
+  return {
+    companies: [
+      commercialDemoCompany,
+      rentalDemoCompany,
+      ...additionalDemoCompanies.map(({ legalEntityId, legalName }) => ({ legalEntityId, legalName })),
+    ],
+    previousCompanyCount: rows.length,
+  };
 });
 
 const persistenceFromTransaction = (
   transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>,
 ): DemoCompanyConfigurationPersistence => ({
+  createCompany: ({ legalEntityId, legalName, registrationNumber }) =>
+    transaction
+      .insert(legalEntities)
+      .values({
+        legalEntityId,
+        legalName,
+        registrationCountry: 'CZ',
+        registrationNumber,
+        status: 'active',
+        tenantId: demoCompanyTenantId,
+      })
+      .pipe(Effect.mapError(persistenceFailure), Effect.asVoid),
   createRental: transaction
     .insert(legalEntities)
     .values({
@@ -123,11 +162,15 @@ const persistenceFromTransaction = (
     .from(legalEntities)
     .where(
       or(
-        inArray(legalEntities.legalEntityId, [commercialDemoCompany.legalEntityId, rentalDemoCompany.legalEntityId]),
+        inArray(legalEntities.legalEntityId, [...knownCompanyIds]),
         and(
           eq(legalEntities.tenantId, demoCompanyTenantId),
           eq(legalEntities.registrationCountry, 'CZ'),
-          inArray(legalEntities.registrationNumber, [commercialRegistrationNumber, rentalRegistrationNumber]),
+          inArray(legalEntities.registrationNumber, [
+            commercialRegistrationNumber,
+            rentalRegistrationNumber,
+            ...additionalDemoCompanies.map((company) => company.registrationNumber),
+          ]),
         ),
       ),
     )

@@ -13,7 +13,14 @@ import {
 import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 import { Schema } from 'effect';
 
-import { demoId, demoLegalEntityId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
+import {
+  crmDemoLegalEntityId,
+  demoId,
+  demoLegalEntityId,
+  demoTenantId,
+  eshopDemoLegalEntityId,
+  rentalDemoLegalEntityId,
+} from './fixture-ids.mts';
 
 /**
  * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, siampark-work,
@@ -32,6 +39,7 @@ export const demoModuleIds = [
   'siampark.property',
   'siampark.occupancy',
   'siampark.agreements',
+  'demo.crm',
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
 export const ModuleAccessSchema = Schema.Literals(['read', 'write']);
@@ -74,6 +82,8 @@ const everything = {
 } as const satisfies Readonly<Partial<Record<DemoModuleId, ModuleAccess>>>;
 
 export interface DemoRole {
+  /** Extra owner-declared context permissions (e.g. `demo.crm.read_assigned`) granted on top of module access. */
+  readonly contextPermissions?: Readonly<Partial<Record<DemoModuleId, readonly string[]>>>;
   /** Tenant `identity_admin` plus the core identity Actions needed to create the bot and its API key. */
   readonly identityAdmin: boolean;
   readonly label: string;
@@ -249,7 +259,7 @@ export const principalRelationships = (
         grantContextPermission(moduleId, contextPermissionKey(moduleId, level));
       }
     }
-    for (const permission of moduleReadPermissions(moduleId)) {
+    for (const permission of [...moduleReadPermissions(moduleId), ...(role.contextPermissions?.[moduleId] ?? [])]) {
       grantContextPermission(moduleId, permission);
     }
     if (moduleId === 'party.registry') {
@@ -353,6 +363,120 @@ export const rentalPermissionRelationships = (actions: readonly DemoAction[]): r
   ...principalRelationships(agentBotPrincipal.principalId, rentalDemoRoles.agentBot, actions, rentalDemoLegalEntityId),
 ];
 
+/**
+ * CRM company „Velkoobchod Hanák s.r.o.“ (0022). `demo.crm` is not a generic read_all/write_all module: managers
+ * hold `demo.crm.read_all` + `demo.crm.write_all` + `demo.crm.assign`, sales reps only `demo.crm.read_assigned` +
+ * `demo.crm.write_assigned`, and the crm owner filters clients by the assigned principal for them.
+ */
+const crmManagerPermissions = ['demo.crm.read_all', 'demo.crm.write_all', 'demo.crm.assign'] as const;
+const crmRepPermissions = ['demo.crm.read_assigned', 'demo.crm.write_assigned'] as const;
+export const crmDemoRoles = {
+  crmAdmin: {
+    contextPermissions: { 'demo.crm': crmManagerPermissions },
+    identityAdmin: true,
+    label: 'Správce',
+    modules: {
+      'commerce.customer-context': 'write',
+      'demo.crm': 'write',
+      'demo.tagging': 'write',
+      'demo.workforce': 'write',
+      'party.registry': 'write',
+      'siampark.work': 'write',
+    },
+  },
+  crmManager: {
+    contextPermissions: { 'demo.crm': crmManagerPermissions },
+    identityAdmin: false,
+    label: 'Vedoucí obchodu',
+    modules: {
+      'commerce.customer-context': 'read',
+      'demo.crm': 'write',
+      'demo.tagging': 'read',
+      'demo.workforce': 'write',
+      'party.registry': 'read',
+      'siampark.work': 'write',
+    },
+  },
+  crmRep: {
+    contextPermissions: { 'demo.crm': crmRepPermissions },
+    identityAdmin: false,
+    label: 'Obchodník',
+    // No party.registry: its customer list is company-wide and would bypass the assigned-client filter.
+    modules: { 'demo.crm': 'write', 'demo.workforce': 'read', 'siampark.work': 'write' },
+  },
+} as const satisfies Readonly<Record<string, DemoRole>>;
+
+/** E-shop company „Kavárna Doma s.r.o.“ (0023). */
+export const eshopDemoRoles = {
+  eshopAdmin: {
+    identityAdmin: false,
+    label: 'Správce e-shopu',
+    modules: {
+      'commerce.customer-context': 'read',
+      'demo.merchandise': 'write',
+      'demo.tagging': 'read',
+      'demo.workforce': 'write',
+      'party.registry': 'write',
+      'siampark.work': 'write',
+    },
+  },
+  fulfilment: { identityAdmin: false, label: 'Expedice', modules: { 'demo.merchandise': 'write' } },
+  /** Non-human storefront BFF: merchandise reads and the apply-command Action (PlaceStorefrontOrder). */
+  storefront: { identityAdmin: false, label: 'Storefront (API)', modules: { 'demo.merchandise': 'write' } },
+} as const satisfies Readonly<Record<string, DemoRole>>;
+
+type CompanyRoleKey = keyof typeof crmDemoRoles | keyof typeof eshopDemoRoles;
+const companyRoles: Readonly<Record<CompanyRoleKey, DemoRole>> = { ...crmDemoRoles, ...eshopDemoRoles };
+
+const persona = (key: string, email: string, displayName: string, legalEntityId: string, role: CompanyRoleKey) => ({
+  authBindingId: demoId('core.auth-binding', key),
+  authUserId: `demo-${key}`,
+  displayName,
+  email,
+  legalEntityId,
+  principalId: demoId('core.principal', key),
+  role,
+});
+
+/** Human accounts of the CRM and e-shop companies (password `password1234`); each belongs to one company only. */
+export const companyHumanAccounts = [
+  persona('hanak-spravce', 'spravce@hanak.demo', 'Karel Hanák', crmDemoLegalEntityId, 'crmAdmin'),
+  persona('hanak-vedouci', 'vedouci@hanak.demo', 'Lucie Dvořáková', crmDemoLegalEntityId, 'crmManager'),
+  persona('hanak-obchodnik-a', 'obchodnik.a@hanak.demo', 'Jan Novák', crmDemoLegalEntityId, 'crmRep'),
+  persona('hanak-obchodnik-b', 'obchodnik.b@hanak.demo', 'Petra Svobodová', crmDemoLegalEntityId, 'crmRep'),
+  persona('kavarna-eshop', 'eshop@kavarna.demo', 'Tereza Malá', eshopDemoLegalEntityId, 'eshopAdmin'),
+  persona('kavarna-expedice', 'expedice@kavarna.demo', 'Ondřej Kříž', eshopDemoLegalEntityId, 'fulfilment'),
+] as const;
+
+/** Stable principal IDs of the CRM personas, e.g. for client assignments in the crm seed. */
+export const crmPersonaPrincipalIds = {
+  manager: demoId('core.principal', 'hanak-vedouci'),
+  repA: demoId('core.principal', 'hanak-obchodnik-a'),
+  repB: demoId('core.principal', 'hanak-obchodnik-b'),
+  spravce: demoId('core.principal', 'hanak-spravce'),
+} as const;
+
+/** Service principal of the e-shop storefront BFF; its managed API key lands in `app/.env.demo.local`. */
+export const storefrontPrincipal = {
+  displayName: 'kavarna-storefront',
+  kind: 'service',
+  legalEntityId: eshopDemoLegalEntityId,
+  principalId: demoId('core.principal', 'kavarna-storefront'),
+  role: 'storefront',
+} as const;
+
+export const companyPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => [
+  ...companyHumanAccounts.flatMap((account) =>
+    principalRelationships(account.principalId, companyRoles[account.role], actions, account.legalEntityId),
+  ),
+  ...principalRelationships(
+    storefrontPrincipal.principalId,
+    companyRoles[storefrontPrincipal.role],
+    actions,
+    storefrontPrincipal.legalEntityId,
+  ),
+];
+
 const relationshipKey = (relationship: DemoRelationship) =>
   [
     relationship.resourceType,
@@ -370,6 +494,7 @@ export const demoPermissionRelationships = (actions: readonly DemoAction[]): rea
     ),
     ...principalRelationships(agentBotPrincipal.principalId, demoRoles[agentBotPrincipal.role], actions),
     ...rentalPermissionRelationships(actions),
+    ...companyPermissionRelationships(actions),
   ];
   return [...new Map(all.map((relationship) => [relationshipKey(relationship), relationship])).values()];
 };

@@ -8,3 +8,18 @@ export const rentalDemoCompany = {
   legalEntityId: '71000000-0000-4000-8000-000000000021',
   legalName: 'Siampark',
 } as const;
+/** Wholesale company of the CRM demo (sales reps with assigned clients). */
+export const crmDemoCompany = {
+  legalEntityId: '71000000-0000-4000-8000-000000000022',
+  legalName: 'Velkoobchod Hanák s.r.o.',
+} as const;
+/** Coffee e-shop of the storefront demo (products, variants, orders). */
+export const eshopDemoCompany = {
+  legalEntityId: '71000000-0000-4000-8000-000000000023',
+  legalName: 'Kavárna Doma s.r.o.',
+} as const;
+/** Every fixed synthetic company with its synthetic registration number. */
+export const additionalDemoCompanies = [
+  { ...crmDemoCompany, registrationNumber: 'DEMO-HANAK-CRM' },
+  { ...eshopDemoCompany, registrationNumber: 'DEMO-KAVARNA-ESHOP' },
+] as const;
