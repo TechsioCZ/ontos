@@ -92,6 +92,7 @@ const isRevisionConflict = (cause: unknown): boolean =>
 /**
  * Sends one apply-command with expectedRevision. Uses `expectedRevision` when the caller already knows it,
  * otherwise reads the current revision first. On a revision conflict it re-reads and retries exactly once.
+ * `idempotencyKey` (optional) makes a repeated logical request execute at most once.
  */
 export const applyCommand = async <S extends Schema.Codec<unknown>>(
   vertical: string,
@@ -99,15 +100,23 @@ export const applyCommand = async <S extends Schema.Codec<unknown>>(
   command: JsonObject,
   currentRevision: () => Promise<number>,
   expectedRevision?: number,
+  idempotencyKey?: string,
 ): Promise<S['Type']> => {
-  const send = async (revision: number) =>
-    await callAction(vertical, 'apply-command', { command, expectedRevision: revision }, schema);
+  const send = async (revision: number, key: string | undefined) =>
+    await callAction(vertical, 'apply-command', { command, expectedRevision: revision }, schema, key);
   try {
-    return await send(expectedRevision ?? (await currentRevision()));
+    return await send(expectedRevision ?? (await currentRevision()), idempotencyKey);
   } catch (error) {
     if (!isRevisionConflict(error)) {
       throw error;
     }
-    return await send(await currentRevision());
+    // The rejected attempt keeps its key; the retry is a new request body, so it needs its own stable key.
+    return await send(await currentRevision(), idempotencyKey === undefined ? undefined : `${idempotencyKey}-retry`);
   }
 };
+
+/** Core answers 409 with one of these codes when an idempotency key was already used: the request ran once. */
+export const isIdempotentReplay = (cause: unknown): boolean =>
+  Schema.is(OntosRequestError)(cause) &&
+  cause.status === 409 &&
+  /already_committed|request_hash_conflict/u.test(cause.code ?? '');

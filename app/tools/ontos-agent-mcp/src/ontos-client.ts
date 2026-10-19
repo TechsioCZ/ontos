@@ -71,12 +71,15 @@ const requestFailure = (path: string, status: number, text: string): OntosReques
   const problem = problemOf(text);
   const code = nonEmpty(problem.code);
   const suffix = code === undefined ? '' : ` ${code}`;
+  const detail = nonEmpty(problem.detail);
+  const title = nonEmpty(problem.title);
+  // optionalKey fields reject an explicit undefined, so absent problem fields are omitted.
   return new OntosRequestError({
-    code,
-    detail: nonEmpty(problem.detail),
+    ...(code === undefined ? {} : { code }),
+    ...(detail === undefined ? {} : { detail }),
     message: `OntosRequest ${path} failed: HTTP ${status}${suffix}`,
     status,
-    title: nonEmpty(problem.title),
+    ...(title === undefined ? {} : { title }),
   });
 };
 
@@ -112,16 +115,20 @@ const postJson = async <S extends Schema.Codec<unknown>>(
   return decoded.success;
 };
 
-/** Invokes a vertical action. The audience is the vertical ID; the answer is decoded by `schema`. */
+/**
+ * Invokes a vertical action. The audience is the vertical ID; the answer is decoded by `schema`.
+ * `idempotencyKey` defaults to a fresh UUID; pass a stable key so a repeated logical request is executed once.
+ */
 export const callAction = async <S extends Schema.Codec<unknown>>(
   vertical: string,
   actionSlug: string,
   payload: JsonObject,
   schema: S,
+  idempotencyKey: string = randomUUID(),
 ): Promise<S['Type']> => {
   const context = await getGatewayContext(vertical);
   return await postJson(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, schema, {
-    'idempotency-key': randomUUID(),
+    'idempotency-key': idempotencyKey,
   });
 };
 

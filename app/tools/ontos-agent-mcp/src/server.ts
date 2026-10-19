@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { getConfig } from './config.ts';
 import { getAssertion } from './gateway.ts';
 import { readRecords } from './ontos-client.ts';
+import { PROFILE_LABEL, PROFILE_TOOLS, restrictToProfile } from './profiles.ts';
 import { registerDomainTools } from './tools/index.ts';
 
 const SERVER_NAME = 'ontos-sales-agent';
@@ -28,19 +29,37 @@ try {
 }
 
 const config = getConfig();
-const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+const mcpServer = new McpServer({
+  name: config.profile === undefined ? SERVER_NAME : `${SERVER_NAME}-${config.profile.toLowerCase()}`,
+  version: SERVER_VERSION,
+});
+// With ONTOS_AGENT_PROFILE=A|B only that level's tools are registered (see profiles.ts).
+const server = restrictToProfile(mcpServer, config.profile);
+
+const profileInfo = () =>
+  config.profile === undefined
+    ? { profile: 'legacy agent-bot (všechny nástroje)' }
+    : {
+        apiKeySource: config.apiKeySource,
+        company: config.company,
+        legalEntityId: config.legalEntityId,
+        profile: config.profile,
+        profileLabel: PROFILE_LABEL[config.profile],
+        tools: [...PROFILE_TOOLS[config.profile]],
+      };
 
 server.registerTool(
   'whoami',
   {
     description:
-      'Show the configured OntOS shell URL and whether a gateway assertion for the siampark-work audience can be obtained. Never returns the API key or the token.',
+      'Show the AI agent level (A = read-only, B = reads + tasks), its company, the shell URL and whether a gateway assertion for the siampark-work audience can be obtained. Never returns the API key or the token.',
     inputSchema: {},
   },
   async () => {
     try {
       await getAssertion(PROBE_AUDIENCE);
       return textResult({
+        ...profileInfo(),
         assertionAudience: PROBE_AUDIENCE,
         assertionObtained: true,
         legalEntityIdConfigured: config.legalEntityId !== undefined,
@@ -49,6 +68,7 @@ server.registerTool(
     } catch (error) {
       return textResult(
         {
+          ...profileInfo(),
           assertionAudience: PROBE_AUDIENCE,
           assertionObtained: false,
           error: errorMessage(error),
@@ -83,5 +103,7 @@ server.registerTool(
 
 registerDomainTools(server);
 
-await server.connect(new StdioServerTransport());
-process.stderr.write(`${SERVER_NAME} ${SERVER_VERSION} ready on stdio\n`);
+await mcpServer.connect(new StdioServerTransport());
+process.stderr.write(
+  `${SERVER_NAME} ${SERVER_VERSION} ready on stdio${config.profile === undefined ? '' : ` (profile ${config.profile}, ${config.company})`}\n`,
+);

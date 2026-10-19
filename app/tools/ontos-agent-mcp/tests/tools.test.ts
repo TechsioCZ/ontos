@@ -17,6 +17,7 @@ const { createOpportunity } = await import('../src/tools/sales.ts');
 const { assignTags } = await import('../src/tools/tagging.ts');
 const { getMetrics } = await import('../src/tools/metrics.ts');
 const { describeError, runTool } = await import('../src/tools/shared.ts');
+const { isToolAllowed } = await import('../src/profiles.ts');
 
 /** A JSON object body, decoded from the request or response text. */
 const BodySchema = z.record(z.string(), z.unknown());
@@ -30,6 +31,7 @@ interface Reply {
 interface Call {
   readonly auth: string | null;
   readonly body: Body;
+  readonly idempotencyKey: string | null;
   readonly path: string;
   readonly vertical: string;
 }
@@ -65,7 +67,13 @@ const installFetch = (routes: Record<string, Route | Reply | Reply[]>): Call[] =
     }
     const { path = '', vertical = '' } = match.groups ?? {};
     const headers = new Headers(init?.headers);
-    const call: Call = { auth: headers.get('authorization'), body, path, vertical };
+    const call: Call = {
+      auth: headers.get('authorization'),
+      body,
+      idempotencyKey: headers.get('idempotency-key'),
+      path,
+      vertical,
+    };
     calls.push(call);
     const key = `${vertical} ${path}`;
     const route = routes[key];
@@ -178,7 +186,11 @@ describe('write tools map arguments onto apply-command', () => {
         expectedRevision: 7,
       });
       assert.equal(apply.auth, 'Bearer token-siampark-work');
+      assert.match(result.idempotencyKey, /^mcp-create-task-[0-9a-f]{32}$/u);
+      assert.equal(apply.idempotencyKey, result.idempotencyKey);
       assert.deepEqual(result, {
+        deduplicated: false,
+        idempotencyKey: result.idempotencyKey,
         revision: 8,
         task: {
           assigneeEmployeeId: null,
@@ -193,6 +205,49 @@ describe('write tools map arguments onto apply-command', () => {
           title: 'Zavolat klientovi',
         },
       });
+    }),
+  );
+
+  it.effect(
+    'create_task reuses one idempotency key per logical request and answers a replay without a second task',
+    () =>
+      Effect.gen(function* testProgram() {
+        const records = {
+          canWrite: true,
+          indicators: { open: 1, openByAssignee: [], overdue: 0 },
+          items: [taskWire],
+          referenceDate: '2026-10-05',
+          revision: 8,
+        };
+        const calls = installFetch({
+          'siampark-work /reads/records': { body: records },
+          'siampark-work /siampark-work/actions/apply-command': {
+            body: { code: 'action_request_hash_conflict', title: 'Conflict' },
+            status: 409,
+          },
+        });
+        const input = {
+          dueDate: '2026-10-20',
+          priority: 'HIGH' as const,
+          requestId: 'chat-msg-0001',
+          title: 'Zavolat klientovi',
+        };
+        const result = yield* Effect.tryPromise(() => createTask(input));
+        const [apply] = applyOf(calls, 'siampark-work');
+        assert.equal(apply?.idempotencyKey, 'mcp-create-task-chat-msg-0001');
+        assert.equal(result.deduplicated, true);
+        assert.equal(result.task?.id, 'task-1');
+      }),
+  );
+
+  it.effect('profiles register only their level tools', () =>
+    Effect.sync(() => {
+      assert.equal(isToolAllowed('A', 'list_orders'), true);
+      assert.equal(isToolAllowed('A', 'create_task'), false);
+      assert.equal(isToolAllowed('B', 'create_task'), true);
+      assert.equal(isToolAllowed('B', 'update_opportunity'), false);
+      assert.equal(isToolAllowed('B', 'assign_tags'), false);
+      assert.equal(isToolAllowed(undefined, 'assign_tags'), true);
     }),
   );
 

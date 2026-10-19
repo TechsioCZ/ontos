@@ -1,8 +1,17 @@
+import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { withoutUndefined } from '../ontos-client.ts';
 import { labelOf, TASK_STATE_CS } from './labels.ts';
-import { applyCommand, CALENDAR_DATE, defineTool, readRecordsOf, readRevision, VERTICAL } from './shared.ts';
+import {
+  applyCommand,
+  CALENDAR_DATE,
+  defineTool,
+  isIdempotentReplay,
+  readRecordsOf,
+  readRevision,
+  VERTICAL,
+} from './shared.ts';
 import { WorkCommandResultWire, WorkRecordsWire } from './wire.ts';
 import type { TaskWire } from './wire.ts';
 
@@ -28,6 +37,15 @@ export const createTaskInput = {
   opportunityId: idSchema.optional().describe('Linked opportunity id.'),
   partyId: idSchema.optional().describe('Linked customer partyId.'),
   priority: z.enum(TASK_PRIORITIES).optional().describe('LOW, NORMAL or HIGH.'),
+  requestId: z
+    .string()
+    .min(8)
+    .max(120)
+    .regex(/^[A-Za-z0-9._:-]+$/u)
+    .optional()
+    .describe(
+      'Stable id of this logical request (e.g. the chat message id). Reusing it never creates a second task. Default: derived from the task fields and today’s date.',
+    ),
   title: z.string().min(1).max(200),
 };
 
@@ -84,6 +102,7 @@ export const createTask = async (input: {
   readonly opportunityId?: string | undefined;
   readonly partyId?: string | undefined;
   readonly priority?: (typeof TASK_PRIORITIES)[number] | undefined;
+  readonly requestId?: string | undefined;
   readonly title: string;
 }) => {
   const command = withoutUndefined({
@@ -96,13 +115,61 @@ export const createTask = async (input: {
     priority: input.priority,
     title: input.title,
   });
-  const result = await applyCommand(
-    VERTICAL.siamparkWork,
-    WorkCommandResultWire,
-    command,
-    async () => await readRevision(VERTICAL.siamparkWork),
-  );
-  return { revision: result.revision, task: result.task === undefined ? null : taskSummary(result.task) };
+  const idempotencyKey = createTaskIdempotencyKey(command, input.requestId);
+  try {
+    const result = await applyCommand(
+      VERTICAL.siamparkWork,
+      WorkCommandResultWire,
+      command,
+      async () => await readRevision(VERTICAL.siamparkWork),
+      undefined,
+      idempotencyKey,
+    );
+    return {
+      deduplicated: false,
+      idempotencyKey,
+      revision: result.revision,
+      task: result.task === undefined ? null : taskSummary(result.task),
+    };
+  } catch (error) {
+    if (!isIdempotentReplay(error)) {
+      throw error;
+    }
+    // Same logical request again: Core refused a second execution. Answer with the task the first call created.
+    const current = await readRecordsOf(VERTICAL.siamparkWork, WorkRecordsWire, {});
+    const existing = current.items.find(
+      (task) => task.title === input.title && task.assigneeEmployeeId === input.assigneeEmployeeId,
+    );
+    return {
+      deduplicated: true,
+      idempotencyKey,
+      note: 'Tento požadavek už byl jednou proveden; druhý úkol se nevytvořil.',
+      revision: current.revision,
+      task: existing === undefined ? null : taskSummary(existing),
+    };
+  }
+};
+
+/** Prague calendar day, so the derived key of "the same task, asked again today" stays stable. */
+const pragueDay = (): string => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Prague' });
+
+/**
+ * Stable `idempotency-key` for one logical create_task request: the caller's requestId, otherwise a hash of the
+ * command fields and today's date. Core stores the key per principal and Action, so a repeated call (model retry,
+ * duplicated tool call) answers 409 instead of creating a second task.
+ */
+export const createTaskIdempotencyKey = (command: Readonly<Record<string, unknown>>, requestId?: string): string => {
+  if (requestId !== undefined) {
+    return `mcp-create-task-${requestId}`;
+  }
+  const fields = Object.keys(command)
+    .toSorted()
+    .map((key) => [key, command[key]]);
+  const digest = createHash('sha256')
+    .update(JSON.stringify([pragueDay(), fields]))
+    .digest('hex')
+    .slice(0, 32);
+  return `mcp-create-task-${digest}`;
 };
 
 export const updateTask = async (input: {
@@ -174,7 +241,7 @@ export const registerWorkTools = (server: McpServer): void => {
   defineTool(
     server,
     'create_task',
-    'Create a task (úkol). Optional assignee, due date (YYYY-MM-DD), priority and links to a customer or opportunity.',
+    'Create a task (úkol). Optional assignee, due date (YYYY-MM-DD), priority and links to a customer or opportunity. Idempotent: the same request (same requestId, or the same fields on the same day) creates the task only once.',
     createTaskInput,
     createTask,
   );
