@@ -119,6 +119,40 @@
       "newContract": "New contract",
       "close": "Close",
       "resizePanel": "Resize panel. Use the left and right arrow keys."
+    },
+    "terms": {
+      "title": "Commercial terms",
+      "subject": "Subject",
+      "responsiblePerson": "Responsible person",
+      "noticePeriod": "Notice period",
+      "monthlyRent": "Monthly rent",
+      "serviceCharges": "Service charges",
+      "monthlyTotal": "Monthly total",
+      "paymentDay": "Payment day",
+      "paymentDayValue": "Day {{day}} of the month",
+      "currency": "Currency",
+      "notProvided": "not provided",
+      "edit": "Edit terms",
+      "save": "Save terms",
+      "formHint": "Terms can be changed on draft and active contracts. Amounts in CZK per month; an empty rent means no agreed amount.",
+      "monthlyRentInput": "Monthly rent (CZK)",
+      "serviceChargesInput": "Service charges (CZK)",
+      "paymentDayInput": "Payment day (1–31)",
+      "rentSection": "Agreed rent",
+      "column": "Rent / month",
+      "deadlines": "Deadlines",
+      "renewalNotice": "Notice / renewal deadline",
+      "ends": "Valid until"
+    },
+    "links": {
+      "title": "Linked records",
+      "unit": "Unit detail",
+      "property": "Building detail",
+      "lease": "Lease",
+      "tenantTasks": "Tenant tasks",
+      "tenantInvoices": "Tenant invoices",
+      "customers": "Customer directory",
+      "tenant": "Tenant / counterparty"
     }
   }
 }

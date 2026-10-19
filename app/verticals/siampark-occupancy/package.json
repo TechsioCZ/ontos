@@ -53,6 +53,8 @@
     "@app/party-registry": "workspace:*",
     "@app/siampark-property": "workspace:*",
     "@app/siampark-agreements": "workspace:*",
+    "@app/siampark-billing-finance": "workspace:*",
+    "@app/siampark-work": "workspace:*",
     "@effect/sql-pg": "4.0.0-rc.117",
     "@effect/platform-node": "4.0.0-rc.117",
     "@app/admin-ui": "workspace:*"

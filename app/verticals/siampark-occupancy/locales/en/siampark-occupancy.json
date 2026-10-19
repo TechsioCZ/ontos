@@ -108,6 +108,111 @@
       "note": "Note",
       "noContract": "No contract has been assigned to this lease yet.",
       "linkedContract": "A contract is assigned to this lease."
+    },
+    "rent": {
+      "title": "Agreed rent",
+      "monthlyRent": "Monthly rent",
+      "serviceCharges": "Service charges",
+      "monthlyTotal": "Monthly total",
+      "paymentDay": "Payment day",
+      "paymentDayValue": "Day {{day}} of the month",
+      "currency": "Currency",
+      "missing": "No agreed amount recorded yet (not provided).",
+      "edit": "Edit rent",
+      "set": "Enter rent",
+      "save": "Save rent",
+      "formTitle": "Agreed rent",
+      "formHint": "Amounts in CZK per calendar month. Stored on the lease and shown to the accountant.",
+      "monthlyRentInput": "Monthly rent (CZK)",
+      "serviceChargesInput": "Service charges (CZK)",
+      "paymentDayInput": "Payment day (1–31)",
+      "contractDiffers": "The contract states a different amount: {{amount}}",
+      "contractMatches": "Matches the contract",
+      "perMonth": "{{amount}} / month",
+      "column": "Rent / month",
+      "readOnly": "Read only"
+    },
+    "story": {
+      "title": "Lease story",
+      "property": "Building",
+      "unit": "Unit",
+      "tenant": "Tenant",
+      "contract": "Contract",
+      "lease": "Lease",
+      "tasks": "Service tasks",
+      "invoice": "Invoice"
+    },
+    "related": {
+      "unitCard": "Unit and building",
+      "property": "Building",
+      "address": "Address",
+      "unitCode": "Unit code",
+      "openUnit": "Unit detail",
+      "openProperty": "Building detail",
+      "tenantCard": "Tenant",
+      "companyId": "Company ID",
+      "email": "E-mail",
+      "phone": "Phone",
+      "notProvided": "not provided",
+      "tenantTasks": "Tenant tasks",
+      "tenantInvoices": "Tenant invoices",
+      "customers": "Customer directory",
+      "contractCard": "Lease contract",
+      "contractSubject": "Subject",
+      "contractPeriod": "Validity",
+      "contractState": "Contract state",
+      "signature": "Signature",
+      "responsiblePerson": "Responsible person",
+      "openContract": "Open contract",
+      "allContracts": "Go to contracts",
+      "noContract": "No contract is linked to this lease yet.",
+      "tasksCard": "Unit service tasks",
+      "noTasks": "No tasks are recorded for this unit.",
+      "tasksUnavailable": "Tasks could not be loaded or you lack access.",
+      "openTasks": "Open tasks",
+      "due": "due {{date}}",
+      "invoicesCard": "Lease invoices",
+      "noInvoices": "No invoice has been issued for this lease yet.",
+      "invoicesUnavailable": "Invoices could not be loaded or you lack access.",
+      "openInvoice": "Open invoice",
+      "allInvoices": "Go to billing",
+      "taskStates": {
+        "NEW": "New",
+        "IN_PROGRESS": "In progress",
+        "WAITING": "Waiting",
+        "DONE": "Done",
+        "CANCELLED": "Cancelled"
+      },
+      "invoiceStates": {
+        "DRAFT": "Draft",
+        "CONFIRMED": "Confirmed",
+        "VOIDED": "Voided"
+      },
+      "paymentStates": {
+        "UNPAID": "Unpaid",
+        "PARTIALLY_PAID": "Partially paid",
+        "PAID": "Paid"
+      },
+      "contractStates": {
+        "DRAFT": "Draft",
+        "ACTIVE": "Active",
+        "TERMINATED": "Terminated",
+        "EXPIRED": "Expired"
+      },
+      "signatureStates": {
+        "NOT_SENT": "Not signed",
+        "SENT": "Sent for signature",
+        "SIGNED": "Signed",
+        "DECLINED": "Declined"
+      }
+    },
+    "list": {
+      "tenant": "Tenant",
+      "upcoming": "Upcoming",
+      "summaryActive": "Active leases",
+      "summaryUpcoming": "Upcoming",
+      "summaryEnded": "Ended",
+      "summaryMonthly": "Agreed monthly rent"
     }
   }
 }

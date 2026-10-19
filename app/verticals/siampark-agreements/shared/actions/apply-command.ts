@@ -4,7 +4,7 @@ import { AgreementsConflict } from './errors/agreements-conflict.ts';
 import { AgreementsRejected } from './errors/agreements-rejected.ts';
 import { Match, Schema } from 'effect';
 
-import { ContractSchema, DemoDateSchema, DocumentSchema } from '../apis/records.ts';
+import { ContractSchema, ContractTermsFields, DemoDateSchema, DocumentSchema } from '../apis/records.ts';
 import { ContractRefSchema } from '../resources/contract.ts';
 import { DocumentRefSchema } from '../resources/document.ts';
 
@@ -12,6 +12,8 @@ export const AgreementsCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateContract', { record: ContractSchema }),
   Schema.TaggedStruct('UpdateContract', { record: ContractSchema }),
   Schema.TaggedStruct('ActivateContract', { contractRef: ContractRefSchema }),
+  // Replaces the commercial terms of a draft or active contract; omitted fields are cleared.
+  Schema.TaggedStruct('SetContractTerms', { contractRef: ContractRefSchema, ...ContractTermsFields }),
   Schema.TaggedStruct('TerminateContract', { contractRef: ContractRefSchema }),
   Schema.TaggedStruct('RenewContract', { contractRef: ContractRefSchema, successor: ContractSchema }),
   Schema.TaggedStruct('SendSignature', {

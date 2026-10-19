@@ -36,6 +36,13 @@ const browserCrypto = Crypto.make({
 const newUuid = browserCrypto.randomUUIDv4;
 type Properties = Effect.Success<ReturnType<typeof executePropertyRecords>>;
 type Occupancies = Effect.Success<ReturnType<typeof executeOccupancyRecords>>;
+/** The optional commercial terms of a contract, carried over when a draft is edited or a contract renewed. */
+export const contractTerms = (record: Contract) => ({
+  ...(record.noticePeriod === undefined ? {} : { noticePeriod: record.noticePeriod }),
+  ...(record.rentTerms === undefined ? {} : { rentTerms: record.rentTerms }),
+  ...(record.responsiblePerson === undefined ? {} : { responsiblePerson: record.responsiblePerson }),
+  ...(record.subject === undefined ? {} : { subject: record.subject }),
+});
 const contractReferenceAudiences = (record: Contract | undefined) => {
   const audiences = ['party-registry'];
   if (record !== undefined && record.unitRef !== null) {
@@ -76,6 +83,15 @@ export const useRecordsPage = () => {
   const [endDate, setEndDate] = useState(DEFAULT_END_DATE);
   const [editingDraft, setEditingDraft] = useState(false);
   const [expiringOnly, setExpiringOnly] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [terms, setTerms] = useState({
+    monthly: '',
+    noticePeriod: '',
+    paymentDay: '15',
+    responsiblePerson: '',
+    service: '',
+    subject: '',
+  });
   const selected = snapshot?.contracts.find((record) => record.contractRef.resourceId === linkedResourceId);
   const clearSensitiveState = () => {
     setSnapshot(undefined);
@@ -95,6 +111,7 @@ export const useRecordsPage = () => {
     setStartDate(DEFAULT_START_DATE);
     setEndDate(DEFAULT_END_DATE);
     setEditingDraft(false);
+    setTermsOpen(false);
   };
   const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
     const nextFeedback = failureFeedback(failure);
@@ -217,6 +234,7 @@ export const useRecordsPage = () => {
         RecordSignedDocument: () => [],
         RenewContract: ({ successor }) => contractReferenceAudiences(successor),
         SendSignature: () => ['party-registry'],
+        SetContractTerms: () => [],
         TerminateContract: () => [],
         UpdateContract: ({ record }) => contractReferenceAudiences(record),
         UpdateDocument: () => [],
@@ -332,6 +350,7 @@ export const useRecordsPage = () => {
     runCommand({
       _tag: 'UpdateContract',
       record: {
+        ...contractTerms(selected),
         contractRef: selected.contractRef,
         counterpartyRef: selected.counterpartyRef,
         endDate: endDate || null,
@@ -346,6 +365,60 @@ export const useRecordsPage = () => {
         supersedesContractRef: selected.supersedesContractRef,
         unitRef: selected.unitRef,
       },
+    });
+  };
+  const crowns = (minor: number) => (minor % 100 === 0 ? String(minor / 100) : (minor / 100).toFixed(2));
+  const parseCrowns = (value: string) => {
+    const normalized = value.replaceAll(/\s/gu, '').replace(',', '.');
+    return /^\d+(\.\d{1,2})?$/u.test(normalized) ? Math.round(Number(normalized) * 100) : undefined;
+  };
+  const openTerms = () => {
+    if (selected === undefined) {
+      return;
+    }
+    setTerms({
+      monthly: selected.rentTerms === undefined ? '' : crowns(selected.rentTerms.monthlyRentMinor),
+      noticePeriod: selected.noticePeriod ?? '',
+      paymentDay: String(selected.rentTerms?.paymentDay ?? 15),
+      responsiblePerson: selected.responsiblePerson ?? '',
+      service: selected.rentTerms === undefined ? '' : crowns(selected.rentTerms.serviceChargesMinor),
+      subject: selected.subject ?? '',
+    });
+    setTermsOpen(true);
+  };
+  const saveTerms = () => {
+    if (selected === undefined) {
+      return;
+    }
+    const hasRent = terms.monthly.trim().length > 0;
+    const monthlyRentMinor = parseCrowns(terms.monthly);
+    const serviceChargesMinor = terms.service.trim().length === 0 ? 0 : parseCrowns(terms.service);
+    const paymentDay = Number(terms.paymentDay);
+    if (
+      hasRent &&
+      (monthlyRentMinor === undefined ||
+        serviceChargesMinor === undefined ||
+        !Number.isInteger(paymentDay) ||
+        paymentDay < 1 ||
+        paymentDay > 31)
+    ) {
+      setFeedback('validation');
+      return;
+    }
+    const text = (value: string) => (value.trim().length === 0 ? undefined : value.trim());
+    const subject = text(terms.subject);
+    const responsiblePerson = text(terms.responsiblePerson);
+    const noticePeriod = text(terms.noticePeriod);
+    setTermsOpen(false);
+    runCommand({
+      _tag: 'SetContractTerms',
+      contractRef: selected.contractRef,
+      ...(subject === undefined ? {} : { subject }),
+      ...(responsiblePerson === undefined ? {} : { responsiblePerson }),
+      ...(noticePeriod === undefined ? {} : { noticePeriod }),
+      ...(hasRent && monthlyRentMinor !== undefined && serviceChargesMinor !== undefined
+        ? { rentTerms: { currency: 'CZK' as const, monthlyRentMinor, paymentDay, serviceChargesMinor } }
+        : {}),
     });
   };
   const recordSignature = (record: Contract) => {
@@ -396,6 +469,7 @@ export const useRecordsPage = () => {
               _tag: 'RenewContract',
               contractRef: record.contractRef,
               successor: {
+                ...contractTerms(record),
                 contractRef: { ...record.contractRef, resourceId },
                 counterpartyRef: record.counterpartyRef,
                 endDate: endDate || null,
@@ -426,7 +500,12 @@ export const useRecordsPage = () => {
     showRentalFeedback: rentalFeedback !== undefined && contractKind === 'LEASE',
     showRentalSelector: !editingDraft && contractKind === 'LEASE',
   };
+  const counterpartyOf = (record: Contract | undefined) =>
+    record === undefined
+      ? undefined
+      : customers.find((item) => item.counterpartyRef.resourceId === record.counterpartyRef.resourceId);
   const detailView = {
+    canEditTerms: selected?.lifecycleState === 'DRAFT' || selected?.lifecycleState === 'ACTIVE',
     canActivate: selected?.lifecycleState === 'DRAFT',
     canEdit: selected?.lifecycleState === 'DRAFT' && selected.signatureState === 'NOT_SENT',
     canRecordSignature:
@@ -443,6 +522,13 @@ export const useRecordsPage = () => {
   };
   return {
     busy,
+    counterpartyOf,
+    openTerms,
+    saveTerms,
+    setTerms,
+    setTermsOpen,
+    terms,
+    termsOpen,
     contractKind,
     createContract,
     customerId,

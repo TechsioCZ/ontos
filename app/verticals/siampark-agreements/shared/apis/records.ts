@@ -15,12 +15,32 @@ import { DocumentRefSchema } from '../resources/document.ts';
 export const DEMO_BUSINESS_DATE = '2026-10-05';
 export const DemoDateSchema = CalendarDateWireSchema;
 const TextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const MoneyMinorSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000_000_000));
+/**
+ * Agreed rent of a lease contract in CZK minor units (haléře) and the monthly payment day. Mirrors the occupancy
+ * `RentTermsSchema`; optional so contracts stored before the terms existed stay valid.
+ */
+export const ContractRentTermsSchema = Schema.Struct({
+  currency: Schema.Literal('CZK'),
+  monthlyRentMinor: MoneyMinorSchema,
+  paymentDay: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(31)),
+  serviceChargesMinor: MoneyMinorSchema,
+});
+export type ContractRentTerms = typeof ContractRentTermsSchema.Type;
+/** Commercial terms of a contract (S12): subject, responsible person, notice period and agreed rent. */
+export const ContractTermsFields = {
+  noticePeriod: Schema.optionalKey(TextSchema),
+  rentTerms: Schema.optionalKey(ContractRentTermsSchema),
+  responsiblePerson: Schema.optionalKey(TextSchema),
+  subject: Schema.optionalKey(TextSchema),
+};
 export const ContractSchema = Schema.Struct({
   contractRef: ContractRefSchema,
   counterpartyRef: CounterpartyRefSchema,
   endDate: Schema.toEncoded(Schema.OptionFromNullOr(DemoDateSchema)),
   kind: Schema.Literals(['LEASE', 'OTHER']),
   lifecycleState: Schema.Literals(['DRAFT', 'ACTIVE', 'TERMINATED', 'EXPIRED']),
+  ...ContractTermsFields,
   note: Schema.toEncoded(Schema.OptionFromNullOr(TextSchema)),
   occupancyRef: Schema.toEncoded(Schema.OptionFromNullOr(OccupancyRefSchema)),
   propertyRef: Schema.toEncoded(Schema.OptionFromNullOr(PropertyRefSchema)),

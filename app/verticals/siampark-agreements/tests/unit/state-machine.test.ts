@@ -99,6 +99,53 @@ const rejected = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
   Effect.exit(effect).pipe(Effect.tap((exit) => Effect.sync(() => expect(Exit.isFailure(exit)).toBe(true))));
 
 describe('Agreements state transitions', () => {
+  it.effect('sets and clears commercial terms on draft and active contracts only', () =>
+    Effect.gen(function* setsTerms() {
+      const rentTerms = { currency: 'CZK', monthlyRentMinor: 1_850_000, paymentDay: 15, serviceChargesMinor: 320_000 } as const;
+      const initial: AgreementsState = { ...empty, contracts: [{ ...draft, lifecycleState: 'ACTIVE' }] };
+      const set = yield* transitionAgreements(
+        initial,
+        {
+          _tag: 'SetContractTerms',
+          contractRef: draft.contractRef,
+          noticePeriod: '3 měsíce',
+          rentTerms,
+          responsiblePerson: 'Jana Správcová',
+          subject: 'Nájem bytu 2+kk',
+        },
+        scope,
+        validators,
+      );
+      expect(set.snapshot.contracts[0]).toEqual({
+        ...draft,
+        lifecycleState: 'ACTIVE',
+        noticePeriod: '3 měsíce',
+        rentTerms,
+        responsiblePerson: 'Jana Správcová',
+        subject: 'Nájem bytu 2+kk',
+      });
+      const cleared = yield* transitionAgreements(
+        set.snapshot,
+        { _tag: 'SetContractTerms', contractRef: draft.contractRef, subject: 'Jen předmět' },
+        scope,
+        validators,
+      );
+      expect(cleared.snapshot.contracts[0]).toEqual({ ...draft, lifecycleState: 'ACTIVE', subject: 'Jen předmět' });
+      const terminated: AgreementsState = { ...empty, contracts: [{ ...draft, lifecycleState: 'TERMINATED' }] };
+      expect(
+        Schema.is(AgreementsConflict)(
+          yield* Effect.flip(
+            transitionAgreements(
+              terminated,
+              { _tag: 'SetContractTerms', contractRef: draft.contractRef, rentTerms },
+              scope,
+              validators,
+            ),
+          ),
+        ),
+      ).toBe(true);
+    }),
+  );
   it.effect('creates a commercial agreement without property or occupancy access', () =>
     Effect.gen(function* commercialContract() {
       const commercial: Contract = { ...draft, kind: 'OTHER', unitRef: null };

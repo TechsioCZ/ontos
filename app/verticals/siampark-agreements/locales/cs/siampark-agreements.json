@@ -119,6 +119,40 @@
       "newContract": "Nová smlouva",
       "close": "Zavřít",
       "resizePanel": "Změnit šířku panelu. Použijte šipky vlevo a vpravo."
+    },
+    "terms": {
+      "title": "Obchodní podmínky",
+      "subject": "Předmět smlouvy",
+      "responsiblePerson": "Odpovědná osoba",
+      "noticePeriod": "Výpovědní lhůta",
+      "monthlyRent": "Měsíční nájemné",
+      "serviceCharges": "Služby a zálohy",
+      "monthlyTotal": "Celkem měsíčně",
+      "paymentDay": "Den splatnosti",
+      "paymentDayValue": "{{day}}. den v měsíci",
+      "currency": "Měna",
+      "notProvided": "neuvedeno",
+      "edit": "Upravit podmínky",
+      "save": "Uložit podmínky",
+      "formHint": "Podmínky lze měnit u návrhu i platné smlouvy. Částky v Kč za kalendářní měsíc; prázdné nájemné znamená smlouvu bez sjednané částky.",
+      "monthlyRentInput": "Měsíční nájemné (Kč)",
+      "serviceChargesInput": "Služby a zálohy (Kč)",
+      "paymentDayInput": "Den splatnosti (1–31)",
+      "rentSection": "Sjednané nájemné",
+      "column": "Nájemné / měsíc",
+      "deadlines": "Termíny",
+      "renewalNotice": "Termín pro výpověď / prodloužení",
+      "ends": "Konec platnosti"
+    },
+    "links": {
+      "title": "Navázané záznamy",
+      "unit": "Detail jednotky",
+      "property": "Detail budovy",
+      "lease": "Nájemní vztah",
+      "tenantTasks": "Úkoly nájemce",
+      "tenantInvoices": "Faktury nájemce",
+      "customers": "Adresář zákazníků",
+      "tenant": "Nájemce / protistrana"
     }
   }
 }

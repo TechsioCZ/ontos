@@ -1,5 +1,14 @@
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { DetailList, PageHeader, SectionCard, SidePanel, comboboxTranslations, formatDate } from '@app/admin-ui';
+import {
+  DetailList,
+  PageHeader,
+  SectionCard,
+  SidePanel,
+  StatCard,
+  comboboxTranslations,
+  formatDate,
+  formatMoney,
+} from '@app/admin-ui';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { failureFeedback } from '../../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -12,6 +21,8 @@ import {
 } from '@app/party-registry/api/client';
 import { executeRecords as executePropertyRecords } from '@app/siampark-property/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/siampark-agreements/clients/records';
+import { executeRecords as executeFinanceRecords } from '@app/siampark-billing-finance/clients/records';
+import { executeRecords as executeWorkRecords } from '@app/siampark-work/clients/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { OccupancyRefSchema } from '../../../../../shared/resources/occupancy.ts';
@@ -24,7 +35,22 @@ import { Crypto, Effect, Option, PlatformError, Schema } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../../shared/actions/apply-command.ts';
-import type { Occupancy, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type { Occupancy, RecordsResponse, RentTerms } from '../../../../../shared/apis/records.ts';
+import {
+  ContractCard,
+  InvoicesCard,
+  LeaseStoryNav,
+  RentTermsCard,
+  TasksCard,
+  TenantCard,
+  UnitCard,
+  crownsInput,
+  leaseContract,
+  loadedList,
+  monthlyTotal,
+  parseCrowns,
+} from './lease-story.tsx';
+import type { LeaseRelated, TenantDirectoryEntry } from './lease-story.tsx';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -118,6 +144,12 @@ const useRecordsPage = () => {
   const [customerNameFeedback, setCustomerNameFeedback] = useState<Feedback>();
   const [editingId, setEditingId] = useState('');
   const [kindFilter, setKindFilter] = useState<'ALL' | 'LONG_TERM_LEASE' | 'SHORT_STAY'>('ALL');
+  const [tenantDirectory, setTenantDirectory] = useState<readonly TenantDirectoryEntry[]>([]);
+  const [related, setRelated] = useState<LeaseRelated>({ invoices: undefined, tasks: undefined });
+  const [rentMonthly, setRentMonthly] = useState('');
+  const [rentService, setRentService] = useState('');
+  const [rentPaymentDay, setRentPaymentDay] = useState('15');
+  const [rentEditorOpen, setRentEditorOpen] = useState(false);
   const selected = snapshot?.occupancies.find((record) => record.occupancyRef.resourceId === linkedResourceId);
   const clearSensitiveState = () => {
     setEditor(undefined);
@@ -138,6 +170,9 @@ const useRecordsPage = () => {
     setUnitId('');
     setStartDate(DEFAULT_START_DATE);
     setEndDate(DEFAULT_END_DATE);
+    setTenantDirectory([]);
+    setRelated({ invoices: undefined, tasks: undefined });
+    setRentEditorOpen(false);
   };
   const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
     const nextFeedback = failureFeedback(failure);
@@ -148,6 +183,31 @@ const useRecordsPage = () => {
     }
     setFeedback(nextFeedback);
   };
+  const loadRelated = (record: Occupancy) =>
+    Effect.all(
+      {
+        invoices: executeFinanceRecords({}, 'siampark-occupancy.lease-invoices').pipe(
+          Effect.map((value) =>
+            value.state.invoices.filter(
+              (invoice) =>
+                invoice.occupancyRef?.resourceId === record.occupancyRef.resourceId ||
+                (invoice.occupancyRef === undefined &&
+                  invoice.unitRef?.resourceId === record.unitRef.resourceId &&
+                  invoice.counterpartyRef.resourceId === record.customerCounterpartyRef?.resourceId),
+            ),
+          ),
+          Effect.orElseSucceed(() => 'unavailable' as const),
+        ),
+        tasks: executeWorkRecords(
+          { contextResourceId: record.unitRef.resourceId },
+          'siampark-occupancy.unit-tasks',
+        ).pipe(
+          Effect.map((value) => value.items),
+          Effect.orElseSucceed(() => 'unavailable' as const),
+        ),
+      },
+      { concurrency: 2 },
+    ).pipe(Effect.tap((value) => Effect.sync(() => setRelated(value))));
   const load = () =>
     Effect.sync(clearSensitiveState).pipe(
       Effect.flatMap(() =>
@@ -167,6 +227,16 @@ const useRecordsPage = () => {
           setAgreements(value.agreements);
         }),
       ),
+      Effect.tap(() =>
+        // The tenant column and card are optional: a role without the customer list still sees its leases.
+        listCustomers({ includeArchived: true, limit: 500 }).pipe(
+          Effect.match({ onFailure: () => undefined, onSuccess: (items) => setTenantDirectory(items) }),
+        ),
+      ),
+      Effect.tap((value) => {
+        const record = value.records.occupancies.find((item) => item.occupancyRef.resourceId === linkedResourceId);
+        return record === undefined ? Effect.void : loadRelated(record);
+      }),
       Effect.tap((value) => {
         const record = value.records.occupancies.find((item) => item.occupancyRef.resourceId === linkedResourceId);
         return loadOccupantName(record).pipe(
@@ -244,10 +314,47 @@ const useRecordsPage = () => {
       ),
     );
   };
+  const rentTermsFromForm = (): RentTerms | 'invalid' | undefined => {
+    if (rentMonthly.trim().length === 0 && rentService.trim().length === 0) {
+      return undefined;
+    }
+    const monthlyRentMinor = parseCrowns(rentMonthly);
+    const serviceChargesMinor = rentService.trim().length === 0 ? 0 : parseCrowns(rentService);
+    const paymentDay = Number(rentPaymentDay);
+    if (
+      monthlyRentMinor === undefined ||
+      serviceChargesMinor === undefined ||
+      !Number.isInteger(paymentDay) ||
+      paymentDay < 1 ||
+      paymentDay > 31
+    ) {
+      return 'invalid';
+    }
+    return { currency: 'CZK', monthlyRentMinor, paymentDay, serviceChargesMinor };
+  };
+  const fillRentForm = (terms: RentTerms | undefined) => {
+    setRentMonthly(terms === undefined ? '' : crownsInput(terms.monthlyRentMinor));
+    setRentService(terms === undefined ? '' : crownsInput(terms.serviceChargesMinor));
+    setRentPaymentDay(String(terms?.paymentDay ?? 15));
+  };
+  const openRentEditor = () => {
+    fillRentForm(selected?.rentTerms);
+    setRentEditorOpen(true);
+  };
+  const saveRentTerms = () => {
+    const rentTerms = rentTermsFromForm();
+    if (selected === undefined || rentTerms === undefined || rentTerms === 'invalid') {
+      setFeedback('validation');
+      return;
+    }
+    setRentEditorOpen(false);
+    runCommand({ _tag: 'SetRentTerms', occupancyRef: selected.occupancyRef, rentTerms });
+  };
   const createDraft = () => {
     const unit = properties?.units.find((record) => record.unitRef.resourceId === unitId);
     const customer = customers.find((record) => record.counterpartyRef.resourceId === customerId);
-    if (unit === undefined || customer === undefined) {
+    const rentTerms = rentTermsFromForm();
+    if (unit === undefined || customer === undefined || rentTerms === 'invalid') {
       setFeedback('validation');
       return;
     }
@@ -273,6 +380,7 @@ const useRecordsPage = () => {
                   tenantId: unit.unitRef.tenantId,
                 },
                 peopleCount: null,
+                ...(rentTerms === undefined ? {} : { rentTerms }),
                 startDate,
                 state: 'DRAFT',
                 unitRef: unit.unitRef,
@@ -289,6 +397,7 @@ const useRecordsPage = () => {
     setEditingId(selected.occupancyRef.resourceId);
     setStartDate(selected.startDate);
     setEndDate(selected.endDate ?? '');
+    fillRentForm(selected.rentTerms);
     setEditor('lease');
   };
   const loadCustomers = () => {
@@ -313,6 +422,7 @@ const useRecordsPage = () => {
     setUnitId('');
     setCustomerId('');
     setCustomers([]);
+    fillRentForm(undefined);
     setGuestId('');
     setGuests([]);
     setGuestQuery('');
@@ -322,7 +432,8 @@ const useRecordsPage = () => {
     }
   };
   const saveDraft = () => {
-    if (selected?.state !== 'DRAFT' || selected.occupancyRef.resourceId !== editingId) {
+    const rentTerms = rentTermsFromForm();
+    if (selected?.state !== 'DRAFT' || selected.occupancyRef.resourceId !== editingId || rentTerms === 'invalid') {
       setFeedback('validation');
       return;
     }
@@ -330,6 +441,7 @@ const useRecordsPage = () => {
       _tag: 'UpdateDraft',
       endDate: endDate || null,
       occupancyRef: selected.occupancyRef,
+      ...(rentTerms === undefined ? {} : { rentTerms }),
       startDate,
     });
   };
@@ -415,10 +527,35 @@ const useRecordsPage = () => {
   const unitName = (resourceId: string) =>
     properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ?? resourceId;
   const visible = snapshot?.occupancies.filter((record) => kindFilter === 'ALL' || record.kind === kindFilter) ?? [];
+  const tenantOf = (record: Occupancy | undefined) =>
+    record?.customerCounterpartyRef === null || record === undefined
+      ? undefined
+      : tenantDirectory.find((item) => item.counterpartyRef.resourceId === record.customerCounterpartyRef?.resourceId);
+  const unitOf = (record: Occupancy) =>
+    properties?.units.find((item) => item.unitRef.resourceId === record.unitRef.resourceId);
+  const propertyOf = (record: Occupancy) => {
+    const unit = unitOf(record);
+    return properties?.properties.find((item) => item.propertyRef.resourceId === unit?.propertyRef.resourceId);
+  };
   const busy = feedback === 'loading' || feedback === 'saving';
   return {
     activate,
+    agreements,
     busy,
+    openRentEditor,
+    propertyOf,
+    related,
+    rentEditorOpen,
+    rentMonthly,
+    rentPaymentDay,
+    rentService,
+    saveRentTerms,
+    setRentEditorOpen,
+    setRentMonthly,
+    setRentPaymentDay,
+    setRentService,
+    tenantOf,
+    unitOf,
     createDraft,
     customerId,
     customerName,
@@ -465,6 +602,13 @@ const useRecordsPage = () => {
     visible,
   };
 };
+const stateBadge = {
+  ACTIVE: 'success',
+  CANCELLED: 'danger',
+  COMPLETED: 'secondary',
+  CONFIRMED: 'info',
+  DRAFT: 'outline',
+} as const;
 const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
   const {
     activate,
@@ -501,6 +645,15 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
     );
   }
   const customerLabel = customerName ?? t('siampark-occupancy.detail.customerUnknown');
+  const unit = state.unitOf(selected);
+  const property = state.propertyOf(selected);
+  const tenant = state.tenantOf(selected);
+  const contract = leaseContract(selected, state.agreements?.contracts);
+  const tasks = loadedList(state.related.tasks);
+  const invoices = loadedList(state.related.invoices);
+  const isLease = selected.kind === 'LONG_TERM_LEASE';
+  const canEditRent = isLease && (selected.state === 'DRAFT' || selected.state === 'CONFIRMED' || selected.state === 'ACTIVE');
+  const firstInvoice = invoices[0];
   return (
     <>
       <div>
@@ -515,12 +668,99 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
         </LinkButton>
       </div>
       <PageHeader
-        description={t(`siampark-occupancy.demo.kind.${selected.kind}`)}
-        title={unitName(selected.unitRef.resourceId)}
+        description={[
+          t(`siampark-occupancy.demo.kind.${selected.kind}`),
+          property?.name,
+          `${formatDate(selected.startDate)} – ${
+            selected.endDate === null ? t('siampark-occupancy.demo.openEnd') : formatDate(selected.endDate)
+          }`,
+        ]
+          .filter((part) => part !== undefined)
+          .join(' · ')}
+        meta={
+          <Badge size="sm" variant={stateBadge[selected.state]}>
+            {t(`siampark-occupancy.demo.stateLabels.${selected.state}`)}
+          </Badge>
+        }
+        title={`${unitName(selected.unitRef.resourceId)}${tenant?.displayName == null ? '' : ` · ${tenant.displayName}`}`}
       />
       {feedback !== 'ready' && <output aria-live="polite">{t(`siampark-occupancy.demo.feedback.${feedback}`)}</output>}
+      {isLease && (
+        <LeaseStoryNav
+          steps={[
+            {
+              href:
+                property === undefined
+                  ? undefined
+                  : `/${language}/siampark/properties?resourceId=${property.propertyRef.resourceId}`,
+              label: t('siampark-occupancy.story.property'),
+              value: property?.name,
+            },
+            {
+              href: `/${language}/siampark/properties?resourceId=${selected.unitRef.resourceId}`,
+              label: t('siampark-occupancy.story.unit'),
+              value: unitName(selected.unitRef.resourceId),
+            },
+            {
+              href: tenant === undefined ? undefined : `/${language}/siampark/work?partyId=${tenant.partyId}`,
+              label: t('siampark-occupancy.story.tenant'),
+              value: tenant?.displayName ?? customerName,
+            },
+            {
+              href:
+                contract === undefined
+                  ? undefined
+                  : `/${language}/siampark/agreements?resourceId=${contract.contractRef.resourceId}`,
+              label: t('siampark-occupancy.story.contract'),
+              value:
+                contract === undefined
+                  ? t('siampark-occupancy.related.notProvided')
+                  : t(`siampark-occupancy.related.contractStates.${contract.lifecycleState}`),
+            },
+            {
+              current: true,
+              label: t('siampark-occupancy.story.lease'),
+              value:
+                selected.rentTerms === undefined
+                  ? t(`siampark-occupancy.demo.stateLabels.${selected.state}`)
+                  : t('siampark-occupancy.rent.perMonth', { amount: formatMoney(monthlyTotal(selected.rentTerms)) }),
+            },
+            {
+              href: `/${language}/siampark/work`,
+              label: t('siampark-occupancy.story.tasks'),
+              value: String(tasks.length),
+            },
+            {
+              href:
+                firstInvoice === undefined
+                  ? undefined
+                  : `/${language}/siampark/finance?resourceId=${firstInvoice.ref.resourceId}`,
+              label: t('siampark-occupancy.story.invoice'),
+              value:
+                firstInvoice === undefined
+                  ? t('siampark-occupancy.related.notProvided')
+                  : (firstInvoice.number ?? firstInvoice.documentNumber),
+            },
+          ]}
+          t={t}
+        />
+      )}
       <div className="siamparkoccupancy:grid siamparkoccupancy:grid-cols-1 siamparkoccupancy:items-start siamparkoccupancy:gap-6 siamparkoccupancy:xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="siamparkoccupancy:min-w-0 siamparkoccupancy:space-y-6">
+          {isLease && (
+            <RentTermsCard
+              action={
+                canEditRent ? (
+                  <Button disabled={busy} onClick={state.openRentEditor} size="sm" theme="outlined" variant="secondary">
+                    {t(selected.rentTerms === undefined ? 'siampark-occupancy.rent.set' : 'siampark-occupancy.rent.edit')}
+                  </Button>
+                ) : undefined
+              }
+              contract={contract}
+              record={selected}
+              t={t}
+            />
+          )}
           <div className="siamparkoccupancy:grid siamparkoccupancy:gap-6 siamparkoccupancy:md:grid-cols-2">
             <SectionCard title={t('siampark-occupancy.detail.lease')}>
               <DetailList
@@ -539,27 +779,35 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
                 ]}
               />
             </SectionCard>
-            <SectionCard
-              title={t(
-                selected.kind === 'SHORT_STAY' ? 'siampark-occupancy.demo.guest' : 'siampark-occupancy.demo.customer',
-              )}
-            >
-              <DetailList
-                items={[
-                  {
-                    label: t('siampark-occupancy.detail.customerName'),
-                    value: feedback === 'loading' ? t('siampark-occupancy.demo.customersLoading') : customerLabel,
-                  },
-                ]}
+            {isLease ? (
+              <TenantCard
+                fallbackName={feedback === 'loading' ? t('siampark-occupancy.demo.customersLoading') : customerLabel}
+                language={language}
+                t={t}
+                tenant={tenant}
+                title={t('siampark-occupancy.related.tenantCard')}
               />
-              {customerNameFeedback !== undefined && (
-                <p className="siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">
-                  {t('siampark-occupancy.detail.customerUnavailable')}{' '}
-                  {t(`siampark-occupancy.demo.feedback.${customerNameFeedback}`)}
-                </p>
-              )}
-            </SectionCard>
+            ) : (
+              <SectionCard title={t('siampark-occupancy.demo.guest')}>
+                <DetailList
+                  items={[
+                    {
+                      label: t('siampark-occupancy.detail.customerName'),
+                      value: feedback === 'loading' ? t('siampark-occupancy.demo.customersLoading') : customerLabel,
+                    },
+                  ]}
+                />
+              </SectionCard>
+            )}
           </div>
+          {customerNameFeedback !== undefined && (
+            <p className="siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">
+              {t('siampark-occupancy.detail.customerUnavailable')}{' '}
+              {t(`siampark-occupancy.demo.feedback.${customerNameFeedback}`)}
+            </p>
+          )}
+          {isLease && <InvoicesCard invoices={state.related.invoices} language={language} t={t} />}
+          <TasksCard language={language} t={t} tasks={state.related.tasks} />
           {selected.note !== null && (
             <SectionCard title={t('siampark-occupancy.detail.note')}>
               <p className="siamparkoccupancy:whitespace-pre-wrap siamparkoccupancy:text-sm">{selected.note}</p>
@@ -597,33 +845,10 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
         </div>
         <div className="siamparkoccupancy:min-w-0 siamparkoccupancy:space-y-6">
           <SectionCard title={t('siampark-occupancy.demo.state')}>
-            <Badge
-              size="sm"
-              variant={
-                (
-                  {
-                    ACTIVE: 'success',
-                    CANCELLED: 'danger',
-                    COMPLETED: 'secondary',
-                    CONFIRMED: 'info',
-                    DRAFT: 'outline',
-                  } as const
-                )[selected.state]
-              }
-            >
+            <Badge size="sm" variant={stateBadge[selected.state]}>
               {t(`siampark-occupancy.demo.stateLabels.${selected.state}`)}
             </Badge>
-          </SectionCard>
-          <SectionCard title={t('siampark-occupancy.demo.contract')}>
-            <p className="siamparkoccupancy:text-sm">
-              {t(
-                selected.contractRef === null
-                  ? 'siampark-occupancy.detail.noContract'
-                  : 'siampark-occupancy.detail.linkedContract',
-              )}
-            </p>
-          </SectionCard>
-          <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
+            <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
             {selected.state === 'DRAFT' && (
               <Button disabled={busy} onClick={editDraft} size="sm" theme="outlined" variant="secondary">
                 {t(LABEL_EDIT_DRAFT)}
@@ -674,11 +899,84 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               </Button>
             )}
           </div>
+          </SectionCard>
+          {isLease && <ContractCard contract={contract} language={language} t={t} />}
+          <UnitCard language={language} property={property} t={t} unit={unit} />
         </div>
       </div>
+      <RentTermsForm state={state} />
     </>
   );
 };
+const RentTermsForm = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
+  const { busy, feedback, t } = state;
+  if (!state.rentEditorOpen) {
+    return null;
+  }
+  return (
+    <SidePanel
+      actions={
+        <>
+          <Button disabled={busy} onClick={() => state.setRentEditorOpen(false)} theme="outlined" variant="secondary">
+            {t('siampark-occupancy.demo.close')}
+          </Button>
+          <Button disabled={busy} isLoading={feedback === 'saving'} onClick={state.saveRentTerms} variant="primary">
+            {t('siampark-occupancy.rent.save')}
+          </Button>
+        </>
+      }
+      closeLabel={t('siampark-occupancy.demo.close')}
+      closeOnInteractOutside={false}
+      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#occupancy-rent-monthly')}
+      onOpenChange={(open) => {
+        if (!open && !busy) {
+          state.setRentEditorOpen(false);
+        }
+      }}
+      open
+      resizeLabel={t('siampark-occupancy.demo.resizePanel')}
+      size="md"
+      title={t('siampark-occupancy.rent.formTitle')}
+    >
+      <div className="siamparkoccupancy:space-y-4 siamparkoccupancy:py-2">
+        <p className="siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">
+          {t('siampark-occupancy.rent.formHint')}
+        </p>
+        {feedback === 'validation' && (
+          <output aria-live="polite">{t('siampark-occupancy.demo.feedback.validation')}</output>
+        )}
+        <RentFields state={state} />
+      </div>
+    </SidePanel>
+  );
+};
+const RentFields = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => (
+  <div className="siamparkoccupancy:grid siamparkoccupancy:gap-4 siamparkoccupancy:md:grid-cols-3">
+    <FormInput
+      id="occupancy-rent-monthly"
+      inputMode="decimal"
+      label={state.t('siampark-occupancy.rent.monthlyRentInput')}
+      onChange={(event) => state.setRentMonthly(event.target.value)}
+      value={state.rentMonthly}
+    />
+    <FormInput
+      id="occupancy-rent-service"
+      inputMode="decimal"
+      label={state.t('siampark-occupancy.rent.serviceChargesInput')}
+      onChange={(event) => state.setRentService(event.target.value)}
+      value={state.rentService}
+    />
+    <FormInput
+      id="occupancy-rent-payment-day"
+      label={state.t('siampark-occupancy.rent.paymentDayInput')}
+      max={31}
+      min={1}
+      onChange={(event) => state.setRentPaymentDay(event.target.value)}
+      type="number"
+      value={state.rentPaymentDay}
+    />
+  </div>
+);
 const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
   const {
     busy,
@@ -827,6 +1125,12 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
               value={endDate}
             />
           </div>
+          {editor === 'lease' && (
+            <section className="siamparkoccupancy:space-y-3">
+              <h3 className="siamparkoccupancy:text-sm siamparkoccupancy:font-semibold">{t('siampark-occupancy.rent.title')}</h3>
+              <RentFields state={state} />
+            </section>
+          )}
         </div>
         {state.editor === 'booking' && (
           <section className="siamparkoccupancy:space-y-4">
@@ -876,6 +1180,26 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
         )}
       </div>
     </SidePanel>
+  );
+};
+const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
+  const leases = state.snapshot?.occupancies.filter((record) => record.kind === 'LONG_TERM_LEASE') ?? [];
+  const active = leases.filter((record) => record.state === 'ACTIVE');
+  const upcoming = leases.filter((record) => record.state === 'CONFIRMED' || record.state === 'DRAFT');
+  const ended = leases.filter((record) => record.state === 'COMPLETED');
+  const monthly = active.reduce((sum, record) => sum + (record.rentTerms === undefined ? 0 : monthlyTotal(record.rentTerms)), 0);
+  const withoutRent = active.filter((record) => record.rentTerms === undefined).length;
+  return (
+    <div className="siamparkoccupancy:grid siamparkoccupancy:gap-4 siamparkoccupancy:sm:grid-cols-2 siamparkoccupancy:xl:grid-cols-4">
+      <StatCard label={state.t('siampark-occupancy.list.summaryActive')} value={String(active.length)} />
+      <StatCard label={state.t('siampark-occupancy.list.summaryUpcoming')} value={String(upcoming.length)} />
+      <StatCard label={state.t('siampark-occupancy.list.summaryEnded')} value={String(ended.length)} />
+      <StatCard
+        {...(withoutRent > 0 ? { hint: state.t('siampark-occupancy.rent.missing') } : {})}
+        label={state.t('siampark-occupancy.list.summaryMonthly')}
+        value={active.length === withoutRent ? '—' : formatMoney(monthly)}
+      />
+    </div>
   );
 };
 const RecordsPageContent = () => {
@@ -945,6 +1269,7 @@ const RecordsPageContent = () => {
               }
               title={t('siampark-occupancy.pages.records.title')}
             />
+            {snapshot !== undefined && <OccupancySummary state={state} />}
             <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:items-center siamparkoccupancy:justify-between siamparkoccupancy:gap-4 siamparkoccupancy:border-b siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:pb-4">
               <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
                 {(['ALL', 'LONG_TERM_LEASE', 'SHORT_STAY'] as const).map((kind) => (
@@ -975,7 +1300,9 @@ const RecordsPageContent = () => {
                 <Table.Header>
                   <Table.Row>
                     <Table.ColumnHeader>{t(LABEL_UNIT)}</Table.ColumnHeader>
+                    <Table.ColumnHeader>{t('siampark-occupancy.list.tenant')}</Table.ColumnHeader>
                     <Table.ColumnHeader>{t('siampark-occupancy.demo.period')}</Table.ColumnHeader>
+                    <Table.ColumnHeader>{t('siampark-occupancy.rent.column')}</Table.ColumnHeader>
                     <Table.ColumnHeader>{t('siampark-occupancy.demo.state')}</Table.ColumnHeader>
                     <Table.ColumnHeader>{t(LABEL_DETAIL)}</Table.ColumnHeader>
                   </Table.Row>
@@ -984,10 +1311,21 @@ const RecordsPageContent = () => {
                   {visible.map((record) => (
                     <Table.Row key={record.occupancyRef.resourceId}>
                       <Table.Cell>
-                        <span className="siamparkoccupancy:font-medium">{unitName(record.unitRef.resourceId)}</span>
+                        <span className="siamparkoccupancy:block siamparkoccupancy:font-medium">
+                          {unitName(record.unitRef.resourceId)}
+                        </span>
+                        <span className="siamparkoccupancy:text-xs siamparkoccupancy:text-(--color-fg-secondary)">
+                          {state.propertyOf(record)?.name ?? ''}
+                        </span>
+                      </Table.Cell>
+                      <Table.Cell>{state.tenantOf(record)?.displayName ?? '—'}</Table.Cell>
+                      <Table.Cell>
+                        {formatDate(record.startDate)} – {record.endDate === null ? t('siampark-occupancy.demo.openEnd') : formatDate(record.endDate)}
                       </Table.Cell>
                       <Table.Cell>
-                        {record.startDate} → {record.endDate ?? t('siampark-occupancy.demo.openEnd')}
+                        <span className="siamparkoccupancy:tabular-nums">
+                          {record.rentTerms === undefined ? '—' : formatMoney(monthlyTotal(record.rentTerms))}
+                        </span>
                       </Table.Cell>
                       <Table.Cell>
                         <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:items-center siamparkoccupancy:gap-2">

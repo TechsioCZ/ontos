@@ -71,6 +71,67 @@ const rejected = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
   Effect.exit(effect).pipe(Effect.tap((exit) => Effect.sync(() => expect(Exit.isFailure(exit)).toBe(true))));
 
 describe('Occupancy state transitions', () => {
+  it.effect('records agreed rent on draft, confirmed and active leases and keeps it through activation', () =>
+    Effect.gen(function* recordsRent() {
+      const rentTerms = {
+        currency: 'CZK',
+        monthlyRentMinor: 1_850_000,
+        paymentDay: 15,
+        serviceChargesMinor: 320_000,
+      } as const;
+      const created = yield* transitionOccupancy(
+        empty,
+        { _tag: 'CreateDraft', record: { ...draft, rentTerms } },
+        scope,
+        validators,
+      );
+      expect(created.snapshot.occupancies[0]?.rentTerms).toEqual(rentTerms);
+      const raised = { ...rentTerms, monthlyRentMinor: 1_900_000 };
+      const edited = yield* transitionOccupancy(
+        created.snapshot,
+        { _tag: 'UpdateDraft', endDate: draft.endDate, occupancyRef, rentTerms: raised, startDate: draft.startDate },
+        scope,
+        validators,
+      );
+      expect(edited.snapshot.occupancies[0]?.rentTerms).toEqual(raised);
+      const kept = yield* transitionOccupancy(
+        edited.snapshot,
+        { _tag: 'UpdateDraft', endDate: draft.endDate, occupancyRef, startDate: '2026-10-06' },
+        scope,
+        validators,
+      );
+      expect(kept.snapshot.occupancies[0]?.rentTerms).toEqual(raised);
+      const confirmed = yield* transitionOccupancy(kept.snapshot, { _tag: 'Confirm', occupancyRef }, scope, validators);
+      const active = yield* transitionOccupancy(
+        confirmed.snapshot,
+        { _tag: 'Activate', contractRef, occupancyRef },
+        scope,
+        validators,
+      );
+      expect(active.snapshot.occupancies[0]?.rentTerms).toEqual(raised);
+      const indexed = yield* transitionOccupancy(
+        active.snapshot,
+        { _tag: 'SetRentTerms', occupancyRef, rentTerms: { ...raised, paymentDay: 10 } },
+        scope,
+        validators,
+      );
+      expect(indexed.snapshot.occupancies[0]?.rentTerms?.paymentDay).toBe(10);
+      expect(indexed.snapshot.occupancies[0]?.state).toBe('ACTIVE');
+      const completed = yield* transitionOccupancy(
+        indexed.snapshot,
+        { _tag: 'Complete', occupancyRef },
+        scope,
+        validators,
+      );
+      yield* rejected(
+        transitionOccupancy(completed.snapshot, { _tag: 'SetRentTerms', occupancyRef, rentTerms }, scope, validators),
+      );
+      expect(Schema.decodeUnknownExit(OccupancySchema)({ ...draft, rentTerms: { ...rentTerms, paymentDay: 0 } })._tag).toBe(
+        'Failure',
+      );
+      expect(Schema.decodeUnknownExit(OccupancySchema)(draft)._tag).toBe('Success');
+    }),
+  );
   it.effect('edits only a draft period and preserves its customer, unit and lifecycle anchors', () =>
     Effect.gen(function* editsDraftPeriod() {
       const created = yield* transitionOccupancy(empty, { _tag: 'CreateDraft', record: draft }, scope, validators);

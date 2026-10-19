@@ -5,7 +5,7 @@ import { OccupancyRejected } from './errors/occupancy-rejected.ts';
 import { ContractRefSchema } from '@app/siampark-agreements/resources/contract';
 import { Match, Schema } from 'effect';
 
-import { OccupancySchema } from '../apis/records.ts';
+import { OccupancySchema, RentTermsSchema } from '../apis/records.ts';
 import { OccupancyRefSchema } from '../resources/occupancy.ts';
 
 export const OccupancyCommandSchema = Schema.Union([
@@ -13,8 +13,11 @@ export const OccupancyCommandSchema = Schema.Union([
   Schema.TaggedStruct('UpdateDraft', {
     endDate: OccupancySchema.fields.endDate,
     occupancyRef: OccupancyRefSchema,
+    rentTerms: Schema.optionalKey(RentTermsSchema),
     startDate: OccupancySchema.fields.startDate,
   }),
+  // Agreed rent can be recorded or corrected while the lease is draft, confirmed or active.
+  Schema.TaggedStruct('SetRentTerms', { occupancyRef: OccupancyRefSchema, rentTerms: RentTermsSchema }),
   Schema.TaggedStruct('Confirm', { occupancyRef: OccupancyRefSchema }),
   Schema.TaggedStruct('Activate', {
     contractRef: Schema.toEncoded(Schema.OptionFromNullOr(ContractRefSchema)),

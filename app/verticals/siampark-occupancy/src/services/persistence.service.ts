@@ -292,15 +292,32 @@ export const transitionOccupancy = (
       Effect.fn('Occupancy.UpdateDraft')(function* updateDraft({
         endDate,
         occupancyRef,
+        rentTerms,
         startDate,
       }: Extract<OccupancyCommand, { readonly _tag: 'UpdateDraft' }>) {
         const record = yield* findOccupancy(state, occupancyRef, scope);
         if (record.state !== 'DRAFT') {
           return yield* conflict('update_requires_draft');
         }
-        const updated = { ...record, endDate, startDate };
+        const updated = { ...record, endDate, startDate, ...(rentTerms === undefined ? {} : { rentTerms }) };
         yield* validateOccupancy(updated, scope, validators);
         return replaceOccupancy(state, updated);
+      }),
+    ),
+    Match.tag(
+      'SetRentTerms',
+      Effect.fn('Occupancy.SetRentTerms')(function* setRentTerms({
+        occupancyRef,
+        rentTerms,
+      }: Extract<OccupancyCommand, { readonly _tag: 'SetRentTerms' }>) {
+        const record = yield* findOccupancy(state, occupancyRef, scope);
+        if (record.state === 'CANCELLED' || record.state === 'COMPLETED') {
+          return yield* conflict('rent_terms_require_open_occupancy');
+        }
+        if (record.kind !== 'LONG_TERM_LEASE') {
+          return yield* rejected('rent_terms_require_lease');
+        }
+        return replaceOccupancy(state, { ...record, rentTerms });
       }),
     ),
     Match.tag(

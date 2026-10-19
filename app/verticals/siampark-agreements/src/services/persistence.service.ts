@@ -295,6 +295,21 @@ export const transitionAgreements = (
       }),
     ),
     Match.tag(
+      'SetContractTerms',
+      Effect.fn('Agreements.SetContractTerms')(function* setContractTerms({
+        _tag: _command,
+        contractRef,
+        ...terms
+      }: Extract<AgreementsCommand, { readonly _tag: 'SetContractTerms' }>) {
+        const record = yield* findContract(state, contractRef, scope);
+        if (record.lifecycleState !== 'DRAFT' && record.lifecycleState !== 'ACTIVE') {
+          return yield* conflict('terms_require_draft_or_active_contract');
+        }
+        const { noticePeriod: _notice, rentTerms: _rent, responsiblePerson: _owner, subject: _subject, ...base } = record;
+        return replaceContract(state, { ...base, ...terms });
+      }),
+    ),
+    Match.tag(
       'ActivateContract',
       Effect.fn('Agreements.ActivateContract')(function* activateContract({
         contractRef,

@@ -1,4 +1,4 @@
-import { DetailList, PageHeader, SectionCard, SidePanel, formatDate } from '@app/admin-ui';
+import { DetailList, PageHeader, SectionCard, SidePanel, formatDate, formatMoney } from '@app/admin-ui';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -8,6 +8,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { useRecordsPage } from './use-agreements-records.ts';
+import { ContractLinksCard, ContractTermsCard, ContractTermsForm, contractMonthlyTotal } from './contract-terms.tsx';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/siampark-agreements.json';
 import enResource from '../../../../../locales/en/siampark-agreements.json';
@@ -110,6 +111,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
               )}
             </SectionCard>
           </div>
+          <ContractTermsCard state={state} />
           {selected.note !== null && (
             <SectionCard title={t('siampark-agreements.detail.note')}>
               <p className="siamparkagreements:whitespace-pre-wrap siamparkagreements:text-sm">{selected.note}</p>
@@ -232,6 +234,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
               </Badge>
             </div>
           </SectionCard>
+          <ContractLinksCard state={state} />
           {selected.supersedesContractRef !== null && (
             <SectionCard title={t('siampark-agreements.demo.supersedes')}>
               <LinkButton
@@ -292,6 +295,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
           </div>
         </div>
       </div>
+      <ContractTermsForm state={state} />
     </>
   );
 };
@@ -565,6 +569,7 @@ const RecordsPageContent = () => {
                   <Table.Row>
                     <Table.ColumnHeader>{t('siampark-agreements.demo.unit')}</Table.ColumnHeader>
                     <Table.ColumnHeader>{t('siampark-agreements.demo.period')}</Table.ColumnHeader>
+                    <Table.ColumnHeader>{t('siampark-agreements.terms.column')}</Table.ColumnHeader>
                     <Table.ColumnHeader>{t('siampark-agreements.demo.lifecycle')}</Table.ColumnHeader>
                     <Table.ColumnHeader>{t('siampark-agreements.demo.signature')}</Table.ColumnHeader>
                     <Table.ColumnHeader>{t(LABEL_DETAIL)}</Table.ColumnHeader>
@@ -581,9 +586,21 @@ const RecordsPageContent = () => {
                               )?.displayName ?? t(LABEL_OTHER))
                             : unitName(record.unitRef?.resourceId)}
                         </span>
+                        {record.kind === 'LEASE' && (
+                          <span className="siamparkagreements:block siamparkagreements:text-xs siamparkagreements:text-(--color-fg-secondary)">
+                            {state.counterpartyOf(record)?.displayName ?? ''}
+                            {record.subject === undefined ? '' : ` · ${record.subject}`}
+                          </span>
+                        )}
                       </Table.Cell>
                       <Table.Cell>
-                        {record.startDate} → {record.endDate ?? t('siampark-agreements.demo.openEnd')}
+                        {formatDate(record.startDate)} –{' '}
+                        {record.endDate === null ? t('siampark-agreements.demo.openEnd') : formatDate(record.endDate)}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <span className="siamparkagreements:tabular-nums">
+                          {contractMonthlyTotal(record) === undefined ? '—' : formatMoney(contractMonthlyTotal(record) ?? 0)}
+                        </span>
                       </Table.Cell>
                       <Table.Cell>
                         <div className="siamparkagreements:flex siamparkagreements:flex-wrap siamparkagreements:gap-2">

@@ -12,6 +12,18 @@ import { OccupancyRefSchema } from '../resources/occupancy.ts';
 
 export const DemoDateSchema = CalendarDateWireSchema;
 const TextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const MoneyMinorSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000_000_000));
+/**
+ * Agreed rent of a lease: monthly rent and service charges in CZK minor units (haléře) and the day of the month
+ * the payment is due. Optional on the record, so older stored leases without agreed terms stay valid.
+ */
+export const RentTermsSchema = Schema.Struct({
+  currency: Schema.Literal('CZK'),
+  monthlyRentMinor: MoneyMinorSchema,
+  paymentDay: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(31)),
+  serviceChargesMinor: MoneyMinorSchema,
+});
+export type RentTerms = typeof RentTermsSchema.Type;
 export const OccupancySchema = Schema.Struct({
   contractRef: Schema.toEncoded(Schema.OptionFromNullOr(ContractRefSchema)),
   customerCounterpartyRef: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyRefSchema)),
@@ -22,6 +34,7 @@ export const OccupancySchema = Schema.Struct({
   note: Schema.toEncoded(Schema.OptionFromNullOr(TextSchema)),
   occupancyRef: OccupancyRefSchema,
   peopleCount: Schema.toEncoded(Schema.OptionFromNullOr(Schema.Int.check(Schema.isGreaterThan(0)))),
+  rentTerms: Schema.optionalKey(RentTermsSchema),
   startDate: DemoDateSchema,
   state: Schema.Literals(['DRAFT', 'CONFIRMED', 'ACTIVE', 'COMPLETED', 'CANCELLED']),
   unitRef: UnitRefSchema,
