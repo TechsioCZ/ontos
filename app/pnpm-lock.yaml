@@ -3457,6 +3457,9 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
+      '@app/siampark-property':
+        specifier: workspace:*
+        version: link:../siampark-property
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging

@@ -16,6 +16,7 @@ import type { ReactNode } from 'react';
 import type { OpsCommand } from '../../shared/agendas.ts';
 import type { AgendaId, AuditFields, PropertyRef } from '../../shared/domain/common.ts';
 import { AgendaGate } from './agenda-frame.tsx';
+import { usePropertyOptions } from './property-options.ts';
 import { useAgendaRecords } from './use-agenda.ts';
 import type { FailureReason } from './use-agenda.ts';
 
@@ -63,6 +64,8 @@ export const ScaffoldRecordView = <Row extends AuditFields & { readonly id: stri
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
   const [location, setLocation] = useState('');
+  const properties = usePropertyOptions();
+  const NONE = 'none';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FailureReason | 'required' | undefined>(undefined);
   const k = `siampark-ops.${props.agenda}`;
@@ -83,7 +86,11 @@ export const ScaffoldRecordView = <Row extends AuditFields & { readonly id: stri
       return;
     }
     setBusy(true);
-    const outcome = await ops.run(props.toCommand(trimmed, typedLocation(location)));
+    const picked =
+      properties.status === 'ready' ? properties.options.find((option) => option.value === location)?.ref : undefined;
+    const outcome = await ops.run(
+      props.toCommand(trimmed, properties.status === 'ready' ? picked : typedLocation(location)),
+    );
     setBusy(false);
     if (outcome.ok) {
       toast.create({ title: t(`${k}.created`), type: 'success' });
@@ -215,15 +222,37 @@ export const ScaffoldRecordView = <Row extends AuditFields & { readonly id: stri
               />
             ),
           )}
-          <FormInput
-            autoComplete="off"
-            helpText={t('siampark-ops.common.locationPlaceholder')}
-            id={`ops-${props.agenda}-location`}
-            label={t('siampark-ops.common.location')}
-            maxLength={300}
-            onChange={(event) => setLocation(event.target.value)}
-            value={location}
-          />
+          {properties.status === 'ready' ? (
+            <Select
+              items={[
+                { displayValue: t('siampark-ops.property.none'), label: t('siampark-ops.property.none'), value: NONE },
+                ...properties.options.map((option) => ({
+                  displayValue: option.ref.label,
+                  label: option.ref.label,
+                  value: option.value,
+                })),
+              ]}
+              label={t('siampark-ops.common.location')}
+              name="location"
+              onValueChange={({ value }) => setLocation(value[0] === undefined || value[0] === NONE ? '' : value[0])}
+              size="md"
+              value={[location === '' ? NONE : location]}
+            />
+          ) : (
+            <FormInput
+              autoComplete="off"
+              helpText={
+                properties.status === 'failed'
+                  ? t('siampark-ops.property.loadFailed')
+                  : t('siampark-ops.common.locationPlaceholder')
+              }
+              id={`ops-${props.agenda}-location`}
+              label={t('siampark-ops.common.location')}
+              maxLength={300}
+              onChange={(event) => setLocation(event.target.value)}
+              value={location}
+            />
+          )}
         </div>
       </SidePanel>
     </>
