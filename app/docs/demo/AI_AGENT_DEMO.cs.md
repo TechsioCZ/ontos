@@ -102,7 +102,14 @@ Zapnutý jen `ontos-ai-b`.
 4. „Teď tu příležitost přesuň do fáze Nabídka a dej zákazníkovi štítek VIP.“ → **AI odmítne**: na
    příležitosti ani štítky oprávnění nemá. Zkusí-li to přímo přes API, backend vrátí 403 (řádky `[B]` v důkazu).
 
-### 4. Bezpečnost opakování
+### 4. AI aktivita v aplikaci
+
+V UI otevřete **Zaměstnanci** (`http://localhost:3020/cs/prodej/zamestnanci`, `obchod@demo.ontos`) a sjeďte
+na sekci **AI aktivita**. Je to živý výpis Core auditu pro AI agenty v této firmě: čas, agent (štítek Úroveň A
+nebo B), akce (např. „Úkoly · zápis“), výsledek (Provedeno nebo Zamítnuto) a důvod („chybí oprávnění
+k zápisu“). Seznam se sám obnovuje každých 10 s, takže úkol založený v chatu se tu objeví bez obnovení stránky.
+
+### 5. Bezpečnost opakování
 
 Když model omylem pošle stejný požadavek dvakrát (výpadek sítě, opakované volání nástroje), úkol vznikne jen
 jednou. `create_task` posílá stabilní idempotency key: `requestId` z chatu, jinak otisk polí úkolu a dnešního
