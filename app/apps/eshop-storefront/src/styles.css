@@ -369,8 +369,15 @@ p {
     display: none;
   }
 
+  .cart-button {
+    margin-left: auto;
+  }
+}
+
+@media (min-width: 1280px) {
   .site-header__search {
     display: block;
+    max-width: 280px;
   }
 
   .cart-button {
