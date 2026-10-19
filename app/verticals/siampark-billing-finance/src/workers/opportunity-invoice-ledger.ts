@@ -81,7 +81,7 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
       { attemptId, now, resourceId },
     );
     if (!result.changed) {
-      return Option.some(result.invoice);
+      return Option.fromUndefinedOr(result.invoice);
     }
     const encoded = yield* Schema.encodeEffect(FinanceStateSchema)(result.state).pipe(Effect.mapError(unavailable));
     const [saved] = yield* scope.routineInvoker
@@ -90,7 +90,7 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
     if (saved === undefined) {
       return yield* new FinanceConflict({ code: 'finance_conflict', reason: 'stale_revision' });
     }
-    return Option.some(result.invoice);
+    return Option.fromUndefinedOr(result.invoice);
   },
 );
 

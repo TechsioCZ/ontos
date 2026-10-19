@@ -46,10 +46,21 @@ const handleApplyCommand = Effect.fn('Finance.applyCommand')(function* handleApp
     payload.command,
     { legalEntityId: context.scope.legalEntityId, tenantId: context.scope.tenantId },
     context.services.validators,
-    { attemptId, now, resourceId },
+    { attemptId, now, principalId: context.scope.principalId, resourceId },
   );
   const revision = result.changed ? yield* context.services.save(result.state, current.revision) : current.revision;
-  return { changed: result.changed, invoice: result.invoice, revision };
+  if (result.changed) {
+    for (const write of result.documentWrites ?? []) {
+      yield* context.services.writeDocument({
+        contentBase64: write.contentBase64,
+        documentId: write.id,
+        mimeType: write.mimeType,
+      });
+    }
+  }
+  return result.invoice === undefined
+    ? { changed: result.changed, revision }
+    : { changed: result.changed, invoice: result.invoice, revision };
 });
 
 const makeActionServices: ActionServiceFactory<Services, FinanceValidatorRequirements> = Effect.fn(

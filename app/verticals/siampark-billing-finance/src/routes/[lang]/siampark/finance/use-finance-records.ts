@@ -206,7 +206,10 @@ export const useFinanceRecords = () => {
       ),
       Effect.match({
         onFailure: (error): DraftInvoiceOutcome => ({ feedback: financeFailureFeedback(error), ok: false }),
-        onSuccess: (result): DraftInvoiceOutcome => ({ invoice: result.invoice, ok: true }),
+        onSuccess: (result): DraftInvoiceOutcome =>
+          result.invoice === undefined
+            ? { feedback: 'unavailable', ok: false }
+            : { invoice: result.invoice, ok: true },
       }),
     );
   };
@@ -272,7 +275,7 @@ export const useFinanceRecords = () => {
           onSuccess: (result) => {
             setFeedback('ready');
             toaster.create({
-              description: result.invoice.number ?? result.invoice.documentNumber,
+              description: result.invoice?.number ?? result.invoice?.documentNumber,
               title: successTitle,
               type: 'success',
             });

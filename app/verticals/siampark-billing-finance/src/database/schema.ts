@@ -20,6 +20,22 @@ export const financeStates = financeSchema.table.withRLS(
     ...tenantLegalEntityRlsPolicies('siampark_finance_scope', table.tenantId, table.legalEntityId),
   ],
 );
+/** Uploaded document bytes (base64). Metadata lives in the finance state `documents`. */
+export const financeDocumentContents = financeSchema.table.withRLS(
+  'finance_document_contents',
+  {
+    contentBase64: text('content_base64').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    documentId: text('document_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    mimeType: text('mime_type').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.legalEntityId, table.documentId] }),
+    ...tenantLegalEntityRlsPolicies('siampark_finance_document_scope', table.tenantId, table.legalEntityId),
+  ],
+);
 export const gatewayAssertionRedemptions = financeSchema.table(
   'gateway_assertion_redemptions',
   {
@@ -33,4 +49,4 @@ export const gatewayAssertionRedemptions = financeSchema.table(
     index('siampark_finance_redemption_expiry').on(table.expiresAt),
   ],
 );
-export const financeRelations = defineRelations({ financeStates, gatewayAssertionRedemptions });
+export const financeRelations = defineRelations({ financeDocumentContents, financeStates, gatewayAssertionRedemptions });

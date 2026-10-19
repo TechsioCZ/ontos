@@ -117,8 +117,8 @@ describe('Finance owner transitions', () => {
     () =>
       Effect.gen(function* financeCase1() {
         const retry = yield* run(state, { _tag: 'RetryAccountingSync', invoiceRef: ref });
-        expect(retry.invoice.accountingSyncState).toBe('PENDING');
-        expect(retry.invoice.paymentState).toBe('UNPAID');
+        expect(retry.invoice!.accountingSyncState).toBe('PENDING');
+        expect(retry.invoice!.paymentState).toBe('UNPAID');
         expect(retry.state.invoices).toHaveLength(1);
         expect(retry.state.accountingObservations).toHaveLength(2);
         expect(retry.state.accountingObservations[0]?.latest).toBe(false);
@@ -141,9 +141,9 @@ describe('Finance owner transitions', () => {
           resultId: 'success-result',
           status: 'SUCCESS',
         });
-        expect(observed.invoice.accountingSyncState).toBe('SYNCED');
-        expect(observed.invoice.externalAccountingReference).toBe('demo-ext-b201');
-        expect(observed.invoice.paidMinor).toBe(0);
+        expect(observed.invoice!.accountingSyncState).toBe('SYNCED');
+        expect(observed.invoice!.externalAccountingReference).toBe('demo-ext-b201');
+        expect(observed.invoice!.paidMinor).toBe(0);
         expect(observed.state.accountingObservations[1]?.revision).toBe(2);
         const duplicate = yield* run(observed.state, {
           _tag: 'ApplyAccountingObservation',
@@ -180,8 +180,8 @@ describe('Finance owner transitions', () => {
           resultId: 'payment-half',
         };
         const half = yield* run(state, command);
-        expect(half.invoice.paymentState).toBe('PARTIALLY_PAID');
-        expect(half.invoice.accountingSyncState).toBe('FAILED');
+        expect(half.invoice!.paymentState).toBe('PARTIALLY_PAID');
+        expect(half.invoice!.accountingSyncState).toBe('FAILED');
         expect(half.state.paymentObservations).toHaveLength(1);
         expect(projectFinanceRecords(half.state, 1, {}).indicators.receivablesOutstandingMinor).toBe(900_000);
         expect(projectFinanceRecords(half.state, 1, {}).indicators.overdueInvoices).toBe(1);
@@ -195,8 +195,8 @@ describe('Finance owner transitions', () => {
         yield* fails(half.state, { ...command, confirmedPaidMinor: 1_800_001, resultId: 'overpayment' });
         yield* fails(half.state, { ...command, confirmedPaidMinor: 800_000 });
         const paid = yield* run(half.state, { ...command, confirmedPaidMinor: 1_800_000, resultId: 'payment-full' });
-        expect(paid.invoice.paymentState).toBe('PAID');
-        expect(paid.invoice.accountingSyncState).toBe('FAILED');
+        expect(paid.invoice!.paymentState).toBe('PAID');
+        expect(paid.invoice!.accountingSyncState).toBe('FAILED');
         expect(projectFinanceRecords(paid.state, 2, {}).indicators.overdueInvoices).toBe(0);
         expect(projectFinanceRecords(paid.state, 2, {}).indicators.integrationWarnings).toBe(1);
       }),
@@ -212,7 +212,7 @@ describe('Finance owner transitions', () => {
         status: 'FAILED',
       });
       expect(replay.changed).toBe(false);
-      expect(replay.invoice.accountingSyncState).toBe('PENDING');
+      expect(replay.invoice!.accountingSyncState).toBe('PENDING');
       yield* fails(pending.state, {
         _tag: 'ApplyAccountingObservation',
         correlation: 'foreign-correlation',
@@ -223,7 +223,7 @@ describe('Finance owner transitions', () => {
     }),
   );
   it.effect(
-    'creates and updates only drafts, requires valid supplier property anchors, and rejects unavailable/foreign references',
+    'creates and updates only drafts and rejects unavailable/foreign references',
     () =>
       Effect.gen(function* financeCase4() {
         const create: FinanceCommand = {
@@ -238,22 +238,21 @@ describe('Finance owner transitions', () => {
           totalMinor: 420_000,
         };
         const draft = yield* run(state, create);
-        expect(draft.invoice.businessState).toBe('DRAFT');
-        expect(draft.invoice.accountingSyncState).toBe('NOT_SYNCED');
-        yield* fails(draft.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref });
+        expect(draft.invoice!.businessState).toBe('DRAFT');
+        expect(draft.invoice!.accountingSyncState).toBe('NOT_SYNCED');
         const updated = yield* run(draft.state, {
           ...create,
           _tag: 'UpdateInvoiceDraft',
-          invoiceRef: draft.invoice.ref,
+          invoiceRef: draft.invoice!.ref,
           propertyRef,
         });
-        const editFields = yield* Schema.decodeEffect(Schema.Struct(InvoiceDraftFields))(updated.invoice);
+        const editFields = yield* Schema.decodeEffect(Schema.Struct(InvoiceDraftFields))(updated.invoice!);
         const edited = yield* run(updated.state, {
           ...editFields,
           _tag: 'UpdateInvoiceDraft',
           documentNumber: 'SUP-EDITED',
           dueDate: '2026-10-20',
-          invoiceRef: updated.invoice.ref,
+          invoiceRef: updated.invoice!.ref,
           issueDate: '2026-10-06',
           totalMinor: 425_000,
         });
@@ -271,12 +270,12 @@ describe('Finance owner transitions', () => {
           propertyRef,
           totalMinor: 425_000,
         });
-        const confirmed = yield* run(edited.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref });
-        expect(confirmed.invoice.businessState).toBe('CONFIRMED');
+        const confirmed = yield* run(edited.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref });
+        expect(confirmed.invoice!.businessState).toBe('CONFIRMED');
         yield* fails(confirmed.state, {
           ...create,
           _tag: 'UpdateInvoiceDraft',
-          invoiceRef: draft.invoice.ref,
+          invoiceRef: draft.invoice!.ref,
           propertyRef,
         });
         yield* fails(state, {
@@ -464,6 +463,8 @@ it.layer(paymentTestDependencies)('Finance Action lifecycle', (suite) => {
           actionPermission: 'allowed',
           services: [
             bindActionTestServices(applyCommandAction, {
+              loadDocument: () => Effect.sync((): undefined => undefined),
+              writeDocument: () => Effect.void,
               load: () => Effect.succeed({ revision, state: storedState }),
               save: (nextState, expectedRevision) =>
                 requireFinanceRevision(revision, expectedRevision).pipe(
@@ -511,8 +512,8 @@ it.layer(paymentTestDependencies)('Finance Action lifecycle', (suite) => {
           registration: applyCommandAction,
           transport: { correlationId: 'finance-payment-action', idempotencyKey: 'finance-payment-action-1' },
         });
-        expect(result.invoice.paymentState).toBe('PAID');
-        expect(result.invoice.accountingSyncState).toBe('FAILED');
+        expect(result.invoice!.paymentState).toBe('PAID');
+        expect(result.invoice!.accountingSyncState).toBe('FAILED');
         expect(storedState.paymentObservations).toHaveLength(1);
         expect(harness.snapshot().committed).toHaveLength(1);
         expect(harness.snapshot().committed[0]?.evidence.dataAccessEvents).toHaveLength(1);

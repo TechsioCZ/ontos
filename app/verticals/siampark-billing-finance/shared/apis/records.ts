@@ -83,8 +83,25 @@ export const InvoiceDraftCommandFields = {
   ...InvoiceDraftFields,
   totalMinor: Schema.optionalKey(PositiveTotalMinorSchema),
 };
+/** Demo-v2 document kinds (S07.R2). Absent means a standard invoice. */
+export const InvoiceDocumentKindSchema = Schema.Literals(['STANDARD', 'ADVANCE', 'PARTIAL', 'FINAL', 'RECURRING']);
+export type InvoiceDocumentKind = typeof InvoiceDocumentKindSchema.Type;
+/** Calendar month `YYYY-MM`. */
+export const CalendarMonthSchema = Schema.String.check(Schema.isPattern(/^\d{4}-(0[1-9]|1[0-2])$/u));
+export const FinanceLongTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
+/** Optional invoice fields added for the sales demo v2; all optional so stored states keep decoding. */
+export const InvoiceDemoFields = {
+  budgetCategory: Schema.optionalKey(FinanceTextSchema),
+  counterpartyCompanyId: Schema.optionalKey(FinanceTextSchema),
+  /** Name snapshot shown when the counterparty is not (or no longer) in the party registry. */
+  counterpartyName: Schema.optionalKey(FinanceTextSchema),
+  documentKind: Schema.optionalKey(InvoiceDocumentKindSchema),
+  recurringPeriod: Schema.optionalKey(CalendarMonthSchema),
+  recurringTemplateId: Schema.optionalKey(FinanceTextSchema),
+};
 export const InvoiceSchema = Schema.Struct({
   ...InvoiceDraftFields,
+  ...InvoiceDemoFields,
   accountingCorrelation: FinanceTextSchema,
   accountingSyncState: AccountingSyncStateSchema,
   businessState: InvoiceBusinessStateSchema,
@@ -141,15 +158,137 @@ export const PaymentObservationSchema = Schema.Struct({
   resultId: FinanceResultIdSchema,
 });
 export type PaymentObservation = typeof PaymentObservationSchema.Type;
+const ActorFields = {
+  actorLabel: Schema.optionalKey(FinanceTextSchema),
+  actorPrincipalId: Schema.optionalKey(FinanceTextSchema),
+};
+/** An uploaded file; its bytes live in `finance_document_contents`, only metadata is in the state. */
+export const FinanceDocumentSchema = Schema.Struct({
+  ...ActorFields,
+  fileName: FinanceTextSchema,
+  id: FinanceTextSchema,
+  invoiceResourceId: Schema.optionalKey(FinanceTextSchema),
+  mimeType: FinanceTextSchema,
+  sha256: FinanceTextSchema,
+  sizeBytes: Schema.Int.check(Schema.isGreaterThan(0)),
+  uploadedAt: Schema.DateTimeUtcFromString,
+});
+export type FinanceDocument = typeof FinanceDocumentSchema.Type;
+/** A payment confirmed by hand by a user (S07.R5); the only non-simulated payment evidence. */
+export const ManualPaymentSchema = Schema.Struct({
+  ...ActorFields,
+  amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
+  id: FinanceTextSchema,
+  invoiceResourceId: FinanceTextSchema,
+  note: Schema.optionalKey(FinanceTextSchema),
+  paidOn: CalendarDateSchema,
+  recordedAt: Schema.DateTimeUtcFromString,
+});
+export type ManualPayment = typeof ManualPaymentSchema.Type;
+export const RecurringTemplateSchema = Schema.Struct({
+  active: Schema.Boolean,
+  contractRef: Schema.optionalKey(ContractRefSchema),
+  counterpartyName: Schema.optionalKey(FinanceTextSchema),
+  counterpartyRef: CounterpartyRefSchema,
+  createdAt: Schema.DateTimeUtcFromString,
+  dueDays: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(90)),
+  id: FinanceTextSchema,
+  issueDay: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(28)),
+  lines: InvoiceLinesSchema,
+  name: FinanceTextSchema,
+  partyId: Schema.optionalKey(FinancePartyIdSchema),
+  propertyRef: Schema.optionalKey(PropertyRefSchema),
+  unitRef: Schema.optionalKey(UnitRefSchema),
+});
+export type RecurringTemplate = typeof RecurringTemplateSchema.Type;
+/** Payment reminder. Delivery is simulated: no e-mail provider is configured in the demo. */
+export const InvoiceReminderSchema = Schema.Struct({
+  ...ActorFields,
+  createdAt: Schema.DateTimeUtcFromString,
+  deliveryMode: Schema.Literal('SIMULATED'),
+  id: FinanceTextSchema,
+  invoiceResourceId: FinanceTextSchema,
+  recipient: FinanceTextSchema,
+  status: Schema.Literal('SIMULATED_SENT'),
+  text: FinanceLongTextSchema,
+});
+export type InvoiceReminder = typeof InvoiceReminderSchema.Type;
+export const AccountingSetupSchema = Schema.Struct({
+  accountant: Schema.optionalKey(FinanceTextSchema),
+  approvalDate: Schema.optionalKey(CalendarDateSchema),
+  product: Schema.optionalKey(FinanceTextSchema),
+  productVersion: Schema.optionalKey(FinanceTextSchema),
+  transferFormat: Schema.optionalKey(FinanceTextSchema),
+  updatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  updatedByLabel: Schema.optionalKey(FinanceTextSchema),
+});
+export type AccountingSetup = typeof AccountingSetupSchema.Type;
+export const AccountingExportFormatSchema = Schema.Literals(['CSV', 'JSON', 'POHODA_XML_SIMULATION']);
+export type AccountingExportFormat = typeof AccountingExportFormatSchema.Type;
+export const ACCOUNTING_EXPORT_SCHEMA_VERSION = 'ontos-finance-export/1';
+/** A handover package for the accountant (S08). Never means "booked": at most "confirmed by the accountant". */
+export const AccountingExportSchema = Schema.Struct({
+  ...ActorFields,
+  batchNumber: FinanceTextSchema,
+  confirmationEvidence: Schema.optionalKey(FinanceTextSchema),
+  confirmedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  confirmedByLabel: Schema.optionalKey(FinanceTextSchema),
+  content: Schema.String.check(Schema.isMaxLength(2_000_000)),
+  createdAt: Schema.DateTimeUtcFromString,
+  fileName: FinanceTextSchema,
+  format: AccountingExportFormatSchema,
+  id: FinanceTextSchema,
+  invoiceResourceIds: Schema.Array(FinanceTextSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  schemaVersion: Schema.Literal(ACCOUNTING_EXPORT_SCHEMA_VERSION),
+  sha256: FinanceTextSchema,
+  status: Schema.Literals(['HANDED_OVER', 'CONFIRMED_BY_ACCOUNTANT']),
+  version: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type AccountingExport = typeof AccountingExportSchema.Type;
+export const BudgetKindSchema = Schema.Literals(['COST', 'REVENUE']);
+/** User-editable monthly budget line per category (S09.R2). */
+export const BudgetLineSchema = Schema.Struct({
+  ...ActorFields,
+  actualManualMinor: Schema.optionalKey(MoneyMinorSchema),
+  category: FinanceTextSchema,
+  explanation: Schema.optionalKey(FinanceTextSchema),
+  id: FinanceTextSchema,
+  kind: BudgetKindSchema,
+  period: CalendarMonthSchema,
+  plannedMinor: MoneyMinorSchema,
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+export type BudgetLine = typeof BudgetLineSchema.Type;
+/** Manually confirmed opening balance for the cash-flow forecast; it is not a bank balance. */
+export const CashFlowOpeningSchema = Schema.Struct({
+  ...ActorFields,
+  confirmedAt: Schema.DateTimeUtcFromString,
+  openingBalanceMinor: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(-1_000_000_000_000),
+    Schema.isLessThanOrEqualTo(1_000_000_000_000),
+  ),
+  openingDate: CalendarDateSchema,
+});
+export type CashFlowOpening = typeof CashFlowOpeningSchema.Type;
 export const FinanceStateSchema = Schema.Struct({
+  accountingExports: Schema.optionalKey(Schema.Array(AccountingExportSchema).check(Schema.isMaxLength(200))),
   accountingObservations: Schema.Array(AccountingObservationSchema).check(Schema.isMaxLength(5000)),
+  accountingSetup: Schema.optionalKey(AccountingSetupSchema),
+  budgets: Schema.optionalKey(Schema.Array(BudgetLineSchema).check(Schema.isMaxLength(2000))),
+  cashFlowOpening: Schema.optionalKey(CashFlowOpeningSchema),
+  documents: Schema.optionalKey(Schema.Array(FinanceDocumentSchema).check(Schema.isMaxLength(500))),
   financialPlanEntries: Schema.Array(FinancialPlanEntrySchema).check(Schema.isMaxLength(1000)),
   invoices: Schema.Array(InvoiceSchema).check(Schema.isMaxLength(1000)),
+  manualPayments: Schema.optionalKey(Schema.Array(ManualPaymentSchema).check(Schema.isMaxLength(5000))),
   paymentObservations: Schema.Array(PaymentObservationSchema).check(Schema.isMaxLength(5000)),
+  recurringTemplates: Schema.optionalKey(Schema.Array(RecurringTemplateSchema).check(Schema.isMaxLength(500))),
+  reminders: Schema.optionalKey(Schema.Array(InvoiceReminderSchema).check(Schema.isMaxLength(5000))),
 });
 export type FinanceState = typeof FinanceStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
   counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
+  /** Returns the stored file content of this uploaded document in `document`. */
+  documentId: Schema.optionalKey(FinanceTextSchema),
   opportunityId: Schema.optionalKey(FinanceOpportunityIdSchema),
   partyId: Schema.optionalKey(FinancePartyIdSchema),
   propertyId: Schema.optionalKey(FinancePropertyIdSchema),
@@ -178,8 +317,19 @@ export const FinanceIndicatorsSchema = Schema.Struct({
   revenueVarianceMinor: Schema.Int,
 });
 export const RecordsResponseSchema = Schema.Struct({
+  /** Today in Europe/Prague; overdue indicators are evaluated against it. */
+  businessDate: Schema.optionalKey(CalendarDateSchema),
   canWrite: Schema.Boolean,
+  document: Schema.optionalKey(
+    Schema.Struct({
+      contentBase64: Schema.String,
+      fileName: FinanceTextSchema,
+      id: FinanceTextSchema,
+      mimeType: FinanceTextSchema,
+    }),
+  ),
   indicators: FinanceIndicatorsSchema,
+  /** Legacy fixed demo date kept for older consumers; use `businessDate`. */
   referenceDate: Schema.Literal('2026-10-05'),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   state: FinanceStateSchema,

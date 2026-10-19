@@ -6,10 +6,11 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import type { OperationalScope, ReadHandlerContext, ReadServiceFactory } from '@app/core-runtime';
 import { persistenceService } from '../services/finance-state-repository.ts';
 import { projectFinanceRecords } from '../services/persistence.service.ts';
+import { pragueCalendarDate } from '../../shared/domain/finance-planning.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };
@@ -75,17 +76,37 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   (input, context: ReadHandlerContext<Services>) =>
-    context.services.load().pipe(
+    Effect.gen(function* recordsHandler() {
+      const { revision, state } = yield* context.services.load();
+      const businessDate = pragueCalendarDate(DateTime.toEpochMillis(yield* DateTime.now));
+      const result = projectFinanceRecords(state, revision, input, businessDate);
+      const metadata =
+        input.documentId === undefined
+          ? undefined
+          : (state.documents ?? []).find((document) => document.id === input.documentId);
+      const stored =
+        metadata === undefined ? undefined : yield* context.services.loadDocument(metadata.id);
+      const document =
+        metadata === undefined || stored === undefined
+          ? undefined
+          : {
+              contentBase64: stored.contentBase64,
+              fileName: metadata.fileName,
+              id: metadata.id,
+              mimeType: metadata.mimeType,
+            };
+      return {
+        evidence: { resultCount: result.state.invoices.length + result.state.financialPlanEntries.length },
+        result: {
+          ...result,
+          ...(document === undefined ? {} : { document }),
+          canWrite: context.services.canWrite,
+        },
+      };
+    }).pipe(
       Effect.mapError(
         (failure) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: failure.reason }),
       ),
-      Effect.map(({ revision, state }) => {
-        const result = projectFinanceRecords(state, revision, input);
-        return {
-          evidence: { resultCount: result.state.invoices.length + result.state.financialPlanEntries.length },
-          result: { ...result, canWrite: context.services.canWrite },
-        };
-      }),
     ),
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: financeModuleKey }),

@@ -119,7 +119,7 @@ describe('Invoice line snapshots', () => {
         totalMinor: 1,
       };
       const draft = yield* run({ ...empty, invoices: [legacyInvoice] }, create, 'invoice-manual');
-      expect(draft.invoice).toMatchObject({
+      expect(draft.invoice!).toMatchObject({
         businessState: 'DRAFT',
         number: 'FV-2026-0001',
         partyId,
@@ -134,12 +134,12 @@ describe('Invoice line snapshots', () => {
         {
           ...create,
           _tag: 'UpdateInvoiceDraft',
-          invoiceRef: draft.invoice.ref,
+          invoiceRef: draft.invoice!.ref,
           lines: [{ description: 'Licence', quantity: 2, unitPriceMinor: 1000, vatRate: 21 }],
         },
         'unused',
       );
-      expect(relined.invoice).toMatchObject({
+      expect(relined.invoice!).toMatchObject({
         number: 'FV-2026-0001',
         subtotalMinor: 2000,
         totalMinor: 2420,
@@ -147,25 +147,25 @@ describe('Invoice line snapshots', () => {
         vatRecap: [{ baseMinor: 2000, rate: 21, vatMinor: 420 }],
       });
 
-      const confirmed = yield* run(relined.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref }, 'unused');
-      const { businessState: _confirmedState, updatedAt: _confirmedAt, ...confirmedSnapshot } = confirmed.invoice;
-      const { businessState: _draftState, updatedAt: _draftAt, ...draftSnapshot } = relined.invoice;
+      const confirmed = yield* run(relined.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref }, 'unused');
+      const { businessState: _confirmedState, updatedAt: _confirmedAt, ...confirmedSnapshot } = confirmed.invoice!;
+      const { businessState: _draftState, updatedAt: _draftAt, ...draftSnapshot } = relined.invoice!;
       expect(confirmedSnapshot).toEqual(draftSnapshot);
-      expect(confirmed.invoice.lines).toBe(relined.invoice.lines);
+      expect(confirmed.invoice!.lines).toBe(relined.invoice!.lines);
 
       const lateEdit = yield* Effect.exit(
-        run(confirmed.state, { ...create, _tag: 'UpdateInvoiceDraft', invoiceRef: draft.invoice.ref, lines }, 'unused'),
+        run(confirmed.state, { ...create, _tag: 'UpdateInvoiceDraft', invoiceRef: draft.invoice!.ref, lines }, 'unused'),
       );
       expect(Exit.isFailure(lateEdit)).toBe(true);
 
-      const voided = yield* run(confirmed.state, { _tag: 'VoidInvoice', invoiceRef: draft.invoice.ref }, 'unused');
-      expect(voided.invoice.lines).toBe(relined.invoice.lines);
-      expect(voided.invoice.totalMinor).toBe(2420);
+      const voided = yield* run(confirmed.state, { _tag: 'VoidInvoice', invoiceRef: draft.invoice!.ref }, 'unused');
+      expect(voided.invoice!.lines).toBe(relined.invoice!.lines);
+      expect(voided.invoice!.totalMinor).toBe(2420);
 
       const roundTrip = yield* Schema.decodeEffect(FinanceStateSchema)(
         yield* Schema.encodeEffect(FinanceStateSchema)(confirmed.state),
       );
-      expect(roundTrip.invoices[1]?.vatRecap).toEqual(confirmed.invoice.vatRecap);
+      expect(roundTrip.invoices[1]?.vatRecap).toEqual(confirmed.invoice!.vatRecap);
     }),
   );
 
@@ -182,9 +182,9 @@ describe('Invoice line snapshots', () => {
         totalMinor: 99_900,
       };
       const created = yield* run(empty, legacy, 'invoice-legacy-new');
-      expect(created.invoice.totalMinor).toBe(99_900);
-      expect(created.invoice.lines).toBeUndefined();
-      expect(created.invoice.vatRecap).toBeUndefined();
+      expect(created.invoice!.totalMinor).toBe(99_900);
+      expect(created.invoice!.lines).toBeUndefined();
+      expect(created.invoice!.vatRecap).toBeUndefined();
       const { totalMinor: _total, ...withoutTotal } = legacy;
       expect(Exit.isFailure(yield* Effect.exit(run(empty, withoutTotal, 'invoice-x')))).toBe(true);
       const zeroLines = yield* Effect.exit(
@@ -216,7 +216,7 @@ describe('CreateInvoiceFromOpportunity', () => {
       };
       const first = yield* run({ ...empty, invoices: [legacyInvoice] }, command, 'invoice-opportunity');
       expect(first.changed).toBe(true);
-      expect(first.invoice).toMatchObject({
+      expect(first.invoice!).toMatchObject({
         businessState: 'DRAFT',
         counterpartyRef,
         direction: 'OUTGOING',
@@ -233,7 +233,7 @@ describe('CreateInvoiceFromOpportunity', () => {
       const redelivered = yield* run(first.state, command, 'invoice-opportunity-duplicate');
       expect(redelivered.changed).toBe(false);
       expect(redelivered.state).toBe(first.state);
-      expect(redelivered.invoice.ref).toEqual(first.invoice.ref);
+      expect(redelivered.invoice!.ref).toEqual(first.invoice!.ref);
 
       const differentLines = yield* run(
         first.state,
@@ -241,7 +241,7 @@ describe('CreateInvoiceFromOpportunity', () => {
         'invoice-opportunity-other',
       );
       expect(differentLines.changed).toBe(false);
-      expect(differentLines.invoice.totalMinor).toBe(2760);
+      expect(differentLines.invoice!.totalMinor).toBe(2760);
 
       const defaultDate = yield* run(
         first.state,

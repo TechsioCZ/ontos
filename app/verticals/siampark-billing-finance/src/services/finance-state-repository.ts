@@ -5,7 +5,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { FinanceConflict, FinancePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
 import type { FinanceState } from '../../shared/apis/records.ts';
-import { financeStates } from '../database/schema.ts';
+import { financeDocumentContents, financeStates } from '../database/schema.ts';
 
 /* The scoped adapter stays apart from pure transitions so the worker bundle never imports request-time Core. */
 type Transaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
@@ -71,6 +71,12 @@ export const financeStateRepository = (persistence: StatePersistence) => ({
   }),
 });
 
+export interface StoredDocument {
+  readonly contentBase64: string;
+  readonly documentId: string;
+  readonly mimeType: string;
+}
+
 export const persistenceService = (transaction: Transaction, scope: OperationalScope) => {
   const { legalEntityId } = scope;
   if (
@@ -86,8 +92,33 @@ export const persistenceService = (transaction: Transaction, scope: OperationalS
     );
   }
   const scopeWhere = and(eq(financeStates.tenantId, scope.tenantId), eq(financeStates.legalEntityId, legalEntityId));
-  return Effect.succeed(
-    financeStateRepository({
+  const documents = {
+    loadDocument: (documentId: string) =>
+      transaction
+        .select()
+        .from(financeDocumentContents)
+        .where(
+          and(
+            eq(financeDocumentContents.tenantId, scope.tenantId),
+            eq(financeDocumentContents.legalEntityId, legalEntityId),
+            eq(financeDocumentContents.documentId, documentId),
+          ),
+        )
+        .limit(1)
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map(([row]): StoredDocument | undefined => row),
+        ),
+    writeDocument: (document: StoredDocument) =>
+      transaction
+        .insert(financeDocumentContents)
+        .values({ ...document, legalEntityId, tenantId: scope.tenantId })
+        .onConflictDoNothing()
+        .pipe(Effect.mapError(unavailable), Effect.asVoid),
+  };
+  return Effect.succeed({
+    ...documents,
+    ...financeStateRepository({
       insert: (state) =>
         DateTime.now.pipe(
           Effect.flatMap((now) =>
@@ -126,5 +157,5 @@ export const persistenceService = (transaction: Transaction, scope: OperationalS
           ),
         ),
     }),
-  );
+  });
 };
