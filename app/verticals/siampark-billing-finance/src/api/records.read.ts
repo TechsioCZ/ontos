@@ -84,8 +84,7 @@ export const recordsRead = defineRead(
         input.documentId === undefined
           ? undefined
           : (state.documents ?? []).find((document) => document.id === input.documentId);
-      const stored =
-        metadata === undefined ? undefined : yield* context.services.loadDocument(metadata.id);
+      const stored = metadata === undefined ? undefined : yield* context.services.loadDocument(metadata.id);
       const document =
         metadata === undefined || stored === undefined
           ? undefined

@@ -28,7 +28,10 @@ import { InvoiceRefSchema } from '../resources/invoice.ts';
 /** Raw upload limit; the base64 payload is about 4/3 of it. */
 export const MAX_DOCUMENT_BYTES = 3 * 1024 * 1024;
 export const DocumentUploadSchema = Schema.Struct({
-  contentBase64: Schema.String.check(Schema.isMinLength(4), Schema.isMaxLength(Math.ceil((MAX_DOCUMENT_BYTES * 4) / 3) + 8)),
+  contentBase64: Schema.String.check(
+    Schema.isMinLength(4),
+    Schema.isMaxLength(Math.ceil((MAX_DOCUMENT_BYTES * 4) / 3) + 8),
+  ),
   fileName: FinanceTextSchema,
   mimeType: FinanceTextSchema,
 });

@@ -106,7 +106,7 @@ const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submit
 ) {
   // Only the modules the validators will read: asking for an audience outside the composition fails the command.
   const referenceCredentials = yield* makeReferenceGatewayCredentials(
-    commandReferenceAudiences(command, snapshot.state.invoices),
+    commandReferenceAudiences(command, snapshot.state.invoices, snapshot.state.recurringTemplates ?? []),
   );
   const idempotencyKey = yield* browserCrypto.randomUUIDv4;
   return yield* executeApplyCommand({ command, expectedRevision: snapshot.revision }, 'siampark-finance.command', {
@@ -143,8 +143,56 @@ const pushDetailUrl = (id: string) => {
   window.history.pushState({ __TSR_index: index + 1, __TSR_key: key, key }, '', detailUrl(id));
 };
 
+export type CommandOutcome =
+  | { readonly feedback: Feedback; readonly ok: false; readonly reason: string | undefined }
+  | { readonly invoice: Invoice | undefined; readonly ok: true };
+
+/** Problem `detail`/`reason` of a failed command, so the UI can explain known domain refusals. */
+const failureReason = (error: unknown): string | undefined => {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+  const record = error as Record<string, unknown>;
+  for (const key of ['reason', 'detail', 'title']) {
+    const value = record[key];
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+  return undefined;
+};
+
+/** Signed-in user's display name from the shell session; used as a readable author label next to the principal. */
+// @effect-diagnostics-next-line globalFetch:off
+const fetchSession = () => fetch('/api/auth/get-session', { credentials: 'include' });
+const useActorLabel = () => {
+  const [label, setLabel] = useState<string>();
+  useEffect(() => {
+    let active = true;
+    void fetchSession()
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((body: unknown) => {
+        const user =
+          typeof body === 'object' && body !== null
+            ? (body as { readonly user?: Record<string, unknown> }).user
+            : undefined;
+        const rawName = user?.['name'];
+        const name = typeof rawName === 'string' && rawName.trim() !== '' ? rawName : user?.['email'];
+        if (active && typeof name === 'string') {
+          setLabel(name.slice(0, 200));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+  return label;
+};
+
 /** Invoice list and detail state. Loads once on mount; commands reload the list after they succeed. */
 export const useFinanceRecords = () => {
+  const actorLabel = useActorLabel();
   const { t } = useModernI18n();
   const toaster = useToast();
   const rawSearch = useRouterState({
@@ -159,7 +207,13 @@ export const useFinanceRecords = () => {
   const { counterpartyId, partyId, tenantId } = fields;
   const requestedId = fields.resourceId;
   const request = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
-  const [snapshot, setSnapshot] = useState<RecordsResponse>();
+  const [snapshot, setSnapshotState] = useState<RecordsResponse>();
+  /** Latest snapshot, so commands issued one after another use the revision the previous one produced. */
+  const latestSnapshot = useRef<RecordsResponse | undefined>(undefined);
+  const setSnapshot = (value: RecordsResponse) => {
+    latestSnapshot.current = value;
+    setSnapshotState(value);
+  };
   const [feedback, setFeedback] = useState<Feedback>('loading');
   const [voidTarget, setVoidTarget] = useState<Invoice>();
   /** Confirming numbers the invoice and locks it, so every entry point asks first. */
@@ -207,9 +261,7 @@ export const useFinanceRecords = () => {
       Effect.match({
         onFailure: (error): DraftInvoiceOutcome => ({ feedback: financeFailureFeedback(error), ok: false }),
         onSuccess: (result): DraftInvoiceOutcome =>
-          result.invoice === undefined
-            ? { feedback: 'unavailable', ok: false }
-            : { invoice: result.invoice, ok: true },
+          result.invoice === undefined ? { feedback: 'unavailable', ok: false } : { invoice: result.invoice, ok: true },
       }),
     );
   };
@@ -285,7 +337,49 @@ export const useFinanceRecords = () => {
     );
   };
 
+  /** Runs any command, reloads the ledger on success and reports the outcome (toasts on success when titled). */
+  const execute = (command: FinanceCommand, successTitle?: string): Promise<CommandOutcome> => {
+    const current = latestSnapshot.current ?? snapshot;
+    if (current === undefined || !canWrite) {
+      return Promise.resolve({ feedback: 'unavailable', ok: false, reason: undefined });
+    }
+    setFeedback('saving');
+    return financeBrowserRuntime.runPromise(
+      submitFinanceCommand(current, command).pipe(
+        Effect.flatMap((result) => load().pipe(Effect.map(() => result))),
+        Effect.tapError((cause) =>
+          financeFailureFeedback(cause) === 'conflict' ? load().pipe(Effect.ignore) : Effect.void,
+        ),
+        Effect.match({
+          onFailure: (error): CommandOutcome => {
+            setFeedback('ready');
+            return { feedback: financeFailureFeedback(error), ok: false, reason: failureReason(error) };
+          },
+          onSuccess: (result): CommandOutcome => {
+            setFeedback('ready');
+            if (successTitle !== undefined) {
+              toaster.create({ title: successTitle, type: 'success' });
+            }
+            return { invoice: result.invoice, ok: true };
+          },
+        }),
+      ),
+    );
+  };
+
+  /** Loads the stored bytes of one uploaded document. */
+  const fetchDocument = (documentId: string) =>
+    financeBrowserRuntime.runPromise(
+      executeRecords({ documentId }, 'siampark-finance.document').pipe(
+        Effect.map((response) => response.document),
+        Effect.orElseSucceed(() => undefined),
+      ),
+    );
+
   return {
+    actorLabel,
+    execute,
+    fetchDocument,
     busy,
     cancelConfirm: () => setConfirmTarget(undefined),
     cancelVoid: () => setVoidTarget(undefined),
@@ -326,7 +420,8 @@ export const useFinanceRecords = () => {
       detailPushed.current = true;
       pushDetailUrl(id);
     },
-    referenceDate: snapshot?.referenceDate ?? '',
+    /** Real business date (today in Prague) from the owner; overdue badges are evaluated against it. */
+    referenceDate: snapshot?.businessDate ?? snapshot?.referenceDate ?? '',
     references,
     relatedCustomer: partyId !== undefined || counterpartyId !== undefined,
     reload,

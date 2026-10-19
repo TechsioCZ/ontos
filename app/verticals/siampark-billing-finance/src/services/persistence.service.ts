@@ -1114,8 +1114,9 @@ const optionalStateParts = (state: FinanceState, selected: ReadonlySet<string>, 
     request.counterpartyRef === undefined &&
     request.opportunityId === undefined &&
     request.propertyId === undefined;
-  const byInvoice = <T extends { readonly invoiceResourceId?: string | undefined }>(records: readonly T[] | undefined) =>
-    records?.filter((record) => record.invoiceResourceId !== undefined && selected.has(record.invoiceResourceId));
+  const byInvoice = <T extends { readonly invoiceResourceId?: string | undefined }>(
+    records: readonly T[] | undefined,
+  ) => records?.filter((record) => record.invoiceResourceId !== undefined && selected.has(record.invoiceResourceId));
   const parts = {
     accountingExports: unfiltered ? state.accountingExports : undefined,
     accountingSetup: state.accountingSetup,

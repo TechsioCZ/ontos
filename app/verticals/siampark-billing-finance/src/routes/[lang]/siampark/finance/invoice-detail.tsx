@@ -22,6 +22,16 @@ import {
   opportunityTitle,
 } from './invoice-view.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { InvoiceDocuments, InvoiceHandover, InvoicePayments, InvoiceReminders } from './invoice-extras.tsx';
+
+const DOCUMENT_KIND_LABEL: Readonly<Record<string, string>> = {
+  ADVANCE: 'Zálohová faktura',
+  FINAL: 'Konečná faktura',
+  PARTIAL: 'Dílčí faktura',
+  RECURRING: 'Opakovaná faktura',
+  STANDARD: 'Běžná faktura',
+};
 
 type FinanceViewModel = ReturnType<typeof useFinanceRecords>;
 
@@ -48,6 +58,13 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
       ? t(`${ns}.sourceManual`)
       : [t(`${ns}.sourceOpportunity`), title].filter((part) => part !== undefined && part !== '').join(' · ');
   const status = invoiceStatusBadge(invoice, referenceDate);
+  const incoming = invoice.direction === 'INCOMING';
+  const counterpartyName = customerDisplayName(
+    customer,
+    references.customersLoading && invoice.counterpartyName === undefined
+      ? customerLoadingLabel
+      : (invoice.counterpartyName ?? t(`${ns}.unknownCustomer`)),
+  );
 
   return (
     <>
@@ -63,13 +80,31 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
           {t(`${ns}.back`)}
         </Button>
       </div>
+      {isDraft && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-50 hidden items-center justify-center print:flex"
+        >
+          <span className="-rotate-30 font-bold text-[9rem] text-fg-secondary opacity-15">NÁVRH</span>
+        </div>
+      )}
       <PageHeader
-        description={t(`${ns}.issuedDue`, {
-          due: formatDate(invoice.dueDate),
-          issued: formatDate(invoice.issueDate),
-        })}
+        description={`${incoming ? 'Přijatá faktura' : (DOCUMENT_KIND_LABEL[invoice.documentKind ?? 'STANDARD'] ?? '')} · ${t(
+          `${ns}.issuedDue`,
+          {
+            due: formatDate(invoice.dueDate),
+            issued: formatDate(invoice.issueDate),
+          },
+        )}${incoming ? ` · ${counterpartyName}` : ''}`}
         title={number}
       />
+      {isDraft && (
+        <div className="flex">
+          <Badge size="sm" variant="warning">
+            NÁVRH – nejde o odborně schválený účetní doklad
+          </Badge>
+        </div>
+      )}
       {isOverdue(invoice, referenceDate) && (
         <StatusText showIcon status="error">
           {t(`${ns}.overdueNotice`)}
@@ -79,24 +114,39 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
         <div className="flex min-w-0 flex-col gap-250">
           <div className="grid grid-cols-1 gap-250 md:grid-cols-2">
             <SectionCard title={t(`${ns}.supplier`)}>
-              <p className="text-sm">{t(`${ns}.supplierName`)}</p>
+              {incoming ? (
+                <DetailList
+                  items={[
+                    { label: 'Dodavatel', value: counterpartyName },
+                    { label: t(`${ns}.companyId`), value: customer?.companyId ?? invoice.counterpartyCompanyId ?? '—' },
+                    { label: 'Číslo dokladu dodavatele', value: invoice.documentNumber },
+                    { label: 'Kategorie rozpočtu', value: invoice.budgetCategory ?? '—' },
+                  ]}
+                />
+              ) : (
+                <p className="text-sm">{t(`${ns}.supplierName`)}</p>
+              )}
             </SectionCard>
             <SectionCard title={t(`${ns}.customer`)}>
-              <DetailList
-                items={[
-                  {
-                    label: t(`${ns}.columns.customer`),
-                    value: customerDisplayName(
-                      customer,
-                      references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`),
-                    ),
-                  },
-                  { label: t(`${ns}.companyId`), value: customer?.companyId ?? '—' },
-                  { label: t(`${ns}.vatId`), value: customer?.vatId ?? '—' },
-                  { label: t(`${ns}.city`), value: customer?.city ?? '—' },
-                  { label: t(`${ns}.source`), value: sourceLabel },
-                ]}
-              />
+              {incoming ? (
+                <p className="text-sm">{t(`${ns}.supplierName`)}</p>
+              ) : (
+                <DetailList
+                  items={[
+                    {
+                      label: t(`${ns}.columns.customer`),
+                      value: counterpartyName,
+                    },
+                    { label: t(`${ns}.companyId`), value: customer?.companyId ?? invoice.counterpartyCompanyId ?? '—' },
+                    { label: t(`${ns}.vatId`), value: customer?.vatId ?? '—' },
+                    { label: t(`${ns}.city`), value: customer?.city ?? '—' },
+                    { label: t(`${ns}.source`), value: sourceLabel },
+                    ...(invoice.recurringPeriod === undefined
+                      ? []
+                      : [{ label: 'Období opakované faktury', value: invoice.recurringPeriod }]),
+                  ]}
+                />
+              )}
             </SectionCard>
           </div>
           <SectionCard flush title={t(`${ns}.lines`)}>
@@ -135,6 +185,11 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
               </Table>
             )}
           </SectionCard>
+          <InvoicePayments invoice={invoice} vm={vm} />
+          <InvoiceDocuments invoice={invoice} vm={vm} />
+          <div className="print:hidden">
+            <InvoiceReminders counterpartyName={counterpartyName} invoice={invoice} vm={vm} />
+          </div>
         </div>
         <div className="flex min-w-0 flex-col gap-250 xl:sticky xl:top-[5rem]">
           <SectionCard title={t(`${ns}.totals`)}>
@@ -199,6 +254,9 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
           <SectionCard title={t(`${ns}.columns.status`)}>
             <StatusBadge kind={status.kind} value={status.value} />
           </SectionCard>
+          <div className="print:hidden">
+            <InvoiceHandover invoice={invoice} vm={vm} />
+          </div>
           <div className="flex flex-wrap items-center gap-100 print:hidden">
             <Button
               className="whitespace-nowrap"
@@ -208,7 +266,7 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
               theme="outlined"
               variant="secondary"
             >
-              {t(`${ns}.print`)}
+              {isDraft ? 'Tisk / PDF (NÁVRH)' : t(`${ns}.print`)}
             </Button>
             {canWrite && isVoidable(invoice) && (
               <Button

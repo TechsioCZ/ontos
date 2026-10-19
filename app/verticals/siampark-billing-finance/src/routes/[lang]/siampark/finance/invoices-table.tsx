@@ -58,20 +58,35 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
   return [
     {
       accessorFn: (row) => row.number ?? row.documentNumber,
-      cell: (info) => <span className="font-medium whitespace-nowrap">{info.getValue<string>()}</span>,
+      cell: (info) => (
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate font-medium whitespace-nowrap">{info.getValue<string>()}</span>
+          <span className="truncate text-fg-secondary text-xs">
+            {info.row.original.direction === 'INCOMING'
+              ? 'přijatá'
+              : info.row.original.documentKind === 'RECURRING'
+                ? 'vydaná · opakovaná'
+                : 'vydaná'}
+          </span>
+        </span>
+      ),
       header: t(`${ns}.columns.number`),
       id: 'number',
       meta: { width: 125 },
     },
     {
-      accessorFn: (row) => customerDisplayName(customerOf(references.customerById, row), unknownCustomer),
+      accessorFn: (row) =>
+        customerDisplayName(customerOf(references.customerById, row), row.counterpartyName ?? unknownCustomer),
       cell: (info) => {
         const customer = customerOf(references.customerById, info.row.original);
-        const companyId = customer?.companyId ?? null;
+        const companyId = customer?.companyId ?? info.row.original.counterpartyCompanyId ?? null;
+        const fallback = info.row.original.counterpartyName;
         return (
           <span className="flex min-w-0 flex-col">
-            <span className={customer === undefined ? 'truncate text-fg-secondary' : 'truncate'}>
-              {customerDisplayName(customer, unknownCustomer)}
+            <span
+              className={customer === undefined && fallback === undefined ? 'truncate text-fg-secondary' : 'truncate'}
+            >
+              {customerDisplayName(customer, fallback ?? unknownCustomer)}
             </span>
             {companyId !== null && (
               <span className="truncate text-fg-secondary text-xs">
@@ -164,12 +179,16 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
   } = vm;
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<string>(ALL);
+  const [direction, setDirection] = useState<string>(ALL);
   const loadFailed = snapshot === undefined && feedback !== 'loading';
-  const filterActive = search.trim() !== '' || status !== ALL;
+  const filterActive = search.trim() !== '' || status !== ALL || direction !== ALL;
   const unknownCustomer = references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`);
 
   const visibleInvoices = invoices.filter((invoice) => {
     if (status !== ALL && invoiceStatusBadge(invoice, referenceDate).value !== status) {
+      return false;
+    }
+    if (direction !== ALL && invoice.direction !== direction) {
       return false;
     }
     if (search.trim() === '') {
@@ -179,8 +198,9 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
     // The row shows the customer's IČO under the name, so the search matches it too.
     const searched = [
       invoice.number ?? invoice.documentNumber,
-      customerDisplayName(customer, unknownCustomer),
-      customer?.companyId ?? '',
+      customerDisplayName(customer, invoice.counterpartyName ?? unknownCustomer),
+      customer?.companyId ?? invoice.counterpartyCompanyId ?? '',
+      invoice.documentNumber,
     ];
     return searched.some((value) => matchesSearch(value, search));
   });
@@ -251,6 +271,25 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
             placeholder={t(`${ns}.table.searchPlaceholder`)}
             size="sm"
             value={search}
+          />
+        </div>
+        <div className="w-40 min-w-0">
+          <Select
+            items={[
+              { displayValue: 'Vydané i přijaté', label: 'Vydané i přijaté', value: ALL },
+              { displayValue: 'Vydané', label: 'Vydané', value: 'OUTGOING' },
+              { displayValue: 'Přijaté', label: 'Přijaté', value: 'INCOMING' },
+            ]}
+            label="Druh"
+            labelProps={{ className: 'font-label text-label-sm' }}
+            onValueChange={({ value }) => {
+              const [next] = value;
+              if (next !== undefined) {
+                setDirection(next);
+              }
+            }}
+            size="sm"
+            value={[direction]}
           />
         </div>
         <div className="w-48 min-w-0">

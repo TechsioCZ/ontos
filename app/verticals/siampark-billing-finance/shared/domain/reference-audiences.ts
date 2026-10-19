@@ -35,7 +35,9 @@ export const commandReferenceAudiences = (
     Match.tag('RecordIncomingInvoice', (incoming) =>
       incoming.counterpartyRef === undefined
         ? []
-        : invoiceReferenceAudiences({ ...(incoming.propertyRef === undefined ? {} : { propertyRef: incoming.propertyRef }) }),
+        : invoiceReferenceAudiences({
+            ...(incoming.propertyRef === undefined ? {} : { propertyRef: incoming.propertyRef }),
+          }),
     ),
     Match.tag('GenerateRecurringInvoice', (generate) => {
       const template = templates.find((entry) => entry.id === generate.templateId);

@@ -1,9 +1,19 @@
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
-import { formatMoney, formatNumber, PageHeader, StatCard, StatRow, Toaster, dialogCloseLabel } from '@app/admin-ui';
+import {
+  formatDate,
+  formatMoney,
+  formatNumber,
+  PageHeader,
+  StatCard,
+  StatRow,
+  Toaster,
+  dialogCloseLabel,
+} from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
+import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useState } from 'react';
 import { Option } from 'effect';
 import csResource from '../../../../../locales/cs/siampark-billing-finance.json';
@@ -13,6 +23,10 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { CreateInvoiceDialog } from './create-invoice-dialog.tsx';
 import { FinanceInvoiceDetail } from './invoice-detail.tsx';
 import { FinanceInvoiceTable } from './invoices-table.tsx';
+import { AccountingPanel } from './accounting-panel.tsx';
+import { IncomingInvoiceDialog } from './incoming-invoice-dialog.tsx';
+import { PlanningPanel } from './planning-panel.tsx';
+import { RecurringPanel } from './recurring-panel.tsx';
 import { customerInvoiceFilterKey, decodeCustomerInvoiceSearch, useFinanceRecords } from './use-finance-records.ts';
 
 const resources = {
@@ -24,6 +38,16 @@ const ns = 'siampark-billing-finance.faktury';
 
 /** KPI tiles show whole Kč; the table keeps exact amounts. */
 const wholeKc = (minor: number) => formatMoney(Math.round(minor / 100) * 100);
+
+const TABS = ['faktury', 'opakovane', 'predani', 'plan'] as const;
+type FinanceTab = (typeof TABS)[number];
+const initialTab = (): FinanceTab => {
+  if (typeof window === 'undefined') {
+    return 'faktury';
+  }
+  const value = new URL(window.location.href).searchParams.get('tab');
+  return TABS.find((tab) => tab === value) ?? 'faktury';
+};
 
 const RecordsPageContent = () => {
   const vm = useFinanceRecords();
@@ -43,6 +67,15 @@ const RecordsPageContent = () => {
     voidTarget,
   } = vm;
   const [createOpen, setCreateOpen] = useState(false);
+  const [incomingOpen, setIncomingOpen] = useState(false);
+  const [tab, setTabState] = useState<FinanceTab>(initialTab);
+  const setTab = (next: string) => {
+    const value = TABS.find((entry) => entry === next) ?? 'faktury';
+    setTabState(value);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', value);
+    window.history.replaceState(window.history.state, '', url);
+  };
   const kpi = (value: (source: NonNullable<typeof indicators>) => string) =>
     indicators === undefined ? '—' : value(indicators);
 
@@ -56,16 +89,28 @@ const RecordsPageContent = () => {
             <PageHeader
               actions={
                 canWrite ? (
-                  <Button
-                    className="whitespace-nowrap"
-                    disabled={references.productsReadable === undefined}
-                    icon="icon-[mdi--plus]"
-                    onClick={() => setCreateOpen(true)}
-                    size="sm"
-                    variant="primary"
-                  >
-                    {t(`${ns}.newInvoice`)}
-                  </Button>
+                  <div className="flex flex-wrap gap-100">
+                    <Button
+                      className="whitespace-nowrap"
+                      icon="icon-[mdi--file-download-outline]"
+                      onClick={() => setIncomingOpen(true)}
+                      size="sm"
+                      theme="outlined"
+                      variant="secondary"
+                    >
+                      Přijatá faktura
+                    </Button>
+                    <Button
+                      className="whitespace-nowrap"
+                      disabled={references.productsReadable === undefined}
+                      icon="icon-[mdi--plus]"
+                      onClick={() => setCreateOpen(true)}
+                      size="sm"
+                      variant="primary"
+                    >
+                      {t(`${ns}.newInvoice`)}
+                    </Button>
+                  </div>
                 ) : undefined
               }
               description={t(`${ns}.${references.productsReadable === false ? 'rentalDescription' : 'description'}`)}
@@ -85,7 +130,14 @@ const RecordsPageContent = () => {
                 label={t(`${ns}.kpi.outstanding`)}
                 value={kpi((source) => wholeKc(source.grossOutstandingMinor))}
               />
-              <StatCard label={t(`${ns}.kpi.overdue`)} value={kpi((source) => formatNumber(source.overdueInvoices))} />
+              <StatCard
+                label={
+                  vm.referenceDate === ''
+                    ? t(`${ns}.kpi.overdue`)
+                    : `${t(`${ns}.kpi.overdue`)} k ${formatDate(vm.referenceDate)}`
+                }
+                value={kpi((source) => formatNumber(source.overdueInvoices))}
+              />
               <StatCard label={t(`${ns}.kpi.drafts`)} value={kpi((source) => formatNumber(source.draftCount))} />
             </StatRow>
             {(feedback === 'forbidden' ||
@@ -101,7 +153,27 @@ const RecordsPageContent = () => {
                 {t(`${ns}.referencesError`)}
               </StatusText>
             )}
-            <FinanceInvoiceTable vm={vm} />
+            <Tabs onValueChange={setTab} size="sm" value={tab} variant="line">
+              <Tabs.List>
+                <Tabs.Trigger value="faktury">Faktury</Tabs.Trigger>
+                <Tabs.Trigger value="opakovane">Opakované faktury</Tabs.Trigger>
+                <Tabs.Trigger value="predani">Účetní předání</Tabs.Trigger>
+                <Tabs.Trigger value="plan">Rozpočet a cash-flow</Tabs.Trigger>
+                <Tabs.Indicator />
+              </Tabs.List>
+              <Tabs.Content className="flex flex-col gap-250 pt-250" value="faktury">
+                <FinanceInvoiceTable vm={vm} />
+              </Tabs.Content>
+              <Tabs.Content className="pt-250" value="opakovane">
+                {tab === 'opakovane' && <RecurringPanel vm={vm} />}
+              </Tabs.Content>
+              <Tabs.Content className="pt-250" value="predani">
+                {tab === 'predani' && <AccountingPanel vm={vm} />}
+              </Tabs.Content>
+              <Tabs.Content className="pt-250" value="plan">
+                {tab === 'plan' && <PlanningPanel vm={vm} />}
+              </Tabs.Content>
+            </Tabs>
           </>
         ) : (
           <FinanceInvoiceDetail invoice={selected} vm={vm} />
@@ -110,6 +182,7 @@ const RecordsPageContent = () => {
       {references.productsReadable !== undefined && (
         <CreateInvoiceDialog onOpenChange={setCreateOpen} open={createOpen} vm={vm} />
       )}
+      {canWrite && <IncomingInvoiceDialog onOpenChange={setIncomingOpen} open={incomingOpen} vm={vm} />}
       <Dialog
         actions={
           <>

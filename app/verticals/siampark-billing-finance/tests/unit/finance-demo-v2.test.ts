@@ -2,7 +2,12 @@ import { describe, expect, it } from 'effect-rstest';
 import { DateTime, Effect, Exit } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
-import { budgetVariance, cashFlowMonths, isInvoiceOverdue, paymentEvents } from '../../shared/domain/finance-planning.ts';
+import {
+  budgetVariance,
+  cashFlowMonths,
+  isInvoiceOverdue,
+  paymentEvents,
+} from '../../shared/domain/finance-planning.ts';
 import { transitionFinance } from '../../src/services/persistence.service.ts';
 import type { FinanceValidators } from '../../src/services/persistence.service.ts';
 
@@ -29,12 +34,22 @@ const invoice = (id: string, overrides: Partial<Invoice> = {}): Invoice => ({
   issueDate: '2026-10-01',
   paidMinor: 0,
   paymentState: 'UNPAID',
-  ref: { moduleId: 'siampark.billing-finance', resourceId: id, resourceType: 'siampark.billing-finance.invoice', tenantId },
+  ref: {
+    moduleId: 'siampark.billing-finance',
+    resourceId: id,
+    resourceType: 'siampark.billing-finance.invoice',
+    tenantId,
+  },
   totalMinor: 100_000,
   updatedAt: now,
   ...overrides,
 });
-const empty: FinanceState = { accountingObservations: [], financialPlanEntries: [], invoices: [], paymentObservations: [] };
+const empty: FinanceState = {
+  accountingObservations: [],
+  financialPlanEntries: [],
+  invoices: [],
+  paymentObservations: [],
+};
 let counter = 0;
 const run = (state: FinanceState, command: FinanceCommand) => {
   counter += 1;
@@ -115,7 +130,11 @@ describe('S07 invoices', () => {
     Effect.gen(function* incoming() {
       const result = yield* run(empty, {
         _tag: 'RecordIncomingInvoice',
-        document: { contentBase64: Buffer.from('%PDF-1.4 demo').toString('base64'), fileName: 'f.pdf', mimeType: 'application/pdf' },
+        document: {
+          contentBase64: Buffer.from('%PDF-1.4 demo').toString('base64'),
+          fileName: 'f.pdf',
+          mimeType: 'application/pdf',
+        },
         documentNumber: '2026-118',
         dueDate: '2026-10-19',
         issueDate: '2026-10-05',
@@ -144,13 +163,21 @@ describe('S08 accounting handover', () => {
   it.effect('S08-02 exports exactly the three selected confirmed invoices with version and history', () =>
     Effect.gen(function* exports() {
       const state = { ...empty, invoices: [invoice('a'), invoice('b'), invoice('c'), invoice('d')] };
-      const first = yield* run(state, { _tag: 'CreateAccountingExport', format: 'CSV', invoiceResourceIds: ['a', 'b', 'c'] });
+      const first = yield* run(state, {
+        _tag: 'CreateAccountingExport',
+        format: 'CSV',
+        invoiceResourceIds: ['a', 'b', 'c'],
+      });
       const created = first.state.accountingExports?.[0];
       expect(created?.invoiceResourceIds).toEqual(['a', 'b', 'c']);
       expect(created?.status).toBe('HANDED_OVER');
       expect(created?.content.trim().split('\r\n').length).toBe(4);
       expect(created?.version).toBe(1);
-      const second = yield* run(first.state, { _tag: 'CreateAccountingExport', format: 'JSON', invoiceResourceIds: ['d'] });
+      const second = yield* run(first.state, {
+        _tag: 'CreateAccountingExport',
+        format: 'JSON',
+        invoiceResourceIds: ['d'],
+      });
       expect(second.state.accountingExports?.map((entry) => entry.version)).toEqual([1, 2]);
       // S08-03: nothing becomes "booked"; the invoices keep their accounting state.
       expect(second.state.invoices.every((entry) => entry.accountingSyncState === 'NOT_SYNCED')).toBe(true);
