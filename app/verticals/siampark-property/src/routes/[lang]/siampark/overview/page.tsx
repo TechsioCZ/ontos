@@ -15,13 +15,15 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/siampark-property.json';
 import enResource from '../../../../../locales/en/siampark-property.json';
 import '../../../index.css';
+import { pragueToday } from '../properties/unit-story.tsx';
 
 const siamparkPropertyI18nResources = {
   cs: { 'siampark-property': csResource },
   en: { 'siampark-property': enResource },
 } as const;
-const referenceDate = '2026-10-05';
-const periodStart = '2026-01-01';
+// Availability, overdue tasks and invoices are evaluated against today's date in Prague.
+const referenceDate = pragueToday();
+const periodStart = `${referenceDate.slice(0, 4)}-01-01`;
 const periodEndExclusive = '2027-01-01';
 const moneyFormatters = {
   cs: new Intl.NumberFormat('cs', { currency: 'CZK', style: 'currency' }),
