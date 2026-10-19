@@ -28,11 +28,31 @@ export const assertCommandAllowed = (
         }),
       );
 
+/** The e-shop demo company (Kavárna Doma). Its non-human principal is the storefront BFF key. */
+export const ESHOP_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000023';
+/** Commands a non-human principal may run inside the e-shop company: only the guest storefront order. */
+export const storefrontOnlyCommands: ReadonlySet<string> = new Set(['PlaceStorefrontOrder']);
+
+/** In the e-shop company, API keys (the storefront BFF) may place guest orders and nothing else. */
+export const assertStorefrontScope = (
+  principalKind: PrincipalKind,
+  legalEntityId: string | undefined,
+  commandTag: string,
+): Effect.Effect<void, MerchandisePermissionDenied> =>
+  principalKind === 'human' || legalEntityId !== ESHOP_LEGAL_ENTITY_ID || storefrontOnlyCommands.has(commandTag)
+    ? Effect.void
+    : Effect.fail(
+        new MerchandisePermissionDenied({
+          code: 'merchandise_permission_denied',
+          reason: `Merchandise command ${commandTag} is not available to the storefront`,
+        }),
+      );
+
 /** Wraps the apply-command handler: the guard runs before any state is loaded. */
 export const withCommandGuard =
   <
     Payload extends { readonly command: { readonly _tag: string } },
-    Context extends { readonly scope: Pick<TrustedPrincipalContext, 'authMethod'> },
+    Context extends { readonly scope: Pick<TrustedPrincipalContext, 'authMethod' | 'legalEntityId'> },
     Success,
     Failure,
     Requirements,
@@ -41,5 +61,12 @@ export const withCommandGuard =
   ) =>
   (payload: Payload, context: Context): Effect.Effect<Success, Failure | MerchandisePermissionDenied, Requirements> =>
     assertCommandAllowed(principalKindOf(context.scope.authMethod), payload.command._tag).pipe(
+      Effect.flatMap(() =>
+        assertStorefrontScope(
+          principalKindOf(context.scope.authMethod),
+          context.scope.legalEntityId,
+          payload.command._tag,
+        ),
+      ),
       Effect.flatMap(() => handler(payload, context)),
     );
