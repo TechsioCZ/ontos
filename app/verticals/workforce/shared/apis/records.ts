@@ -51,10 +51,27 @@ export const WorkforceStateSchema = Schema.Struct({
 });
 export type WorkforceState = typeof WorkforceStateSchema.Type;
 
+/** One Core audit event of a non-human principal (AI agent, integration) in the selected company. */
+export const AiActivityEntrySchema = Schema.Struct({
+  actionKey: Schema.NullOr(Schema.String),
+  actorDisplayName: Schema.String,
+  actorKind: Schema.String,
+  actorPrincipalId: Schema.String,
+  auditEventId: Schema.String,
+  occurredAt: Schema.String,
+  outcome: Schema.String,
+  outcomeCode: Schema.String,
+  outcomeStage: Schema.String,
+  targetModuleKey: Schema.NullOr(Schema.String),
+});
+export type AiActivityEntry = typeof AiActivityEntrySchema.Type;
+
 export const RecordsRequestSchema = Schema.Struct({
   active: Schema.optionalKey(Schema.Boolean),
   department: Schema.optionalKey(EmployeeDepartmentSchema),
   employeeId: Schema.optionalKey(EmployeeIdSchema),
+  /** Adds `aiActivity`: the latest Core audit events of non-human principals in this company. */
+  includeAiActivity: Schema.optionalKey(Schema.Boolean),
   role: Schema.optionalKey(EmployeeRoleSchema),
 });
 export type RecordsRequest = typeof RecordsRequestSchema.Type;
@@ -62,6 +79,7 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 
 export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
+  aiActivity: Schema.optionalKey(Schema.Array(AiActivityEntrySchema)),
   canWrite: Schema.Boolean,
   indicators: Schema.Struct({
     active: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

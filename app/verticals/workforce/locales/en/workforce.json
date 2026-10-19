@@ -132,6 +132,48 @@
           "access": "Access",
           "role": "Role",
           "title": "Permissions"
+        },
+        "aiActivity": {
+          "title": "AI activity",
+          "description": "What AI agents and integrations did in this company: every allowed and denied write attempt from the Core audit. Level A may only read, level B may also create tasks.",
+          "refresh": "Refresh",
+          "executed": "Executed: {{count}}",
+          "denied": "Denied: {{count}}",
+          "level": "Level {{level}}",
+          "write": "write",
+          "unavailable": "The audit records could not be loaded.",
+          "empty": "No AI agent activity yet",
+          "emptyDescription": "As soon as an AI agent changes something in this company, or tries to, it appears here.",
+          "columns": {
+            "time": "Time",
+            "actor": "Agent",
+            "action": "Action",
+            "result": "Result",
+            "reason": "Reason"
+          },
+          "modules": {
+            "siampark_work": "Tasks",
+            "demo_sales-pipeline": "Opportunities",
+            "demo_tagging": "Tags",
+            "demo_merchandise": "Orders and products",
+            "demo_workforce": "Employees",
+            "party_registry": "Customers",
+            "siampark_billing-finance": "Invoices",
+            "demo_crm": "CRM"
+          },
+          "outcomes": {
+            "succeeded": "Executed",
+            "denied": "Denied",
+            "allowed": "Allowed",
+            "failed": "Failed"
+          },
+          "codes": {
+            "action_permission_denied": "no write permission",
+            "action_succeeded": "saved",
+            "succeeded": "saved",
+            "action_policy_denied": "denied by policy",
+            "action_revision_conflict": "concurrent change"
+          }
         }
       }
     },

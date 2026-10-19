@@ -35,6 +35,7 @@ import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
+import { AiActivityCard } from './ai-activity-card.tsx';
 import { BulkDepartmentDialog, BulkRoleDialog, EmployeeFormDialog, selectLabelProps } from './employee-dialogs.tsx';
 import type { CommitCommand, ShownEdit } from './employee-dialogs.tsx';
 import type { CommitOutcome, EmployeeFilters } from './employee-model.ts';
@@ -694,6 +695,8 @@ const EmployeesPageContent = () => {
             />
           </EmployeeTagsContext>
         </EmployeeTagStatusContext>
+
+        <AiActivityCard />
 
         <PermissionsCard />
       </div>

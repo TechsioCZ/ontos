@@ -132,6 +132,48 @@
           "access": "Přístup",
           "role": "Role",
           "title": "Oprávnění"
+        },
+        "aiActivity": {
+          "title": "AI aktivita",
+          "description": "Co v této firmě dělali AI agenti a integrace: každý povolený i zamítnutý pokus o zápis z Core auditu. Úroveň A smí jen číst, úroveň B navíc zakládá úkoly.",
+          "refresh": "Obnovit",
+          "executed": "Provedeno: {{count}}",
+          "denied": "Zamítnuto: {{count}}",
+          "level": "Úroveň {{level}}",
+          "write": "zápis",
+          "unavailable": "Záznamy auditu se nepodařilo načíst.",
+          "empty": "Zatím žádná aktivita AI agentů",
+          "emptyDescription": "Jakmile AI agent v této firmě něco změní nebo se o to pokusí, objeví se to tady.",
+          "columns": {
+            "time": "Čas",
+            "actor": "Agent",
+            "action": "Akce",
+            "result": "Výsledek",
+            "reason": "Důvod"
+          },
+          "modules": {
+            "siampark_work": "Úkoly",
+            "demo_sales-pipeline": "Příležitosti",
+            "demo_tagging": "Štítky",
+            "demo_merchandise": "Objednávky a produkty",
+            "demo_workforce": "Zaměstnanci",
+            "party_registry": "Zákazníci",
+            "siampark_billing-finance": "Faktury",
+            "demo_crm": "CRM"
+          },
+          "outcomes": {
+            "succeeded": "Provedeno",
+            "denied": "Zamítnuto",
+            "allowed": "Povoleno",
+            "failed": "Selhalo"
+          },
+          "codes": {
+            "action_permission_denied": "chybí oprávnění k zápisu",
+            "action_succeeded": "uloženo",
+            "succeeded": "uloženo",
+            "action_policy_denied": "zamítnuto pravidlem",
+            "action_revision_conflict": "souběžná změna"
+          }
         }
       }
     },
