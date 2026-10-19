@@ -527,7 +527,12 @@ const productState = (product: SeedProduct): EncodedProduct => {
     currentPriceMinor: priceMinor,
     description: product.description,
     id: productId,
-    images: product.images ?? [`/img/${product.slug}.svg`],
+    // Main pack shot, a detail view and (for every other product) a lifestyle scene; the storefront renders them.
+    images: product.images ?? [
+      `/img/${product.slug}.svg`,
+      `/img/${product.slug}--2.svg`,
+      ...(product.slug.length % 2 === 0 ? [`/img/${product.slug}--3.svg`] : []),
+    ],
     lowStockThreshold: product.lowStockThreshold,
     name: product.name,
     priceHistory: [{ effectiveFrom: createdAt, priceMinor }],
