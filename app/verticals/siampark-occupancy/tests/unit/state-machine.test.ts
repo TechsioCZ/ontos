@@ -126,10 +126,10 @@ describe('Occupancy state transitions', () => {
       yield* rejected(
         transitionOccupancy(completed.snapshot, { _tag: 'SetRentTerms', occupancyRef, rentTerms }, scope, validators),
       );
-      expect(Schema.decodeUnknownExit(OccupancySchema)({ ...draft, rentTerms: { ...rentTerms, paymentDay: 0 } })._tag).toBe(
+      expect(Schema.decodeExit(OccupancySchema)({ ...draft, rentTerms: { ...rentTerms, paymentDay: 0 } })._tag).toBe(
         'Failure',
       );
-      expect(Schema.decodeUnknownExit(OccupancySchema)(draft)._tag).toBe('Success');
+      expect(Schema.decodeExit(OccupancySchema)(draft)._tag).toBe('Success');
     }),
   );
   it.effect('edits only a draft period and preserves its customer, unit and lifecycle anchors', () =>
