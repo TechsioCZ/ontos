@@ -9,7 +9,9 @@
     "build": "rsbuild build",
     "start": "node server/server.ts",
     "serve": "pnpm run build && node server/server.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "demo:restart": "sh scripts/demo-restart.sh",
+    "verify:flow": "node scripts/verify-flow.mjs"
   },
   "dependencies": {
     "react": "19.2.8",
