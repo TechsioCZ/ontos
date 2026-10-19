@@ -5,7 +5,7 @@ import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { formatMoney, formatNumber, comboboxTranslations } from '@app/admin-ui';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
+import type { ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 
 export interface DraftLine {
@@ -14,9 +14,24 @@ export interface DraftLine {
   readonly quantity: number;
   /** The quantity input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
   readonly quantityText: string;
+  /** Chosen variant of a product with sellable variants. */
+  readonly variantId?: VariantId | null;
 }
 
-export type DraftLinePatch = Partial<Pick<DraftLine, 'productId' | 'quantity' | 'quantityText'>>;
+export type DraftLinePatch = Partial<Pick<DraftLine, 'productId' | 'quantity' | 'quantityText' | 'variantId'>>;
+
+/** One pickable unit: a product without variants, or one active variant of a product. */
+export const pickItems = (products: readonly ProductRecord[]) =>
+  products.flatMap((item) => {
+    const variants = (item.variantRecords ?? []).filter((variant) => variant.active);
+    return variants.length === 0
+      ? [{ id: item.id, label: `${item.name} (${item.sku})`, value: item.id }]
+      : variants.map((variant) => ({
+          id: `${item.id}|${variant.id}`,
+          label: `${item.name} — ${variant.name} (${variant.sku})`,
+          value: `${item.id}|${variant.id}`,
+        }));
+  });
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
 
@@ -36,6 +51,9 @@ interface OrderLineEditorProps {
 export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, products }: OrderLineEditorProps) => {
   const { t } = useModernI18n();
   const product = products.find((item) => item.id === line.productId);
+  const variant = product?.variantRecords?.find((entry) => entry.id === line.variantId);
+  const selected =
+    line.productId === null ? [] : [line.variantId === undefined || line.variantId === null ? line.productId : `${line.productId}|${line.variantId}`];
 
   return (
     <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
@@ -46,16 +64,18 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
             clearable={false}
             translations={comboboxTranslations}
             {...(error === undefined ? {} : { helpText: error })}
-            items={products.map((item) => ({ id: item.id, label: `${item.name} (${item.sku})`, value: item.id }))}
+            items={pickItems(products)}
             label={t(key('create.product'))}
             noResultsMessage={t(key('create.noMatch'))}
             onChange={(values) => {
-              const next = firstValue(values);
-              onChange({ productId: products.find((item) => item.id === next)?.id ?? null });
+              const [productPart, variantPart] = (firstValue(values) ?? '').split('|');
+              const picked = products.find((item) => item.id === productPart);
+              const pickedVariant = picked?.variantRecords?.find((entry) => entry.id === variantPart);
+              onChange({ productId: picked?.id ?? null, variantId: pickedVariant?.id ?? null });
             }}
             placeholder={t(key('create.product'))}
             validateStatus={error === undefined ? 'default' : 'error'}
-            value={line.productId === null ? [] : [line.productId]}
+            value={selected}
           />
         </div>
         <div className="min-w-0">
@@ -88,8 +108,8 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
       {product !== undefined && (
         <p className="text-fg-secondary text-xs">
           {t(key('create.productMeta'), {
-            price: formatMoney(product.currentPriceMinor),
-            stock: formatNumber(product.stockOnHand),
+            price: formatMoney(variant?.priceMinor ?? product.currentPriceMinor),
+            stock: formatNumber(variant?.stockOnHand ?? product.stockOnHand),
           })}
         </p>
       )}

@@ -2,7 +2,7 @@ import { DateTime, Effect, Exit, Match, Random, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Order, RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { OrderStatus, ProductId } from '../../../../../shared/domain/merchandise-model.ts';
+import type { OrderStatus, ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { OrderIdSchema, PartyIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
@@ -22,6 +22,7 @@ export type OrdersState =
 export interface NewOrderLine {
   readonly productId: ProductId;
   readonly quantity: number;
+  readonly variantId?: VariantId;
 }
 
 const correlation = (purpose: string) =>

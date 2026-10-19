@@ -80,9 +80,10 @@ export const OrderCreateDialog = ({
 
   const priced = draft.lines.flatMap((line) => {
     const product = activeProducts.find((item) => item.id === line.productId);
+    const variant = product?.variantRecords?.find((entry) => entry.id === line.variantId);
     return product === undefined || !isValidQuantity(line.quantity)
       ? []
-      : [lineAmounts(product.currentPriceMinor, line.quantity, product.vatRate)];
+      : [lineAmounts(variant?.priceMinor ?? product.currentPriceMinor, line.quantity, product.vatRate)];
   });
   const totals = sumAmounts(priced);
 
@@ -99,7 +100,15 @@ export const OrderCreateDialog = ({
       return;
     }
     const lines = draft.lines.flatMap((line) =>
-      line.productId === null ? [] : [{ productId: line.productId, quantity: line.quantity }],
+      line.productId === null
+        ? []
+        : [
+            {
+              productId: line.productId,
+              quantity: line.quantity,
+              ...(line.variantId === undefined || line.variantId === null ? {} : { variantId: line.variantId }),
+            },
+          ],
     );
     setBusy(true);
     setServerError(null);
