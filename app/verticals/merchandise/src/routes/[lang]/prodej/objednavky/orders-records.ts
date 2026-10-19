@@ -63,6 +63,14 @@ export const createOrder = Effect.fn('OrdersRecords.createOrder')(function* crea
 
 export type CreateFailure = Effect.Error<ReturnType<typeof createOrder>>;
 
+/** Admin edit of one order (lines, prices, shipping, address, contact, note); the server writes the history. */
+export const editOrder = Effect.fn('OrdersRecords.editOrder')(function* editOrder(
+  command: Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>,
+  revision: number,
+) {
+  return yield* submitCommand(command, revision);
+});
+
 /** A revision conflict reaches the page as a 409 problem with its own code; other 409s are different conflicts. */
 export const isRevisionConflict = (error: CreateFailure): boolean =>
   Match.value(error).pipe(

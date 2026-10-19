@@ -1,4 +1,5 @@
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import { formatDate, formatNumber, StatusBadge, dataTableRowLabels } from '@app/admin-ui';
 import type { Tag } from '@app/tagging/contracts/records';
@@ -6,6 +7,7 @@ import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import { TagsCell, formatKc } from '../../../../list-cells.tsx';
 import type { CustomerDirectory } from './customers-directory.ts';
+import { orderCustomerName } from './order-eshop.ts';
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
@@ -24,18 +26,28 @@ export const ordersColumns = (
     meta: { type: 'string', width: 120 },
   },
   {
-    accessorFn: (order) => customers.nameOf(order.partyId) ?? '',
+    accessorFn: (order) => orderCustomerName(order, customers) ?? '',
     cell: (info) => {
       const name = info.getValue<string>();
-      return name === '' ? (
-        <span className="text-fg-secondary">{t(key('customers.unknown'))}</span>
-      ) : (
-        <span className="truncate">{name}</span>
+      const storefront = info.row.original.channel === 'STOREFRONT';
+      return (
+        <span className="flex min-w-0 items-center gap-100">
+          {name === '' ? (
+            <span className="text-fg-secondary">{t(key('customers.unknown'))}</span>
+          ) : (
+            <span className="truncate">{name}</span>
+          )}
+          {storefront && (
+            <Badge size="sm" variant="warning">
+              E-shop DEMO
+            </Badge>
+          )}
+        </span>
       );
     },
     header: t(key('columns.customer')),
     id: 'customer',
-    meta: { type: 'string', width: 230 },
+    meta: { type: 'string', width: 280 },
   },
   {
     accessorFn: (order) => DateTime.formatIso(order.createdAt),
@@ -61,7 +73,7 @@ export const ordersColumns = (
     accessorKey: 'status',
     cell: (info) => <StatusBadge kind="order" value={info.getValue<string>()} />,
     header: t(key('columns.status')),
-    meta: { type: 'string', width: 120 },
+    meta: { type: 'string', width: 160 },
   },
   {
     cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,

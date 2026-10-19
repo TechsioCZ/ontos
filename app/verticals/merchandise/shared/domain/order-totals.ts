@@ -44,9 +44,11 @@ export const vatInGrossMinor = (grossMinor: number, vatRate: number): number =>
  * lines exactly, so the customer-visible total equals the sum of the shown line totals; net-priced staff orders
  * keep the original per-line VAT arithmetic. Shipping price is always gross.
  */
-export const fullOrderTotals = (
-  order: Pick<Order, 'lines' | 'pricesIncludeVat' | 'shipping'>,
-): Pick<Order, 'totalMinor' | 'totalVatMinor'> => {
+export const fullOrderTotals = (order: {
+  readonly lines: readonly OrderLine[];
+  readonly pricesIncludeVat?: boolean | undefined;
+  readonly shipping?: Order['shipping'] | undefined;
+}): Pick<Order, 'totalMinor' | 'totalVatMinor'> => {
   const shippingGross = order.shipping?.priceMinor ?? 0;
   const shippingVat = order.shipping === undefined ? 0 : vatInGrossMinor(shippingGross, order.shipping.vatRate);
   if (order.pricesIncludeVat !== true) {

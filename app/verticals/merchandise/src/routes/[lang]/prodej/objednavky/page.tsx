@@ -34,6 +34,7 @@ import { useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
+import { orderSearchText } from './order-eshop.ts';
 import {
   commonOrderTransitions,
   ordersPageSummary,
@@ -107,7 +108,7 @@ const OrdersPageContent = () => {
   const query = search.trim().toLowerCase();
   const visible = orders.filter(
     (order) =>
-      (query === '' || `${order.number} ${directory.nameOf(order.partyId) ?? ''}`.toLowerCase().includes(query)) &&
+      (query === '' || orderSearchText(order, directory).toLowerCase().includes(query)) &&
       (statusFilter === null || order.status === statusFilter) &&
       tagFilter.matches(order.id),
   );
@@ -352,10 +353,17 @@ const OrdersPageContent = () => {
         <OrderDetailDialog
           busy={busy}
           canWrite={canWrite}
+          currentPrincipalId={ready?.records.actorPrincipalRef.principalId}
           customers={directory}
           onClose={() => setDetailId(null)}
+          onEdited={(message) => {
+            toaster.create({ title: message, type: 'success' });
+            load();
+          }}
           onStatus={(order, status) => requestStatus([order], status)}
           order={detailOrder}
+          products={ready?.records.products ?? []}
+          revision={ready?.records.revision ?? 0}
         />
 
         <OrderCancelDialog
