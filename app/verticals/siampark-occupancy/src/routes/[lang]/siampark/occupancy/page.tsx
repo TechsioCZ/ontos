@@ -845,9 +845,11 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
         </div>
         <div className="siamparkoccupancy:min-w-0 siamparkoccupancy:space-y-6">
           <SectionCard title={t('siampark-occupancy.demo.state')}>
-            <Badge size="sm" variant={stateBadge[selected.state]}>
-              {t(`siampark-occupancy.demo.stateLabels.${selected.state}`)}
-            </Badge>
+            <div>
+              <Badge size="sm" variant={stateBadge[selected.state]}>
+                {t(`siampark-occupancy.demo.stateLabels.${selected.state}`)}
+              </Badge>
+            </div>
             <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
             {selected.state === 'DRAFT' && (
               <Button disabled={busy} onClick={editDraft} size="sm" theme="outlined" variant="secondary">
