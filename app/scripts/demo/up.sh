@@ -12,7 +12,7 @@ set -euo pipefail
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP"
 
-DEFAULT_VERTICALS="party-registry siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights siampark-ops crm"
+DEFAULT_VERTICALS="party-registry siampark-property siampark-occupancy siampark-agreements siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm siampark-ops"
 read -r -a VERTICALS <<<"$(printf '%s' "${DEMO_VERTICALS:-$DEFAULT_VERTICALS}" | tr ',' ' ')"
 SCRATCH="$APP/.scratch"
 LOG_DIR="$SCRATCH/demo-logs"
@@ -140,6 +140,8 @@ step authorization-provision "${WITH_ENV[@]}" node scripts/demo/provision-action
 # 4. Native development builds, only when missing, stale, or forced.
 needs_build() {
   local id="$1" dir stamp
+  # DEMO_SKIP_BUILD=1 serves whatever dist/ already holds (builds are done separately, e.g. rebuild-one.sh).
+  [ "${DEMO_SKIP_BUILD:-0}" = 1 ] && [ -f "$(contract_of "$id")" ] && return 1
   dir="$(dir_of "$id")"
   stamp="$STAMP_DIR/$id.stamp"
   [ "${DEMO_REBUILD:-0}" = 1 ] && return 0

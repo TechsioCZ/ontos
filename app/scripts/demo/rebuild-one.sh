@@ -10,6 +10,27 @@
 set -euo pipefail
 
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Demo v2: the live demo is served from a separate runtime worktree that only ever contains COMMITTED code
+# from demo/sales-crm, so half-edited files in the shared development tree never break the running demo.
+RUNTIME_APP="${DEMO_RUNTIME_APP:-/Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app}"
+if [ "$APP" != "$RUNTIME_APP" ] && [ -d "$RUNTIME_APP" ]; then
+  # Serialise the fast-forward so concurrent callers do not race on the runtime index.
+  until mkdir "$RUNTIME_APP/.scratch-ff.lock" 2>/dev/null; do sleep 1; done
+  trap 'rmdir "$RUNTIME_APP/.scratch-ff.lock" 2>/dev/null' EXIT
+  before="$(git -C "$RUNTIME_APP" rev-parse HEAD:app/pnpm-lock.yaml)"
+  git -C "$RUNTIME_APP" merge -q --ff-only demo/sales-crm || {
+    echo "[rebuild] runtime fast-forward failed" >&2
+    exit 1
+  }
+  if [ "$before" != "$(git -C "$RUNTIME_APP" rev-parse HEAD:app/pnpm-lock.yaml)" ]; then
+    echo "[rebuild] lockfile changed; installing in runtime"
+    (cd "$RUNTIME_APP" && TMPDIR=/Volumes/TraceDecayKingston/techsio-demo/tmp mise exec -- pnpm install --frozen-lockfile >/dev/null)
+  fi
+  rmdir "$RUNTIME_APP/.scratch-ff.lock" 2>/dev/null
+  trap - EXIT
+  echo "[rebuild] runtime at $(git -C "$RUNTIME_APP" log --oneline -1) (only committed code is built)"
+  exec "$RUNTIME_APP/scripts/demo/rebuild-one.sh" "$@"
+fi
 cd "$APP"
 SCRATCH="$APP/.scratch"
 LOG_DIR="$SCRATCH/demo-logs"
@@ -120,10 +141,15 @@ trap 'rm -rf "$slot"' EXIT
 for id in "$@"; do
   script="$(build_script "$id")" || die "unexpected build script shape for $id"
   say "building $id (log: $LOG_DIR/build-$id.log)"
+  dist="$(dir_of "$id")/dist"
+  rm -rf "$dist.prev"
+  [ -d "$dist" ] && cp -cR "$dist" "$dist.prev" 2>/dev/null || cp -R "$dist" "$dist.prev" 2>/dev/null || true
   if ! "${NO_GIT[@]}" "${WITH_ENV[@]}" pnpm --dir "$(dir_of "$id")" exec sh -c "$script" >"$LOG_DIR/build-$id.log" 2>&1; then
-    tail -30 "$LOG_DIR/build-$id.log" >&2
-    die "build failed: $id"
+    grep -E "error|Error" "$LOG_DIR/build-$id.log" | grep -v '^\s*at ' | head -30 >&2
+    if [ -d "$dist.prev" ]; then rm -rf "$dist" && mv "$dist.prev" "$dist"; fi
+    die "build failed: $id (previous build kept running; full log $LOG_DIR/build-$id.log)"
   fi
+  rm -rf "$dist.prev"
   touch "$STAMP_DIR/$id.stamp"
 done
 rm -rf "$slot"
