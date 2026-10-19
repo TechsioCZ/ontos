@@ -54,6 +54,7 @@ import { account, apikey, user } from '../../apps/shell-super-app/api/auth/db/sc
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
+import { setupAiProfiles } from './ai-profiles.mts';
 import { demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
 import {
   agentBotPrincipal,
@@ -533,6 +534,10 @@ const main = (skipBot: boolean) =>
       yield* ensureBotKey(root);
       yield* liftBotKeyRateLimit;
     }
+    // AI principals A/B (ai-ab lane); a failure there must not hide the company and persona setup above.
+    yield* setupAiProfiles(root, environment, { skipKeys: skipBot }).pipe(
+      Effect.catch((failure) => Console.error(`ai-profiles failed (${String(failure)}); companies are configured`)),
+    );
   });
 
 const environmentLive = ConfigProvider.layer(
