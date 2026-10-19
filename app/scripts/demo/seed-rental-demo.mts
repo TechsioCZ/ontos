@@ -40,10 +40,10 @@ const main = (apply: boolean, demoSignature: boolean) =>
       `${result.applied ? 'Seed complete' : 'Read-only preflight passed'}: ${target.shellUrl}, tenant ${target.tenantId}, legal entity ${target.legalEntityId}.`,
     );
     yield* Console.log(
-      `${rentalSeed.propertyName}, ${rentalSeed.unitName}, demo customer, opportunity, confirmed lease, contract and draft invoice. Existing matching records are retained.`,
+      `Siampark rental story (${rentalSeed.propertyName} and more): 2 buildings, 8 units, 5 tenants, 6 leases, contracts with signature evidence, service tasks and invoice drafts. Existing matching records are retained.`,
     );
     if (demoSignature) {
-      yield* Console.log('Signature example is DEMO metadata only; no PDF was uploaded or signed.');
+      yield* Console.log('Signature evidence is DEMO metadata only; no PDF was uploaded or signed.');
     }
     if (!apply) {
       yield* Console.log('No business data changed. Run with --apply to seed this target.');

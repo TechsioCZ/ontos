@@ -15,10 +15,16 @@ import { Effect, FileSystem, Schema } from 'effect';
 import { DemoSeedError, SeedLegalEntityId, SeedTenantId } from './seed-client.mts';
 import type { SeedClient, SeedTarget } from './seed-client.mts';
 
-const customerEvidenceReference = 'demo:sales-rental-v1:customer';
+const defaultEvidenceReference = 'demo:sales-rental-v1:customer';
 const seedSource = 'demo.sales-rental-v1';
 const partyAudience = 'party-registry';
 export const rentalCustomerName = 'Ukázkový nájemce Siampark';
+/** One synthetic tenant organization: display name plus a stable key for its evidence reference. */
+export interface SeedCustomerSpec {
+  readonly evidenceKey: string;
+  readonly name: string;
+}
+const defaultCustomer: SeedCustomerSpec = { evidenceKey: 'customer', name: rentalCustomerName };
 const Customer = Schema.Struct({
   counterpartyRef: Schema.toEncoded(CounterpartyRefSchema),
   displayName: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
@@ -49,9 +55,9 @@ export const seedCustomerList = (client: SeedClient) =>
       ),
     );
 
-export const existingSeedCustomer = (items: readonly (typeof Customer.Type)[]) =>
+export const existingSeedCustomer = (items: readonly (typeof Customer.Type)[], name: string = rentalCustomerName) =>
   Effect.gen(function* existingCustomer() {
-    const matches = items.filter((item) => item.displayName === rentalCustomerName);
+    const matches = items.filter((item) => item.displayName === name);
     if (matches.length > 1 || (matches.length === 1 && matches[0]?.status !== 'ACTIVE')) {
       return yield* new DemoSeedError({
         reason: 'Demo customer name is duplicated or archived; review it before seeding.',
@@ -60,9 +66,18 @@ export const existingSeedCustomer = (items: readonly (typeof Customer.Type)[]) =
     return matches[0];
   });
 
-export const ensureSeedCustomer = (client: SeedClient, target: SeedTarget, checkpointPath: string) =>
+export const ensureSeedCustomer = (
+  client: SeedClient,
+  target: SeedTarget,
+  checkpointPath: string,
+  spec: SeedCustomerSpec = defaultCustomer,
+) =>
   Effect.gen(function* ensureCustomer() {
-    const existing = yield* existingSeedCustomer(yield* seedCustomerList(client));
+    const customerEvidenceReference =
+      spec.evidenceKey === defaultCustomer.evidenceKey
+        ? defaultEvidenceReference
+        : `demo:siampark-rental-v2:${spec.evidenceKey}`;
+    const existing = yield* existingSeedCustomer(yield* seedCustomerList(client), spec.name);
     if (existing !== undefined) {
       return existing;
     }
@@ -90,7 +105,7 @@ export const ensureSeedCustomer = (client: SeedClient, target: SeedTarget, check
         CreatePartyPayloadJsonSchema,
         {
           candidate: {
-            displayName: rentalCustomerName,
+            displayName: spec.name,
             evidenceRefs: [customerEvidenceReference],
             officialIdentifiers: [],
             partyType: 'ORGANIZATION',
@@ -169,5 +184,5 @@ export const ensureSeedCustomer = (client: SeedClient, target: SeedTarget, check
       Schema.toEncoded(CounterpartyCustomerOnboardResultSchema),
       true,
     );
-    return { counterpartyRef: onboarded.counterpartyRef, displayName: rentalCustomerName, partyRef, status: 'ACTIVE' };
+    return { counterpartyRef: onboarded.counterpartyRef, displayName: spec.name, partyRef, status: 'ACTIVE' };
   });
