@@ -182,6 +182,55 @@ interface DemoNavigationGroupPresentation {
  * module publishes an enabled entry with one of the accepted hrefs (or, for single-page modules, any entry).
  */
 const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
+  // CRM company (Velkoobchod Hanák): clients, visits, contact plan, order imports and sales overview.
+  {
+    icon: 'icon-[mdi--account-group-outline]',
+    items: [
+      {
+        entrypoints: ['demo.crm.page.clients'],
+        hrefs: ['/crm/klienti'],
+        icon: 'icon-[mdi--account-tie-outline]',
+        key: 'crmClients',
+        moduleId: 'demo.crm',
+      },
+      {
+        entrypoints: ['demo.crm.page.plan'],
+        hrefs: ['/crm/k-osloveni'],
+        icon: 'icon-[mdi--phone-outgoing-outline]',
+        key: 'crmPlan',
+        moduleId: 'demo.crm',
+      },
+      {
+        entrypoints: ['demo.crm.page.visits'],
+        hrefs: ['/crm/navstevy'],
+        icon: 'icon-[mdi--map-marker-check-outline]',
+        key: 'crmVisits',
+        moduleId: 'demo.crm',
+      },
+      {
+        entrypoints: ['demo.crm.page.imports'],
+        hrefs: ['/crm/importy'],
+        icon: 'icon-[mdi--file-import-outline]',
+        key: 'crmImports',
+        moduleId: 'demo.crm',
+      },
+      {
+        entrypoints: ['demo.crm.page.pairing'],
+        hrefs: ['/crm/parovani'],
+        icon: 'icon-[mdi--link-variant]',
+        key: 'crmPairing',
+        moduleId: 'demo.crm',
+      },
+      {
+        entrypoints: ['demo.crm.page.reports'],
+        hrefs: ['/crm/prehled-prodeju'],
+        icon: 'icon-[mdi--chart-areaspline]',
+        key: 'crmReports',
+        moduleId: 'demo.crm',
+      },
+    ],
+    key: 'crm',
+  },
   {
     icon: 'icon-[mdi--handshake-outline]',
     items: [

@@ -62,7 +62,8 @@
           "operations": "Operations",
           "insights": "Insights",
           "settings": "Settings",
-          "other": "Other modules"
+          "other": "Other modules",
+          "crm": "CRM"
         },
         "items": {
           "opportunities": "Opportunities",
@@ -76,7 +77,13 @@
           "tags": "Tags",
           "agreements": "Contracts and signatures",
           "properties": "Properties",
-          "occupancy": "Leases and stays"
+          "occupancy": "Leases and stays",
+          "crmClients": "Clients",
+          "crmPlan": "To contact",
+          "crmVisits": "Visits",
+          "crmImports": "Order imports",
+          "crmPairing": "Matching",
+          "crmReports": "Sales overview"
         }
       },
       "sidebar": {

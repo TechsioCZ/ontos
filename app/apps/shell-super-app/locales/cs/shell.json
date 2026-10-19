@@ -62,7 +62,8 @@
           "operations": "Provoz",
           "insights": "Přehledy",
           "settings": "Nastavení",
-          "other": "Další moduly"
+          "other": "Další moduly",
+          "crm": "CRM"
         },
         "items": {
           "opportunities": "Příležitosti",
@@ -76,7 +77,13 @@
           "tags": "Štítky",
           "agreements": "Smlouvy a podpisy",
           "properties": "Nemovitosti",
-          "occupancy": "Nájmy a pobyty"
+          "occupancy": "Nájmy a pobyty",
+          "crmClients": "Klienti",
+          "crmPlan": "K oslovení",
+          "crmVisits": "Návštěvy",
+          "crmImports": "Importy objednávek",
+          "crmPairing": "Párování",
+          "crmReports": "Přehled prodejů"
         }
       },
       "sidebar": {
