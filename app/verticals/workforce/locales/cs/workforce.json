@@ -175,11 +175,131 @@
             "action_revision_conflict": "souběžná změna"
           }
         }
+      },
+      "people": {
+        "title": "Lidé a role",
+        "description": "Správa účtů, rolí a deaktivace."
       }
     },
     "selectPlaceholder": "Vyberte…",
     "sidePanel": {
       "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    },
+    "people": {
+      "title": "Lidé a role",
+      "description": "Účty lidí ve firmě {{company}}: role, přístup a deaktivace. Každá změna prochází řízenou akcí Core a zapisuje se do auditní stopy.",
+      "create": "Nový účet",
+      "reload": "Obnovit",
+      "stats": {
+        "active": "Aktivní účty",
+        "disabled": "Deaktivované",
+        "admins": "Správci",
+        "changes": "Změny v auditu",
+        "changesHint": "Posledních 80 záznamů",
+        "adminsHint": "Smí spravovat lidi"
+      },
+      "table": {
+        "name": "Jméno",
+        "email": "E-mail",
+        "role": "Role",
+        "status": "Stav",
+        "companies": "Další firmy",
+        "loading": "Načítání…",
+        "noRole": "Bez role",
+        "self": "Vy",
+        "none": "—",
+        "emailMissing": "údaj neposkytnut"
+      },
+      "status": {
+        "active": "Aktivní",
+        "disabled": "Deaktivovaný",
+        "archived": "Archivovaný"
+      },
+      "roles": {
+        "title": "Role firmy",
+        "hint": "Návrh minimální konfigurace rolí, nikoli zákazníkem schválená matice. Oprávnění role se kopírují z referenční persony.",
+        "admin": "Správce",
+        "people": "Lidí: {{count}}"
+      },
+      "audit": {
+        "title": "Auditní stopa správy lidí",
+        "empty": "Zatím žádné změny. Vytvořte účet nebo změňte roli a záznam se objeví zde.",
+        "source": "Zdroj: core.audit_events · akce core.identity.manage-demo-account",
+        "denied": "Zamítnuto",
+        "succeeded": "Provedeno",
+        "unknownActor": "neznámý uživatel",
+        "create": "založil(a) účet {{target}} s rolí {{role}}",
+        "changeRole": "změnil(a) roli účtu {{target}}: {{from}} → {{to}}",
+        "disable": "deaktivoval(a) účet {{target}}",
+        "enable": "znovu aktivoval(a) účet {{target}}",
+        "rejected": "pokus o správu účtu byl zamítnut ({{code}})",
+        "reason": "Důvod: {{reason}}",
+        "noPrevious": "bez role"
+      },
+      "forbidden": {
+        "title": "Správu lidí má jen správce firmy",
+        "description": "Váš účet nemá v této firmě roli správce. Oprávnění vyhodnocuje Core na serveru; skrytí tlačítek není bezpečnostní hranice."
+      },
+      "signedOut": {
+        "title": "Nejste přihlášeni",
+        "description": "Přihlaste se znovu. Pokud byl účet deaktivován, přihlášení bude odmítnuto."
+      },
+      "error": {
+        "title": "Seznam lidí se nepodařilo načíst",
+        "description": "Služba je dočasně nedostupná. Zkuste to znovu.",
+        "retry": "Zkusit znovu"
+      },
+      "form": {
+        "createTitle": "Nový účet",
+        "createDescription": "Účet vznikne v Core (principal + vazba přihlášení) a dostane oprávnění zvolené role.",
+        "name": "Jméno a příjmení",
+        "email": "Přihlašovací e-mail",
+        "role": "Role",
+        "password": "Úvodní heslo (demo): password1234",
+        "cancel": "Zrušit",
+        "submit": "Založit účet",
+        "saving": "Ukládání…",
+        "nameRequired": "Vyplňte jméno.",
+        "emailInvalid": "Zadejte platný e-mail.",
+        "roleRequired": "Vyberte roli."
+      },
+      "panel": {
+        "title": "Účet",
+        "close": "Zavřít",
+        "email": "E-mail",
+        "role": "Role",
+        "status": "Stav",
+        "companies": "Další firmy",
+        "principal": "Principal (Core)",
+        "roleSection": "Role ve firmě",
+        "changeRole": "Uložit roli",
+        "roleUnchanged": "Vyberte jinou roli.",
+        "statusSection": "Přístup",
+        "reason": "Důvod deaktivace",
+        "reasonRequired": "Uveďte důvod deaktivace.",
+        "disable": "Deaktivovat účet",
+        "enable": "Znovu aktivovat",
+        "disableHint": "Deaktivace platí pro celý účet (všechny firmy). Další požadavek tohoto účtu Core odmítne.",
+        "enableHint": "Účet se znovu přihlásí se stejnou rolí.",
+        "selfHint": "Vlastní účet ani vlastní oprávnění nemůžete měnit.",
+        "sharedHint": "Účet je členem i jiných firem; role se mění jen v této firmě.",
+        "history": "Historie účtu",
+        "historyEmpty": "Žádné změny tohoto účtu."
+      },
+      "toast": {
+        "created": "Účet {{name}} byl založen",
+        "roleChanged": "Role byla změněna",
+        "disabled": "Účet byl deaktivován",
+        "enabled": "Účet byl znovu aktivován",
+        "grants": "Oprávnění: přidáno {{granted}}, odebráno {{revoked}}"
+      },
+      "errors": {
+        "forbidden": "Akci smí provést jen správce firmy. Pokus byl zaznamenán v auditu.",
+        "conflict": "Konflikt: e-mail je obsazený nebo se účet mezitím změnil. Obnovte seznam.",
+        "invalid": "Požadavek nelze provést (např. změna vlastního účtu).",
+        "error": "Uložení se nepodařilo. Zkuste to znovu.",
+        "signedOut": "Relace vypršela, přihlaste se znovu."
+      }
     }
   }
 }

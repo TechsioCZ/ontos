@@ -393,6 +393,13 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         key: 'tags',
         moduleId: 'demo.tagging',
       },
+      {
+        entrypoints: ['demo.workforce.page.people'],
+        hrefs: ['/sprava/lide'],
+        icon: 'icon-[mdi--account-key-outline]',
+        key: 'people',
+        moduleId: 'demo.workforce',
+      },
     ],
     key: 'settings',
   },

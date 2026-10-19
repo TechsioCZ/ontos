@@ -29,6 +29,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
+    './PagePeople': './src/routes/[lang]/sprava/lide/page.tsx',
     './PageRecords': './src/routes/[lang]/prodej/zamestnanci/page.tsx',
     './Route': './src/federation-entry.tsx',
   },

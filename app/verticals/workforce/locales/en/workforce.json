@@ -175,11 +175,131 @@
             "action_revision_conflict": "concurrent change"
           }
         }
+      },
+      "people": {
+        "title": "People and roles",
+        "description": "Accounts, roles and deactivation."
       }
     },
     "selectPlaceholder": "Select…",
     "sidePanel": {
       "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    },
+    "people": {
+      "title": "People and roles",
+      "description": "Accounts of people in {{company}}: roles, access and deactivation. Every change runs a governed Core action and is written to the audit trail.",
+      "create": "New account",
+      "reload": "Refresh",
+      "stats": {
+        "active": "Active accounts",
+        "disabled": "Deactivated",
+        "admins": "Administrators",
+        "changes": "Audit entries",
+        "changesHint": "Latest 80 entries",
+        "adminsHint": "May manage people"
+      },
+      "table": {
+        "name": "Name",
+        "email": "E-mail",
+        "role": "Role",
+        "status": "Status",
+        "companies": "Other companies",
+        "loading": "Loading…",
+        "noRole": "No role",
+        "self": "You",
+        "none": "—",
+        "emailMissing": "not provided"
+      },
+      "status": {
+        "active": "Active",
+        "disabled": "Deactivated",
+        "archived": "Archived"
+      },
+      "roles": {
+        "title": "Company roles",
+        "hint": "A proposed minimal role configuration, not a customer-approved matrix. Role permissions are copied from a reference persona.",
+        "admin": "Administrator",
+        "people": "People: {{count}}"
+      },
+      "audit": {
+        "title": "People administration audit trail",
+        "empty": "No changes yet. Create an account or change a role and the entry appears here.",
+        "source": "Source: core.audit_events · action core.identity.manage-demo-account",
+        "denied": "Denied",
+        "succeeded": "Done",
+        "unknownActor": "unknown user",
+        "create": "created account {{target}} with role {{role}}",
+        "changeRole": "changed the role of {{target}}: {{from}} → {{to}}",
+        "disable": "deactivated account {{target}}",
+        "enable": "reactivated account {{target}}",
+        "rejected": "an account administration attempt was denied ({{code}})",
+        "reason": "Reason: {{reason}}",
+        "noPrevious": "no role"
+      },
+      "forbidden": {
+        "title": "Only the company administrator manages people",
+        "description": "Your account has no administrator role in this company. Core evaluates permissions on the server; hiding buttons is not a security boundary."
+      },
+      "signedOut": {
+        "title": "You are signed out",
+        "description": "Sign in again. A deactivated account is rejected."
+      },
+      "error": {
+        "title": "People could not be loaded",
+        "description": "The service is temporarily unavailable. Try again.",
+        "retry": "Try again"
+      },
+      "form": {
+        "createTitle": "New account",
+        "createDescription": "The account is created in Core (principal + sign-in binding) and receives the permissions of the selected role.",
+        "name": "Full name",
+        "email": "Sign-in e-mail",
+        "role": "Role",
+        "password": "Initial password (demo): password1234",
+        "cancel": "Cancel",
+        "submit": "Create account",
+        "saving": "Saving…",
+        "nameRequired": "Enter a name.",
+        "emailInvalid": "Enter a valid e-mail.",
+        "roleRequired": "Choose a role."
+      },
+      "panel": {
+        "title": "Account",
+        "close": "Close",
+        "email": "E-mail",
+        "role": "Role",
+        "status": "Status",
+        "companies": "Other companies",
+        "principal": "Principal (Core)",
+        "roleSection": "Role in the company",
+        "changeRole": "Save role",
+        "roleUnchanged": "Choose a different role.",
+        "statusSection": "Access",
+        "reason": "Deactivation reason",
+        "reasonRequired": "Enter a deactivation reason.",
+        "disable": "Deactivate account",
+        "enable": "Reactivate",
+        "disableHint": "Deactivation applies to the whole account (all companies). Core rejects the account's next request.",
+        "enableHint": "The account signs in again with the same role.",
+        "selfHint": "You cannot change your own account or permissions.",
+        "sharedHint": "The account also belongs to other companies; the role changes only in this company.",
+        "history": "Account history",
+        "historyEmpty": "No changes to this account."
+      },
+      "toast": {
+        "created": "Account {{name}} created",
+        "roleChanged": "Role changed",
+        "disabled": "Account deactivated",
+        "enabled": "Account reactivated",
+        "grants": "Permissions: {{granted}} granted, {{revoked}} revoked"
+      },
+      "errors": {
+        "forbidden": "Only the company administrator may do this. The attempt was audited.",
+        "conflict": "Conflict: the e-mail is taken or the account changed meanwhile. Refresh the list.",
+        "invalid": "The request cannot be performed (e.g. changing your own account).",
+        "error": "Saving failed. Try again.",
+        "signedOut": "Your session expired, sign in again."
+      }
     }
   }
 }
