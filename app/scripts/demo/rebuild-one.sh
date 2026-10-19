@@ -42,6 +42,7 @@ VERTICALS_FILE="$SCRATCH/demo-verticals"
 COMPOSITION_PORT="${DEMO_COMPOSITION_PORT:-3041}"
 mkdir -p "$LOG_DIR" "$PID_DIR" "$STAMP_DIR" "$STUB_DIR" "$LOCK_ROOT"
 export TMPDIR="${TMPDIR:-/Volumes/TraceDecayKingston/techsio-demo/tmp}"
+export DEMO_DISABLE_TS_CHECKER="${DEMO_DISABLE_TS_CHECKER:-1}"
 export pnpm_config_verify_deps_before_run=false
 
 say() { printf '\033[1m[rebuild]\033[0m %s\n' "$*"; }

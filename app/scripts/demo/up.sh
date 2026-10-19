@@ -8,6 +8,8 @@
 #
 # Re-running stops the previous demo processes first. Logs: app/.scratch/demo-logs/*.log.
 set -euo pipefail
+# Demo builds skip the build-time type checker (lint suggestions in tests would fail them); typecheck per package.
+export DEMO_DISABLE_TS_CHECKER="${DEMO_DISABLE_TS_CHECKER:-1}"
 
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP"

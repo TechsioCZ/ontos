@@ -166,7 +166,7 @@ const applicationConfig: Parameters<typeof presetUltramodern>[0] = {
   },
   output: {
     assetPrefix,
-    disableTsChecker: false,
+    disableTsChecker: process.env.DEMO_DISABLE_TS_CHECKER === '1',
     distPath: {
       html: './',
       root: buildOutputRoot,

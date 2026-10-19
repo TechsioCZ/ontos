@@ -148,7 +148,7 @@ export default defineConfig(
       },
       output: {
         assetPrefix,
-        disableTsChecker: false,
+        disableTsChecker: process.env.DEMO_DISABLE_TS_CHECKER === '1',
         distPath: {
           html: './',
           root: buildOutputRoot,
