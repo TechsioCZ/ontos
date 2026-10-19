@@ -824,6 +824,14 @@ export { changePrincipalBindingStatusAction } from './modules/actions/change-pri
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
 export { configureDemoCompaniesAction } from './modules/actions/configure-demo-companies.action.ts';
+export {
+  manageDemoAccountAction,
+  ManageDemoAccountAuditEvidenceSchema,
+  ManageDemoAccountPayloadSchema,
+} from './modules/actions/manage-demo-account.action.ts';
+export type { ManageDemoAccountPayload, ManageDemoAccountResult } from './modules/actions/manage-demo-account.action.ts';
+export { demoAccountObjectIdParts, openDemoAccountGrants } from './install/demo-account-administration.ts';
+export type { DemoAccountGrants } from './install/demo-account-administration.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';

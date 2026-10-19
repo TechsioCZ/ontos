@@ -63,6 +63,8 @@ import {
   AvailableTenantsResponseSchema,
   CurrentSessionSchema,
   ConfigureDemoCompaniesResponseSchema,
+  DemoAccountListResponseSchema,
+  ManageDemoAccountResponseSchema,
   ManagedApiKeyListResponseSchema,
   MediaAttachmentResponseSchema,
   PrincipalMutationResponseSchema,
@@ -129,6 +131,13 @@ import {
 import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
+import { listDemoAccounts, manageDemoAccount } from './auth/demo-accounts.ts';
+import type {
+  DemoAccountConflict,
+  DemoAccountForbidden,
+  DemoAccountInvalid,
+  DemoAccountUnavailable,
+} from './auth/demo-accounts.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
 import {
@@ -1299,6 +1308,42 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       service,
     };
   });
+  const demoAccountCaller = Effect.fn('shell.identity.demoAccountCaller')(function* demoAccountCaller(
+    request: RequestWithHeaders,
+  ) {
+    const authentication = yield* AuthenticationService;
+    const session = yield* authentication
+      .resolveShellContext(requestHeaders(request.headers))
+      .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+    yield* forwardSetCookieHeaders(session.setCookieHeaders);
+    if (session.state !== 'authenticated') {
+      return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+    }
+    const { legalEntityId } = session.identity;
+    return {
+      legalName:
+        session.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
+        legalEntityId,
+      principal: { ...session.principal, legalEntityId },
+    };
+  });
+  const demoAccountFailure = (
+    error:
+      | DemoAccountConflict
+      | DemoAccountForbidden
+      | DemoAccountInvalid
+      | DemoAccountUnavailable
+      | IdentityRuntimeError,
+  ) =>
+    failIdentityProblem(
+      Match.value(error).pipe(
+        Match.tag('DemoAccountForbidden', () => shellTargetForbiddenProblem()),
+        Match.tag('DemoAccountInvalid', () => shellPolicyUnprocessableProblem()),
+        Match.tag('DemoAccountConflict', () => shellPolicyConflictProblem()),
+        Match.tag('DemoAccountUnavailable', () => shellCapabilityUnavailableProblem()),
+        Match.orElse((other) => identityProblem(other)),
+      ),
+    );
   return handlers
     .handle('configureDemoCompanies', ({ headers, payload, request }) =>
       safeIdentity(
@@ -1309,6 +1354,31 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
             .configureDemoCompanies({ ...context, payload })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           return yield* decodeResponse(ConfigureDemoCompaniesResponseSchema, response, shellInternalProblem);
+        }),
+      ),
+    )
+    .handle('listDemoAccounts', ({ request }) =>
+      safeIdentity(
+        request,
+        Effect.gen(function* listDemoAccountsHandler() {
+          const caller = yield* demoAccountCaller(request);
+          const response = yield* listDemoAccounts(caller).pipe(Effect.catch(demoAccountFailure));
+          yield* noStore;
+          return yield* decodeResponse(DemoAccountListResponseSchema, response, shellInternalProblem);
+        }),
+      ),
+    )
+    .handle('manageDemoAccount', ({ headers, payload, request }) =>
+      safeIdentity(
+        request,
+        Effect.gen(function* manageDemoAccountHandler() {
+          const caller = yield* demoAccountCaller(request);
+          const idempotencyKey = yield* requiredIdempotencyKey(headers);
+          const response = yield* manageDemoAccount(caller, payload, {
+            correlationId: correlationFromRequest(request),
+            idempotencyKey,
+          }).pipe(Effect.catch(demoAccountFailure));
+          return yield* decodeResponse(ManageDemoAccountResponseSchema, response, shellInternalProblem);
         }),
       ),
     )
