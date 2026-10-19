@@ -1,0 +1,35 @@
+{
+  "crm": {
+    "title": "CRM",
+    "role": "crm",
+    "routeSurface": "Hanák wholesale CRM.",
+    "seo": { "description": "CRM: clients, visits, imported orders and sales overview." },
+    "routes": { "home": "Home" },
+    "common": {
+      "loading": "Loading…",
+      "errorTitle": "CRM data could not be loaded",
+      "errorDescription": "Please try again.",
+      "retry": "Retry",
+      "forbiddenTitle": "You have no access to the CRM",
+      "notProvided": "not provided",
+      "noData": "no data",
+      "unassigned": "Unassigned",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "saved": "Saved",
+      "saveFailed": "Saving failed",
+      "scopeAll": "You see every client of the company.",
+      "scopeAssigned": "You see only clients assigned to you.",
+      "scopeNone": "No clients are assigned to you."
+    },
+    "pages": {
+      "clients": { "title": "Clients", "description": "Business clients, contact persons and salesperson assignment." },
+      "visits": { "title": "Visits", "description": "History of visits, calls and e-mails." },
+      "plan": { "title": "To contact", "description": "Manual plan of next contacts. Not a system recommendation." },
+      "imports": { "title": "Order import", "description": "CSV imports of orders and status changes from source systems." },
+      "pairing": { "title": "Order pairing", "description": "Orders without an unambiguous client awaiting manual pairing." },
+      "reports": { "title": "Sales overview", "description": "Counts and values of recorded orders by salesperson, client and period." }
+    }
+  }
+}

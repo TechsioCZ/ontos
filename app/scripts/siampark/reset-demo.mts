@@ -53,6 +53,8 @@ const moduleIds = [
   // Customer segments (commerce customer groups). Kept last: module state ids derive from the index, and it has no
   // read_all/write_all context permissions, so it stays out of `salesDemoModuleIds`.
   'commerce.customer-context',
+  // CRM company (LE …022) owns its own grants (scripts/demo/permissions.mts); activation only. Kept last (state ids).
+  'demo.crm',
 ] as const;
 type AddRelationship = (
   resourceType: string,
@@ -130,7 +132,10 @@ const relationships = (): readonly Relationship[] => {
     for (const moduleId of moduleIds) {
       const module = toModuleAccessObjectId(demoTenantId, demoLegalEntityId, moduleId) ?? '';
       add('module_access', module, 'legal_entity', 'legal_entity', legal);
-      if (index < 3 || moduleId === partyModuleId || moduleId === workModuleId || moduleId === relationshipsModuleId) {
+      if (
+        moduleId !== 'demo.crm' &&
+        (index < 3 || moduleId === partyModuleId || moduleId === workModuleId || moduleId === relationshipsModuleId)
+      ) {
         add('module_access', module, 'accessor', 'principal', account.principalId);
       }
     }

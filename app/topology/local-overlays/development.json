@@ -24,7 +24,8 @@
     "sales-insights": "http://localhost:4124/.well-known/ontos-module-manifest.json",
     "siampark-billing-finance": "http://localhost:4118/.well-known/ontos-module-manifest.json",
     "siampark-relationships": "http://localhost:4119/.well-known/ontos-module-manifest.json",
-    "siampark-ops": "http://localhost:4126/.well-known/ontos-module-manifest.json"
+    "siampark-ops": "http://localhost:4126/.well-known/ontos-module-manifest.json",
+    "crm": "http://localhost:4125/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -55,7 +56,8 @@
     "sales-insights": 4124,
     "siampark-billing-finance": 4118,
     "siampark-relationships": 4119,
-    "siampark-ops": 4126
+    "siampark-ops": 4126,
+    "crm": 4125
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -75,7 +77,8 @@
     "sales-insights": "http://localhost:4124/mf-manifest.json",
     "siampark-billing-finance": "http://localhost:4118/mf-manifest.json",
     "siampark-relationships": "http://localhost:4119/mf-manifest.json",
-    "siampark-ops": "http://localhost:4126/mf-manifest.json"
+    "siampark-ops": "http://localhost:4126/mf-manifest.json",
+    "crm": "http://localhost:4125/mf-manifest.json"
   },
   "serverExecution": {
     "party-registry": {
@@ -1347,6 +1350,57 @@
           "buildMarker": "5af5cbe964140fbe"
         }
       }
+    },
+    "crm": {
+      "apiBaseUrl": "http://localhost:4125/crm-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/crm",
+        "buildMarker": "d8de0d2e6c127622"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-crm",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAGGING",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_TAGGING_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_TAGGING_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_TAGGING_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_TAGGING_WORKER",
+          "serviceBindingEnv": "VERTICAL_TAGGING_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_TAGGING_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_TAGGING_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalCrmBackend",
+        "manifestEnv": "VERTICAL_TAGGING_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4125/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4125/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/crm",
+          "buildMarker": "d8de0d2e6c127622"
+        }
+      }
     }
   },
   "apis": {
@@ -1374,6 +1428,7 @@
     "sales-insights": "http://localhost:4124/sales-insights-api",
     "siampark-billing-finance": "http://localhost:4118/siampark-billing-finance-api",
     "siampark-relationships": "http://localhost:4119/siampark-relationships-api",
-    "siampark-ops": "http://localhost:4126/siampark-ops-api"
+    "siampark-ops": "http://localhost:4126/siampark-ops-api",
+    "crm": "http://localhost:4125/crm-api"
   }
 }

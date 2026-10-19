@@ -25,6 +25,7 @@ const SALES_DEMO_OWNERS = [
   'workforce',
   'merchandise',
   'tagging',
+  'crm',
   'sales-pipeline',
   'siampark-billing-finance',
   'siampark-work',

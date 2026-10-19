@@ -1,0 +1,35 @@
+{
+  "crm": {
+    "title": "CRM",
+    "role": "crm",
+    "routeSurface": "CRM Velkoobchodu Hanák.",
+    "seo": { "description": "CRM: klienti, návštěvy, importované objednávky a přehled prodejů." },
+    "routes": { "home": "Domů" },
+    "common": {
+      "loading": "Načítání…",
+      "errorTitle": "Data CRM se nepodařilo načíst",
+      "errorDescription": "Zkuste to prosím znovu.",
+      "retry": "Zkusit znovu",
+      "forbiddenTitle": "K CRM nemáte přístup",
+      "notProvided": "údaj neposkytnut",
+      "noData": "bez dat",
+      "unassigned": "Nepřiděleno",
+      "save": "Uložit",
+      "saving": "Ukládám…",
+      "cancel": "Zrušit",
+      "saved": "Uloženo",
+      "saveFailed": "Uložení se nezdařilo",
+      "scopeAll": "Vidíte všechny klienty firmy.",
+      "scopeAssigned": "Vidíte pouze klienty přidělené vám.",
+      "scopeNone": "Nemáte přidělené žádné klienty."
+    },
+    "pages": {
+      "clients": { "title": "Klienti", "description": "Firemní klienti, kontaktní osoby a přidělení obchodníkům." },
+      "visits": { "title": "Návštěvy", "description": "Historie návštěv, telefonátů a e-mailů u klientů." },
+      "plan": { "title": "K oslovení", "description": "Ruční plán dalších kontaktů. Není to doporučení systému." },
+      "imports": { "title": "Import objednávek", "description": "CSV importy objednávek a změn stavů ze zdrojových systémů." },
+      "pairing": { "title": "Párování objednávek", "description": "Objednávky bez jednoznačného klienta čekající na ruční přiřazení." },
+      "reports": { "title": "Přehled prodejů", "description": "Počty a hodnoty evidovaných objednávek po obchodnících, klientech a obdobích." }
+    }
+  }
+}
