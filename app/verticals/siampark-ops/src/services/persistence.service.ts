@@ -16,7 +16,6 @@ import type { ApplyCommandResult, OpsCommand } from '../../shared/actions/apply-
 import { MAX_FILE_BYTES, agendaDefinitions, agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
 import type { FileUploadCommand } from '../../shared/agendas.ts';
 import type { RecordsRequest, RecordsResponse, StoredFile } from '../../shared/apis/records.ts';
-import { RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { FileIdSchema, entityIdOf, mintId, opsConflict } from '../../shared/domain/common.ts';
 import type { AgendaId, AgendaSensitivity } from '../../shared/domain/common.ts';
 import { agendaStates, files } from '../database/schema.ts';
@@ -308,16 +307,14 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
       const documentsReadable = accessList.find((entry) => entry.agenda === 'documents')?.canRead === true;
       const file =
         request.fileId !== undefined && documentsReadable ? yield* readFile(request.fileId) : undefined;
-      const response = {
+      // The read definition validates the result against RecordsResponseSchema (agenda states are typed values).
+      const response: RecordsResponse = {
         access: accessList,
-        actorPrincipalRef: actor,
-        agendas,
+        actorPrincipalRef: actor as RecordsResponse['actorPrincipalRef'],
+        agendas: agendas as RecordsResponse['agendas'],
         ...(file === undefined ? {} : { file }),
       };
-      // Validates the assembled shape (agenda states are already typed values).
-      return yield* Schema.decodeUnknownEffect(Schema.toType(RecordsResponseSchema))(response).pipe(
-        Effect.mapError(unavailable),
-      ) as Effect.Effect<RecordsResponse, SiamparkOpsPersistenceUnavailable>;
+      return response;
     });
 
     return { apply, records };
