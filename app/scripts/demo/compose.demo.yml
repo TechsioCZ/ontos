@@ -1,10 +1,14 @@
-# Local demo identity. Explicit DEMO_INSTANCE values receive independent containers and data.
-name: ${DEMO_PROJECT:-ontos-demo}
+# Sales-demo override for app/docker-compose.yml. It isolates the demo containers and the Postgres
+# volume from the primary OntOS checkout (which uses ontos-db / ontos_postgres_data) while keeping
+# the same host ports (5433, 50051, 8443). Use through scripts/demo/up.sh.
+name: ontos-demo
+
 services:
   ontos-db:
-    container_name: ${DEMO_PROJECT:-ontos-demo}-db
+    container_name: ontos-demo-db
   ontos-spicedb:
-    container_name: ${DEMO_PROJECT:-ontos-demo}-spicedb
+    container_name: ontos-demo-spicedb
+
 volumes:
   ontos_postgres_data:
-    name: ${DEMO_VOLUME:-ontos_demo_postgres_data}
+    name: ontos_demo_postgres_data

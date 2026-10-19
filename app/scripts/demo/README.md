@@ -1,131 +1,62 @@
-# Sales demo: local stack and portable rental seed
+# Sales demo: local stack
 
-The stack launchers run locally; the rental seeder can target an existing server. Nothing here deploys.
-Run commands from `app/`. The macOS/Linux and native Windows
-launchers use the same Effect/Node lifecycle in `scripts/demo/lifecycle.mts`; Windows does not require WSL.
-
-## Prerequisites
-
-Install Git, mise, the toolchain declared by `.mise.toml`, and Docker with its Compose plugin.
-On Windows use Docker Desktop with Linux containers. From `app/`, run `mise install` and
-`mise exec -- pnpm install` once. Start Docker before launching the demo. The launcher checks mise,
-pnpm, the selected Docker daemon and Compose before preparing environment files or resetting data.
+Local only. Nothing here deploys. Run everything from `app/`.
 
 ## Start / stop
 
-macOS or Linux:
-
 ```sh
-./scripts/demo/up.sh
-./scripts/demo/down.sh
-./scripts/demo/down.sh --containers
+./scripts/demo/up.sh                 # cold start or restart (idempotent)
+./scripts/demo/down.sh               # stop the servers; containers keep running
+./scripts/demo/down.sh --containers  # also stop the containers
 ```
 
-Windows PowerShell (the `.cmd` files also work in Command Prompt):
+`up.sh` runs these steps in order and stops at the first failure:
 
-```powershell
-.\scripts\demo\up.cmd
-.\scripts\demo\down.cmd
-.\scripts\demo\down.cmd --containers
-```
+1. Creates `app/.env` from `.env.example` when it is missing. Both database URLs point at the
+   isolated `siampark_demo` database, with a random auth secret and no Commerce portal realm.
+   Then it runs `pnpm env:local:ensure` and `pnpm spicedb:tls:local`.
+2. `docker --context orbstack compose -f docker-compose.yml -f scripts/demo/compose.demo.yml up -d --wait`.
+   This starts `ontos-demo-db` (Postgres 18) and `ontos-demo-spicedb` (in-memory) in a separate
+   project with its own `ontos_demo_postgres_data` volume.
+3. `pnpm db:migrate`, `pnpm local:initialize`, `pnpm demo:reset`, `pnpm db:verify`, and
+   `node scripts/demo/provision-actions.mts` (development replacement for
+   `pnpm authorization:provision-current-actions`, see Known issues).
+4. Native builds of the shell and each selected vertical, run only when an app has no build or its
+   sources (or `packages/`, or the lockfile) changed since its last build.
+5. Starts `modern serve` for the shell and each vertical. Then it starts the composition publisher
+   (`scripts/siampark/development-composition.mts`) and the outbox worker host
+   (`scripts/outbox-worker-host.generated.mts`).
+6. `node scripts/demo/reset-permissions.mts`: sales-demo accounts, role grants and the agent-bot API key
+   (see Sales demo permissions).
 
-The launchers resolve `app/` from their own path, including paths with spaces. Startup waits until
-all selected servers and the composition publisher are ready, then returns. An authenticated
-loopback supervisor owns their process trees. Repeated startup first stops that supervisor and its
-children; stop waits for cleanup. Closing a launching terminal during preparation interrupts its
-owned startup. Once startup succeeds, use the stop launcher to shut down the detached demo.
+Every step and server writes a log to `app/.scratch/demo-logs/<name>.log` (gitignored). PIDs go in
+`.scratch/demo-pids/` and build stamps in `.scratch/demo-build/`.
 
-**The existing default `DEMO_RESET=1` reseeds demo data on each startup.** To preserve edits set
-`DEMO_RESET=0` before starting. This skips both the Siampark and sales reset steps. SpiceDB is
-in-memory; keeping database rows alone does not recover Siampark grants after its container was
-restarted. The development Action provisioning and sales-account permission steps still run.
+### Options
 
-Stop preserves all database volumes. `--containers` additionally stops this demo's Compose
-services. It never runs `docker compose down -v` and never changes the global Docker context.
+| Variable                | Default                                                                           | Effect                                                                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEMO_VERTICALS`        | `party-registry siampark-work siampark-billing-finance commerce-customer-context` | Verticals to build, serve and compose. Takes vertical IDs from `topology/reference-topology.json`, separated by spaces or commas.              |
+| `DEMO_REBUILD=1`        | off                                                                               | Rebuilds every selected app.                                                                                                                   |
+| `DEMO_RESET=0`          | on                                                                                | Skips `pnpm demo:reset` and keeps the database data. Use it only when SpiceDB was not restarted: the reset is what writes the Siampark grants. |
+| `DEMO_COMPOSITION_PORT` | `3041`                                                                            | Composition publisher port.                                                                                                                    |
 
-## Lifecycle
-
-The common lifecycle runs these steps in order and stops on failure:
-
-1. Validate prerequisites, module IDs and application ports. A busy port is an error; no process
-   found by port or a saved PID is killed.
-2. Create `app/.env` from `.env.example` if absent, choosing `siampark_demo` and a random auth
-   secret. Run `env:local:ensure` and `spicedb:tls:local`. Explicit inherited values take precedence
-   when projecting configuration into child processes. Only local `siampark_demo` database URLs
-   and the development environment are accepted before container startup or reset.
-3. Start the selected Compose project, migrate, initialize the local context, optionally run
-   `demo:reset` and `demo:reset:sales`, and run database verification and development provisioning.
-4. Build the shell and selected verticals when their contract/stamp is missing, sources changed,
-   or `DEMO_REBUILD=1`. Build stages use argument arrays without a platform shell; the deployment
-   stage is removed explicitly. The supervisor pins development builds to the non-promotable
-   `workspace` identity on both platforms.
-5. Serve the shell and selected verticals, wait for their runtime contracts, start the development
-   composition publisher and wait for `/active`, then start the outbox worker host and provision
-   sales-demo accounts, role grants and the bot API key.
-
-Startup has a 30-minute deadline; individual HTTP readiness checks have a 180-second deadline.
-Any failed preparation or server exit releases the supervisor's scoped process trees, including
-children on Windows through the Effect Node platform's tree termination. Containers remain
-available for diagnosis and data is preserved. Stop does not rely on PID reuse-sensitive files.
-
-Private state, build stamps and logs live under `app/.scratch/demo-<instance>/`. The directory is
-created with owner-only POSIX permissions; on Windows keep the checkout in your private user
-profile with normal private NTFS permissions. Logs may contain application configuration and
-should not be shared unredacted. A stale `supervisor.json` never authorizes process termination:
-if its listener cannot be authenticated, inspect the private logs and manually remove only the
-stale descriptor after confirming that its supervisor is gone. Earlier Bash-launcher processes
-must be stopped with that old launcher before upgrading; new code refuses to take over their ports.
-
-## Options and isolation
-
-| Variable                | Default                                                                                                                                       | Effect                                                                                                                                 |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `DEMO_VERTICALS`        | `party-registry siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights` | Space/comma-separated topology IDs to build, serve and compose.                                                                        |
-| `DEMO_REBUILD=1`        | off                                                                                                                                           | Force all selected native builds.                                                                                                      |
-| `DEMO_RESET=0`          | reset on                                                                                                                                      | Preserve database rows; see SpiceDB caveat above.                                                                                      |
-| `DEMO_STRICT_VERIFY=1`  | off                                                                                                                                           | Make the existing database-verifier failure fatal. Otherwise its log remains available.                                                |
-| `DEMO_COMPOSITION_PORT` | `3041`                                                                                                                                        | Loopback composition publisher port.                                                                                                   |
-| `DEMO_DOCKER_CONTEXT`   | current active context                                                                                                                        | Select a Docker context per command without changing the global context. Use the same value for stop.                                  |
-| `DEMO_INSTANCE`         | `default`                                                                                                                                     | Isolate supervisor state and Compose project, container and volume names. Lowercase letters, numbers and hyphens, up to 40 characters. |
-
-Default infrastructure names remain `ontos-demo`, `ontos-demo-db`, `ontos-demo-spicedb` and
-`ontos_demo_postgres_data`. With `DEMO_INSTANCE=proof-one` they become `ontos-demo-proof-one`,
-`ontos-demo-proof-one-db`, `ontos-demo-proof-one-spicedb` and
-`ontos_demo_proof_one_postgres_data`. Use a fresh instance in an isolated worktree for cold-start
-proofs so resets cannot touch the standard demo volume. **An instance does not remap ports or
-change an existing environment file.** Coordinate application ports and provide local database/
-SpiceDB port overrides externally when another stack uses the defaults.
-
-macOS/Linux example:
-
-```sh
-DEMO_INSTANCE=proof-one DEMO_DOCKER_CONTEXT=desktop-linux ./scripts/demo/up.sh
-DEMO_INSTANCE=proof-one DEMO_DOCKER_CONTEXT=desktop-linux ./scripts/demo/down.sh --containers
-```
-
-Windows PowerShell example:
-
-```powershell
-$env:DEMO_INSTANCE = 'proof-one'
-$env:DEMO_RESET = '0'
-.\scripts\demo\up.cmd
-.\scripts\demo\down.cmd --containers
-```
+Example: `DEMO_VERTICALS="party-registry siampark-work siampark-billing-finance commerce-customer-context workforce tagging" ./scripts/demo/up.sh`.
+The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 
 ## Ports
 
-The shell listens on 3020 (`http://localhost:3020/cs`), the composition publisher defaults to
-3041, and selected vertical ports come from `topology/reference-topology.json`. Database and
-SpiceDB ports come from the configured local environment (normally 5433 and 50051/8443).
-
-## Verification evidence
-
-Focused lifecycle tests cover context selection, instance separation, argument-safe build stages,
-configuration precedence, database safety, authenticated HTTP control and native scoped child-tree
-cleanup. Run `mise exec -- pnpm test:scripts scripts/demo/tests/lifecycle.test.mts`.
-Linux tests do not prove native Windows or macOS cold startup. Those full start, repeat-start,
-stop and data-preservation smoke runs remain required on each target OS; do not infer them from
-launcher syntax or Linux test success.
+| Port            | Service                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------ |
+| 3020            | Shell: http://localhost:3020/cs                                                                        |
+| 3041            | Development composition (`/active`). Siampark used 3031, but launchd still holds 3031 on this machine. |
+| 4101            | commerce-customer-context (API only)                                                                   |
+| 4102            | party-registry                                                                                         |
+| 4117            | siampark-work                                                                                          |
+| 4118            | siampark-billing-finance                                                                               |
+| 4114–4116, 4119 | siampark property / occupancy / agreements / relationships (not started by default)                    |
+| 5433            | Postgres (`siampark_demo` database, admin `ontos_admin`)                                               |
+| 50051 / 8443    | SpiceDB gRPC / HTTP (TLS)                                                                              |
 
 ## Portable rental data seeder
 
