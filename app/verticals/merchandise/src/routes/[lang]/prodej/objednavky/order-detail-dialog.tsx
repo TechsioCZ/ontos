@@ -44,7 +44,7 @@ const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
   if (status === 'CANCELLED') {
     return (
       <StatusText showIcon status="error">
-        Objednávka je stornovaná. Další změny stavu nejsou možné.
+        Objednávka je zrušená. Další změny stavu nejsou možné.
       </StatusText>
     );
   }

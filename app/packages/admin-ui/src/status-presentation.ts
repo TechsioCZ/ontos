@@ -41,7 +41,7 @@ const vocabulary = {
   order: {
     CANCELLED: { label: 'Zrušená', variant: 'outline' },
     CONFIRMED: { label: 'Potvrzená', variant: 'info' },
-    DELIVERED: { label: 'Doručená', variant: 'success' },
+    DELIVERED: { label: 'Dokončená', variant: 'success' },
     NEW: { label: 'Nová', variant: 'warning' },
     PACKING: { label: 'Balí se', variant: 'info' },
     SHIPPED: { label: 'Předáno dopravci', variant: 'info' },

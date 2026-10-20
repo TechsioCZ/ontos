@@ -6,6 +6,7 @@
  * Default mode merges: seed products, variants, stock receipts and sample orders are added when missing (by
  * id), everything created or edited during a demo is kept, so running it twice changes nothing.
  * `--reset` replaces the company aggregate with the pristine seed (predictable starting state, E01-02).
+ * `--restore-catalog` puts seed products back to their seed prices/variants/images but keeps every order.
  * `--validate-only` builds and schema-checks the state without touching the database.
  */
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -581,11 +582,11 @@ const openingMovements = (product: SeedProduct): EncodedMovement[] => {
 };
 
 const statusLabels: Readonly<Record<OrderStatus, string>> = {
-  CANCELLED: 'Stornovaná',
-  CONFIRMED: 'Potvrzená / zpracovává se',
+  CANCELLED: 'Zrušená',
+  CONFIRMED: 'Potvrzená',
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
-  PACKING: 'Balí se / připravená k předání',
+  PACKING: 'Balí se',
   SHIPPED: 'Předáno dopravci (simulace)',
 };
 
@@ -788,7 +789,17 @@ const whereEshop = and(
   eq(merchandiseStates.legalEntityId, eshopLegalEntityId),
 );
 
-const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshopState(reset: boolean) {
+/** Restores seed products (prices, variants, images, flags) to their seed definition; keeps orders and extra data. */
+export const restoreCatalog = (current: MerchandiseState, seed: MerchandiseState): MerchandiseState => {
+  const merged = mergeSeed(current, seed);
+  const seedProducts = new Map(seed.products.map((product) => [product.id, product] as const));
+  return { ...merged, products: merged.products.map((product) => seedProducts.get(product.id) ?? product) };
+};
+
+const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshopState(
+  reset: boolean,
+  restore: boolean,
+) {
   const seed = yield* buildEshopState();
   const db = yield* makeWithDefaults({ relations: merchandiseRelations });
   const now = DateTime.toDateUtc(yield* DateTime.now);
@@ -814,7 +825,7 @@ const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshop
     );
   }
   const current = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(row.state);
-  const merged = mergeSeed(current, seed);
+  const merged = restore ? restoreCatalog(current, seed) : mergeSeed(current, seed);
   const added =
     merged.products.length -
     current.products.length +
@@ -822,7 +833,7 @@ const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshop
     current.movements.length +
     merged.orders.length -
     current.orders.length;
-  if (added === 0) {
+  if (added === 0 && !restore) {
     return yield* Console.log(
       `e-shop merchandise (Kavárna Doma) already seeded: ${current.products.length} products, ${current.orders.length} orders; nothing changed`,
     );
@@ -832,16 +843,21 @@ const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshop
     .update(merchandiseStates)
     .set({ revision: row.revision + 1, state: encoded, updatedAt: now })
     .where(and(whereEshop, eq(merchandiseStates.revision, row.revision)));
-  return yield* Console.log(`e-shop merchandise (Kavárna Doma) merged: ${added} missing seed records added`);
+  return yield* Console.log(
+    restore
+      ? `e-shop merchandise (Kavárna Doma) catalog restored to seed prices/variants; ${current.orders.length} orders kept`
+      : `e-shop merchandise (Kavárna Doma) merged: ${added} missing seed records added`,
+  );
 });
 
 const command = Command.make(
   'merchandise-seed-eshop',
   {
     reset: Flag.Boolean('reset').pipe(Flag.withDefault(false)),
+    restoreCatalog: Flag.Boolean('restore-catalog').pipe(Flag.withDefault(false)),
     validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)),
   },
-  ({ reset, validateOnly }) =>
+  ({ reset, restoreCatalog: restore, validateOnly }) =>
     validateOnly
       ? buildEshopState().pipe(
           Effect.flatMap((state) =>
@@ -854,7 +870,7 @@ const command = Command.make(
             ),
           ),
         )
-      : Layer.build(Layer.effectDiscard(writeState(reset)).pipe(Layer.provide(AdminDatabaseLive))).pipe(Effect.scoped),
+      : Layer.build(Layer.effectDiscard(writeState(reset, restore)).pipe(Layer.provide(AdminDatabaseLive))).pipe(Effect.scoped),
 );
 
 const appRoot = new URL('../../..', import.meta.url).pathname;

@@ -229,11 +229,11 @@ const czk = (minor: number) =>
   `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 0 })} Kč`;
 
 export const orderStatusLabels: Readonly<Record<OrderStatus, string>> = {
-  CANCELLED: 'Stornovaná',
-  CONFIRMED: 'Potvrzená / zpracovává se',
+  CANCELLED: 'Zrušená',
+  CONFIRMED: 'Potvrzená',
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
-  PACKING: 'Balí se / připravená k předání',
+  PACKING: 'Balí se',
   SHIPPED: 'Předáno dopravci (simulace)',
 };
 

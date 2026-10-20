@@ -628,6 +628,17 @@ export const ProductDetailView = ({
   const { t } = useModernI18n();
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState(() => draftOf(product));
+  // Variants are saved from their own tab; after the reload the detail draft must carry the saved ones, otherwise
+  // the unchanged detail form would count as dirty and ask to discard on navigation.
+  const savedRealVariantsKey = JSON.stringify((product.variants ?? []).filter(isRealVariant));
+  const latestProduct = useRef(product);
+  latestProduct.current = product;
+  useEffect(() => {
+    setDraft((current) => ({
+      ...current,
+      realVariants: (latestProduct.current.variants ?? []).filter(isRealVariant),
+    }));
+  }, [savedRealVariantsKey]);
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
   // A detail save finishes seconds after the click; it reads the movement draft as it is then, not at the click.
   const movementDraftRef = useRef(movementDraft);
