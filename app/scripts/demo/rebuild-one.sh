@@ -31,6 +31,11 @@ if [ "$APP" != "$RUNTIME_APP" ] && [ -d "$RUNTIME_APP" ]; then
   echo "[rebuild] runtime at $(git -C "$RUNTIME_APP" log --oneline -1) (only committed code is built)"
   exec "$RUNTIME_APP/scripts/demo/rebuild-one.sh" "$@"
 fi
+# The customer storefront is a standalone channel app, not a federated vertical.
+# Its own helper builds committed code and restarts only :3060; composition stays untouched.
+if [ "$#" -eq 1 ] && [ "$1" = eshop-storefront ]; then
+  exec "$APP/apps/eshop-storefront/scripts/demo-restart.sh"
+fi
 cd "$APP"
 SCRATCH="$APP/.scratch"
 LOG_DIR="$SCRATCH/demo-logs"
