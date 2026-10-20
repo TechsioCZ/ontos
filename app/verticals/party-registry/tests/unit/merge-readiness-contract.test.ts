@@ -311,8 +311,9 @@ it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
         );
         expect(workspaceToolingSource).toMatch(/response\.setHeader\('Content-Type', 'application\/json'\)/u);
         expect(workspaceToolingSource).toMatch(
-          /setupMiddlewares: appId === 'shell-super-app' \? \[\] : \[createDevelopmentContractMiddleware\(moduleUrl\)\],\s*\},\s*server: \{\s*publicDir: \['\.\/\.dev-public'\],/u,
+          /dev: \{\s*setupMiddlewares: appId === 'shell-super-app' \? \[\] : \[createDevelopmentContractMiddleware\(moduleUrl\)\],\s*\},/u,
         );
+        expect(workspaceToolingSource).toMatch(/server: \{\s*publicDir: \['\.\/\.dev-public'\],\s*\},/u);
       },
     ),
   );
