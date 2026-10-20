@@ -7,7 +7,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { OpsCommand } from '../../../../../../shared/agendas.ts';
 import type { PropertyRef } from '../../../../../../shared/domain/common.ts';
 import { meterMedia, readingProblem, readingRows } from '../../../../../../shared/domain/meters.ts';
@@ -322,6 +322,7 @@ export const ReadingForm = ({
   const [cost, setCost] = useState('');
   const [note, setNote] = useState('');
   const [photo, setPhoto] = useState<File | undefined>(undefined);
+  const photoInput = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ReadingError | undefined>(undefined);
   const meter = meters.find((entry) => entry.id === meterId);
@@ -500,16 +501,36 @@ export const ReadingForm = ({
         value={note}
       />
       <div className="flex flex-col gap-50">
-        <label className="font-medium text-sm" htmlFor="reading-photo">
-          {t(`${k}.reading.photo`)}
-        </label>
+        <span className="font-medium text-sm">{t(`${k}.reading.photo`)}</span>
         <input
           accept="image/*"
-          className="text-sm file:mr-150 file:rounded-md file:border file:border-border-primary file:bg-surface file:px-150 file:py-50"
+          className="hidden"
           id="reading-photo"
           onChange={(event) => setPhoto(event.target.files?.[0])}
+          ref={photoInput}
           type="file"
         />
+        <div className="flex flex-wrap items-center gap-150">
+          <Button onClick={() => photoInput.current?.click()} size="sm" theme="outlined" variant="secondary">
+            {t(`${k}.reading.photoPick`)}
+          </Button>
+          <span className="text-sm">{photo === undefined ? t(`${k}.reading.photoNone`) : `${photo.name} (${Math.ceil(photo.size / 1024)} kB)`}</span>
+          {photo !== undefined && (
+            <Button
+              onClick={() => {
+                setPhoto(undefined);
+                if (photoInput.current !== null) {
+                  photoInput.current.value = '';
+                }
+              }}
+              size="sm"
+              theme="borderless"
+              variant="secondary"
+            >
+              {t('siampark-ops.common.cancel')}
+            </Button>
+          )}
+        </div>
         <span className="text-fg-secondary text-xs">{t(`${k}.reading.photoHelp`)}</span>
       </div>
       <div className="flex flex-wrap justify-end gap-100">

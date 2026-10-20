@@ -120,7 +120,9 @@
       "lowerThanPrevious": "The value is lower than the previous reading. For a meter exchange, create a new meter.",
       "higherThanNext": "The value is higher than the next reading of this meter.",
       "retired": "The meter is retired; no reading can be recorded."
-    }
+    },
+    "photoPick": "Choose photo",
+    "photoNone": "No photo selected"
   },
   "void": {
     "title": "Void the reading of {{date}}",
@@ -143,7 +145,7 @@
     "consumption": "Consumption",
     "perDay": "Daily average",
     "cost": "Cost",
-    "readBy": "Reading",
+    "readBy": "Read by",
     "note": "Note",
     "author": "Recorded by {{who}} {{at}}",
     "series": {

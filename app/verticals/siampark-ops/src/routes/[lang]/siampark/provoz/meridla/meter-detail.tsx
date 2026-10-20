@@ -10,7 +10,6 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Table } from '@techsio/ui-kit/organisms/table';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import { readingRows } from '../../../../../../shared/domain/meters.ts';
@@ -244,126 +243,112 @@ export const MeterDetail = ({
         {history.length === 0 ? (
           <p className="text-fg-secondary text-sm">{t(`${k}.row.noReadings`)}</p>
         ) : (
-          <div className="overflow-x-auto">
-            <Table size="sm" variant="line">
-              <Table.Header>
-                <Table.Row>
-                  <Table.ColumnHeader>{t(`${k}.detail.date`)}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{t(`${k}.detail.value`)}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{t(`${k}.detail.consumption`)}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{t(`${k}.detail.cost`)}</Table.ColumnHeader>
-                  <Table.ColumnHeader>{t(`${k}.detail.readBy`)}</Table.ColumnHeader>
-                  <Table.ColumnHeader />
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {history.map((reading) => {
-                  const row = rowById.get(reading.id);
-                  const voided = reading.voided;
-                  return (
-                    <Table.Row
-                      className={row?.anomaly === true ? 'bg-danger-light' : voided === undefined ? '' : 'opacity-70'}
-                      data-testid={`reading-${reading.date}`}
-                      key={reading.id}
-                    >
-                      <Table.Cell>
-                        <div className="flex flex-col">
-                          <span className={`whitespace-nowrap ${voided === undefined ? '' : 'line-through'}`}>{formatDate(reading.date)}</span>
-                          {voided !== undefined && (
-                            <Badge size="sm" variant="outline">
-                              {t(`${k}.void.voided`)}
-                            </Badge>
-                          )}
-                        </div>
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        <span className={`whitespace-nowrap ${voided === undefined ? '' : 'line-through'}`}>
-                          {formatQuantity(reading.value, reading.unit)}
+          <ol className="flex flex-col divide-y divide-border-primary rounded-md border border-border-primary">
+            {history.map((reading) => {
+              const row = rowById.get(reading.id);
+              const voided = reading.voided;
+              const struck = voided === undefined ? '' : 'line-through';
+              return (
+                <li
+                  className={`flex flex-col gap-100 p-150 ${row?.anomaly === true ? 'bg-danger-light' : ''} ${voided === undefined ? '' : 'bg-surface-subtle'}`}
+                  data-testid={`reading-${reading.date}`}
+                  key={reading.id}
+                >
+                  <div className="flex flex-wrap items-start gap-200">
+                    <div className="flex min-w-[7rem] flex-col">
+                      <span className={`font-semibold ${struck}`}>{formatDate(reading.date)}</span>
+                      <span className={`text-fg-secondary text-xs tabular-nums ${struck}`}>
+                        {t(`${k}.detail.value`)}: {formatQuantity(reading.value, reading.unit)}
+                      </span>
+                    </div>
+                    <div className="flex min-w-[9rem] flex-1 flex-col tabular-nums">
+                      {voided !== undefined ? (
+                        <span>
+                          <Badge size="sm" variant="outline">
+                            {t(`${k}.void.voided`)}
+                          </Badge>
                         </span>
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {voided !== undefined ? (
-                          '—'
-                        ) : row === undefined || row.status === 'first' ? (
-                          <span className="text-fg-secondary text-xs italic">{t(`${k}.row.first`)}</span>
-                        ) : row.status === 'unitChanged' ? (
-                          <span className="text-fg-secondary text-xs italic">{t(`${k}.row.unitChanged`)}</span>
-                        ) : (
-                          <div className="flex flex-col items-end">
-                            <strong className="whitespace-nowrap">{formatQuantity(row.consumption ?? 0, reading.unit)}</strong>
-                            <span className="whitespace-nowrap text-fg-secondary text-xs">
-                              {row.dailyRate === undefined
-                                ? t(`${k}.row.days`, { days: row.days ?? 0 })
-                                : t(`${k}.row.perDay`, { value: formatRate(row.dailyRate, reading.unit) })}
-                            </span>
+                      ) : row === undefined || row.status === 'first' ? (
+                        <span className="text-fg-secondary text-sm italic">{t(`${k}.row.first`)}</span>
+                      ) : row.status === 'unitChanged' ? (
+                        <span className="text-fg-secondary text-sm italic">{t(`${k}.row.unitChanged`)}</span>
+                      ) : (
+                        <>
+                          <span className="flex flex-wrap items-center gap-100">
+                            <strong>{formatQuantity(row.consumption ?? 0, reading.unit)}</strong>
                             {row.anomaly && row.change !== undefined && (
                               <Badge size="sm" variant="danger">
                                 {t(`${k}.row.anomaly`, { change: formatChange(row.change) })}
                               </Badge>
                             )}
-                          </div>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {reading.costMinor === undefined ? (
-                          <span className="text-fg-secondary text-xs">{t('siampark-ops.common.noData')}</span>
-                        ) : (
-                          <span className="whitespace-nowrap">{formatMoney(reading.costMinor)}</span>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <div className="flex min-w-[12rem] max-w-[20rem] flex-col gap-50">
-                          <span>{reading.readBy ?? t('siampark-ops.common.notProvided')}</span>
-                          {reading.note !== undefined && reading.note !== '' && (
-                            <span className="text-sm italic">„{reading.note}“</span>
-                          )}
-                          <span className="text-fg-secondary text-xs">
-                            {t(`${k}.detail.author`, { at: formatDateTime(iso(reading.createdAt)), who: who(reading.createdBy) })}
                           </span>
-                          {voided !== undefined && (
-                            <span className="text-fg-secondary text-xs">
-                              {t(`${k}.void.voidedBy`, {
-                                at: formatDateTime(iso(voided.at)),
-                                reason: voided.reason,
-                                who: who(voided.by),
-                              })}
-                            </span>
-                          )}
-                          {reading.photo !== undefined && (
-                            <Button
-                              isLoading={photoLoading === reading.id}
-                              onClick={() => void showPhoto(reading)}
-                              size="sm"
-                              theme="borderless"
-                              variant="secondary"
-                            >
-                              {t(`${k}.actions.showPhoto`)}
-                            </Button>
-                          )}
-                        </div>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {canWrite && voided === undefined && (
-                          <Button
-                            onClick={() => {
-                              setVoiding(reading);
-                              setReason('');
-                              setVoidError(undefined);
-                            }}
-                            size="sm"
-                            theme="borderless"
-                            variant="danger"
-                          >
-                            {t(`${k}.actions.void`)}
-                          </Button>
-                        )}
-                      </Table.Cell>
-                    </Table.Row>
-                  );
-                })}
-              </Table.Body>
-            </Table>
-          </div>
+                          <span className="text-fg-secondary text-xs">
+                            {t(`${k}.row.days`, { days: row.days ?? 0 })}
+                            {row.dailyRate === undefined
+                              ? ''
+                              : ` · ${t(`${k}.row.perDay`, { value: formatRate(row.dailyRate, reading.unit) })}`}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end tabular-nums">
+                      <span className="text-fg-secondary text-xs">{t(`${k}.detail.cost`)}</span>
+                      {reading.costMinor === undefined ? (
+                        <span className="text-fg-secondary text-sm">{t('siampark-ops.common.noData')}</span>
+                      ) : (
+                        <span className="text-sm">{formatMoney(reading.costMinor)}</span>
+                      )}
+                    </div>
+                    {canWrite && voided === undefined && (
+                      <Button
+                        onClick={() => {
+                          setVoiding(reading);
+                          setReason('');
+                          setVoidError(undefined);
+                        }}
+                        size="sm"
+                        theme="borderless"
+                        variant="danger"
+                      >
+                        {t(`${k}.actions.void`)}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-150 gap-y-50 text-fg-secondary text-xs">
+                    <span>
+                      {t(`${k}.detail.readBy`)}: {reading.readBy ?? t('siampark-ops.common.notProvided')}
+                    </span>
+                    <span>
+                      {t(`${k}.detail.author`, { at: formatDateTime(iso(reading.createdAt)), who: who(reading.createdBy) })}
+                    </span>
+                    {reading.photo !== undefined && (
+                      <Button
+                        isLoading={photoLoading === reading.id}
+                        onClick={() => void showPhoto(reading)}
+                        size="sm"
+                        theme="borderless"
+                        variant="secondary"
+                      >
+                        {t(`${k}.actions.showPhoto`)}
+                      </Button>
+                    )}
+                  </div>
+                  {reading.note !== undefined && reading.note !== '' && (
+                    <p className="text-fg-primary text-sm">„{reading.note}“</p>
+                  )}
+                  {voided !== undefined && (
+                    <p className="text-fg-secondary text-xs">
+                      {t(`${k}.void.voidedBy`, {
+                        at: formatDateTime(iso(voided.at)),
+                        reason: voided.reason,
+                        who: who(voided.by),
+                      })}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
         )}
         {photo !== undefined && (
           <figure className="flex flex-col gap-100">
