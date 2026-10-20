@@ -355,8 +355,11 @@ export const SettingsPanel = ({
                     <td className="siamparkops:whitespace-nowrap siamparkops:px-2 siamparkops:py-1.5">{fmt.stamp(lang, DateTime.formatIso(entry.exportedAt))}</td>
                     <td className="siamparkops:px-2 siamparkops:py-1.5">{personaOf(entry.exportedBy.principalId)?.email ?? entry.exportedBy.principalId}</td>
                     <td className="siamparkops:px-2 siamparkops:py-1.5">
-                      <div>{entry.list}</div>
-                      {entry.filter !== undefined && (
+                      <div>{entry.list.startsWith('overview:')
+                        ? t(`${k}.kpi.${entry.list.slice('overview:'.length)}.label`)
+                        : entry.list === 'search' ? t(`${k}.search.label`)
+                          : entry.list === 'calendar' ? t(`${k}.tabs.kalendar`) : t(`${k}.exportsLog.other`)}</div>
+                      {entry.filter !== undefined && !entry.filter.startsWith('kpi=') && (
                         <div className="siamparkops:text-xs" style={muted}>
                           {entry.filter}
                         </div>

@@ -43,7 +43,8 @@
     "cancel": "Zrušit událost",
     "comments": "Komentáře k události",
     "openSource": "Otevřít v modulu {{source}}",
-    "derivedNote": "Termín se čte ze zdroje ({{source}}). Změňte ho v původním záznamu – kalendář ho po načtení ukáže sám, bez druhého zápisu."
+    "derivedNote": "Termín se čte ze zdroje ({{source}}). Změňte ho v původním záznamu – kalendář ho po načtení ukáže sám, bez druhého zápisu.",
+    "draftContract": "Návrh smlouvy"
   },
   "personas": {
     "management": "Vedení",
@@ -65,7 +66,7 @@
     "ready": "načteno",
     "forbidden": "Bez oprávnění",
     "forbiddenDescription": "K tomuto zdroji nemáte oprávnění, proto se nezobrazuje ani nezapočítává.",
-    "unavailable": "Zdroj nedostupný",
+    "unavailable": "Bez dat – zdroj nedostupný",
     "unavailableDescription": "Zdroj teď neodpovídá. Údaj nezobrazujeme jako nulu – zkuste obnovit.",
     "noData": "bez dat",
     "noDataDescription": "Zdroj neobsahuje údaje potřebné k výpočtu.",
@@ -220,7 +221,8 @@
     "when": "Kdy",
     "who": "Kdo",
     "list": "Seznam a filtr",
-    "rows": "Řádků"
+    "rows": "Řádků",
+    "other": "Seznam záznamů"
   },
   "search": {
     "label": "Hledat v záznamech Siamparku",
@@ -306,7 +308,7 @@
     },
     "leases": {
       "label": "Aktivní nájmy",
-      "definition": "Nájmy a pobyty ve stavu Aktivní. Potvrzené budoucí nájmy jsou v rozkliknutí uvedeny zvlášť.",
+      "definition": "Právě probíhající nájmy a pobyty ve stavu Aktivní (začátek nejpozději dnes, konec až po dnešku). Rozkliknutí ukazuje přesně započtené záznamy; potvrzené budoucí nájmy jsou jen doplňkový údaj.",
       "secondary": "+ {{confirmed}} potvrzených budoucích"
     },
     "overdueInvoices": {

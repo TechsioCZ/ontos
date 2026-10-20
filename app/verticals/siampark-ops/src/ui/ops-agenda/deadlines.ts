@@ -145,14 +145,15 @@ export const contractDeadlines = (contracts: readonly ContractSource[], names: N
       done: false,
       href: `/siampark/agreements?resourceId=${encodeURIComponent(id)}`,
       source: 'agreements' as const,
+      detail: contract.lifecycleState,
       title,
       ...withOptional('location', location),
     };
     const rows: Deadline[] = [];
-    if (contract.lifecycleState === 'ACTIVE' && contract.endDate !== null) {
+    if (contract.endDate !== null) {
       rows.push({ ...base, category: 'contractEnd', date: day(contract.endDate), key: `contract-end:${id}:${day(contract.endDate)}` });
     }
-    if (contract.lifecycleState === 'ACTIVE' && contract.renewalNoticeDate !== null) {
+    if (contract.renewalNoticeDate !== null) {
       rows.push({
         ...base,
         category: 'contractNotice',

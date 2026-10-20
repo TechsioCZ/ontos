@@ -337,6 +337,7 @@ export const DeadlinePanel = ({
             <Pill tone={categoryTone[deadline.category]}>{t(`${k}.category.${deadline.category}`)}</Pill>
             <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
             {event !== undefined && <Pill tone="neutral">{t(`${k}.eventStatus.${status}`)}</Pill>}
+            {deadline.source === 'agreements' && deadline.detail === 'DRAFT' && <Pill tone="neutral">{t(`${k}.event.draftContract`)}</Pill>}
           </div>
           {error !== undefined && (
             <StatusText showIcon status="error">

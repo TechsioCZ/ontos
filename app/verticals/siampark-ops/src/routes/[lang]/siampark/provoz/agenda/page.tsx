@@ -13,7 +13,7 @@ import { DEFAULT_LEAD_DAYS } from '../../../../../../shared/domain/agenda.ts';
 import { AgendaFrame } from '../../../../../ui/agenda-frame.tsx';
 import { notificationCandidates, pragueToday } from '../../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../../ui/ops-agenda/deadlines.ts';
-import { agendaStateOf, buildDeadlines } from '../../../../../ui/ops-agenda/model.ts';
+import { currentAgendaState, buildDeadlines } from '../../../../../ui/ops-agenda/model.ts';
 import { allSettled, useSiamparkSources } from '../../../../../ui/ops-agenda/sources.ts';
 import { SourceHealth } from '../prehled/dashboard-parts.tsx';
 import { useAgendaCommands } from '../../../../../ui/ops-agenda/use-agenda-commands.ts';
@@ -66,7 +66,7 @@ const AgendaView = () => {
   }, []);
 
   const deadlines = useMemo(() => buildDeadlines(sources, names), [sources, names]);
-  const state = agendaStateOf(sources);
+  const state = useMemo(() => currentAgendaState(sources, deadlines, today), [sources, deadlines, today]);
   const me = sources.ops.data?.actorPrincipalRef.principalId;
   const settled = allSettled(sources);
   const unread = myNotifications(state, me).filter((entry) => entry.readAt === undefined).length;
@@ -124,6 +124,10 @@ const AgendaView = () => {
     setBusy(true);
     const result = await deliver(true);
     setBusy(false);
+    if (result.failed === true) {
+      toast.create({ title: t('siampark-ops.common.errors.unavailable'), type: 'error' });
+      return;
+    }
     toast.create({
       description: t(`${k}.notifications.checkDescription`),
       title: t(`${k}.notifications.checkResult`, { delivered: result.delivered, duplicates: result.duplicates }),

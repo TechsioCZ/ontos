@@ -10,7 +10,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { useEffect, useMemo, useState } from 'react';
 import { AgendaFrame } from '../../../../../ui/agenda-frame.tsx';
 import { pragueToday } from '../../../../../ui/ops-agenda/deadlines.ts';
-import { agendaStateOf, buildDeadlines, buildKpis, buildSearchIndex } from '../../../../../ui/ops-agenda/model.ts';
+import { currentAgendaState, buildDeadlines, buildKpis, buildSearchIndex } from '../../../../../ui/ops-agenda/model.ts';
 import type { KpiId } from '../../../../../ui/ops-agenda/model.ts';
 import { allSettled, useSiamparkSources } from '../../../../../ui/ops-agenda/sources.ts';
 import { Icon, fmt, langOf } from '../../../../../ui/ops-agenda/ui-bits.tsx';
@@ -43,7 +43,7 @@ const OverviewView = () => {
   const deadlines = useMemo(() => buildDeadlines(sources, names), [sources, names]);
   const kpis = useMemo(() => buildKpis(sources, names, deadlines, today), [sources, names, deadlines, today]);
   const index = useMemo(() => buildSearchIndex(sources, names), [sources, names]);
-  const agendaState = agendaStateOf(sources);
+  const agendaState = useMemo(() => currentAgendaState(sources, deadlines, today), [sources, deadlines, today]);
   const me = sources.ops.data?.actorPrincipalRef.principalId ?? sources.work.data?.actorPrincipalRef.principalId;
   const unread = (agendaState?.notifications ?? []).filter(
     (entry) => entry.recipient.principalId === me && entry.readAt === undefined,

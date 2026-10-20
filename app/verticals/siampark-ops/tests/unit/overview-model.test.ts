@@ -6,7 +6,7 @@ rstest.mock('../../src/ui/ops-agenda/sources.ts', () => ({
 }));
 rstest.mock('@app/admin-ui', () => ({ foldSearchText: (value: string) => value.toLowerCase() }));
 
-import { buildKpis, buildSearchIndex } from '../../src/ui/ops-agenda/model.ts';
+import { buildKpis, buildSearchIndex, currentAgendaState } from '../../src/ui/ops-agenda/model.ts';
 
 const absent = { status: 'unavailable' } as const;
 const sources = (extra: Partial<SiamparkSources> = {}): SiamparkSources => ({
@@ -48,4 +48,15 @@ it('S15-01 active property count and rows exclude disposed records', () => {
   expect(kpi?.value).toBe(5);
   expect(kpi?.rows).toHaveLength(5);
   expect(kpi?.rows.every((row) => row.id.startsWith('active-'))).toBe(true);
+});
+
+it('stale source deadlines are hidden without deleting stored notification history', () => {
+  const notifications = [
+    { category: 'DEADLINE', eventKey: 'invoice-due:removed:2026-10-25:DEADLINE', source: 'finance' },
+    { category: 'ASSIGNED', eventKey: 'assignment', source: 'ops' },
+  ];
+  const state = { events: [], notifications };
+  const source = sources({ finance: { status: 'ready' }, ops: { status: 'ready', data: { agendas: { agenda: { state } } } as unknown as NonNullable<SiamparkSources['ops']['data']> } });
+  expect(currentAgendaState(source, [], '2026-10-20')?.notifications?.map((entry) => entry.eventKey)).toEqual(['assignment']);
+  expect(notifications).toHaveLength(2);
 });

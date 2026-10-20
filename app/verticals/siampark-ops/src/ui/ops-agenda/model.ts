@@ -26,6 +26,25 @@ import type { SiamparkSources, SourceKey, SourceStatus } from './sources.ts';
 export const agendaStateOf = (sources: SiamparkSources): AgendaState | undefined =>
   sources.ops.data?.agendas.agenda?.state as AgendaState | undefined;
 
+/** Retain the audit history in storage, but do not present removed, completed or superseded dates as live alerts. */
+export const currentAgendaState = (sources: SiamparkSources, deadlines: readonly Deadline[], today: string): AgendaState | undefined => {
+  const state = agendaStateOf(sources);
+  if (state === undefined) return undefined;
+  const currentKeys = new Set(deadlines.filter((row) => !row.done).map((row) =>
+    `${row.key}:${row.date < today ? 'OVERDUE' : 'DEADLINE'}`,
+  ));
+  return {
+    ...state,
+    notifications: (state.notifications ?? []).filter((entry) => {
+      const source = sourceKeys.find((key) => key === entry.source);
+      if (source !== undefined && sources[source].status === 'forbidden') return false;
+      if (entry.category !== 'DEADLINE' && entry.category !== 'OVERDUE') return true;
+      if (!/^(contract-|lease-|task-due:|invoice-due:|asset-service:|agenda-event:|ops:|project-)/u.test(entry.eventKey)) return true;
+      return source === undefined || sources[source].status !== 'ready' || currentKeys.has(entry.eventKey);
+    }),
+  };
+};
+
 /** Calendar rows from every readable source + which sources were covered. */
 export const buildDeadlines = (sources: SiamparkSources, names: ReadonlyMap<string, string>): Deadline[] => {
   const rows: Deadline[] = [];
@@ -500,7 +519,7 @@ export const buildSearchIndex = (sources: SiamparkSources, names: ReadonlyMap<st
     rows.push(
       row(
         {
-          href: `/siampark/agreements`,
+          href: '/prodej/zakaznici',
           id: customer.counterpartyId,
           kind: 'party',
           source: 'parties',
@@ -532,7 +551,7 @@ export const buildSearchIndex = (sources: SiamparkSources, names: ReadonlyMap<st
       }
       const state = loose(envelope.state);
       for (const [field, list] of Object.entries(state ?? {})) {
-        if (!Array.isArray(list) || /history|events|versions|readings|log/iu.test(field)) {
+        if (!Array.isArray(list) || /history|events|versions|readings|log|comments|threads|messages|preferences|exports|templates|signatures/iu.test(field)) {
           continue;
         }
         for (const entry of list) {
@@ -540,20 +559,23 @@ export const buildSearchIndex = (sources: SiamparkSources, names: ReadonlyMap<st
           if (record === undefined || typeof record['id'] !== 'string') {
             continue;
           }
-          const title = ['name', 'title', 'label', 'serialNumber', 'code', 'description']
+          const title = ['name', 'title', 'label', 'inventoryNumber', 'serialNumber', 'code', 'documentNumber', 'number', 'description', 'summary']
             .map((key) => record[key])
             .find((value): value is string => typeof value === 'string' && value !== '');
+          if (title === undefined) continue;
           const extra = Object.values(record).filter((value): value is string => typeof value === 'string' && value.length < 200);
+          const detailParam = field === 'assets' ? 'asset' : field === 'meters' ? 'meter' : field === 'documents' ? 'doc' : undefined;
+          const detailQuery = detailParam === undefined ? '' : `?${detailParam}=${encodeURIComponent(record['id'])}`;
           const location = loose(record['location']) ?? loose(record['related']);
           rows.push(
             row(
               {
-                href: `/siampark/provoz/${opsSegments[agenda] ?? agenda}`,
+                href: `/siampark/provoz/${opsSegments[agenda] ?? agenda}${detailQuery}`,
                 id: record['id'],
                 kind: 'ops',
                 source: 'ops',
-                title: title ?? record['id'],
-                ...opt('subtitle', typeof location?.['label'] === 'string' ? location['label'] : agenda),
+                title,
+                ...opt('subtitle', typeof location?.['label'] === 'string' ? location['label'] : undefined),
               },
               agenda,
               ...extra,
