@@ -2,7 +2,16 @@
 // Siampark provoz — Měřidla a energie (S04). OWNED BY THE `meters` LANE (ops-meters).
 // List of meters with last reading, truthful consumption and anomaly highlight → detail side panel with history and
 // chart → record reading / edit meter; consumption and costs per property/unit below the list.
-import { EmptyState, PageHeader, SidePanel, StatCard, StatRow, formatDate, formatMoney, matchesSearch } from '@app/admin-ui';
+import {
+  EmptyState,
+  PageHeader,
+  SidePanel,
+  StatCard,
+  StatRow,
+  formatDate,
+  formatMoney,
+  matchesSearch,
+} from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -11,7 +20,13 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { useEffect, useState } from 'react';
-import { daysBetween, latestRow, meterMedia, monthlySeries, validReadingsOf } from '../../../../../../shared/domain/meters.ts';
+import {
+  daysBetween,
+  latestRow,
+  meterMedia,
+  monthlySeries,
+  validReadingsOf,
+} from '../../../../../../shared/domain/meters.ts';
 import type { Meter, MeterMedium } from '../../../../../../shared/domain/meters.ts';
 import { AgendaFrame, AgendaGate } from '../../../../../ui/agenda-frame.tsx';
 import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
@@ -34,9 +49,12 @@ import {
 const k = 'siampark-ops.meters';
 
 const pragueToday = (): string =>
-  new Intl.DateTimeFormat('en-CA', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Prague', year: 'numeric' }).format(
-    Date.now(),
-  );
+  new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+  }).format(Date.now());
 
 /** Tiny bar sparkline of the daily consumption of the last periods; anomalies in the danger colour. */
 const Trend = ({ meter }: { readonly meter: Meter }) => {
@@ -81,6 +99,7 @@ const MetersView = () => {
   const meters = envelope?.state.meters ?? [];
   const canWrite = envelope?.canWrite === true;
   const actor = ops.data?.actorPrincipalRef;
+  const fileAccess = ops.data?.access.find((entry) => entry.agenda === 'documents');
 
   const [medium, setMedium] = useState<MeterMedium | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
@@ -107,7 +126,10 @@ const MetersView = () => {
   }).length;
   const anomalies = active.filter(isAnomalous);
   const costMonths = monthlySeries(meters).filter((point) => point.costMinor !== undefined);
-  const costMonth = costMonths.map((point) => point.month).sort().at(-1);
+  const costMonth = costMonths
+    .map((point) => point.month)
+    .sort()
+    .at(-1);
   const costPoints = costMonth === undefined ? [] : monthlySeries(meters).filter((point) => point.month === costMonth);
   const costTotal = costPoints.reduce((sum, point) => sum + (point.costMinor ?? 0), 0);
   const costMissing = costPoints.reduce((sum, point) => sum + point.periodsWithoutCost, 0);
@@ -281,7 +303,11 @@ const MetersView = () => {
             label={t(`${k}.stats.count`)}
             value={String(active.length)}
           />
-          <StatCard hint={t(`${k}.stats.readings30Hint`)} label={t(`${k}.stats.readings30`)} value={String(recentReadings)} />
+          <StatCard
+            hint={t(`${k}.stats.readings30Hint`)}
+            label={t(`${k}.stats.readings30`)}
+            value={String(recentReadings)}
+          />
           <StatCard
             hint={
               anomalies.length === 0
@@ -354,6 +380,7 @@ const MetersView = () => {
             getRowLabel={(row) => row.original.serialNumber}
             loading={false}
             tableLayout="fixed"
+            size="sm"
             onRowClick={(row) => {
               setDetailId(row.original.id);
               setDetailMode('view');
@@ -393,6 +420,8 @@ const MetersView = () => {
           <div className="py-200">
             <MeterDetail
               actor={actor}
+              canReadPhotos={fileAccess?.canRead === true}
+              canUploadPhotos={fileAccess?.canWrite === true}
               canWrite={canWrite}
               language={language}
               meter={detail}
@@ -442,6 +471,7 @@ const MetersView = () => {
         {recording && (
           <div className="py-200">
             <ReadingForm
+              canUploadPhoto={fileAccess?.canWrite === true}
               meters={meters}
               onCancel={() => setRecording(false)}
               onSaved={(meterId) => {

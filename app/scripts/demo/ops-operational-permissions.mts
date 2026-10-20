@@ -16,20 +16,28 @@ const program = Effect.gen(function* () {
   const configuration = yield* loadSpiceDbConfig({
     envPath: process.env.ONTOS_DEMO_ENV_FILE ?? new URL('../../.env', import.meta.url).pathname,
   });
-  if (configuration.deploymentEnvironment !== 'development' || !/^(?:localhost|127\.0\.0\.1|\[::1\]):\d+$/u.test(configuration.endpoint)) {
+  if (
+    configuration.deploymentEnvironment !== 'development' ||
+    !/^(?:localhost|127\.0\.0\.1|\[::1\]):\d+$/u.test(configuration.endpoint)
+  ) {
     return yield* Effect.fail(new Error('This demo grant helper requires local development SpiceDB'));
   }
   const persona = siamparkRentalPersonas.find((entry) => entry.email === 'external@siampark.demo');
   if (persona === undefined) return yield* Effect.fail(new Error('External demo persona is missing'));
-  const relationships = principalRelationships(persona.principalId, persona.role, [
-    { actionKey: 'demo.siampark-ops.apply-command', provisioning: 'explicit' },
-  ], rentalDemoLegalEntityId);
+  const relationships = principalRelationships(
+    persona.principalId,
+    persona.role,
+    [{ actionKey: 'demo.siampark-ops.apply-command', provisioning: 'explicit' }],
+    rentalDemoLegalEntityId,
+  );
   const client = yield* Effect.acquireRelease(
     Effect.try(() => openSpiceDbGrpcRpc(configuration, 5000)),
     (value) => Effect.sync(() => value.close()),
   );
   yield* client.writeRelationships(bootstrapRelationshipRequest(relationships));
-  yield* Console.log(`External Siampark operational grants applied (${relationships.length} relationships); restricted agendas unchanged.`);
+  yield* Console.log(
+    `External Siampark operational grants applied (${relationships.length} relationships); restricted agendas unchanged.`,
+  );
 }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 await Effect.runPromise(program);

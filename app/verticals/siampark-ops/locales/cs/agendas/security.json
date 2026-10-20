@@ -124,7 +124,7 @@
     "withTask": "Současně založit servisní úkol v agendě Úkoly",
     "withTaskHint": "Úkol dostane odkaz na zařízení a jeho nemovitost/jednotku.",
     "taskTitle": "Servis: {{device}} – {{title}}",
-    "taskDescription": "Porucha bezpečnostního zařízení „{{device}}“ ({{location}}). Závažnost: {{severity}}. {{description}} Evidence OntOS Provoz areálu › Bezpečnost.",
+    "taskDescription": "Porucha bezpečnostního zařízení „{{device}}“ ({{location}}). Závažnost: {{severity}}. {{description}} Karta zařízení: {{url}}. Pouze evidence; OntOS zařízení neovládá.",
     "done": "Porucha nahlášena",
     "doneWithTask": "Porucha nahlášena a servisní úkol založen",
     "taskFailed": "Porucha je uložená, ale úkol se nepodařilo založit. Zkuste „Založit servisní úkol“ v detailu."

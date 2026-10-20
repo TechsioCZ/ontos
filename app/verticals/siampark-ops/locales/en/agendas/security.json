@@ -124,7 +124,7 @@
     "withTask": "Also create a service task in Tasks",
     "withTaskHint": "The task links the device's property/unit.",
     "taskTitle": "Service: {{device}} – {{title}}",
-    "taskDescription": "Security device fault „{{device}}“ ({{location}}). Severity: {{severity}}. {{description}} OntOS Site operations › Security.",
+    "taskDescription": "Security device fault „{{device}}“ ({{location}}). Severity: {{severity}}. {{description}} Device card: {{url}}. Evidence only; OntOS does not control the device.",
     "done": "Fault reported",
     "doneWithTask": "Fault reported and service task created",
     "taskFailed": "The fault is saved but the task could not be created. Use „Create service task“ in the detail."

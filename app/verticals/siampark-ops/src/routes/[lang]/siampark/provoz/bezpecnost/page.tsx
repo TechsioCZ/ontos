@@ -11,7 +11,7 @@ import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { isInspectionOverdue } from '../../../../../../shared/commands/security.ts';
 import { isOpenIncident, securityDeviceStates, securityDeviceTypes } from '../../../../../../shared/domain/security.ts';
 import type { SecurityDevice, SecurityIncident, SecurityState } from '../../../../../../shared/domain/security.ts';
@@ -61,6 +61,14 @@ const SecurityView = () => {
   const [openOnly, setOpenOnly] = useState(true);
   const today = todayPrague();
 
+  // Service-task descriptions link back to the exact device, without bypassing the agenda access gate.
+  useEffect(() => {
+    const deviceId = new URLSearchParams(window.location.search).get('device');
+    if (deviceId !== null && deviceId !== '') {
+      setPanel({ kind: 'detail', deviceId });
+    }
+  }, []);
+
   const openIncidentsOf = (deviceId: string) =>
     incidents.filter((incident) => incident.deviceId === deviceId && isOpenIncident(incident));
   const deviceById = (deviceId: string) => devices.find((device) => device.id === deviceId);
@@ -108,7 +116,7 @@ const SecurityView = () => {
             className={`${deviceTypeIcon(row.original.deviceType)} size-5 shrink-0 text-fg-secondary`}
           />
           <span className="flex min-w-0 flex-col">
-            <span className="truncate font-medium">{row.original.name}</span>
+            <span className="truncate font-medium" title={row.original.name}>{row.original.name}</span>
             <span className="truncate text-fg-secondary text-xs">
               {k(`deviceType.${row.original.deviceType}`)}
               {row.original.serialNumber === undefined ? '' : ` · ${row.original.serialNumber}`}

@@ -103,6 +103,7 @@
     "costHelp": "Optional. Amount for the period ending with this reading; empty shows as “no data”.",
     "note": "Note",
     "photo": "Meter photo",
+    "photoRestricted": "Reading photos are available to internal roles only. You can save the reading without a photo.",
     "photoHelp": "Optional, JPG or PNG up to 5 MB. Stored in Siampark documents.",
     "photoTooLarge": "The file is larger than 5 MB.",
     "photoFailed": "The photo could not be uploaded; the reading was not saved.",

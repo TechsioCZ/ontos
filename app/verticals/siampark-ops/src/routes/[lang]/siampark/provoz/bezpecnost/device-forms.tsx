@@ -528,6 +528,9 @@ export const linkNewTask = async (input: {
   readonly title: string;
 }) => {
   const k = input.label;
+  const language = window.location.pathname.split('/')[1] === 'en' ? 'en' : 'cs';
+  const deviceUrl = new URL(`/${language}/siampark/provoz/bezpecnost`, window.location.origin);
+  deviceUrl.searchParams.set('device', input.device.id);
   const task = await createServiceTask(
     {
       description: k('report.taskDescription', {
@@ -535,6 +538,7 @@ export const linkNewTask = async (input: {
         device: input.device.name,
         location: locationText(input.device, '—'),
         severity: input.severityLabel,
+        url: deviceUrl.href,
       }),
       dueDate: input.dueDate === '' ? addDays(todayPrague(), 3) : input.dueDate,
       severity: input.severity,

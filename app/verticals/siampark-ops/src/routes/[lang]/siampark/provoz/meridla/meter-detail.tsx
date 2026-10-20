@@ -36,6 +36,8 @@ const iso = (value: DateTime.Utc) => DateTime.formatIso(value);
 
 export const MeterDetail = ({
   actor,
+  canReadPhotos,
+  canUploadPhotos,
   canWrite,
   language,
   meter,
@@ -45,6 +47,8 @@ export const MeterDetail = ({
   run,
 }: {
   readonly actor: PrincipalRef | undefined;
+  readonly canReadPhotos: boolean;
+  readonly canUploadPhotos: boolean;
   readonly canWrite: boolean;
   readonly language: string;
   readonly meter: Meter;
@@ -105,7 +109,12 @@ export const MeterDetail = ({
       return;
     }
     setVoidBusy(true);
-    const outcome = await run({ _tag: 'MeterReadingVoid', meterId: meter.id, readingId: voiding.id, reason: reason.trim() });
+    const outcome = await run({
+      _tag: 'MeterReadingVoid',
+      meterId: meter.id,
+      readingId: voiding.id,
+      reason: reason.trim(),
+    });
     setVoidBusy(false);
     if (outcome.ok) {
       toast.create({ title: t(`${k}.void.done`), type: 'success' });
@@ -133,6 +142,7 @@ export const MeterDetail = ({
   if (mode === 'reading') {
     return (
       <ReadingForm
+        canUploadPhoto={canUploadPhotos}
         fixedMeterId={meter.id}
         meters={meters}
         onCancel={() => onModeChange('view')}
@@ -203,7 +213,9 @@ export const MeterDetail = ({
             <strong className="text-sm">{t(`${k}.void.title`, { date: formatDate(voiding.date) })}</strong>
             {voidError !== undefined && (
               <StatusText showIcon status="error">
-                {voidError === 'required' ? t('siampark-ops.common.required') : t(`siampark-ops.common.errors.${voidError}`)}
+                {voidError === 'required'
+                  ? t('siampark-ops.common.required')
+                  : t(`siampark-ops.common.errors.${voidError}`)}
               </StatusText>
             )}
             <FormInput
@@ -319,9 +331,12 @@ export const MeterDetail = ({
                       {t(`${k}.detail.readBy`)}: {reading.readBy ?? t('siampark-ops.common.notProvided')}
                     </span>
                     <span>
-                      {t(`${k}.detail.author`, { at: formatDateTime(iso(reading.createdAt)), who: who(reading.createdBy) })}
+                      {t(`${k}.detail.author`, {
+                        at: formatDateTime(iso(reading.createdAt)),
+                        who: who(reading.createdBy),
+                      })}
                     </span>
-                    {reading.photo !== undefined && (
+                    {canReadPhotos && reading.photo !== undefined && (
                       <Button
                         isLoading={photoLoading === reading.id}
                         onClick={() => void showPhoto(reading)}
@@ -352,7 +367,11 @@ export const MeterDetail = ({
         )}
         {photo !== undefined && (
           <figure className="flex flex-col gap-100">
-            <img alt={photo.name} className="max-h-[320px] rounded-md border border-border-primary object-contain" src={photo.url} />
+            <img
+              alt={photo.name}
+              className="max-h-[320px] rounded-md border border-border-primary object-contain"
+              src={photo.url}
+            />
             <figcaption className="flex items-center justify-between text-fg-secondary text-xs">
               {photo.name}
               <Button onClick={() => setPhoto(undefined)} size="sm" theme="borderless" variant="secondary">

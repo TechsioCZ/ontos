@@ -23,9 +23,12 @@ const NONE = 'none';
 export type RunCommand = (command: OpsCommand) => Promise<CommandOutcome>;
 
 const pragueToday = (): string =>
-  new Intl.DateTimeFormat('en-CA', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Prague', year: 'numeric' }).format(
-    Date.now(),
-  );
+  new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+  }).format(Date.now());
 
 /** Parses a typed decimal (`1 234,5` or `1234.5`). `undefined` for empty or invalid input. */
 export const parseDecimal = (raw: string): number | undefined => {
@@ -127,7 +130,12 @@ export const MeterForm = ({
     const outcome = await run(
       (meter === undefined
         ? { _tag: 'MeterCreate', ...fields }
-        : { _tag: 'MeterUpdate', ...fields, meterId: meter.id, status: draft.retired ? 'RETIRED' : 'ACTIVE' }) as OpsCommand,
+        : {
+            _tag: 'MeterUpdate',
+            ...fields,
+            meterId: meter.id,
+            status: draft.retired ? 'RETIRED' : 'ACTIVE',
+          }) as OpsCommand,
     );
     setBusy(false);
     if (outcome.ok) {
@@ -140,7 +148,11 @@ export const MeterForm = ({
   const locationItems = [
     { displayValue: t('siampark-ops.property.none'), label: t('siampark-ops.property.none'), value: NONE },
     ...(properties.status === 'ready'
-      ? properties.options.map((option) => ({ displayValue: option.ref.label, label: option.ref.label, value: option.value }))
+      ? properties.options.map((option) => ({
+          displayValue: option.ref.label,
+          label: option.ref.label,
+          value: option.value,
+        }))
       : meter?.location === undefined
         ? []
         : [
@@ -298,16 +310,24 @@ const previewOf = (meter: Meter, date: string, value: number) => {
   if (row === undefined || row.status !== 'ok' || row.consumption === undefined || row.previous === undefined) {
     return { kind: 'first' as const };
   }
-  return { anomaly: row.anomaly, change: row.change, consumption: row.consumption, kind: 'ok' as const, previous: row.previous };
+  return {
+    anomaly: row.anomaly,
+    change: row.change,
+    consumption: row.consumption,
+    kind: 'ok' as const,
+    previous: row.previous,
+  };
 };
 
 export const ReadingForm = ({
+  canUploadPhoto,
   meters,
   fixedMeterId,
   onCancel,
   onSaved,
   run,
 }: {
+  readonly canUploadPhoto: boolean;
   readonly meters: readonly Meter[];
   readonly fixedMeterId?: string;
   readonly onCancel: () => void;
@@ -327,9 +347,12 @@ export const ReadingForm = ({
   const [error, setError] = useState<ReadingError | undefined>(undefined);
   const meter = meters.find((entry) => entry.id === meterId);
   const parsed = parseDecimal(value);
-  const preview = meter !== undefined && parsed !== undefined && date !== '' ? previewOf(meter, date, parsed) : undefined;
+  const preview =
+    meter !== undefined && parsed !== undefined && date !== '' ? previewOf(meter, date, parsed) : undefined;
   const problem =
-    meter !== undefined && parsed !== undefined && date !== '' ? readingProblem(meter, { date, value: parsed }, pragueToday()) : undefined;
+    meter !== undefined && parsed !== undefined && date !== ''
+      ? readingProblem(meter, { date, value: parsed }, pragueToday())
+      : undefined;
 
   const submit = async () => {
     if (meter === undefined) {
@@ -500,39 +523,45 @@ export const ReadingForm = ({
         rows={2}
         value={note}
       />
-      <div className="flex flex-col gap-50">
-        <span className="font-medium text-sm">{t(`${k}.reading.photo`)}</span>
-        <input
-          accept="image/*"
-          className="hidden"
-          id="reading-photo"
-          onChange={(event) => setPhoto(event.target.files?.[0])}
-          ref={photoInput}
-          type="file"
-        />
-        <div className="flex flex-wrap items-center gap-150">
-          <Button onClick={() => photoInput.current?.click()} size="sm" theme="outlined" variant="secondary">
-            {t(`${k}.reading.photoPick`)}
-          </Button>
-          <span className="text-sm">{photo === undefined ? t(`${k}.reading.photoNone`) : `${photo.name} (${Math.ceil(photo.size / 1024)} kB)`}</span>
-          {photo !== undefined && (
-            <Button
-              onClick={() => {
-                setPhoto(undefined);
-                if (photoInput.current !== null) {
-                  photoInput.current.value = '';
-                }
-              }}
-              size="sm"
-              theme="borderless"
-              variant="secondary"
-            >
-              {t('siampark-ops.common.cancel')}
+      {canUploadPhoto ? (
+        <div className="flex flex-col gap-50">
+          <span className="font-medium text-sm">{t(`${k}.reading.photo`)}</span>
+          <input
+            accept="image/*"
+            className="hidden"
+            id="reading-photo"
+            onChange={(event) => setPhoto(event.target.files?.[0])}
+            ref={photoInput}
+            type="file"
+          />
+          <div className="flex flex-wrap items-center gap-150">
+            <Button onClick={() => photoInput.current?.click()} size="sm" theme="outlined" variant="secondary">
+              {t(`${k}.reading.photoPick`)}
             </Button>
-          )}
+            <span className="text-sm">
+              {photo === undefined ? t(`${k}.reading.photoNone`) : `${photo.name} (${Math.ceil(photo.size / 1024)} kB)`}
+            </span>
+            {photo !== undefined && (
+              <Button
+                onClick={() => {
+                  setPhoto(undefined);
+                  if (photoInput.current !== null) {
+                    photoInput.current.value = '';
+                  }
+                }}
+                size="sm"
+                theme="borderless"
+                variant="secondary"
+              >
+                {t('siampark-ops.common.cancel')}
+              </Button>
+            )}
+          </div>
+          <span className="text-fg-secondary text-xs">{t(`${k}.reading.photoHelp`)}</span>
         </div>
-        <span className="text-fg-secondary text-xs">{t(`${k}.reading.photoHelp`)}</span>
-      </div>
+      ) : (
+        <p className="text-fg-secondary text-xs">{t(`${k}.reading.photoRestricted`)}</p>
+      )}
       <div className="flex flex-wrap justify-end gap-100">
         <Button onClick={onCancel} theme="outlined" variant="secondary">
           {t('siampark-ops.common.cancel')}

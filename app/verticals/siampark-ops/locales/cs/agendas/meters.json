@@ -103,6 +103,7 @@
     "costHelp": "Nepovinné. Částka za období končící tímto odečtem; prázdné pole se zobrazí jako „bez dat“.",
     "note": "Poznámka",
     "photo": "Fotka měřidla",
+    "photoRestricted": "Fotografie odečtů jsou dostupné jen interním rolím. Odečet lze uložit bez fotografie.",
     "photoHelp": "Nepovinné, JPG nebo PNG do 5 MB. Uloží se do dokumentů Siamparku.",
     "photoTooLarge": "Soubor je větší než 5 MB.",
     "photoFailed": "Fotku se nepodařilo nahrát, odečet nebyl uložen.",
