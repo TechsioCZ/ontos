@@ -41,6 +41,7 @@ import { MovementForm } from './movement-form.tsx';
 import type { MovementKind } from './movement-form.tsx';
 import {
   failureKey,
+  parseAmountMinor,
   formatStamp,
   dateTimeIso,
   formatAmount,
@@ -652,6 +653,7 @@ const ItemEditForm = ({
     minimum: String(item.minimum),
     name: item.name,
     note: item.note ?? '',
+    price: item.lastPriceMinor === undefined ? '' : String(item.lastPriceMinor / 100),
     supplierId: item.supplierId ?? 'none',
   });
   const [error, setError] = useState<string | undefined>(undefined);
@@ -682,6 +684,7 @@ const ItemEditForm = ({
       name,
       note: (values['note'] ?? '').trim(),
       ...(supplier === undefined ? {} : { supplierId: supplier.id }),
+      ...(parseAmountMinor(values['price'] ?? '') === undefined ? {} : { lastPriceMinor: parseAmountMinor(values['price'] ?? '') ?? 0 }),
     });
     setBusy(false);
     if (outcome.ok) {
@@ -714,6 +717,7 @@ const ItemEditForm = ({
         {input('maximum', k('fields.maximum'), true)}
         {input('leadTimeDays', k('fields.leadTimeDays'), true)}
       </div>
+      {input('price', k('fields.lastPriceCzk'), true)}
       <Select
         items={state.suppliers.map((entry) => ({ displayValue: entry.name, label: entry.name, value: entry.id }))}
         label={k('fields.supplier')}

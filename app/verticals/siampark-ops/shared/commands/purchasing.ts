@@ -87,6 +87,8 @@ export const purchasingCommandSchemas = [
     maximum: LevelSchema,
     leadTimeDays: LeadTimeDaysSchema,
     supplierId: Schema.optionalKey(SupplierIdSchema),
+    /** Usual purchase unit price (CZK minor units); a received order line overwrites it. */
+    lastPriceMinor: Schema.optionalKey(MinorAmountSchema),
     location: Schema.optionalKey(PropertyRefSchema),
     note: Schema.optionalKey(NoteSchema),
   }),
@@ -99,6 +101,7 @@ export const purchasingCommandSchemas = [
     maximum: Schema.optionalKey(LevelSchema),
     leadTimeDays: Schema.optionalKey(LeadTimeDaysSchema),
     supplierId: Schema.optionalKey(SupplierIdSchema),
+    lastPriceMinor: Schema.optionalKey(MinorAmountSchema),
     note: Schema.optionalKey(NoteSchema),
   }),
   Schema.TaggedStruct('StockReceipt', {

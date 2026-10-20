@@ -20,7 +20,7 @@
     "supplierName": "Název dodavatele",
     "leadTime": "Dodací lhůta",
     "leadTimeDays": "Dodací lhůta (dny)",
-    "lastPrice": "Poslední nákupní cena",
+    "lastPrice": "Nákupní cena",
     "date": "Datum",
     "reason": "Důvod",
     "batch": "Šarže",
@@ -58,7 +58,8 @@
     "ico": "IČO",
     "contact": "Kontaktní osoba",
     "email": "E-mail a telefon",
-    "phone": "Telefon"
+    "phone": "Telefon",
+    "lastPriceCzk": "Nákupní cena (Kč / jedn.)"
   },
   "tabs": {
     "stock": "Zásoby",
@@ -89,7 +90,7 @@
     "transfer": "Přesun",
     "adjustment": "Korekce",
     "planned": "Plánovat výdej",
-    "issuePlanned": "Vydat",
+    "issuePlanned": "Vydat dle plánu",
     "cancelPlanned": "Zrušit plán",
     "edit": "Upravit"
   },

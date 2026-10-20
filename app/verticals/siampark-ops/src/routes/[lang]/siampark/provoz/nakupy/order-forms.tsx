@@ -63,7 +63,7 @@ const LinesEditor = ({
       <span className="font-medium text-sm">{k('fields.lines')}</span>
       {lines.map((line, index) => (
         <div
-          className="grid grid-cols-1 gap-100 rounded-md border border-border-primary p-150 sm:grid-cols-[2fr_1fr_1fr_auto]"
+          className="flex flex-col gap-100 rounded-md border border-border-primary p-150"
           key={line.key}
         >
           <div className="flex flex-col gap-100">
@@ -100,6 +100,7 @@ const LinesEditor = ({
               />
             )}
           </div>
+          <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-100">
           <FormInput
             id={`line-quantity-${line.key}`}
             inputMode="numeric"
@@ -127,6 +128,10 @@ const LinesEditor = ({
               variant="secondary"
             />
           </div>
+          </div>
+          <span className="text-right text-fg-secondary text-xs tabular-nums">
+            {formatAmount((parsePositiveInt(line.quantity) ?? 0) * (parseAmountMinor(line.price) ?? 0))}
+          </span>
         </div>
       ))}
       <div className="flex flex-wrap items-center justify-between gap-100">
@@ -187,7 +192,9 @@ export const PurchaseDocumentPanel = ({
   const { t } = useModernI18n();
   const toast = useToast();
   const [supplierId, setSupplierId] = useState(initialSupplierId ?? state.suppliers[0]?.id ?? '');
-  const [warehouseId, setWarehouseId] = useState(state.warehouses[0]?.id ?? '');
+  const [warehouseId, setWarehouseId] = useState(
+    state.items.find((item) => item.id === initialLines?.[0]?.itemId)?.warehouseId ?? state.warehouses[0]?.id ?? '',
+  );
   const [number, setNumber] = useState('');
   const [date, setDate] = useState(todayIso());
   const [secondDate, setSecondDate] = useState('');
@@ -474,7 +481,7 @@ export const ItemCreatePanel = ({
       label={label}
       maxLength={200}
       onChange={(event) => set(name, event.target.value)}
-      required={!numeric || name !== 'leadTimeDays'}
+      required={!numeric || (name !== 'leadTimeDays' && name !== 'price')}
       value={values[name] ?? ''}
     />
   );
@@ -515,6 +522,7 @@ export const ItemCreatePanel = ({
         ? {}
         : { supplierId: value('supplierId') as StockItem['supplierId'] & string }),
       ...(value('note') === '' ? {} : { note: value('note') }),
+      ...(parseAmountMinor(value('price')) === undefined ? {} : { lastPriceMinor: parseAmountMinor(value('price')) ?? 0 }),
     });
     setBusy(false);
     if (outcome.ok) {
@@ -583,6 +591,7 @@ export const ItemCreatePanel = ({
           {text('minimum', k('fields.minimum'), true)}
           {text('maximum', k('fields.maximum'), true)}
           {text('leadTimeDays', k('fields.leadTimeDays'), true)}
+          {text('price', k('fields.lastPriceCzk'), true)}
         </div>
         <FormTextarea
           id="item-note"

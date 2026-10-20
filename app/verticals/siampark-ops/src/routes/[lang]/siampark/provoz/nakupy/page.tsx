@@ -135,7 +135,7 @@ const PurchasingView = () => {
         {state !== undefined && (
           <>
             <Stats state={state} />
-            <Tabs onValueChange={(value) => setTab(value as Tab)} value={tab} variant="line">
+            <Tabs onValueChange={(value) => setTab(value as Tab)} size="sm" value={tab} variant="line">
               <Tabs.List>
                 <Tabs.Trigger value="stock">{k('tabs.stock')}</Tabs.Trigger>
                 <Tabs.Trigger value="replenish">

@@ -20,7 +20,7 @@
     "supplierName": "Supplier name",
     "leadTime": "Lead time",
     "leadTimeDays": "Lead time (days)",
-    "lastPrice": "Last purchase price",
+    "lastPrice": "Purchase price",
     "date": "Date",
     "reason": "Reason",
     "batch": "Batch",
@@ -58,7 +58,8 @@
     "ico": "Company ID",
     "contact": "Contact person",
     "email": "E-mail and phone",
-    "phone": "Phone"
+    "phone": "Phone",
+    "lastPriceCzk": "Purchase price (CZK / unit)"
   },
   "tabs": {
     "stock": "Stock",
@@ -89,7 +90,7 @@
     "transfer": "Transfer",
     "adjustment": "Correction",
     "planned": "Plan issue",
-    "issuePlanned": "Issue",
+    "issuePlanned": "Issue as planned",
     "cancelPlanned": "Cancel plan",
     "edit": "Edit"
   },
