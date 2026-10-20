@@ -69,7 +69,10 @@ const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
             >
               {done ? '✓' : index + 1}
             </span>
-            <span className={`text-xs leading-tight ${active ? 'font-semibold' : 'text-fg-secondary'}`}>
+            <span
+              className={`text-xs leading-tight ${active ? 'font-semibold' : 'text-fg-secondary'}`}
+              style={{ overflowWrap: 'anywhere', width: '100%' }}
+            >
               {step.label}
             </span>
           </li>

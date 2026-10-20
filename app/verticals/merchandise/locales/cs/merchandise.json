@@ -121,7 +121,7 @@
           "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
           "errorTitle": "Data se nepodařilo načíst.",
           "filteredTitle": "Filtrům neodpovídá žádná objednávka.",
-          "firstDescription": "Založte první objednávku a sledujte ji až do doručení.",
+          "firstDescription": "Založte první objednávku a sledujte ji až do dokončení.",
           "firstTitle": "Zatím tu nejsou žádné objednávky.",
           "forbiddenTitle": "K této sekci nemáte oprávnění.",
           "retry": "Zkusit znovu",
