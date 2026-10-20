@@ -142,12 +142,12 @@ const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
     cell: (info) => {
       const value = info.getValue<string>();
       return value === '' ? (
-        <span className="text-fg-secondary">bez návštěvy</span>
+        <span className="text-fg-secondary">bez kontaktu</span>
       ) : (
         <span className="tabular-nums">{formatDate(value)}</span>
       );
     },
-    header: 'Poslední návštěva',
+    header: 'Poslední kontakt',
     id: 'lastVisit',
     meta: { type: 'string', width: 140 },
   },
@@ -270,7 +270,7 @@ const ClientsList = ({
           label="Kontaktní osoby"
           value={formatNumber(active.reduce((sum, row) => sum + row.contactCount, 0))}
         />
-        <StatCard hint="podle zapsaných návštěv" label="Navštíveno za 30 dní" value={formatNumber(visitedRecently)} />
+        <StatCard hint="podle zapsaných kontaktů" label="Kontaktováno za 30 dní" value={formatNumber(visitedRecently)} />
       </StatRow>
       <CrmSalesKpiStrip records={records} />
       <div className="flex flex-wrap items-end gap-150">
@@ -382,7 +382,7 @@ const ClientsList = ({
                   <span className="tabular-nums">{row.client.phone ?? ''}</span>
                 )}
                 <span className="text-fg-secondary text-xs">
-                  {row.lastVisit === undefined ? 'bez návštěvy' : `návštěva ${formatDate(row.lastVisit)}`}
+                  {row.lastVisit === undefined ? 'bez kontaktu' : `kontakt ${formatDate(row.lastVisit)}`}
                 </span>
               </span>
             </button>
