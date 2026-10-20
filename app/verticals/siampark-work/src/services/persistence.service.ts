@@ -254,17 +254,31 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
                   }),
                 ),
           ),
-          Match.tag('UpdateTask', ({ _tag, dueDate, taskRef, ...changes }) => {
+          Match.tag('UpdateTask', ({ _tag, dueDate, plannedHours, projectId, taskRef, ...changes }) => {
             void _tag;
             void taskRef;
             const updated = { ...existing, ...changes, updatedAt: input.now };
             // An absent due date keeps the saved one; None removes the key, Some replaces it.
-            return Effect.succeed(
+            const withDate =
               dueDate === undefined
                 ? updated
                 : Option.match(dueDate, {
                     onNone: (): Task => Struct.omit(updated, ['dueDate']),
                     onSome: (date) => ({ ...updated, dueDate: date }),
+                  });
+            const withProject =
+              projectId === undefined
+                ? withDate
+                : Option.match(projectId, {
+                    onNone: (): Task => Struct.omit(withDate, ['projectId']),
+                    onSome: (id) => ({ ...withDate, projectId: id }),
+                  });
+            return Effect.succeed(
+              plannedHours === undefined
+                ? withProject
+                : Option.match(plannedHours, {
+                    onNone: (): Task => Struct.omit(withProject, ['plannedHours']),
+                    onSome: (hours) => ({ ...withProject, plannedHours: hours }),
                   }),
             );
           }),
@@ -669,6 +683,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
             reason: 'Project dates or milestone dates are outside the planned period',
           });
         }
+        yield* resolveAssignee(command.responsibleEmployeeId);
         const projects = snapshot.state.projects ?? [];
         const existing = command._tag === 'UpdateProject' ? projects.find((item) => item.id === command.id) : undefined;
         if (command._tag === 'UpdateProject' && existing === undefined) {
@@ -725,10 +740,15 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           reason: workChangedReason,
         });
       }
+      const selectedProjectId =
+        command._tag === 'CreateTask'
+          ? command.projectId
+          : command._tag === 'UpdateTask'
+            ? Option.getOrUndefined(command.projectId ?? Option.none())
+            : undefined;
       if (
-        (command._tag === 'CreateTask' || command._tag === 'UpdateTask') &&
-        command.projectId !== undefined &&
-        !(snapshot.state.projects ?? []).some((project) => project.id === command.projectId)
+        selectedProjectId !== undefined &&
+        !(snapshot.state.projects ?? []).some((project) => project.id === selectedProjectId)
       ) {
         return yield* new WorkReferenceIneligible({
           code: 'work_reference_ineligible',

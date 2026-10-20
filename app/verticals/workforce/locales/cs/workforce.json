@@ -189,7 +189,7 @@
     },
     "people": {
       "title": "Lidé a role",
-      "description": "Účty lidí ve firmě {{company}}: role, přístup a deaktivace. Každá změna prochází řízenou akcí Core a zapisuje se do auditní stopy.",
+      "description": "Účty lidí ve firmě {{company}}: role, přístup a deaktivace. Každá změna se bezpečně zapisuje do auditní stopy.",
       "create": "Nový účet",
       "reload": "Obnovit",
       "stats": {
@@ -226,7 +226,7 @@
       "audit": {
         "title": "Auditní stopa správy lidí",
         "empty": "Zatím žádné změny. Vytvořte účet nebo změňte roli a záznam se objeví zde.",
-        "source": "Zdroj: core.audit_events · akce core.identity.manage-demo-account",
+        "source": "Historie změn rolí, přístupu a zamítnutých požadavků.",
         "denied": "Zamítnuto",
         "succeeded": "Provedeno",
         "unknownActor": "neznámý uživatel",
@@ -241,11 +241,13 @@
         "codes": {
           "company_administrator_required": "uživatel není správcem firmy",
           "spicedb_permission_denied": "chybí oprávnění v Core"
-        }
+        },
+        "more": "Zobrazit celou historii ({{count}})",
+        "less": "Zobrazit poslední změny"
       },
       "forbidden": {
         "title": "Správu lidí má jen správce firmy",
-        "description": "Váš účet nemá v této firmě roli správce. Oprávnění vyhodnocuje Core na serveru; skrytí tlačítek není bezpečnostní hranice."
+        "description": "Váš účet nemá v této firmě roli správce. O změnu přístupu požádejte správce firmy."
       },
       "signedOut": {
         "title": "Nejste přihlášeni",
@@ -258,7 +260,7 @@
       },
       "form": {
         "createTitle": "Nový účet",
-        "createDescription": "Účet vznikne v Core (principal + vazba přihlášení) a dostane oprávnění zvolené role.",
+        "createDescription": "Založte osobní účet a vyberte roli. Oprávnění platí pouze pro tuto firmu.",
         "name": "Jméno a příjmení",
         "email": "Přihlašovací e-mail",
         "role": "Role",
@@ -306,6 +308,12 @@
         "invalid": "Požadavek nelze provést (např. změna vlastního účtu).",
         "error": "Uložení se nepodařilo. Zkuste to znovu.",
         "signedOut": "Relace vypršela, přihlaste se znovu."
+      },
+      "search": "Hledat jméno nebo e-mail",
+      "filters": {
+        "active": "Aktivní účty",
+        "disabled": "Deaktivované účty",
+        "all": "Všechny účty"
       }
     }
   }

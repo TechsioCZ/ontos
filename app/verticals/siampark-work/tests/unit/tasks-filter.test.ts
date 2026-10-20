@@ -32,12 +32,20 @@ it('never expands My tasks to everyone when the login has no employee binding', 
 
 it('matches explicit principal ownership as well as employee assignment', () => {
   const owned = { ...task, ownerPrincipalRef: { principalId: tenantId, tenantId } };
-  expect(filterTasks([owned, task], {
-    filters: initialTaskFilters, minePrincipalId: tenantId, tab: 'mine',
-  })).toStrictEqual([owned]);
-  expect(filterTasks([owned], {
-    filters: initialTaskFilters, minePrincipalId: 'someone-else', tab: 'mine',
-  })).toHaveLength(0);
+  expect(
+    filterTasks([owned, task], {
+      filters: initialTaskFilters,
+      minePrincipalId: tenantId,
+      tab: 'mine',
+    }),
+  ).toStrictEqual([owned]);
+  expect(
+    filterTasks([owned], {
+      filters: initialTaskFilters,
+      minePrincipalId: 'someone-else',
+      tab: 'mine',
+    }),
+  ).toHaveLength(0);
 });
 
 // The "all" tab ignores whose task it is, so any employee id works here.

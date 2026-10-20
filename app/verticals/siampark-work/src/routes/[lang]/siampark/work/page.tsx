@@ -458,7 +458,21 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
   // list reloads behind it, since each reload costs a gateway round trip. Failures become messages.
   const runCommand = (command: WorkCommand, revision: number, onDone: (outcome: CommandOutcome) => void) =>
     browserRuntime.runFork(
-      Effect.all({ id: requestId, referenceCredentials: makeReferenceGatewayCredentials([]) }, { concurrency: 1 }).pipe(
+      Effect.all(
+        {
+          id: requestId,
+          referenceCredentials: makeReferenceGatewayCredentials(
+            command._tag === 'CreateProject' ||
+              command._tag === 'UpdateProject' ||
+              ((command._tag === 'CreateTask' || command._tag === 'UpdateTask') &&
+                command.assigneeEmployeeId !== undefined) ||
+              (command._tag === 'BulkAssignTasks' && Option.isSome(command.assigneeEmployeeId))
+              ? ['workforce']
+              : [],
+          ),
+        },
+        { concurrency: 1 },
+      ).pipe(
         Effect.flatMap(({ id, referenceCredentials }) =>
           executeApplyCommand({ command, expectedRevision: revision }, id, {
             idempotencyKey: id,
@@ -517,6 +531,8 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
             ...fields,
             // An edit always sends the due date, replacing the create-shaped one: None removes a saved date.
             dueDate: Option.fromUndefinedOr(submission.dueDate),
+            plannedHours: Option.fromUndefinedOr(submission.plannedHours),
+            projectId: Option.fromUndefinedOr(submission.projectId),
             taskRef: editor.task.ref,
           };
     const successKey = editor.mode === 'create' ? `${key}.created` : `${key}.saved`;

@@ -2,6 +2,7 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import {
   DetailList,
+  foldSearchText,
   EmptyState,
   PageHeader,
   SectionCard,
@@ -76,7 +77,9 @@ const Avatar = ({ name, muted }: { readonly muted: boolean; readonly name: strin
   <span
     aria-hidden
     className={`flex size-400 shrink-0 items-center justify-center rounded-full font-semibold text-xs ${
-      muted ? 'bg-surface-secondary text-fg-secondary' : 'border border-border-primary bg-surface-secondary text-fg-primary'
+      muted
+        ? 'bg-surface-secondary text-fg-secondary'
+        : 'border border-border-primary bg-surface-secondary text-fg-primary'
     }`}
   >
     {initials(name)}
@@ -598,6 +601,9 @@ const PeoplePageContent = () => {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [allAudit, setAllAudit] = useState(false);
 
   const reload = () => {
     void browserRuntime
@@ -693,9 +699,31 @@ const PeoplePageContent = () => {
           />
         </StatRow>
 
+        <div className="flex flex-wrap items-end gap-150">
+          <FormInput
+            id="people-search"
+            label={t(`${key}.search`)}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <SelectTemplate
+            label={t(`${key}.table.status`)}
+            value={[statusFilter]}
+            onValueChange={({ value }) => setStatusFilter(value[0] ?? 'active')}
+            items={['active', 'disabled', 'all'].map((value) => ({
+              value,
+              label: t(`${key}.filters.${value}`),
+              displayValue: t(`${key}.filters.${value}`),
+            }))}
+          />
+        </div>
         <DataTable
           columns={columnsOf(t)}
-          data={[...people]}
+          data={people.filter(
+            (person) =>
+              (statusFilter === 'all' || person.status === statusFilter) &&
+              foldSearchText(`${person.displayName} ${person.email ?? ''}`).includes(foldSearchText(search.trim())),
+          )}
           enableSorting
           getRowId={(row) => row.principalId}
           getRowLabel={(row) => row.original.displayName}
@@ -712,7 +740,12 @@ const PeoplePageContent = () => {
           <div className="grid grid-cols-1 gap-250 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <SectionCard title={t(`${key}.audit.title`)}>
               <p className="text-fg-secondary text-xs">{t(`${key}.audit.source`)}</p>
-              <AuditList entries={data.audit} />
+              <AuditList entries={allAudit ? data.audit : data.audit.slice(0, 8)} />
+              {data.audit.length > 8 && (
+                <Button size="sm" theme="outlined" variant="secondary" onClick={() => setAllAudit((value) => !value)}>
+                  {t(allAudit ? `${key}.audit.less` : `${key}.audit.more`, { count: data.audit.length })}
+                </Button>
+              )}
             </SectionCard>
             <RolesCard data={data} />
           </div>

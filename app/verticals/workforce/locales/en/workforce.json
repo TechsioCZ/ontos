@@ -241,7 +241,9 @@
         "codes": {
           "company_administrator_required": "the user is not a company administrator",
           "spicedb_permission_denied": "missing permission in Core"
-        }
+        },
+        "more": "Show full history ({{count}})",
+        "less": "Show recent changes"
       },
       "forbidden": {
         "title": "Only the company administrator manages people",
@@ -306,6 +308,12 @@
         "invalid": "The request cannot be performed (e.g. changing your own account).",
         "error": "Saving failed. Try again.",
         "signedOut": "Your session expired, sign in again."
+      },
+      "search": "Search name or email",
+      "filters": {
+        "active": "Active accounts",
+        "disabled": "Disabled accounts",
+        "all": "All accounts"
       }
     }
   }

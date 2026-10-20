@@ -47,6 +47,8 @@ export const SingleWorkCommandSchema = Schema.Union([
   }),
   Schema.TaggedStruct('UpdateTask', {
     ...editableFields,
+    plannedHours: Schema.optionalKey(Schema.OptionFromNullOr(PlannedHoursSchema)),
+    projectId: Schema.optionalKey(Schema.OptionFromNullOr(ProjectIdSchema)),
     // Wire `null` removes the due date (None in the decoded model); an absent key keeps it.
     dueDate: Schema.optionalKey(Schema.OptionFromNullOr(CalendarDateSchema)),
     taskRef: TaskRefSchema,
