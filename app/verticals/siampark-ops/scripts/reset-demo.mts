@@ -66,7 +66,8 @@ const writeStates = Effect.fn('SiamparkOps.writeDemoStates')(function* writeDemo
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value !== '');
-  for (const { agenda, encoded } of states.filter((entry) => only.length === 0 || only.includes(entry.agenda))) {
+  const selected = states.filter((entry) => only.length === 0 || only.includes(entry.agenda));
+  for (const { agenda, encoded } of selected) {
     yield* db
       .insert(agendaStates)
       .values({
@@ -104,7 +105,7 @@ const writeStates = Effect.fn('SiamparkOps.writeDemoStates')(function* writeDemo
         target: [files.tenantId, files.legalEntityId, files.id],
       });
   }
-  yield* Console.log(`siampark-ops demo state reset for ${states.length} agendas (legal entity ${siamparkLegalEntityId})`);
+  yield* Console.log(`siampark-ops demo state reset for ${selected.length} agendas (legal entity ${siamparkLegalEntityId})`);
 });
 
 const command = Command.make(

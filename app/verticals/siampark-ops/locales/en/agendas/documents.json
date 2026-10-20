@@ -39,6 +39,7 @@
     "channel": "Channel",
     "contact": "Contact",
     "device": "Device",
+    "event": "Event",
     "purchase": "Purchase",
     "other": "Record"
   },

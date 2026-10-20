@@ -18,6 +18,11 @@ const ref = {
   r201: { id: 'ec2c089a-69d4-459d-a67f-83d986add5f8', kind: 'unit', label: 'Riverside Office Park › Kancelář R201 (R201)' },
   riverside: { id: '6a0197b3-4b13-46c5-a3ab-8dbb46dda58e', kind: 'property', label: 'Riverside Office Park (RIVERSIDE)' },
 } as const;
+// Siampark provoz assets (assets lane seed, deterministic ids) — documents show on the asset card via LinkedDocuments.
+const asset = {
+  riversideBuilding: { id: 'siampark-asset-002', kind: 'asset', label: 'BUD-002 · Administrativní budova Riverside Office Park' },
+  switchboard: { id: 'siampark-asset-011', kind: 'asset', label: 'TEC-008 · Hlavní rozvodna NN' },
+} as const;
 const tenant = (id: string, label: string) => ({ id: `tenant:${id}`, kind: 'tenant', label });
 const agreement = (id: string, label: string) => ({ id, kind: 'contract', label });
 
@@ -256,7 +261,7 @@ export const seedDocumentsState = (): DocumentsStateEncoded => ({
       category: 'revision',
       description: 'Pravidelná revize elektroinstalace podle ČSN 33 1500. Dvě závady k odstranění, příští revize do 18. 9. 2029.',
       id: 'seed-doc-revize-elektro',
-      links: [ref.riverside],
+      links: [ref.riverside, asset.riversideBuilding, asset.switchboard],
       title: 'Revizní zpráva elektro – Riverside 2026',
       versions: [version('seed-file-revize-elektro', 1)],
     },
@@ -273,7 +278,7 @@ export const seedDocumentsState = (): DocumentsStateEncoded => ({
       ...audit('2026-09-02T11:00:00Z', management),
       category: 'plan',
       id: 'seed-doc-pudorys-2np',
-      links: [ref.riverside, ref.r201],
+      links: [ref.riverside, ref.r201, asset.riversideBuilding],
       title: 'Půdorys 2. NP – Riverside Office Park',
       versions: [version('seed-file-pudorys-2np', 1)],
     },
@@ -282,7 +287,7 @@ export const seedDocumentsState = (): DocumentsStateEncoded => ({
       category: 'photo',
       description: 'Prasklina u okna ve 3. NP, R-blok. Statik objednán na 22. 10. 2026.',
       id: 'seed-doc-foto-fasada',
-      links: [ref.riverside],
+      links: [ref.riverside, asset.riversideBuilding],
       title: 'Fotodokumentace – prasklina fasády R-blok',
       versions: [version('seed-file-foto-fasada', 1)],
     },
