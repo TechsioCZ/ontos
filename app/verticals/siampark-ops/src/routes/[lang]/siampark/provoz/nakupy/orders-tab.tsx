@@ -37,6 +37,7 @@ import {
   usePurchasingT,
 } from './purchasing-model.ts';
 import type { RunCommand } from './purchasing-model.ts';
+import { TextLink } from './stock-tab.tsx';
 
 const statusVariant: Readonly<Record<PurchaseOrder['status'], 'outline' | 'info' | 'warning' | 'success' | 'danger'>> =
   {
@@ -213,7 +214,7 @@ export const OrderPanel = ({
       onOpenChange={(open) => !open && onClose()}
       open
       resizeLabel={t('siampark-ops.common.close')}
-      size="lg"
+      size="xl"
       title={k('orders.panelTitle', { number: order.number })}
     >
       <div className="flex flex-col gap-250 py-200">
@@ -330,9 +331,10 @@ export const OrderPanel = ({
                           <span className="text-fg-secondary text-xs">{k('lines.service')}</span>
                         </span>
                       ) : (
-                        <Button onClick={() => onOpenItem(item.id)} size="sm" theme="borderless" variant="primary">
-                          {`${item.sku} · ${line.description}`}
-                        </Button>
+                        <span className="flex flex-col">
+                          <TextLink onClick={() => onOpenItem(item.id)}>{line.description}</TextLink>
+                          <span className="text-fg-secondary text-xs">{item.sku}</span>
+                        </span>
                       )}
                     </Table.Cell>
                     <Table.Cell align="end">{formatQuantity(line.quantity, unit)}</Table.Cell>
@@ -374,9 +376,9 @@ export const OrderPanel = ({
                   quote === undefined ? (
                     k('orders.direct')
                   ) : (
-                    <Button onClick={() => onOpenQuote(quote.id)} size="sm" theme="borderless" variant="primary">
+                    <TextLink onClick={() => onOpenQuote(quote.id)}>
                       {k('orders.fromQuote', { number: quote.number })}
-                    </Button>
+                    </TextLink>
                   ),
               },
               ...(order.note === undefined || order.note === ''

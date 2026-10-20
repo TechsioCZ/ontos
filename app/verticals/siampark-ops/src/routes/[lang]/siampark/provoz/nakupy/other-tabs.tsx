@@ -26,7 +26,7 @@ import { draftLine } from './order-forms.tsx';
 import type { DraftLine } from './order-forms.tsx';
 import { failureKey, formatAmount, formatQuantity, lookupOf, todayIso, usePurchasingT } from './purchasing-model.ts';
 import type { RunCommand } from './purchasing-model.ts';
-import { LevelBadge, MovementTable } from './stock-tab.tsx';
+import { LevelBadge, MovementTable, TextLink } from './stock-tab.tsx';
 
 // ── Doplnění zásob ────────────────────────────────────────────────────────────────────────────────────────────────
 export const ReplenishTab = ({
@@ -109,9 +109,9 @@ export const ReplenishTab = ({
                   {plans.map((plan) => (
                     <Table.Row key={plan.item.id}>
                       <Table.Cell>
-                        <Button onClick={() => onOpenItem(plan.item.id)} size="sm" theme="borderless" variant="primary">
+                        <TextLink onClick={() => onOpenItem(plan.item.id)}>
                           {`${plan.item.sku} · ${plan.item.name}`}
-                        </Button>
+                        </TextLink>
                       </Table.Cell>
                       <Table.Cell align="end">
                         <span className="flex items-center justify-end gap-100">
@@ -381,7 +381,7 @@ export const QuotePanel = ({
       onOpenChange={(open) => !open && onClose()}
       open
       resizeLabel={t('siampark-ops.common.close')}
-      size="lg"
+      size="xl"
       title={k('quotes.panelTitle', { number: quote.number })}
     >
       <div className="flex flex-col gap-250 py-200">
@@ -496,13 +496,7 @@ export const QuotePanel = ({
               {
                 label: k('fields.order'),
                 value:
-                  order === undefined ? (
-                    '—'
-                  ) : (
-                    <Button onClick={() => onOpenOrder(order.id)} size="sm" theme="borderless" variant="primary">
-                      {order.number}
-                    </Button>
-                  ),
+                  order === undefined ? '—' : <TextLink onClick={() => onOpenOrder(order.id)}>{order.number}</TextLink>,
               },
               ...(quote.note === undefined || quote.note === ''
                 ? []

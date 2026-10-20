@@ -62,10 +62,7 @@ const LinesEditor = ({
     <div className="flex flex-col gap-150">
       <span className="font-medium text-sm">{k('fields.lines')}</span>
       {lines.map((line, index) => (
-        <div
-          className="flex flex-col gap-100 rounded-md border border-border-primary p-150"
-          key={line.key}
-        >
+        <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150" key={line.key}>
           <div className="flex flex-col gap-100">
             <Select
               items={[
@@ -101,33 +98,33 @@ const LinesEditor = ({
             )}
           </div>
           <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-100">
-          <FormInput
-            id={`line-quantity-${line.key}`}
-            inputMode="numeric"
-            label={k('fields.quantity')}
-            onChange={(event) => update(line.key, { quantity: event.target.value })}
-            size="sm"
-            value={line.quantity}
-          />
-          <FormInput
-            id={`line-price-${line.key}`}
-            inputMode="decimal"
-            label={k('fields.unitPriceCzk')}
-            onChange={(event) => update(line.key, { price: event.target.value })}
-            size="sm"
-            value={line.price}
-          />
-          <div className="flex items-end">
-            <Button
-              aria-label={k('lines.remove')}
-              disabled={lines.length === 1}
-              icon="icon-[mdi--close]"
-              onClick={() => onChange(lines.filter((entry) => entry.key !== line.key))}
+            <FormInput
+              id={`line-quantity-${line.key}`}
+              inputMode="numeric"
+              label={k('fields.quantity')}
+              onChange={(event) => update(line.key, { quantity: event.target.value })}
               size="sm"
-              theme="borderless"
-              variant="secondary"
+              value={line.quantity}
             />
-          </div>
+            <FormInput
+              id={`line-price-${line.key}`}
+              inputMode="decimal"
+              label={k('fields.unitPriceCzk')}
+              onChange={(event) => update(line.key, { price: event.target.value })}
+              size="sm"
+              value={line.price}
+            />
+            <div className="flex items-end">
+              <Button
+                aria-label={k('lines.remove')}
+                disabled={lines.length === 1}
+                icon="icon-[mdi--close]"
+                onClick={() => onChange(lines.filter((entry) => entry.key !== line.key))}
+                size="sm"
+                theme="borderless"
+                variant="secondary"
+              />
+            </div>
           </div>
           <span className="text-right text-fg-secondary text-xs tabular-nums">
             {formatAmount((parsePositiveInt(line.quantity) ?? 0) * (parseAmountMinor(line.price) ?? 0))}
@@ -522,7 +519,9 @@ export const ItemCreatePanel = ({
         ? {}
         : { supplierId: value('supplierId') as StockItem['supplierId'] & string }),
       ...(value('note') === '' ? {} : { note: value('note') }),
-      ...(parseAmountMinor(value('price')) === undefined ? {} : { lastPriceMinor: parseAmountMinor(value('price')) ?? 0 }),
+      ...(parseAmountMinor(value('price')) === undefined
+        ? {}
+        : { lastPriceMinor: parseAmountMinor(value('price')) ?? 0 }),
     });
     setBusy(false);
     if (outcome.ok) {

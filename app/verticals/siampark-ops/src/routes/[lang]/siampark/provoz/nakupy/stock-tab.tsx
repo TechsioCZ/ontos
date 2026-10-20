@@ -22,6 +22,7 @@ import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type {
   PurchasingState,
@@ -54,6 +55,17 @@ import {
 import type { RunCommand } from './purchasing-model.ts';
 
 const ALL = '__all__';
+
+/** Inline link-styled button (wraps like text, unlike the ui-kit Button). */
+export const TextLink = ({ children, onClick }: { readonly children: ReactNode; readonly onClick: () => void }) => (
+  <button
+    className="cursor-pointer text-left font-medium text-primary underline-offset-2 hover:underline"
+    onClick={onClick}
+    type="button"
+  >
+    {children}
+  </button>
+);
 
 export const LevelBadge = ({ level }: { readonly level: StockLevel }) => {
   const k = usePurchasingT();
@@ -284,7 +296,7 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
       onOpenChange={(open) => !open && close()}
       open
       resizeLabel={t('siampark-ops.common.close')}
-      size="lg"
+      size="xl"
       title={item.name}
     >
       <div className="flex flex-col gap-250 py-200">
@@ -344,7 +356,13 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
             >
               {k('actions.planned')}
             </Button>
-            <Button icon="icon-[mdi--pencil]" onClick={() => setEditing(true)} size="sm" theme="borderless" variant="secondary">
+            <Button
+              icon="icon-[mdi--pencil]"
+              onClick={() => setEditing(true)}
+              size="sm"
+              theme="borderless"
+              variant="secondary"
+            >
               {k('actions.edit')}
             </Button>
           </div>
@@ -361,7 +379,7 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
           />
         )}
         <SectionCard title={k('panel.plan')}>
-          <div className="grid grid-cols-2 gap-150 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-150">
             <PlanFigure label={k('fields.onHand')} value={formatQuantity(plan.onHand, item.unit)} />
             <PlanFigure label={k('plan.expected')} value={`+ ${formatQuantity(plan.expectedReceipts, item.unit)}`} />
             <PlanFigure label={k('plan.plannedIssues')} value={`− ${formatQuantity(plan.plannedIssues, item.unit)}`} />
@@ -385,51 +403,41 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
             </p>
           )}
           {planned.length > 0 && (
-            <Table size="sm" variant="line">
-              <Table.Header>
-                <Table.Row>
-                  <Table.ColumnHeader>{k('movement.plannedDate')}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{k('fields.quantity')}</Table.ColumnHeader>
-                  <Table.ColumnHeader>{k('fields.reason')}</Table.ColumnHeader>
-                  <Table.ColumnHeader>{k('fields.refs')}</Table.ColumnHeader>
-                  {canWrite && <Table.ColumnHeader>{''}</Table.ColumnHeader>}
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {planned.map((entry) => (
-                  <Table.Row key={entry.id}>
-                    <Table.Cell>{formatDate(entry.date)}</Table.Cell>
-                    <Table.Cell align="end">{formatQuantity(entry.quantity, item.unit)}</Table.Cell>
-                    <Table.Cell>{entry.reason}</Table.Cell>
-                    <Table.Cell>
-                      <RefList movement={entry} />
-                    </Table.Cell>
-                    {canWrite && (
-                      <Table.Cell>
-                        <div className="flex justify-end gap-50">
-                          <Button
-                            onClick={() => setForm({ kind: 'issue', planned: entry })}
-                            size="sm"
-                            theme="outlined"
-                            variant="secondary"
-                          >
-                            {k('actions.issuePlanned')}
-                          </Button>
-                          <Button
-                            onClick={() => void cancelPlanned(entry)}
-                            size="sm"
-                            theme="borderless"
-                            variant="secondary"
-                          >
-                            {k('actions.cancelPlanned')}
-                          </Button>
-                        </div>
-                      </Table.Cell>
-                    )}
-                  </Table.Row>
-                ))}
-              </Table.Body>
-            </Table>
+            <div className="flex flex-col gap-100">
+              <span className="text-fg-secondary text-xs">{k('plan.plannedIssues')}</span>
+              {planned.map((entry) => (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-150 rounded-md border border-border-primary p-150 text-sm"
+                  key={entry.id}
+                >
+                  <div className="flex min-w-0 flex-col gap-50">
+                    <span className="font-medium">{`${formatDate(entry.date)} · ${formatQuantity(entry.quantity, item.unit)}`}</span>
+                    <span className="text-fg-secondary">{entry.reason}</span>
+                    <RefList movement={entry} />
+                  </div>
+                  {canWrite && (
+                    <div className="flex gap-50">
+                      <Button
+                        onClick={() => setForm({ kind: 'issue', planned: entry })}
+                        size="sm"
+                        theme="outlined"
+                        variant="secondary"
+                      >
+                        {k('actions.issuePlanned')}
+                      </Button>
+                      <Button
+                        onClick={() => void cancelPlanned(entry)}
+                        size="sm"
+                        theme="borderless"
+                        variant="secondary"
+                      >
+                        {k('actions.cancelPlanned')}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </SectionCard>
         <SectionCard title={k('panel.detail')}>
@@ -614,11 +622,7 @@ export const MovementTable = ({
               </Table.Cell>
               <Table.Cell>
                 <span className="flex flex-wrap items-center gap-50">
-                  {order !== undefined && (
-                    <Button onClick={() => onOpenOrder(order.id)} size="sm" theme="borderless" variant="primary">
-                      {order.number}
-                    </Button>
-                  )}
+                  {order !== undefined && <TextLink onClick={() => onOpenOrder(order.id)}>{order.number}</TextLink>}
                   <RefList movement={{ refs: movement.refs.filter((ref) => ref.kind !== 'purchase_order') }} />
                 </span>
               </Table.Cell>
@@ -684,7 +688,9 @@ const ItemEditForm = ({
       name,
       note: (values['note'] ?? '').trim(),
       ...(supplier === undefined ? {} : { supplierId: supplier.id }),
-      ...(parseAmountMinor(values['price'] ?? '') === undefined ? {} : { lastPriceMinor: parseAmountMinor(values['price'] ?? '') ?? 0 }),
+      ...(parseAmountMinor(values['price'] ?? '') === undefined
+        ? {}
+        : { lastPriceMinor: parseAmountMinor(values['price'] ?? '') ?? 0 }),
     });
     setBusy(false);
     if (outcome.ok) {
@@ -731,7 +737,13 @@ const ItemEditForm = ({
         <Button onClick={onDone} size="sm" theme="outlined" variant="secondary">
           {t('siampark-ops.common.cancel')}
         </Button>
-        <Button isLoading={busy} loadingText={t('siampark-ops.common.saving')} onClick={() => void submit()} size="sm" variant="primary">
+        <Button
+          isLoading={busy}
+          loadingText={t('siampark-ops.common.saving')}
+          onClick={() => void submit()}
+          size="sm"
+          variant="primary"
+        >
           {t('siampark-ops.common.save')}
         </Button>
       </div>
