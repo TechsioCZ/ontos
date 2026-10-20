@@ -121,3 +121,11 @@ it.effect('never removes non-DEMO or staff orders', () =>
     }
   }),
 );
+
+it('preserves fractional-length packages and does not invent an integer package rule', () => {
+  const rules = orderQuantityRules({ minimumQuantity: 6.21, packageQuantity: 6.21, stockOnHand: 100 });
+  expect(isOrderQuantityValid(12.42, rules)).toBe(true);
+  expect(isOrderQuantityValid(12.4, rules)).toBe(false);
+  expect(isOrderQuantityValid(1.5, orderQuantityRules({ stockOnHand: 10 }))).toBe(true);
+  expect(isOrderQuantityValid(0.75, orderQuantityRules({ minimumQuantity: 0.5, stockOnHand: 10 }))).toBe(true);
+});

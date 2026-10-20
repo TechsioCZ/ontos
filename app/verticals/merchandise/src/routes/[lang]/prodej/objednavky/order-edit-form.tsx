@@ -21,7 +21,7 @@ import {
 import { isOrderQuantityValid, orderQuantityRules } from '../../../../../shared/domain/order-quantity.ts';
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
+import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
 import { editOrder, isRevisionConflict } from './orders-records.ts';
 
@@ -386,7 +386,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
                   <Table.Cell align="end">
                     <div className="ml-auto" style={{ minWidth: 100 }}>
                       <FormNumericInput
-                        formatOptions={WHOLE_NUMBER_FORMAT}
+                        formatOptions={{ maximumFractionDigits: 6 }}
                         id={`edit-qty-${line.key}`}
                         label={<span className="sr-only">Množství</span>}
                         locale="cs-CZ"
