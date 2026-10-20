@@ -59,6 +59,29 @@ export const AiDiffLineSchema = Schema.Struct({
 });
 export type AiDiffLine = typeof AiDiffLineSchema.Type;
 
+/** Reconstruct nested contact values even for pending batches stored before complete diffs existed. */
+export const newClientContactsDiff = (
+  contacts: Extract<AiOperation, { readonly _tag: 'CreateClient' }>['contacts'],
+): readonly AiDiffLine[] => {
+  const fields = [
+    ['name', 'Jméno'],
+    ['email', 'E-mail'],
+    ['phone', 'Telefon'],
+    ['role', 'Role'],
+    ['primary', 'Hlavní kontakt'],
+    ['note', 'Poznámka'],
+  ] as const;
+  const firstPrimary = contacts?.findIndex((contact) => contact.primary === true);
+  return (contacts ?? []).flatMap((contact, index) =>
+    fields.flatMap(([field, label]) => {
+      const value = field === 'primary' ? (index === firstPrimary ? 'ano' : 'ne') : contact[field];
+      return value === undefined || value === ''
+        ? []
+        : [{ after: value, field: `contacts.${index}.${field}`, label: `Kontakt ${index + 1} · ${label}` }];
+    }),
+  );
+};
+
 /** Exact entity state before/after applying the change; absent before = the change created the entity. */
 export const AiSnapshotSchema = Schema.Struct({
   after: Schema.optionalKey(Schema.Unknown),

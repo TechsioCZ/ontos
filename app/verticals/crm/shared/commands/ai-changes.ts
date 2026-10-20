@@ -18,7 +18,7 @@ import type {
   AiRisk,
   AiSnapshot,
 } from '../domain/ai-changes.ts';
-import { AiOperationSchema, initialAiChangesSlice } from '../domain/ai-changes.ts';
+import { AiOperationSchema, initialAiChangesSlice, newClientContactsDiff } from '../domain/ai-changes.ts';
 import type { Client, ClientEvent, ContactPerson } from '../domain/clients.ts';
 import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
 import type { ImportedOrder, PairingChange } from '../domain/imports.ts';
@@ -219,20 +219,7 @@ const describe = (state: CrmState, operation: AiOperation): Described => {
         target: clientTarget(clientId),
       }),
       CreateClient: (value): Described => ({
-        diff: [
-          ...newValueLines(state, value),
-          ...(value.contacts ?? []).flatMap((contact, index, contacts) =>
-            newValueLines(state, {
-              ...contact,
-              // The owning reducer keeps only the first primary contact.
-              primary: index === contacts.findIndex((entry) => entry.primary === true),
-            }).map((entry) => ({
-              ...entry,
-              field: `contacts.${index}.${entry.field}`,
-              label: `Kontakt ${index + 1} · ${entry.label}`,
-            })),
-          ),
-        ],
+        diff: [...newValueLines(state, value), ...newClientContactsDiff(value.contacts)],
         summary: 'Založení nového klienta',
         target: { kind: 'client', label: value.name },
       }),

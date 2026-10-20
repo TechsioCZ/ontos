@@ -3,6 +3,7 @@ import { Effect, Exit } from 'effect';
 import { dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { CrmCommand } from '../../shared/commands/index.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
+import { newClientContactsDiff } from '../../shared/domain/ai-changes.ts';
 import { initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 
@@ -207,6 +208,25 @@ describe('AI level C governed pending batches', () => {
         Exit.isFailure(run(edited, { _tag: 'AiRevertBatch', batchId: pending.aiChanges?.batches[0]?.id ?? '' })),
       ).toBe(true);
     }
+  });
+  it('reconstructs a complete contact review for batches saved with a legacy name-only diff', () => {
+    const pending = proposal(base, {
+      _tag: 'CreateClient',
+      kind: 'organization',
+      name: 'Kavárna U lípy s.r.o.',
+      contacts: [
+        { name: 'Eva Lipová', email: 'eva@lipa.demo', phone: '+420 777 123 456', role: 'Provozní', primary: true },
+      ],
+    }).state.aiChanges?.changes[0];
+    if (pending?.operation._tag !== 'CreateClient') throw new Error('Missing creation proposal');
+    const legacy = { ...pending, diff: [{ field: 'contacts', label: 'Kontaktní osoby', after: 'Eva Lipová' }] };
+    expect(newClientContactsDiff(legacy.operation.contacts).map((entry) => entry.after)).toEqual([
+      'Eva Lipová',
+      'eva@lipa.demo',
+      '+420 777 123 456',
+      'Provozní',
+      'ano',
+    ]);
   });
   it('round-trips client data exactly and records actor/time/result', () => {
     const pending = proposal(base, { _tag: 'UpdateClient', id: 'c1', patch: { phone: '+420 777 888 999' } }).state;

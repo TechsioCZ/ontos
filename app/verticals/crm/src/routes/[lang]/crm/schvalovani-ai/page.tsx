@@ -6,7 +6,12 @@ import { useState } from 'react';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { AiBatch, AiChange } from '../../../../../shared/domain/ai-changes.ts';
-import { aiRiskLabel, aiStatusLabel, initialAiChangesSlice } from '../../../../../shared/domain/ai-changes.ts';
+import {
+  aiRiskLabel,
+  aiStatusLabel,
+  initialAiChangesSlice,
+  newClientContactsDiff,
+} from '../../../../../shared/domain/ai-changes.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import { useCrmRecords } from '../../../../crm/records.ts';
@@ -63,7 +68,13 @@ const ChangeCard = ({
         <span role="columnheader">Před změnou</span>
         <span role="columnheader">Po schválení</span>
       </div>
-      {change.diff.map((line) => (
+      {(change.operation._tag === 'CreateClient'
+        ? [
+            ...change.diff.filter((line) => line.field !== 'contacts' && !line.field.startsWith('contacts.')),
+            ...newClientContactsDiff(change.operation.contacts),
+          ]
+        : change.diff
+      ).map((line) => (
         <div className="ai-review-diff-row" role="row" key={line.field}>
           <span className="font-medium" role="cell">
             {line.label}
