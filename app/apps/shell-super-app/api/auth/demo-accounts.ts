@@ -119,16 +119,21 @@ const companyRoles: Readonly<Record<string, CompanyRoles>> = {
   },
   '71000000-0000-4000-8000-000000000021': {
     roles: [
+      role('spravce', 'Správce', 'obchod@demo.ontos', 'Celá agenda pronájmů a správa lidí.', true),
       role('management', 'Vedení', 'management@siampark.demo', 'Přehledy, schvalování a správa lidí.', true),
       role('operations', 'Provoz', 'operations@siampark.demo', 'Majetek, prostory, úkoly a závady.'),
-      role('finance', 'Finance', 'finance@siampark.demo', 'Fakturace, platby a upomínky.'),
+      role('sales', 'Obchod', 'obchodnik@demo.ontos', 'Nájemci, smlouvy a obchodní případy; faktury jen čte.'),
+      role('finance', 'Účetní', 'finance@siampark.demo', 'Fakturace, platby a upomínky.'),
       role('external', 'Externí obchodník', 'external@siampark.demo', 'Jen svěřené kontakty a případy, bez financí.'),
     ],
     seeded: {
       'external@siampark.demo': 'external',
       'finance@siampark.demo': 'finance',
       'management@siampark.demo': 'management',
+      'obchod@demo.ontos': 'spravce',
+      'obchodnik@demo.ontos': 'sales',
       'operations@siampark.demo': 'operations',
+      'ucetni@demo.ontos': 'finance',
     },
   },
   '71000000-0000-4000-8000-000000000022': {
