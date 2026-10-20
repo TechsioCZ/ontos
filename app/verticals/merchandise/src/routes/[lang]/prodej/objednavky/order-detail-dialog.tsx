@@ -483,20 +483,21 @@ const DemoOrderCleanup = ({
         title={`Odstranit DEMO objednávku ${order.number}?`}
         description="Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečné objednávky nelze odstranit."
         actions={
-          <>
-            <Button disabled={busy} theme="outlined" variant="secondary" onClick={() => setOpen(false)}>
+          <div style={{ display: 'grid', gap: 8, width: '100%' }}>
+            <Button disabled={busy} size="sm" theme="outlined" variant="secondary" onClick={() => setOpen(false)}>
               Zachovat objednávku
             </Button>
             <Button
               disabled={reason.trim().length < 5}
               isLoading={busy}
               loadingText="Odstraňuji…"
+              size="sm"
               variant="danger"
               onClick={remove}
             >
               Potvrdit odstranění DEMO
             </Button>
-          </>
+          </div>
         }
       >
         <FormInput
