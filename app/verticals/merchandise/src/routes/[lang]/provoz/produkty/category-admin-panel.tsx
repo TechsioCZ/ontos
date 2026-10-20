@@ -236,6 +236,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               <FormInput
                 id="category-name"
                 label="Název"
+                maxLength={200}
                 name="name"
                 onChange={(event) => patchDraft({ name: event.target.value })}
                 required
@@ -247,6 +248,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               <FormInput
                 id="category-heading"
                 label="Nadpis na stránce kategorie"
+                maxLength={300}
                 name="heading"
                 onChange={(event) => patchDraft({ heading: event.target.value })}
                 value={draft.heading}
