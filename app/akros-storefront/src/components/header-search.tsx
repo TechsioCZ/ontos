@@ -136,7 +136,7 @@ export function HeaderSearch() {
       <input name="q" type="hidden" value={query} />
       <SearchForm.Control>
         {/* SearchSuggestions has no trigger-visibility prop; the existing submit button owns this action. */}
-        <div className="min-w-0 flex-1 [&_[data-part=trigger]]:hidden [&_[data-part=control]]:rounded-e-none [&_[data-part=content]]:max-h-[min(70vh,var(--dimension-container-xl),var(--available-height))]">
+        <div className="min-w-0 flex-1 [&_[data-part=trigger]]:hidden [&_[data-part=content]]:max-h-[min(70vh,var(--dimension-container-xl),var(--available-height))]">
           <SearchSuggestions
             clearable={false}
             groups={groups}

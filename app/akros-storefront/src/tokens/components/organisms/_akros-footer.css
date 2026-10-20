@@ -33,3 +33,25 @@
   --color-footer-link-fg: var(--color-base-dark);
   --color-footer-link-fg-hover: var(--color-base-dark);
 }
+
+.akros-footer__top {
+  --footer-cols: var(--akros-footer-top-columns);
+}
+
+.akros-footer__commerce {
+  --footer-cols: var(--akros-footer-commerce-columns);
+}
+
+@media (max-width: 1100px) {
+  .akros-footer__top,
+  .akros-footer__commerce {
+    --footer-cols: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .akros-footer__top,
+  .akros-footer__commerce {
+    --footer-cols: 1fr;
+  }
+}

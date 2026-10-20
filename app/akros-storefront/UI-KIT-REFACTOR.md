@@ -7,7 +7,7 @@ tokens. Page composition and verified library limitations may retain local CSS/u
 | Task | Scope                                                                       | Status   |
 | ---- | --------------------------------------------------------------------------- | -------- |
 | 1    | Catalog categories/listings, variant filters and purchase tables            | Complete |
-| 2    | Shared search/suggestions, navigation and footer                            | Pending  |
+| 2    | Shared search/suggestions, navigation and footer                            | Complete |
 | 3    | Cart and checkout appearance overrides                                      | Pending  |
 | 4    | Account, login, registration and shared form styling                        | Pending  |
 | 5    | FAQ, blog, news, contacts and delivery information                          | Pending  |
@@ -47,3 +47,30 @@ All checks passed: 150 unit/component tests and the production build; 77 before/
 matched; the catalog interaction/token checks passed at all three widths. The responsive suite
 also passed all 88 variant-table checks at 22 widths, and account, checkout and typography
 regression checks passed.
+
+## Task 2 inventory
+
+| Surface                              | Implementation                                                         | Result / retained exception                                                                                                                                                                                                            |
+| ------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Header utility links                 | `LinkButton`, `size="sm"`, `theme="borderless"`, `variant="secondary"` | Font weight/size, padding, radius and current/hover colors use scoped Button tokens. Underline and a leading utility referencing the existing text line-height remain because Button has no line-height/text-decoration token.         |
+| Mobile information/account links     | The same `LinkButton` API, with `block`                                | Replaced native link appearance rules with scoped tokens. Keep left alignment and the grid of links as composition. The links retain their routes and current-page semantics and use kit focus feedback.                               |
+| Search control                       | `SearchForm` and `SearchSuggestions`/`Combobox`                        | The joined control's full corner shape uses `--radius-combobox-md`, replacing the descendant radius utility. Keep the hidden redundant trigger: Combobox exposes no visibility prop.                                                   |
+| Search popup and result content      | Existing grouped `SearchSuggestions`                                   | The popup has no max-height prop/token beyond measured available height. Keep the app's viewport cap and mobile positioner width; custom image/category/SKU/price content is result-slot composition.                                  |
+| Catalog navigation                   | `VerticalNavigation`                                                   | Already uses kit size/spacing/typography tokens. Depth-specific open/current row tints stay local: Row and Link share the item background token, so changing it on Row would also recolor its child controls and alter state layering. |
+| Footer containers                    | `Footer`, `layout="col"`                                               | Grid columns use the existing `--footer-cols` token at desktop/tablet/mobile widths instead of native grid/display overrides.                                                                                                          |
+| Footer bottom, text and social links | `Footer.Bottom`, `Footer.Text`, `Footer.Link`                          | Removed duplicate flex alignment, paragraph margin and cursor overrides. Keep the original asset dimensions, row wrapping and section composition. Footer has no title/link line-height token, so those scoped declarations remain.    |
+
+## Task 2 verification
+
+- Before/after computed styles match in 22 shared UI states at twelve viewport widths,
+  including open search suggestions and open/current/hovered mobile links. Navigation/footer
+  geometry matches; popup geometry is checked after its discrete scale transition settles.
+- `npm run test:shared-ui`: header/menu/search/footer token consumption, logo bounds,
+  footer grid token isolation, Escape/focus restoration, selected category/product navigation,
+  all-results links, mobile navigation close and internal footer links.
+- `npm run test:catalog`, `npm run test:responsive`, `npm run test:theme`,
+  `npm run test:account`, `npm run test:typography` and `npm run check`.
+
+All checks passed: the shared UI test at twelve widths, the catalog interaction checks,
+150 unit/component tests, the production build and the responsive/theme/account/typography
+regression suites.

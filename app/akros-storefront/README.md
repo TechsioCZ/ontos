@@ -19,6 +19,11 @@ The remaining six UI-kit refactor tasks and the catalog adoption inventory are t
 flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
 keyboard slider changes and preservation of the search query when paging through results.
 
+`npm run test:shared-ui` checks header/menu/search/footer token consumption and layout at twelve
+widths from 320 to 1920px, search keyboard/all-results navigation, mobile menu close/focus and
+internal footer links. Utility navigation uses Button tokens, with a line-height utility for
+the Button API gap. Footer columns use the shared component's `layout="col"` and `--footer-cols`.
+
 With the storefront running, `npm run test:home` checks homepage overflow, product stock rows
 and reachable carousel controls at 34 widths from 320 to 2560 px, including breakpoint edges.
 It also exercises every mobile indicator, both arrows and keyboard navigation. Set

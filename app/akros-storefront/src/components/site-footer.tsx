@@ -84,7 +84,7 @@ const socialLinks = [
 
 export function SiteFooter() {
   return (
-    <Footer className="akros-footer" direction="vertical" layout="row" sectionFlow="col" size="sm">
+    <Footer className="akros-footer" direction="vertical" layout="col" sectionFlow="col" size="sm">
       <div className="akros-footer__inner" id="footer">
         <Footer.Container className="akros-footer__top">
           <Footer.Section className="akros-footer__section akros-footer__brand-column">
@@ -156,7 +156,7 @@ export function SiteFooter() {
               {socialLinks.map((social) => (
                 <Footer.Link
                   aria-label={social.label}
-                  className="akros-footer__social-icon cursor-pointer"
+                  className="akros-footer__social-icon"
                   external
                   href={social.href}
                   key={social.href}

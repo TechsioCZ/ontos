@@ -4,7 +4,6 @@ import NextLink from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Drawer } from "@techsio/ui-kit/molecules/drawer";
 import { CatalogHelpNavigation, CatalogNavigation } from "@/components/catalog-sidebar";
@@ -105,29 +104,58 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                     aria-label={cs.header.personalNavigation}
                     className="akros-mobile-menu__links"
                   >
-                    <Link as={NextLink} href="/prihlaseni">
+                    <LinkButton
+                      as={NextLink}
+                      block
+                      className="justify-start"
+                      href="/prihlaseni"
+                      size="sm"
+                      theme="borderless"
+                      variant="secondary"
+                    >
                       {cs.header.login}
-                    </Link>
-                    <Link as={NextLink} href="/muj-ucet">
+                    </LinkButton>
+                    <LinkButton
+                      as={NextLink}
+                      block
+                      className="justify-start"
+                      href="/muj-ucet"
+                      size="sm"
+                      theme="borderless"
+                      variant="secondary"
+                    >
                       {cs.header.account}
-                    </Link>
-                    <Link as={NextLink} href="/oblibene">
+                    </LinkButton>
+                    <LinkButton
+                      as={NextLink}
+                      block
+                      className="justify-start"
+                      href="/oblibene"
+                      size="sm"
+                      theme="borderless"
+                      variant="secondary"
+                    >
                       {cs.header.favorites}
-                    </Link>
+                    </LinkButton>
                   </nav>
                 </section>
                 <section>
                   <h3 className="akros-mobile-menu__section-title">{cs.header.information}</h3>
                   <nav aria-label="Mobilní navigace" className="akros-mobile-menu__links">
                     {utilityLinks.map((item) => (
-                      <Link
+                      <LinkButton
                         key={item.href}
                         as={NextLink}
                         aria-current={pathname === item.href ? "page" : undefined}
+                        block
+                        className="justify-start"
                         href={item.href}
+                        size="sm"
+                        theme="borderless"
+                        variant="secondary"
                       >
                         {item.label}
-                      </Link>
+                      </LinkButton>
                     ))}
                   </nav>
                 </section>
@@ -149,15 +177,18 @@ export function SiteHeader() {
         <div className="akros-header__utility">
           <nav className="akros-header__utility-links" aria-label="Pomocná navigace">
             {utilityLinks.map((item) => (
-              <Link
+              <LinkButton
                 key={item.href}
                 as={NextLink}
                 aria-current={pathname === item.href ? "page" : undefined}
-                className="inline-flex h-form-control-sm items-center px-(--dimension-12) text-sm underline max-xl:px-(--dimension-8) aria-[current=page]:bg-primary"
+                className="leading-(--text-sm--line-height) underline"
                 href={item.href}
+                size="sm"
+                theme="borderless"
+                variant="secondary"
               >
                 {item.label}
-              </Link>
+              </LinkButton>
             ))}
           </nav>
           <LinkButton

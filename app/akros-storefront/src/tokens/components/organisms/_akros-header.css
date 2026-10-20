@@ -80,19 +80,43 @@
 }
 
 .akros-mobile-menu__links {
+  --height-form-control-sm: var(--dimension-44);
+  --font-weight-button: var(--font-weight-normal);
+  --padding-button-sm: var(--dimension-8) var(--dimension-12);
+  --radius-button-sm: var(--radius-none);
+  --spacing-button-sm: normal;
+  --text-button-sm: var(--text-base);
+  --color-button-fg-secondary-borderless: var(--color-fg-primary);
+  --color-button-bg-borderless-base: transparent;
+  --color-button-bg-borderless-hover: var(--color-primary);
+  --color-button-bg-borderless-active: var(--color-primary);
   display: grid;
 }
 
-.akros-mobile-menu__links a {
-  display: flex;
-  min-height: var(--dimension-44);
-  align-items: center;
-  padding: var(--dimension-8) var(--dimension-12);
-  font-size: var(--text-base);
+.akros-mobile-menu__links a[aria-current="page"] {
+  --color-button-bg-borderless-base: var(--color-primary);
 }
 
-.akros-mobile-menu__links a:is(:hover, [aria-current="page"]) {
-  background: var(--color-primary);
+.akros-header__utility-links {
+  --color-button-fg-secondary-borderless: var(--color-fg-primary);
+  --color-button-bg-borderless-base: transparent;
+  --color-button-bg-borderless-hover: var(--color-button-bg-borderless-base);
+  --color-button-bg-borderless-active: var(--color-button-bg-borderless-base);
+  --font-weight-button: var(--font-weight-normal);
+  --padding-button-sm: var(--dimension-0) var(--dimension-12);
+  --radius-button-sm: var(--radius-none);
+  --spacing-button-sm: normal;
+  --text-button-sm: var(--text-sm);
+}
+
+.akros-header__utility-links a[aria-current="page"] {
+  --color-button-bg-borderless-base: var(--color-primary);
+}
+
+@media (width < 1280px) {
+  .akros-header__utility-links {
+    --padding-button-sm: var(--dimension-0) var(--dimension-8);
+  }
 }
 
 [data-akros-header-login] {
@@ -121,7 +145,7 @@
   --color-combobox-border-hover: var(--color-combobox-border-base);
   --color-combobox-border-focus: var(--color-combobox-border-base);
   --padding-combobox-input-md: var(--padding-input-md);
-  --radius-combobox-md: var(--radius-input-md);
+  --radius-combobox-md: var(--radius-input-md) 0 0 var(--radius-input-md);
   --color-popup-bg: var(--color-base);
   --color-popup-item-bg-hover: var(--color-primary);
   --radius-popup-md: var(--radius-sm);
