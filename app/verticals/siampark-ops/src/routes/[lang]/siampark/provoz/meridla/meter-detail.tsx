@@ -21,7 +21,7 @@ import { loadRecords } from '../../../../../ui/use-agenda.ts';
 import type { FailureReason } from '../../../../../ui/use-agenda.ts';
 import { MeterForm, ReadingForm } from './meter-forms.tsx';
 import type { RunCommand } from './meter-forms.tsx';
-import { formatChange, formatQuantity, formatRate, mediumVariant, personLabel } from './meters-view.ts';
+import { formatChange, formatQuantity, formatRate, mediumVariant, personLabel, recentAnomaly } from './meters-view.ts';
 
 const k = 'siampark-ops.meters';
 
@@ -64,6 +64,7 @@ export const MeterDetail = ({
   const [photoLoading, setPhotoLoading] = useState<string | undefined>(undefined);
 
   const rows = readingRows(meter);
+  const anomaly = recentAnomaly(meter);
   const rowById = new Map<string, ReadingRow>(rows.map((row) => [row.reading.id, row]));
   const history = [...(meter.readings ?? [])].sort(
     (left, right) => right.date.localeCompare(left.date) || iso(right.createdAt).localeCompare(iso(left.createdAt)),
@@ -157,9 +158,9 @@ export const MeterDetail = ({
         <Badge size="sm" variant={meter.status === 'RETIRED' ? 'outline' : 'success'}>
           {t(`${k}.status.${meter.status ?? 'ACTIVE'}`)}
         </Badge>
-        {rows.at(-1)?.anomaly === true && (
+        {anomaly?.change !== undefined && (
           <Badge size="sm" variant="danger">
-            {t(`${k}.row.anomaly`, { change: formatChange(rows.at(-1)?.change ?? 0) })}
+            {`${t(`${k}.row.anomaly`, { change: formatChange(anomaly.change) })} · ${formatDate(anomaly.reading.date)}`}
           </Badge>
         )}
         <span className="flex-1" />
@@ -252,7 +253,6 @@ export const MeterDetail = ({
                   <Table.ColumnHeader align="end">{t(`${k}.detail.consumption`)}</Table.ColumnHeader>
                   <Table.ColumnHeader align="end">{t(`${k}.detail.cost`)}</Table.ColumnHeader>
                   <Table.ColumnHeader>{t(`${k}.detail.readBy`)}</Table.ColumnHeader>
-                  <Table.ColumnHeader>{t(`${k}.detail.note`)}</Table.ColumnHeader>
                   <Table.ColumnHeader />
                 </Table.Row>
               </Table.Header>
@@ -268,7 +268,7 @@ export const MeterDetail = ({
                     >
                       <Table.Cell>
                         <div className="flex flex-col">
-                          <span className={voided === undefined ? '' : 'line-through'}>{formatDate(reading.date)}</span>
+                          <span className={`whitespace-nowrap ${voided === undefined ? '' : 'line-through'}`}>{formatDate(reading.date)}</span>
                           {voided !== undefined && (
                             <Badge size="sm" variant="outline">
                               {t(`${k}.void.voided`)}
@@ -277,7 +277,7 @@ export const MeterDetail = ({
                         </div>
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
-                        <span className={voided === undefined ? '' : 'line-through'}>
+                        <span className={`whitespace-nowrap ${voided === undefined ? '' : 'line-through'}`}>
                           {formatQuantity(reading.value, reading.unit)}
                         </span>
                       </Table.Cell>
@@ -290,8 +290,8 @@ export const MeterDetail = ({
                           <span className="text-fg-secondary text-xs italic">{t(`${k}.row.unitChanged`)}</span>
                         ) : (
                           <div className="flex flex-col items-end">
-                            <strong>{formatQuantity(row.consumption ?? 0, reading.unit)}</strong>
-                            <span className="text-fg-secondary text-xs">
+                            <strong className="whitespace-nowrap">{formatQuantity(row.consumption ?? 0, reading.unit)}</strong>
+                            <span className="whitespace-nowrap text-fg-secondary text-xs">
                               {row.dailyRate === undefined
                                 ? t(`${k}.row.days`, { days: row.days ?? 0 })
                                 : t(`${k}.row.perDay`, { value: formatRate(row.dailyRate, reading.unit) })}
@@ -308,20 +308,18 @@ export const MeterDetail = ({
                         {reading.costMinor === undefined ? (
                           <span className="text-fg-secondary text-xs">{t('siampark-ops.common.noData')}</span>
                         ) : (
-                          formatMoney(reading.costMinor)
+                          <span className="whitespace-nowrap">{formatMoney(reading.costMinor)}</span>
                         )}
                       </Table.Cell>
                       <Table.Cell>
-                        <div className="flex flex-col">
+                        <div className="flex min-w-[12rem] max-w-[20rem] flex-col gap-50">
                           <span>{reading.readBy ?? t('siampark-ops.common.notProvided')}</span>
+                          {reading.note !== undefined && reading.note !== '' && (
+                            <span className="text-sm italic">„{reading.note}“</span>
+                          )}
                           <span className="text-fg-secondary text-xs">
                             {t(`${k}.detail.author`, { at: formatDateTime(iso(reading.createdAt)), who: who(reading.createdBy) })}
                           </span>
-                        </div>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <div className="flex max-w-[16rem] flex-col gap-50">
-                          {reading.note !== undefined && reading.note !== '' && <span className="text-sm">{reading.note}</span>}
                           {voided !== undefined && (
                             <span className="text-fg-secondary text-xs">
                               {t(`${k}.void.voidedBy`, {

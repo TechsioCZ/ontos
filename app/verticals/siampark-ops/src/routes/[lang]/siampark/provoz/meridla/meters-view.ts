@@ -1,8 +1,9 @@
+// @effect-diagnostics globalDate:off
 // Presentation helpers of the meters page (ops-meters lane). Pure functions over the decoded agenda state.
 import { formatNumber, formatPercent } from '@app/admin-ui';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { PropertyRef } from '../../../../../../shared/domain/common.ts';
-import { latestRow, readingRows } from '../../../../../../shared/domain/meters.ts';
+import { readingRows, recentAnomalyRow } from '../../../../../../shared/domain/meters.ts';
 import type { Meter, MeterMedium } from '../../../../../../shared/domain/meters.ts';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -101,7 +102,15 @@ export const metersAt = (meters: readonly Meter[], place: string): readonly Mete
   return meters.filter((meter) => meter.location?.kind === 'unit' && meter.location.id === unitId);
 };
 
-export const isAnomalous = (meter: Meter): boolean => latestRow(meter)?.anomaly === true;
+const todayInPrague = (): string =>
+  new Intl.DateTimeFormat('en-CA', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Prague', year: 'numeric' }).format(
+    Date.now(),
+  );
+
+/** Latest anomalous period of a meter still within the highlight window (see ANOMALY_WINDOW_DAYS). */
+export const recentAnomaly = (meter: Meter) => (meter.status === 'RETIRED' ? undefined : recentAnomalyRow(meter, todayInPrague()));
+
+export const isAnomalous = (meter: Meter): boolean => recentAnomaly(meter) !== undefined;
 
 /** Free-text search haystack of a meter. */
 export const meterSearchText = (meter: Meter, t: Translate): string =>

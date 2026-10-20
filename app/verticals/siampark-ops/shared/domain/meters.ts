@@ -211,6 +211,15 @@ export const readingProblem = (
 /** Latest history row of a meter (the last valid reading with its consumption), if any. */
 export const latestRow = (meter: Pick<Meter, 'readings'>): ReadingRow | undefined => readingRows(meter).at(-1);
 
+/** How long (days after its closing reading) an anomalous period stays highlighted on the meter list. */
+export const ANOMALY_WINDOW_DAYS = 62;
+
+/** The latest anomalous period closed within the highlight window before `today`, if any. */
+export const recentAnomalyRow = (meter: Pick<Meter, 'readings'>, today: string): ReadingRow | undefined =>
+  readingRows(meter)
+    .filter((row) => row.anomaly && daysBetween(row.reading.date, today) <= ANOMALY_WINDOW_DAYS)
+    .at(-1);
+
 /** `YYYY-MM` of an ISO date. */
 export const monthOf = (date: string): string => date.slice(0, 7);
 

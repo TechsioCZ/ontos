@@ -1,7 +1,7 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { evolveMeters, MetersCommandSchema } from '../../shared/commands/meters.ts';
-import { MetersStateSchema, monthlySeries, readingProblem, readingRows } from '../../shared/domain/meters.ts';
+import { MetersStateSchema, monthlySeries, readingProblem, readingRows, recentAnomalyRow } from '../../shared/domain/meters.ts';
 import type { MetersState } from '../../shared/domain/meters.ts';
 import { seedMetersState } from '../../scripts/seed/meters.mts';
 
@@ -143,5 +143,9 @@ it.effect('the seed decodes, covers every Siampark unit and stages the demo case
     expect(readingRows(bySerial('EL-RV-S01-CH')).map((row) => row.status)).toEqual(['first']);
     const anomalies = state.meters.filter((meter) => readingRows(meter).some((row) => row.anomaly));
     expect(anomalies.map((meter) => meter.serialNumber).sort()).toEqual(['EL-RV-R101', 'VO-PK-A202']);
+    // Both staged anomalies are still highlighted on 20. 10. 2026, and expire after the window.
+    expect(recentAnomalyRow(bySerial('VO-PK-A202'), '2026-10-20')?.reading.date).toBe('2026-09-30');
+    expect(recentAnomalyRow(bySerial('EL-RV-R101'), '2026-10-20')?.reading.date).toBe('2026-08-31');
+    expect(recentAnomalyRow(bySerial('EL-RV-R101'), '2026-12-31')).toBeUndefined();
   }),
 );

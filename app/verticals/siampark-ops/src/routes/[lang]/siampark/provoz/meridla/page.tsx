@@ -27,6 +27,7 @@ import {
   mediumVariant,
   meterSearchText,
   monthLongLabel,
+  recentAnomaly,
   trendOf,
 } from './meters-view.ts';
 
@@ -202,22 +203,34 @@ const MetersView = () => {
             </Badge>
           );
         }
+        const anomaly = recentAnomaly(row.original);
         const last = latestRow(row.original);
-        if (last?.anomaly === true && last.change !== undefined) {
+        if (anomaly?.change !== undefined) {
           return (
-            <Badge size="sm" variant="danger">
-              {t(`${k}.row.anomaly`, { change: formatChange(last.change) })}
-            </Badge>
+            <div className="flex flex-col items-start gap-50">
+              <span className="whitespace-nowrap">
+                <Badge size="sm" variant="danger">
+                  {t(`${k}.row.anomaly`, { change: formatChange(anomaly.change) })}
+                </Badge>
+              </span>
+              <span className="whitespace-nowrap text-fg-secondary text-xs">
+                {t(`${k}.row.anomalyPeriod`, { date: formatDate(anomaly.reading.date) })}
+              </span>
+            </div>
           );
         }
-        return last?.status === 'ok' ? (
-          <Badge size="sm" variant="success">
-            {t(`${k}.row.normal`)}
-          </Badge>
-        ) : (
-          <Badge size="sm" variant="outline">
-            {t('siampark-ops.common.noData')}
-          </Badge>
+        return (
+          <span className="whitespace-nowrap">
+            {last?.status === 'ok' ? (
+              <Badge size="sm" variant="success">
+                {t(`${k}.row.normal`)}
+              </Badge>
+            ) : (
+              <Badge size="sm" variant="outline">
+                {t('siampark-ops.common.noData')}
+              </Badge>
+            )}
+          </span>
         );
       },
       header: t(`${k}.columns.state`),

@@ -67,7 +67,8 @@
     "normal": "V normě",
     "retired": "Vyřazené",
     "days": "za {{days}} dní",
-    "perDay": "{{value}} / den"
+    "perDay": "{{value}} / den",
+    "anomalyPeriod": "období do {{date}}"
   },
   "actions": {
     "newMeter": "Nové měřidlo",
@@ -142,7 +143,7 @@
     "consumption": "Spotřeba",
     "perDay": "Denní průměr",
     "cost": "Náklad",
-    "readBy": "Odečetl(a)",
+    "readBy": "Odečet",
     "note": "Poznámka",
     "author": "Zapsal(a) {{who}} {{at}}",
     "series": {
