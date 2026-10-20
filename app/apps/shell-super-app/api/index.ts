@@ -63,6 +63,7 @@ import {
   AvailableTenantsResponseSchema,
   CurrentSessionSchema,
   ConfigureDemoCompaniesResponseSchema,
+  DemoAccountCapabilitySchema,
   DemoAccountListResponseSchema,
   ManageDemoAccountResponseSchema,
   ManagedApiKeyListResponseSchema,
@@ -131,7 +132,7 @@ import {
 import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
-import { listDemoAccounts, manageDemoAccount } from './auth/demo-accounts.ts';
+import { demoAccountCapability, listDemoAccounts, manageDemoAccount } from './auth/demo-accounts.ts';
 import type {
   DemoAccountConflict,
   DemoAccountForbidden,
@@ -1354,6 +1355,17 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
             .configureDemoCompanies({ ...context, payload })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           return yield* decodeResponse(ConfigureDemoCompaniesResponseSchema, response, shellInternalProblem);
+        }),
+      ),
+    )
+    .handle('demoAccountCapability', ({ request }) =>
+      safeIdentity(
+        request,
+        Effect.gen(function* demoAccountCapabilityHandler() {
+          const caller = yield* demoAccountCaller(request);
+          const response = yield* demoAccountCapability(caller).pipe(Effect.catch(demoAccountFailure));
+          yield* noStore;
+          return yield* decodeResponse(DemoAccountCapabilitySchema, response, shellInternalProblem);
         }),
       ),
     )

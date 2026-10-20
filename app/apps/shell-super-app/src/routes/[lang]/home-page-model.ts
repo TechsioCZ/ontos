@@ -147,6 +147,18 @@ const browserTenantsCache = browserStaleWhileRevalidateCache(
   },
 );
 
+/** Permission hints share concurrent preloads; actual people reads and writes always reauthorize server-side. */
+const browserPeopleCapabilityCache = browserStaleWhileRevalidateCache(
+  (key: string) => canManageDemoAccounts({ baseUrl: baseUrlOfKey(key) }),
+  { capacity: 4, keep: keepSuccess },
+);
+const peopleCapabilityFor = (identity: SafeTenantIdentity, options: ShellAuthenticationClientOptions) => {
+  const cacheBaseUrl = browserBaseUrl(options);
+  return cacheBaseUrl === undefined
+    ? canManageDemoAccounts(options)
+    : browserPeopleCapabilityCache.get(browserReadKey(cacheBaseUrl, identity));
+};
+
 /** Drops every cached browser read (session, composition, tenants, legal entities). Tests call it between cases. */
 export const resetBrowserSessionCache = Effect.all(
   [
@@ -154,6 +166,7 @@ export const resetBrowserSessionCache = Effect.all(
     browserCompositionCache.invalidateAll,
     browserLegalEntitiesCache.invalidateAll,
     browserTenantsCache.invalidateAll,
+    browserPeopleCapabilityCache.invalidateAll,
   ],
   { concurrency: 1, discard: true },
 );
@@ -222,7 +235,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
         yield* pinDocumentCompositionRevision(compositionRevision, globalThis.document);
       }
       const hasPeoplePage = composition.navigation.some(({ href }) => href === '/sprava/lide');
-      const canManagePeople = hasPeoplePage ? yield* canManageDemoAccounts(options) : false;
+      const canManagePeople = hasPeoplePage ? yield* peopleCapabilityFor(session.identity, options) : false;
       navigation = {
         items: presentableDemoNavigation(composition.navigation, canManagePeople),
         state: 'available',

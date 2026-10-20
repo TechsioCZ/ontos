@@ -424,6 +424,18 @@ const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(
   });
 });
 
+/** Safe navigation hint: reveal no people or role records and keep actual list/write authorization unchanged. */
+export const demoAccountCapability = Effect.fn('DemoAccounts.capability')(function* demoAccountCapability(
+  caller: DemoAccountCaller,
+) {
+  const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
+  const canManage = yield* requireAdministrator(caller, grants).pipe(
+    Effect.as(true),
+    Effect.catchTag('DemoAccountForbidden', () => Effect.succeed(false)),
+  );
+  return { canManage };
+});
+
 export const listDemoAccounts = Effect.fn('DemoAccounts.list')(function* listDemoAccounts(caller: DemoAccountCaller) {
   const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
   const { assigned, members, roles } = yield* requireAdministrator(caller, grants);

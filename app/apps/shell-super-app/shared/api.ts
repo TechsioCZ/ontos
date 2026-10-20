@@ -72,8 +72,7 @@ export const ConfigureDemoCompaniesResponseSchema = Schema.Struct({
 });
 
 /** Sales-demo people administration of the current company (accounts-admin lane). */
-const demoAccountText = (maximum: number) =>
-  Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
+const demoAccountText = (maximum: number) => Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
 const DemoAccountStatusSchema = Schema.Literals(['active', 'disabled']);
 export const DemoAccountListPayloadSchema = Schema.Struct({});
 export const ManageDemoAccountRequestSchema = Schema.Union([
@@ -123,6 +122,7 @@ export const DemoAccountAuditEntrySchema = Schema.Struct({
   outcomeCode: Schema.String,
   targetName: Schema.NullOr(Schema.String),
 });
+export const DemoAccountCapabilitySchema = Schema.Struct({ canManage: Schema.Boolean });
 export const DemoAccountListResponseSchema = Schema.Struct({
   accounts: Schema.Array(DemoAccountSchema),
   audit: Schema.Array(DemoAccountAuditEntrySchema),
@@ -701,6 +701,13 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           headers: IdentityRequestHeadersSchema,
           payload: ConfigureDemoCompaniesPayloadSchema,
           success: ConfigureDemoCompaniesResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('demoAccountCapability', '/auth/identity/demo-accounts/capability', {
+          error: identityErrors,
+          payload: DemoAccountListPayloadSchema,
+          success: DemoAccountCapabilitySchema,
         }),
       )
       .add(
