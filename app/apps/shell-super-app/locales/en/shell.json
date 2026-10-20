@@ -226,6 +226,8 @@
       "unavailable": "The module is temporarily unavailable. Try again."
     },
     "search": {
+      "agenda_title": "Search within an agenda",
+      "agenda_hint": "Global search is not part of this demo. Open an authorized agenda and use its search or filters. No record results are simulated here.",
       "alias_match": "Alias match",
       "archived": "Archived",
       "counterparty": "Counterparty",

@@ -7,6 +7,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Match } from 'effect';
 
 import type { ShellSearchResult } from '../../../../shared/api.ts';
+import { buildShellNavigation, ShellRouteLink } from '../../shell-frame.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
 
@@ -116,8 +117,25 @@ const SearchPage = () => {
     );
   }
   const currentTenantId = model.shell.identity.tenantId;
+  const agendaLinks = buildShellNavigation({ navigation: model.shell.navigation.items, unavailableDeployments: [] }, t)
+    .groups.flatMap(({ links }) => links)
+    .filter(({ enabled, href }) => enabled && href !== null);
   const content =
-    model.state !== 'ready' ? (
+    model.state === 'unavailable' ? (
+      <section className="grid w-full max-w-2xl gap-200 rounded-lg border border-border-primary bg-base p-300">
+        <h1 className="font-semibold text-xl">{t('shell.search.agenda_title')}</h1>
+        <p className="text-fg-secondary text-sm">{t('shell.search.agenda_hint')}</p>
+        <ul className="grid gap-100">
+          {agendaLinks.map((link) => (
+            <li key={link.key}>
+              <LinkButton as={ShellRouteLink} icon={link.icon} size="sm" to={link.href ?? '/'} variant="secondary">
+                {link.label}
+              </LinkButton>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ) : model.state !== 'ready' ? (
       <StatusText aria-live="polite" showIcon status="error">
         {t(`shell.search.${model.state}`)}
       </StatusText>

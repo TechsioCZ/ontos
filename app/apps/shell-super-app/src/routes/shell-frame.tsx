@@ -10,13 +10,12 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
-import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
@@ -87,12 +86,6 @@ interface DashboardSelectorProps {
   readonly status: 'default' | 'error' | 'warning';
   readonly statusId: string;
   readonly statusText: string | null;
-}
-
-interface DashboardSearchProps {
-  readonly onSearch: (query: string) => void;
-  readonly onValueChange: (value: string) => void;
-  readonly value: string;
 }
 
 const propertyModuleId = 'siampark.property';
@@ -780,34 +773,6 @@ const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => {
   );
 };
 
-const DashboardSearch = ({ onSearch, onValueChange, value }: DashboardSearchProps) => {
-  const { t } = useModernI18n();
-  const searchLabel = t('shell.search.label');
-
-  return (
-    <SearchForm
-      className="w-full"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const query = value.trim();
-        if (query.length > 0) {
-          onSearch(query);
-        }
-      }}
-      onValueChange={onValueChange}
-      size="sm"
-      value={value}
-    >
-      <SearchForm.Label className="sr-only">{searchLabel}</SearchForm.Label>
-      <SearchForm.Control>
-        <SearchForm.Input aria-label={searchLabel} placeholder={t('shell.search.placeholder')} />
-        <SearchForm.ClearButton aria-label={t('shell.search.clear')} />
-        <SearchForm.Button aria-label={t('shell.search.submit')} showSearchIcon variant="primary" />
-      </SearchForm.Control>
-    </SearchForm>
-  );
-};
-
 const DashboardAccountMenu = ({
   identity,
   logoutPending,
@@ -1093,7 +1058,6 @@ const topBarOffsetStyle: SidebarOffsetStyle = {
  */
 export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayoutProps) => {
   const { language, t } = useModernI18n();
-  const [searchValue, setSearchValue] = useState('');
   const { tenantSwitchFailed } = props;
   const pendingPath = usePendingNavigationPath();
   const pendingHref = pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, language ?? '');
@@ -1158,11 +1122,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             <LocalizedLink aria-current={false} className="hidden no-underline md:flex" prefetch="intent" to="/">
               <DashboardBrand />
             </LocalizedLink>
-            {props.logoutPending ? null : (
-              <div className="min-w-0 max-w-md flex-1">
-                <DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />
-              </div>
-            )}
+            {/* Search lives in each governed agenda; do not advertise an unavailable global provider. */}
             {props.logoutPending ? null : <DashboardTrail model={model} />}
           </Header.Container>
           <Header.Container className="ms-auto w-auto shrink-0" position="end">

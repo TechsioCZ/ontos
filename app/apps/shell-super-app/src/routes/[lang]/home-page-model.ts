@@ -9,7 +9,14 @@ import type {
   ShellNavigationItem,
   ShellUnavailableDeployment,
 } from '../../../shared/api.ts';
-import { availableLegalEntities, availableTenants, currentSession, shellComposition } from '../../api/auth-client.ts';
+import {
+  availableLegalEntities,
+  availableTenants,
+  canManageDemoAccounts,
+  currentSession,
+  shellComposition,
+} from '../../api/auth-client.ts';
+import { demoDisplayName, presentableDemoNavigation } from '../shell-demo-presentation.ts';
 import { loadHomeContribution } from './home-contribution-model.ts';
 import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
@@ -214,8 +221,10 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       if ('document' in globalThis) {
         yield* pinDocumentCompositionRevision(compositionRevision, globalThis.document);
       }
+      const hasPeoplePage = composition.navigation.some(({ href }) => href === '/sprava/lide');
+      const canManagePeople = hasPeoplePage ? yield* canManageDemoAccounts(options) : false;
       navigation = {
-        items: composition.navigation,
+        items: presentableDemoNavigation(composition.navigation, canManagePeople),
         state: 'available',
         unavailableDeployments: composition.unavailableDeployments,
       };
@@ -275,7 +284,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
           const contribution = Option.getOrUndefined(contributionOption);
           const baseModel = {
             contextState: session.state,
-            identity: session.identity,
+            identity: { ...session.identity, displayName: demoDisplayName(session.identity) },
             legalEntities: choices,
             navigation: items,
             state: 'authenticated' as const,

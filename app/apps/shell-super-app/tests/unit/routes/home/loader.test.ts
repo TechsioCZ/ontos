@@ -10,6 +10,7 @@ const {
   availableLegalEntitiesMock,
   availableTenantsMock,
   browserConfigValuesMock,
+  canManageDemoAccountsMock,
   currentSessionMock,
   resolveModuleTargetMock,
   shellCompositionMock,
@@ -17,6 +18,7 @@ const {
   availableLegalEntitiesMock: rstest.fn(),
   availableTenantsMock: rstest.fn(),
   browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
+  canManageDemoAccountsMock: rstest.fn(),
   currentSessionMock: rstest.fn(),
   resolveModuleTargetMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
@@ -26,6 +28,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   ...actualAuthClient,
   availableLegalEntities: availableLegalEntitiesMock,
   availableTenants: availableTenantsMock,
+  canManageDemoAccounts: canManageDemoAccountsMock,
   currentSession: currentSessionMock,
   resolveModuleTarget: resolveModuleTargetMock,
   shellComposition: shellCompositionMock,
@@ -75,6 +78,7 @@ const withBetterAuthUrl = <Value, Failure>(baseUrl: string, operation: () => Eff
 
 beforeEach(() => {
   browserConfigValuesMock.mockReturnValue({});
+  canManageDemoAccountsMock.mockReturnValue(Effect.succeed(false));
   resolveModuleTargetMock.mockReturnValue(Effect.fail({ _tag: 'ShellTargetForbiddenProblem' }));
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
   availableLegalEntitiesMock.mockReturnValue(
@@ -315,6 +319,16 @@ it.effect('shares one composition, tenant and legal-entity read across concurren
 
 it.effect('rechecks Home contribution permissions on every visit even when navigation composition is reused', () =>
   Effect.gen(function* freshHomeContributionPermission() {
+    shellCompositionMock.mockReturnValue(
+      Effect.succeed({
+        compositionRevision,
+        navigation: ['demo.sales-insights', 'demo.sales-pipeline', 'siampark.work', 'siampark.billing-finance'].map(
+          (moduleId) => ({ ...navigation[0], moduleId }),
+        ),
+        state: 'available',
+        unavailableDeployments: [],
+      }),
+    );
     yield* loadModel({ request: request() });
     yield* loadHomePageModel(request());
     expect(resolveModuleTargetMock).toHaveBeenCalledTimes(2);
@@ -336,4 +350,29 @@ it.effect('does not resolve the Home component from anonymous, selection-require
     yield* loadModel({ request: request() });
     expect(resolveModuleTargetMock).not.toHaveBeenCalled();
   }),
+);
+
+it.effect.each([false, true])(
+  'offers people administration only after a successful server capability check (%s)',
+  (allowed) =>
+    Effect.gen(function* peopleNavigationCapability() {
+      shellCompositionMock.mockReturnValue(
+        Effect.succeed({
+          compositionRevision,
+          navigation: ['/contacts', '/sprava/lide', '/crm/klienti'].map((href) => ({ ...navigation[0], href })),
+          state: 'available',
+          unavailableDeployments: [],
+        }),
+      );
+      canManageDemoAccountsMock.mockReturnValue(Effect.succeed(allowed));
+      const model = yield* loadModel({ request: request() });
+      expect(model).toMatchObject({
+        navigation: {
+          items: allowed
+            ? [expect.objectContaining({ href: '/sprava/lide' }), expect.objectContaining({ href: '/crm/klienti' })]
+            : [expect.objectContaining({ href: '/crm/klienti' })],
+        },
+      });
+      expect(canManageDemoAccountsMock).toHaveBeenCalledTimes(1);
+    }),
 );

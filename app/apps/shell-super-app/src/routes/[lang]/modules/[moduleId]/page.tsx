@@ -202,7 +202,11 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
       shell={model.shell}
       {...(model.state === 'resolved'
         ? { currentEntrypointKey: model.target.entrypointKey, currentModuleId: model.target.moduleId }
-        : {})}
+        : {
+            title: t(
+              `shell.recovery.${status === 'not_found' ? 'missing' : status === 'forbidden' ? 'forbidden' : 'unavailable'}`,
+            ),
+          })}
     >
       {content}
     </ShellContentLayout>

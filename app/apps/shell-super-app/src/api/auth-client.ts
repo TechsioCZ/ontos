@@ -231,6 +231,13 @@ export const resolveModuleTarget = (
 ): Effect.Effect<ResolvedModuleTarget, ShellTargetClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTarget({ payload }));
 
+/** Navigation capability only: the server still authorizes the people page and every write. */
+export const canManageDemoAccounts = (options: ShellAuthenticationClientOptions = {}) =>
+  invokeShellAuthenticationClient(options, (client) => client.identity.listDemoAccounts({ payload: {} })).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+
 export const searchResources = (
   payload: ShellSearchPayload,
   options: ShellAuthenticationClientOptions = {},

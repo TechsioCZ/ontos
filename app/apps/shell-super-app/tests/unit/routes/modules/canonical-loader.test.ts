@@ -95,16 +95,14 @@ it.effect('retains denial and never exposes a remote target for a canonical path
   }),
 );
 
-it.effect('reports unknown canonical targets through native TanStack not-found handling', () =>
-  Effect.gen(function* reportsNativeNotFound() {
+it.effect('keeps the shell recovery model for unknown canonical targets', () =>
+  Effect.gen(function* reportsShellNotFound() {
     resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
-    const nativeNotFound = yield* Effect.flip(
-      Effect.tryPromise({
-        catch: isNotFound,
-        try: () => loader({ params: { lang: 'en' }, request: requestFor('/en/previously-unknown/page') }),
-      }),
+    const model = yield* Effect.promise(() =>
+      loader({ params: { lang: 'cs' }, request: requestFor('/cs/previously-unknown/page') }),
     );
-    expect(nativeNotFound).toBe(true);
+    expect(model).toMatchObject({ state: 'not_found', shell: authenticatedShell });
+    expect(model).not.toHaveProperty('target');
   }),
 );
 
@@ -128,7 +126,7 @@ it.effect.each([
     }),
 );
 
-it.effect('the generated native catchall returns HTTP 404 for an unknown approved target', () =>
+it.effect('the generated catchall renders shell recovery for an unknown target', () =>
   Effect.gen(function* reportsGeneratedRouteNotFound() {
     resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
     const pathname = '/cs/previously-unknown/page';
@@ -144,7 +142,7 @@ it.effect('the generated native catchall returns HTTP 404 for an unknown approve
       { canonicalPath: '/previously-unknown/page', compositionRevision: 'c'.repeat(64) },
       expect.any(Object),
     );
-    expect(router._serverResult).toMatchObject({ status: 404, type: 'render' });
+    expect(router._serverResult).toMatchObject({ status: 200, type: 'render' });
   }),
 );
 

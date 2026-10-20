@@ -226,6 +226,8 @@
       "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."
     },
     "search": {
+      "agenda_title": "Vyhledávání v agendách",
+      "agenda_hint": "Společné vyhledávání není součástí této ukázky. Otevřete povolenou agendu a použijte její hledání nebo filtry. Výsledky záznamů zde nepředstíráme.",
       "alias_match": "Shoda přes alias",
       "archived": "Archivováno",
       "counterparty": "Obchodní protistrana",

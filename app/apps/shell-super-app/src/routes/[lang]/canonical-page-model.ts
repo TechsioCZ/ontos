@@ -36,12 +36,10 @@ export const loader = ({
   if (aliasTarget !== undefined) {
     return Promise.resolve().then(() => throwTanstackRedirect(`/${encodeURIComponent(params.lang)}${aliasTarget}`));
   }
-  return browserRuntime
-    .runPromise(
-      loadModulePageModel({ canonicalPath, request }).pipe(
-        Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
-      ),
-      { signal: request.signal },
-    )
-    .then((model) => (model.state === 'not_found' ? notFound({ throw: true }) : model));
+  return browserRuntime.runPromise(
+    loadModulePageModel({ canonicalPath, request }).pipe(
+      Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
+    ),
+    { signal: request.signal },
+  );
 };
