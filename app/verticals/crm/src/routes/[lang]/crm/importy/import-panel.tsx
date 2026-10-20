@@ -135,7 +135,7 @@ export const ImportPanel = ({
     >
       <div className="flex flex-col gap-250">
         <div
-          className={`flex flex-col items-center gap-150 rounded-lg border-2 border-dashed p-300 text-center ${dragging ? 'border-primary bg-base' : 'border-border-primary'}`}
+          className={`flex flex-col items-center gap-150 rounded-lg border-2 border-dashed text-center ${draft === undefined ? 'p-300' : 'p-150'} ${dragging ? 'border-primary bg-base' : 'border-border-primary'}`}
           onDragLeave={() => setDragging(false)}
           onDragOver={(event) => {
             event.preventDefault();
@@ -150,7 +150,9 @@ export const ImportPanel = ({
             }
           }}
         >
-          <span aria-hidden="true" className="icon-[mdi--file-delimited-outline] size-600 text-fg-secondary" />
+          {draft === undefined && (
+            <span aria-hidden="true" className="icon-[mdi--file-delimited-outline] size-600 text-fg-secondary" />
+          )}
           <span className="text-sm">
             {draft === undefined ? 'Přetáhněte sem soubor CSV' : `Načteno: ${draft.fileName}`}
           </span>
