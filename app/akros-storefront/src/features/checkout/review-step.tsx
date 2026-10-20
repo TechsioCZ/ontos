@@ -1,5 +1,6 @@
 "use client";
 import { useDataSource } from "@/ontos/catalog-provider";
+import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
 import { useState } from "react";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
@@ -23,7 +24,7 @@ import { formatPrice } from "@/lib/format";
 export function ReviewStep() {
   const ontos = useDataSource() === "ontos";
   const { cart } = useCart();
-  const { draft, updateDraft, completeOrder, submitted } = useCheckout();
+  const { draft, updateDraft, completeOrder, submitted, storageError } = useCheckout();
   const router = useRouter();
   const [sending, setSending] = useState(false);
   const totals = getCheckoutTotals(cart, draft, ontos);
@@ -63,7 +64,7 @@ export function ReviewStep() {
             </dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
-            <dt>Způsob platby – {getPayment(draft)?.title}</dt>
+            <dt>Způsob platby – {ontos ? demoPayment.title : getPayment(draft)?.title}</dt>
             <dd>{totals.payment === 0 ? "Zdarma" : formatPrice(totals.payment)}</dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
@@ -115,12 +116,14 @@ export function ReviewStep() {
             <p className="text-sm">{draft.email}</p>
           </section>
         </div>
-        <FormCheckbox
-          label="Mám zájem o zasílání e-mailových akcí, novinek a tipů"
-          size="sm"
-          checked={draft.newsletter}
-          onCheckedChange={(newsletter) => updateDraft((current) => ({ ...current, newsletter }))}
-        />
+        {!ontos && (
+          <FormCheckbox
+            label="Mám zájem o zasílání e-mailových akcí, novinek a tipů"
+            size="sm"
+            checked={draft.newsletter}
+            onCheckedChange={(newsletter) => updateDraft((current) => ({ ...current, newsletter }))}
+          />
+        )}
       </section>
       <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
         <LinkButton
@@ -135,6 +138,22 @@ export function ReviewStep() {
           Zpět k dodacím údajům
         </LinkButton>
         <div className="grid max-w-sm gap-3">
+          {storageError && (
+            <p
+              role="alert"
+              className="rounded-sm border border-(--color-danger) p-4 text-sm text-(--color-danger)"
+            >
+              {storageError}
+            </p>
+          )}
+          {ontos && (
+            <p
+              role="note"
+              className="rounded-sm border border-(--color-border-primary) bg-(--color-base) p-4 text-sm font-bold"
+            >
+              {demoCheckoutNotice}
+            </p>
+          )}
           <Button
             type="submit"
             data-akros-checkout-action
@@ -144,19 +163,25 @@ export function ReviewStep() {
             uppercase
             disabled={sending || submitted || !cart.lines.length}
           >
-            {sending ? "Odesílám do OntOS…" : "Objednat s povinností platby"}
+            {sending
+              ? "Odesílám do OntOS…"
+              : ontos
+                ? "Potvrdit DEMO objednávku"
+                : "Objednat s povinností platby"}
           </Button>
-          <p className="text-center text-xs leading-(--akros-checkout-body-leading)">
-            Kliknutím na tlačítko Objednat s povinností platby souhlasíte s{" "}
-            <Link as={NextLink} href="/obchodni-podminky">
-              obchodními podmínkami
-            </Link>{" "}
-            a{" "}
-            <Link as={NextLink} href="/gdpr">
-              zpracováním osobních údajů
-            </Link>
-            .
-          </p>
+          {!ontos && (
+            <p className="text-center text-xs leading-(--akros-checkout-body-leading)">
+              Kliknutím na tlačítko Objednat s povinností platby souhlasíte s{" "}
+              <Link as={NextLink} href="/obchodni-podminky">
+                obchodními podmínkami
+              </Link>{" "}
+              a{" "}
+              <Link as={NextLink} href="/gdpr">
+                zpracováním osobních údajů
+              </Link>
+              .
+            </p>
+          )}
           <p className="text-center text-xs text-(--color-fg-secondary)">
             {ontos
               ? "DEMO – objednávka se uloží v OntOS, nebude doručena. Platba ani e-mail se neodesílají."

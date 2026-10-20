@@ -86,7 +86,28 @@ No staff orders read or order-search endpoint is exposed to the public browser.
 account/login and tracking are simulated. The top banner labels this on every live page.
 Live checkout offers owner-supported personal pickup (0 Kč) or Zásilkovna (79 Kč).
 Prototype-only free-shipping threshold/paid extended returns are not applied in ontos mode.
-GoPay/Apple Pay are labels only; no payment authorization or charge occurs.
+Connected checkout has only the inactive **Nic neplatíte (DEMO)** method. Old saved payment
+choices are migrated to `demo-no-payment`; GoPay/Apple Pay/card choices remain in mock mode only.
+The connected CTA is **Potvrdit DEMO objednávku** with the exact notice before and after confirmation:
+**E-shop je prezentační demo. Žádné zboží vám nebude doručeno a nic neplatíte.**
+The production-style payment-obligation terms and newsletter signup are hidden in connected mode.
+HTTP errors (including non-JSON), invalid success payloads and network failures show Czech retry
+guidance without clearing the cart or inventing a local success. The same persisted submission ID
+is reused on retry, including after an ambiguous response; only validated owner order numbers and
+totals produce confirmation.
+
+Connected category lists combine name/SKU text, unit/from price range (CZK with VAT), availability
+and sorting (Czech name A–Z by default, price ascending/descending). Filters apply server-side to
+the current permitted catalog, not to the current page only. GET query keys `q`, `min`, `max`,
+`availability=in-stock|out-of-stock`, `sort=name|price-asc|price-desc` survive reload/back and
+pagination. Filter submit resets pagination; **Vymazat filtry** clears the complete selection.
+A grouped product uses its displayed lowest/from price; availability requires at least one variant
+with its legal minimum in stock. No query parameter changes backend authorization or company.
+Kai's mock category layout/order and prototype checkout wording/payment choices are unchanged.
+
+Both modes are nonproduction: all pages inherit robots `noindex, nofollow`, every response has
+`X-Robots-Tag: noindex, nofollow, noarchive`, and `/robots.txt` disallows all crawlers. This is
+indexing guidance, not authentication or access control.
 
 Staff: `eshop@akros.demo`, `http://localhost:3020/cs/provoz/produkty` (AKROS company).
 Edit a variant net price, save, wait at most 15 seconds, reload the storefront. An existing cart

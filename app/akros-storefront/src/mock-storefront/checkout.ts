@@ -1,3 +1,4 @@
+import { demoPayment } from "@/ontos/demo-checkout";
 import { type CartState, getCartSubtotal } from "./cart";
 import { mockCustomer } from "./fixtures/account";
 import {
@@ -76,7 +77,9 @@ export const createCheckoutDraft = (): CheckoutDraft => ({
 export const getDelivery = (draft: CheckoutDraft) =>
   checkoutDeliveryMethods.find((method) => method.id === draft.deliveryId);
 export const getPayment = (draft: CheckoutDraft) =>
-  checkoutPaymentMethods.find((method) => method.id === draft.paymentId);
+  draft.paymentId === demoPayment.id
+    ? demoPayment
+    : checkoutPaymentMethods.find((method) => method.id === draft.paymentId);
 export const getDeliveryAddress = (draft: CheckoutDraft) =>
   draft.differentDeliveryAddress ? draft.delivery : draft.billing;
 

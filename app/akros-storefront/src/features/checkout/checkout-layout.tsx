@@ -68,7 +68,7 @@ export function CheckoutLayout({
                 </Steps.Item>
               ))}
             </Steps.List>
-            {storageError && (
+            {storageError && step !== 3 && (
               <p role="alert" className="mb-4 text-sm text-(--color-danger)">
                 {storageError}
               </p>

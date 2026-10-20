@@ -2,6 +2,14 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { CategoryGrid } from "@/components/category-grid";
+import { CategoryFilters } from "@/components/category-filters";
+import { isOntos } from "@/ontos/config";
+import {
+  parseCategoryFilters,
+  categoryFilterParams,
+  filterCategoryProducts,
+  type CategoryQuery,
+} from "@/ontos/category-filters";
 import { CatalogPagination } from "@/components/catalog-pagination";
 import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
@@ -11,7 +19,7 @@ import { getCatalog } from "@/ontos/catalog-server";
 
 interface CategoryPageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<CategoryQuery>;
 }
 
 const productsPerPage = 24;
@@ -41,7 +49,10 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
     toProductSummary,
   } = await getCatalog();
   const { slug } = await params;
-  const requestedPage = Number.parseInt((await searchParams).page ?? "1", 10);
+  const query = await searchParams;
+  const ontos = isOntos();
+  const filters = parseCategoryFilters(query);
+  const requestedPage = Number.parseInt(String(query.page ?? "1"), 10);
   const category = getCategoryBySlug(slug);
   if (!category) notFound();
 
@@ -51,7 +62,8 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
     childCategories.every(
       (childCategory) => Boolean(childCategory.imageSrc) && Boolean(childCategory.imageAlt),
     );
-  const products = getProductsByCategory(category.slug);
+  const categoryProducts = getProductsByCategory(category.slug);
+  const products = ontos ? filterCategoryProducts(categoryProducts, filters) : categoryProducts;
   const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
   const currentPage = Math.min(
     Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1),
@@ -86,6 +98,14 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
         {hasVisualChildCategories && <CategoryGrid categories={childCategories} />}
       </section>
 
+      {ontos && (
+        <CategoryFilters
+          key={JSON.stringify(filters)}
+          filters={filters}
+          pathname={`/kategorie/${category.slug}`}
+          count={products.length}
+        />
+      )}
       {products.length > 0 ? (
         <section
           className="akros-section akros-product-listing-section"
@@ -97,10 +117,15 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
             itemCount={products.length}
             pageSize={productsPerPage}
             pathname={`/kategorie/${category.slug}`}
+            searchParams={ontos ? categoryFilterParams(filters) : undefined}
           />
         </section>
       ) : (
-        <p className="akros-empty-state">{cs.catalog.emptyCategory}</p>
+        <p className="akros-empty-state">
+          {ontos && categoryProducts.length
+            ? "Nenalezeny žádné produkty. Upravte nebo vymažte filtry."
+            : cs.catalog.emptyCategory}
+        </p>
       )}
 
       {recommendations.length > 0 && (

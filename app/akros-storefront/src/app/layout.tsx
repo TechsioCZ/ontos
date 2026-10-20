@@ -22,6 +22,7 @@ export const metadata: Metadata = {
     default: "AKROS | Nerezový a spojovací materiál",
     template: "%s | AKROS",
   },
+  robots: { index: false, follow: false, nocache: true },
   description: "Klikací ukázka e-shopu AKROS s nerezovým, hutním a spojovacím materiálem.",
 };
 

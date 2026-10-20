@@ -1,5 +1,7 @@
 "use client";
 import { useDataSource } from "@/ontos/catalog-provider";
+import { demoPayment } from "@/ontos/demo-checkout";
+import { checkoutSaveError, readCheckoutQuote, readOrderResponse } from "@/ontos/checkout-response";
 
 import { createContext, type ReactNode, useContext, useEffect, useReducer, useRef } from "react";
 import { useCart } from "@/features/cart/cart-provider";
@@ -33,12 +35,14 @@ interface CheckoutState {
   draft: CheckoutDraft;
   hydrated: boolean;
   storageError: string;
+  submitError?: string;
   submitted: boolean;
 }
 type CheckoutAction =
   | { type: "hydrate"; draft: CheckoutDraft; error: string }
   | { type: "update"; update: DraftUpdate }
   | { type: "storage-result"; error: string }
+  | { type: "submit-error"; error: string }
   | { type: "submitted" };
 
 function checkoutReducer(state: CheckoutState, action: CheckoutAction): CheckoutState {
@@ -47,6 +51,8 @@ function checkoutReducer(state: CheckoutState, action: CheckoutAction): Checkout
       return { ...state, draft: action.draft, hydrated: true, storageError: action.error };
     case "update":
       return { ...state, draft: action.update(state.draft) };
+    case "submit-error":
+      return { ...state, submitError: action.error };
     case "storage-result":
       return state.storageError === action.error ? state : { ...state, storageError: action.error };
     case "submitted":
@@ -65,10 +71,16 @@ function CheckoutCartProvider({
   const { cart, dispatch, ready: cartReady, activeCartId } = useCart();
   const draftStorageKey =
     activeCartId === "default" ? legacyDraftStorageKey : `${legacyDraftStorageKey}:${activeCartId}`;
-  const [{ draft, hydrated, storageError, submitted }, checkoutDispatch] = useReducer(
+  const [{ draft, hydrated, storageError, submitError, submitted }, checkoutDispatch] = useReducer(
     checkoutReducer,
     undefined,
-    () => ({ draft: createCheckoutDraft(), hydrated: false, storageError: "", submitted: false }),
+    () => ({
+      draft: createCheckoutDraft(),
+      hydrated: false,
+      storageError: "",
+      submitError: "",
+      submitted: false,
+    }),
   );
   const storageRef = useRef<CheckoutStorage | null>(null);
   const completed = useRef<LocalOrder | null>(null);
@@ -78,17 +90,20 @@ function CheckoutCartProvider({
       storageRef.current = storage ?? window.sessionStorage;
       checkoutDispatch({
         type: "hydrate",
-        draft: parseCheckoutDraft(storageRef.current.getItem(draftStorageKey)),
+        draft: {
+          ...parseCheckoutDraft(storageRef.current.getItem(draftStorageKey)),
+          ...(ontos ? { paymentId: demoPayment.id } : {}),
+        },
         error: "",
       });
     } catch {
       checkoutDispatch({
         type: "hydrate",
-        draft: createCheckoutDraft(),
+        draft: { ...createCheckoutDraft(), ...(ontos ? { paymentId: demoPayment.id } : {}) },
         error: "Rozpracované údaje nelze uložit v prohlížeči. Povolte úložiště pro tento web.",
       });
     }
-  }, [storage, draftStorageKey]);
+  }, [storage, draftStorageKey, ontos]);
 
   useEffect(() => {
     if (!hydrated || !storageRef.current) return;
@@ -105,6 +120,7 @@ function CheckoutCartProvider({
 
   async function completeOrder(): Promise<LocalOrder | null> {
     if (completed.current) return completed.current;
+    checkoutDispatch({ type: "submit-error", error: "" });
     if (!hydrated || !cartReady || getReachableStep(3, cart, draft) !== 3) return null;
     const delivery = getDelivery(draft);
     const payment = getPayment(draft);
@@ -130,13 +146,12 @@ function CheckoutCartProvider({
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ cart }),
           });
-          const check = await checkResponse.json();
-          if (!checkResponse.ok) throw new Error(check.message);
+          const check = await readCheckoutQuote(checkResponse);
           if (!check.canCheckout)
             throw new Error(
               check.priceChanged
                 ? "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu."
-                : check.issues.join(" "),
+                : "Košík nyní nelze ověřit. Vraťte se do košíku a zkontrolujte dostupnost a množství.",
             );
         }
         pending.sent = true;
@@ -146,17 +161,18 @@ function CheckoutCartProvider({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ cart, draft, clientRequestId: pending.clientRequestId }),
         });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message);
+        const result = await readOrderResponse(response);
         orderNumber = result.orderNumber;
         serverTotals = result;
       } catch (error) {
         checkoutDispatch({
-          type: "storage-result",
+          type: "submit-error",
           error:
-            error instanceof Error
+            error instanceof Error &&
+            (error.message.startsWith("Cena se změnila") ||
+              error.message.startsWith("Košík nyní nelze ověřit"))
               ? error.message
-              : "Objednávku se nepodařilo uložit. Zkuste to znovu.",
+              : checkoutSaveError,
         });
         return null;
       }
@@ -204,8 +220,15 @@ function CheckoutCartProvider({
         draft,
         ready: hydrated && cartReady,
         submitted,
-        storageError,
-        updateDraft: (update) => checkoutDispatch({ type: "update", update }),
+        storageError: submitError || storageError,
+        updateDraft: (update) =>
+          checkoutDispatch({
+            type: "update",
+            update: (current) => ({
+              ...update(current),
+              ...(ontos ? { paymentId: demoPayment.id } : {}),
+            }),
+          }),
         completeOrder,
       }}
     >

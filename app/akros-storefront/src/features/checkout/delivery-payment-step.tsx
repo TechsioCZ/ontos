@@ -1,5 +1,6 @@
 "use client";
 import { useDataSource } from "@/ontos/catalog-provider";
+import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
 import Image from "next/image";
 import NextLink from "next/link";
 import { useRef, useState } from "react";
@@ -143,61 +144,71 @@ export function DeliveryPaymentStep() {
           >
             Platba
           </h2>
-          <RadioGroup
-            id="checkout-payment"
-            name="payment"
-            size="sm"
-            value={draft.paymentId}
-            required
-            validateStatus={errors.paymentId ? "error" : "default"}
-            onValueChange={(paymentId) => {
-              if (paymentId) updateDraft((current) => ({ ...current, paymentId }));
-            }}
-          >
-            <RadioGroup.Label className="sr-only">Způsob platby</RadioGroup.Label>
-            <RadioGroup.ItemGroup>
-              {checkoutPaymentMethods.map((method) => (
-                <RadioGroup.Item
-                  key={method.id}
-                  value={method.id}
-                  disabled={method.pickupOnly && draft.deliveryId !== "osobni"}
-                  className="min-h-16 items-center border-b border-(--color-border-primary) py-3 last:border-b-0 data-disabled:opacity-50"
-                >
-                  <RadioGroup.ItemHiddenInput />
-                  <RadioGroup.ItemControl />
-                  <span className="col-start-2 row-start-1">
-                    {method.logo && (
-                      <Image
-                        alt=""
-                        src={method.logo}
-                        width={140}
-                        height={63}
-                        className="h-9 w-20 object-cover max-sm:h-6 max-sm:w-14"
-                      />
-                    )}
-                  </span>
-                  <RadioGroup.ItemContent className="col-start-3">
-                    <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
-                    {method.pickupOnly && draft.deliveryId !== "osobni" && (
-                      <RadioGroup.ItemDescription>
-                        Pouze s osobním odběrem
-                      </RadioGroup.ItemDescription>
-                    )}
-                  </RadioGroup.ItemContent>
-                  <span className="col-start-4 row-start-1 text-sm text-(--color-fg-status-success) uppercase">
-                    Zdarma
-                  </span>
-                </RadioGroup.Item>
-              ))}
-            </RadioGroup.ItemGroup>
-            {errors.paymentId && (
-              <RadioGroup.StatusText status="error">{errors.paymentId}</RadioGroup.StatusText>
-            )}
-          </RadioGroup>
+          {ontos ? (
+            <div className="rounded-sm border border-(--color-border-primary) p-4">
+              <p className="font-bold">{demoPayment.title}</p>
+              <p className="mt-2 text-sm text-(--color-fg-secondary)">
+                Neaktivní ukázková metoda. Platba se neprovádí.
+              </p>
+            </div>
+          ) : (
+            <RadioGroup
+              id="checkout-payment"
+              name="payment"
+              size="sm"
+              value={draft.paymentId}
+              required
+              validateStatus={errors.paymentId ? "error" : "default"}
+              onValueChange={(paymentId) => {
+                if (paymentId) updateDraft((current) => ({ ...current, paymentId }));
+              }}
+            >
+              <RadioGroup.Label className="sr-only">Způsob platby</RadioGroup.Label>
+              <RadioGroup.ItemGroup>
+                {checkoutPaymentMethods.map((method) => (
+                  <RadioGroup.Item
+                    key={method.id}
+                    value={method.id}
+                    disabled={method.pickupOnly && draft.deliveryId !== "osobni"}
+                    className="min-h-16 items-center border-b border-(--color-border-primary) py-3 last:border-b-0 data-disabled:opacity-50"
+                  >
+                    <RadioGroup.ItemHiddenInput />
+                    <RadioGroup.ItemControl />
+                    <span className="col-start-2 row-start-1">
+                      {method.logo && (
+                        <Image
+                          alt=""
+                          src={method.logo}
+                          width={140}
+                          height={63}
+                          className="h-9 w-20 object-cover max-sm:h-6 max-sm:w-14"
+                        />
+                      )}
+                    </span>
+                    <RadioGroup.ItemContent className="col-start-3">
+                      <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
+                      {method.pickupOnly && draft.deliveryId !== "osobni" && (
+                        <RadioGroup.ItemDescription>
+                          Pouze s osobním odběrem
+                        </RadioGroup.ItemDescription>
+                      )}
+                    </RadioGroup.ItemContent>
+                    <span className="col-start-4 row-start-1 text-sm text-(--color-fg-status-success) uppercase">
+                      Zdarma
+                    </span>
+                  </RadioGroup.Item>
+                ))}
+              </RadioGroup.ItemGroup>
+              {errors.paymentId && (
+                <RadioGroup.StatusText status="error">{errors.paymentId}</RadioGroup.StatusText>
+              )}
+            </RadioGroup>
+          )}
         </section>
         <p className="text-xs text-(--color-fg-secondary)">
-          Ukázkové metody pro doručení v ČR. Nejde o ověření dostupnosti přepravce ani skutečnou
-          platbu.
+          {ontos
+            ? demoCheckoutNotice
+            : "Ukázkové metody pro doručení v ČR. Nejde o ověření dostupnosti přepravce ani skutečnou platbu."}
         </p>
       </div>
       <div className="mt-6 flex flex-wrap justify-between gap-4">

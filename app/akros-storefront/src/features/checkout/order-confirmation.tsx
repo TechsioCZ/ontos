@@ -1,5 +1,6 @@
 "use client";
 import NextLink from "next/link";
+import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
 import { useSyncExternalStore } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -81,12 +82,20 @@ export function OrderConfirmation() {
         />
         <h1 id="confirmation-title" className="text-lg font-bold">
           {order.source === "ontos"
-            ? "Objednávka je uložená v OntOS"
+            ? `DEMO objednávka č. ${order.id} byla uložena do administrace`
             : "Ukázková objednávka je uložená"}
         </h1>
         <p>
           Číslo objednávky: <strong>{order.id}</strong>
         </p>
+        {order.source === "ontos" && (
+          <p
+            role="note"
+            className="rounded-sm border border-(--color-border-primary) p-4 text-sm font-bold"
+          >
+            {demoCheckoutNotice}
+          </p>
+        )}
         <p className="text-sm text-(--color-fg-secondary)">
           {order.source === "ontos"
             ? "DEMO – objednávka nebude doručena. Objednávka byla skutečně uložena v OntOS. Platba ani e-mail nebyly odeslány."
@@ -128,7 +137,7 @@ export function OrderConfirmation() {
           <dd>{formatPrice(order.totals.shipping ?? 0)}</dd>
         </div>
         <div className="flex justify-between gap-4">
-          <dt>Platba – {order.paymentTitle}</dt>
+          <dt>Platba – {order.source === "ontos" ? demoPayment.title : order.paymentTitle}</dt>
           <dd>Neprovedena (demo)</dd>
         </div>
         <div className="flex justify-between gap-4">
