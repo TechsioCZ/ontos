@@ -2,7 +2,7 @@ import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref'
 import { DateTime, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { AgendaCommandSchema, evolveAgenda } from '../../shared/commands/agenda.ts';
-import { AgendaStateSchema } from '../../shared/domain/agenda.ts';
+import { AgendaStateSchema, agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
 import type { AgendaState } from '../../shared/domain/agenda.ts';
 import { seedAgendaState } from '../../scripts/seed/agenda.mts';
 import {
@@ -10,6 +10,7 @@ import {
   notificationCandidates,
   openOpsIncidents,
   opsAgendaDeadlines,
+  projectDeadlines,
   toCsv,
   urgencyOf,
 } from '../../src/ui/ops-agenda/deadlines.ts';
@@ -214,4 +215,47 @@ it('the agenda seed decodes', () => {
   const decoded = Schema.decodeUnknownSync(AgendaStateSchema)(seedAgendaState());
   expect(decoded.events.length).toBeGreaterThan(3);
   expect((decoded.notifications ?? []).every((entry) => entry.category === 'ASSIGNED')).toBe(true);
+});
+
+it('personal agenda data is projected server-side, including tenant identity', () => {
+  const ref = Schema.decodeUnknownSync(PrincipalRefSchema)(management);
+  const other = Schema.decodeUnknownSync(PrincipalRefSchema)(operations);
+  const state = Schema.decodeUnknownSync(AgendaStateSchema)(seedAgendaState());
+  const projected = agendaStateForPrincipal({
+    ...state,
+    preferences: [ref, other].map((principal) => ({ principal, leadDays: 14, emailOptIn: false, updatedAt: now })),
+  }, ref);
+  expect(projected.events).toEqual(state.events);
+  expect(projected.notifications?.every((entry) => entry.recipient.principalId === ref.principalId)).toBe(true);
+  expect(projected.preferences?.map((entry) => entry.principal.principalId)).toEqual([ref.principalId]);
+  expect(agendaStateForPrincipal(state, { ...ref, tenantId: other.principalId as typeof ref.tenantId }).notifications).toEqual([]);
+});
+
+it('calendar keeps separate revision types, honors latest performed service and reads nested objects', () => {
+  const rows = opsAgendaDeadlines('assets', {
+    assets: [{ id: 'a1', name: 'Výtah', services: [
+      { id: 'r1', title: 'Roční revize', kind: 'revision', performedOn: '2025-10-01', nextDueOn: '2028-10-01' },
+      { id: 'r2', title: 'Roční revize', kind: 'revision', performedOn: '2026-10-01', nextDueOn: '2027-10-01' },
+      { id: 's1', title: 'Měsíční servis', kind: 'service', nextDueOn: '2026-11-01' },
+    ] }],
+    inventories: [{ id: 'i1', items: [{ id: 'i2', followUp: { id: 'f1', title: 'Dohledat vybavení', dueDate: '2026-10-29', status: 'open' } }] }],
+  });
+  expect(rows.filter((row) => row.field === 'nextDueOn').map((row) => row.date).sort()).toEqual(['2026-11-01', '2027-10-01']);
+  expect(rows.some((row) => row.title === 'Dohledat vybavení')).toBe(true);
+  const documents = opsAgendaDeadlines('documents', { documents: [{ id: 'd1', title: 'Nájemní smlouva', contract: { validTo: '2026-11-30', status: 'active' } }] });
+  expect(documents[0]?.date).toBe('2026-11-30');
+  expect(openOpsIncidents('security', { incidents: [{ id: 'i', title: 'Otevřeno', resolvedAt: null }] })).toHaveLength(1);
+});
+
+it('project milestones follow source dates and completion flags without a copied calendar entry', () => {
+  const rows = projectDeadlines([{ id: 'p1', title: 'Modernizace recepce', plannedStart: '2026-10-01', plannedEnd: '2026-12-15', state: 'ACTIVE', milestones: [
+    { title: 'Předání', dueDate: '2026-11-30', completed: false },
+    { title: 'Zaměření', dueDate: '2026-10-05', completed: true },
+  ] }]);
+  expect(rows).toHaveLength(4);
+  expect(rows.filter((row) => !row.done).map((row) => row.date)).toEqual(['2026-12-15', '2026-11-30']);
+});
+
+it('CSV neutralizes spreadsheet formulas without changing numeric amounts', () => {
+  expect(toCsv(['Název', 'Částka'], [['=SUM(A1:A2)', -20], [' @HYPERLINK()', 10]])).toContain("'=SUM(A1:A2);-20");
 });

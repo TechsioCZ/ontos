@@ -16,6 +16,8 @@ import type { ApplyCommandResult, OpsCommand } from '../../shared/actions/apply-
 import { MAX_FILE_BYTES, agendaDefinitions, agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
 import type { FileUploadCommand } from '../../shared/agendas.ts';
 import type { RecordsRequest, RecordsResponse, StoredFile } from '../../shared/apis/records.ts';
+import { agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
+import type { AgendaState } from '../../shared/domain/agenda.ts';
 import { FileIdSchema, entityIdOf, mintId, opsConflict } from '../../shared/domain/common.ts';
 import type { AgendaId, AgendaSensitivity } from '../../shared/domain/common.ts';
 import { agendaStates, files } from '../database/schema.ts';
@@ -300,7 +302,9 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
         agendas[entry.agenda] = {
           canWrite: entry.canWrite,
           revision: snapshot.revision,
-          state: snapshot.state,
+          state: entry.agenda === 'agenda'
+            ? agendaStateForPrincipal(snapshot.state as AgendaState, actor as RecordsResponse['actorPrincipalRef'])
+            : snapshot.state,
           updatedAt: snapshot.updatedAt,
         };
       }

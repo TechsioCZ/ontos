@@ -25,7 +25,7 @@ const palette: Record<Tone, { readonly bg: string; readonly fg: string; readonly
   primary: {
     accent: 'var(--color-primary-500, #d4a106)',
     bg: 'var(--color-primary-100, #fef3c7)',
-    fg: 'var(--color-primary-900, #713f12)',
+    fg: '#713f12',
     ring: 'var(--color-primary-300, #fcd34d)',
   },
   success: {

@@ -47,82 +47,42 @@ const linkTo = (lang: string, href: string) => `/${lang}${href}`;
 const pragueHour = () =>
   Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Europe/Prague' }).format(new Date()));
 
-const OccupancyDonut = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
+const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
   const { t } = useLang();
-  const size = 168;
-  const stroke = 18;
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
   const total = Number(kpi?.secondary?.['total'] ?? 0);
   const occupied = Number(kpi?.secondary?.['occupied'] ?? 0);
   const reserved = Number(kpi?.secondary?.['reserved'] ?? 0);
   const ready = kpi?.status === 'ready' && kpi.value !== undefined && total > 0;
-  const occupiedLength = ready ? (occupied / total) * circumference : 0;
-  const reservedLength = ready ? (reserved / total) * circumference : 0;
-  const primary = toneColors('primary');
-  const warning = toneColors('warning');
   return (
-    <div className="siamparkops:flex siamparkops:items-center siamparkops:gap-5">
-      <div className="siamparkops:relative" style={{ height: size, width: size }}>
-        <svg height={size} role="img" viewBox={`0 0 ${size} ${size}`} width={size}>
-          <title>{t(`${k}.kpi.occupancy.label`)}</title>
-          <circle cx={size / 2} cy={size / 2} fill="none" r={radius} stroke="var(--color-neutral-200, #e5e7eb)" strokeWidth={stroke} />
-          {ready && (
-            <>
-              <circle
-                cx={size / 2}
-                cy={size / 2}
-                fill="none"
-                r={radius}
-                stroke={primary.accent}
-                strokeDasharray={`${occupiedLength} ${circumference}`}
-                strokeLinecap="round"
-                strokeWidth={stroke}
-                transform={`rotate(-90 ${size / 2} ${size / 2})`}
-              />
-              <circle
-                cx={size / 2}
-                cy={size / 2}
-                fill="none"
-                r={radius}
-                stroke={warning.accent}
-                strokeDasharray={`${reservedLength} ${circumference}`}
-                strokeDashoffset={-occupiedLength}
-                strokeWidth={stroke}
-                transform={`rotate(-90 ${size / 2} ${size / 2})`}
-              />
-            </>
-          )}
-        </svg>
-        <div className="siamparkops:absolute siamparkops:inset-0 siamparkops:flex siamparkops:flex-col siamparkops:items-center siamparkops:justify-center">
-          <span className="siamparkops:text-3xl siamparkops:font-semibold siamparkops:tabular-nums">
-            {ready ? formatPercent(kpi?.value ?? 0) : '—'}
-          </span>
-          <span className="siamparkops:text-xs" style={muted}>
-            {t(`${k}.overview.occupiedToday`)}
-          </span>
-        </div>
-      </div>
-      <ul className="siamparkops:m-0 siamparkops:flex siamparkops:list-none siamparkops:flex-col siamparkops:gap-2 siamparkops:p-0 siamparkops:text-sm">
-        {ready ? (
-          <>
-            <li className="siamparkops:flex siamparkops:items-center siamparkops:gap-2">
-              <Dot size={10} tone="primary" />
-              {t(`${k}.overview.legend.occupied`, { count: occupied })}
-            </li>
-            <li className="siamparkops:flex siamparkops:items-center siamparkops:gap-2">
-              <Dot size={10} tone="warning" />
-              {t(`${k}.overview.legend.reserved`, { count: reserved })}
-            </li>
-            <li className="siamparkops:flex siamparkops:items-center siamparkops:gap-2">
-              <Dot size={10} tone="neutral" />
-              {t(`${k}.overview.legend.free`, { count: total - occupied - reserved })}
-            </li>
-          </>
-        ) : (
-          <li style={muted}>{kpi === undefined || kpi.status === 'loading' ? t('siampark-ops.common.loading') : t(`${k}.state.${kpi.status === 'ready' ? 'noData' : kpi.status}`)}</li>
-        )}
-      </ul>
+    <div className="siamparkops:flex siamparkops:w-full siamparkops:flex-col siamparkops:gap-3" style={{ maxWidth: 300 }}>
+      <span className="siamparkops:text-sm siamparkops:font-medium" style={muted}>{t(`${k}.overview.occupiedToday`)}</span>
+      <strong style={{ fontSize: 56, fontWeight: 600, letterSpacing: '-0.04em', lineHeight: 1.1 }}>
+        {ready ? formatPercent(kpi.value ?? 0) : '—'}
+      </strong>
+      {ready ? (
+        <>
+          <div
+            aria-label={t(`${k}.kpi.occupancy.label`)}
+            aria-valuemax={total}
+            aria-valuemin={0}
+            aria-valuenow={occupied}
+            aria-valuetext={t(`${k}.kpi.occupancy.secondary`, { occupied, total, reserved })}
+            role="meter"
+            style={{ background: '#fef3c7', borderRadius: 4, height: 10, overflow: 'hidden' }}
+          >
+            <span style={{ background: 'var(--color-primary-500, #ffc627)', display: 'block', height: '100%', width: `${(occupied / total) * 100}%` }} />
+          </div>
+          <div className="siamparkops:flex siamparkops:flex-wrap siamparkops:gap-x-4 siamparkops:gap-y-1 siamparkops:text-xs" style={muted}>
+            <span>{t(`${k}.overview.legend.occupied`, { count: occupied })}</span>
+            <span>{t(`${k}.overview.legend.reserved`, { count: reserved })}</span>
+            <span>{t(`${k}.overview.legend.free`, { count: total - occupied - reserved })}</span>
+          </div>
+        </>
+      ) : (
+        <span className="siamparkops:text-sm" style={muted}>
+          {kpi === undefined || kpi.status === 'loading' ? t('siampark-ops.common.loading') : t(`${k}.state.${kpi.status === 'ready' ? 'noData' : kpi.status}`)}
+        </span>
+      )}
     </div>
   );
 };
@@ -202,7 +162,7 @@ export const Hero = ({
         <SourceHealth sources={sources} />
       </div>
       <div className="siamparkops:flex siamparkops:items-center siamparkops:justify-center">
-        <OccupancyDonut kpi={kpis.find((kpi) => kpi.id === 'occupancy')} />
+        <OccupancyFigure kpi={kpis.find((kpi) => kpi.id === 'occupancy')} />
       </div>
     </section>
   );
@@ -213,7 +173,7 @@ const HeroStat = ({ label, tone, value }: { readonly label: string; readonly ton
   return (
     <span
       className="siamparkops:inline-flex siamparkops:items-baseline siamparkops:gap-2 siamparkops:rounded-xl siamparkops:px-3 siamparkops:py-2"
-      style={{ background: colors.bg, color: colors.fg }}
+      style={{ background: colors.bg, color: 'var(--color-fg-primary, #111827)' }}
     >
       <span className="siamparkops:text-xl siamparkops:font-semibold siamparkops:tabular-nums">{formatNumber(value)}</span>
       <span className="siamparkops:text-xs siamparkops:font-medium">{label}</span>
@@ -289,7 +249,7 @@ const KpiValue = ({ kpi }: { readonly kpi: Kpi }) => {
     );
   }
   return (
-    <span className="siamparkops:text-4xl siamparkops:font-semibold siamparkops:leading-none siamparkops:tabular-nums">
+    <span className="siamparkops:text-4xl siamparkops:font-semibold siamparkops:leading-none">
       {kpi.kind === 'percent' ? formatPercent(kpi.value) : formatNumber(kpi.value)}
     </span>
   );
@@ -333,7 +293,7 @@ export const KpiGrid = ({
           >
             <div className="siamparkops:flex siamparkops:items-start siamparkops:justify-between siamparkops:gap-2">
               <IconBadge name={kpiIcon[kpi.id]} tone={ready ? kpi.tone : 'neutral'} />
-              <span className="siamparkops:inline-flex siamparkops:items-center siamparkops:gap-1 siamparkops:text-xs siamparkops:font-medium" style={{ color: colors.accent }}>
+              <span className="siamparkops:inline-flex siamparkops:items-center siamparkops:gap-1 siamparkops:text-xs siamparkops:font-medium" style={{ color: 'var(--color-fg-secondary, #4b5563)' }}>
                 {t(`${k}.overview.drill`)}
                 <Icon name="arrowRight" size={14} />
               </span>

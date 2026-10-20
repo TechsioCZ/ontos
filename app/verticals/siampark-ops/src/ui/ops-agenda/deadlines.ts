@@ -232,6 +232,32 @@ export const taskDeadlines = (tasks: readonly TaskSource[], names: NameLookup): 
     ];
   });
 
+/** Project dates and milestones are read directly from the work owner's public records. */
+export const projectDeadlines = (projects: readonly {
+  readonly id: string;
+  readonly title: string;
+  readonly plannedStart: string;
+  readonly plannedEnd: string;
+  readonly state: string;
+  readonly milestones: readonly { readonly title: string; readonly dueDate: string; readonly completed: boolean }[];
+}[]): Deadline[] => projects.flatMap((project) => {
+  const base = {
+    category: 'opsDeadline' as const,
+    source: 'work' as const,
+    href: `/siampark/work?tab=projects&project=${encodeURIComponent(project.id)}`,
+    done: project.state === 'DONE',
+  };
+  return [
+    { ...base, date: project.plannedStart, done: project.state !== 'PLANNED', title: project.title, key: `project-start:${project.id}:${project.plannedStart}` },
+    { ...base, date: project.plannedEnd, title: project.title, key: `project-end:${project.id}:${project.plannedEnd}` },
+    ...project.milestones.map((milestone, index) => ({
+      ...base, date: milestone.dueDate, done: base.done || milestone.completed,
+      title: `${project.title} · ${milestone.title}`,
+      key: `project-milestone:${project.id}:${index}:${milestone.dueDate}`,
+    })),
+  ];
+});
+
 /** Outstanding amount of an invoice in minor units (never negative). */
 export const outstandingMinor = (invoice: InvoiceSource) => Math.max(0, invoice.totalMinor - invoice.paidMinor);
 
@@ -335,6 +361,8 @@ const CLOSED_VALUES = new Set([
   'resolved',
   'retired',
   'sold',
+  'terminated',
+  'expired',
 ]);
 const TITLE_FIELDS = ['name', 'title', 'label', 'serialNumber', 'code', 'documentNumber', 'number', 'summary'] as const;
 
@@ -360,7 +388,7 @@ export const isClosedRecord = (record: Loose): boolean => {
       return true;
     }
   }
-  return record['closedAt'] !== undefined || record['resolvedAt'] !== undefined;
+  return record['closedAt'] != null || record['resolvedAt'] != null;
 };
 
 const categoryOfField = (field: string, agenda: string): DeadlineCategory => {
@@ -401,7 +429,9 @@ interface ScanHit {
   readonly parentTitle?: string;
   readonly location?: string;
   readonly closed: boolean;
-  /** Parent record id; hits of nested records keep only the latest date per parent + field. */
+  /** Latest performed service wins, not the most distant promised deadline. */
+  readonly rank: string;
+  /** Nested services keep a separate current deadline per parent + service kind/title + field. */
   readonly groupKey: string;
 }
 
@@ -427,14 +457,19 @@ const scanRecords = (
           closed,
           date: day(value),
           field,
-          groupKey: parent === undefined ? `${recordId}:${field}` : `nested:${parent.id}:${field}`,
+          groupKey: parent === undefined
+            ? `${recordId}:${field}`
+            : `nested:${parent.id}:${String(entry['kind'] ?? '')}:${title.toLowerCase()}:${field}`,
+          rank: typeof entry['performedOn'] === 'string' ? entry['performedOn'] : day(value),
           recordId,
           title,
           ...withOptional('location', location),
           ...withOptional('parentTitle', parent?.title),
         });
-      } else if (Array.isArray(value) && depth < 3) {
-        scanRecords(agenda, value, depth + 1, { closed, id: recordId, title, ...withOptional('location', location) }, hits);
+      } else if (depth < 3 && (Array.isArray(value) || isRecord(value))) {
+        // Contract terms and inventory follow-ups are nested objects, not arrays.
+        scanRecords(agenda, Array.isArray(value) ? value : [value], depth + 1,
+          { closed, id: `${recordId}:${field}`, title, ...withOptional('location', location) }, hits);
       }
     }
   }
@@ -457,7 +492,7 @@ export const opsAgendaDeadlines = (agenda: string, state: unknown): Deadline[] =
   const latest = new Map<string, ScanHit>();
   for (const hit of hits) {
     const current = latest.get(hit.groupKey);
-    if (current === undefined || hit.date > current.date) {
+    if (current === undefined || hit.rank >= current.rank) {
       latest.set(hit.groupKey, hit);
     }
   }
@@ -596,7 +631,9 @@ export const notificationCandidates = (
 // ---- CSV -------------------------------------------------------------------------------------------------------
 
 const csvCell = (value: string | number | undefined) => {
-  const text = value === undefined ? '' : String(value);
+  const raw = value === undefined ? '' : String(value);
+  // Names and notes must not execute as spreadsheet formulas when a CSV is opened in Excel.
+  const text = typeof value === 'string' && /^[\s]*[=+@-]/u.test(raw) ? `'${raw}` : raw;
   return /[";\n\r]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 

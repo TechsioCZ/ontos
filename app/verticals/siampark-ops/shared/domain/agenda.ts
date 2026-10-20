@@ -7,6 +7,7 @@
 //   exports        audit log of CSV exports (who, which list, how many rows, which filter) (S15)
 //   preferences    per-person notification preferences (lead time, optional e-mail opt-in — e-mail is simulated)
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
+import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 import { AuditFieldsSchema, IsoDateSchema, NoteSchema, PropertyRefSchema, TextSchema, opsIdOf } from './common.ts';
 
@@ -96,6 +97,17 @@ export type AgendaStateEncoded = typeof AgendaStateSchema.Encoded;
 
 /** State written by the seed when nothing else is known. Must decode with AgendaStateSchema. */
 export const emptyAgendaState: AgendaStateEncoded = { events: [], exports: [], notifications: [], preferences: [] };
+
+/** Personal inbox, preferences and export history are filtered before leaving the server, not just in the UI. */
+export const agendaStateForPrincipal = (state: AgendaState, actor: PrincipalRef): AgendaState => {
+  const mine = (principal: PrincipalRef) => principal.principalId === actor.principalId && principal.tenantId === actor.tenantId;
+  return {
+    ...state,
+    notifications: (state.notifications ?? []).filter((entry) => mine(entry.recipient)),
+    preferences: (state.preferences ?? []).filter((entry) => mine(entry.principal)),
+    exports: (state.exports ?? []).filter((entry) => mine(entry.exportedBy)),
+  };
+};
 
 /** Default lead time for DEADLINE notifications when a person has not set a preference. */
 export const DEFAULT_LEAD_DAYS = 14;

@@ -15,6 +15,7 @@ import {
   opsAgendaDeadlines,
   opsSegments,
   outstandingMinor,
+  projectDeadlines,
   sortDeadlines,
   taskDeadlines,
 } from './deadlines.ts';
@@ -36,6 +37,7 @@ export const buildDeadlines = (sources: SiamparkSources, names: ReadonlyMap<stri
   }
   if (sources.work.data !== undefined) {
     rows.push(...taskDeadlines(sources.work.data.items, names));
+    rows.push(...projectDeadlines(sources.work.data.projects ?? []));
   }
   if (sources.finance.data !== undefined) {
     rows.push(...invoiceDeadlines(sources.finance.data.state.invoices, names));
@@ -217,12 +219,14 @@ export const buildKpis = (
 
   // Active leases: occupancies in state ACTIVE today; CONFIRMED (future) shown separately.
   if (occupancy !== undefined) {
-    const active = occupancy.occupancies.filter((entry) => entry.state === 'ACTIVE');
-    const confirmed = occupancy.occupancies.filter((entry) => entry.state === 'CONFIRMED');
+    const active = occupancy.occupancies.filter(
+      (entry) => entry.state === 'ACTIVE' && entry.startDate <= today && (entry.endDate === null || today < entry.endDate),
+    );
+    const confirmed = occupancy.occupancies.filter((entry) => entry.state === 'CONFIRMED' && entry.startDate > today);
     kpis.push({
       ...kpiBase(sources, 'leases', ['occupancy']),
       kind: 'count',
-      rows: [...active, ...confirmed].map((entry) => ({
+      rows: active.map((entry) => ({
         date: entry.endDate ?? entry.startDate,
         href: `/siampark/occupancy?resourceId=${encodeURIComponent(entry.occupancyRef.resourceId)}`,
         id: entry.occupancyRef.resourceId,
@@ -446,7 +450,7 @@ export const buildSearchIndex = (sources: SiamparkSources, names: ReadonlyMap<st
           kind: 'contract',
           source: 'agreements',
           title: party ?? contract.subject ?? contract.contractRef.resourceId,
-          ...opt('subtitle', [contract.unitRef === null ? undefined : names.get(contract.unitRef.resourceId), contract.lifecycleState].filter(Boolean).join(' · ')),
+          ...opt('subtitle', [contract.unitRef === null ? undefined : names.get(contract.unitRef.resourceId), contract.subject].filter(Boolean).join(' · ')),
         },
         contract.subject,
         contract.responsiblePerson,
