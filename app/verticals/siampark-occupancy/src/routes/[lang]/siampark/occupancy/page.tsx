@@ -728,7 +728,10 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
             {
               href: `/${language}/siampark/work`,
               label: t('siampark-occupancy.story.tasks'),
-              value: String(tasks.length),
+              value:
+                state.related.tasks === 'unavailable'
+                  ? t('siampark-occupancy.story.unavailable')
+                  : String(tasks.length),
             },
             {
               href:

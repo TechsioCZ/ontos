@@ -140,7 +140,8 @@
       "contract": "Smlouva",
       "lease": "Nájem",
       "tasks": "Servisní úkoly",
-      "invoice": "Faktura"
+      "invoice": "Faktura",
+      "unavailable": "nedostupné"
     },
     "related": {
       "unitCard": "Jednotka a budova",

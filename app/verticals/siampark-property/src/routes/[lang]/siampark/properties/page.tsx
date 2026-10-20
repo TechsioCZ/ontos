@@ -503,10 +503,14 @@ const RecordsPageContent = () => {
                               <Table.Cell>{item.code}</Table.Cell>
                               <Table.Cell>{item.name}</Table.Cell>
                               <Table.Cell>
-                                <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
-                                  {t(`${key}.states.${item.state}`)}
-                                </Badge>
-                                {group.kind === 'units' && <span>{availabilityLabel(item.id, item.state)}</span>}
+                                <span className="siamparkproperty:inline-flex siamparkproperty:flex-wrap siamparkproperty:items-center siamparkproperty:gap-2">
+                                  <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
+                                    {t(`${key}.states.${item.state}`)}
+                                  </Badge>
+                                  {group.kind === 'units' && (
+                                    <span className={secondaryTextClass}>{availabilityLabel(item.id, item.state)}</span>
+                                  )}
+                                </span>
                               </Table.Cell>
                               <Table.Cell>
                                 <Button
@@ -544,6 +548,7 @@ const RecordsPageContent = () => {
                 </h2>
                 <p className={secondaryTextClass}>{model.property.address}</p>
                 <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
+                <div className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:gap-2">
                 <Button
                   disabled={editor.busy}
                   onClick={() => {
@@ -578,9 +583,30 @@ const RecordsPageContent = () => {
                 >
                   {t(`${key}.loadSummary`)}
                 </Button>
+                </div>
                 <output aria-live="polite" className={messageClass}>
                   {model.summaryMessage}
                 </output>
+                {unit !== undefined && (
+                  <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
+                    <h3 className={detailHeadingClass}>
+                      {unit.code} · {unit.name}
+                    </h3>
+                    <p className={secondaryTextClass}>
+                      {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'} ·{' '}
+                      {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
+                    </p>
+                    {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
+                    <UnitStory
+                      agreements={model.agreements}
+                      language={model.language}
+                      occupancy={model.occupancy}
+                      t={t}
+                      tasks={model.work?.items}
+                      unit={unit}
+                    />
+                  </aside>
+                )}
                 {model.finance !== undefined && (
                   <section aria-label={t(`${key}.financialSummary`)} className={relatedCardClass}>
                     <h3 className={detailHeadingClass}>{t(`${key}.financialSummary`)}</h3>
@@ -623,26 +649,6 @@ const RecordsPageContent = () => {
                       : [],
                   )}
                 </div>
-                {unit !== undefined && (
-                  <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
-                    <h3 className={detailHeadingClass}>
-                      {unit.code} · {unit.name}
-                    </h3>
-                    <p className={secondaryTextClass}>
-                      {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'} ·{' '}
-                      {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
-                    </p>
-                    {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
-                    <UnitStory
-                      agreements={model.agreements}
-                      language={model.language}
-                      occupancy={model.occupancy}
-                      t={t}
-                      tasks={model.work?.items}
-                      unit={unit}
-                    />
-                  </aside>
-                )}
                 {asset !== undefined && (
                   <aside className={relatedCardClass}>
                     <h3 className={detailHeadingClass}>

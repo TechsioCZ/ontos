@@ -140,7 +140,8 @@
       "contract": "Contract",
       "lease": "Lease",
       "tasks": "Service tasks",
-      "invoice": "Invoice"
+      "invoice": "Invoice",
+      "unavailable": "unavailable"
     },
     "related": {
       "unitCard": "Unit and building",
