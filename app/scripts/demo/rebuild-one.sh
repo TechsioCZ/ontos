@@ -199,8 +199,17 @@ stop_pid composition
 docker --context orbstack exec ontos-demo-db psql -q -U "${POSTGRES_USER:-ontos_admin}" -d "${POSTGRES_DB:-siampark_demo}" \
   -c "update core.application_composition_authority set valid_until = now() + interval '30 minutes' where valid_until < now() + interval '2 minutes'" \
   >/dev/null 2>&1 || true
+# Demo only: party search projections that no worker claimed would block the drain forever (STATUS 02:37, 14:51).
+docker --context orbstack exec ontos-demo-db psql -q -U "${POSTGRES_USER:-ontos_admin}" -d "${POSTGRES_DB:-siampark_demo}" \
+  -c "update core.outbox_deliveries set status = 'done', updated_at = now() where status = 'pending' and attempts_count = 0 and worker_key like 'party.registry.project-%-to-search' and created_at < now() - interval '2 minutes'" \
+  >/dev/null 2>&1 || true
 start composition "${NO_GIT[@]}" "${WITH_ENV[@]}" node scripts/siampark/development-composition.mts \
   --environment development --port "$COMPOSITION_PORT"
 wait_http "http://127.0.0.1:$COMPOSITION_PORT/active" 180 composition
 [ "$changed_set" = 1 ] && say "served verticals now: ${SERVED[*]}"
+# Keep the outbox worker host alive so deliveries are processed instead of piling up before the next drain.
+if ! kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid" 2>/dev/null)" 2>/dev/null; then
+  start outbox-worker-host "${WITH_ENV[@]}" node --experimental-strip-types ./scripts/outbox-worker-host.generated.mts
+  say "started the outbox worker host"
+fi
 say "done: ${*:-composition}"
