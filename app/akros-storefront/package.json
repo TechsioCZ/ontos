@@ -8,6 +8,7 @@
     "build": "next build",
     "catalog:generate": "node scripts/generate-akros-catalog.mjs",
     "start": "next start",
+    "check:browser-bundle": "node scripts/check-browser-bundle.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",

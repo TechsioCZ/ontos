@@ -1,5 +1,12 @@
 import type { NextConfig } from "next";
 
+// Extra https image hosts an OntOS admin may use (comma-separated). Must match the server env at build AND start;
+// src/ontos/catalog-projection.ts replaces images from any other host with the honest placeholder.
+const extraImageHosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
+
 const nextConfig: NextConfig = {
   agentRules: false,
   images: {
@@ -9,6 +16,11 @@ const nextConfig: NextConfig = {
         hostname: "www.akros.cz",
         pathname: "/data/**",
       },
+      ...extraImageHosts.map((hostname) => ({
+        protocol: "https" as const,
+        hostname,
+        pathname: "/**",
+      })),
     ],
   },
   reactStrictMode: true,
