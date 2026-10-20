@@ -63,15 +63,15 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     ),
     header: 'Objednávka',
     id: 'number',
-    meta: { type: 'string', width: 170 },
+    meta: { type: 'string', width: 155 },
   },
-  { accessorKey: 'source', header: 'Zdroj', meta: { type: 'string', width: 130 } },
+  { accessorKey: 'source', header: 'Zdroj', meta: { type: 'string', width: 115 } },
   {
     accessorFn: (order) => order.orderedAt ?? '',
     cell: (info) => orderDate(info.row.original),
     header: 'Datum',
     id: 'orderedAt',
-    meta: { type: 'string', width: 120 },
+    meta: { type: 'string', width: 110 },
   },
   {
     accessorFn: (order) => clientLabel(records, order.clientId) ?? '',
@@ -80,7 +80,9 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
       return order.clientId === undefined ? (
         <div className="flex min-w-0 flex-col items-start gap-50">
           <PairingStateBadge order={order} />
-          <span className="truncate text-fg-secondary text-xs">{order.customerName ?? order.externalCustomerId ?? '—'}</span>
+          <span className="truncate text-fg-secondary text-xs">
+            {order.customerName ?? order.externalCustomerId ?? '—'}
+          </span>
         </div>
       ) : (
         <span className="truncate">{clientLabel(records, order.clientId)}</span>
@@ -88,7 +90,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     },
     header: 'Klient',
     id: 'client',
-    meta: { type: 'string', width: 220 },
+    meta: { type: 'string', width: 190 },
   },
   {
     accessorFn: (order) => Number(order.amount ?? 0),
@@ -99,20 +101,20 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     ),
     header: 'Částka',
     id: 'amount',
-    meta: { align: 'end', type: 'number', width: 140 },
+    meta: { align: 'end', type: 'number', width: 135 },
   },
   {
     accessorKey: 'rawStatus',
     cell: (info) => <RawStatusBadge status={info.row.original.rawStatus} />,
     header: 'Stav ve zdroji',
-    meta: { type: 'string', width: 140 },
+    meta: { type: 'string', width: 130 },
   },
   {
     accessorFn: (order) => order.lastEventAt ?? order.receivedAt,
     cell: (info) => <span className="text-sm">{lastChange(info.row.original)}</span>,
     header: 'Poslední změna',
     id: 'lastEventAt',
-    meta: { type: 'string', width: 160 },
+    meta: { type: 'string', width: 145 },
   },
   {
     accessorFn: (order) => (needsReview(order) ? 1 : 0),
@@ -130,7 +132,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     },
     header: 'Kontrola',
     id: 'review',
-    meta: { type: 'number', width: 130 },
+    meta: { type: 'number', width: 110 },
   },
 ];
 
@@ -159,10 +161,25 @@ const batchColumns = (records: RecordsResponse): ColumnDef<ImportBatch>[] => [
     meta: { type: 'string', width: 190 },
   },
   { accessorKey: 'rowCount', header: 'Řádků', meta: { align: 'end', type: 'number', width: 80 } },
-  { accessorFn: (batch) => batch.created ?? 0, header: 'Nové', id: 'created', meta: { align: 'end', type: 'number', width: 80 } },
-  { accessorFn: (batch) => batch.updated ?? 0, header: 'Změny', id: 'updated', meta: { align: 'end', type: 'number', width: 80 } },
+  {
+    accessorFn: (batch) => batch.created ?? 0,
+    header: 'Nové',
+    id: 'created',
+    meta: { align: 'end', type: 'number', width: 80 },
+  },
+  {
+    accessorFn: (batch) => batch.updated ?? 0,
+    header: 'Změny',
+    id: 'updated',
+    meta: { align: 'end', type: 'number', width: 80 },
+  },
   { accessorKey: 'duplicates', header: 'Duplicity', meta: { align: 'end', type: 'number', width: 90 } },
-  { accessorFn: (batch) => batch.review ?? 0, header: 'Ke kontrole', id: 'review', meta: { align: 'end', type: 'number', width: 100 } },
+  {
+    accessorFn: (batch) => batch.review ?? 0,
+    header: 'Ke kontrole',
+    id: 'review',
+    meta: { align: 'end', type: 'number', width: 100 },
+  },
   { accessorKey: 'rejected', header: 'Chyby', meta: { align: 'end', type: 'number', width: 80 } },
   {
     accessorKey: 'status',
@@ -297,19 +314,29 @@ const TemplateTab = ({ onImportSample }: { readonly onImportSample: (draft: Impo
                   )}
                 </td>
                 <td className="px-150 py-100">{column.label}</td>
-                <td className="max-w-64 break-all px-150 py-100 font-mono text-fg-secondary text-xs">{column.example}</td>
+                <td className="max-w-64 break-all px-150 py-100 font-mono text-fg-secondary text-xs">
+                  {column.example}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <ul className="flex list-disc flex-col gap-50 ps-250 text-sm">
-        <li>Objednávku určuje dvojice zdroj + ID objednávky. Další řádek se stejným ID přidá stav do historie, nikdy druhou objednávku.</li>
+        <li>
+          Objednávku určuje dvojice zdroj + ID objednávky. Další řádek se stejným ID přidá stav do historie, nikdy
+          druhou objednávku.
+        </li>
         <li>Stejná událost (ID události, nebo stav + čas) se při opakovaném importu ignoruje – počty se nezmění.</li>
         <li>Starší nebo současně sporná událost nepřepíše novější stav; uloží se a označí „vyžaduje kontrolu“.</li>
-        <li>Klient se přiřadí jen podle schválené vazby ID zákazníka. Shoda IČO, e-mailu nebo názvu je jen návrh k ruční kontrole.</li>
+        <li>
+          Klient se přiřadí jen podle schválené vazby ID zákazníka. Shoda IČO, e-mailu nebo názvu je jen návrh k ruční
+          kontrole.
+        </li>
         <li>Stejné číslo objednávky ze dvou zdrojů se nesčítá dvakrát – čeká na rozhodnutí.</li>
-        <li>Chybný řádek dostane čitelnou chybu, ostatní řádky se uloží. Položky se ukládají jen, když je zdroj posílá.</li>
+        <li>
+          Chybný řádek dostane čitelnou chybu, ostatní řádky se uloží. Položky se ukládají jen, když je zdroj posílá.
+        </li>
       </ul>
     </SectionCard>
     <SectionCard title="Vzorové soubory">
@@ -395,7 +422,9 @@ const ImportsContent = () => {
           )
           .filter((order) => source === ALL || order.source === source)
           .filter((order) => matchesSearch(orderSearchText(records, order), search))
-          .toSorted((left, right) => (right.lastEventAt ?? right.receivedAt).localeCompare(left.lastEventAt ?? left.receivedAt));
+          .toSorted((left, right) =>
+            (right.lastEventAt ?? right.receivedAt).localeCompare(left.lastEventAt ?? left.receivedAt),
+          );
         const lastBatch = batches[0];
         const detail = orders.find((order) => order.id === orderId);
         return (
@@ -435,13 +464,19 @@ const ImportsContent = () => {
               />
               {lead && (
                 <StatCard
-                  hint={lastBatch === undefined ? 'zatím žádný import' : `Poslední ${formatDateTime(lastBatch.importedAt)}`}
+                  hint={
+                    lastBatch === undefined ? 'zatím žádný import' : `Poslední ${formatDateTime(lastBatch.importedAt)}`
+                  }
                   label="Importní dávky"
                   value={formatNumber(batches.length)}
                 />
               )}
               {lead && (
-                <StatCard hint="bez schválené vazby na klienta" label="K napárování" value={formatNumber(queue.length)} />
+                <StatCard
+                  hint="bez schválené vazby na klienta"
+                  label="K napárování"
+                  value={formatNumber(queue.length)}
+                />
               )}
               <StatCard
                 hint="sporné pořadí stavů nebo duplicita zdrojů"
@@ -452,8 +487,8 @@ const ImportsContent = () => {
             <CrmScopeNote records={records} />
             {!lead && (
               <p className="text-fg-secondary text-sm">
-                Import, frontu k napárování a historii importů spravuje vedení obchodu. Vidíte jen objednávky napárované na
-                vaše klienty.
+                Import, frontu k napárování a historii importů spravuje vedení obchodu. Vidíte jen objednávky napárované
+                na vaše klienty.
               </p>
             )}
             <Tabs onValueChange={setTab} size="sm" value={tab} variant="line">
@@ -491,7 +526,10 @@ const ImportsContent = () => {
                   </div>
                   <div className="w-44">
                     <SelectTemplate
-                      items={[{ label: 'Všechny zdroje', value: ALL }, ...sources.map((entry) => ({ label: entry, value: entry }))]}
+                      items={[
+                        { label: 'Všechny zdroje', value: ALL },
+                        ...sources.map((entry) => ({ label: entry, value: entry })),
+                      ]}
                       label="Zdroj"
                       name="sourceFilter"
                       onValueChange={(details) => setSource(details.value[0] ?? ALL)}
@@ -510,7 +548,11 @@ const ImportsContent = () => {
                           </Button>
                         ) : undefined
                       }
-                      description={lead ? 'Naimportujte první soubor objednávek.' : 'Vašim klientům zatím nebyla přiřazena žádná objednávka.'}
+                      description={
+                        lead
+                          ? 'Naimportujte první soubor objednávek.'
+                          : 'Vašim klientům zatím nebyla přiřazena žádná objednávka.'
+                      }
                       title="Zatím žádné objednávky"
                     />
                   </SectionCard>
@@ -537,7 +579,10 @@ const ImportsContent = () => {
                 <Tabs.Content className="flex flex-col gap-200 pt-250" value="batches">
                   {batches.length === 0 ? (
                     <SectionCard>
-                      <EmptyState description="Každý import se tu uloží s počty a chybami po řádcích." title="Zatím žádný import" />
+                      <EmptyState
+                        description="Každý import se tu uloží s počty a chybami po řádcích."
+                        title="Zatím žádný import"
+                      />
                     </SectionCard>
                   ) : (
                     <DataTable
@@ -555,7 +600,9 @@ const ImportsContent = () => {
                 </Tabs.Content>
               )}
               <Tabs.Content className="pt-250" value="template">
-                <TemplateTab onImportSample={(draft) => (canImport ? openImport(draft) : downloadText(draft.fileName, draft.csv))} />
+                <TemplateTab
+                  onImportSample={(draft) => (canImport ? openImport(draft) : downloadText(draft.fileName, draft.csv))}
+                />
               </Tabs.Content>
             </Tabs>
             {detail !== undefined && (

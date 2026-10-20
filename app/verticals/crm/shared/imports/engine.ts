@@ -86,7 +86,10 @@ export const pairingCandidates = (
 
 const sameEvent = (left: OrderStatusEvent, right: OrderStatusEvent) =>
   left.eventId !== undefined && right.eventId !== undefined
-    ? left.eventId === right.eventId && left.source === right.source
+    ? left.eventId === right.eventId &&
+      left.source === right.source &&
+      left.rawStatus === right.rawStatus &&
+      left.eventAt === right.eventAt
     : left.rawStatus === right.rawStatus && left.eventAt === right.eventAt;
 
 const orderKey = (source: string, externalId: string) => `${source}\u0000${externalId}`;
@@ -96,7 +99,11 @@ const definedEntries = <T extends Record<string, unknown>>(value: T) =>
     [K in keyof T]?: Exclude<T[K], undefined>;
   };
 
-const pragueTime = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Prague' });
+const pragueTime = new Intl.DateTimeFormat('cs-CZ', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Europe/Prague',
+});
 /** Readable Prague time for review reasons stored with the order. */
 const formatFor = (value: string | undefined) => {
   if (value === undefined) {
@@ -199,17 +206,27 @@ export const importOrders = (
 
   const updateOrder = (existing: ImportedOrder, row: ParsedOrderRow, event: OrderStatusEvent) => {
     if (existing.statusHistory.some((entry) => sameEvent(entry, event))) {
-      return { message: 'Stejná událost už byla importována, nic se nezměnilo', orderId: existing.id, outcome: 'duplicate' as const };
+      return {
+        message: 'Stejná událost už byla importována, nic se nezměnilo',
+        orderId: existing.id,
+        outcome: 'duplicate' as const,
+      };
     }
     const last = existing.lastEventAt;
-    const reviewReason =
-      event.eventAt === undefined
+    const conflictingEventId =
+      event.eventId !== undefined &&
+      existing.statusHistory.some((entry) => entry.eventId === event.eventId && entry.source === event.source);
+    const reviewReason = conflictingEventId
+      ? 'Stejné ID události už přišlo s jiným stavem nebo časem, zdrojová data jsou sporná'
+      : event.eventAt === undefined
         ? 'Chybí čas události, pořadí změn nelze ověřit'
-        : last !== undefined && event.eventAt < last
-          ? `Událost je starší než poslední známý stav „${existing.rawStatus}“ (${formatFor(last)}), nepřepisuje ho`
-          : last !== undefined && event.eventAt === last && event.rawStatus !== existing.rawStatus
-            ? `Ve stejném čase už je stav „${existing.rawStatus}“, nový stav je sporný`
-            : undefined;
+        : last === undefined
+          ? 'Předchozí stav nemá čas události, pořadí změn nelze bezpečně ověřit'
+          : event.eventAt < last
+            ? `Událost je starší než poslední známý stav „${existing.rawStatus}“ (${formatFor(last)}), nepřepisuje ho`
+            : last !== undefined && event.eventAt === last && event.rawStatus !== existing.rawStatus
+              ? `Ve stejném čase už je stav „${existing.rawStatus}“, nový stav je sporný`
+              : undefined;
     const filled = definedEntries({
       amount: existing.amount ?? row.amount,
       currency: existing.currency ?? row.currency,
@@ -281,7 +298,9 @@ export const importOrders = (
     duplicates,
     errors: [
       ...(parsed.fileError === undefined ? [] : [{ message: parsed.fileError, row: 1 }]),
-      ...results.filter((result) => result.outcome === 'error').map((result) => ({ message: result.message, row: result.row })),
+      ...results
+        .filter((result) => result.outcome === 'error')
+        .map((result) => ({ message: result.message, row: result.row })),
     ],
     fileName: meta.fileName,
     format: ORDERS_CSV_FORMAT,

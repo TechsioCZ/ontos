@@ -70,6 +70,7 @@ export const ImportPanel = ({
   const readFile = (file: File) => {
     setFileError(undefined);
     if (file.size > MAX_BYTES) {
+      setDraft(undefined);
       setFileError('Soubor je pro demo import příliš velký (max. 350 kB).');
       return;
     }
@@ -154,7 +155,12 @@ export const ImportPanel = ({
             {draft === undefined ? 'Přetáhněte sem soubor CSV' : `Načteno: ${draft.fileName}`}
           </span>
           <div className="flex flex-wrap justify-center gap-100">
-            <Button icon="icon-[mdi--folder-open-outline]" onClick={() => inputRef.current?.click()} size="sm" variant="secondary">
+            <Button
+              icon="icon-[mdi--folder-open-outline]"
+              onClick={() => inputRef.current?.click()}
+              size="sm"
+              variant="secondary"
+            >
               Vybrat soubor
             </Button>
             <Button
@@ -206,6 +212,7 @@ export const ImportPanel = ({
               className="font-mono"
               id="crm-import-paste"
               label="Obsah CSV (první řádek je hlavička)"
+              maxLength={MAX_BYTES}
               onChange={(event) => setPaste(event.target.value)}
               rows={6}
               size="sm"

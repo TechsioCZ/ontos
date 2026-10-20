@@ -122,6 +122,10 @@ describe('CRM order CSV parser', () => {
     });
     expect(first?.kind === 'ok' ? first.value.lines?.length : 0).toBe(3);
   });
+  it('requires currency for supplied line amounts even when the order total is absent', () => {
+    const parsed = parseOrdersCsv('zdroj;id_objednavky;stav;polozky\nE-shop;1;nova;SKU:Mouka:2:450.00\n');
+    expect(parsed.rows[0]).toMatchObject({ kind: 'error', message: 'Částka položky bez měny: doplňte sloupec mena' });
+  });
   it('rejects a file without required columns', () => {
     expect(parseOrdersCsv('a;b\n1;2').fileError).toContain('zdroj');
   });
@@ -130,7 +134,13 @@ describe('CRM order CSV parser', () => {
 describe('CRM order import (C03)', () => {
   it('C03-01 seeded import keeps source, number and raw state; pairs only approved links (C04-01)', () => {
     expect(seeded.imports.orders).toHaveLength(28);
-    expect(seeded.imports.batches[0]).toMatchObject({ created: 28, rejected: 0, rowCount: 29, status: 'completed', updated: 1 });
+    expect(seeded.imports.batches[0]).toMatchObject({
+      created: 28,
+      rejected: 0,
+      rowCount: 29,
+      status: 'completed',
+      updated: 1,
+    });
     expect(order(seeded, '100201')).toMatchObject({
       clientId: 'pekarna-mala',
       number: 'OBJ-2026-0201',
@@ -174,6 +184,41 @@ describe('CRM order import (C03)', () => {
     expect(twice.imports.batches[0]).toMatchObject({ accepted: 0, duplicates: 9, rejected: 0 });
     const again = runOk(seeded, sample('initial'));
     expect(again.imports.orders).toHaveLength(28);
+  });
+  it('preserves the current state when the previous event has no timestamp', () => {
+    const first = runOk(base, {
+      _tag: 'ImportOrdersCsv',
+      csv: 'zdroj;id_objednavky;stav\nE-shop;1;dorucena\n',
+      fileName: 'bez-casu.csv',
+    });
+    const next = runOk(first, {
+      _tag: 'ImportOrdersCsv',
+      csv: 'zdroj;id_objednavky;stav;cas_udalosti\nE-shop;1;nova;2026-10-19T10:00:00+02:00\n',
+      fileName: 'stav.csv',
+    });
+    expect(order(next, '1').rawStatus).toBe('dorucena');
+    expect(openReviewEvents(order(next, '1'))).toHaveLength(1);
+    expect(next.imports.batches[0]?.results?.[0]?.message).toContain('Předchozí stav nemá čas');
+  });
+  it('keeps conflicting payloads of the same event ID for review and deduplicates their replay', () => {
+    const header = 'zdroj;id_objednavky;stav;cas_udalosti;id_udalosti\n';
+    const first = runOk(base, {
+      _tag: 'ImportOrdersCsv',
+      csv: `${header}E-shop;1;dorucena;2026-10-19T10:00:00+02:00;event-1\n`,
+      fileName: 'prvni.csv',
+    });
+    const command = {
+      _tag: 'ImportOrdersCsv' as const,
+      csv: `${header}E-shop;1;stornovana;2026-10-20T10:00:00+02:00;event-1\n`,
+      fileName: 'konflikt.csv',
+    };
+    const next = runOk(first, command);
+    expect(order(next, '1').rawStatus).toBe('dorucena');
+    expect(openReviewEvents(order(next, '1'))).toHaveLength(1);
+    expect(next.imports.batches[0]?.results?.[0]?.message).toContain('Stejné ID události');
+    const replay = runOk(next, command);
+    expect(order(replay, '1').statusHistory).toHaveLength(2);
+    expect(replay.imports.batches[0]?.duplicates).toBe(1);
   });
   it('bad rows produce readable errors and do not block good rows', () => {
     const next = runOk(seeded, sample('errors'));
@@ -224,11 +269,16 @@ describe('CRM order pairing (C04)', () => {
       orderId: target.id,
       reason: 'Oprava chybného přiřazení',
     });
-    expect(moved.imports.pairingHistory.at(-1)).toMatchObject({ fromClientId: 'pekarna-mala', toClientId: 'zlata-husa' });
+    expect(moved.imports.pairingHistory.at(-1)).toMatchObject({
+      fromClientId: 'pekarna-mala',
+      toClientId: 'zlata-husa',
+    });
     const unpaired = runOk(moved, { _tag: 'UnpairOrder', orderId: target.id, reason: 'Nejasný odběratel' });
     expect(order(unpaired, '100201').pairing).toBe('unpaired');
     expect(
-      Exit.isFailure(run(seeded, { _tag: 'PairOrder', clientId: 'pekarna-mala', orderId: target.id, reason: 'xxx' }, repA)),
+      Exit.isFailure(
+        run(seeded, { _tag: 'PairOrder', clientId: 'pekarna-mala', orderId: target.id, reason: 'xxx' }, repA),
+      ),
     ).toBe(true);
   });
   it('review decisions resolve the flag with author and reason', () => {
