@@ -20,11 +20,11 @@
     "pages": {
       "orders": {
         "actions": {
-          "cancel": "Zrušit",
-          "confirm": "Potvrdit",
+          "cancel": "Stornovat",
+          "confirm": "Začít zpracovávat",
           "deliver": "Dokončit",
           "ship": "Předat dopravci (simulace)",
-          "pack": "Začít balit"
+          "pack": "Připraveno k předání"
         },
         "bulk": {
           "changeStatus": "Změnit stav",
@@ -36,7 +36,7 @@
           "selectHint": "Vyberte objednávky v tabulce pro hromadnou změnu stavu nebo štítků.",
           "selectionScope": "Akce se týkají vybraných objednávek v aktuálním filtru, včetně dalších stránek.",
           "noCommonStatus": "Vybrané objednávky nemají společný další stav. Štítky můžete upravit společně.",
-          "finalStatus": "U doručených a zrušených objednávek už stav změnit nelze. Štítky můžete upravit společně."
+          "finalStatus": "U dokončených a stornovaných objednávek už stav změnit nelze. Štítky můžete upravit společně."
         },
         "columns": {
           "createdAt": "Vytvořeno",
@@ -49,11 +49,11 @@
         },
         "confirm": {
           "back": "Zpět",
-          "cancelAction": "Zrušit objednávku",
-          "cancelBulkAction": "Zrušit objednávky",
-          "cancelBulkTitle": "Zrušit vybrané objednávky?",
-          "cancelTitle": "Zrušit objednávku {{number}}?",
-          "description": "Objednávka se přepne do stavu Zrušená."
+          "cancelAction": "Stornovat objednávku",
+          "cancelBulkAction": "Stornovat objednávky",
+          "cancelBulkTitle": "Stornovat vybrané objednávky?",
+          "cancelTitle": "Stornovat objednávku {{number}}?",
+          "description": "Objednávka se přepne do stavu Stornovaná."
         },
         "create": {
           "addLine": "Přidat položku",
@@ -110,10 +110,10 @@
           "opportunity": "Příležitost"
         },
         "stats": {
-          "cancelled": "Zrušeno",
+          "cancelled": "Stornováno",
           "open": "Otevřené",
-          "openHint": "Nové a potvrzené",
-          "shippedThisMonth": "Odesláno tento měsíc",
+          "openHint": "Nové a ve zpracování",
+          "shippedThisMonth": "Předáno dopravci tento měsíc",
           "total": "Objednávky celkem"
         },
         "states": {
@@ -147,13 +147,13 @@
         },
         "title": "Objednávky",
         "toast": {
-          "cancelled": "Objednávka zrušena",
-          "confirmed": "Objednávka potvrzena",
+          "cancelled": "Objednávka stornována",
+          "confirmed": "Objednávka se zpracovává",
           "created": "Objednávka vytvořena",
           "delivered": "Objednávka dokončena",
           "shipped": "Předáno dopravci (simulace)",
           "statusFailed": "Stav se nepodařilo změnit.",
-          "packing": "Objednávka se balí"
+          "packing": "Objednávka je připravená k předání"
         },
         "customers": {
           "unknown": "Neznámý zákazník"

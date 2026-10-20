@@ -22,8 +22,8 @@ export const isOrderEditable = (order: Pick<Order, 'status'>): boolean =>
 /** The fixed e-shop workflow, in order. CANCELLED is the side exit. */
 export const workflowSteps: readonly { readonly label: string; readonly status: OrderStatus }[] = [
   { label: 'Nová', status: 'NEW' },
-  { label: 'Potvrzená', status: 'CONFIRMED' },
-  { label: 'Balí se', status: 'PACKING' },
+  { label: 'Zpracovává se', status: 'CONFIRMED' },
+  { label: 'Připravená k předání', status: 'PACKING' },
   { label: 'Předáno dopravci (simulace)', status: 'SHIPPED' },
   { label: 'Dokončená', status: 'DELIVERED' },
 ];

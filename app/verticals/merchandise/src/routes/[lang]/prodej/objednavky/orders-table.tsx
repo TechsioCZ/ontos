@@ -21,9 +21,9 @@ export const ordersColumns = (
 ): ColumnDef<Order>[] => [
   {
     accessorKey: 'number',
-    cell: (info) => <span className="font-medium">{info.getValue<string>()}</span>,
+    cell: (info) => <span className="whitespace-nowrap font-medium">{info.getValue<string>()}</span>,
     header: t(key('columns.number')),
-    meta: { type: 'string', width: 120 },
+    meta: { type: 'string', width: 140 },
   },
   {
     accessorFn: (order) => orderCustomerName(order, customers) ?? '',
@@ -71,9 +71,13 @@ export const ordersColumns = (
   },
   {
     accessorKey: 'status',
-    cell: (info) => <StatusBadge kind="order" value={info.getValue<string>()} />,
+    cell: (info) => (
+      <span className="whitespace-nowrap">
+        <StatusBadge kind="order" value={info.getValue<string>()} />
+      </span>
+    ),
     header: t(key('columns.status')),
-    meta: { type: 'string', width: 160 },
+    meta: { type: 'string', width: 190 },
   },
   {
     cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,

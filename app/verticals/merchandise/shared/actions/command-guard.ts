@@ -52,6 +52,20 @@ export const assertStorefrontScope = (
         }),
       );
 
+/**
+ * In the e-shop company, a non-human principal (the storefront BFF key) only ever reads the public storefront view:
+ * published active products and, at most, the one order it placed by `clientRequestId`. Staff data (all orders with
+ * customer contacts, stock ledger, order indicators) stays server-side even if the key omits the storefront flag.
+ */
+export const storefrontReadRequest = <Request extends { readonly view?: { readonly storefront?: boolean } }>(
+  principalKind: PrincipalKind,
+  legalEntityId: string | undefined,
+  request: Request,
+): Request =>
+  principalKind === 'human' || legalEntityId !== ESHOP_LEGAL_ENTITY_ID
+    ? request
+    : { ...request, view: { ...request.view, storefront: true } };
+
 /** Wraps the apply-command handler: the guard runs before any state is loaded. */
 export const withCommandGuard =
   <

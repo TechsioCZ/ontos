@@ -229,11 +229,11 @@ const czk = (minor: number) =>
   `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 0 })} Kč`;
 
 export const orderStatusLabels: Readonly<Record<OrderStatus, string>> = {
-  CANCELLED: 'Zrušená',
-  CONFIRMED: 'Potvrzená',
+  CANCELLED: 'Stornovaná',
+  CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
-  PACKING: 'Balí se',
+  PACKING: 'Připravená k předání',
   SHIPPED: 'Předáno dopravci (simulace)',
 };
 
@@ -1207,15 +1207,16 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const response: RecordsResponse = {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite: yield* contextGrant('write_all'),
+        // The storefront view never reveals staff totals: its indicators cover only what the view returns.
         indicators: {
-          lowStockCount: allProducts.filter((record) => record.lowStock).length,
+          lowStockCount: (storefront ? filteredProducts : allProducts).filter((record) => record.lowStock).length,
           openOrderValueMinor: sumOf(
-            orders.filter((order) => openOrderStatuses.has(order.status)),
+            (storefront ? filteredOrders : orders).filter((order) => openOrderStatuses.has(order.status)),
             (order) => order.totalMinor,
           ),
-          orderCount: orders.length,
-          productCount: allProducts.length,
-          stockValueMinor: sumOf(allProducts, (record) => record.stockValueMinor),
+          orderCount: (storefront ? filteredOrders : orders).length,
+          productCount: (storefront ? filteredProducts : allProducts).length,
+          stockValueMinor: storefront ? 0 : sumOf(allProducts, (record) => record.stockValueMinor),
         },
         movements: filteredMovements,
         orders: filteredOrders,

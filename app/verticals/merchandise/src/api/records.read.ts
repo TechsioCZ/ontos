@@ -15,6 +15,7 @@ import type {
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { principalKindOf, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -83,10 +84,12 @@ export const recordsRead = defineRead(
     ReadPermissionDenied | ReadHandlerUnavailable,
     Effect.Services<ReturnType<typeof persistenceService>>
   > =>
-    context.services.records(input).pipe(
-      Effect.mapError(readFailure),
-      Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),
-    ),
+    context.services
+      .records(storefrontReadRequest(principalKindOf(context.scope.authMethod), context.scope.legalEntityId, input))
+      .pipe(
+        Effect.mapError(readFailure),
+        Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),
+      ),
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: moduleKey }),
 );

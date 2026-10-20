@@ -27,7 +27,7 @@ export type VatRate = typeof VatRateSchema.Type;
 export const StockMovementReasonSchema = Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT', 'ORDER']);
 export type StockMovementReason = typeof StockMovementReasonSchema.Type;
 /**
- * Order workflow. PACKING („Balí se / Připravená k předání“) was added for the e-shop demo; SHIPPED is the
+ * Order workflow. PACKING („Připravená k předání“), CONFIRMED („Zpracovává se“) was added for the e-shop demo; SHIPPED is the
  * simulated hand-over to a carrier („Předáno dopravci (simulace)“), DELIVERED is „Dokončená“.
  */
 export const OrderStatusSchema = Schema.Literals(['NEW', 'CONFIRMED', 'PACKING', 'SHIPPED', 'DELIVERED', 'CANCELLED']);

@@ -38,7 +38,7 @@ interface OrderDetailDialogProps {
 
 const DEMO_NOTICE = 'E-shop je prezentační demo. Žádné zboží nebude doručeno a nic se neplatí.';
 
-/** Horizontal workflow: Nová → Potvrzená → Balí se → Předáno dopravci (simulace) → Dokončená. */
+/** Horizontal workflow: Nová → Zpracovává se → Připravená k předání → Předáno dopravci (simulace) → Dokončená. */
 const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
   const current = workflowIndex(status);
   if (status === 'CANCELLED') {
@@ -313,7 +313,9 @@ export const OrderDetailDialog = ({
                   <Table.ColumnHeader align="end">
                     {t('merchandise.pages.orders.detail.lineQuantity')}
                   </Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{gross ? 'Cena/j s DPH' : 'Cena/j bez DPH'}</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">
+                    <span className="whitespace-nowrap">{gross ? 'Cena/j s DPH' : 'Cena/j bez DPH'}</span>
+                  </Table.ColumnHeader>
                   <Table.ColumnHeader align="end">{t('merchandise.pages.orders.detail.lineVat')}</Table.ColumnHeader>
                   <Table.ColumnHeader align="end">{t('merchandise.pages.orders.detail.lineTotal')}</Table.ColumnHeader>
                 </Table.Row>
@@ -329,16 +331,16 @@ export const OrderDetailDialog = ({
                         </span>
                       </div>
                     </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
+                    <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
                       {line.quantity}
                     </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
+                    <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
                       {formatMoney(line.unitPriceMinor)}
                     </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
+                    <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
                       {`${line.vatRate} %`}
                     </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
+                    <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
                       {formatMoney(lineGrossMinor(line, order.pricesIncludeVat))}
                     </Table.Cell>
                   </Table.Row>

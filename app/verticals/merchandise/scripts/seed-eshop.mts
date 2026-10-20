@@ -582,11 +582,11 @@ const openingMovements = (product: SeedProduct): EncodedMovement[] => {
 };
 
 const statusLabels: Readonly<Record<OrderStatus, string>> = {
-  CANCELLED: 'Zrušená',
-  CONFIRMED: 'Potvrzená',
+  CANCELLED: 'Stornovaná',
+  CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
-  PACKING: 'Balí se',
+  PACKING: 'Připravená k předání',
   SHIPPED: 'Předáno dopravci (simulace)',
 };
 
