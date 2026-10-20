@@ -141,54 +141,74 @@ const PlanCard = ({
         </div>
       </dl>
       {plan.note !== undefined && <p className="text-fg-secondary text-sm">{plan.note}</p>}
-      <Table size="sm" variant="line">
-        <Table.Header>
-          <Table.Row>
-            <Table.ColumnHeader>{k('fields.period')}</Table.ColumnHeader>
-            <Table.ColumnHeader align="end">{k('depreciation.indicative')}</Table.ColumnHeader>
-            <Table.ColumnHeader align="end">{k('fields.approvedAmount')}</Table.ColumnHeader>
-            <Table.ColumnHeader>{k('fields.documentRef')}</Table.ColumnHeader>
-            <Table.ColumnHeader>{k('depreciation.recordedBy')}</Table.ColumnHeader>
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {[...visible, ...extra.map((entry) => ({ amountMinor: undefined, period: entry.period }))].map((row) => {
-            const entry = entries.get(row.period);
-            return (
-              <Table.Row key={row.period}>
-                <Table.Cell className="tabular-nums">{row.period}</Table.Cell>
-                <Table.Cell align="end" className="text-fg-secondary tabular-nums">
-                  {row.amountMinor === undefined ? '—' : formatMoney(row.amountMinor)}
-                </Table.Cell>
-                <Table.Cell align="end" className="font-medium tabular-nums">
-                  {entry === undefined ? (
-                    <span className="font-normal text-fg-secondary">{k('depreciation.notApproved')}</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-100">
-                      {entry.partial === true && (
-                        <Badge size="sm" variant="warning">
-                          {k('depreciation.partial')}
-                        </Badge>
-                      )}
-                      {formatMoney(entry.amountMinor)}
-                    </span>
-                  )}
-                </Table.Cell>
-                <Table.Cell>{entry?.documentRef ?? (entry === undefined ? '' : k('notProvided'))}</Table.Cell>
-                <Table.Cell className="text-fg-secondary text-xs">
-                  {entry === undefined
-                    ? ''
-                    : `${principalLabel(entry.by, actor, k('you'))} · ${instantLabel(entry.at)}`}
-                  {entry?.note === undefined ? null : <div className="text-fg-primary">{entry.note}</div>}
-                </Table.Cell>
-              </Table.Row>
-            );
-          })}
-        </Table.Body>
-      </Table>
-      <div className="flex flex-wrap items-center justify-between gap-100 text-fg-secondary text-xs">
+      {/* Keep the audit's intrinsic width inside its own viewport, not the panel's prose and controls. */}
+      <div
+        aria-label={k(`depreciation.${plan.type}Plan`)}
+        role="region"
+        style={{ maxWidth: '100%', minWidth: 0, overflowX: 'auto', overscrollBehaviorX: 'contain' }}
+        tabIndex={0}
+      >
+        <Table size="sm" style={{ minWidth: 840 }} variant="line">
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeader style={{ whiteSpace: 'nowrap' }}>{k('fields.period')}</Table.ColumnHeader>
+              <Table.ColumnHeader align="end" style={{ whiteSpace: 'nowrap' }}>
+                {k('depreciation.indicative')}
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" style={{ whiteSpace: 'nowrap' }}>
+                {k('fields.approvedAmount')}
+              </Table.ColumnHeader>
+              <Table.ColumnHeader style={{ whiteSpace: 'nowrap' }}>{k('fields.documentRef')}</Table.ColumnHeader>
+              <Table.ColumnHeader style={{ whiteSpace: 'nowrap' }}>{k('depreciation.recordedBy')}</Table.ColumnHeader>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {[...visible, ...extra.map((entry) => ({ amountMinor: undefined, period: entry.period }))].map((row) => {
+              const entry = entries.get(row.period);
+              return (
+                <Table.Row key={row.period}>
+                  <Table.Cell className="tabular-nums">{row.period}</Table.Cell>
+                  <Table.Cell align="end" className="text-fg-secondary tabular-nums">
+                    {row.amountMinor === undefined ? '—' : formatMoney(row.amountMinor)}
+                  </Table.Cell>
+                  <Table.Cell align="end" className="font-medium tabular-nums">
+                    {entry === undefined ? (
+                      <span className="font-normal text-fg-secondary">{k('depreciation.notApproved')}</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-100">
+                        {entry.partial === true && (
+                          <Badge size="sm" variant="warning">
+                            {k('depreciation.partial')}
+                          </Badge>
+                        )}
+                        {formatMoney(entry.amountMinor)}
+                      </span>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell style={{ whiteSpace: 'nowrap' }}>
+                    {entry?.documentRef ?? (entry === undefined ? '' : k('notProvided'))}
+                  </Table.Cell>
+                  <Table.Cell className="text-fg-secondary" style={{ fontSize: '1rem', minWidth: 260, maxWidth: 320 }}>
+                    {entry === undefined ? null : (
+                      <>
+                        <div>{principalLabel(entry.by, actor, k('you'))}</div>
+                        <div>{instantLabel(entry.at)}</div>
+                      </>
+                    )}
+                    {entry?.note === undefined ? null : <div className="text-fg-primary">{entry.note}</div>}
+                  </Table.Cell>
+                </Table.Row>
+              );
+            })}
+          </Table.Body>
+        </Table>
+      </div>
+      <div
+        className="flex flex-wrap items-center justify-between gap-100 text-fg-secondary"
+        style={{ fontSize: '1rem' }}
+      >
         <span>{k('depreciation.indicativeNote')}</span>
-        {schedule.length > visible.length && (
+        {(full || schedule.length > visible.length) && (
           <Button onClick={() => setFull((value) => !value)} size="sm" theme="borderless" variant="secondary">
             {full ? k('depreciation.collapse') : k('depreciation.showAll', { count: schedule.length })}
           </Button>
