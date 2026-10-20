@@ -386,9 +386,13 @@ const program = Effect.gen(function* seed() {
         yield* sql`insert into siampark_billing_finance.finance_states (tenant_id, legal_entity_id, revision, state)
           values (${TENANT}, ${LEGAL_ENTITY}, 1, ${JSON.stringify(encoded)}::jsonb)`;
       } else {
-        yield* sql`update siampark_billing_finance.finance_states
+        const updated = yield* sql`update siampark_billing_finance.finance_states
           set state = ${JSON.stringify(encoded)}::jsonb, revision = revision + 1, updated_at = now()
-          where tenant_id = ${TENANT} and legal_entity_id = ${LEGAL_ENTITY} and revision = ${existing.revision}`;
+          where tenant_id = ${TENANT} and legal_entity_id = ${LEGAL_ENTITY} and revision = ${existing.revision}
+          returning revision`;
+        if (updated.length === 0) {
+          return yield* Effect.die(new Error('finance state changed concurrently; run the seed again'));
+        }
       }
       for (const write of writes) {
         yield* sql`insert into siampark_billing_finance.finance_document_contents

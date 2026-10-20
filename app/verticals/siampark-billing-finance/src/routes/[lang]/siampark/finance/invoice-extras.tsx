@@ -579,3 +579,59 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
     </SectionCard>
   );
 };
+
+/** S09.R6: payment history of the counterparty across its other invoices. */
+export const CounterpartyHistory = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+  const key = (entry: Invoice) =>
+    entry.counterpartyRef.resourceId === '00000000-0000-4000-8000-000000000000'
+      ? `name:${entry.counterpartyName ?? ''}`
+      : entry.counterpartyRef.resourceId;
+  const related = (vm.snapshot?.state.invoices ?? []).filter(
+    (entry) => entry.businessState === 'CONFIRMED' && key(entry) === key(invoice),
+  );
+  if (related.length <= 1) {
+    return null;
+  }
+  const paid = related.filter((entry) => entry.paymentState === 'PAID').length;
+  const overdue = related.filter((entry) => remainingOf(entry) > 0 && entry.dueDate < vm.referenceDate).length;
+  const outstanding = related.reduce((sum, entry) => sum + remainingOf(entry), 0);
+  return (
+    <SectionCard title="Platební historie protistrany">
+      <div className="flex flex-col gap-100 text-sm">
+        <span>
+          {related.length} potvrzených dokladů · uhrazeno {paid} · po splatnosti{' '}
+          <strong className={overdue > 0 ? 'text-fg-danger' : ''}>{overdue}</strong>
+        </span>
+        <span>
+          Celkem neuhrazeno <strong className="tabular-nums">{formatMoney(outstanding)}</strong>
+        </span>
+        <ul className="flex flex-col divide-y divide-border-primary">
+          {related.slice(0, 6).map((entry) => (
+            <li className="flex items-center justify-between gap-100 py-50 text-xs" key={entry.ref.resourceId}>
+              <span>{entry.number ?? entry.documentNumber}</span>
+              <span className="tabular-nums">{formatMoney(entry.totalMinor)}</span>
+              <Badge
+                size="sm"
+                variant={
+                  entry.paymentState === 'PAID'
+                    ? 'success'
+                    : remainingOf(entry) > 0 && entry.dueDate < vm.referenceDate
+                      ? 'danger'
+                      : 'info'
+                }
+              >
+                {entry.paymentState === 'PAID'
+                  ? 'uhrazeno'
+                  : entry.paymentState === 'PARTIALLY_PAID'
+                    ? 'částečně'
+                    : remainingOf(entry) > 0 && entry.dueDate < vm.referenceDate
+                      ? 'po splatnosti'
+                      : 'neuhrazeno'}
+              </Badge>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </SectionCard>
+  );
+};

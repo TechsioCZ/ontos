@@ -23,7 +23,13 @@ import {
 } from './invoice-view.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { InvoiceDocuments, InvoiceHandover, InvoicePayments, InvoiceReminders } from './invoice-extras.tsx';
+import {
+  CounterpartyHistory,
+  InvoiceDocuments,
+  InvoiceHandover,
+  InvoicePayments,
+  InvoiceReminders,
+} from './invoice-extras.tsx';
 
 /** Clickable chain from the invoice back to its property, unit, lease and contract. */
 const InvoiceAnchors = ({ invoice }: { readonly invoice: Invoice }) => {
@@ -297,6 +303,9 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
             <InvoiceHandover invoice={invoice} vm={vm} />
           </div>
           <InvoiceAnchors invoice={invoice} />
+          <div className="print:hidden">
+            <CounterpartyHistory invoice={invoice} vm={vm} />
+          </div>
           <div className="flex flex-wrap items-center gap-100 print:hidden">
             <Button
               className="whitespace-nowrap"
