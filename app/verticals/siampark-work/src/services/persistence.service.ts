@@ -861,7 +861,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           (request.contextResourceId === undefined ||
             task.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
       );
-      const referenceDate = DateTime.formatIsoDate(yield* DateTime.nowInCurrentZone);
+      const referenceDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(DateTime.toDateUtc(yield* DateTime.now));
       return {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite: yield* contextGrant(scope, 'write_all'),
