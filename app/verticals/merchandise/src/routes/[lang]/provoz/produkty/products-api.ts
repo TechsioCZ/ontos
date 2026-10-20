@@ -39,8 +39,8 @@ const newId = Effect.map(
   ([first, second, third]) => `merchandise:products:${first}:${second}:${third}`,
 );
 
-/** Maps the records read's typed problems onto the four UI outcomes. Anything unlisted reads as unavailable. */
-const recordsReason = (error: RecordsFailure): FailureReason =>
+/** Keep release admission failures distinct from owner revision conflicts and ordinary network failures. */
+export const recordsReason = (error: RecordsFailure): FailureReason =>
   Match.value(error).pipe(
     Match.tag('RecordsPolicyConflictProblem', (): FailureReason => 'conflict'),
     Match.tag('RecordsAuthenticationProblem', 'RecordsForbiddenProblem', (): FailureReason => 'forbidden'),
@@ -52,6 +52,12 @@ const recordsReason = (error: RecordsFailure): FailureReason =>
       'DocumentCompositionRevisionError',
       (): FailureReason => 'reload-required',
     ),
+    // The shell module-admission seam returns a plain-text 409, not the owner problem JSON.
+    Match.tag('HttpClientError', (problem): FailureReason =>
+      problem.response?.status === 409 && problem.request.url.includes('/module-api/')
+        ? 'reload-required'
+        : 'unavailable',
+    ),
     Match.tag(
       'RecordsNotFoundProblem',
       'RecordsUnavailableProblem',
@@ -59,7 +65,6 @@ const recordsReason = (error: RecordsFailure): FailureReason =>
       'GatewayRateLimitedProblem',
       'GatewayUnavailableProblem',
       'GatewayInternalProblem',
-      'HttpClientError',
       'SchemaError',
       (): FailureReason => 'unavailable',
     ),

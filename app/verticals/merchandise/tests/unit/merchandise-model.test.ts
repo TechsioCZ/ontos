@@ -1,7 +1,8 @@
 import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
+import { HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
 import { RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { createProductDetailQuery } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
+import { createProductDetailQuery, recordsReason } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import type { LoadOutcome } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import { ProductRecordSchema, sameSku } from '../../shared/domain/merchandise-model.ts';
 import { productResourceDescriptor } from '../../shared/resources/product.ts';
@@ -137,4 +138,21 @@ it('detail query keeps release-change failures distinct from record revision con
   callbacks[1]?.({ ok: false, reason: 'conflict' });
   expect(query.getSnapshot()).toEqual({ reason: 'conflict', status: 'error' });
   stop();
+});
+
+it('plain module admission 409 requires document reload, not query retry or a connection message', () => {
+  const error = (
+    status: number,
+    url = 'http://localhost:3020/module-api/merchandise/release/merchandise-api/reads/records',
+  ) => {
+    const request = HttpClientRequest.get(url);
+    const response = HttpClientResponse.fromWeb(
+      request,
+      new Response('Reload the document to use the active release', { status }),
+    );
+    return new HttpClientError.HttpClientError({ reason: new HttpClientError.DecodeError({ request, response }) });
+  };
+  expect(recordsReason(error(409))).toBe('reload-required');
+  expect(recordsReason(error(503))).toBe('unavailable');
+  expect(recordsReason(error(409, 'http://localhost:4120/merchandise-api/reads/records'))).toBe('unavailable');
 });
