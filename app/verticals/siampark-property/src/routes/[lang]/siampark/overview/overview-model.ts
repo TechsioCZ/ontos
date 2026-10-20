@@ -25,14 +25,20 @@ export interface OverviewSources {
   readonly work: Source<WorkRecords>;
 }
 
-export const readyData = <A>(source: Source<A>): A | undefined =>
-  source.status === 'ready' ? source.data : undefined;
+export const readyData = <A>(source: Source<A>): A | undefined => (source.status === 'ready' ? source.data : undefined);
 
 const money = new Intl.NumberFormat('cs-CZ', { currency: 'CZK', maximumFractionDigits: 0, style: 'currency' });
 export const formatCzk = (minor: number) => money.format(Math.round(minor / 100));
-const dayFormat = new Intl.DateTimeFormat('cs-CZ', { day: 'numeric', month: 'numeric', timeZone: 'UTC', year: 'numeric' });
+const dayFormat = new Intl.DateTimeFormat('cs-CZ', {
+  day: 'numeric',
+  month: 'numeric',
+  timeZone: 'UTC',
+  year: 'numeric',
+});
 export const formatDay = (value: string | null | undefined) =>
-  value === null || value === undefined || value === '' ? '—' : dayFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(`${value}T00:00:00Z`)));
+  value === null || value === undefined || value === ''
+    ? '—'
+    : dayFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(`${value}T00:00:00Z`)));
 
 export const addDays = (isoDate: string, days: number) =>
   DateTime.formatIsoDate(DateTime.add(DateTime.makeUnsafe(`${isoDate}T00:00:00Z`), { days }));
@@ -148,7 +154,11 @@ export const attentionItems = (sources: OverviewSources, today: string, lang: st
       continue;
     }
     const unit = unitLabel(property, contract.unitRef?.resourceId) ?? contract.subject ?? 'Smlouva';
-    if (contract.renewalNoticeDate !== null && contract.renewalNoticeDate >= today && contract.renewalNoticeDate <= horizon) {
+    if (
+      contract.renewalNoticeDate !== null &&
+      contract.renewalNoticeDate >= today &&
+      contract.renewalNoticeDate <= horizon
+    ) {
       items.push({
         date: contract.renewalNoticeDate,
         detail: `Výpovědní / prodlužovací lhůta ${formatDay(contract.renewalNoticeDate)} · za ${daysBetween(today, contract.renewalNoticeDate)} dní`,
@@ -216,7 +226,10 @@ export const searchSiampark = (sources: OverviewSources, query: string, lang: st
   const occupancy = readyData(sources.occupancy);
   const hits: SearchHit[] = [];
   const push = (hit: SearchHit, haystack: readonly (string | null | undefined)[]) => {
-    if ((includeClosed || !hit.closed) && haystack.some((value) => value !== null && value !== undefined && fold(value).includes(needle))) {
+    if (
+      (includeClosed || !hit.closed) &&
+      haystack.some((value) => value !== null && value !== undefined && fold(value).includes(needle))
+    ) {
       hits.push(hit);
     }
   };
@@ -297,7 +310,13 @@ export const searchSiampark = (sources: OverviewSources, query: string, lang: st
         kind: 'Faktura',
         label: `${invoice.documentNumber}${invoice.counterpartyName === undefined ? '' : ` · ${invoice.counterpartyName}`}`,
       },
-      [invoice.documentNumber, invoice.number, invoice.counterpartyName, invoice.note, ...(invoice.lines ?? []).map((line) => line.description)],
+      [
+        invoice.documentNumber,
+        invoice.number,
+        invoice.counterpartyName,
+        invoice.note,
+        ...(invoice.lines ?? []).map((line) => line.description),
+      ],
     );
   }
   for (const task of work?.items ?? []) {

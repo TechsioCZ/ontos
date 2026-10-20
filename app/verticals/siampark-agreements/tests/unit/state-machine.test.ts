@@ -101,7 +101,12 @@ const rejected = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
 describe('Agreements state transitions', () => {
   it.effect('sets and clears commercial terms on draft and active contracts only', () =>
     Effect.gen(function* setsTerms() {
-      const rentTerms = { currency: 'CZK', monthlyRentMinor: 1_850_000, paymentDay: 15, serviceChargesMinor: 320_000 } as const;
+      const rentTerms = {
+        currency: 'CZK',
+        monthlyRentMinor: 1_850_000,
+        paymentDay: 15,
+        serviceChargesMinor: 320_000,
+      } as const;
       const initial: AgreementsState = { ...empty, contracts: [{ ...draft, lifecycleState: 'ACTIVE' }] };
       const set = yield* transitionAgreements(
         initial,
@@ -310,7 +315,7 @@ describe('Agreements state transitions', () => {
       Effect.gen(function* testEffect() {
         const previous = { ...draft, lifecycleState: 'ACTIVE' as const, signatureState: 'SIGNED' as const };
         const initial = { ...empty, contracts: [previous] };
-        expect(presentContracts(initial)[0]?.expiringSoon).toBe(true);
+        expect(presentContracts(initial, '2026-10-05')[0]?.expiringSoon).toBe(true);
         const successor = {
           ...draft,
           contractRef: { ...contractRef, resourceId: '77777777-7777-4777-8777-777777777777' },
@@ -325,7 +330,7 @@ describe('Agreements state transitions', () => {
           validators,
         );
         expect(renewed.snapshot.contracts[0]).toEqual(previous);
-        const presented = presentContracts(renewed.snapshot);
+        const presented = presentContracts(renewed.snapshot, '2026-10-05');
         expect(presented[0]).toMatchObject({ expiringSoon: true, hasSuccessorDraft: true, lifecycleState: 'ACTIVE' });
         expect(presented.filter((record) => record.expiringSoon)).toHaveLength(1);
         expect(presented.filter((record) => record.expiringSoon && !record.hasSuccessorDraft)).toEqual([]);
@@ -487,9 +492,12 @@ describe('Agreements state transitions', () => {
       );
     }),
   );
-  it('derives expiration using the fixed demo date, independently of audit time', () => {
+  it('derives expiration using the supplied business date, independently of audit time', () => {
     expect(
-      presentContracts({ ...empty, contracts: [{ ...draft, endDate: '2026-10-05', lifecycleState: 'ACTIVE' }] })[0],
+      presentContracts(
+        { ...empty, contracts: [{ ...draft, endDate: '2026-10-05', lifecycleState: 'ACTIVE' }] },
+        '2026-10-05',
+      )[0],
     ).toMatchObject({ expiringSoon: false, isExpired: true });
   });
   it('limits expiry warnings to active unexpired contracts within the thirty-day calendar window', () => {
@@ -501,7 +509,7 @@ describe('Agreements state transitions', () => {
       { ...draft, endDate: '2026-11-05', lifecycleState: 'ACTIVE' },
       { ...draft, endDate: '2026-11-04', lifecycleState: 'ACTIVE' },
     ];
-    expect(presentContracts({ ...empty, contracts }).map((record) => record.expiringSoon)).toEqual([
+    expect(presentContracts({ ...empty, contracts }, '2026-10-05').map((record) => record.expiringSoon)).toEqual([
       false,
       false,
       false,
@@ -509,5 +517,10 @@ describe('Agreements state transitions', () => {
       false,
       true,
     ]);
+  });
+  it('moves the expiry warning with the actual business day', () => {
+    const state = { ...empty, contracts: [{ ...draft, endDate: '2026-10-25', lifecycleState: 'ACTIVE' as const }] };
+    expect(presentContracts(state, '2026-10-20')[0]).toMatchObject({ expiringSoon: true, isExpired: false });
+    expect(presentContracts(state, '2026-10-26')[0]).toMatchObject({ expiringSoon: false, isExpired: true });
   });
 });

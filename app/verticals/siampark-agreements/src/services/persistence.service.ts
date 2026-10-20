@@ -19,7 +19,7 @@ import {
   AgreementsRejected,
 } from '../../shared/actions/apply-command.ts';
 import type { AgreementsCommand, AgreementsError } from '../../shared/actions/apply-command.ts';
-import { AgreementsStateSchema, DEMO_BUSINESS_DATE } from '../../shared/apis/records.ts';
+import { AgreementsStateSchema } from '../../shared/apis/records.ts';
 import type {
   AgreementsState,
   Contract,
@@ -305,7 +305,13 @@ export const transitionAgreements = (
         if (record.lifecycleState !== 'DRAFT' && record.lifecycleState !== 'ACTIVE') {
           return yield* conflict('terms_require_draft_or_active_contract');
         }
-        const { noticePeriod: _notice, rentTerms: _rent, responsiblePerson: _owner, subject: _subject, ...base } = record;
+        const {
+          noticePeriod: _notice,
+          rentTerms: _rent,
+          responsiblePerson: _owner,
+          subject: _subject,
+          ...base
+        } = record;
         return replaceContract(state, { ...base, ...terms });
       }),
     ),
@@ -318,7 +324,7 @@ export const transitionAgreements = (
         if (record.lifecycleState !== 'DRAFT') {
           return yield* conflict('activate_requires_draft');
         }
-        if (record.endDate !== null && record.endDate <= DEMO_BUSINESS_DATE) {
+        if (record.endDate !== null && record.endDate <= currentBusinessDate()) {
           return yield* rejected('cannot_activate_expired_contract');
         }
         yield* validateContract(record, scope, validators);
@@ -612,7 +618,14 @@ export const transitionAgreements = (
     ),
     Match.exhaustive,
   );
-export const presentContracts = (state: AgreementsState) =>
+const currentBusinessDate = () =>
+  new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+export const presentContracts = (state: AgreementsState, businessDate = currentBusinessDate()) =>
   state.contracts.map((record) => {
     const hasSuccessorDraft = state.contracts.some(
       (value) =>
@@ -622,12 +635,12 @@ export const presentContracts = (state: AgreementsState) =>
     );
     const isExpired =
       record.lifecycleState === 'EXPIRED' ||
-      (record.lifecycleState === 'ACTIVE' && record.endDate !== null && record.endDate <= DEMO_BUSINESS_DATE);
+      (record.lifecycleState === 'ACTIVE' && record.endDate !== null && record.endDate <= businessDate);
     const daysRemaining =
       record.endDate === null
         ? null
         : (DateTime.toEpochMillis(DateTime.makeUnsafe(`${record.endDate}T00:00:00.000Z`)) -
-            DateTime.toEpochMillis(DateTime.makeUnsafe(`${DEMO_BUSINESS_DATE}T00:00:00.000Z`))) /
+            DateTime.toEpochMillis(DateTime.makeUnsafe(`${businessDate}T00:00:00.000Z`))) /
           86_400_000;
     return {
       ...record,

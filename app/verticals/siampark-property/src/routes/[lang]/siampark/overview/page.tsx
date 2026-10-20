@@ -2,49 +2,48 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { executeRecords as executeAgreements } from '@app/siampark-agreements/clients/records';
 import { executeRecords as executeFinance } from '@app/siampark-billing-finance/clients/records';
 import { executeRecords as executeOccupancy } from '@app/siampark-occupancy/clients/records';
-import { executeRecords as executeRelationships } from '@app/siampark-relationships/clients/records';
 import { executeRecords as executeWork } from '@app/siampark-work/clients/records';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Link } from '@techsio/ui-kit/atoms/link';
-import { Table } from '@techsio/ui-kit/organisms/table';
-import { Effect, Match, Random } from 'effect';
-import { useState } from 'react';
+import { Effect, Random } from 'effect';
+import { useEffect, useEffectEvent, useState } from 'react';
 import { executeRecords as executeProperty } from '../../../../api/records-client';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/siampark-property.json';
 import enResource from '../../../../../locales/en/siampark-property.json';
-import '../../../index.css';
 import { pragueToday } from '../properties/unit-story.tsx';
+import {
+  addDays,
+  attentionItems,
+  availabilityLabel,
+  formatCzk,
+  formatDay,
+  isOpenTask,
+  isOverdueInvoice,
+  readyData,
+  searchSiampark,
+  unitAvailability,
+  unitLabel,
+} from './overview-model';
+import type {
+  AgreementsRecords,
+  FinanceRecords,
+  OccupancyRecords,
+  OverviewSources,
+  PropertyRecords,
+  Source,
+  SourceRow,
+  WorkRecords,
+} from './overview-model';
+import '../../../index.css';
+import './overview.css';
 
 const siamparkPropertyI18nResources = {
   cs: { 'siampark-property': csResource },
   en: { 'siampark-property': enResource },
 } as const;
-// Availability, overdue tasks and invoices are evaluated against today's date in Prague.
-const referenceDate = pragueToday();
-const periodStart = `${referenceDate.slice(0, 4)}-01-01`;
-const periodEndExclusive = '2027-01-01';
-const moneyFormatters = {
-  cs: new Intl.NumberFormat('cs', { currency: 'CZK', style: 'currency' }),
-  en: new Intl.NumberFormat('en', { currency: 'CZK', style: 'currency' }),
-};
-const modules = ['properties', 'agreements', 'occupancy', 'finance', 'work', 'relationships', 'integrations'] as const;
-const loadOverview = () => {
-  const requestId = Random.nextInt.pipe(Effect.map((id) => `siampark-overview:${id}`));
-  return Effect.all(
-    {
-      agreements: requestId.pipe(Effect.flatMap((id) => executeAgreements({}, id))),
-      finance: requestId.pipe(Effect.flatMap((id) => executeFinance({}, id))),
-      occupancy: requestId.pipe(Effect.flatMap((id) => executeOccupancy({}, id))),
-      property: requestId.pipe(Effect.flatMap((id) => executeProperty({}, id))),
-      relationships: requestId.pipe(Effect.flatMap((id) => executeRelationships({}, id))),
-      work: requestId.pipe(Effect.flatMap((id) => executeWork({}, id))),
-    },
-    { concurrency: 1 },
-  );
-};
-type Overview = Effect.Success<ReturnType<typeof loadOverview>>;
+type Overview = { agreements: AgreementsRecords; occupancy: OccupancyRecords; work: WorkRecords };
 interface AgendaSources {
   readonly agreements: {
     readonly contracts: readonly Pick<
@@ -119,726 +118,419 @@ export const projectOverviewAgenda = (records: AgendaSources) => {
     (left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id),
   );
 };
-const unitAvailability = (unitId: string, records: Overview) => {
-  const current = records.occupancy.occupancies.filter(
-    (item) =>
-      item.unitRef.resourceId === unitId &&
-      item.startDate <= referenceDate &&
-      (item.endDate === null || referenceDate < item.endDate),
-  );
-  if (current.some((item) => item.state === 'ACTIVE')) {
-    return 'OCCUPIED' as const;
-  }
-  if (current.some((item) => item.state === 'CONFIRMED')) {
-    return 'RESERVED' as const;
-  }
-  return 'AVAILABLE' as const;
-};
-const occupancyCounts = (units: Overview['property']['units'], records: Overview) => {
-  const active = units.filter((unit) => unit.lifecycleState === 'ACTIVE');
-  const occupied = active.filter((unit) => unitAvailability(unit.unitRef.resourceId, records) === 'OCCUPIED').length;
-  const reserved = active.filter((unit) => unitAvailability(unit.unitRef.resourceId, records) === 'RESERVED').length;
-  return { available: active.length - occupied - reserved, occupied, reserved, total: active.length };
-};
 
-const useOverviewRecords = () => {
-  const { language, t } = useModernI18n();
-  const key = 'siampark-property.pages.overview';
-  const [records, setRecords] = useState<Overview>();
-  const [propertyId, setPropertyId] = useState('');
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState('');
-  const [drilldown, setDrilldown] = useState('');
+/** Each source fails independently: no financial permissions must not erase the property portfolio. */
+const governedSource = <A, E>(read: Effect.Effect<A, E>): Effect.Effect<Source<A>> =>
+  read.pipe(
+    Effect.match({
+      onFailure: (error) =>
+        ({
+          status:
+            typeof error === 'object' && error !== null && '_tag' in error && String(error._tag).includes('Forbidden')
+              ? 'forbidden'
+              : 'unavailable',
+        }) as Source<A>,
+      onSuccess: (data): Source<A> => ({ data, status: 'ready' }),
+    }),
+  );
+const loadOverview = () => {
+  const requestId = Random.nextInt.pipe(Effect.map((id) => `siampark-overview:${id}`));
+  return Effect.all(
+    {
+      agreements: governedSource(requestId.pipe(Effect.flatMap((id) => executeAgreements({}, id)))),
+      finance: governedSource(requestId.pipe(Effect.flatMap((id) => executeFinance({}, id)))),
+      occupancy: governedSource(requestId.pipe(Effect.flatMap((id) => executeOccupancy({}, id)))),
+      property: governedSource(requestId.pipe(Effect.flatMap((id) => executeProperty({}, id)))),
+      work: governedSource(requestId.pipe(Effect.flatMap((id) => executeWork({}, id)))),
+    },
+    { concurrency: 2 },
+  );
+};
+const sourceLabels: Record<keyof OverviewSources, string> = {
+  agreements: 'Smlouvy',
+  finance: 'Finance',
+  occupancy: 'Nájmy a pobyty',
+  property: 'Nemovitosti',
+  work: 'Úkoly',
+};
+const sourceMessages = {
+  forbidden: 'bez oprávnění',
+  ready: 'aktuální data',
+  unavailable: 'dočasně nedostupné',
+} as const;
+const availabilityTone = {
+  AVAILABLE: 'success',
+  OCCUPIED: 'info',
+  OUT_OF_SERVICE: 'secondary',
+  RESERVED: 'warning',
+} as const;
+
+const OverviewPageContent = () => {
+  const { language } = useModernI18n();
+  const lang = language ?? 'cs';
+  const [sources, setSources] = useState<OverviewSources>();
+  const [pending, setPending] = useState(true);
+  const [query, setQuery] = useState('');
+  const [includeClosed, setIncludeClosed] = useState(false);
+  const [selection, setSelection] = useState('');
+  const today = pragueToday();
   const refresh = () => {
     setPending(true);
     void browserRuntime.runPromise(
       loadOverview().pipe(
-        Effect.match({
-          onFailure: (error) => {
-            setRecords(undefined);
-            setMessage(
-              Match.value(error).pipe(
-                Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
-            );
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            setSources(result);
             setPending(false);
-          },
-          onSuccess: (result) => {
-            setRecords(result);
-            setMessage('');
-            setPending(false);
-          },
-        }),
+          }),
+        ),
       ),
     );
   };
-  const moneyFormatter = language === 'en' ? moneyFormatters.en : moneyFormatters.cs;
-  const money = (minor: number) => moneyFormatter.format(minor / 100);
-  const counts = records === undefined ? undefined : occupancyCounts(records.property.units, records);
-  const property = records?.property.properties.find((item) => item.propertyRef.resourceId === propertyId);
-  const units = records?.property.units.filter((item) => item.propertyRef.resourceId === propertyId) ?? [];
-  const expiring =
-    records?.agreements.contracts.filter((item) => item.lifecycleState === 'ACTIVE' && item.expiringSoon) ?? [];
-  const bookingWarnings = records?.occupancy.bookingObservations.filter((item) => item.state !== 'SUCCESS') ?? [];
-  const accountingWarnings =
-    records?.finance.state.accountingObservations.filter((item) => item.latest && item.status === 'FAILED') ?? [];
-  const ownerHref = (owner: string, id: string) =>
-    `/${language ?? 'cs'}/siampark/${owner}?resourceId=${encodeURIComponent(id)}`;
-  const sourceRows = (() => {
-    if (records === undefined) {
-      return [];
-    }
-    if (['occupied', 'available', 'reserved'].includes(drilldown)) {
-      let desired = 'AVAILABLE';
-      if (drilldown === 'occupied') {
-        desired = 'OCCUPIED';
-      }
-      if (drilldown === 'reserved') {
-        desired = 'RESERVED';
-      }
-      return records.property.units.flatMap((unit) =>
-        unit.lifecycleState === 'ACTIVE' && unitAvailability(unit.unitRef.resourceId, records) === desired
-          ? [
-              {
-                detail: t(`${key}.availability.${desired}`),
-                href: ownerHref('properties', unit.unitRef.resourceId),
-                id: unit.unitRef.resourceId,
-                label: `${unit.code} · ${unit.name}`,
-              },
-            ]
-          : [],
-      );
-    }
-    if (['expiring', 'renewalMissing'].includes(drilldown)) {
-      return expiring.flatMap((contract) =>
-        drilldown !== 'renewalMissing' || !contract.hasSuccessorDraft
-          ? [
-              {
-                detail: contract.endDate ?? '—',
-                href: ownerHref('agreements', contract.contractRef.resourceId),
-                id: contract.contractRef.resourceId,
-                label:
-                  records.property.units.find((unit) => unit.unitRef.resourceId === contract.unitRef?.resourceId)
-                    ?.code ?? contract.contractRef.resourceId,
-              },
-            ]
-          : [],
-      );
-    }
-    if (['openTasks', 'overdueTasks'].includes(drilldown)) {
-      return records.work.items.flatMap((task) =>
-        !['DONE', 'CANCELLED'].includes(task.state) &&
-        (drilldown !== 'overdueTasks' || (task.dueDate !== undefined && task.dueDate < referenceDate))
-          ? [
-              {
-                detail: task.dueDate ?? '—',
-                href: ownerHref('work', task.ref.resourceId),
-                id: task.ref.resourceId,
-                label: task.title,
-              },
-            ]
-          : [],
-      );
-    }
-    if (drilldown === 'activities') {
-      return records.relationships.items.map((activity) => ({
-        detail: '',
-        href: ownerHref('relationships', activity.ref.resourceId),
-        id: activity.ref.resourceId,
-        label: activity.summary,
-      }));
-    }
-    if (['planRevenue', 'planCost'].includes(drilldown)) {
-      const planLabel = t(`${key}.${drilldown}`);
-      const actualLabel = t(`${key}.${drilldown === 'planRevenue' ? 'revenue' : 'cost'}`);
-      const plans = records.finance.state.financialPlanEntries.flatMap((entry) =>
-        entry.state === 'CONFIRMED' &&
-        entry.kind === (drilldown === 'planRevenue' ? 'REVENUE' : 'COST') &&
-        entry.periodStart >= periodStart &&
-        entry.periodStart < periodEndExclusive
-          ? [
-              {
-                detail: `${planLabel} · ${entry.periodStart} → ${entry.periodEndExclusive} · ${money(entry.plannedMinor)}`,
-                href: ownerHref('finance', entry.ref.resourceId),
-                id: entry.ref.resourceId,
-                label: entry.category,
-              },
-            ]
-          : [],
-      );
-      const actuals = records.finance.state.invoices.flatMap((invoice) =>
-        invoice.businessState === 'CONFIRMED' &&
-        invoice.issueDate >= periodStart &&
-        invoice.issueDate < periodEndExclusive &&
-        invoice.direction === (drilldown === 'planRevenue' ? 'OUTGOING' : 'INCOMING')
-          ? [
-              {
-                detail: `${actualLabel} · ${money(invoice.totalMinor)}`,
-                href: ownerHref('finance', invoice.ref.resourceId),
-                id: invoice.ref.resourceId,
-                label: invoice.documentNumber,
-              },
-            ]
-          : [],
-      );
-      return [...plans, ...actuals];
-    }
-    const invoices = records.finance.state.invoices.filter((invoice) => {
-      if (invoice.businessState !== 'CONFIRMED') {
-        return false;
-      }
-      if (drilldown === 'revenue' || drilldown === 'cost') {
-        return (
-          invoice.issueDate >= periodStart &&
-          invoice.issueDate < periodEndExclusive &&
-          invoice.direction === (drilldown === 'revenue' ? 'OUTGOING' : 'INCOMING')
-        );
-      }
-      if (invoice.paidMinor >= invoice.totalMinor) {
-        return false;
-      }
-      if (drilldown === 'receivables' || drilldown === 'payables') {
-        return invoice.direction === (drilldown === 'receivables' ? 'OUTGOING' : 'INCOMING');
-      }
-      return drilldown === 'openInvoices' || (drilldown === 'overdueInvoices' && invoice.dueDate < referenceDate);
-    });
-    return invoices.map((invoice) => ({
-      detail: money(
-        ['receivables', 'payables', 'openInvoices', 'overdueInvoices'].includes(drilldown)
-          ? invoice.totalMinor - invoice.paidMinor
-          : invoice.totalMinor,
-      ),
-      href: ownerHref('finance', invoice.ref.resourceId),
-      id: invoice.ref.resourceId,
-      label: invoice.documentNumber,
-    }));
-  })();
-  return {
-    accountingWarnings,
-    bookingWarnings,
-    counts,
-    drilldown,
-    expiring,
-    key,
-    language,
-    message,
-    money,
-    ownerHref,
-    pending,
-    property,
-    records,
-    refresh,
-    setDrilldown,
-    setPropertyId,
-    sourceRows,
-    t,
-    units,
-  };
-};
-const OverviewIndicators = ({ state }: { readonly state: ReturnType<typeof useOverviewRecords> }) => {
-  const { counts, expiring, key, money, records, setDrilldown, t } = state;
-  if (records === undefined || counts === undefined) {
-    return null;
-  }
-  return (
-    <dl className="siamparkproperty:grid siamparkproperty:grid-cols-2 siamparkproperty:gap-4 siamparkproperty:xl:grid-cols-4">
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.occupied`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('occupied')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {counts.occupied} / {counts.total}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.available`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('available')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {counts.available}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.reserved`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('reserved')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {counts.reserved}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.revenue`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('revenue')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {money(records.finance.indicators.revenueMinor)}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.cost`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('cost')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {money(records.finance.indicators.costMinor)}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.receivables`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('receivables')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {money(records.finance.indicators.receivablesOutstandingMinor)}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.payables`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('payables')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {money(records.finance.indicators.payablesOutstandingMinor)}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.planRevenue`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('planRevenue')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            <span className="siamparkproperty:flex siamparkproperty:flex-col siamparkproperty:gap-2">
-              <span>{money(records.finance.indicators.plannedRevenueMinor)}</span>
-              <span className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary) siamparkproperty:font-normal">
-                {t(`${key}.variance`)} {money(records.finance.indicators.revenueVarianceMinor)}
-              </span>
-            </span>
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.planCost`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('planCost')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            <span className="siamparkproperty:flex siamparkproperty:flex-col siamparkproperty:gap-2">
-              <span>{money(records.finance.indicators.plannedCostMinor)}</span>
-              <span className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary) siamparkproperty:font-normal">
-                {t(`${key}.variance`)} {money(records.finance.indicators.costVarianceMinor)}
-              </span>
-            </span>
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.openInvoices`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('openInvoices')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {records.finance.indicators.openInvoices}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.overdueInvoices`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('overdueInvoices')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {records.finance.indicators.overdueInvoices}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.openTasks`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('openTasks')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {records.work.indicators.open}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.overdueTasks`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('overdueTasks')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {records.work.indicators.overdue}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.expiring`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('expiring')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {expiring.length}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.renewalMissing`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('renewalMissing')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {expiring.filter((item) => !item.hasSuccessorDraft).length}{' '}
-          </Button>
-        </dd>
-      </div>
-      <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
-        <dt className="siamparkproperty:text-xs siamparkproperty:font-medium siamparkproperty:text-(--color-fg-secondary)">
-          {t(`${key}.activities`)}
-        </dt>
-        <dd className="siamparkproperty:min-w-0">
-          <Button
-            className="siamparkproperty:h-auto siamparkproperty:max-w-full siamparkproperty:justify-start siamparkproperty:p-0 siamparkproperty:text-left siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tabular-nums siamparkproperty:whitespace-normal"
-            onClick={() => setDrilldown('activities')}
-            size="current"
-            theme="borderless"
-            variant="secondary"
-          >
-            {' '}
-            {records.relationships.items.length}{' '}
-          </Button>
-        </dd>
-      </div>
-    </dl>
+  const onMount = useEffectEvent(refresh);
+  useEffect(() => {
+    onMount();
+  }, []);
+  const property = sources === undefined ? undefined : readyData(sources.property);
+  const occupancy = sources === undefined ? undefined : readyData(sources.occupancy);
+  const agreements = sources === undefined ? undefined : readyData(sources.agreements);
+  const finance = sources === undefined ? undefined : readyData(sources.finance);
+  const work = sources === undefined ? undefined : readyData(sources.work);
+  const units = property?.units.filter((unit) => unit.lifecycleState === 'ACTIVE') ?? [];
+  const occupied = units.filter((unit) => unitAvailability(unit, occupancy, today) === 'OCCUPIED');
+  const available = units.filter((unit) => unitAvailability(unit, occupancy, today) === 'AVAILABLE');
+  const activeLeases = occupancy?.occupancies.filter(
+    (lease) =>
+      lease.state === 'ACTIVE' && lease.startDate <= today && (lease.endDate === null || today < lease.endDate),
   );
-};
-const OverviewPageContent = () => {
-  const state = useOverviewRecords();
-  const {
-    accountingWarnings,
-    bookingWarnings,
-    counts,
-    drilldown,
-    key,
-    language,
-    message,
-    ownerHref,
-    pending,
-    property,
-    records,
-    refresh,
-    setPropertyId,
-    sourceRows,
-    t,
-    units,
-  } = state;
+  const knownRent = activeLeases?.filter((lease) => lease.rentTerms !== undefined) ?? [];
+  const rent = knownRent.reduce(
+    (sum, lease) => sum + (lease.rentTerms?.monthlyRentMinor ?? 0) + (lease.rentTerms?.serviceChargesMinor ?? 0),
+    0,
+  );
+  const attention = sources === undefined ? [] : attentionItems(sources, today, lang);
+  const hits = sources === undefined ? [] : searchSiampark(sources, query, lang, includeClosed);
+  const href = (owner: string, id?: string) =>
+    `/${lang}/siampark/${owner}${id === undefined ? '' : `?resourceId=${encodeURIComponent(id)}`}`;
+  const rows: SourceRow[] = [];
+  if (selection === 'occupied' || selection === 'available') {
+    for (const unit of selection === 'occupied' ? occupied : available) {
+      rows.push({
+        detail: availabilityLabel[unitAvailability(unit, occupancy, today)],
+        href: href('properties', unit.unitRef.resourceId),
+        id: unit.unitRef.resourceId,
+        label: unitLabel(property, unit.unitRef.resourceId) ?? unit.name,
+      });
+    }
+  }
+  if (selection === 'rent') {
+    for (const lease of activeLeases ?? []) {
+      rows.push({
+        detail:
+          lease.rentTerms === undefined
+            ? 'Nájemné neuvedeno'
+            : `${formatCzk(lease.rentTerms.monthlyRentMinor + lease.rentTerms.serviceChargesMinor)} / měsíc`,
+        href: href('occupancy', lease.occupancyRef.resourceId),
+        id: lease.occupancyRef.resourceId,
+        label: unitLabel(property, lease.unitRef.resourceId) ?? 'Nájem',
+      });
+    }
+  }
+  const agenda = projectOverviewAgenda({
+    agreements: agreements ?? { contracts: [] },
+    occupancy: occupancy ?? { occupancies: [] },
+    work: work ?? { items: [] },
+  })
+    .filter((entry) => entry.date >= today && entry.date <= addDays(today, 60))
+    .slice(0, 12);
+  const agendaLabels = {
+    contract: 'Konec smlouvy',
+    occupancyEnd: 'Konec nájmu / pobytu',
+    occupancyStart: 'Začátek nájmu / pobytu',
+    task: 'Provozní úkol',
+  };
+  const agendaLabel = (entry: (typeof agenda)[number]) => {
+    if (entry.kind === 'task') return entry.label;
+    if (entry.kind === 'contract') {
+      const contract = agreements?.contracts.find((item) => item.contractRef.resourceId === entry.resourceId);
+      return contract?.subject ?? unitLabel(property, contract?.unitRef?.resourceId) ?? 'Smlouva';
+    }
+    const lease = occupancy?.occupancies.find((item) => item.occupancyRef.resourceId === entry.resourceId);
+    return unitLabel(property, lease?.unitRef.resourceId) ?? 'Nájem / pobyt';
+  };
+  const overdueCount =
+    (finance?.state.invoices.filter((invoice) => isOverdueInvoice(invoice, today)).length ?? 0) +
+    (work?.items.filter((task) => isOpenTask(task) && task.dueDate !== undefined && task.dueDate < today).length ?? 0);
+  const nav = [
+    { label: 'Nemovitosti a jednotky', owner: 'properties', source: sources?.property },
+    { label: 'Nájmy a pobyty', owner: 'occupancy', source: sources?.occupancy },
+    { label: 'Smlouvy', owner: 'agreements', source: sources?.agreements },
+    { label: 'Provozní úkoly', owner: 'work', source: sources?.work },
+    { label: 'Faktury a finance', owner: 'finance', source: sources?.finance },
+  ];
   return (
     <>
       <UltramodernRouteHead />
-      <section
-        aria-labelledby="overview-heading"
-        className="siamparkproperty:w-full siamparkproperty:min-w-0 siamparkproperty:max-w-none siamparkproperty:space-y-6 siamparkproperty:p-0 siamparkproperty:text-(--color-page-fg)"
-      >
-        <header className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:items-start siamparkproperty:justify-between siamparkproperty:gap-4 siamparkproperty:border-b siamparkproperty:border-(--color-border-muted) siamparkproperty:pb-5">
-          <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2">
-            <h1
-              className="siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tracking-tight"
-              id="overview-heading"
-            >
-              {t(`${key}.title`)}
-            </h1>
-            <p className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)">
-              {t(`${key}.referenceDate`)}: {referenceDate} · {t(`${key}.period`)}
+      <section aria-labelledby="overview-heading" className="sp-overview">
+        <header className="sp-heading">
+          <div className="sp-stack">
+            <span className="sp-eyebrow">SIAMPARK · SPRÁVA NEMOVITOSTÍ</span>
+            <h1 id="overview-heading">Vaše nemovitosti v souvislostech</h1>
+            <p className="sp-muted">
+              Obsazenost, nájemci a nejbližší kroky na jednom místě. Stav k {formatDay(today)}.
             </p>
           </div>
-          <Button disabled={pending} onClick={refresh} size="sm" variant="warning">
-            {t(`${key}.refresh`)}
+          <Button disabled={pending} onClick={refresh} size="sm" theme="outlined" variant="secondary">
+            {pending ? 'Načítání přehledu…' : 'Obnovit přehled'}
           </Button>
         </header>
-        <output
-          aria-live="polite"
-          className="siamparkproperty:block siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)"
-        >
-          {message}
-        </output>
-        {records !== undefined && counts !== undefined && (
+        <nav aria-label="Agendy Siampark" className="sp-quicklinks">
+          {nav
+            .filter((item) => item.source?.status === 'ready')
+            .map((item) => (
+              <a href={href(item.owner)} key={item.owner}>
+                {item.label} →
+              </a>
+            ))}
+        </nav>
+        {sources === undefined ? (
+          <p aria-live="polite" className="sp-muted">
+            Načítáme dostupné agendy a ověřujeme vaše oprávnění…
+          </p>
+        ) : (
           <>
-            <OverviewIndicators state={state} />
-            {drilldown !== '' && (
-              <section
-                aria-label={t(`${key}.sourceRecords`)}
-                className="siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-5"
+            <div aria-label="Přehled dnešního dne" className="sp-stats">
+              <button
+                className="sp-stat"
+                disabled={property === undefined || occupancy === undefined}
+                onClick={() => setSelection('occupied')}
+                type="button"
               >
-                <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">
-                  {t(`${key}.sourceRecords`)}: {t(`${key}.${drilldown}`)}
-                </h2>
-                {sourceRows.length === 0 && (
-                  <p className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)">
-                    {t(`${key}.emptySources`)}
-                  </p>
+                <span className="sp-muted">Obsazené jednotky</span>
+                <strong>
+                  {property === undefined || occupancy === undefined ? '—' : `${occupied.length} / ${units.length}`}
+                </strong>
+                <span className="sp-muted">Aktivní nájmy právě dnes · zobrazit →</span>
+              </button>
+              <button
+                className="sp-stat"
+                disabled={property === undefined || occupancy === undefined}
+                onClick={() => setSelection('available')}
+                type="button"
+              >
+                <span className="sp-muted">Volné jednotky</span>
+                <strong>{property === undefined || occupancy === undefined ? '—' : available.length}</strong>
+                <span className="sp-muted">Dnešní dostupnost · zobrazit →</span>
+              </button>
+              <button
+                className="sp-stat"
+                disabled={occupancy === undefined}
+                onClick={() => setSelection('rent')}
+                type="button"
+              >
+                <span className="sp-muted">Sjednaná měsíční platba</span>
+                <strong>{occupancy === undefined || knownRent.length === 0 ? '—' : formatCzk(rent)}</strong>
+                <span className="sp-muted">
+                  Nájemné včetně záloh · {knownRent.length} z {activeLeases?.length ?? '—'} aktivních nájmů
+                </span>
+              </button>
+              <button className="sp-stat" onClick={() => setSelection('attention')} type="button">
+                <span className="sp-muted">Vyžaduje pozornost</span>
+                <strong>{attention.length}</strong>
+                <span className="sp-muted">{overdueCount} po termínu · další termíny do 60 dní</span>
+              </button>
+            </div>
+            {selection !== '' && (
+              <section aria-label="Zdrojové záznamy" className="sp-panel">
+                <div className="sp-heading">
+                  <h2>
+                    {selection === 'occupied'
+                      ? 'Dnes obsazené jednotky'
+                      : selection === 'available'
+                        ? 'Dnes volné jednotky'
+                        : selection === 'rent'
+                          ? 'Zdroj sjednaných měsíčních plateb'
+                          : 'Co vyžaduje pozornost'}
+                  </h2>
+                  <Button onClick={() => setSelection('')} size="sm" theme="borderless" variant="secondary">
+                    Zavřít
+                  </Button>
+                </div>
+                {selection === 'attention'
+                  ? attention.map((item) => (
+                      <a className="sp-attention" href={item.href} key={item.id}>
+                        <strong>{item.label}</strong>
+                        <span className="sp-muted">{item.detail}</span>
+                      </a>
+                    ))
+                  : rows.map((row) => (
+                      <a className="sp-attention" href={row.href} key={row.id}>
+                        <strong>{row.label}</strong>
+                        <span className="sp-muted">{row.detail}</span>
+                      </a>
+                    ))}
+                {selection !== 'attention' && rows.length === 0 && (
+                  <p className="sp-muted">Žádné odpovídající záznamy.</p>
                 )}
-                <ul className="siamparkproperty:space-y-2 siamparkproperty:text-sm">
-                  {sourceRows.map((row) => (
-                    <li key={row.id}>
-                      <Link href={row.href}>{row.label}</Link> · {row.detail}
-                    </li>
-                  ))}
-                </ul>
               </section>
             )}
-            <section
-              aria-labelledby="overview-agenda-heading"
-              className="siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-5"
-            >
-              <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold" id="overview-agenda-heading">
-                {t(`${key}.agenda.title`)}
-              </h2>
-              <p className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)">
-                {t(`${key}.agenda.description`)}
-              </p>
-              <div className="siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface)">
-                <Table className="siamparkproperty:w-full" size="sm" variant="outline">
-                  <Table.Caption>{t(`${key}.agenda.title`)}</Table.Caption>
-                  <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
-                    <Table.Row>
-                      <Table.ColumnHeader>{t(`${key}.agenda.date`)}</Table.ColumnHeader>
-                      <Table.ColumnHeader>{t(`${key}.agenda.kind`)}</Table.ColumnHeader>
-                      <Table.ColumnHeader>{t(`${key}.detail`)}</Table.ColumnHeader>
-                    </Table.Row>
-                  </Table.Header>
-                  <Table.Body>
-                    {projectOverviewAgenda(records).map((entry) => (
-                      <Table.Row key={entry.id}>
-                        <Table.Cell>
-                          <time dateTime={entry.date}>{entry.date}</time>
-                        </Table.Cell>
-                        <Table.Cell>{t(`${key}.agenda.kinds.${entry.kind}`)}</Table.Cell>
-                        <Table.Cell>
-                          <Link href={ownerHref(entry.owner, entry.resourceId)}>
-                            {entry.kind === 'task' ? entry.label : t(`${key}.detail`)}
-                          </Link>
-                        </Table.Cell>
-                      </Table.Row>
-                    ))}
-                  </Table.Body>
-                </Table>
+            <div className="sp-columns">
+              <section className="sp-panel">
+                <div className="sp-heading">
+                  <h2>Portfolio nemovitostí</h2>
+                  <span className="sp-muted">
+                    {property === undefined
+                      ? 'Data nejsou dostupná'
+                      : `${property.properties.length} budovy · ${units.length} aktivních jednotek`}
+                  </span>
+                </div>
+                {(property?.properties ?? []).map((building) => (
+                  <article className="sp-property" key={building.propertyRef.resourceId}>
+                    <div className="sp-heading">
+                      <div className="sp-stack">
+                        <h3>
+                          <a href={href('properties', building.propertyRef.resourceId)}>{building.name} →</a>
+                        </h3>
+                        <p className="sp-muted">{building.address}</p>
+                      </div>
+                      <Badge size="sm" variant={building.lifecycleState === 'ACTIVE' ? 'success' : 'outline'}>
+                        {building.lifecycleState === 'ACTIVE' ? 'Aktivní' : 'Archivováno'}
+                      </Badge>
+                    </div>
+                    <div className="sp-units">
+                      {property?.units
+                        .filter((unit) => unit.propertyRef.resourceId === building.propertyRef.resourceId)
+                        .map((unit) => {
+                          const state = unitAvailability(unit, occupancy, today);
+                          const next = occupancy?.occupancies
+                            .filter(
+                              (lease) =>
+                                lease.unitRef.resourceId === unit.unitRef.resourceId &&
+                                lease.state === 'CONFIRMED' &&
+                                lease.startDate > today,
+                            )
+                            .toSorted((a, b) => a.startDate.localeCompare(b.startDate))[0];
+                          return (
+                            <a
+                              className="sp-unit"
+                              href={href('properties', unit.unitRef.resourceId)}
+                              key={unit.unitRef.resourceId}
+                            >
+                              <strong>{unit.code}</strong>
+                              <Badge size="sm" variant={occupancy === undefined ? 'outline' : availabilityTone[state]}>
+                                {occupancy === undefined ? 'Bez dat' : availabilityLabel[state]}
+                              </Badge>
+                              <span className="sp-muted">
+                                {next === undefined ? unit.name : `Rezervace od ${formatDay(next.startDate)}`}
+                              </span>
+                            </a>
+                          );
+                        })}
+                    </div>
+                  </article>
+                ))}
+                {property !== undefined && property.properties.length === 0 && (
+                  <p className="sp-muted">Zatím nejsou evidovány žádné nemovitosti.</p>
+                )}
+              </section>
+              <aside className="sp-panel">
+                <div className="sp-heading">
+                  <h2>Na co nezapomenout</h2>
+                  <Badge size="sm" variant="outline">
+                    Nejbližších 60 dní
+                  </Badge>
+                </div>
+                {attention.slice(0, 6).map((item) => (
+                  <a className="sp-attention" href={item.href} key={item.id}>
+                    <Badge size="sm" variant={item.tone}>
+                      {item.kind}
+                    </Badge>
+                    <strong>{item.label}</strong>
+                    <span className="sp-muted">{item.detail}</span>
+                  </a>
+                ))}
+                {attention.length === 0 && (
+                  <p className="sp-muted">V dostupných agendách nejsou žádné blížící se ani překročené termíny.</p>
+                )}
+              </aside>
+            </div>
+            <section className="sp-panel">
+              <div className="sp-heading">
+                <div className="sp-stack">
+                  <h2>Kalendář nájmů a provozu</h2>
+                  <p className="sp-muted">Termíny na příštích 60 dní. Každý řádek otevírá původní záznam.</p>
+                </div>
+                <a className="sp-muted" href={`/${lang}/siampark/provoz/agenda`}>
+                  Otevřít celou agendu →
+                </a>
               </div>
-              {projectOverviewAgenda(records).length === 0 && (
-                <p className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)">
-                  {t(`${key}.emptySources`)}
-                </p>
+              <div className="sp-table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Datum</th>
+                      <th>Událost</th>
+                      <th>Jednotka / předmět</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agenda.map((entry) => (
+                      <tr key={entry.id}>
+                        <td>{formatDay(entry.date)}</td>
+                        <td>{agendaLabels[entry.kind]}</td>
+                        <td>
+                          <a href={href(entry.owner, entry.resourceId)}>{agendaLabel(entry)} →</a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {agenda.length === 0 && (
+                <p className="sp-muted">V dostupných agendách nejsou v tomto období žádné termíny.</p>
               )}
             </section>
-            <section className="siamparkproperty:min-w-0 siamparkproperty:space-y-3 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-4">
-              <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">{t(`${key}.warnings`)}</h2>
-              <p className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)">
-                {t(`${key}.bookingWarnings`)}: {bookingWarnings.length} · {t(`${key}.accountingWarnings`)}:{' '}
-                {accountingWarnings.length}
-              </p>
-              <ul className="siamparkproperty:space-y-2 siamparkproperty:text-sm">
-                {bookingWarnings.map((item) => (
-                  <li key={item.observationId}>
-                    {t(`${key}.booking`)} · {item.correlation} · {item.state}
-                    <Link href={`/${language ?? 'cs'}/siampark/occupancy`}>{t(`${key}.openBooking`)}</Link>
-                  </li>
-                ))}
-                {accountingWarnings.map((item) => (
-                  <li key={item.attemptId}>
-                    {t(`${key}.accounting`)} · {item.correlation} · {item.resultSummary}
-                    <Link href={ownerHref('finance', item.invoiceRef.resourceId)}>{t(`${key}.detail`)}</Link>
-                  </li>
-                ))}
-              </ul>
+            <section className="sp-panel">
+              <h2>Najít v Siamparku</h2>
+              <label className="sp-stack">
+                <span className="sp-muted">Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol</span>
+                <input
+                  className="sp-search"
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Například R101, Parková nebo revize…"
+                  type="search"
+                  value={query}
+                />
+              </label>
+              <label className="sp-muted">
+                <input
+                  checked={includeClosed}
+                  onChange={(event) => setIncludeClosed(event.target.checked)}
+                  type="checkbox"
+                />{' '}
+                Zahrnout ukončené a archivované
+              </label>
+              {hits.map((hit) => (
+                <a className="sp-attention" href={hit.href} key={hit.id}>
+                  <strong>
+                    {hit.kind} · {hit.label}
+                  </strong>
+                  <span className="sp-muted">{hit.detail}</span>
+                </a>
+              ))}
+              {query.trim().length >= 2 && hits.length === 0 && (
+                <p className="sp-muted">Žádné výsledky v agendách, ke kterým máte oprávnění.</p>
+              )}
             </section>
-            <div className="siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface)">
-              <Table className="siamparkproperty:w-full" size="sm" variant="outline">
-                <Table.Caption>{t(`${key}.properties`)}</Table.Caption>
-                <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
-                  <Table.Row>
-                    <Table.ColumnHeader>{t(`${key}.property`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader>{t(`${key}.occupied`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader>{t(`${key}.available`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader>{t(`${key}.reserved`)}</Table.ColumnHeader>
-                    <Table.ColumnHeader>{t(`${key}.detail`)}</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {records.property.properties.map((item) => {
-                    const ownUnits = records.property.units.filter(
-                      (unit) => unit.propertyRef.resourceId === item.propertyRef.resourceId,
-                    );
-                    const ownCounts = occupancyCounts(ownUnits, records);
-                    return (
-                      <Table.Row key={item.propertyRef.resourceId}>
-                        <Table.Cell>
-                          {item.code} · {item.name}
-                        </Table.Cell>
-                        <Table.Cell>{ownCounts.occupied}</Table.Cell>
-                        <Table.Cell>{ownCounts.available}</Table.Cell>
-                        <Table.Cell>{ownCounts.reserved}</Table.Cell>
-                        <Table.Cell>
-                          <Button
-                            onClick={() => setPropertyId(item.propertyRef.resourceId)}
-                            size="sm"
-                            theme="outlined"
-                            variant="secondary"
-                          >
-                            {t(`${key}.detail`)}
-                          </Button>
-                        </Table.Cell>
-                      </Table.Row>
-                    );
-                  })}
-                </Table.Body>
-              </Table>
-            </div>
-            {property !== undefined && (
-              <article className="siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-5">
-                <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">
-                  {property.code} · {property.name}
-                </h2>
-                <p className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)">
-                  {property.address}
-                </p>
-                <ul className="siamparkproperty:space-y-2 siamparkproperty:text-sm">
-                  {units.map((unit) => (
-                    <li key={unit.unitRef.resourceId}>
-                      {unit.code} · {unit.name} ·{' '}
-                      {unit.lifecycleState === 'ACTIVE'
-                        ? t(`${key}.availability.${unitAvailability(unit.unitRef.resourceId, records)}`)
-                        : t(`${key}.outOfService`)}
-                    </li>
-                  ))}
-                </ul>
-              </article>
-            )}
+            <footer className="sp-sources" aria-label="Dostupnost zdrojů">
+              {(Object.keys(sourceLabels) as (keyof OverviewSources)[]).map((key) => (
+                <span className="sp-muted" key={key}>
+                  {sourceLabels[key]}: {sourceMessages[sources[key].status]}
+                </span>
+              ))}
+            </footer>
           </>
         )}
-        <nav
-          aria-label={t(`${key}.modules`)}
-          className="siamparkproperty:min-w-0 siamparkproperty:space-y-3 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-4"
-        >
-          <ul className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:gap-3 siamparkproperty:text-sm">
-            {modules.map((module) => (
-              <li key={module}>
-                <Link href={`/${language ?? 'cs'}/siampark/${module}`}>{t(`${key}.modulesList.${module}`)}</Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
       </section>
     </>
   );
