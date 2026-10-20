@@ -80,6 +80,7 @@
       "archive": "Archivovat",
       "create": "Vytvořit smlouvu",
       "noUnit": "Bez jednotky",
+      "unnamedContract": "Smlouva bez názvu",
       "signedDocumentTitle": "Podepsaná nájemní smlouva (simulace)",
       "list": "Smlouvy",
       "provider": "Poskytovatel",

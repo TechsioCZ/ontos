@@ -11,6 +11,7 @@ import type { Occupancy, RecordsResponse, TenantContact, TenantDossier } from '.
 import { parseCrowns } from './lease-story.tsx';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
 import './tenant-dossier.css';
+import { contactCountLabel } from './contact-count.ts';
 
 const caseLabels = {
   NEW: 'Nový',
@@ -456,7 +457,7 @@ export const TenantDirectory = ({
                   </Badge>
                 </div>
                 <span className="sp-tenant-muted">
-                  {unitName(record.unitRef.resourceId)} · {dossier?.contacts.length ?? 0} kontaktních osob
+                  {unitName(record.unitRef.resourceId)} · {contactCountLabel(dossier?.contacts.length ?? 0)}
                 </span>
                 <span className="sp-tenant-muted">
                   {tenant?.email ?? 'E-mail neuveden'} · {tenant?.phone ?? 'Telefon neuveden'}

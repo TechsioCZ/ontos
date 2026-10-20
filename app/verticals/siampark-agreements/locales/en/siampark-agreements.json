@@ -80,6 +80,7 @@
       "archive": "Archive",
       "create": "Create contract",
       "noUnit": "No unit",
+      "unnamedContract": "Untitled contract",
       "signedDocumentTitle": "Signed lease contract (simulation)",
       "list": "Contracts",
       "provider": "Provider",

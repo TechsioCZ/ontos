@@ -14,6 +14,7 @@ import type { Contract, RecordsResponse } from '../../../../../shared/apis/recor
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { rentalReferenceAccess } from './rental-reference-access.ts';
+import { contractTitle } from './contract-title.ts';
 
 const RecordsSearchSchema = Schema.Struct({ resourceId: Schema.optional(ContractRefSchema.fields.resourceId) });
 const DEFAULT_START_DATE = '2026-10-05';
@@ -491,8 +492,15 @@ export const useRecordsPage = () => {
   };
   const unitName = (resourceId: string | undefined) =>
     properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ??
-    resourceId ??
     t('siampark-agreements.demo.noUnit');
+  const titleOf = (record: Contract) =>
+    contractTitle(
+      record,
+      properties?.units.find((unit) => unit.unitRef.resourceId === record.unitRef?.resourceId)?.name,
+      customers.find((customer) => customer.counterpartyRef.resourceId === record.counterpartyRef.resourceId)
+        ?.displayName,
+      t('siampark-agreements.demo.unnamedContract'),
+    );
   const visible = snapshot?.contracts.filter((record) => !expiringOnly || record.expiringSoon) ?? [];
   const busy = feedback === 'loading' || feedback === 'saving';
   const formView = {
@@ -575,6 +583,7 @@ export const useRecordsPage = () => {
     snapshot,
     startDate,
     t,
+    titleOf,
     unitName,
     visible,
   };

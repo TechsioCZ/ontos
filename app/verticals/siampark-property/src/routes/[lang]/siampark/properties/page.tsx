@@ -545,26 +545,28 @@ const RecordsPageContent = () => {
                                 </span>
                               </Table.Cell>
                               <Table.Cell>
-                                <Button
-                                  disabled={model.pending || editor.busy}
-                                  onClick={() => group.select(item.id)}
-                                  size="sm"
-                                  theme="outlined"
-                                  variant="secondary"
-                                >
-                                  {t(`${key}.detail`)}
-                                </Button>
-                                {item.property !== null && (
+                                <div className="sp-property-row-actions">
                                   <Button
-                                    disabled={editor.busy}
-                                    onClick={() => editor.begin(item.property)}
+                                    disabled={model.pending || editor.busy}
+                                    onClick={() => group.select(item.id)}
                                     size="sm"
                                     theme="outlined"
                                     variant="secondary"
                                   >
-                                    {t(`${key}.editor.edit`)}
+                                    {t(`${key}.detail`)}
                                   </Button>
-                                )}
+                                  {item.property !== null && (
+                                    <Button
+                                      disabled={editor.busy}
+                                      onClick={() => editor.begin(item.property)}
+                                      size="sm"
+                                      theme="outlined"
+                                      variant="secondary"
+                                    >
+                                      {t(`${key}.editor.edit`)}
+                                    </Button>
+                                  )}
+                                </div>
                               </Table.Cell>
                             </Table.Row>
                           ))}

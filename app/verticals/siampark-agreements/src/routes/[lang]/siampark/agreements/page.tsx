@@ -73,10 +73,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
           {t('siampark-agreements.detail.back')}
         </LinkButton>
       </div>
-      <PageHeader
-        description={t(`siampark-agreements.demo.kinds.${selected.kind}`)}
-        title={selected.kind === 'OTHER' ? t(LABEL_OTHER) : unitName(selected.unitRef?.resourceId)}
-      />
+      <PageHeader description={t(`siampark-agreements.demo.kinds.${selected.kind}`)} title={state.titleOf(selected)} />
       {feedback !== 'ready' && <output aria-live="polite">{t(`siampark-agreements.demo.feedback.${feedback}`)}</output>}
       <div className="siamparkagreements:grid siamparkagreements:grid-cols-1 siamparkagreements:items-start siamparkagreements:gap-6 siamparkagreements:xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="siamparkagreements:min-w-0 siamparkagreements:space-y-6">
@@ -587,13 +584,7 @@ const RecordsPageContent = () => {
                   {visible.map((record) => (
                     <Table.Row key={record.contractRef.resourceId}>
                       <Table.Cell>
-                        <span className="siamparkagreements:font-medium">
-                          {record.kind === 'OTHER'
-                            ? (state.customers.find(
-                                (customer) => customer.counterpartyRef.resourceId === record.counterpartyRef.resourceId,
-                              )?.displayName ?? t(LABEL_OTHER))
-                            : unitName(record.unitRef?.resourceId)}
-                        </span>
+                        <span className="siamparkagreements:font-medium">{state.titleOf(record)}</span>
                         {record.kind === 'LEASE' && (
                           <span className="siamparkagreements:block siamparkagreements:text-xs siamparkagreements:text-(--color-fg-secondary)">
                             {state.counterpartyOf(record)?.displayName ?? ''}
