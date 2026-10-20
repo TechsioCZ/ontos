@@ -65,6 +65,7 @@ export default async function NewsPage() {
         kind: "quantity",
         status: getProductStockStatus(variant),
         minimumQuantity: variant.minimumQuantity,
+        quantityStep: variant.quantityStep,
         packageQuantity: variant.packageQuantity,
         stockCount: variant.stockCount,
         unit: variant.unit,

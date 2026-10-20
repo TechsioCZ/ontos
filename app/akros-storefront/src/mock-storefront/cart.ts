@@ -9,6 +9,7 @@ export interface CartItemSnapshot {
   imageAlt: string;
   unit: string;
   minimumQuantity: number;
+  quantityStep?: number;
   stockCount: number;
   priceMinor: number;
   priceExcludingVatMinor?: number;
@@ -39,14 +40,19 @@ const getDecimalPlaces = (value: number) => {
 };
 
 const getQuantityScale = (item: CartItemSnapshot) =>
-  10 ** Math.max(getDecimalPlaces(item.minimumQuantity), getDecimalPlaces(item.stockCount));
+  10 **
+  Math.max(
+    getDecimalPlaces(item.minimumQuantity),
+    getDecimalPlaces(item.quantityStep ?? item.minimumQuantity),
+    getDecimalPlaces(item.stockCount),
+  );
 
 export const getMaximumOrderQuantity = (item: CartItemSnapshot): number => {
   const scale = getQuantityScale(item);
-  const step = Math.round(item.minimumQuantity * scale);
+  const step = Math.round((item.quantityStep ?? item.minimumQuantity) * scale);
   const stock = Math.floor(item.stockCount * scale);
 
-  if (step <= 0 || stock < step) return 0;
+  if (step <= 0 || stock < item.minimumQuantity * scale) return 0;
   return Math.floor(stock / step) * (step / scale);
 };
 
@@ -54,12 +60,15 @@ export const normalizeOrderQuantity = (item: CartItemSnapshot, quantity: number)
   if (!Number.isFinite(quantity) || quantity <= 0) return 0;
 
   const scale = getQuantityScale(item);
-  const step = Math.round(item.minimumQuantity * scale);
+  const step = Math.round((item.quantityStep ?? item.minimumQuantity) * scale);
   const requested = Math.round(quantity * scale);
   const maximum = Math.round(getMaximumOrderQuantity(item) * scale);
   if (step <= 0 || maximum <= 0) return 0;
 
-  const normalized = Math.max(step, Math.floor(requested / step) * step);
+  const normalized = Math.max(
+    Math.ceil((item.minimumQuantity * scale) / step) * step,
+    Math.floor(requested / step) * step,
+  );
   return Math.min(normalized, maximum) / scale;
 };
 

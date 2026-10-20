@@ -3,7 +3,13 @@ import { useEffect, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { useCart } from "@/features/cart/cart-provider";
 import { useDataSource } from "./catalog-provider";
-import type { CartState } from "@/mock-storefront/cart";
+import {
+  getCartSubtotal,
+  getLineTotal,
+  formatQuantity,
+  type CartState,
+} from "@/mock-storefront/cart";
+import { formatPrice } from "@/lib/format";
 interface Quote {
   cart: CartState;
   priceChanged: boolean;
@@ -29,6 +35,7 @@ export function CartRevalidation() {
         .then(async (r) => {
           const body = await r.json();
           if (!r.ok) throw new Error(body.message);
+          if (controller.signal.aborted) return;
           setQuote(body);
           if (body.canCheckout && JSON.stringify(body.cart) !== JSON.stringify(cart))
             dispatch({ type: "revalidate", cart: body.cart });
@@ -61,8 +68,41 @@ export function CartRevalidation() {
             <div role="alert">
               <p className="font-bold">Cena se změnila – přijmout novou cenu</p>
               <p>
-                Aktuální ceny budou přeneseny z OntOS do tohoto košíku. Objednávka se zatím
+                Ceny s DPH. Nové ceny použijeme až po vašem souhlasu; objednávka se zatím
                 neodeslala.
+              </p>
+              <ul className="my-4 grid gap-4">
+                {quote.cart.lines.map((next) => {
+                  const previous = cart.lines.find(
+                    (line) =>
+                      line.productId === next.productId && line.variantId === next.variantId,
+                  );
+                  if (!previous || previous.priceMinor === next.priceMinor) return null;
+                  return (
+                    <li
+                      key={`${next.productId}:${next.variantId ?? ""}`}
+                      className="min-w-0 wrap-anywhere"
+                    >
+                      <p className="font-bold">
+                        {next.name}
+                        {next.variantLabel ? ` – ${next.variantLabel}` : ""}
+                      </p>
+                      <p>
+                        Za {next.unit}: {formatPrice(previous.priceMinor)} →{" "}
+                        <strong>{formatPrice(next.priceMinor)}</strong>
+                      </p>
+                      <p>
+                        Za {formatQuantity(next.quantity)} {next.unit}:{" "}
+                        {formatPrice(getLineTotal(previous))} →{" "}
+                        <strong>{formatPrice(getLineTotal(next))}</strong>
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mb-4 font-bold">
+                Celkem za zboží: {formatPrice(getCartSubtotal(cart))} →{" "}
+                {formatPrice(getCartSubtotal(quote.cart))}
               </p>
               <Button
                 type="button"

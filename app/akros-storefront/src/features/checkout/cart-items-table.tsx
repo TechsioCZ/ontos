@@ -35,7 +35,7 @@ function CartQuantity({ line }: { line: CartLine }) {
         formatOptions={{ maximumFractionDigits: 6 }}
         min={line.minimumQuantity}
         max={getMaximumOrderQuantity(line)}
-        step={line.minimumQuantity}
+        step={line.quantityStep ?? line.minimumQuantity}
         value={draftQuantity ?? line.quantity}
         size="sm"
         allowMouseWheel={false}

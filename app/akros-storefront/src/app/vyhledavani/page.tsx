@@ -33,6 +33,7 @@ const toSearchGridItem = (
       stock: {
         kind: "quantity" as const,
         minimumQuantity: matchedVariant.minimumQuantity,
+        quantityStep: matchedVariant.quantityStep,
         packageQuantity: matchedVariant.packageQuantity,
         status: getProductStockStatus(matchedVariant),
         stockCount: matchedVariant.stockCount,

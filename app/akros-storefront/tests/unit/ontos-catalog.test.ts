@@ -34,7 +34,8 @@ describe("OntOS source-of-truth boundary", () => {
     expect(model.getProducts()[0].detail.variants[0]).toMatchObject({
       priceMinor: 121,
       stockCount: 40,
-      minimumQuantity: 2,
+      minimumQuantity: 10,
+      quantityStep: 10,
       packageQuantity: 10,
     });
     expect(s.revision).toBe(7);

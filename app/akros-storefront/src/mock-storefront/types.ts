@@ -22,6 +22,7 @@ export interface CatalogProductVariant {
   label: string;
   minimumQuantity: number;
   packageQuantity?: number;
+  quantityStep?: number;
   priceMinor: number;
   originalPriceMinor?: number;
   stockCount: number;
@@ -68,6 +69,7 @@ export interface CatalogProduct {
   unit: string;
   minimumQuantity: number;
   packageQuantity?: number;
+  quantityStep?: number;
   netWeight?: number;
   stockCount: number;
   imageSrc: string;
@@ -97,6 +99,7 @@ export type CatalogProductSummaryStock =
       kind: "quantity";
       minimumQuantity: number;
       packageQuantity?: number;
+      quantityStep?: number;
       status: ProductStockStatus;
       stockCount: number;
       unit: string;

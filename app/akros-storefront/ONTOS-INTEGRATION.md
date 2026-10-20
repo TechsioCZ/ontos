@@ -59,6 +59,16 @@ than the complete prototype catalog. Outage shows a Czech error, never prototype
 Cart remains Kai's browser-local named cart storage. `POST /api/ontos/cart` revalidates fresh
 owner prices, applicable quantity tiers, stock, minimum and package multiples. Price changes
 require the visible **Přijmout nové ceny** action; they are never silently accepted.
+Before consent, the quote lists old → new gross unit prices, each changed line total and the
+cart merchandise subtotal. The cart itself keeps its original amounts until the customer accepts.
+
+In OntOS mode mandatory package quantities are selling constraints, not an optional discount.
+`purchase-constraints.ts` rounds the owner minimum up to a complete package and publishes an
+additive `quantityStep` for purchase controls, cart edits and browser storage. Both purchase
+buttons therefore add only legal package multiples (including metre-based products). The UI
+explains this before adding; grouped product summaries defer to each variant rather than
+advertising another variant’s minimum. Mock mode has no `quantityStep` and retains Kai’s
+original unit/package behavior. The server still rechecks all constraints independently.
 
 `POST /api/ontos/orders` only constructs `PlaceStorefrontOrder`, through merchandise
 `apply-command`. It validates the input and delivery details, uses the fresh aggregate revision

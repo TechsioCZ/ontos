@@ -1,4 +1,5 @@
 import "server-only";
+import { purchaseConstraints } from "./purchase-constraints";
 import type { CartState, CartLine } from "@/mock-storefront/cart";
 import { createCatalog } from "./catalog-model";
 import { getSnapshot } from "./catalog-server";
@@ -61,7 +62,7 @@ export async function quoteCart(cart: CartState) {
       sku: item.sku,
       unit: item.unit,
       stockCount: item.stockCount,
-      minimumQuantity: item.minimumQuantity,
+      ...purchaseConstraints(item.minimumQuantity, item.packageQuantity),
       priceMinor: price,
       priceExcludingVatMinor: tier?.priceExcludingVatMinor,
     };

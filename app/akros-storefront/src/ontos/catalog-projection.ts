@@ -1,3 +1,4 @@
+import { purchaseConstraints } from "./purchase-constraints";
 import rawCatalog from "@/mock-storefront/generated/catalog.generated.json";
 import rawCategories from "@/mock-storefront/generated/categories.generated.json";
 import type {
@@ -59,7 +60,7 @@ export function project(body: Raw): CatalogSnapshot {
         priceMinor: gross,
         originalPriceMinor: undefined,
         stockCount: stock,
-        minimumQuantity: minimum,
+        ...purchaseConstraints(minimum, number(v.packageQuantity) ?? number(p.packageQuantity)),
         packageQuantity: number(v.packageQuantity) ?? number(p.packageQuantity),
         priceTiers: [
           { minimumQuantity: minimum, priceMinor: gross, priceExcludingVatMinor: net },
@@ -96,7 +97,10 @@ export function project(body: Raw): CatalogSnapshot {
       vatRate: number(p.vatRate),
       priceMinor: first?.priceMinor ?? gross!,
       originalPriceMinor: undefined,
-      minimumQuantity: first?.minimumQuantity ?? minimum!,
+      ...purchaseConstraints(
+        first?.minimumQuantity ?? minimum!,
+        first?.packageQuantity ?? number(p.packageQuantity),
+      ),
       packageQuantity: first?.packageQuantity ?? number(p.packageQuantity),
       stockCount: variants.length ? variants.reduce((s, v) => s + v.stockCount, 0) : stock!,
       detail: {

@@ -83,6 +83,7 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
       return {
         kind: "quantity",
         minimumQuantity: product.minimumQuantity,
+        quantityStep: product.quantityStep,
         packageQuantity: product.packageQuantity,
         status: getProductStockStatus(product),
         stockCount: product.stockCount,

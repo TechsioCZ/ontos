@@ -72,6 +72,32 @@ function CartLines() {
 afterEach(cleanup);
 
 describe("ProductPurchaseForm", () => {
+  it.each([
+    { minimumQuantity: 200, packageQuantity: 200, quantityStep: 200, unit: "ks" },
+    { minimumQuantity: 100, packageQuantity: 100, quantityStep: 100, unit: "m" },
+    { minimumQuantity: 400, packageQuantity: 200, quantityStep: 200, unit: "ks" },
+  ])("only adds authoritative package multiples: %j", async (constraints) => {
+    const user = userEvent.setup();
+    const live = { ...variants[0], ...constraints };
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={[live]} />
+        <CartLines />
+      </CartProvider>,
+    );
+    expect(screen.getByText(/Pouze celá balení/)).toBeTruthy();
+    expect(
+      (screen.getByRole("spinbutton", { name: "Množství M 2 × 5" }) as HTMLInputElement).value,
+    ).toBe(String(live.minimumQuantity));
+    await user.click(screen.getByRole("button", { name: "Koupit M 2 × 5" }));
+    let lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
+    expect(lines[0].quantity).toBe(live.minimumQuantity);
+    await user.click(screen.getByRole("button", { name: "Koupit celé balení M 2 × 5" }));
+    lines = JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]");
+    expect(lines[0].quantity).toBe(live.minimumQuantity * 2);
+    expect(lines[0].quantity % live.packageQuantity).toBe(0);
+  });
+
   it("synchronizes typed range limits and slider values, applying them only on submit", async () => {
     const user = userEvent.setup();
     render(

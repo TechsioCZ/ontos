@@ -217,6 +217,7 @@ const getVariantCartItem = (product: CatalogProduct, variant: CatalogProductVari
   imageAlt: product.imageAlt,
   unit: variant.unit,
   minimumQuantity: variant.minimumQuantity,
+  quantityStep: variant.quantityStep,
   stockCount: variant.stockCount,
   priceMinor: variant.priceMinor,
   priceExcludingVatMinor: variant.priceTiers.find((tier) => tier.priceMinor === variant.priceMinor)
@@ -239,8 +240,12 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
   const maximum = isPackage
     ? Math.floor(maximumOrderQuantity / packageQuantity)
     : maximumOrderQuantity;
-  const minimum = isPackage ? 0 : variant.minimumQuantity;
-  const step = isPackage ? 1 : variant.minimumQuantity;
+  const minimum = isPackage
+    ? variant.quantityStep
+      ? Math.ceil(variant.minimumQuantity / packageQuantity)
+      : 0
+    : variant.minimumQuantity;
+  const step = isPackage ? 1 : (variant.quantityStep ?? variant.minimumQuantity);
   const [selectedQuantity, setSelectedQuantity] = useState(minimum);
   const quantityToAdd = isPackage
     ? Math.max(selectedQuantity, 1) * packageQuantity
@@ -519,10 +524,16 @@ export function ProductPurchaseForm({
         cell: ({ row }) => {
           const item = row.original;
           const packageQuantity = item.packageQuantity ?? item.minimumQuantity;
-          const hasSeparatePackage = packageQuantity > item.minimumQuantity;
+          const hasSeparatePackage = packageQuantity > item.minimumQuantity || !!item.quantityStep;
 
           return (
             <div className="akros-variant-table__purchase-cell @max-akros-variant-table/akros-variants:grid-cols-1! @max-akros-variant-table/akros-variants:gap-(--dimension-8)">
+              {item.quantityStep && (
+                <small className="col-span-full text-fg-secondary">
+                  Pouze celá balení po {packageQuantity.toLocaleString("cs-CZ")} {item.unit}.{" "}
+                  Minimální odběr {item.minimumQuantity.toLocaleString("cs-CZ")} {item.unit}.
+                </small>
+              )}
               <VariantOrderControl
                 mode="minimum"
                 onAdd={addVariant}
@@ -565,6 +576,7 @@ export function ProductPurchaseForm({
       imageAlt: product.imageAlt,
       unit: purchaseItem.unit,
       minimumQuantity: purchaseItem.minimumQuantity,
+      quantityStep: purchaseItem.quantityStep,
       stockCount: purchaseItem.stockCount,
       priceMinor: purchaseItem.priceMinor,
       priceExcludingVatMinor: (variant?.priceTiers ?? product.detail.priceTiers).find(
@@ -576,12 +588,19 @@ export function ProductPurchaseForm({
 
     return (
       <div className="akros-purchase-form">
+        {purchaseItem.quantityStep && (
+          <small className="col-span-full text-fg-secondary">
+            Pouze celá balení po{" "}
+            {(purchaseItem.packageQuantity ?? purchaseItem.quantityStep).toLocaleString("cs-CZ")}{" "}
+            {purchaseItem.unit}.
+          </small>
+        )}
         <NumericInput
           id={`quantity-${product.id}`}
           locale="cs-CZ"
           min={purchaseItem.minimumQuantity}
           max={maximumQuantity}
-          step={purchaseItem.minimumQuantity}
+          step={purchaseItem.quantityStep ?? purchaseItem.minimumQuantity}
           onChange={setQuantity}
           size="lg"
           value={quantity}

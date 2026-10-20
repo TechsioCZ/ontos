@@ -212,7 +212,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 <div>
                   <dt>Minimální odběr</dt>
                   <dd>
-                    {purchaseItem.minimumQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
+                    {hasMultipleVariants && product.quantityStep
+                      ? "Dle zvolené varianty – pouze celá balení"
+                      : `${purchaseItem.minimumQuantity.toLocaleString("cs-CZ")} ${purchaseItem.unit}`}
                   </dd>
                 </div>
               )}

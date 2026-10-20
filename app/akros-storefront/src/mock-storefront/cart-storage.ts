@@ -43,6 +43,11 @@ export const parseStoredCart = (value: string | null): CartState => {
           imageAlt: line.imageAlt,
           unit: line.unit,
           minimumQuantity: line.minimumQuantity,
+          ...(typeof line.quantityStep === "number" &&
+          Number.isFinite(line.quantityStep) &&
+          line.quantityStep > 0
+            ? { quantityStep: line.quantityStep }
+            : {}),
           priceMinor: line.priceMinor,
           ...(Number.isSafeInteger(line.priceExcludingVatMinor) &&
           (line.priceExcludingVatMinor ?? -1) >= 0 &&
