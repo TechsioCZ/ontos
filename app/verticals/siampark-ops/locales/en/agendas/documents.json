@@ -168,6 +168,8 @@
     "title": "Documents",
     "empty": "No documents are linked to this record.",
     "forbidden": "Documents are visible to Siampark internal roles only.",
+    "upload": "Upload a file to this record",
+    "attach": "Attach an existing document",
     "openAll": "Open in Documents"
   },
   "comments": {

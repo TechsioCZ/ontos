@@ -169,6 +169,8 @@
     "title": "Dokumenty",
     "empty": "K tomuto záznamu nejsou připojené žádné dokumenty.",
     "forbidden": "Dokumenty vidí jen interní role Siamparku.",
+    "upload": "Nahrát soubor k záznamu",
+    "attach": "Připojit existující dokument",
     "openAll": "Otevřít v Dokumentech"
   },
   "comments": {
