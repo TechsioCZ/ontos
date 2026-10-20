@@ -88,6 +88,9 @@ Live checkout offers owner-supported personal pickup (0 Kč) or Zásilkovna (79 
 Prototype-only free-shipping threshold/paid extended returns are not applied in ontos mode.
 Connected checkout has only the inactive **Nic neplatíte (DEMO)** method. Old saved payment
 choices are migrated to `demo-no-payment`; GoPay/Apple Pay/card choices remain in mock mode only.
+New connected orders use the Czech staff note **Platba se neprovádí (DEMO).** rather than
+serializing the internal payment ID (including when submitting an old saved payment choice).
+Existing order notes are historical snapshots and are not rewritten by this presentation fix.
 The connected CTA is **Potvrdit DEMO objednávku** with the exact notice before and after confirmation:
 **E-shop je prezentační demo. Žádné zboží vám nebude doručeno a nic neplatíte.**
 The production-style payment-obligation terms and newsletter signup are hidden in connected mode.

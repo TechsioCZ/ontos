@@ -54,7 +54,7 @@ export async function POST(request: Request) {
         quantity: l.quantity,
         expectedUnitPriceMinor: l.priceMinor,
       })),
-      note: `AKROS DEMO – objednávka nebude doručena. Platba ${draft.paymentId}: simulace. ${draft.company}`.slice(
+      note: `AKROS DEMO – objednávka nebude doručena. Platba se neprovádí (DEMO). ${draft.company}`.slice(
         0,
         1000,
       ),
