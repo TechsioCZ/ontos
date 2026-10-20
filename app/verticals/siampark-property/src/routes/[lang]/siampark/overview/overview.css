@@ -219,3 +219,8 @@
     gap: 8px;
   }
 }
+
+.sp-overview .sp-attention > :first-child,
+.sp-overview .sp-unit > :nth-child(2) {
+  justify-self: start;
+}

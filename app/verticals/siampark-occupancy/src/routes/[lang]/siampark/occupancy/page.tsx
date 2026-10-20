@@ -1232,6 +1232,7 @@ const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useReco
 };
 const RecordsPageContent = () => {
   const state = useRecordsPage();
+  const [calendarMonth, setCalendarMonth] = useState('');
   const {
     busy,
     feedback,
@@ -1299,7 +1300,13 @@ const RecordsPageContent = () => {
             />
             {snapshot !== undefined && <OccupancySummary state={state} />}
             {snapshot !== undefined && state.properties !== undefined && (
-              <OccupancyCalendar language={state.language} properties={state.properties} snapshot={snapshot} />
+              <OccupancyCalendar
+                monthValue={calendarMonth}
+                onMonthChange={setCalendarMonth}
+                language={state.language}
+                properties={state.properties}
+                snapshot={snapshot}
+              />
             )}
             <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
               <LinkButton href="#tenants" size="sm" theme="outlined" variant="secondary">

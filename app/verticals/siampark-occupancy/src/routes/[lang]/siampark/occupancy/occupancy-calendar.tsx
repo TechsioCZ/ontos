@@ -1,7 +1,6 @@
 import { SectionCard } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DateTime } from 'effect';
-import { useState } from 'react';
 import type { executeRecords as executeProperty } from '@app/siampark-property/clients/records';
 import type { Effect } from 'effect';
 import type { Occupancy, RecordsResponse } from '../../../../../shared/apis/records.ts';
@@ -28,22 +27,26 @@ export const dayOccupancy = (records: readonly Occupancy[], unitId: string, day:
 /** Exact source intervals, not a second calendar store: cancellation releases every affected day immediately. */
 export const OccupancyCalendar = ({
   language,
+  monthValue,
+  onMonthChange,
   properties,
   snapshot,
 }: {
   readonly language: string;
+  readonly monthValue: string;
+  readonly onMonthChange: (month: string) => void;
   readonly properties: Properties;
   readonly snapshot: RecordsResponse;
 }) => {
   const today = todayInPrague();
-  const [month, setMonth] = useState(() => `${today.slice(0, 7)}-01`);
+  const month = monthValue === '' ? `${today.slice(0, 7)}-01` : monthValue;
   const start = DateTime.makeUnsafe(`${month}T00:00:00Z`);
   const next = DateTime.add(start, { months: 1 });
   const days = Array.from(
     { length: Math.round((DateTime.toEpochMillis(next) - DateTime.toEpochMillis(start)) / 86_400_000) },
     (_, index) => DateTime.formatIsoDate(DateTime.add(start, { days: index })),
   );
-  const shift = (months: number) => setMonth(DateTime.formatIsoDate(DateTime.add(start, { months })));
+  const shift = (months: number) => onMonthChange(DateTime.formatIsoDate(DateTime.add(start, { months })));
   return (
     <div className="sp-occupancy-calendar">
       <SectionCard
@@ -69,7 +72,7 @@ export const OccupancyCalendar = ({
               →
             </Button>
             <Button
-              onClick={() => setMonth(`${today.slice(0, 7)}-01`)}
+              onClick={() => onMonthChange(`${today.slice(0, 7)}-01`)}
               size="sm"
               theme="borderless"
               variant="secondary"

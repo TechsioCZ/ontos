@@ -317,7 +317,9 @@ export const uniqueSeedRecord = <A,>(label: string, records: readonly A[]) =>
         new DemoSeedError({ reason: `${label} has multiple matches. Refusing to create or overwrite data.` }),
       );
 const required = <A,>(label: string, value: A | undefined) =>
-  value === undefined ? Effect.fail(new DemoSeedError({ reason: `${label} could not be read back.` })) : Effect.succeed(value);
+  value === undefined
+    ? Effect.fail(new DemoSeedError({ reason: `${label} could not be read back.` }))
+    : Effect.succeed(value);
 
 const storyRef = <M extends string, K extends string>(target: SeedTarget, moduleId: M, kind: K, key: string) => ({
   moduleId,
@@ -442,14 +444,12 @@ const ensureLeaseDraft = (client: SeedClient, target: SeedTarget, spec: LeaseSpe
 type Lease = Effect.Success<ReturnType<typeof ensureLeaseDraft>>;
 
 const occupancyState = (client: SeedClient, lease: Lease) =>
-  client
-    .read(occupancyAudience, occupancyRead)
-    .pipe(
-      Effect.map((snapshot) => ({
-        record: snapshot.occupancies.find((item) => item.occupancyRef.resourceId === lease.occupancyRef.resourceId),
-        revision: snapshot.revision,
-      })),
-    );
+  client.read(occupancyAudience, occupancyRead).pipe(
+    Effect.map((snapshot) => ({
+      record: snapshot.occupancies.find((item) => item.occupancyRef.resourceId === lease.occupancyRef.resourceId),
+      revision: snapshot.revision,
+    })),
+  );
 const applyOccupancy = (
   client: SeedClient,
   lease: Lease,
@@ -518,7 +518,10 @@ const ensureContract = (
       record.counterpartyRef.resourceId === tenant.counterpartyRef.resourceId &&
         record.unitRef?.resourceId === unit.unitRef.resourceId,
     );
-    if (record.signatureState === 'NOT_SENT' && (record.lifecycleState === 'DRAFT' || record.lifecycleState === 'ACTIVE')) {
+    if (
+      record.signatureState === 'NOT_SENT' &&
+      (record.lifecycleState === 'DRAFT' || record.lifecycleState === 'ACTIVE')
+    ) {
       const now = DateTime.formatIso(yield* DateTime.now);
       yield* client.apply(
         agreementsAudience,
@@ -597,6 +600,41 @@ const progressLease = (client: SeedClient, spec: LeaseSpec, lease: Lease, contra
         );
       }
     }
+  });
+
+const ensureTenantContacts = (client: SeedClient, lease: Lease) =>
+  Effect.gen(function* tenantContacts() {
+    if (lease.customerCounterpartyRef === null) return;
+    const snapshot = yield* client.read(occupancyAudience, occupancyRead);
+    // Retain any operator edits, communication and archival evidence; only fill a missing dossier.
+    if (snapshot.tenantDossiers?.some((item) => item.counterpartyId === lease.customerCounterpartyRef?.resourceId))
+      return;
+    yield* client.apply(
+      occupancyAudience,
+      occupancyCommand,
+      {
+        _tag: 'UpdateTenantDossier',
+        occupancyRef: lease.occupancyRef,
+        contacts: [
+          {
+            id: demoId('siampark-rental.contact', 'kavarna-lucie'),
+            name: 'Lucie Parková',
+            role: 'Jednatelka',
+            email: 'lucie@kavarna-u-parku.demo',
+            phone: '+420 777 101 101',
+          },
+          {
+            id: demoId('siampark-rental.contact', 'kavarna-petr'),
+            name: 'Petr Novák',
+            role: 'Vedoucí provozu',
+            email: 'petr@kavarna-u-parku.demo',
+            phone: '+420 777 101 102',
+          },
+        ],
+        activity: { kind: 'NOTE', summary: 'DEMO: založena evidence kontaktních osob nájemce kavárny R101.' },
+      },
+      snapshot.revision,
+    );
   });
 
 const ensureTask = (client: SeedClient, spec: TaskSpec, unit: Unit, tenant: Customer) =>
@@ -712,7 +750,9 @@ const ensureOpportunity = (client: SeedClient, tenant: Customer) =>
 
 const byKey = <A extends { readonly key: string }>(label: string, items: ReadonlyMap<string, A>, key: string) => {
   const value = items.get(key);
-  return value === undefined ? Effect.fail(new DemoSeedError({ reason: `${label} ${key} is missing.` })) : Effect.succeed(value);
+  return value === undefined
+    ? Effect.fail(new DemoSeedError({ reason: `${label} ${key} is missing.` }))
+    : Effect.succeed(value);
 };
 
 export const seedRentalDemo = (
@@ -748,29 +788,38 @@ export const seedRentalDemo = (
     const tenants = new Map<string, Customer & { readonly key: string }>();
     const checkpointDirectory = options.checkpointPath.replace(/[^/]+$/u, '');
     for (const spec of rentalStory.tenants) {
-      const customer = yield* ensureSeedCustomer(
-        client,
-        target,
-        `${checkpointDirectory}tenant-${spec.key}.json`,
-        { evidenceKey: spec.evidenceKey, name: spec.name },
-      );
+      const customer = yield* ensureSeedCustomer(client, target, `${checkpointDirectory}tenant-${spec.key}.json`, {
+        evidenceKey: spec.evidenceKey,
+        name: spec.name,
+      });
       tenants.set(spec.key, { ...customer, key: spec.key });
     }
     yield* Console.log(`Tenants ready: ${tenants.size}.`);
-    const leases = new Map<string, { readonly contract: Contract | undefined; readonly lease: Lease; readonly key: string }>();
+    const leases = new Map<
+      string,
+      { readonly contract: Contract | undefined; readonly lease: Lease; readonly key: string }
+    >();
     for (const spec of rentalStory.leases) {
       const unit = yield* byKey('Unit', units, spec.unit);
       const tenant = yield* byKey('Tenant', tenants, spec.tenant);
       const lease = yield* ensureLeaseDraft(client, target, spec, unit, tenant);
       const contract = yield* ensureContract(client, target, spec, unit, tenant, lease);
       yield* progressLease(client, spec, lease, contract);
+      if (spec.key === 'r101-kavarna') yield* ensureTenantContacts(client, lease);
       leases.set(spec.key, { contract, key: spec.key, lease });
-      yield* Console.log(`Lease ${spec.key}: ${spec.state}${contract === undefined ? '' : `, contract ${spec.contract?.state}`}.`);
+      yield* Console.log(
+        `Lease ${spec.key}: ${spec.state}${contract === undefined ? '' : `, contract ${spec.contract?.state}`}.`,
+      );
     }
     for (const spec of rentalStory.tasks) {
       const leaseSpec = rentalStory.leases.find((item) => item.key === spec.lease);
       if (leaseSpec !== undefined) {
-        yield* ensureTask(client, spec, yield* byKey('Unit', units, leaseSpec.unit), yield* byKey('Tenant', tenants, leaseSpec.tenant));
+        yield* ensureTask(
+          client,
+          spec,
+          yield* byKey('Unit', units, leaseSpec.unit),
+          yield* byKey('Tenant', tenants, leaseSpec.tenant),
+        );
       }
     }
     yield* Console.log(`Service tasks ready: ${rentalStory.tasks.length}.`);
