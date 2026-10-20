@@ -4,8 +4,23 @@ import type { SafeTenantIdentity, ShellNavigationItem } from '../../shared/api.t
 export const presentableDemoNavigation = (
   navigation: readonly ShellNavigationItem[],
   canManagePeople: boolean,
-): readonly ShellNavigationItem[] =>
-  navigation.filter(({ href }) => href !== '/contacts' && (href !== '/sprava/lide' || canManagePeople));
+): readonly ShellNavigationItem[] => {
+  // CRM owns this company's client workflow; the canonical registry is not yet integrated with its snapshots.
+  const hasCrmClients = navigation.some(
+    ({ enabled, href, moduleId, unavailable }) =>
+      moduleId === 'demo.crm' && href === '/crm/klienti' && enabled && !unavailable,
+  );
+  return navigation.filter(
+    ({ href, moduleId }) =>
+      href !== '/contacts' &&
+      (href !== '/sprava/lide' || canManagePeople) &&
+      !(
+        hasCrmClients &&
+        moduleId === 'party.registry' &&
+        (href === '/prodej/zakaznici' || href === '/zakaznici' || href === '/customers')
+      ),
+  );
+};
 
 const seededNames: Readonly<Record<string, { readonly original: string; readonly translated: string }>> = {
   'management@siampark.demo': { original: 'Management', translated: 'Vedení' },
