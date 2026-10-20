@@ -12,7 +12,7 @@ import {
 } from '@app/core-runtime';
 import { and, eq, inArray } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, Effect, Predicate, Redacted, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
@@ -58,6 +58,7 @@ import {
   SupportImpersonationStoreService,
 } from '../../api/auth/impersonation-service.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
+import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   const cookies = new Map<string, string>();
@@ -399,7 +400,7 @@ it.live.each([
               x: privateJwk.x ?? '',
             },
           }),
-        }),
+        }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       ),
     );
     const verifiedAssertion = yield* Effect.tryPromise(() =>

@@ -295,7 +295,9 @@ it.effect('executes exact business and Resource gates before resolving unavailab
           return Effect.succeed([{ operation_at: new Date('2026-09-21T10:00:00.000Z') }]);
         }
         return Effect.succeed(
-          text.includes('current_setting') ? [{ legal_entity_id: scope.legalEntityId, tenant_id: tenantId }] : [],
+          text.includes('current_setting')
+            ? [{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]
+            : [],
         );
       }),
     };

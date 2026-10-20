@@ -1128,10 +1128,13 @@ const isMigrationChange = (changedPath: string): boolean =>
   /(?:^|\/)(?:drizzle(?:-auth)?\/|drizzle(?:\.auth)?\.config\.ts$|schema\.ts$|prepare-[^/]+-migration\.mts$|verify-(?:auth-)?db-schema\.mts$)/u.test(
     changedPath,
   ) ||
-  /^(?:scripts\/run-zerops-migrator\.mjs|scripts\/verify-application-db-schema\.mts|scripts\/postgres\/(?:bootstrap-runtime-role\.mts|bootstrap-spicedb-database\.mts|docker-init-runtime-role\.sh))$/u.test(
+  /^(?:scripts\/run-zerops-migrator\.mjs|scripts\/verify-application-db-schema\.mts|scripts\/postgres\/(?:bootstrap-runtime-role\.mts|bootstrap-spicedb-database\.mts|database-login-roles\.mts|database-role-manifest\.mts|docker-init-runtime-role\.sh))$/u.test(
     changedPath,
   ) ||
-  changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts';
+  changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts' ||
+  // The migrator provisions the dedicated database identities and grants from these manifests.
+  changedPath === 'packages/core-runtime/src/db/database-identities.ts' ||
+  changedPath === 'verticals/party-registry/src/db/database-grants.ts';
 
 const isPublicContractChange = (ownerPath: string, changedPath: string): boolean => {
   const relativePath = changedPath.slice(ownerPath.length + 1);

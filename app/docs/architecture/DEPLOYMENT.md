@@ -120,6 +120,34 @@ Never share a migration journal between owners. Never omit a migration because o
 
 Destructive contraction is a later release after all old readers and writers are gone. Ordinary rollback leaves additive schema changes in place.
 
+### Database identities
+
+Party Registry and the Shell gateway-grant registrar use dedicated PostgreSQL logins instead of `ontos_runtime`. The design, rotation costs and the full rollback recipe are in [Database trust boundaries](./DATABASE_TRUST_BOUNDARIES.md#operations).
+
+Stage provisioning, run by a human, never an agent:
+
+1. From a host on the Zerops VPN, with `DATABASE_ADMIN_URL` set, run `node scripts/ops/cloudflare-stage-cutover.mts database-identities`. It creates the missing sensitive `migrator` service secrets `PARTY_REGISTRY_DB_PASSWORD`, `PARTY_REGISTRY_WORKER_DB_PASSWORD` and `SHELL_GATEWAY_ISSUER_DB_PASSWORD` (never printed), then creates the three login roles with `LOGIN` and `CONNECT` only. Roles must exist first because Hyperdrive tests the connection when a config is created.
+2. Run `provision`. It creates Hyperdrive `ontos-stage-party-registry` (user `party_registry_runtime`, caching off, origin limit 10) and `ontos-stage-gateway-issuer` (user `shell_gateway_issuer`, caching off, limit 5), and writes `ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID` and `ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID` into `topology/cloudflare-placement.json` `buildEnvironment` for a reviewed PR. `verify` checks user, caching and limit drift.
+3. Merge. `edge-deploy-readiness` requires both IDs, so no deploy starts before provisioning is complete.
+
+The passwords are `migrator` service secrets, referenced as `${migrator_<KEY>}`, never project variables: every service inherits project variables, which would hand every credential to every process. `scripts/tests/zerops-deployment-contract.test.mts` enforces this. Each process holds only its own URLs:
+
+| Service                 | Database URLs                                        |
+| ----------------------- | ---------------------------------------------------- |
+| `party-registry`        | `PARTY_REGISTRY_DATABASE_URL` only                   |
+| `party-registry-worker` | `PARTY_REGISTRY_WORKER_DATABASE_URL` only            |
+| `outbox-worker-host`    | `DATABASE_URL`, `PARTY_REGISTRY_WORKER_DATABASE_URL` |
+| `shellsuperapp`         | `DATABASE_URL`, `SHELL_GATEWAY_ISSUER_DATABASE_URL`  |
+| `migrator`              | all of them, plus `DATABASE_ADMIN_URL`               |
+
+Every bootstrap pass of the migrator re-sets the three passwords, resets role settings, re-applies the grant manifest and fails if a URL user differs from its manifest role or targets another database.
+
+Party requests fail closed during the first deploy of this change, from the end of the migrator until Shell finishes. The old Party Worker still connects as `ontos_runtime`, which no Party policy matches, or the new Party Worker receives assertions from an old Shell that registers no grants. The planner order (migrator, providers, workers, Shell) is unchanged, so announce that deploy as stage maintenance. Later deploys are unaffected.
+
+Rotation: change the `migrator` secret, run the migrator (it runs `ALTER ROLE ... PASSWORD`), run `cutover provision` to update the Hyperdrive password, then restart the services that use the credential. New connections fail between the migrator and `provision`, so run the steps back to back. The worker credential has no Hyperdrive step.
+
+`zerops.yaml` is shared with production. Production stays blocked until the same `migrator` secrets exist there.
+
 ### SpiceDB
 
 Distinguish Authzed datastore migrations from the OntOS authorization schema. A datastore migration does not publish a changed permission model.
@@ -834,6 +862,7 @@ Rollback must be executable and tested before rollout:
 4. explicitly promote the previously validated composition revision;
 5. restore affected delivery units using the deployment automation's immutable release records. Composition pins public contract and MF-manifest digests; its `buildMarker` alone is not an executable artifact identity. The publisher in #374 must bind the composition revision to those release records before supporting rollback;
 6. leave additive PostgreSQL and compatible SpiceDB changes in place;
+   Exception: the dedicated database identities cannot be rolled back by redeploying the previous release, because its verifiers reject the `trust` schema. Ship the forward rollback release described in [Database trust boundaries](./DATABASE_TRUST_BOUNDARIES.md#rollback) instead.
 7. rerun the complete authenticated smoke suite;
 8. record the rollback artifacts and outcome.
 

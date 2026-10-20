@@ -11,6 +11,7 @@ import {
   setApiKeyBindingStatus,
 } from '../../src/auth/principal-management.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
@@ -23,7 +24,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('principal management'
       const crypto = yield* Crypto.Crypto;
       const tenantId = yield* crypto.randomUUIDv4;
       const providerKeyId = `better-auth-principal-management-${yield* crypto.randomUUIDv4}`;
-      const configuration = yield* loadDatabaseConfig();
+      const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
       const database = yield* makeTestDatabaseFromClient(
         yield* makeTestPgClient(configuration.connectionString),
         coreRelations,

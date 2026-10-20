@@ -4,6 +4,7 @@ import {
   GatewayAssertionReplayError,
   isVerifiedGatewayPrincipalContext,
   readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayScopeAssertion,
 } from '@app/core-runtime';
 import { Clock, ConfigProvider, Context, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -143,6 +144,42 @@ it.effect('preserves signed Storefront scope with non-copyable verified provenan
     expect(isVerifiedGatewayPrincipalContext(verified)).toBe(true);
     expect(readVerifiedGatewayCompositionRevision(verified)).toBe((yield* gatewayComposition).composition.revision);
     expect(readVerifiedGatewayCompositionRevision({ ...verified })).toBeUndefined();
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+it.effect('attaches the redeemed token as the scope assertion only after redemption succeeds', () =>
+  Effect.gen(function* verifyScopeAssertionAttachment() {
+    const fixture = yield* makeFixture('party-registry');
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const verificationOptions = {
+      currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+      environment: fixture.environment,
+    } as const;
+    const signatureOnly = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), verificationOptions);
+    expect(readVerifiedGatewayScopeAssertion(signatureOnly)).toBeUndefined();
+
+    const replayed = yield* Effect.exit(
+      verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+        ...verificationOptions,
+        redemption: {
+          consume: () => Effect.fail(new GatewayAssertionReplayError({ reason: 'The assertion was already used' })),
+        },
+      }),
+    );
+    expect(Exit.isFailure(replayed)).toBe(true);
+
+    const redeemed = yield* verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+      ...verificationOptions,
+      redemption: { consume: () => Effect.void },
+    });
+    const scopeAssertion = readVerifiedGatewayScopeAssertion(redeemed);
+    expect(scopeAssertion?.audience).toBe('party-registry');
+    expect(scopeAssertion === undefined ? undefined : Redacted.value(scopeAssertion.assertion)).toBe(fixture.token);
+    expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(redeemed)).not.toContain(fixture.token);
+    expect(readVerifiedGatewayScopeAssertion({ ...redeemed })).toBeUndefined();
   }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 

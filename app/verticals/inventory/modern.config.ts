@@ -12,6 +12,7 @@ import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareWorkerConfig,
@@ -35,6 +36,7 @@ const {
   buildTarget,
   buildTempDirectory,
   cloudflareDeployEnabled,
+  cloudflareHyperdrives,
   envValue,
   getBuildBoolean,
   moduleFederationDevServerOrigin,
@@ -42,6 +44,7 @@ const {
   siteUrl,
 } = createModernBuildContext({
   appId,
+  cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_INVENTORY',
   cloudflareWorkerName,
   defaultPort: 4110,
@@ -77,6 +80,7 @@ const whenEnabled = <Configuration>(enabled: boolean, configuration: Configurati
 const cloudflareWorkerConfig = cloudflareDeployEnabled
   ? createCloudflareWorkerConfig(envValue, {
       cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical,
+      hyperdrives: cloudflareHyperdrives,
       publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_INVENTORY',
     })
   : undefined;

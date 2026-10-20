@@ -36,6 +36,10 @@ import { transform } from 'effect/SchemaTransformation';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
+  SHARED_RUNTIME_IDENTITY,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identities.ts';
+import {
   CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareWorkerConfig,
   createCloudflareWorkerSecurity,
@@ -43,14 +47,6 @@ import {
   createZephyrRspackPlugin,
   resolveCloudflareExternal,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
-
-const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
-  base: Base,
-  condition: boolean,
-  key: Key,
-  value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 type RspackConfigHandler = Extract<
   NonNullable<NonNullable<AppToolsUserConfig['tools']>['rspack']>,
@@ -82,13 +78,28 @@ const getBuildBoolean = (name: string): boolean =>
     () => false,
   );
 const cloudflareDeployEnabled = resolveDeployTarget().target === 'cloudflare';
+const cloudflareWorkerName = 'app-shell-super-app';
 // Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
-const cloudflareWorkerConfig = cloudflareDeployEnabled
-  ? createCloudflareWorkerConfig(envValue, {
-      cpuMs: CLOUDFLARE_WORKER_CPU_MS.shell,
-      publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
-    })
-  : undefined;
+// Shell reaches PostgreSQL as the shared runtime and, for gateway scope grants only, as the issuer.
+const shellDeploy: NonNullable<UltramodernAppUserConfig['deploy']> = cloudflareDeployEnabled
+  ? {
+      releaseEnvelopeRole: 'shell',
+      worker: {
+        ...createCloudflareWorkerConfig(envValue, {
+          cpuMs: CLOUDFLARE_WORKER_CPU_MS.shell,
+          hyperdrives: [
+            SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive,
+            SHELL_GATEWAY_ISSUER_IDENTITY.cloudflareHyperdrive,
+          ],
+          publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
+        }),
+        compatibilityDate: '2026-06-02',
+        name: cloudflareWorkerName,
+        security: createCloudflareWorkerSecurity(),
+        ssr: true,
+      },
+    }
+  : { releaseEnvelopeRole: 'shell' };
 const effectApiSourceDirectory = fileURLToPath(new URL('api/', import.meta.url));
 /* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 const cloudflareRuntimeExternal = (
@@ -126,7 +137,6 @@ const NativeBffTopologySchema = Struct({
 getResultOrThrow(
   decodeUnknownResult(fromJsonString(NativeBffTopologySchema))(readFileSync(referenceTopologyPath, 'utf-8')),
 );
-const cloudflareWorkerName = 'app-shell-super-app';
 const port = getOptionOrElse(
   getResultOrThrow(
     decodeUnknownResult(
@@ -165,156 +175,138 @@ const shellDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserCon
 
 export default defineConfig(
   presetUltramodern(
-    withOptionalProperty(
-      {
-        bff: {
-          effect: {
-            entry: './api/index',
-            openapi: {
-              path: '/openapi.json',
-            },
-            strictEffectApproach: true,
+    {
+      bff: {
+        effect: {
+          entry: './api/index',
+          openapi: {
+            path: '/openapi.json',
           },
-          prefix: '/shell-super-app-api',
-          runtimeFramework: 'effect',
+          strictEffectApproach: true,
         },
-        builderPlugins: [pluginTailwindcss()],
-        deploy: { releaseEnvelopeRole: 'shell' },
-      } satisfies UltramodernAppUserConfig,
-      cloudflareDeployEnabled,
-      'deploy',
-      {
-        releaseEnvelopeRole: 'shell',
-        worker: {
-          ...cloudflareWorkerConfig,
-          compatibilityDate: '2026-06-02',
-          name: cloudflareWorkerName,
-          security: createCloudflareWorkerSecurity(),
-          ssr: true,
-        },
-      } satisfies NonNullable<UltramodernAppUserConfig['deploy']>,
-      {
-        dev: {
-          // Keep shell dev assets origin-relative so the shell works through
-          // tunnels and local previews without rewriting its own chunks.
-          assetPrefix: '/',
-          lazyCompilation: getBuildBoolean('CI') ? false : undefined,
-          server: {
-            headers: shellDevServerHeaders,
-          },
-        },
-        html: {
-          outputStructure: 'flat',
-        },
-        output: {
-          assetPrefix,
-          // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
-          disableTsChecker: true,
-          distPath: {
-            html: './',
-            root: buildOutputRoot,
-          },
-          polyfill: 'off',
-          splitRouteChunks: true,
-          tempDir: buildTempDirectory,
-        },
-        performance: {
-          buildCache: {
-            cacheDigest: [appId, buildTarget],
-            cacheDirectory: buildCacheDirectory,
-          },
-        },
-        plugins: [
-          ultramodernAppTools(),
-          bffPlugin(),
-          tanstackRouterPlugin(),
-          i18nPlugin({
-            backend: {
-              enabled: true,
-              loadPath: '/locales/{{lng}}/{{ns}}.json',
-            },
-            localeDetection: {
-              fallbackLanguage: 'en',
-              ignoreRedirectRoutes: [
-                // The Shell runtime contract the Application Composition publisher observes.
-                '/.well-known',
-                '/@mf-types',
-                '/assets',
-                '/bundles',
-                '/shell-super-app-api',
-                '/locales',
-                '/mf-manifest.json',
-                '/mf-stats.json',
-                '/remoteEntry.js',
-                '/robots.txt',
-                '/site.webmanifest',
-                '/sitemap.xml',
-                '/static',
-                '/zephyr-manifest.json',
-              ],
-              languages: ['en', 'cs'],
-              localePathRedirect: true,
-            },
-            reactI18next: false,
-          }),
-          moduleFederationPlugin({
-            configPath: moduleFederationConfigPath,
-          }),
-          zephyrRspackPlugin(),
-        ],
+        prefix: '/shell-super-app-api',
+        runtimeFramework: 'effect',
+      },
+      builderPlugins: [pluginTailwindcss()],
+      deploy: shellDeploy,
+      dev: {
+        // Keep shell dev assets origin-relative so the shell works through
+        // tunnels and local previews without rewriting its own chunks.
+        assetPrefix: '/',
+        lazyCompilation: getBuildBoolean('CI') ? false : undefined,
         server: {
-          port,
-          publicDir: ['./locales', './assets'],
-          ssr: {
-            mode: 'stream',
-            moduleFederationAppSSR: true,
-          },
+          headers: shellDevServerHeaders,
         },
-        source: {
-          alias: {
-            '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
-          },
-          globalVars: {
-            ULTRAMODERN_SITE_URL: siteUrl,
-          },
-          mainEntryName: 'index',
+      },
+      html: {
+        outputStructure: 'flat',
+      },
+      output: {
+        assetPrefix,
+        // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
+        disableTsChecker: true,
+        distPath: {
+          html: './',
+          root: buildOutputRoot,
         },
-        splitChunks: {
-          chunks: 'async',
+        polyfill: 'off',
+        splitRouteChunks: true,
+        tempDir: buildTempDirectory,
+      },
+      performance: {
+        buildCache: {
+          cacheDigest: [appId, buildTarget],
+          cacheDirectory: buildCacheDirectory,
         },
-        tools: {
-          autoprefixer: {
-            overrideBrowserslist: ['defaults'],
+      },
+      plugins: [
+        ultramodernAppTools(),
+        bffPlugin(),
+        tanstackRouterPlugin(),
+        i18nPlugin({
+          backend: {
+            enabled: true,
+            loadPath: '/locales/{{lng}}/{{ns}}.json',
           },
-          bundlerChain: (chain) => {
-            chain.output
-              .uniqueName('shellSuperApp')
-              .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
+          localeDetection: {
+            fallbackLanguage: 'en',
+            ignoreRedirectRoutes: [
+              // The Shell runtime contract the Application Composition publisher observes.
+              '/.well-known',
+              '/@mf-types',
+              '/assets',
+              '/bundles',
+              '/shell-super-app-api',
+              '/locales',
+              '/mf-manifest.json',
+              '/mf-stats.json',
+              '/remoteEntry.js',
+              '/robots.txt',
+              '/site.webmanifest',
+              '/sitemap.xml',
+              '/static',
+              '/zephyr-manifest.json',
+            ],
+            languages: ['en', 'cs'],
+            localePathRedirect: true,
           },
-          rspack: ((config, { environment, rspack }) => {
-            if (!cloudflareDeployEnabled) {
-              return;
-            }
-            const configuredExternals = config.externals;
-            config.externals = [cloudflareRuntimeExternal];
-            if (configuredExternals !== undefined) {
-              config.externals.push(
-                ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
-              );
-            }
-            if (environment.name === 'workerSSR') {
-              const configuredNode = config.node;
-              config.node = configuredNode === false || configuredNode === undefined ? {} : configuredNode;
-              Object.assign(config.node, {
-                __dirname: false,
-                __filename: false,
-              });
-              config.plugins.push(...createWorkerSsrPlugins(rspack, effectApiSourceDirectory));
-            }
-          }) satisfies RspackConfigHandler,
+          reactI18next: false,
+        }),
+        moduleFederationPlugin({
+          configPath: moduleFederationConfigPath,
+        }),
+        zephyrRspackPlugin(),
+      ],
+      server: {
+        port,
+        publicDir: ['./locales', './assets'],
+        ssr: {
+          mode: 'stream',
+          moduleFederationAppSSR: true,
         },
-      } satisfies UltramodernAppUserConfig,
-    ) satisfies UltramodernAppUserConfig,
+      },
+      source: {
+        alias: {
+          '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
+        },
+        globalVars: {
+          ULTRAMODERN_SITE_URL: siteUrl,
+        },
+        mainEntryName: 'index',
+      },
+      splitChunks: {
+        chunks: 'async',
+      },
+      tools: {
+        autoprefixer: {
+          overrideBrowserslist: ['defaults'],
+        },
+        bundlerChain: (chain) => {
+          chain.output.uniqueName('shellSuperApp').chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
+        },
+        rspack: ((config, { environment, rspack }) => {
+          if (!cloudflareDeployEnabled) {
+            return;
+          }
+          const configuredExternals = config.externals;
+          config.externals = [cloudflareRuntimeExternal];
+          if (configuredExternals !== undefined) {
+            config.externals.push(
+              ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
+            );
+          }
+          if (environment.name === 'workerSSR') {
+            const configuredNode = config.node;
+            config.node = configuredNode === false || configuredNode === undefined ? {} : configuredNode;
+            Object.assign(config.node, {
+              __dirname: false,
+              __filename: false,
+            });
+            config.plugins.push(...createWorkerSsrPlugins(rspack, effectApiSourceDirectory));
+          }
+        }) satisfies RspackConfigHandler,
+      },
+    } satisfies UltramodernAppUserConfig,
     {
       appId,
       deliveryUnit: {

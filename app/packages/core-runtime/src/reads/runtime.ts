@@ -71,7 +71,7 @@ import {
   ReadPolicyEvaluationError,
   ReadResultValidationError,
 } from './errors.ts';
-import { persistReadEvidence } from './repository.ts';
+import { persistReadEvidence, persistScopedReadEvidence } from './repository.ts';
 
 const withOptionalProperty = <
   const Base extends object,
@@ -1286,7 +1286,7 @@ const readRuntimeFromDependencies = <
       ];
       stage('permission_checked');
       if (authorizationDecisions.includes('denied')) {
-        yield* persistReadEvidence(
+        yield* persistScopedReadEvidence(
           executor,
           withOptionalProperty(
             {
@@ -1355,7 +1355,7 @@ const readRuntimeFromDependencies = <
             })
             .pipe(
               Effect.catchTag('PolicyDenied', (failure) =>
-                persistReadEvidence(
+                persistScopedReadEvidence(
                   executor,
                   withOptionalProperty(
                     {
@@ -1536,7 +1536,7 @@ const readRuntimeFromDependencies = <
         return yield* Effect.failCause(cause);
       }
       const evidenceExit = yield* Effect.exit(
-        persistReadEvidence(
+        persistScopedReadEvidence(
           executor,
           withOptionalProperty(
             {

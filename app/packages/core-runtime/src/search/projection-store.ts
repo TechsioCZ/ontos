@@ -1,5 +1,6 @@
 import { Context } from 'effect';
 import type { Effect, Schema } from 'effect';
+import type { OperationalScope } from '../operations/context.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 
 import type {
@@ -18,9 +19,13 @@ export interface CoreSearchProjectionStoreService {
     input: UnparsedCoreSearchInput,
     context: OutboxWorkerHandlerContext,
   ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
-  /** Candidate access is Core-private: the query runtime strips searchable evidence before return. */
+  /**
+   * Candidate access is Core-private: the query runtime strips searchable evidence before return.
+   * The scope's database authority is installed before reading, so its tenant must match the query.
+   */
   readonly queryCandidates: (
     input: CoreSearchQuery,
+    scope: OperationalScope,
   ) => Effect.Effect<readonly CoreSearchProjectionDocument[], CoreSearchProjectionUnavailableInstance>;
   /**
    * Replaces one tenant/module/resource projection as one physical rebuild unit. Implementations

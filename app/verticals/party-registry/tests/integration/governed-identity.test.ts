@@ -2,12 +2,19 @@ import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
-  loadDatabaseConnectionPair,
+  loadDatabaseIdentityConnections,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
   ReadRuntime,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
   resolveActionCommit,
   runAction,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import {
+  addTestGatewayScopeGrantCleanup,
+  registerTestGatewayScopeGrant,
+} from '@app/core-runtime/testing/gateway-scope-grant';
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
@@ -19,7 +26,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { coreRelations, outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
@@ -97,7 +104,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.scoped(
         Effect.gen(function* governedIdentityTestEffect() {
-          const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+          const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+          const partyRuntimeConnectionString = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString;
+          const issuerClient = yield* makeTestPgClient(
+            connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString,
+            { maxConnections: 1 },
+          );
           const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
             [ultramodernApiMarker.appId],
             ultramodernApiMarker.buildMarker,
@@ -117,39 +129,63 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               actionKeys,
+              adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
-              runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+              runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),
           );
           const other = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               actionKeys,
+              adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
-              runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+              runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
             (resource) => resource.close().pipe(Effect.orDie),
           );
           const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
           const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
+          const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
           // Release only these disposable tenants' dispatch queues; retain append-only Core evidence.
           yield* Effect.addFinalizer(() =>
             Effect.forEach([fixture.tenantId, other.tenantId], (tenantId) =>
               admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
             ).pipe(Effect.orDie),
           );
+          yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId, other.tenantId]);
           const fixtureContext = yield* Layer.build(fixture.layer);
           const otherContext = yield* Layer.build(other.layer);
-          const managerPrincipal = decodeFixturePrincipal(fixture.manager);
-          const deniedPrincipal = decodeFixturePrincipal(fixture.denied);
-          const legalEntityOnlyPrincipal = decodeFixturePrincipal(fixture.legalEntityOnly);
-          const managerReadPrincipal = decodeFixturePrincipal({
+          // Each principal carries a registered gateway grant for its own tenant and Legal Entity, as a
+          // redeemed Shell assertion would.
+          const withGatewayScope = Effect.fn('GovernedIdentityTest.withGatewayScope')(function* withGatewayScope(
+            principal: EncodedFixturePrincipal,
+          ) {
+            const context = decodeFixturePrincipal(principal);
+            const grant = {
+              audience: 'party-registry',
+              principalId: context.principalId,
+              tenantId: context.tenantId,
+            };
+            const { assertion } = yield* registerTestGatewayScopeGrant(
+              issuerClient,
+              context.legalEntityId === undefined ? grant : { ...grant, legalEntityId: context.legalEntityId },
+            ).pipe(Effect.orDie);
+            return trustVerifiedGatewayPrincipalContext(context, compositionSnapshot.composition.revision, {
+              assertion,
+              audience: 'party-registry',
+            });
+          });
+          const managerPrincipal = yield* withGatewayScope(fixture.manager);
+          const deniedPrincipal = yield* withGatewayScope(fixture.denied);
+          const legalEntityOnlyPrincipal = yield* withGatewayScope(fixture.legalEntityOnly);
+          const managerReadPrincipal = yield* withGatewayScope({
             ...fixture.manager,
             legalEntityId: fixture.legalEntityId,
           });
-          const otherManagerPrincipal = decodeFixturePrincipal(other.manager);
+          const otherManagerPrincipal = yield* withGatewayScope(other.manager);
           const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof fixture.layer> | Crypto.Crypto>) =>
             effect.pipe(Effect.provideContext(fixtureContext));
           const create = (
@@ -193,7 +229,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   .from(duplicateCandidateCases)
                   .where(eq(duplicateCandidateCases.tenantId, fixture.tenantId))
                   .orderBy(duplicateCandidateCases.candidateCaseId),
-                fixture.evidence(),
+                fixture.evidence(coreAdmin),
               ],
               { concurrency: 6 },
             );

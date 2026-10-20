@@ -86,7 +86,9 @@ mise exec -- pnpm db:migrate
 mise exec -- pnpm db:verify
 ```
 
-Each owner keeps its own schema, migration journal, and verifier. See [Database Architecture](docs/architecture/DATABASE.md).
+Party Registry and the Shell gateway issuer connect with their own PostgreSQL roles. Three more keys sit next to `DATABASE_URL`: `SHELL_GATEWAY_ISSUER_DATABASE_URL`, `PARTY_REGISTRY_DATABASE_URL` and `PARTY_REGISTRY_WORKER_DATABASE_URL`. `mise exec -- pnpm env:local:ensure` adds any missing ones from a loopback `DATABASE_URL`, with user and password equal to the role name, and never overwrites a value. `db:migrate` creates the roles. To check every identity against the checked-in grant manifest, run `mise exec -- pnpm database-trust:audit`.
+
+Each owner keeps its own schema, migration journal, and verifier. See [Database Architecture](docs/architecture/DATABASE.md) and [Database Trust Boundaries](docs/architecture/DATABASE_TRUST_BOUNDARIES.md).
 
 ## Public URLs and Cloudflare proof
 

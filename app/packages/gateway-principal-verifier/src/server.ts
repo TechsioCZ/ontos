@@ -304,6 +304,8 @@ const readBearer = (
 };
 
 interface VerifiedGatewayPrincipal {
+  /** The verified token itself; it becomes the scope assertion only after redemption succeeds. */
+  readonly assertion: Redacted.Redacted;
   readonly compositionRevision: string;
   readonly expiresAtEpochSeconds: number;
   readonly issuer: string;
@@ -437,6 +439,7 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
       return yield* Effect.fail(invalidError());
     }
     return {
+      assertion: Redacted.make(token),
       compositionRevision: claims.compositionRevision,
       expiresAtEpochSeconds: claims.exp,
       issuer: claims.iss,
@@ -545,8 +548,11 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
             }),
           ),
       ),
-      Effect.map(({ compositionRevision, principal }) =>
-        trustVerifiedGatewayPrincipalContext(principal, compositionRevision),
+      Effect.map(({ assertion, compositionRevision, principal }) =>
+        trustVerifiedGatewayPrincipalContext(principal, compositionRevision, {
+          assertion,
+          audience: expectedAudience,
+        }),
       ),
     );
   }

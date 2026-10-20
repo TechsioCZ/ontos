@@ -1,7 +1,8 @@
 import { Duration, Effect } from 'effect';
 
 import { dataAccessEvents } from '../db/schema.ts';
-import type { CoreDbExecutor } from '../db/types.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
+import type { CoreDatabaseExecutor, CoreDbExecutor } from '../db/types.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { ReadAccessKind, ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidencePersistenceError } from './errors.ts';
@@ -77,4 +78,26 @@ export const persistReadEvidence = (
         orElse: () => Effect.fail(readEvidencePersistenceFailure('Read evidence persistence timed out')),
       }),
       Effect.asVoid,
+    );
+
+/**
+ * Persists denial evidence written outside the governed read transaction. It installs the read's
+ * trusted database scope first, so tenant-bound row-level security on `core.data_access_events`
+ * admits only the request role's own tenant.
+ */
+export const persistScopedReadEvidence = (
+  executor: Pick<CoreDatabaseExecutor, 'transaction'>,
+  input: PersistReadEvidenceInput,
+): Effect.Effect<void, ReadEvidencePersistenceError> =>
+  executor
+    .transaction((transaction) =>
+      installOperationalScope(transaction, input.scope).pipe(
+        Effect.andThen(() => persistReadEvidence(transaction, input)),
+      ),
+    )
+    .pipe(
+      Effect.catchTags({
+        OperationContextUnavailable: (failure) => Effect.fail(readEvidencePersistenceFailure(failure)),
+        SqlError: (failure) => Effect.fail(readEvidencePersistenceFailure(failure)),
+      }),
     );

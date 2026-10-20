@@ -32,6 +32,7 @@
     "./permissions/principal-ref": "./src/permissions/principal-ref.ts",
     "./resources/legal-entity": "./src/resources/legal-entity.ts",
     "./testing/actions": "./src/testing/actions.ts",
+    "./testing/gateway-scope-grant": "./src/testing/gateway-scope-grant.ts",
     "./testing/application-composition-source": "./src/modules/active-application-composition-source-service.ts",
     "./testing/outbox": "./src/outbox/verified-handler-context.ts",
     "./testing/reads": "./src/testing/reads.ts",

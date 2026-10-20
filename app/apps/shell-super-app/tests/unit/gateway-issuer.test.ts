@@ -1,4 +1,4 @@
-import { ConfigProvider, Effect, Exit, Fiber, Predicate, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Exit, Fiber, Layer, Predicate, Redacted, Schema } from 'effect';
 import { expect, rs, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
@@ -8,9 +8,10 @@ import {
   GatewayContextV2ClaimsSchema,
 } from '@app/shared-contracts';
 
-import { makeActiveApplicationCompositionLayer } from '@app/core-runtime';
+import { GatewayScopeGrantUnavailableError, makeActiveApplicationCompositionLayer } from '@app/core-runtime';
 import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { capturingScopeGrantRegistrar, scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 
 import type { GatewayAssertionRedemption } from '../../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
 import {
@@ -102,7 +103,7 @@ const issueGatewayContextAssertionWith = <Principal>(
   issueGatewayContextAssertion({
     ...input,
     compositionRevision: input.compositionRevision ?? compositionRevision,
-  }).pipe(Effect.provide(makeGatewayIssuerLayer(options)));
+  }).pipe(Effect.provide(makeGatewayIssuerLayer(options).pipe(Layer.provide(scopeGrantRegistrarLayer()))));
 
 it.effect('memoises configuration within the refresh window and issues signed assertions', () =>
   Effect.gen(function* testProgram2() {
@@ -115,7 +116,7 @@ it.effect('memoises configuration within the refresh window and issues signed as
           return configuration;
         }),
       }),
-    );
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
     const [result] = yield* Effect.all(
       [
         issueGatewayContextAssertion({
@@ -185,7 +186,7 @@ it.effect('shares cached configuration across concurrent valid issuances', () =>
           return configuration;
         }),
       }),
-    );
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         rs.restoreAllMocks();
@@ -239,7 +240,7 @@ it.effect('issues and verifies v2 assertions for namespaced principals', () =>
           revision: selectedRevision,
         }),
       }),
-    );
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
     const [legacyResult, result] = yield* Effect.all([
       issueGatewayContextAssertion({
         audience: 'property-registry',
@@ -417,7 +418,11 @@ it.effect('allows the next issuance after interrupting a pending key import', ()
         compositionRevision,
         principal,
       });
-    }).pipe(Effect.provide(makeGatewayIssuerLayer(dependencies(configuration))));
+    }).pipe(
+      Effect.provide(
+        makeGatewayIssuerLayer(dependencies(configuration)).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+      ),
+    );
     yield* Effect.promise(() =>
       jwtVerify(result.token, publicKey, {
         algorithms: ['EdDSA'],
@@ -448,7 +453,7 @@ it.effect('refreshes configuration after 30 seconds and replaces the rotated sig
           return loadConfigCount === 1 ? initialConfiguration : rotatedConfiguration;
         }),
       }),
-    );
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
     const [initialResult, rotatedResult] = yield* Effect.gen(function* gatewayRotationSequence() {
       const initial = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
@@ -507,7 +512,7 @@ it.effect('does not cache configuration failures', () =>
           return loadConfigCount === 1 ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration);
         }),
       }),
-    );
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
     const [configurationError, result] = yield* Effect.gen(function* gatewayFailureSequence() {
       const configurationFailure = yield* Effect.flip(
         issueGatewayContextAssertion({
@@ -552,7 +557,11 @@ it.effect('retries a failed key import on the next issuance', () =>
         principal,
       });
       return [failed, issued] as const;
-    }).pipe(Effect.provide(makeGatewayIssuerLayer(dependencies(configuration))));
+    }).pipe(
+      Effect.provide(
+        makeGatewayIssuerLayer(dependencies(configuration)).pipe(Layer.provide(scopeGrantRegistrarLayer())),
+      ),
+    );
     expect(error.stage).toBe('signing');
     yield* Effect.promise(() =>
       jwtVerify(result.token, publicKey, {
@@ -731,5 +740,124 @@ it.effect('rejects stale document revisions before signing and reads admission f
     );
     expect(revoked.code).toBe('gateway_audience_invalid');
     expect(loads).toBe(3);
+  }),
+);
+
+it.effect('registers a gateway scope grant for the exact signed party-registry assertion', () =>
+  Effect.gen(function* registerPartyRegistryScopeGrant() {
+    const { configuration } = yield* makeConfiguration();
+    const { inputs, registrar } = capturingScopeGrantRegistrar();
+    const result = yield* issueGatewayContextAssertion({
+      audience: 'party-registry',
+      compositionRevision,
+      principal,
+    }).pipe(
+      Effect.provide(
+        makeGatewayIssuerLayer(
+          dependencies(configuration, {
+            loadAdmission: Effect.succeed({
+              audiences: new Map([['party-registry', 'party-registry-build']]),
+              revision: compositionRevision,
+            }),
+          }),
+        ).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar))),
+      ),
+    );
+    const claims = decodeJwt(result.token);
+
+    expect(inputs).toHaveLength(1);
+    const [registered] = inputs;
+    expect(registered === undefined ? undefined : Redacted.value(registered.assertion)).toBe(result.token);
+    expect(registered).toEqual({
+      assertion: registered?.assertion,
+      audience: 'party-registry',
+      expiresAtEpochSeconds: (claims.iat ?? 0) + 300,
+      jti: claims.jti,
+      legalEntityId: principal.legalEntityId,
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    });
+    expect(registered?.expiresAtEpochSeconds).toBe(result.expiresAt);
+    expect(JSON.stringify(registered)).not.toContain(result.token);
+  }),
+);
+
+it.effect('omits the legal entity from the scope grant when the principal has none', () =>
+  Effect.gen(function* registerTenantOnlyScopeGrant() {
+    const { configuration } = yield* makeConfiguration();
+    const { inputs, registrar } = capturingScopeGrantRegistrar();
+    const { legalEntityId: _legalEntityId, ...tenantOnlyPrincipal } = principal;
+    const issued = yield* issueGatewayContextAssertion({
+      audience: 'property-registry',
+      compositionRevision,
+      principal: tenantOnlyPrincipal,
+    }).pipe(
+      Effect.provide(
+        makeGatewayIssuerLayer(dependencies(configuration)).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar))),
+      ),
+    );
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0] === undefined ? undefined : Redacted.value(inputs[0].assertion)).toBe(issued.token);
+    expect(Object.hasOwn(inputs[0] ?? {}, 'legalEntityId')).toBe(false);
+  }),
+);
+
+it.effect('returns no token when the scope grant registration fails', () =>
+  Effect.gen(function* failClosedOnScopeGrantFailure() {
+    const { configuration } = yield* makeConfiguration();
+    let attempts = 0;
+    const error = yield* Effect.flip(
+      issueGatewayContextAssertion({
+        audience: 'property-registry',
+        compositionRevision,
+        principal,
+      }).pipe(
+        Effect.provide(
+          makeGatewayIssuerLayer(dependencies(configuration)).pipe(
+            Layer.provide(
+              scopeGrantRegistrarLayer({
+                register: () =>
+                  Effect.suspend(() => {
+                    attempts += 1;
+                    return Effect.fail(
+                      new GatewayScopeGrantUnavailableError({
+                        reason: 'The gateway scope grant could not be registered',
+                      }),
+                    );
+                  }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(attempts).toBe(1);
+    expect(error.code).toBe('gateway_issuer_unavailable');
+    expect(error.stage).toBe('scope_grant');
+    expect(error.reason).toBe('The gateway assertion issuer is unavailable');
+    expect(JSON.stringify(error)).not.toMatch(/eyJ/u);
+  }),
+);
+
+it.effect('passes every issued audience to the scope grant registrar', () =>
+  Effect.gen(function* registerEveryAudience() {
+    const { configuration } = yield* makeConfiguration();
+    const { inputs, registrar } = capturingScopeGrantRegistrar();
+    const audiences = ['shell-super-app', 'party-registry', 'property-registry', 'catalog'];
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        loadAdmission: Effect.succeed({
+          audiences: new Map(audiences.map((audience) => [audience, `${audience}-build`] as const)),
+          revision: compositionRevision,
+        }),
+      }),
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar)));
+    const results = yield* Effect.all(
+      audiences.map((audience) => issueGatewayContextAssertion({ audience, compositionRevision, principal })),
+    ).pipe(Effect.provide(layer));
+
+    expect(inputs.map(({ audience }) => audience)).toEqual(audiences);
+    expect(inputs.map(({ assertion }) => Redacted.value(assertion))).toEqual(results.map(({ token }) => token));
   }),
 );

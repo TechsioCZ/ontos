@@ -1,8 +1,15 @@
 // @rstest-environment happy-dom
 // @rstest-environment-options {"url":"https://party.ontos.test"}
-import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
+import {
+  GatewayScopeGrantRegistrar,
+  GatewayScopeGrantRegistrarLive,
+  loadDatabaseConnectionPair,
+  makeDatabaseConfigLive,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { NodeCrypto } from '@effect/platform-node';
@@ -30,7 +37,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { coreRelations, outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
@@ -113,7 +120,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     'exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction',
     () =>
       Effect.gen(function* aresGovernedTestEffect() {
-        const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+        // The Party request identity serves every Action, Read and redemption in this test.
+        const connections = yield* loadDatabaseConnectionPair({
+          envPath: '/dev/null',
+          identity: PARTY_REGISTRY_REQUEST_IDENTITY,
+        });
+        const grantRegistrar = Context.get(
+          yield* Layer.build(GatewayScopeGrantRegistrarLive).pipe(Effect.orDie),
+          GatewayScopeGrantRegistrar,
+        );
         const compositionSnapshot = yield* partyCompositionSnapshot;
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
@@ -125,6 +140,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               resolveDuplicateCandidateCreateAction,
               updatePartyAction,
             ].map(({ descriptor }) => descriptor.actionKey),
+            adminConnectionString: Redacted.make(connections.admin.connectionString),
             // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: compositionSnapshot.composition.revision,
@@ -134,10 +150,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
         const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
+        const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
         // Release only this disposable tenant's dispatch queue; retain append-only Core evidence.
         yield* Effect.addFinalizer(() =>
           admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, fixture.tenantId)).pipe(Effect.orDie),
         );
+        // The registrar persists a gateway grant per issued assertion; remove this tenant's grants.
+        yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId]);
         const managerWithLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
         const compositionRevision = compositionSnapshot.composition.revision;
         const apiBaseUrl = '/party-registry-api';
@@ -152,9 +171,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         });
         // The operation gateway issuer contract has no requirements, so assertion IDs come from the captured service.
         const crypto = yield* Crypto.Crypto;
-        const sign = Effect.fn('AresGovernedTest.sign')(function* signAssertion(principal: typeof fixture.manager) {
+        const sign = Effect.fn('AresGovernedTest.sign')(function* signAssertion(
+          principal: typeof fixture.manager & { readonly legalEntityId?: string },
+        ) {
           const assertionId = yield* Effect.orDie(crypto.randomUUIDv4);
-          return yield* Effect.promise(() =>
+          // Grants expire against PostgreSQL's clock, so the expiry is derived from the database time.
+          const [databaseNow] = yield* adminClient<{ readonly nowSeconds: number }>`
+            select floor(extract(epoch from now()))::int as "nowSeconds"
+          `.pipe(Effect.orDie);
+          const expiresAtEpochSeconds = (databaseNow?.nowSeconds ?? 0) + 300;
+          const token = yield* Effect.promise(() =>
             new SignJWT({
               compositionRevision: compositionSnapshot.composition.revision,
               principal,
@@ -166,10 +192,25 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               .setAudience('party-registry')
               .setSubject(principal.principalId)
               .setIssuedAt()
-              .setExpirationTime('5m')
+              .setExpirationTime(expiresAtEpochSeconds)
               .setJti(assertionId)
               .sign(privateKey),
           );
+          // Shell registers each issued assertion before the token leaves the issuer.
+          const grant = {
+            assertion: Redacted.make(token),
+            audience: 'party-registry',
+            expiresAtEpochSeconds,
+            jti: assertionId,
+            principalId: principal.principalId,
+            tenantId: principal.tenantId,
+          };
+          yield* grantRegistrar
+            .register(
+              principal.legalEntityId === undefined ? grant : { ...grant, legalEntityId: principal.legalEntityId },
+            )
+            .pipe(Effect.orDie);
+          return token;
         });
         const authorization = () => sign(managerWithLegalEntity).pipe(Effect.map((token) => `Bearer ${token}`));
         const gateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
@@ -187,7 +228,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const upstream = AresSubjectServiceLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, provider)));
         const redemption = GatewayAssertionRedemptionLive.pipe(
           Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-          Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+          Layer.provide(makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY)),
         );
         const api = HttpApi.make('PartyRegistryApi')
           .add(partyRegistryApi.groups.partyCommands)
@@ -325,7 +366,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 .select()
                 .from(partyContactPoints)
                 .where(eq(partyContactPoints.tenantId, fixture.tenantId)),
-              core: fixture.evidence(),
+              core: fixture.evidence(coreAdmin),
               identifiers: admin
                 .select()
                 .from(partyOfficialIdentifiers)

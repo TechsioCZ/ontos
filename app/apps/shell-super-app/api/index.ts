@@ -13,6 +13,7 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
+  GatewayScopeGrantRegistrarLive,
   LegalEntityContextLive,
   legalEntityDetailRead,
   makeTenantModuleStateService,
@@ -1803,14 +1804,18 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
   Layer.provide(compositionSourceLive),
 );
 const approvedModuleCatalogLive = ShellInstalledModuleCatalogLive.pipe(Layer.provide(activeApplicationCompositionLive));
-const approvedGatewayIssuerLive = GatewayIssuerLive.pipe(Layer.provide(approvedModuleCatalogLive));
+const approvedGatewayIssuerLive = GatewayIssuerLive.pipe(
+  Layer.provide(approvedModuleCatalogLive),
+  Layer.provide(GatewayScopeGrantRegistrarLive),
+);
+type ShellGatewayIssuerLayer = Layer.Layer<GatewayIssuer, Layer.Error<typeof approvedGatewayIssuerLive>>;
 
 const defaultScopedModuleStateFactory: ShellScopedModuleStateFactory = (transaction) =>
   makeTenantModuleStateService({ executor: transaction });
 
 type ShellAuthenticationApiRuntimeArguments = readonly [
   authenticationLayer: ShellAuthenticationLayer,
-  issuerLayer: Layer.Layer<GatewayIssuer>,
+  issuerLayer: ShellGatewayIssuerLayer,
   moduleStateLayer?: ShellModuleStateLayer,
   loadInstalledModuleCatalog?: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>,
   enableInstalledOutboxMatcher?: boolean,

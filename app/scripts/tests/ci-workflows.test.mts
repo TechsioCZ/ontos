@@ -228,6 +228,8 @@ it('deploys to Cloudflare only when the account, retained artifact origin, backe
   ).toEqual([
     'ULTRAMODERN_MF_DEV_ORIGIN',
     'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID',
     'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID',
     'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID',
     'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT',
@@ -237,7 +239,9 @@ it('deploys to Cloudflare only when the account, retained artifact origin, backe
     missingBuildVariables({
       buildEnvironment: {
         ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
+        ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: 'gateway-issuer-hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+        ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'party-registry-hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
         ULTRAMODERN_MF_DEV_ORIGIN: 'https://stage.example.test',
         ULTRAMODERN_PUBLIC_URL_PRICING: 'https://pricing.example.test',
@@ -258,7 +262,9 @@ it('fails edge readiness before migrations when either private-network credentia
       JSON.stringify({
         buildEnvironment: {
           ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'test-kv',
+          ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: 'test-gateway-issuer-hyperdrive',
           ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'test-hyperdrive',
+          ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'test-party-registry-hyperdrive',
           ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'test-vpc',
           ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.test',
         },
@@ -1905,4 +1911,54 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
+});
+
+const RUNTIME_IDENTITY_URLS = {
+  PARTY_REGISTRY_DATABASE_URL: 'party_registry_runtime',
+  PARTY_REGISTRY_WORKER_DATABASE_URL: 'party_registry_worker',
+  SHELL_GATEWAY_ISSUER_DATABASE_URL: 'shell_gateway_issuer',
+} as const;
+const IDENTITY_STEP_ENV_FILTER = /printenv \| grep -E '(?<pattern>[^']+)'/gu;
+const AUDIT_STEP = 'Audit runtime database identities against the checked-in grant manifest';
+const IdentityGateJobSchema = Schema.Struct({
+  // Unquoted placeholder IDs parse as numbers.
+  env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
+  steps: Schema.Array(WorkflowStepSchema),
+});
+const IdentityGateJobsSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    'cloudflare-artifact-build': IdentityGateJobSchema,
+    'service-integration': IdentityGateJobSchema,
+  }),
+});
+
+it('gives every CI database tool a separate login per runtime identity and audits their grants', () => {
+  const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(source));
+  const integration = jobs['service-integration'];
+  const proofValues = jobs['cloudflare-artifact-build'].steps.find(
+    ({ name }) => name === 'Set the development-only service values of the Worker proofs',
+  );
+  for (const environment of [integration.env, proofValues?.env]) {
+    for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
+      expect(environment?.[key]).toBe(`postgresql://${role}:${role}@localhost:5433/ontos_ci`);
+    }
+  }
+  // Both dotenv writers pass exactly the identity URLs through, and nothing that merely shares a prefix.
+  const filters = Array.from(source.matchAll(IDENTITY_STEP_ENV_FILTER), (match) => match.groups?.pattern ?? '');
+  expect(filters).toHaveLength(2);
+  for (const filter of filters) {
+    const pattern = new RegExp(filter, 'u');
+    for (const key of Object.keys(RUNTIME_IDENTITY_URLS)) {
+      expect(pattern.test(`${key}=postgresql://identity`)).toBe(true);
+      expect(pattern.test(`${key}_EXTRA=value`)).toBe(false);
+    }
+  }
+  const { steps } = integration;
+  const migrations = steps.findIndex(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
+  const audit = steps.findIndex(({ name }) => name === AUDIT_STEP);
+  expect(migrations).toBeGreaterThanOrEqual(0);
+  expect(audit).toBe(migrations + 1);
+  expect(steps[audit]?.if).toBe("matrix.suite == 'integration'");
+  expect(steps[audit]?.run).toBe('mise exec -- pnpm database-trust:audit');
 });

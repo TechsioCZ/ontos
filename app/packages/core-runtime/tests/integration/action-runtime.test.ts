@@ -30,6 +30,7 @@ import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import {
   AuthenticationNamespaceIdSchema,
   AuthenticationNamespaceRegistrationSchema,
@@ -39,6 +40,7 @@ import {
   makeAuthenticationNamespaceRegistry,
 } from '../../src/auth/external-identity/verifier.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import {
   actionInvocations,
   applicationCompositionAuthority,
@@ -203,7 +205,7 @@ const withDatabase = <Value, Error, Requirements>(
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
-      const configuration = yield* loadDatabaseConfig();
+      const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
       const database = yield* makeCoreDatabase(configuration);
       return yield* execute(database);
     }),
@@ -217,6 +219,60 @@ const withTransactionOverride = (
 ): ContextServiceContract => ({
   executor: Object.assign(Object.create(database.executor), override),
 });
+
+/**
+ * Tracks which transaction is the Action commit transaction: invocation recording opens its own
+ * tenant-scoped transactions first, and only the commit transaction reports `database_scope_installed`.
+ */
+const makeCommitTransactionTracker = () => {
+  let commitStageSeen = false;
+  return {
+    /** Reports and clears whether the transaction body that just finished was the commit transaction. */
+    consume: () => {
+      const wasCommit = commitStageSeen;
+      commitStageSeen = false;
+      return wasCommit;
+    },
+    options: {
+      ...openActionRuntimeOptions,
+      onStage: (stage: ActionRuntimeStage) => {
+        if (stage === 'database_scope_installed') {
+          commitStageSeen = true;
+        }
+      },
+    },
+  };
+};
+
+/**
+ * Runs every transaction normally except the Action commit transaction, which dies with `failure` once
+ * it ends: after committing, or after a forced rollback when `outcome` is `rolled_back`.
+ */
+const loseCommitAcknowledgement = (
+  database: ContextServiceContract,
+  tracker: ReturnType<typeof makeCommitTransactionTracker>,
+  failure: SqlError,
+  outcome: 'committed' | 'rolled_back',
+) =>
+  ({
+    transaction: (transactionBody) =>
+      Effect.suspend(() => {
+        let isCommit = false;
+        const settleBody = Effect.suspend(() => {
+          isCommit = tracker.consume();
+          return isCommit && outcome === 'rolled_back'
+            ? Effect.die(new Error('force rollback after the transaction body'))
+            : Effect.void;
+        });
+        const settleTransaction = Effect.suspend(() => (isCommit ? Effect.die(failure) : Effect.void));
+        return database.executor
+          .transaction((transaction) => transactionBody(transaction).pipe(Effect.tap(settleBody)))
+          .pipe(
+            Effect.tap(settleTransaction),
+            Effect.catchCause((cause) => (isCommit ? Effect.die(failure) : Effect.failCause(cause))),
+          );
+      }),
+  }) satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
 
 const invocationEvidence = (database: ContextServiceContract, key: string) =>
   Effect.gen(function* readInvocationEvidence() {
@@ -1455,13 +1511,16 @@ const testProgram11 = () =>
       const firstCommitRelease = yield* Deferred.make<null>();
       const firstFlushed = yield* Deferred.make<null>();
       const secondInsertStarted = yield* Deferred.make<null>();
+      const commitTracker = makeCommitTransactionTracker();
       const delayedTransaction = {
         transaction: (transactionBody) =>
           database.executor.transaction(
             Effect.fn(function* delayCommit(transaction) {
               const result = yield* transactionBody(transaction);
-              yield* Deferred.succeed(firstFlushed, null);
-              yield* Deferred.await(firstCommitRelease);
+              if (commitTracker.consume()) {
+                yield* Deferred.succeed(firstFlushed, null);
+                yield* Deferred.await(firstCommitRelease);
+              }
               return result;
             }),
           ),
@@ -1476,7 +1535,7 @@ const testProgram11 = () =>
         repository,
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        commitTracker.options,
       );
       const secondRuntime = makeActionRuntime(
         database,
@@ -1562,17 +1621,15 @@ const testProgram12 = () =>
       const acknowledgementLost = new SqlError({
         reason: new ConnectionError({ cause: { code: '08007' } }),
       });
-      const uncertainTransaction = {
-        transaction: (transactionBody) =>
-          database.executor.transaction(transactionBody).pipe(Effect.andThen(Effect.die(acknowledgementLost))),
-      } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+      const commitTracker = makeCommitTransactionTracker();
+      const uncertainTransaction = loseCommitAcknowledgement(database, commitTracker, acknowledgementLost, 'committed');
 
       const uncertainRuntime = makeActionRuntime(
         withTransactionOverride(database, uncertainTransaction),
         repository,
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        commitTracker.options,
       );
       const first = yield* Effect.exit(
         uncertainRuntime.runAction({
@@ -1660,23 +1717,20 @@ const testProgram12 = () =>
         actionKey: 'shell.test.lost-ack-open',
         moduleStateKey: openModuleStateKey,
       });
-      const uncertainRollbackTransaction = {
-        transaction: (transactionBody) =>
-          database.executor
-            .transaction((transaction) =>
-              transactionBody(transaction).pipe(
-                Effect.andThen(Effect.die(new Error('force rollback after the transaction body'))),
-              ),
-            )
-            .pipe(Effect.catchCause(() => Effect.die(acknowledgementLost))),
-      } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+      const openCommitTracker = makeCommitTransactionTracker();
+      const uncertainRollbackTransaction = loseCommitAcknowledgement(
+        database,
+        openCommitTracker,
+        acknowledgementLost,
+        'rolled_back',
+      );
 
       const uncertainOpenRuntime = makeActionRuntime(
         withTransactionOverride(database, uncertainRollbackTransaction),
         repository,
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openCommitTracker.options,
       );
       const openFirst = yield* Effect.exit(
         uncertainOpenRuntime.runAction({

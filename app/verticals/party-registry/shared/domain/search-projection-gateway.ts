@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { Context } from 'effect';
 import type { Effect, Schema } from 'effect';
 
@@ -45,15 +46,18 @@ export interface CounterpartySearchProjectionHit {
 export interface PartySearchProjectionGatewayService {
   readonly searchCounterparties: (
     input: CounterpartySearchProjectionQuery,
+    scope: OperationalScope,
   ) => Effect.Effect<readonly CounterpartySearchProjectionHit[], PartySearchProjectionUnavailable>;
   readonly searchParties: (
     input: PartySearchProjectionQuery,
+    scope: OperationalScope,
   ) => Effect.Effect<readonly PartySearchProjectionHit[], PartySearchProjectionUnavailable>;
 }
 
 /**
  * Owner-facing port implemented by OntOS Core Search. Party Registry supplies business semantics;
  * the implementation supplies only the rebuildable, eventually-consistent projection/query runtime.
+ * Every query carries the Read factory's OperationalScope, which Core Search installs for its query.
  */
 export class PartySearchProjectionGateway extends Context.Service<
   PartySearchProjectionGateway,

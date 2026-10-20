@@ -14,6 +14,7 @@ import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const commerceCustomerContextSetup = 'commerce-customer-context';
 const priceGroupCatalogSetup = 'price-group-catalog';
+const PARTY_REGISTRY_WORKER_SETUP = 'party-registry-worker';
 const zeropsYamlPath = new URL('../../zerops.yaml', import.meta.url);
 const workflowPath = new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url);
 
@@ -46,6 +47,34 @@ const DeployWorkflowSchema = Schema.Struct({
   }),
 });
 
+const zeropsImportPath = new URL('../../zerops-import.yaml', import.meta.url);
+const ServiceEnvironmentSchema = Schema.Struct({
+  zerops: Schema.Array(
+    Schema.Struct({
+      run: Schema.Struct({ envVariables: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+      setup: Schema.String,
+    }),
+  ),
+});
+const DATABASE_URL_KEYS = [
+  'DATABASE_URL',
+  'PARTY_REGISTRY_DATABASE_URL',
+  'PARTY_REGISTRY_WORKER_DATABASE_URL',
+  'SHELL_GATEWAY_ISSUER_DATABASE_URL',
+];
+const identityUrl = (role: string, password: string) =>
+  `postgresql://${role}:\${${password}}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
+
+const serviceEnvironments = (): ReadonlyMap<string, Readonly<Record<string, string>>> =>
+  new Map(
+    Schema.decodeUnknownSync(ServiceEnvironmentSchema)(parse(readFileSync(zeropsYamlPath, 'utf-8'))).zerops.map(
+      ({ run, setup }) => [setup, run.envVariables ?? {}],
+    ),
+  );
+
+const databaseUrlKeys = (environment: Readonly<Record<string, string>>) =>
+  DATABASE_URL_KEYS.filter((key) => environment[key] !== undefined);
+
 const serviceBlock = (zeropsYaml: string, setup: string): string => {
   const start = zeropsYaml.indexOf(`  - setup: '${setup}'`);
   const end = zeropsYaml.indexOf('\n  - setup:', start + 1);
@@ -59,7 +88,6 @@ it('binds generated PostgreSQL credentials into every database-using service', (
 
   for (const setup of [
     'migrator',
-    'party-registry',
     commerceCustomerContextSetup,
     'payment-term-catalog',
     priceGroupCatalogSetup,
@@ -188,7 +216,11 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
   expect(host).toContain("start: sh -c 'cd app/.zerops/runtime/outbox-worker-host");
   expect(host.match(/path: '\/live'/gu)).toHaveLength(2);
   // The dedicated Outbox Worker mode keeps deploying each owner's own worker.
-  for (const worker of ['party-registry-worker', 'commerce-customer-context-worker', 'price-group-catalog-worker']) {
+  for (const worker of [
+    PARTY_REGISTRY_WORKER_SETUP,
+    'commerce-customer-context-worker',
+    'price-group-catalog-worker',
+  ]) {
     expect(serviceBlock(zeropsYaml, worker)).toContain('--worker');
   }
 });
@@ -358,3 +390,81 @@ it.effect('pushes every Zerops setup with the deploying environment named in its
     expect(pushUnits).toContain('--zerops-yaml-path "$ZEROPS_YAML_PATH"');
   }),
 );
+
+it('connects Party Registry only as its dedicated request identity', () => {
+  const party = serviceEnvironments().get('party-registry') ?? {};
+
+  expect(databaseUrlKeys(party)).toStrictEqual(['PARTY_REGISTRY_DATABASE_URL']);
+  expect(party.PARTY_REGISTRY_DATABASE_URL).toBe(
+    identityUrl('party_registry_runtime', 'migrator_PARTY_REGISTRY_DB_PASSWORD'),
+  );
+});
+
+it('connects the Party Registry worker only as its worker identity and the host with both', () => {
+  const environments = serviceEnvironments();
+  const workerUrl = identityUrl('party_registry_worker', 'migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD');
+
+  expect(databaseUrlKeys(environments.get(PARTY_REGISTRY_WORKER_SETUP) ?? {})).toStrictEqual([
+    'PARTY_REGISTRY_WORKER_DATABASE_URL',
+  ]);
+  expect(environments.get(PARTY_REGISTRY_WORKER_SETUP)?.PARTY_REGISTRY_WORKER_DATABASE_URL).toBe(workerUrl);
+  const host = environments.get(OUTBOX_WORKER_HOST.stageSetup) ?? {};
+  expect(databaseUrlKeys(host)).toStrictEqual(['DATABASE_URL', 'PARTY_REGISTRY_WORKER_DATABASE_URL']);
+  expect(host.PARTY_REGISTRY_WORKER_DATABASE_URL).toBe(workerUrl);
+});
+
+it('gives the Shell its gateway issuer identity next to the shared runtime role', () => {
+  const shell = serviceEnvironments().get('shellsuperapp') ?? {};
+
+  expect(databaseUrlKeys(shell)).toStrictEqual(['DATABASE_URL', 'SHELL_GATEWAY_ISSUER_DATABASE_URL']);
+  expect(shell.SHELL_GATEWAY_ISSUER_DATABASE_URL).toBe(
+    identityUrl('shell_gateway_issuer', 'migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
+  );
+});
+
+it('lets only the migrator hold every database identity URL', () => {
+  const environments = serviceEnvironments();
+  const holders = [...environments].filter(
+    ([, environment]) => databaseUrlKeys(environment).length === DATABASE_URL_KEYS.length,
+  );
+
+  expect(holders.map(([setup]) => setup)).toStrictEqual(['migrator']);
+  // Zerops resolves a service's own variables without the hostname prefix, so the migrator, which owns
+  // the identity passwords as its sensitive secrets, references `${<KEY>}` rather than `${migrator_<KEY>}`.
+  expect(environments.get('migrator')).toMatchObject({
+    PARTY_REGISTRY_DATABASE_URL: identityUrl('party_registry_runtime', 'PARTY_REGISTRY_DB_PASSWORD'),
+    PARTY_REGISTRY_WORKER_DATABASE_URL: identityUrl('party_registry_worker', 'PARTY_REGISTRY_WORKER_DB_PASSWORD'),
+    SHELL_GATEWAY_ISSUER_DATABASE_URL: identityUrl('shell_gateway_issuer', 'SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
+  });
+});
+
+it('references each identity password only from the migrator and the services that own it', () => {
+  const environments = serviceEnvironments();
+  const owners = {
+    PARTY_REGISTRY_DB_PASSWORD: ['migrator', 'party-registry'],
+    PARTY_REGISTRY_WORKER_DB_PASSWORD: ['migrator', PARTY_REGISTRY_WORKER_SETUP, OUTBOX_WORKER_HOST.stageSetup],
+    SHELL_GATEWAY_ISSUER_DB_PASSWORD: ['migrator', 'shellsuperapp'],
+  };
+
+  for (const [secretKey, expected] of Object.entries(owners)) {
+    const reference = new RegExp(`\\$\\{(?:migrator_)?${secretKey}\\}`, 'u');
+    const referencing = [...environments]
+      .filter(([, environment]) => Object.values(environment).some((value) => reference.test(value)))
+      .map(([setup]) => setup);
+    expect(referencing).toStrictEqual(expected);
+  }
+});
+
+it('declares no project-level variable that could carry a database credential', () => {
+  const deployment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
+    parse(readFileSync(zeropsYamlPath, 'utf-8')),
+  );
+  const imports = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
+    parse(readFileSync(zeropsImportPath, 'utf-8')),
+  );
+
+  // Every service inherits project variables, so identity passwords stay service secrets on the migrator.
+  expect(Object.keys(deployment)).toStrictEqual(['zerops']);
+  expect(Object.keys(imports)).toStrictEqual(['services']);
+  expect(readFileSync(zeropsImportPath, 'utf-8')).not.toMatch(/envVariables|DB_PASSWORD|DATABASE_URL/u);
+});

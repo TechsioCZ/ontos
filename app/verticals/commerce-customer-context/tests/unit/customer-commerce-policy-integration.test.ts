@@ -98,7 +98,7 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
         return Effect.succeed([]);
       }
       if (text.includes('current_setting')) {
-        return Effect.succeed([{ legal_entity_id: legalEntityId, tenant_id: tenantId }]);
+        return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
       }
       for (const [routineName, result] of options.routineResults ?? []) {
         if (text.includes(routineName)) {

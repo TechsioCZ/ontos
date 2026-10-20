@@ -126,7 +126,7 @@ export const makePartySearchProjectionGateway = (
   coreSearch: CoreSearchQueryRuntimePort,
 ): PartySearchProjectionGatewayPort =>
   Object.freeze({
-    searchCounterparties: (input: CounterpartySearchProjectionQuery) =>
+    searchCounterparties: (input: CounterpartySearchProjectionQuery, scope: OperationalScope) =>
       coreSearch
         .search(
           input.role === undefined
@@ -149,6 +149,7 @@ export const makePartySearchProjectionGateway = (
                 selectedLegalEntityId: input.legalEntityId,
                 tenantId: input.tenantId,
               },
+          scope,
         )
         .pipe(
           Effect.flatMap((hits) =>
@@ -158,15 +159,18 @@ export const makePartySearchProjectionGateway = (
           ),
           Effect.mapError(projectionUnavailable),
         ),
-    searchParties: (input: PartySearchProjectionQuery) =>
+    searchParties: (input: PartySearchProjectionQuery, scope: OperationalScope) =>
       coreSearch
-        .search({
-          includeArchived: input.includeArchived,
-          moduleId: 'party.registry',
-          query: input.query,
-          resourceType: 'party.registry.party',
-          tenantId: input.tenantId,
-        })
+        .search(
+          {
+            includeArchived: input.includeArchived,
+            moduleId: 'party.registry',
+            query: input.query,
+            resourceType: 'party.registry.party',
+            tenantId: input.tenantId,
+          },
+          scope,
+        )
         .pipe(
           Effect.flatMap((hits) => Effect.forEach(hits, mapPartyProjectionHit, { concurrency: 1 })),
           Effect.mapError(projectionUnavailable),
@@ -183,15 +187,18 @@ export const PartySearchProjectionGatewayLive = Layer.effect(
 
 export const loadPartySearch = (
   gateway: PartySearchProjectionGatewayPort,
-  scope: Readonly<{ readonly tenantId: string }>,
+  scope: OperationalScope,
   input: PartiesProviderRequest,
 ) =>
   gateway
-    .searchParties({
-      includeArchived: input.includeArchived ?? false,
-      query: input.query,
-      tenantId: scope.tenantId,
-    })
+    .searchParties(
+      {
+        includeArchived: input.includeArchived ?? false,
+        query: input.query,
+        tenantId: scope.tenantId,
+      },
+      scope,
+    )
     .pipe(
       Effect.flatMap((hits) => {
         const normalized = normalizePartySearchHits(

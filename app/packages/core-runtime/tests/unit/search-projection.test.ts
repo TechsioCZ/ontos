@@ -2,6 +2,8 @@ import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 
@@ -18,6 +20,19 @@ import type { CoreSearchProjectionHit, CoreSearchProjectionStoreService } from '
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Any));
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
+const searchScope = (scopeTenantId: string, scopeLegalEntityId?: string): OperationalScope => {
+  const principal = {
+    authBindingId: '40000000-0000-4000-8000-000000000009',
+    authContextRef: 'better-auth-session:core-search-test',
+    authMethod: 'session' as const,
+    principalId: '40000000-0000-4000-8000-000000000008',
+    tenantId: scopeTenantId,
+  };
+  const context = Schema.decodeSync(TrustedPrincipalContextSchema)(
+    scopeLegalEntityId === undefined ? principal : { ...principal, legalEntityId: scopeLegalEntityId },
+  );
+  return { ...context, correlationId: 'core-search-test' };
+};
 const workerContext = (overrides: Partial<OutboxWorkerHandlerContext> = {}): OutboxWorkerHandlerContext =>
   attestOutboxWorkerHandlerContext({
     attemptNumber: 1,
@@ -106,13 +121,16 @@ it.effect('Core Search rejects unattested, malformed revision, and cross-tenant 
     }
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     expect(
-      yield* runtime.search({
-        includeArchived: false,
-        moduleId: partyRef.moduleId,
-        query: 'acme',
-        resourceType: partyRef.resourceType,
-        tenantId,
-      }),
+      yield* runtime.search(
+        {
+          includeArchived: false,
+          moduleId: partyRef.moduleId,
+          query: 'acme',
+          resourceType: partyRef.resourceType,
+          tenantId,
+        },
+        searchScope(tenantId),
+      ),
     ).toEqual([]);
   });
 });
@@ -141,13 +159,16 @@ it.effect(
         workerContext(),
       );
       expect(
-        yield* runtime.search({
-          includeArchived: false,
-          moduleId: partyRef.moduleId,
-          query: 'acme',
-          resourceType: partyRef.resourceType,
-          tenantId,
-        }),
+        yield* runtime.search(
+          {
+            includeArchived: false,
+            moduleId: partyRef.moduleId,
+            query: 'acme',
+            resourceType: partyRef.resourceType,
+            tenantId,
+          },
+          searchScope(tenantId),
+        ),
       ).toEqual([]);
       yield* store.replace(rebuild, workerContext());
       const divergent = yield* Effect.flip(store.replace({ ...rebuild, documents: [party()] }, workerContext()));
@@ -160,13 +181,16 @@ it.effect(
         workerContext(),
       );
       yield* store.replace(rebuild, workerContext());
-      const searchResults = yield* runtime.search({
-        includeArchived: false,
-        moduleId: partyRef.moduleId,
-        query: 'acme',
-        resourceType: partyRef.resourceType,
-        tenantId,
-      });
+      const searchResults = yield* runtime.search(
+        {
+          includeArchived: false,
+          moduleId: partyRef.moduleId,
+          query: 'acme',
+          resourceType: partyRef.resourceType,
+          tenantId,
+        },
+        searchScope(tenantId),
+      );
       expect(searchResults.length).toBe(1);
     });
   },
@@ -193,13 +217,16 @@ it.effect('Core Search identifies alias-only matches while canonical evidence ta
       workerContext(),
     );
     const search = (query: string) =>
-      runtime.search({
-        includeArchived: false,
-        moduleId: partyRef.moduleId,
-        query,
-        resourceType: partyRef.resourceType,
-        tenantId,
-      });
+      runtime.search(
+        {
+          includeArchived: false,
+          moduleId: partyRef.moduleId,
+          query,
+          resourceType: partyRef.resourceType,
+          tenantId,
+        },
+        searchScope(tenantId),
+      );
     const aliasHits = yield* search('former');
     expect(aliasHits.length).toBe(1);
     expect(aliasHits[0]?.ref).toEqual(partyRef);
@@ -317,7 +344,7 @@ it.effect('Core Search honors half-open evidence periods for canonical and subje
         resourceType: partyRef.resourceType,
         tenantId,
       };
-      return runtime.search(effectiveAt === undefined ? request : { ...request, effectiveAt });
+      return runtime.search(effectiveAt === undefined ? request : { ...request, effectiveAt }, searchScope(tenantId));
     };
     const historicalHits = yield* search('old-private', '2026-01-01T00:00:00Z');
     expect(historicalHits[0]?.matchedSubjectRef).toEqual(aliasRef);
@@ -363,13 +390,16 @@ it.effect('Core Search rebuilds one owned projection atomically and isolates ten
       workerContext({ tenantId: otherTenantId }),
     );
 
-    const result = yield* runtime.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'acme',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const result = yield* runtime.search(
+      {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'acme',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      searchScope(tenantId),
+    );
     expect(result).toEqual([
       {
         archived: false,
@@ -397,13 +427,16 @@ it.effect('Core Search rebuilds one owned projection atomically and isolates ten
       },
       workerContext(),
     );
-    const hits = yield* runtime.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'acme',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const hits = yield* runtime.search(
+      {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'acme',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      searchScope(tenantId),
+    );
     expect(hits).toEqual([]);
   });
 });
@@ -460,16 +493,19 @@ it.effect('Core Search applies typed Legal Entity and role facets without return
       workerContext(),
     );
 
-    const result = yield* runtime.search({
-      effectiveAt: '2026-09-03T00:00:00.000Z',
-      facets: [{ key: 'current-role', values: ['SUPPLIER'] }],
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'private@example.test',
-      resourceType: 'party.registry.counterparty',
-      selectedLegalEntityId: legalEntityId,
-      tenantId,
-    });
+    const result = yield* runtime.search(
+      {
+        effectiveAt: '2026-09-03T00:00:00.000Z',
+        facets: [{ key: 'current-role', values: ['SUPPLIER'] }],
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'private@example.test',
+        resourceType: 'party.registry.counterparty',
+        selectedLegalEntityId: legalEntityId,
+        tenantId,
+      },
+      searchScope(tenantId, legalEntityId),
+    );
     expect(result).toEqual([
       {
         archived: false,
@@ -502,13 +538,16 @@ it.effect('Core Search applies typed Legal Entity and role facets without return
     ]);
     expect(encodeJson(result)).not.toMatch(/private@example\.test/u);
     expect(
-      yield* runtime.search({
-        includeArchived: false,
-        moduleId: 'party.registry',
-        query: 'acme',
-        resourceType: 'party.registry.counterparty',
-        tenantId,
-      }),
+      yield* runtime.search(
+        {
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: 'acme',
+          resourceType: 'party.registry.counterparty',
+          tenantId,
+        },
+        searchScope(tenantId),
+      ),
     ).toEqual([]);
   });
 });
@@ -541,13 +580,16 @@ it.effect('Core Search rejects malformed or cross-owner rebuild documents withou
       ),
     );
     expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(true);
-    const result = yield* runtime.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'acme',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const result = yield* runtime.search(
+      {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'acme',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      searchScope(tenantId),
+    );
     expect(result.length).toBe(1);
   });
 });
@@ -580,13 +622,16 @@ it.effect('Core Search makes duplicate and out-of-order lifecycle observations h
     yield* store.apply({ document: versionTwo, kind: 'upsert' }, workerContext());
 
     expect(
-      yield* runtime.search({
-        includeArchived: true,
-        moduleId: 'party.registry',
-        query: 'current',
-        resourceType: 'party.registry.party',
-        tenantId,
-      }),
+      yield* runtime.search(
+        {
+          includeArchived: true,
+          moduleId: 'party.registry',
+          query: 'current',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        searchScope(tenantId),
+      ),
     ).toEqual([]);
   });
 });
@@ -608,13 +653,16 @@ it.effect('native projection services compose store writes with query reads', ()
     const providedStore = yield* CoreSearchProjectionStore;
     const runtime = yield* CoreSearchQueryRuntime;
     yield* providedStore.apply({ document: party(), kind: 'upsert' }, workerContext());
-    const hits = yield* runtime.search({
-      includeArchived: false,
-      moduleId: partyRef.moduleId,
-      query: 'acme',
-      resourceType: partyRef.resourceType,
-      tenantId,
-    });
+    const hits = yield* runtime.search(
+      {
+        includeArchived: false,
+        moduleId: partyRef.moduleId,
+        query: 'acme',
+        resourceType: partyRef.resourceType,
+        tenantId,
+      },
+      searchScope(tenantId),
+    );
     expect(hits.length).toBe(1);
     expect(hits[0]?.ref).toEqual(partyRef);
   }).pipe(
@@ -632,7 +680,7 @@ const searchThroughNativeService = (
 > =>
   Effect.gen(function* searchNativeProjection() {
     const runtime = yield* CoreSearchQueryRuntime;
-    return yield* runtime.search(input);
+    return yield* runtime.search(input, searchScope(tenantId));
   });
 
 it.effect('native projection services retain invalid and unavailable failures', () => {
@@ -664,4 +712,50 @@ it.effect('native projection services retain invalid and unavailable failures', 
     Effect.provideServiceEffect(CoreSearchQueryRuntime, createCoreSearchQueryRuntime),
     Effect.provideService(CoreSearchProjectionStore, store),
   );
+});
+
+it.effect('rejects a query whose tenant differs from its operational scope', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  return Effect.gen(function* rejectForeignScopeQuery() {
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    const failure = yield* Effect.flip(
+      runtime.search(
+        {
+          includeArchived: false,
+          moduleId: partyRef.moduleId,
+          query: 'acme',
+          resourceType: partyRef.resourceType,
+          tenantId,
+        },
+        searchScope(otherTenantId),
+      ),
+    );
+    expect(Schema.is(CoreSearchProjectionUnavailable)(failure)).toBe(true);
+  });
+});
+
+it.effect('rejects a query whose selected Legal Entity differs from its operational scope', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const otherLegalEntityId = '20000000-0000-4000-8000-000000000002';
+  const query = {
+    includeArchived: false,
+    moduleId: 'party.registry',
+    query: 'acme',
+    resourceType: 'party.registry.counterparty',
+    tenantId,
+  };
+  return Effect.gen(function* rejectForeignLegalEntityQuery() {
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    for (const [input, scope] of [
+      [{ ...query, selectedLegalEntityId: otherLegalEntityId }, searchScope(tenantId, legalEntityId)],
+      [{ ...query, selectedLegalEntityId: legalEntityId }, searchScope(tenantId)],
+      [query, searchScope(tenantId, legalEntityId)],
+    ] as const) {
+      const failure = yield* Effect.flip(runtime.search(input, scope));
+      expect(Schema.is(CoreSearchProjectionUnavailable)(failure)).toBe(true);
+    }
+    expect(
+      yield* runtime.search({ ...query, selectedLegalEntityId: legalEntityId }, searchScope(tenantId, legalEntityId)),
+    ).toEqual([]);
+  });
 });

@@ -345,7 +345,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       }
       if (sql.includes('current_setting')) {
-        return Effect.succeed([{ legal_entity_id: installedLegalEntityId, tenant_id: installedTenantId }]);
+        return Effect.succeed([
+          { legal_entity_id: installedLegalEntityId, role: 'ontos_runtime', tenant_id: installedTenantId },
+        ]);
       }
       if (sql.includes('transaction_timestamp')) {
         return Effect.succeed([{ operation_at: new Date('2026-11-30T00:00:00.000Z') }]);

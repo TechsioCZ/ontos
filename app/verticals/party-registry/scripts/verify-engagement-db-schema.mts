@@ -1,11 +1,18 @@
 // @effect-diagnostics globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
+import {
+  DatabaseConfig,
+  loadDatabaseConfig,
+  loadDatabaseConnectionPair,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
+import { PARTY_REGISTRY_WORKER_PARTY_TABLES } from '../src/db/database-grants.ts';
 import { compareContactsCatalog } from '../src/db/engagement-catalog.ts';
 import { CONTACTS_SCHEMA_NAME, CONTACTS_TABLES } from '../src/db/engagement-schema.ts';
+import { policyMismatches, rolePrivilegeMismatches, routineMismatches } from './database-role-contract.mts';
 
 class ContactsDatabaseVerificationError extends Schema.TaggedError<ContactsDatabaseVerificationError>()(
   'ContactsDatabaseVerificationError',
@@ -28,12 +35,6 @@ interface InfrastructureCatalogRow extends Readonly<Record<string, boolean | num
   readonly rls_count: number;
   readonly role_bypass_rls: boolean;
   readonly role_super: boolean;
-  readonly runtime_create: boolean;
-  readonly runtime_delete: boolean;
-  readonly runtime_insert: boolean;
-  readonly runtime_select: boolean;
-  readonly runtime_update: boolean;
-  readonly runtime_usage: boolean;
 }
 
 const expectedColumns = [
@@ -53,18 +54,8 @@ const expectedColumns = [
   'person_engagement_profiles.updated_at',
 ] as const;
 
-const organizationEngagementProfileRelation = `${CONTACTS_SCHEMA_NAME}.organization_engagement_profiles`;
-const personEngagementProfileRelation = `${CONTACTS_SCHEMA_NAME}.person_engagement_profiles`;
-
-const runtimePrivilegesMatch = (verified: InfrastructureCatalogRow): boolean =>
-  !verified.runtime_create &&
-  verified.runtime_usage &&
-  verified.runtime_select &&
-  verified.runtime_insert &&
-  verified.runtime_update &&
-  verified.runtime_delete &&
-  !verified.role_super &&
-  !verified.role_bypass_rls;
+const runtimeRoleAttributesMatch = (verified: InfrastructureCatalogRow): boolean =>
+  !verified.role_super && !verified.role_bypass_rls;
 
 const infrastructureMatches = (verified: InfrastructureCatalogRow, adminUser: string): boolean =>
   verified.organization_owner === adminUser &&
@@ -73,10 +64,10 @@ const infrastructureMatches = (verified: InfrastructureCatalogRow, adminUser: st
   verified.journal_count === 1 &&
   verified.policy_count === 8 &&
   verified.rls_count === 2 &&
-  runtimePrivilegesMatch(verified);
+  runtimeRoleAttributesMatch(verified);
 
 const verification = Effect.gen(function* verifyContactsDatabase() {
-  const connections = yield* loadDatabaseConnectionPair();
+  const connections = yield* loadDatabaseConnectionPair({ identity: PARTY_REGISTRY_REQUEST_IDENTITY });
   const database = yield* PartyDatabase;
 
   for (const table of CONTACTS_TABLES) {
@@ -158,12 +149,6 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
         (select count(*)::integer from pg_catalog.pg_constraint where contype = ${'f'} and connamespace = organization_namespace.oid) as foreign_key_count,
         (select count(*)::integer from pg_catalog.pg_class as journal inner join pg_catalog.pg_namespace as journal_namespace on journal_namespace.oid = journal.relnamespace where journal_namespace.nspname = ${'drizzle'} and journal.relname = ${'__drizzle_migrations_contacts'}) as journal_count,
         (select count(*)::integer from pg_catalog.pg_policy as policy where policy.polrelid in (organization_profile.oid, person_profile.oid)) as policy_count,
-        has_schema_privilege(${'ontos_runtime'}, ${CONTACTS_SCHEMA_NAME}, ${'CREATE'}) as runtime_create,
-        has_schema_privilege(${'ontos_runtime'}, ${CONTACTS_SCHEMA_NAME}, ${'USAGE'}) as runtime_usage,
-        has_table_privilege(${'ontos_runtime'}, ${organizationEngagementProfileRelation}, ${'SELECT'}) and has_table_privilege(${'ontos_runtime'}, ${personEngagementProfileRelation}, ${'SELECT'}) as runtime_select,
-        has_table_privilege(${'ontos_runtime'}, ${organizationEngagementProfileRelation}, ${'INSERT'}) and has_table_privilege(${'ontos_runtime'}, ${personEngagementProfileRelation}, ${'INSERT'}) as runtime_insert,
-        has_table_privilege(${'ontos_runtime'}, ${organizationEngagementProfileRelation}, ${'UPDATE'}) and has_table_privilege(${'ontos_runtime'}, ${personEngagementProfileRelation}, ${'UPDATE'}) as runtime_update,
-        has_table_privilege(${'ontos_runtime'}, ${organizationEngagementProfileRelation}, ${'DELETE'}) and has_table_privilege(${'ontos_runtime'}, ${personEngagementProfileRelation}, ${'DELETE'}) as runtime_delete,
         runtime_role.rolsuper as role_super,
         runtime_role.rolbypassrls as role_bypass_rls,
         ((organization_profile.relrowsecurity and organization_profile.relforcerowsecurity)::integer + (person_profile.relrowsecurity and person_profile.relforcerowsecurity)::integer) as rls_count
@@ -176,7 +161,7 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
         and organization_profile.relname = ${'organization_engagement_profiles'}
         and person_namespace.nspname = ${CONTACTS_SCHEMA_NAME}
         and person_profile.relname = ${'person_engagement_profiles'}
-        and runtime_role.rolname = ${'ontos_runtime'}
+        and runtime_role.rolname = ${PARTY_REGISTRY_REQUEST_IDENTITY.role}
     `,
       'objects',
     )
@@ -195,9 +180,30 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
     });
   }
 
+  const accessMismatches = yield* Effect.all([
+    rolePrivilegeMismatches(database.executor, CONTACTS_SCHEMA_NAME),
+    policyMismatches(database.executor, CONTACTS_SCHEMA_NAME, CONTACTS_TABLES, PARTY_REGISTRY_WORKER_PARTY_TABLES),
+    routineMismatches(database.executor, CONTACTS_SCHEMA_NAME, connections.admin.user),
+  ]).pipe(
+    Effect.map((groups) => groups.flat()),
+    Effect.mapError(
+      () =>
+        new ContactsDatabaseVerificationError({
+          reason: 'Unable to verify Contacts grants, routines and row-level security policies',
+        }),
+    ),
+  );
+  if (accessMismatches.length > 0) {
+    return yield* new ContactsDatabaseVerificationError({
+      reason: `Contacts grants or policies do not match the database role manifest: ${accessMismatches.join('; ')}`,
+    });
+  }
+
   return { typedTableCount: CONTACTS_TABLES.length };
 });
 
-const runtime = PartyDatabaseLive.pipe(Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())));
+const runtime = PartyDatabaseLive.pipe(
+  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig({ identity: PARTY_REGISTRY_REQUEST_IDENTITY }))),
+);
 const result = await Effect.runPromise(Effect.provide(verification, runtime));
 console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${CONTACTS_SCHEMA_NAME}`);

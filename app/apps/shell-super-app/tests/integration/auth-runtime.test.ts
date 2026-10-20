@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import {
   PrincipalResolver,
   PrincipalResolverUnavailableError,
   ContextAccess,
+  GatewayScopeGrantRegistrarLive,
   LegalEntityContext,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
@@ -54,6 +56,7 @@ import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 
 type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
@@ -458,7 +461,7 @@ it.live(
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
         loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -604,7 +607,7 @@ it.live(
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000009'),
         loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       Effect.succeed(approvedPageCatalog),
       false,
@@ -734,7 +737,7 @@ it.live(
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000010'),
         loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedPageCatalog(),
       false,
@@ -757,7 +760,7 @@ it.live(
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000011'),
         loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedPageCatalog(),
       false,
@@ -809,7 +812,7 @@ it.live(
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000002'),
         loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -966,7 +969,7 @@ it.live(
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
         loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -1010,7 +1013,7 @@ it.live(
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
         loadAdmission: installedAdmission(['testing.one']),
         loadConfig: parseGatewayIssuerConfig({}),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       Layer.succeed(TenantModuleStateService, unavailableModuleStates),
       installedPageCatalog(),
       false,
@@ -1079,7 +1082,7 @@ it.live(
     };
     const issuingHandler = makeShellAuthenticationApiRuntime(
       authenticationLayer,
-      makeGatewayIssuerLayer(issuerDependencies),
+      makeGatewayIssuerLayer(issuerDependencies).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -1200,6 +1203,84 @@ it.live(
     expect(generatedPrincipal.legalEntityId).toBe(fixtureLegalEntityId);
     expect(generatedPrincipal.principalId).toBe(principalId);
     expect(generatedPrincipal.tenantId).toBe(tenantId);
+    const databaseConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const scopeGrantAdminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
+    // The grant function checks expiry against the database clock, so the issuer reads the same clock.
+    const databaseNowSeconds = scopeGrantAdminClient<{
+      readonly now: number;
+    }>`select floor(extract(epoch from clock_timestamp()))::int as now`.pipe(
+      Effect.map(([row]) => row?.now ?? 0),
+      Effect.orDie,
+    );
+    const partyRegistryIssuingHandler = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      makeGatewayIssuerLayer({
+        ...issuerDependencies,
+        currentTimeSeconds: databaseNowSeconds,
+        generateJti: Effect.sync(() => randomUUID()),
+        loadAdmission: Effect.succeed({
+          audiences: new Map([['party-registry', 'integration-build']]),
+          revision: testRevision,
+        }),
+      }).pipe(Layer.provide(GatewayScopeGrantRegistrarLive)),
+      moduleStateLayer,
+      installedCatalog(['testing.one']),
+      false,
+      contextAccessLayer,
+    ).createHandler();
+    handlers.push(partyRegistryIssuingHandler);
+    const partyRegistryAssertionResponse = yield* Effect.tryPromise(() =>
+      partyRegistryIssuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-context`, {
+          body: JSON.stringify({ audience: 'party-registry', compositionRevision: testRevision }),
+          headers: new Headers({
+            'content-type': 'application/json',
+            cookie: cookieHeader(signedInCookies),
+            origin: configuration.baseUrl,
+          }),
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(
+      partyRegistryAssertionResponse.status,
+      yield* Effect.tryPromise(() => partyRegistryAssertionResponse.clone().text()),
+    ).toBe(200);
+    const partyRegistryAssertion = yield* Schema.decodeUnknownEffect(TokenResponseSchema)(
+      yield* Effect.tryPromise(() => partyRegistryAssertionResponse.json()),
+    );
+    const partyRegistryClaims = yield* Effect.tryPromise(() =>
+      jwtVerify(partyRegistryAssertion.token, pair.publicKey, {
+        algorithms: ['EdDSA'],
+        audience: 'party-registry',
+        issuer: 'https://shell.example.test',
+      }),
+    );
+    yield* Effect.acquireRelease(Effect.void, () =>
+      scopeGrantAdminClient`delete from trust.gateway_scope_grants where assertion_digest = sha256(convert_to(${partyRegistryAssertion.token}, 'UTF8'))`.pipe(
+        Effect.orDie,
+      ),
+    );
+    const scopeGrantRows = yield* scopeGrantAdminClient<{
+      readonly audience: string;
+      readonly expiresAt: number;
+      readonly jti: string;
+      readonly legalEntityId: string | null;
+      readonly principalId: string;
+      readonly registeredBy: string;
+      readonly tenantId: string;
+    }>`select audience, jti::text as jti, principal_id::text as "principalId", tenant_id::text as "tenantId", legal_entity_id::text as "legalEntityId", extract(epoch from expires_at)::bigint::int as "expiresAt", registered_by as "registeredBy" from trust.gateway_scope_grants where assertion_digest = sha256(convert_to(${partyRegistryAssertion.token}, 'UTF8'))`;
+    expect(scopeGrantRows).toEqual([
+      {
+        audience: 'party-registry',
+        expiresAt: partyRegistryClaims.payload.exp,
+        jti: partyRegistryClaims.payload.jti,
+        legalEntityId: fixtureLegalEntityId,
+        principalId,
+        registeredBy: 'shell_gateway_issuer',
+        tenantId,
+      },
+    ]);
     const invalidAudienceResponse = yield* Effect.tryPromise(() =>
       issuingHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {
@@ -1219,7 +1300,7 @@ it.live(
       makeGatewayIssuerLayer({
         ...issuerDependencies,
         generateJti: Effect.die(new Error('deliberate gateway test defect')),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -1543,7 +1624,7 @@ it.live(
             x: optionalText(privateJwk.x),
           },
         }),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
       installedCatalog(['testing.first', 'testing.second']),
       false,
@@ -1630,7 +1711,7 @@ it.live(
         generateJti: Effect.succeed('61000000-0000-4000-8000-000000000002'),
         loadAdmission: Effect.succeed({ audiences: new Map<string, string>(), revision: '0'.repeat(64) }),
         loadConfig: parseGatewayIssuerConfig({}),
-      }),
+      }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       moduleStateLayer,
     ).createHandler();
     handlers.push(resolverUnavailableRuntime);

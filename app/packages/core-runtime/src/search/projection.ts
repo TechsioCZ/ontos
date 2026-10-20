@@ -3,6 +3,7 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { Clock, DateTime, Effect, Option, Predicate, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
+import type { OperationalScope } from '../operations/context.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 
@@ -464,12 +465,20 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
       return yield* Effect.void;
     },
   );
-  const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = (input) =>
-    Effect.sync(() =>
-      [...(units.get(projectionUnitKey(input.tenantId, input.moduleId, input.resourceType))?.values() ?? [])].flatMap(
-        ({ document }) => (document === undefined ? [] : [document]),
-      ),
-    );
+  // The query may read only the installed scope: its tenant and exactly its legal entity, if any.
+  const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = (input, scope) =>
+    input.tenantId === scope.tenantId && input.selectedLegalEntityId === scope.legalEntityId
+      ? Effect.sync(() =>
+          [
+            ...(units.get(projectionUnitKey(input.tenantId, input.moduleId, input.resourceType))?.values() ?? []),
+          ].flatMap(({ document }) => (document === undefined ? [] : [document])),
+        )
+      : Effect.fail(
+          new CoreSearchProjectionUnavailable({
+            code: 'core_search_projection_unavailable',
+            reason: 'Core Search projection is temporarily unavailable',
+          }),
+        );
   const replace: CoreSearchProjectionStoreService['replace'] = Effect.fn('CoreSearchProjectionStore.replace')(
     function* replaceCoreSearchProjection(input: UnparsedCoreSearchInput, context: OutboxWorkerHandlerContext) {
       const replacement = yield* decodeReplacementEffect(input);
@@ -585,11 +594,11 @@ export const createCoreSearchQueryRuntime: Effect.Effect<
 > = Effect.gen(function* createCoreSearchQueryRuntimeService() {
   const store = yield* CoreSearchProjectionStore;
   const search: CoreSearchQueryRuntimeService['search'] = Effect.fn('CoreSearchQueryRuntime.search')(
-    function* searchCoreSearchProjection(input: UnparsedCoreSearchInput) {
+    function* searchCoreSearchProjection(input: UnparsedCoreSearchInput, scope: OperationalScope) {
       const query = yield* Schema.decodeUnknownEffect(CoreSearchQuerySchema)(input).pipe(
         Effect.mapError((cause) => invalid('Core Search query does not match its declared contract', cause)),
       );
-      const documents = yield* store.queryCandidates(query);
+      const documents = yield* store.queryCandidates(query, scope);
       const needle = normalize(query.query);
       const requestedFacets = query.facets ?? [];
       const effectiveAt =

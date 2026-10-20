@@ -23,6 +23,7 @@ import {
   CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareWorkerConfig,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { build as bundleSource, transform } from 'esbuild';
 
 import { MicroVerticalReadinessSchema } from '@modern-js/bff-effect/microvertical-api';
@@ -2506,6 +2507,7 @@ import { runInNewContext } from 'node:vm';
 const environment = {
   ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
   ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+  ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'party-registry-hyperdrive-id',
   ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
   ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
   ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
@@ -2600,6 +2602,7 @@ process.stdout.write(JSON.stringify(evidence, normalize));
 
 // OntOS's one intended extension of a generated UI vertical config: its Worker binds the private
 // data plane (Hyperdrive and the SpiceDB Workers VPC service), with the harness's placeholder IDs.
+// Party binds only its request identity's Hyperdrive (`PARTY_REGISTRY_HYPERDRIVE`), never the shared one.
 // The workspace preset owns the Worker identity, so the scaffold config may carry no deploy section.
 const OntosEvaluatedConfigSchema = Schema.Struct({
   deploy: Schema.optional(Schema.Struct({ worker: Schema.optional(Schema.Record(Schema.String, Schema.Json)) })),
@@ -2610,11 +2613,15 @@ const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
     (name) =>
       ({
         ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
-        ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+        ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'party-registry-hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
         ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
       })[name],
-    { cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical, publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY' },
+    {
+      cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical,
+      hyperdrives: [PARTY_REGISTRY_REQUEST_IDENTITY.cloudflareHyperdrive],
+      publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
+    },
   );
   return Schema.decodeUnknownSync(Schema.Json)({
     ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),

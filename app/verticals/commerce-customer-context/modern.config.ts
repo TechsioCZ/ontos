@@ -4,6 +4,7 @@ import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-t
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { presetUltramodernWorkspace, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   CLOUDFLARE_WORKER_CPU_MS,
   createHeadlessModernConfig,
@@ -19,6 +20,7 @@ const bffPrefix = COMMERCE_CUSTOMER_CONTEXT_API_PREFIX;
 const cloudflareWorkerName = 'app-commerce-customer-context';
 const build = createModernBuildContext({
   appId,
+  cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT',
   cloudflareWorkerName,
   defaultPort: 4101,

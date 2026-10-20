@@ -1,4 +1,4 @@
-import { databaseRuntime } from '@app/core-runtime';
+import { SHARED_RUNTIME_IDENTITY, databaseRuntime } from '@app/core-runtime';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 
 import { loadConfigurationProvider } from './configuration-provider.ts';
@@ -128,7 +128,7 @@ export const loadAuthConfig = (
     // A Worker's DATABASE_URL is its HYPERDRIVE binding; Node keeps the environment's.
     Effect.flatMap((provider) =>
       databaseRuntime
-        .runtimeDatabaseProvider(provider)
+        .runtimeDatabaseProvider(provider, SHARED_RUNTIME_IDENTITY)
         .pipe(Effect.catchTag('DatabaseConfigError', ({ reason }) => Effect.fail(new AuthConfigError({ reason })))),
     ),
     Effect.flatMap(parseAuthConfigFromProvider),

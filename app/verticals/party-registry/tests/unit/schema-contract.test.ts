@@ -6,6 +6,7 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import { FileSystem, Effect } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
+import { PARTY_REGISTRY_WORKER_PARTY_TABLES } from '../../src/db/database-grants.ts';
 import * as schemaExports from '../../src/db/schema.ts';
 import {
   PARTY_SCHEMA_NAME,
@@ -176,13 +177,22 @@ it('gives every tenant-owned record a tenant-qualified identity and forced-RLS p
       config.columns.some((column) => column.name === 'tenant_id' && column.notNull),
       `${config.name} needs a required tenant_id`,
     ).toBeTruthy();
+    const requestPolicies = config.policies.filter((policy) => policy.to === 'party_registry_runtime');
+    const workerPolicies = config.policies.filter((policy) => policy.to === 'party_registry_worker');
     expect(
-      config.policies.map((policy) => policy.for),
+      requestPolicies.map((policy) => policy.for),
       `${config.name} needs complete CRUD policies`,
     ).toEqual(['select', 'insert', 'update', 'delete']);
-    for (const policy of config.policies) {
-      expect(policy.to).toBe('ontos_runtime');
+    expect(requestPolicies.length + workerPolicies.length, `${config.name} has a policy for another role`).toBe(
+      config.policies.length,
+    );
+    for (const policy of workerPolicies) {
+      expect(policy.for).toBe('select');
+      expect(policy.name).toMatch(/_worker_select$/u);
     }
+    expect(workerPolicies.length > 0, `${config.name} worker read policy`).toBe(
+      PARTY_REGISTRY_WORKER_PARTY_TABLES.some((workerTable) => workerTable === `party.${config.name}`),
+    );
     const tenantIdentity = [...config.uniqueConstraints, ...config.indexes].find((candidate) => {
       const columns = 'columns' in candidate ? candidate.columns : (candidate.config.columns ?? []);
       return columns.some((column) => 'name' in column && column.name === 'tenant_id');
@@ -628,7 +638,7 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
     Effect.gen(function* testScenario() {
       const bootstrap = yield* FileSystem.FileSystem.use((fs) =>
         fs.readFileString(
-          fileURLToPath(new URL('../../../../scripts/postgres/bootstrap-runtime-role.mts', import.meta.url)),
+          fileURLToPath(new URL('../../../../scripts/postgres/runtime-role-bootstrap.mts', import.meta.url)),
         ),
       );
       const verifier = yield* FileSystem.FileSystem.use((fs) =>
@@ -636,11 +646,10 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      expect(bootstrap).toMatch(
-        /\['core', 'auth', 'contacts', 'party', 'catalog', 'inventory', 'tax', 'privacy', 'projects'\]/u,
-      );
+      expect(bootstrap).toMatch(/\['core', 'auth', 'catalog', 'inventory', 'tax', 'privacy', 'projects'\]/u);
+      expect(bootstrap).toMatch(/revoke all on all tables in schema/u);
       expect(verifier).toMatch(
-        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'projects',\s*'storefront_registry',\s*'tax',\s*\]/u,
+        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'assortment',\s*'auth',\s*'catalog',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'contacts',\s*'core',\s*'inventory',\s*'party',\s*'payment_term_catalog',\s*'price_group_catalog',\s*'pricing',\s*'privacy',\s*'projects',\s*'storefront_registry',\s*'tax',\s*'trust',\s*\]/u,
       );
       expect(verifier).toMatch(/__drizzle_migrations_assortment/u);
       expect(verifier).toMatch(/__drizzle_migrations_catalog/u);

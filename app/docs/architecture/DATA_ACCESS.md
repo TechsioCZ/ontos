@@ -55,9 +55,25 @@ Every Shell-to-MicroVertical provider attempt acquires a fresh assertion for tha
 
 ## PostgreSQL Isolation
 
-`DATABASE_ADMIN_URL` is used only for role/schema/migration work. `DATABASE_URL` is the application pool and must authenticate as a non-superuser role without `BYPASSRLS`. The URLs must not be identical. Local/test bootstrap creates or updates `ontos_runtime`, grants only schema/table/sequence usage needed by the application, and verifies its capabilities.
+`DATABASE_ADMIN_URL` is used only for role, schema and migration work. Each runtime process connects as one checked-in database identity (`packages/core-runtime/src/db/database-identities.ts`), and each identity has its own URL key:
 
-Owner tenant tables use enabled and forced RLS. Tenant-only policies compare `tenant_id` with `current_setting('ontos.tenant_id', true)` for `USING` and `WITH CHECK`. Legal-entity-owned policies also compare `legal_entity_id` with `current_setting('ontos.legal_entity_id', true)`. Missing or malformed settings match no rows and permit no writes. Settings use parameterized `set_config(..., true)`, are verified before owner services exist, and disappear at transaction end.
+| Identity                 | Role                     | URL key                              | Scope authority         |
+| ------------------------ | ------------------------ | ------------------------------------ | ----------------------- |
+| `shared_runtime`         | `ontos_runtime`          | `DATABASE_URL`                       | `session_setting`       |
+| `shell_gateway_issuer`   | `shell_gateway_issuer`   | `SHELL_GATEWAY_ISSUER_DATABASE_URL`  | none (registers grants) |
+| `party_registry_request` | `party_registry_runtime` | `PARTY_REGISTRY_DATABASE_URL`        | `gateway_grant`         |
+| `party_registry_worker`  | `party_registry_worker`  | `PARTY_REGISTRY_WORKER_DATABASE_URL` | `session_setting`       |
+
+Every runtime role is a non-superuser login without `BYPASSRLS`, memberships, owned objects or `CREATE`. No runtime URL may equal the admin URL. The bootstrap grants each role exactly its grant manifest (`scripts/postgres/database-role-manifest.mts`) and verifies its capabilities.
+
+Owner tenant tables use enabled and forced RLS. The scope authority decides where a policy takes tenant and legal entity from.
+
+- **`gateway_grant`** (the Party request role). Shell registers the SHA-256 digest of every gateway assertion it issues for an enrolled audience. In each scoped transaction, Core calls `trust.establish_gateway_scope($assertion)`. The routine checks that the grant exists, belongs to the role's audience and has not passed its deadline. It then writes the transaction-local seal `ontos_trust.scope`, which binds tenant and legal entity to the top-level transaction ID (`xid8`), `session_user` and a deadline, under an HMAC key that never leaves the database. Policies compare `tenant_id` with `(select trust.current_tenant_id())`, and legal-entity tables also compare `legal_entity_id` with `(select trust.current_legal_entity_id())`. The accessors re-verify the seal on every read and fail with 42501 on a forged, copied or expired seal. Plain `ontos.*` settings have no effect on these tables.
+- **`session_setting`** (`ontos_runtime` and the Party worker). Tenant-only policies compare `tenant_id` with `current_setting('ontos.tenant_id', true)`. Legal-entity policies also compare `legal_entity_id` with `current_setting('ontos.legal_entity_id', true)`. These roles can set those values themselves, so this path isolates correct code but does not stop a compromised process.
+
+In both paths, missing or malformed context matches no rows and permits no writes, and the context disappears at transaction end. Core installs it with parameterized calls and checks it before owner services exist. Core Search queries carry the `OperationalScope` and install the same context in their own query transaction.
+
+See [Database Trust Boundaries](./DATABASE_TRUST_BOUNDARIES.md) for the full design and its limits.
 
 Core global catalogs, schedulers, delivery state, and checkpoints deliberately remain Core-private instead of becoming a business-handler RLS surface because controlled global scans are required. All Core rows carrying a tenant plus a referenced legal entity, principal, auth binding, Action invocation, audit/data-access/domain event, evidence, media, outbox, or checkpoint use composite same-tenant uniqueness and foreign keys. This database invariant remains effective if application validation is bypassed.
 

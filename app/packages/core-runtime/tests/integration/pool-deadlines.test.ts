@@ -7,6 +7,7 @@ import { Reactivity } from 'effect/reactivity';
 import { Socket } from 'effect/socket';
 
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
 
 /**
@@ -24,7 +25,7 @@ const silentListener = Effect.gen(function* silentListener() {
 
 it.live('applies PostgreSQL connect and statement deadlines', () =>
   Effect.gen(function* poolDeadlines1() {
-    const databaseConfiguration = yield* loadDatabaseConfig();
+    const databaseConfiguration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const clientConfiguration = yield* configureDatabasePool(Redacted.make(databaseConfiguration.connectionString), {
       connectTimeoutMillis: 200,
       statement_timeout: 120,

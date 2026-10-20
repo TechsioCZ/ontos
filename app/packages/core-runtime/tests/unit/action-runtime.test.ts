@@ -385,6 +385,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return [
         {
           legal_entity_id: installedLegalEntityId,
+          role: 'ontos_runtime',
           tenant_id: installedTenantId,
         },
       ];
@@ -4084,7 +4085,7 @@ it.effect(
     expect(Schema.is(ActionPermissionDenied)(retry)).toBe(true);
     expect(harness.permissionChecks).toHaveLength(1);
     expect(harness.rejections).toHaveLength(1);
-    expect(harness.counts().transactionCount).toBe(0);
+    expect(harness.counts().transactionCount).toBe(1);
   }),
 );
 

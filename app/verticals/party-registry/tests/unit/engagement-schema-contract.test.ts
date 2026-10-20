@@ -60,7 +60,8 @@ it('forces tenant RLS with complete CRUD policies on both profile tables', () =>
     ]);
     expect(config.policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
     for (const policy of config.policies) {
-      expect(policy.to).toBe('ontos_runtime');
+      expect(policy.to).toBe('party_registry_runtime');
+      expect(policy.name.endsWith('_worker_select')).toBe(false);
     }
   }
 });

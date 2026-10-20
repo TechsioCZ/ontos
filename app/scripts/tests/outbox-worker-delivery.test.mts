@@ -872,3 +872,24 @@ const cleanupControl = (interrupt: boolean) =>
 it.live('reaps a worker before removing its fixture after failed startup output', () => cleanupControl(false));
 
 it.live('reaps a worker before removing its fixture on interruption', () => cleanupControl(true));
+
+it.live('hands the Party Registry worker its worker identity and the host both database identities', () =>
+  Effect.gen(function* workerDatabaseIdentities() {
+    const appRoot = path.resolve(import.meta.dirname, '../..');
+    const source = yield* Effect.tryPromise(() => readFile(path.join(appRoot, 'zerops.yaml'), 'utf-8'));
+    const { deployment } = yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(appRoot, source));
+    const section = (setup: string) =>
+      deployment
+        .split(/(?=^ {2}(?:- setup:|# <\/generated-outbox-worker-deployments>))/mu)
+        .find((candidate) => candidate.startsWith(`  - setup: '${setup}'\n`)) ?? '';
+    const databaseUrls = (setup: string) => section(setup).match(/^ {8}[A-Z_]*DATABASE_URL: .*$/gmu) ?? [];
+    const workerUrl = `        PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:\${migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
+    const sharedUrl = `        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
+
+    expect(deployment).toBe(source);
+    expect(databaseUrls('party-registry-worker')).toStrictEqual([workerUrl]);
+    expect(section('party-registry-worker')).not.toContain('PARTY_REGISTRY_DB_PASSWORD');
+    expect(databaseUrls(OUTBOX_WORKER_HOST.stageSetup)).toStrictEqual([sharedUrl, workerUrl]);
+    expect(databaseUrls('inventory-worker')).toStrictEqual([sharedUrl]);
+  }),
+);

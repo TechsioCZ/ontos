@@ -1,8 +1,9 @@
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { parse } from 'yaml';
 
+import { PARTY_REGISTRY_REQUEST_SECRET, zeropsIdentityDatabaseUrl } from './ops/database-identity-secrets.mts';
 import { readDevelopmentPorts } from './topology-development-ports.mjs';
 
 const begin = '  # <generated-vertical-provider-deployments>';
@@ -34,6 +35,19 @@ interface ProviderVertical {
   readonly path: string;
   readonly port: number;
 }
+
+const EnvironmentEntryOrder = Order.mapInput(Order.String, ([key]: readonly [string, string]) => key);
+
+const SHARED_RUNTIME_DATABASE_URL = `postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
+
+/**
+ * The database URL environment of one provider: Party Registry connects only as its dedicated request
+ * identity (design D11); every other provider keeps the shared runtime role.
+ */
+const providerDatabaseEnvironment = (id: string): readonly (readonly [string, string])[] =>
+  id === 'party-registry'
+    ? [[PARTY_REGISTRY_REQUEST_SECRET.identity.urlKey, zeropsIdentityDatabaseUrl(PARTY_REGISTRY_REQUEST_SECRET, id)]]
+    : [['DATABASE_URL', SHARED_RUNTIME_DATABASE_URL]];
 
 const isPort = (port: number): boolean => Number.isInteger(port) && port >= 1 && port <= 65_535;
 
@@ -83,10 +97,23 @@ const renderProvider = (
     const readiness = `/${id}-api/${id}/readiness`;
     const runtime = `app/.zerops/runtime/${id}`;
     const portKey = `VERTICAL_${id.replaceAll('-', '_').toUpperCase()}_PORT`;
-    const dependencyEnvironment =
-      id === 'commerce-customer-context' && priceGroupCatalogBaseUrl !== undefined
-        ? `\n        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: '${priceGroupCatalogBaseUrl}'`
-        : '';
+    const environment: (readonly [string, string])[] = [
+      ...providerDatabaseEnvironment(id),
+      ['NODE_ENV', 'production'],
+      ['PORT', `'${port}'`],
+      ['SPICEDB_CA_CERT', `\${spicedb_SPICEDB_GRPC_TLS_CERT}`],
+      ['SPICEDB_ENDPOINT', "'spicedb:50051'"],
+      ['SPICEDB_PRESHARED_KEY', `\${spicedb_SPICEDB_GRPC_PRESHARED_KEY}`],
+      ['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT', 'stage'],
+      ['ULTRAMODERN_ZEROPS_SERVICE', id],
+      [portKey, `'${port}'`],
+    ];
+    if (id === 'commerce-customer-context' && priceGroupCatalogBaseUrl !== undefined) {
+      environment.push(['ONTOS_PRICE_GROUP_CATALOG_BASE_URL', `'${priceGroupCatalogBaseUrl}'`]);
+    }
+    const renderedEnvironment = EffectArray.sort(environment, EnvironmentEntryOrder)
+      .map(([key, value]) => `        ${key}: ${value}`)
+      .join('\n');
     const nodeBin = `$HOME/.local/node-${toolchain.node}/bin`;
     return `  - setup: '${id}'
     build:
@@ -122,15 +149,7 @@ const renderProvider = (
           protocol: tcp
           httpSupport: true
       envVariables:
-        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}
-        NODE_ENV: production${dependencyEnvironment}
-        PORT: '${port}'
-        SPICEDB_CA_CERT: \${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
-        SPICEDB_PRESHARED_KEY: \${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        ULTRAMODERN_ZEROPS_SERVICE: ${id}
-        ${portKey}: '${port}'
+${renderedEnvironment}
       healthCheck:
         httpGet:
           port: ${port}
