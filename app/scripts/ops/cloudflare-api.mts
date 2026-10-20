@@ -418,6 +418,11 @@ export interface CloudflareApiService {
     spec: AccessPolicySpec,
   ) => Effect.Effect<CloudflareAccessPolicy, CloudflareApiError>;
   readonly updateAlertPolicy: (policyId: string, spec: AlertPolicySpec) => Effect.Effect<string, CloudflareApiError>;
+  /** Reconciles an existing config, including its write-only origin password. */
+  readonly updateHyperdrive: (
+    hyperdriveId: string,
+    spec: HyperdriveSpec,
+  ) => Effect.Effect<CloudflareHyperdrive, CloudflareApiError>;
   /** Updates one rule in place, leaving the ruleset's other rules untouched. */
   readonly updateRulesetRule: (
     zoneId: string,
@@ -667,6 +672,13 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
         AlertPolicyIdSchema,
         `notification policy ${spec.name} update`,
       ).pipe(Effect.map(({ id }) => id)),
+    updateHyperdrive: (hyperdriveId, spec) =>
+      send(
+        HttpClientRequest.put(accountUrl(`/hyperdrive/configs/${hyperdriveId}`)),
+        hyperdriveBody(spec),
+        HyperdriveSchema,
+        'Hyperdrive update',
+      ),
     updateRulesetRule: (zoneId, rulesetId, ruleId, spec) =>
       send(
         HttpClientRequest.patch(rule(zoneId, rulesetId, ruleId)),

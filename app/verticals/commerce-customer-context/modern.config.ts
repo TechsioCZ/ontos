@@ -4,7 +4,7 @@ import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-t
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { presetUltramodernWorkspace, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 
-import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import {
   CLOUDFLARE_WORKER_CPU_MS,
   createHeadlessModernConfig,

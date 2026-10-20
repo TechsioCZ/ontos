@@ -130,8 +130,7 @@ export {
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   TRUST_ROUTINES,
-  gatewayScopeGrantRoleForAudience,
-} from './db/database-identities.ts';
+} from './db/database-identity-manifest.ts';
 export type {
   CloudflareHyperdriveBinding,
   DatabaseAcceptedFinding,
@@ -143,7 +142,8 @@ export type {
   DatabaseTableGrant,
   DatabaseTablePrivilege,
   DatabaseUrlKey,
-} from './db/database-identities.ts';
+} from './db/database-identity-manifest.ts';
+export { gatewayScopeGrantRoleForAudience } from './db/database-identities.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {

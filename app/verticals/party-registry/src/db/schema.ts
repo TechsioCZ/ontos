@@ -15,6 +15,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  pgPolicy,
   text,
   timestamp,
   unique,
@@ -780,9 +781,10 @@ export const counterpartyAdminReadModels = enableGovernedRls(
         foreignColumns: [parties.tenantId, parties.partyId],
         name: 'party_counterparty_admin_model_party_fk',
       }).onDelete('restrict'),
-      ...gatewayScopedTenantRlsPolicies(
+      ...gatewayScopedTenantLegalEntityRlsPolicies(
         'counterparty_admin_read_models_tenant',
         table.tenantId,
+        table.legalEntityId,
         PARTY_REGISTRY_REQUEST_IDENTITY.role,
       ),
     ],
@@ -849,11 +851,27 @@ export const counterpartyRoleAdminReadModels = enableGovernedRls(
         'party_counterparty_role_admin_models_end_evidence_ck',
         sql`(${table.validTo} is null and ${table.endReason} is null and ${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null and ${table.endEvidenceRefs} is null) or (${table.validTo} is not null and length(btrim(${table.endReason})) > 0 and length(btrim(${table.endProvenanceSource})) > 0 and length(btrim(${table.endProvenanceMethod})) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) between 1 and 32)`,
       ),
-      ...gatewayScopedTenantRlsPolicies(
-        'counterparty_role_admin_read_models_tenant',
-        table.tenantId,
-        PARTY_REGISTRY_REQUEST_IDENTITY.role,
-      ),
+      pgPolicy('counterparty_role_admin_read_models_tenant_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_REQUEST_IDENTITY.role,
+        using: sql`${table.tenantId} = (select trust.current_tenant_id()) and exists (select 1 from party.counterparty_admin_read_models as parent where parent.tenant_id = ${table.tenantId} and parent.counterparty_id = ${table.counterpartyId})`,
+      }),
+      pgPolicy('counterparty_role_admin_read_models_tenant_insert', {
+        for: 'insert',
+        to: PARTY_REGISTRY_REQUEST_IDENTITY.role,
+        withCheck: sql`${table.tenantId} = (select trust.current_tenant_id()) and exists (select 1 from party.counterparty_admin_read_models as parent where parent.tenant_id = ${table.tenantId} and parent.counterparty_id = ${table.counterpartyId})`,
+      }),
+      pgPolicy('counterparty_role_admin_read_models_tenant_update', {
+        for: 'update',
+        to: PARTY_REGISTRY_REQUEST_IDENTITY.role,
+        using: sql`${table.tenantId} = (select trust.current_tenant_id()) and exists (select 1 from party.counterparty_admin_read_models as parent where parent.tenant_id = ${table.tenantId} and parent.counterparty_id = ${table.counterpartyId})`,
+        withCheck: sql`${table.tenantId} = (select trust.current_tenant_id()) and exists (select 1 from party.counterparty_admin_read_models as parent where parent.tenant_id = ${table.tenantId} and parent.counterparty_id = ${table.counterpartyId})`,
+      }),
+      pgPolicy('counterparty_role_admin_read_models_tenant_delete', {
+        for: 'delete',
+        to: PARTY_REGISTRY_REQUEST_IDENTITY.role,
+        using: sql`${table.tenantId} = (select trust.current_tenant_id()) and exists (select 1 from party.counterparty_admin_read_models as parent where parent.tenant_id = ${table.tenantId} and parent.counterparty_id = ${table.counterpartyId})`,
+      }),
     ],
   ),
 );

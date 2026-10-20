@@ -7,7 +7,7 @@ import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 
-import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import {
   createModernBuildContext,
   createModernConfig,

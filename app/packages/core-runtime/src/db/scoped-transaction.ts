@@ -81,7 +81,8 @@ const readSettingRow = (statement: SQL, transaction: OperationalScopeRawTransact
 /**
  * Reads the installed scope together with the connected role. The scope counts only when that role's
  * database identity installs scope through `authority`; a gateway-grant role never trusts session
- * settings, and a role without scope authority never trusts either.
+ * settings, and a role without scope authority never trusts either. Logins outside the runtime
+ * identities (the migration admin) count as session-setting roles.
  */
 const readVerifiedScope = (
   statement: SQL,
@@ -94,8 +95,9 @@ const readVerifiedScope = (
       if (row === undefined) {
         return Effect.succeed(Option.none<SettingRow>());
       }
-      const identity = DATABASE_IDENTITIES.find((candidate) => candidate.role === row.role);
-      return identity?.scopeAuthority === authority
+      const identityAuthority =
+        DATABASE_IDENTITIES.find((candidate) => candidate.role === row.role)?.scopeAuthority ?? 'session_setting';
+      return identityAuthority === authority
         ? Effect.succeed(Option.some<SettingRow>({ legal_entity_id: row.legal_entity_id, tenant_id: row.tenant_id }))
         : Effect.fail(operationContextUnavailable());
     }),
@@ -250,7 +252,7 @@ const sessionTenantLegalEntityPredicate = (tenantColumn: AnyPgColumn, legalEntit
 const gatewayTenantPredicate = (tenantColumn: AnyPgColumn) => sql`${tenantColumn} = (select trust.current_tenant_id())`;
 
 const gatewayTenantLegalEntityPredicate = (tenantColumn: AnyPgColumn, legalEntityColumn: AnyPgColumn) =>
-  sql`${tenantColumn} = (select trust.current_tenant_id()) and ${legalEntityColumn} = (select trust.current_legal_entity_id())`;
+  sql`${tenantColumn} = (select trust.current_tenant_id()) and ((select trust.current_legal_entity_id()) is null or ${legalEntityColumn} is null or ${legalEntityColumn} = (select trust.current_legal_entity_id()))`;
 
 export const tenantRlsPolicies = (prefix: string, tenantColumn: AnyPgColumn) =>
   operationalRlsPolicies(prefix, sessionTenantPredicate(tenantColumn), 'ontos_runtime');

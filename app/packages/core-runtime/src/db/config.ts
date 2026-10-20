@@ -9,8 +9,8 @@ import {
   PARTY_REGISTRY_WORKER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-} from './database-identities.ts';
-import type { DatabaseIdentity, DatabaseIdentityId, DatabaseUrlKey } from './database-identities.ts';
+} from './database-identity-manifest.ts';
+import type { DatabaseIdentity, DatabaseIdentityId, DatabaseUrlKey } from './database-identity-manifest.ts';
 
 export { DatabaseConfigError } from './config-error.ts';
 

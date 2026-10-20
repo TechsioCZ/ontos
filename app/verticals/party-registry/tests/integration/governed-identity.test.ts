@@ -1,3 +1,4 @@
+import { PgClient } from '@effect/sql-pg';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
   CoreSearchProjectionStoreLive,
@@ -21,12 +22,12 @@ import { and, eq } from 'drizzle-orm';
 import { Crypto, Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
-import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { coreRelations, outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
@@ -148,11 +149,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
           const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
-          const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+          const coreAdmin = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
           // Release only these disposable tenants' dispatch queues; retain append-only Core evidence.
           yield* Effect.addFinalizer(() =>
             Effect.forEach([fixture.tenantId, other.tenantId], (tenantId) =>
-              admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+              deleteTestCoreOutbox(adminClient, tenantId),
             ).pipe(Effect.orDie),
           );
           yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId, other.tenantId]);

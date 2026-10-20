@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -10,7 +11,7 @@ import {
   PARTY_REGISTRY_WORKER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identities.ts';
+} from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING } from '../../packages/core-runtime/src/modules/active-application-composition-edge.ts';
 import {
   CLOUDFLARE_WORKER_CPU_MS,
@@ -364,4 +365,36 @@ it('declares each unit Worker Hyperdrive from the database identities it serves'
     );
     expect(config, unit.id).not.toMatch(DEDICATED_IDENTITY_REFERENCE);
   }
+});
+
+// Exercise Modern's actual jiti dependency in a fresh process, outside Rstest's ESM bundler.
+it('loads the canonical identity facts synchronously and every Modern configuration through jiti', () => {
+  const units = [topology.shell, ...topology.verticals];
+  const loaded = execFileSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `
+        import { createRequire } from 'node:module';
+        import path from 'node:path';
+        const require = createRequire(import.meta.url);
+        const appToolsRequire = createRequire(require.resolve('@modern-js/app-tools'));
+        const pluginRequire = createRequire(appToolsRequire.resolve('@modern-js/plugin'));
+        const { createJiti } = pluginRequire('jiti');
+        const jiti = createJiti(import.meta.url, { fsCache: false, requireCache: false, interopDefault: true });
+        const facts = jiti('./packages/core-runtime/src/db/database-identity-manifest.ts');
+        if (facts.DATABASE_IDENTITIES.length !== 4) throw new Error('Missing canonical database identities');
+        const units = JSON.parse(process.argv[1]);
+        for (const unit of units) {
+          const configuration = await jiti.import(path.resolve(unit.path, 'modern.config.ts'));
+          if (!(configuration.default ?? configuration)) throw new Error('Missing Modern configuration');
+          console.log(unit.id);
+        }
+      `,
+      JSON.stringify(units),
+    ],
+    { cwd: appRoot, encoding: 'utf-8', timeout: 90_000 },
+  );
+  expect(loaded.trim().split('\n')).toEqual(units.map(({ id }) => id));
 });

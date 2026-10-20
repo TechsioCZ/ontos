@@ -1,9 +1,102 @@
 import { sql } from 'drizzle-orm';
-import { Cause, Context, Deferred, Effect, Exit, Fiber } from 'effect';
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Predicate, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
+import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
+import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
+import { makeOperationalScopeRepository } from '../../src/operations/context.ts';
+import type { OperationContextUnavailable } from '../../src/operations/errors.ts';
+import type { ReadEvidencePersistenceError } from '../../src/reads/errors.ts';
+import { persistScopedReadEvidence } from '../../src/reads/repository.ts';
 import { makeTestDatabase } from '../support/database.ts';
+
+const scopedPrincipal = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: '40000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:sql-finalizer',
+    authMethod: 'session',
+    correlationId: 'sql-finalizer-test',
+    principalId: '10000000-0000-4000-8000-000000000001',
+    tenantId: '20000000-0000-4000-8000-000000000001',
+  },
+  'a'.repeat(64),
+  { assertion: Redacted.make('verified-finalizer-test-assertion'), audience: 'party-registry' },
+);
+
+for (const boundary of ['context', 'evidence'] as const) {
+  const run = (
+    executor: CoreDatabaseExecutor,
+  ): Effect.Effect<void, OperationContextUnavailable | ReadEvidencePersistenceError> =>
+    boundary === 'context'
+      ? makeOperationalScopeRepository({ executor }).load(scopedPrincipal).pipe(Effect.asVoid)
+      : persistScopedReadEvidence(executor, {
+          accessKind: 'list',
+          captureMode: 'metadata_only',
+          outcome: 'denied',
+          outcomeCode: 'permission_denied',
+          outcomeStage: 'authz',
+          policyKey: 'test.read.v1',
+          readKey: 'test.read',
+          resultCount: 0,
+          scope: scopedPrincipal,
+          servingModuleKey: 'core.shell',
+        });
+
+  for (const phase of ['BEGIN', 'COMMIT', 'ROLLBACK', 'RELEASE SAVEPOINT', 'ROLLBACK TO SAVEPOINT'] as const) {
+    it.effect(`scoped ${boundary} maps native ${phase} failures to its declared persistence error`, () =>
+      Effect.gen(function* classifyScopedSettlement() {
+        const failure = new SqlError({ reason: new ConnectionError({ cause: new Error(`${phase} failed`) }) });
+        const events: string[] = [];
+        const executor = yield* makeTestDatabase((statement) => {
+          events.push(statement);
+          const failingControl = phase.includes('SAVEPOINT') ? statement.startsWith(phase) : statement === phase;
+          const failingBody =
+            phase.startsWith('ROLLBACK') &&
+            (statement.includes('from "core"."tenants"') || statement.startsWith('insert into'));
+          if (failingControl || failingBody) {
+            return Effect.fail(failure);
+          }
+          return Effect.succeed(
+            statement.includes('trust.')
+              ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+              : [],
+          );
+        });
+        const error = yield* Effect.flip(
+          phase.includes('SAVEPOINT') ? executor.transaction(() => run(executor)) : run(executor),
+        );
+        expect(
+          Predicate.isTagged(
+            error,
+            boundary === 'context' ? 'OperationContextUnavailable' : 'ReadEvidencePersistenceError',
+          ),
+        ).toBe(true);
+        expect(events.some((statement) => statement.startsWith(phase))).toBe(true);
+      }),
+    );
+  }
+
+  it.effect(`scoped ${boundary} preserves unrelated settlement defects`, () =>
+    Effect.gen(function* preserveUnrelatedSettlementDefect() {
+      const defect = new Error('unexpected settlement defect');
+      const executor = yield* makeTestDatabase((statement) =>
+        statement === 'COMMIT'
+          ? Effect.die(defect)
+          : Effect.succeed(
+              statement.includes('trust.')
+                ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+                : [],
+            ),
+      );
+      const exit = yield* Effect.exit(run(executor));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === defect)).toBe(true);
+      }
+    }),
+  );
+}
 
 const harness = Effect.fn(function* makeHarness(
   settle: (statement: string) => Effect.Effect<void, SqlError> = () => Effect.void,

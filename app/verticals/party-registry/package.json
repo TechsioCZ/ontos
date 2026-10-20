@@ -48,11 +48,11 @@
     "serve": "modern serve",
     "test:component": "rstest --project component",
     "test:integration": "pnpm run test:integration:shared && pnpm run test:integration:worker-cycle",
-    "test:integration:shared": "rstest --project integration",
-    "test:integration:worker-cycle": "rstest --project integration-worker-cycle",
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
-    "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
+    "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts",
+    "test:integration:shared": "rstest --project integration",
+    "test:integration:worker-cycle": "rstest --project integration-worker-cycle"
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",

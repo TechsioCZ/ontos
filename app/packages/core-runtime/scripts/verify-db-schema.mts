@@ -67,6 +67,7 @@ interface ExpectedPolicy {
   readonly command: 'ALL' | 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
   readonly name: string;
   readonly roles: readonly string[];
+  readonly trustedLegalEntity?: true;
   /** The policy must read the trusted tenant through trust.current_tenant_id(). */
   readonly trustedTenant?: true;
 }
@@ -118,18 +119,21 @@ const EXPECTED_CORE_POLICIES: ReadonlyMap<string, readonly ExpectedPolicy[]> = n
         command: 'SELECT',
         name: 'core_action_invocations_party_registry_request_select',
         roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
         trustedTenant: true,
       },
       {
         command: 'INSERT',
         name: 'core_action_invocations_party_registry_request_insert',
         roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
         trustedTenant: true,
       },
       {
         command: 'UPDATE',
         name: 'core_action_invocations_party_registry_request_update',
         roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
         trustedTenant: true,
       },
       { command: 'SELECT', name: 'core_action_invocations_party_registry_worker_select', roles: [WORKER_ROLE] },
@@ -140,12 +144,14 @@ const EXPECTED_CORE_POLICIES: ReadonlyMap<string, readonly ExpectedPolicy[]> = n
         command: 'SELECT',
         name: 'core_audit_events_party_registry_request_select',
         roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
         trustedTenant: true,
       },
       {
         command: 'INSERT',
         name: 'core_audit_events_party_registry_request_insert',
         roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
         trustedTenant: true,
       },
     ],
@@ -155,6 +161,7 @@ const EXPECTED_CORE_POLICIES: ReadonlyMap<string, readonly ExpectedPolicy[]> = n
         command: 'INSERT',
         name: 'core_data_access_events_party_registry_request_insert',
         roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
         trustedTenant: true,
       },
     ],
@@ -164,6 +171,7 @@ const EXPECTED_CORE_POLICIES: ReadonlyMap<string, readonly ExpectedPolicy[]> = n
         command: 'INSERT',
         name: 'core_domain_events_party_registry_request_insert',
         roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
         trustedTenant: true,
       },
       { command: 'SELECT', name: 'core_domain_events_party_registry_worker_select', roles: [WORKER_ROLE] },
@@ -214,6 +222,7 @@ const EXPECTED_CORE_POLICIES: ReadonlyMap<string, readonly ExpectedPolicy[]> = n
         command: 'SELECT',
         name: 'core_search_index_entries_party_registry_request_select',
         roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
         trustedTenant: true,
       },
       ...workerSearchPolicies('search_index_entries'),
@@ -471,6 +480,12 @@ const verifyDurableWorkRoutine = Effect.gen(function* verifyDurableWorkRoutineEf
   return yield* Effect.void;
 });
 
+const hasEntityOrGlobalPredicate = (expression: string | null): boolean =>
+  expression === null ||
+  (expression.includes('trust.current_legal_entity_id()') &&
+    (expression.match(/IS NULL/gu)?.length ?? 0) >= 2 &&
+    (expression.match(/ OR /gu)?.length ?? 0) >= 2);
+
 const verifyDedicatedIdentityPolicies = Effect.gen(function* verifyDedicatedIdentityPoliciesEffect() {
   const database = yield* CoreDatabase;
   const relations = yield* database.executor
@@ -545,6 +560,11 @@ const verifyDedicatedIdentityPolicies = Effect.gen(function* verifyDedicatedIden
   for (const policy of policies) {
     const expected = expectedPolicies.find(({ name }) => name === policy.policyname);
     const predicate = `${policy.qual ?? ''} ${policy.with_check ?? ''}`;
+    if (expected?.trustedLegalEntity === true && ![policy.qual, policy.with_check].every(hasEntityOrGlobalPredicate)) {
+      return yield* new DatabaseVerificationError({
+        reason: `Core policy ${policy.policyname} must allow global rows and tenant-wide scope while checking sealed legal entity`,
+      });
+    }
     if (
       policy.roles.includes(REQUEST_ROLE) &&
       (predicate.includes('current_setting') ||

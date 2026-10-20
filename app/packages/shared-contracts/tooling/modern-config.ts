@@ -32,7 +32,10 @@ import {
 } from 'effect/Schema';
 import { transform } from 'effect/SchemaTransformation';
 
-import type { CloudflareHyperdriveBinding, DatabaseIdentity } from '../../core-runtime/src/db/database-identities.ts';
+import type {
+  CloudflareHyperdriveBinding,
+  DatabaseIdentity,
+} from '../../core-runtime/src/db/database-identity-manifest.ts';
 
 const nodeBuiltinRequests = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));
 

@@ -282,10 +282,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ),
         ),
       ).toBe(true);
-      // A tenant-only grant carries no legal entity, so legal-entity-scoped rows stay invisible.
+      // A tenant-wide sealed grant sees every legal entity in its tenant, never another tenant.
       expect(
-        yield* inScope(runtime, scopeA, query(runtime, 'select counterparty_id from party.counterparties')),
-      ).toEqual([]);
+        yield* inScope(
+          runtime,
+          scopeA,
+          query(runtime, 'select counterparty_id from party.counterparties order by counterparty_id'),
+        ),
+      ).toEqual([{ counterparty_id: counterpartyA1 }, { counterparty_id: counterpartyA2 }]);
 
       const searchRows = yield* inScope(
         runtime,
@@ -415,6 +419,32 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     }),
   );
 
+  suite.effect('denies caller-controlled tenant login defaults and reconnects without trusted scope', () =>
+    Effect.gen(function* runtimeDefaultScope() {
+      const { runtime } = yield* openFixture;
+      // A failed assertion also rolls back any unexpectedly accepted role change.
+      for (const statement of [
+        `alter role party_registry_runtime set ontos.tenant_id = '${tenantA}'`,
+        'alter role party_registry_runtime reset ontos.tenant_id',
+      ]) {
+        expect({ denied: yield* inTransaction(runtime, isDenied(runtime, statement)), statement }).toEqual({
+          denied: true,
+          statement,
+        });
+      }
+      const connections = yield* loadDatabaseIdentityConnections();
+      const fresh = yield* makeTestPgClient(connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString, {
+        maxConnections: 1,
+      });
+      expect(yield* fresh.unsafe('select trust.current_tenant_id()::text as trusted')).toEqual([{ trusted: null }]);
+      expect(yield* fresh.unsafe('select party_id from party.parties')).toEqual([]);
+      // PostgreSQL 18 protects log_parameter_max_length, not the USERSET error-logging counterpart.
+      expect(yield* fresh.unsafe("select current_setting('log_parameter_max_length') as length")).toEqual([
+        { length: '0' },
+      ]);
+    }),
+  );
+
   suite.effect('denies DDL, unrelated schemas, sequences, role changes and grant propagation', () =>
     Effect.gen(function* testEffect() {
       const { admin, adminUser, runtime, scopeA } = yield* openFixture;
@@ -445,6 +475,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         'alter role party_registry_runtime bypassrls',
         'alter role party_registry_runtime superuser',
         'alter role party_registry_runtime createrole',
+        'alter role party_registry_runtime set log_parameter_max_length = -1',
+        'alter role party_registry_runtime reset log_parameter_max_length',
+        'set local log_parameter_max_length = -1',
         'alter role ontos_runtime nologin',
         'create role boundary_probe',
         'grant party_registry_runtime to ontos_runtime',

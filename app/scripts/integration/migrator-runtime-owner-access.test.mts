@@ -240,6 +240,24 @@ it.live('D1 owner migrations alone grant exact runtime access, and readiness rej
     }
     // A bootstrap re-run discards role settings that drifted outside the manifest.
     const partyRole = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+    // ALTER ROLE is cluster-wide even on a disposable database. Register restoration before mutation.
+    yield* Effect.acquireRelease(
+      isolatedAdmin.unsafe<{ setting: string }>(
+        `select setting from pg_catalog.pg_db_role_setting as settings
+          join pg_catalog.pg_roles as role on role.oid = settings.setrole
+          cross join lateral unnest(settings.setconfig) as setting
+         where role.rolname = $1 and settings.setdatabase = 0 and setting like 'statement_timeout=%'`,
+        [partyRole],
+      ),
+      (original) => {
+        const setting = original[0]?.setting;
+        const restore =
+          setting === undefined
+            ? `alter role ${partyRole} reset statement_timeout`
+            : `alter role ${partyRole} set statement_timeout = '${setting.slice('statement_timeout='.length).replaceAll("'", "''")}'`;
+        return isolatedAdmin.unsafe(restore).pipe(Effect.orDie);
+      },
+    );
     yield* isolatedAdmin.unsafe(`alter role ${partyRole} set statement_timeout = '1ms'`);
     yield* expectScriptSuccess(bootstrapScript, env);
     const settings = yield* isolatedAdmin.unsafe<{ setting: string }>(

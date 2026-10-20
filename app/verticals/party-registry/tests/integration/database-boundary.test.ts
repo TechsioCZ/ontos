@@ -781,7 +781,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           validTo: role.validTo,
         })),
       );
-      expect(yield* withTenant(tenantA, (transaction) => transaction.select().from(counterparties))).toEqual([]);
+      expect(
+        (yield* withTenant(tenantA, (transaction) => transaction.select().from(counterparties))).map(
+          ({ counterpartyId }) => counterpartyId,
+        ),
+      ).toEqual([counterpartyA]);
       expect(yield* runtime.select().from(counterpartyAdminReadModels)).toEqual([]);
       const tenantCounterpartyModels = yield* withTenant(tenantA, (transaction) =>
         transaction.select().from(counterpartyAdminReadModels),
@@ -794,8 +798,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       expect(
         yield* withTenant(tenantB, (transaction) => transaction.select().from(counterpartyAdminReadModels)),
       ).toEqual([]);
-      expect(yield* withTenant(tenantA, (transaction) => transaction.select().from(counterpartyRolePeriods))).toEqual(
-        [],
+      const tenantRolePeriods = yield* withTenant(tenantA, (transaction) =>
+        transaction.select().from(counterpartyRolePeriods),
+      );
+      expect(new Set(tenantRolePeriods.map(({ rolePeriodId }) => rolePeriodId))).toEqual(
+        new Set(roleSources.map(({ rolePeriodId }) => rolePeriodId)),
       );
       const scopedCounterparties = yield* runtime.transaction((transaction) =>
         Effect.gen(function* transactionTestBody() {

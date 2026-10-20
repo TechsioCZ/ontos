@@ -88,8 +88,8 @@ import {
 import type { ServiceImport, ZeropsService } from './stage-operations.mts';
 
 /**
- * Idempotent Cloudflare stage cut-over (design runbook section 13.3). Every step first reads the
- * current state and creates only what is missing, so a re-run after a partial failure converges.
+ * Idempotent Cloudflare stage cut-over (design runbook section 13.3). Steps read the current state,
+ * create missing objects and reapply write-only origin passwords, so re-runs after partial failures converge.
  * `--dry-run` performs the reads and reports each mutation instead of running it.
  *
  * Settings come from the environment, else from the dotenv file `--env-file` names (default
@@ -616,30 +616,34 @@ export const ensureHyperdrive = (spec: StageHyperdriveSpec, db18ServiceId: strin
           message: `Hyperdrive ${spec.name} (${current.id}) differs from the runbook: ${drift.value}; fix or delete it, then re-run`,
         });
       }
-      yield* Console.log(`Hyperdrive ${spec.name} exists: ${current.id}`);
-      return current.id;
     }
-    // Hyperdrive connects to the origin on creation, so the tunnel and the login role must already exist.
+    // Origin passwords are write-only: reapply the current secret even when non-secret settings match.
+    // Both creation and updates require the tunnel and the login role to exist first.
     return yield* mutate(
-      `create Hyperdrive ${spec.name} (role ${spec.role}, caching disabled, origin connection limit ${String(spec.originConnectionLimit)})`,
-      Effect.gen(function* createHyperdrive() {
-        const created = yield* api.createHyperdrive({
+      current === undefined
+        ? `create Hyperdrive ${spec.name} (role ${spec.role}, caching disabled, origin connection limit ${String(spec.originConnectionLimit)})`
+        : `synchronize Hyperdrive ${spec.name} (${current.id}) origin credentials`,
+      Effect.gen(function* reconcileHyperdrive() {
+        const configuration = {
           database,
           name: spec.name,
           originConnectionLimit: spec.originConnectionLimit,
           password: yield* readZeropsValue(projectId, spec.secretReference),
           serviceId: db18ServiceId,
           user: spec.role,
-        });
-        return created.id;
+        };
+        const reconciled = yield* current === undefined
+          ? api.createHyperdrive(configuration)
+          : api.updateHyperdrive(current.id, configuration);
+        return reconciled.id;
       }),
-      `<${spec.name} id>`,
+      current?.id ?? `<${spec.name} id>`,
     );
   });
 
 /**
- * Creates or reuses every stage Hyperdrive config, one after another, and returns their IDs. The shared
- * runtime config goes first, so a drifted one stops the run before any identity config is created.
+ * Creates or synchronizes every stage Hyperdrive config, one after another, and returns their IDs.
+ * The shared runtime config goes first, so a drifted one stops the run before any identity config is changed.
  */
 export const ensureHyperdrives = (db18ServiceId: string) =>
   Effect.gen(function* ensureHyperdrivesEffect() {

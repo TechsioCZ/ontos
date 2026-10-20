@@ -13,6 +13,8 @@ const swc = {
 const workerCycleIntegrationTest = 'tests/integration/party-identity-runtime.test.ts';
 
 export default defineConfig({
+  // Both integration projects mutate one database; serialize them even when invoked directly.
+  pool: { maxWorkers: 1 },
   projects: [
     {
       name: 'component',

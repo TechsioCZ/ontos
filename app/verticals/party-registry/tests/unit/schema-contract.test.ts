@@ -664,3 +664,33 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
     }),
   );
 });
+
+it('narrows every Counterparty projection policy to the sealed entity without excluding tenant-wide grants', () => {
+  for (const table of [counterparties, counterpartyRolePeriods, counterpartyAdminReadModels]) {
+    for (const policy of configOf(table).policies.filter((candidate) => candidate.to === 'party_registry_runtime')) {
+      for (const expression of [policy.using, policy.withCheck]) {
+        if (expression === undefined) {
+          continue;
+        }
+        const predicate = dialect.sqlToQuery(expression).sql;
+        expect(predicate).toContain('trust.current_tenant_id()');
+        expect(predicate).toContain('(select trust.current_legal_entity_id()) is null or');
+        expect(predicate).toContain('"legal_entity_id" is null or');
+        expect(predicate).toContain('"legal_entity_id" = (select trust.current_legal_entity_id())');
+      }
+    }
+  }
+  for (const policy of configOf(counterpartyRoleAdminReadModels).policies) {
+    for (const expression of [policy.using, policy.withCheck]) {
+      if (expression === undefined) {
+        continue;
+      }
+      const predicate = dialect.sqlToQuery(expression).sql;
+      expect(predicate).toContain('exists (select 1 from party.counterparty_admin_read_models as parent');
+      expect(predicate).toContain('parent.tenant_id = "party"."counterparty_role_admin_read_models"."tenant_id"');
+      expect(predicate).toContain(
+        'parent.counterparty_id = "party"."counterparty_role_admin_read_models"."counterparty_id"',
+      );
+    }
+  }
+});

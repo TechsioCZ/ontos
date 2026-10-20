@@ -177,6 +177,7 @@ const legacyEntry: DatabaseTrustManifestEntry = {
   acceptedFindings: [],
   identity: { id: 'shared_runtime', role: 'ontos_runtime' },
   kind: 'legacy_shared',
+  revokedSchemas: [],
   roleSettings: [],
 };
 
@@ -1417,3 +1418,72 @@ it('fails the audit on any unaccepted or global finding', () => {
     }),
   ).toBe(1);
 });
+
+it('never accepts withheld Party/Contacts authority as the shared non-pilot baseline', () => {
+  const report = legacyReport(snapshot, {
+    ...legacyEntry,
+    acceptedFindings: [
+      { code: 'runtime_role_has_cross_schema_dml', objects: 'all', reason: 'non-pilot baseline' },
+      { code: 'runtime_role_privilege_outside_manifest', objects: 'all', reason: 'must not override revocation' },
+    ],
+    kind: 'legacy_shared',
+    revokedSchemas: ['contacts'],
+  });
+  const drift = report.unacceptedFindings.find(({ code }) => code === 'runtime_role_privilege_outside_manifest');
+  expect(drift?.objects).toContain('contacts');
+  expect(drift?.objects).toContain('contacts.customers');
+  expect(drift?.objects).toContain('default:ontos_admin:sequence:contacts:USAGE');
+  expect(report.acceptedFindings.flatMap(({ objects }) => objects)).not.toContain(contactsCustomersTable);
+});
+
+it('rejects withheld column, sequence and invoker-routine authority without schema usage', () => {
+  const report = legacyReport(
+    {
+      ...hardenedSnapshot,
+      columnPrivileges: [{ column: 'name', privilege: 'select', schema: 'contacts', table: 'customers' }],
+      defaultPrivileges: [],
+      routines: [{ ...trustRoutine('read'), schema: 'contacts', securityDefiner: false, signature: 'contacts.read()' }],
+      schemas: [],
+      sequences: [
+        {
+          owner: 'ontos_admin',
+          privileges: { select: true, update: false, usage: false },
+          schema: 'contacts',
+          sequence: 'ids',
+        },
+      ],
+      tables: [],
+    },
+    { ...legacyEntry, kind: 'legacy_shared', revokedSchemas: ['contacts'] },
+  );
+  expect(findingObjects(report)).toEqual([
+    'runtime_role_privilege_outside_manifest:contacts.customers(name),contacts.ids,contacts.read()',
+  ]);
+});
+
+it.each([
+  ['table', 'core', 'direct'],
+  ['sequence', null, 'public'],
+  ['table', null, 'inherited'],
+  ['sequence', 'party', 'assumable'],
+] as const)(
+  'rejects ordinary default %s grants in %s from %s for an explicit identity',
+  (objectType, schema, source) => {
+    const report = partyReport({
+      defaultPrivileges: [
+        {
+          grantable: false,
+          grantee: source === 'public' ? 'PUBLIC' : partyRole,
+          objectType,
+          owner: 'another_creator',
+          privilege: 'SELECT',
+          schema,
+          source,
+        },
+      ],
+    });
+    expect(findingObjects(report)).toEqual([
+      `runtime_role_privilege_outside_manifest:default:another_creator:${objectType}:${schema ?? '*'}:SELECT`,
+    ]);
+  },
+);

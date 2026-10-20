@@ -1,5 +1,6 @@
 import { Duration, Effect } from 'effect';
 
+import { recoverSqlTransactionError } from '../actions/repository.ts';
 import { dataAccessEvents } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreDbExecutor } from '../db/types.ts';
@@ -96,6 +97,7 @@ export const persistScopedReadEvidence = (
       ),
     )
     .pipe(
+      recoverSqlTransactionError,
       Effect.catchTags({
         OperationContextUnavailable: (failure) => Effect.fail(readEvidencePersistenceFailure(failure)),
         SqlError: (failure) => Effect.fail(readEvidencePersistenceFailure(failure)),

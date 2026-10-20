@@ -1,3 +1,4 @@
+import { PgClient } from '@effect/sql-pg';
 // @rstest-environment happy-dom
 // @rstest-environment-options {"url":"https://party.ontos.test"}
 import {
@@ -37,7 +38,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { coreRelations, outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
 import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
@@ -150,11 +151,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
         const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
-        const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+        const coreAdmin = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
         // Release only this disposable tenant's dispatch queue; retain append-only Core evidence.
-        yield* Effect.addFinalizer(() =>
-          admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, fixture.tenantId)).pipe(Effect.orDie),
-        );
+        yield* Effect.addFinalizer(() => deleteTestCoreOutbox(adminClient, fixture.tenantId).pipe(Effect.orDie));
         // The registrar persists a gateway grant per issued assertion; remove this tenant's grants.
         yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId]);
         const managerWithLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };

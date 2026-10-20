@@ -36,6 +36,8 @@ import {
   validateCoreSearchProjectionWorkerContext,
 } from './projection.ts';
 
+import { coreSearchQueryMatchesScope } from './projection-store.ts';
+
 const PersistedDocumentPayloadSchema = Schema.Struct({
   aliases: Schema.optionalKey(Schema.Array(CoreSearchAliasSchema).check(Schema.isMaxLength(100))),
   archived: Schema.Boolean,
@@ -546,8 +548,8 @@ const makeTransactionOperations = () => {
       input: CoreSearchQuery,
       scope: OperationalScope,
     ) {
-      // The query may read only the installed scope: its tenant and exactly its legal entity, if any.
-      if (input.tenantId !== scope.tenantId || input.selectedLegalEntityId !== scope.legalEntityId) {
+      // A query may narrow a tenant-wide scope, or select global rows under an entity scope.
+      if (!coreSearchQueryMatchesScope(input, scope)) {
         return yield* unavailable();
       }
       // The scope's own authority (session setting or gateway grant) decides which rows are visible.

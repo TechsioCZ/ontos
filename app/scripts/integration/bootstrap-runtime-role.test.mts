@@ -1,10 +1,13 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
+import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import { makeTestPgSession } from '../../packages/core-runtime/tests/support/database.ts';
 import { quoteIdentifier } from '../postgres/database-login-roles.mts';
+import { manifestEntryForRole } from '../postgres/database-role-manifest.mts';
 import {
   assertExplicitRole,
   explicitEntries,
@@ -140,4 +143,56 @@ it.live('detects a sequence privilege outside the manifest', () =>
       );
     }),
   ),
+);
+
+for (const scope of ['', 'in schema core']) {
+  for (const object of ['tables', 'sequences']) {
+    for (const grantee of ['party_registry_runtime', 'public']) {
+      it.live(`rejects undeclared default ${object} grants ${scope || 'globally'} to ${grantee}`, () =>
+        rolledBack((session) =>
+          Effect.gen(function* defaultPrivilegeDrift() {
+            const entry = entryWith(({ identity }) => identity.role === 'party_registry_runtime');
+            yield* session.unsafe(`alter default privileges ${scope} grant select on ${object} to ${grantee}`);
+            // Reconciliation must not bless a latent grant merely because no table exists yet.
+            yield* grantExplicitRole(session, entry);
+            expect(yield* assertionFailure(session, entry)).toContain('has default privileges outside its manifest');
+          }),
+        ),
+      );
+    }
+  }
+}
+
+it.live('rejects ordinary default grants made by a different object creator', () =>
+  rolledBack((session) =>
+    Effect.gen(function* otherCreatorDefaults() {
+      const entry = entryWith(({ identity }) => identity.role === 'party_registry_runtime');
+      yield* session.unsafe(
+        'alter default privileges for role ontos_runtime in schema core grant select on tables to public',
+      );
+      expect(yield* assertionFailure(session, entry)).toContain('ontos_runtime:core:r:SELECT');
+    }),
+  ),
+);
+
+it.live('every runtime login is denied changing protected logging defaults', () =>
+  Effect.gen(function* runtimeSelfSettings() {
+    const connections = yield* loadDatabaseIdentityConnections();
+    for (const { id, role } of DATABASE_IDENTITIES) {
+      const session = yield* makeTestPgSession(connections.runtime[id].connectionString);
+      // RESET of an absent setting is a harmless no-op. Configured bearer-role defaults must be protected too.
+      const clauses = ['set log_parameter_max_length = -1'];
+      if (manifestEntryForRole(role)?.roleSettings.includes('log_parameter_max_length=0') === true) {
+        clauses.push('reset log_parameter_max_length');
+      }
+      for (const clause of clauses) {
+        yield* session.unsafe('begin');
+        yield* session.unsafe(`alter role ${quoteIdentifier(role)} ${clause}`).pipe(
+          Effect.flip,
+          Effect.map((failure) => expect(Option.getOrUndefined(findPostgresFailure(failure))?.code).toBe('42501')),
+          Effect.ensuring(session.unsafe('rollback').pipe(Effect.orDie)),
+        );
+      }
+    }
+  }).pipe(Effect.scoped),
 );

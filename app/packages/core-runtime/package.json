@@ -38,7 +38,8 @@
     "./testing/reads": "./src/testing/reads.ts",
     "./testing/module-contract": "./src/testing/module-contract.ts",
     "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
-    "./workspace-environment": "./src/environment/workspace-environment.ts"
+    "./workspace-environment": "./src/environment/workspace-environment.ts",
+    "./testing/owner-evidence": "./src/testing/owner-evidence.ts"
   },
   "imports": {
     "#database-runtime": {

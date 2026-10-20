@@ -27,7 +27,7 @@ import type {
 import type { ActionRuntimeStage } from '../actions/runtime.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';

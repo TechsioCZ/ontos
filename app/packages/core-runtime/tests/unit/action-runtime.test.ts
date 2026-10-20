@@ -1,7 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { Cause, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/sql/SqlError';
+import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 import {
   defineAction,
   defineActionAssortmentPermissions,
@@ -4151,6 +4151,62 @@ it.effect(
     );
 
     expect(Schema.is(ActionPermissionDenied)(error)).toBe(true);
+  }),
+);
+
+for (const phase of ['BEGIN', 'COMMIT'] as const) {
+  it.effect(`maps ${phase} failure while loading a recorded rejection to invocation persistence unavailability`, () =>
+    Effect.gen(function* recordedRejectionSettlementFailure() {
+      const harness = yield* makeHarness({
+        createRecord: {
+          actionInvocationId: 'rejected-settlement-failure',
+          completedAt: completionTime(),
+          requestHash: '',
+          status: 'rejected',
+        },
+        transactionMode: phase === 'BEGIN' ? 'definite-failure' : 'commit-definite',
+      });
+      const error = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport(),
+        }),
+      );
+      expect(Schema.is(ActionInvocationPersistenceError)(error)).toBe(true);
+      if (Schema.is(ActionInvocationPersistenceError)(error)) {
+        const cause = getActionInvocationPersistenceFailureCause(error);
+        expect(cause?.reasons.some((reason) => Cause.isDieReason(reason) && isSqlError(reason.defect))).toBe(true);
+      }
+    }),
+  );
+}
+
+it.effect('preserves unrelated defects while loading a recorded rejection', () =>
+  Effect.gen(function* recordedRejectionUnexpectedDefect() {
+    const defect = new Error('unexpected rejection lookup settlement');
+    const harness = yield* makeHarness({
+      commit: Effect.die(defect),
+      createRecord: {
+        actionInvocationId: 'rejected-unexpected-defect',
+        completedAt: completionTime(),
+        requestHash: '',
+        status: 'rejected',
+      },
+    });
+    const exit = yield* Effect.exit(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport(),
+      }),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === defect)).toBe(true);
+    }
   }),
 );
 

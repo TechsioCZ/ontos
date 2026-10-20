@@ -13,6 +13,13 @@ import type {
 type UnparsedCoreSearchInput = typeof Schema.Unknown.Type;
 type CoreSearchProjectionUnavailableInstance = InstanceType<typeof CoreSearchProjectionUnavailable>;
 
+/** Query selection can narrow, but never widen, the caller's sealed database authority. */
+export const coreSearchQueryMatchesScope = (input: CoreSearchQuery, scope: OperationalScope): boolean =>
+  input.tenantId === scope.tenantId &&
+  (scope.legalEntityId === undefined ||
+    input.selectedLegalEntityId === undefined ||
+    input.selectedLegalEntityId === scope.legalEntityId);
+
 export interface CoreSearchProjectionStoreService {
   /** Applies one idempotent versioned lifecycle observation. */
   readonly apply: (
@@ -21,7 +28,8 @@ export interface CoreSearchProjectionStoreService {
   ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
   /**
    * Candidate access is Core-private: the query runtime strips searchable evidence before return.
-   * The scope's database authority is installed before reading, so its tenant must match the query.
+   * The unchanged scope is installed before reading. A selected entity must match a sealed entity;
+   * tenant-wide scopes may select any entity, and global queries remain valid in selected scopes.
    */
   readonly queryCandidates: (
     input: CoreSearchQuery,
