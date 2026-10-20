@@ -236,3 +236,33 @@ describe('CRM sales report (C05)', () => {
     ]);
   });
 });
+
+describe('CRM sales report — duplicate decisions', () => {
+  it('a confirmed duplicate stays out, an order decided "distinct" counts', () => {
+    const decided = (decision: string) =>
+      ({ decisions: [{ at, by: 'p-lead', decision, reason: 'ověřeno' }] }) as unknown as Partial<ImportedOrder>;
+    const state = base([
+      order({ amount: '100.00', clientId: 'x', currency: 'CZK', pairing: 'paired' }),
+      order({
+        amount: '100.00',
+        clientId: 'x',
+        currency: 'CZK',
+        duplicateOf: 'o-1',
+        pairing: 'paired',
+        ...decided('confirmed_duplicate'),
+      }),
+      order({
+        amount: '40.00',
+        clientId: 'x',
+        currency: 'CZK',
+        duplicateOf: 'o-1',
+        pairing: 'paired',
+        ...decided('distinct'),
+      }),
+    ]);
+    const report = buildSalesReport(state);
+    expect(report.count).toBe(2);
+    expect(report.totals).toEqual([{ amount: '140.00', count: 2, currency: 'CZK' }]);
+    expect(report.excluded).toEqual([{ count: 1, reason: 'confirmed_duplicate' }]);
+  });
+});

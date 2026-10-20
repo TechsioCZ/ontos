@@ -12,10 +12,6 @@
 import type { ImportedOrder } from './imports.ts';
 import type { CrmState } from './state.ts';
 
-/** Orders that count into confirmed figures: paired, not a duplicate. */
-export const confirmedOrders = (state: CrmState) =>
-  state.imports.orders.filter((order) => order.pairing === 'paired' && order.duplicateOf === undefined);
-
 // ---------------------------------------------------------------------------------------------------------------
 // Status meanings
 // ---------------------------------------------------------------------------------------------------------------
@@ -23,7 +19,13 @@ export const confirmedOrders = (state: CrmState) =>
 export type StatusMeaning = 'open' | 'paid' | 'fulfilled' | 'cancelled';
 export type StatusMeaningOrUnmapped = StatusMeaning | 'unmapped';
 
-export const statusMeanings: readonly StatusMeaningOrUnmapped[] = ['open', 'paid', 'fulfilled', 'cancelled', 'unmapped'];
+export const statusMeanings: readonly StatusMeaningOrUnmapped[] = [
+  'open',
+  'paid',
+  'fulfilled',
+  'cancelled',
+  'unmapped',
+];
 
 export const statusMeaningLabels: Record<StatusMeaningOrUnmapped, string> = {
   cancelled: 'Stornovaná',
@@ -51,7 +53,17 @@ export const statusMapping = {
     { meaning: 'paid', raw: ['zaplacena', 'uhrazena', 'uhrazeno', 'paid'] },
     {
       meaning: 'fulfilled',
-      raw: ['dorucena', 'doručena', 'dodana', 'vyrizena', 'vyřízená', 'vyrizeno', 'dokoncena', 'delivered', 'completed'],
+      raw: [
+        'dorucena',
+        'doručena',
+        'dodana',
+        'vyrizena',
+        'vyřízená',
+        'vyrizeno',
+        'dokoncena',
+        'delivered',
+        'completed',
+      ],
     },
     { meaning: 'cancelled', raw: ['stornovana', 'stornována', 'stornovano', 'storno', 'zrusena', 'cancelled'] },
   ] satisfies readonly StatusMappingEntry[],
@@ -212,10 +224,11 @@ export interface ReportGroup {
   readonly withoutAmount: number;
 }
 
-export type ExclusionReason = 'unpaired' | 'review' | 'duplicate';
+export type ExclusionReason = 'unpaired' | 'review' | 'duplicate' | 'confirmed_duplicate';
 
 export const exclusionReasonLabels: Record<ExclusionReason, string> = {
-  duplicate: 'možný duplikát z jiného zdroje bez potvrzené korelace',
+  confirmed_duplicate: 'potvrzený duplikát z jiného zdroje (nepočítá se dvakrát)',
+  duplicate: 'možný duplikát z jiného zdroje, čeká na rozhodnutí',
   review: 'vazba na klienta vyžaduje kontrolu',
   unpaired: 'nespárováno s klientem',
 };
@@ -275,9 +288,25 @@ const matchesStatus = (row: ReportOrderRow, status: ReportStatusFilter | undefin
     : normalizeStatus(row.order.rawStatus) === normalizeStatus(status.raw);
 };
 
+/**
+ * Latest manual decision on a cross-source duplicate (crm-imports `decisions`), read structurally so this file
+ * also decodes documents written before the field existed.
+ */
+const duplicateDecision = (order: ImportedOrder): string | undefined => {
+  const decisions = (order as { readonly decisions?: readonly { readonly decision?: unknown }[] }).decisions;
+  const last = decisions?.at(-1)?.decision;
+  return typeof last === 'string' ? last : undefined;
+};
+
 const exclusionOf = (order: ImportedOrder): ExclusionReason | undefined => {
   if (order.duplicateOf !== undefined) {
-    return 'duplicate';
+    const decision = duplicateDecision(order);
+    if (decision === 'confirmed_duplicate') {
+      return 'confirmed_duplicate';
+    }
+    if (decision !== 'distinct') {
+      return 'duplicate';
+    }
   }
   if (order.pairing === 'review') {
     return 'review';
@@ -287,6 +316,10 @@ const exclusionOf = (order: ImportedOrder): ExclusionReason | undefined => {
   }
   return undefined;
 };
+
+/** Orders that count into confirmed figures: paired, not an undecided or confirmed duplicate. */
+export const confirmedOrders = (state: CrmState) =>
+  state.imports.orders.filter((order) => exclusionOf(order) === undefined);
 
 const groupBy = (
   rows: readonly ReportOrderRow[],
@@ -445,7 +478,7 @@ export const buildSalesReport = (state: CrmState, filters: ReportFilters = {}): 
   for (const row of rows) {
     accumulate(all, row);
   }
-  const excluded = (['unpaired', 'review', 'duplicate'] as const).flatMap((reason) => {
+  const excluded = (['unpaired', 'review', 'duplicate', 'confirmed_duplicate'] as const).flatMap((reason) => {
     const count = exclusionCounts.get(reason) ?? 0;
     return count === 0 ? [] : [{ count, reason }];
   });
