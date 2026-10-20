@@ -183,6 +183,7 @@ const identityAdminActionKeys = [
   'core.identity.bind-managed-api-key',
   'core.identity.create-non-human-principal',
   'core.identity.configure-demo-companies',
+  'core.identity.manage-demo-account',
   'core.identity.set-managed-api-key-binding-status',
 ] as const;
 

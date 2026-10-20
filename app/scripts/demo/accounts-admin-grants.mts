@@ -55,6 +55,11 @@ const administrators: readonly Administrator[] = [
     legalEntityId: '71000000-0000-4000-8000-000000000023',
     principalId: demoId('core.principal', 'kavarna-eshop'),
   },
+  {
+    extraModules: [],
+    legalEntityId: '71000000-0000-4000-8000-000000000024',
+    principalId: demoId('core.principal', 'akros-eshop'),
+  },
 ];
 
 const administratorRelationships = administrators.flatMap(({ extraModules, legalEntityId, principalId }) => {
