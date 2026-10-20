@@ -349,7 +349,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
             {parsedLines.map(({ line, price, quantity }) => (
               <Table.Row key={line.key}>
                 <Table.Cell>
-                  <div className="flex min-w-0 flex-col">
+                  <div className="flex min-w-32 flex-col">
                     <span className="font-medium">{line.name}</span>
                     <span className="text-fg-secondary text-xs">
                       {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
@@ -357,7 +357,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
                   </div>
                 </Table.Cell>
                 <Table.Cell align="end">
-                  <div className="ml-auto w-24">
+                  <div className="ml-auto w-16">
                     <FormNumericInput
                       formatOptions={WHOLE_NUMBER_FORMAT}
                       id={`edit-qty-${line.key}`}
@@ -380,7 +380,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
                   </div>
                 </Table.Cell>
                 <Table.Cell align="end">
-                  <div className="ml-auto w-32">
+                  <div className="ml-auto w-24">
                     <FormNumericInput
                       formatOptions={MONEY_FORMAT}
                       id={`edit-price-${line.key}`}

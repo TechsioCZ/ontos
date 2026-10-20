@@ -1,9 +1,38 @@
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { assertCommandAllowed, principalKindOf, withCommandGuard } from '../../shared/actions/command-guard.ts';
+import {
+  assertCommandAllowed,
+  assertStorefrontScope,
+  ESHOP_LEGAL_ENTITY_ID,
+  principalKindOf,
+  storefrontReadRequest,
+  withCommandGuard,
+} from '../../shared/actions/command-guard.ts';
 import { MerchandisePermissionDenied } from '../../shared/errors/merchandise-permission-denied.ts';
 
-const deniedCommands = ['BulkUpdateProducts', 'ChangePrice'] as const;
+const deniedCommands = ['BulkUpdateProducts', 'ChangePrice', 'EditOrder'] as const;
+
+it('forces e-shop API keys into the public view even if the flag is omitted or false', () => {
+  const request = { view: { orderClientRequestId: 'guest-request', storefront: false } };
+  expect(storefrontReadRequest('non_human', ESHOP_LEGAL_ENTITY_ID, {})).toEqual({ view: { storefront: true } });
+  expect(storefrontReadRequest('non_human', ESHOP_LEGAL_ENTITY_ID, request)).toEqual({
+    view: { orderClientRequestId: 'guest-request', storefront: true },
+  });
+  expect(storefrontReadRequest('human', ESHOP_LEGAL_ENTITY_ID, request)).toBe(request);
+  expect(storefrontReadRequest('non_human', 'other-company', request)).toBe(request);
+});
+
+it.effect('only allows guest order placement for the storefront company key', () =>
+  Effect.gen(function* storefrontCommands() {
+    yield* assertStorefrontScope('non_human', ESHOP_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
+    for (const tag of ['EditOrder', 'ChangeOrderStatus', 'UpdateProduct', 'CreateOrder']) {
+      const failure = yield* assertStorefrontScope('non_human', ESHOP_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
+      expect(isRejection(failure)).toBe(true);
+      yield* assertStorefrontScope('human', ESHOP_LEGAL_ENTITY_ID, tag);
+    }
+    yield* assertStorefrontScope('non_human', 'other-company', 'CreateOrder');
+  }),
+);
 const isRejection = Schema.is(MerchandisePermissionDenied);
 
 it('treats sessions as human and API keys or system jobs as non-human', () => {
