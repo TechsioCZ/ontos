@@ -13,6 +13,7 @@ import type {
   ReadPermissionDenied,
   ReadServiceFactory,
 } from '@app/core-runtime';
+import { authorizedImportSamples } from '../../api/authorized-import-samples.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
@@ -95,7 +96,10 @@ export const recordsRead = defineRead(
             reason: 'Klient neexistuje nebo k němu nemáte přístup',
           }),
       ),
-      Effect.map((result) => ({ evidence: { resultCount: result.state.clients.items.length }, result })),
+      Effect.map((result) => ({
+        evidence: { resultCount: result.state.clients.items.length },
+        result: { ...result, importSamples: authorizedImportSamples(result.viewer) },
+      })),
     ),
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: moduleKey }),

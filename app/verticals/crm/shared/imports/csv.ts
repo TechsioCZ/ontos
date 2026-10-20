@@ -15,9 +15,9 @@ export interface CsvColumn {
 /** The documented template. Order of columns in a file does not matter; header names do. */
 export const ordersCsvColumns: readonly CsvColumn[] = [
   { example: 'E-shop', key: 'zdroj', label: 'Zdrojový systém (E-shop, Účetní systém…)', required: true },
-  { example: '100231', key: 'id_objednavky', label: 'Neměnné ID objednávky ve zdrojovém systému', required: true },
+  { example: 'VZOR-001', key: 'id_objednavky', label: 'Neměnné ID objednávky ve zdrojovém systému', required: true },
   {
-    example: 'OBJ-2026-0231',
+    example: 'VZOR-2026-001',
     key: 'cislo_objednavky',
     label: 'Číslo objednávky zobrazované zákazníkovi',
     required: false,
@@ -29,15 +29,20 @@ export const ordersCsvColumns: readonly CsvColumn[] = [
     required: false,
   },
   {
-    example: 'ESH-1001',
+    example: 'VZOR-ZAK-001',
     key: 'id_zakaznika',
     label: 'ID zákazníka ve zdrojovém systému (pro schválenou vazbu)',
     required: false,
   },
-  { example: 'Pekárna Malá s.r.o.', key: 'nazev_zakaznika', label: 'Název zákazníka podle zdroje', required: false },
-  { example: '90000101', key: 'ico_zakaznika', label: 'IČO zákazníka podle zdroje', required: false },
   {
-    example: 'info@pekarna-mala.demo',
+    example: 'Fiktivní zákazník s.r.o.',
+    key: 'nazev_zakaznika',
+    label: 'Název zákazníka podle zdroje',
+    required: false,
+  },
+  { example: '12345678', key: 'ico_zakaznika', label: 'IČO zákazníka podle zdroje', required: false },
+  {
+    example: 'objednavky@example.invalid',
     key: 'email_zakaznika',
     label: 'E-mail zákazníka podle zdroje',
     required: false,
@@ -47,13 +52,13 @@ export const ordersCsvColumns: readonly CsvColumn[] = [
   { example: 'Vyřízeno', key: 'stav', label: 'Stav přesně tak, jak ho posílá zdroj', required: true },
   { example: '2026-09-05T14:10:00+02:00', key: 'cas_udalosti', label: 'Čas změny stavu ve zdroji', required: false },
   {
-    example: 'evt-0231-3',
+    example: 'vzor-udalost-3',
     key: 'id_udalosti',
     label: 'ID události ve zdroji (pro odstranění duplicit)',
     required: false,
   },
   {
-    example: 'MOU-T650:Mouka hladká T650 25 kg:10:6450.00|DRO-50:Droždí 1 kg:6:3000.00',
+    example: 'VZOR-01:Ukázková položka:10:6450.00|VZOR-02:Další ukázková položka:6:3000.00',
     key: 'polozky',
     label: 'Položky SKU:název:množství:částka oddělené znakem |, jen pokud je zdroj posílá',
     required: false,

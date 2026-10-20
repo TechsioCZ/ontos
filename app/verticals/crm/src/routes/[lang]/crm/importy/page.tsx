@@ -27,7 +27,6 @@ import { canSeeEverything } from '../../../../../shared/domain/access.ts';
 import type { ImportBatch, ImportedOrder } from '../../../../../shared/domain/imports.ts';
 import { needsReview } from '../../../../../shared/domain/imports.ts';
 import { ORDERS_CSV_FORMAT, ordersCsvColumns, ordersCsvTemplate } from '../../../../../shared/imports/csv.ts';
-import { ordersCsvSamples } from '../../../../../shared/imports/samples.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import { CrmScopeNote, CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
@@ -273,7 +272,15 @@ const BatchPanel = ({
   );
 };
 
-const TemplateTab = ({ onImportSample }: { readonly onImportSample: (draft: ImportDraft) => void }) => (
+const TemplateTab = ({
+  canImport,
+  onImportSample,
+  samples,
+}: {
+  readonly canImport: boolean;
+  readonly onImportSample: (draft: ImportDraft) => void;
+  readonly samples: NonNullable<RecordsResponse['importSamples']>;
+}) => (
   <div className="grid grid-cols-1 gap-250 xl:grid-cols-[3fr_2fr]">
     <SectionCard
       actions={
@@ -291,7 +298,8 @@ const TemplateTab = ({ onImportSample }: { readonly onImportSample: (draft: Impo
     >
       <p className="text-fg-secondary text-sm">
         Středník nebo čárka jako oddělovač, UTF-8, první řádek hlavička. Čas bez časového pásma se čte jako čas v Praze.
-        Až dodá WR tým finální šablonu, mapování sloupců se upraví – pravidla níže zůstanou.
+        Šablona obsahuje nezávislý fiktivní příklad, nikoli objednávku z evidence firmy. Až dodá WR tým finální šablonu,
+        mapování sloupců se upraví – pravidla níže zůstanou.
       </p>
       <div className="overflow-auto rounded-lg border border-border-primary">
         <table className="w-full text-sm">
@@ -341,38 +349,45 @@ const TemplateTab = ({ onImportSample }: { readonly onImportSample: (draft: Impo
     </SectionCard>
     <SectionCard title="Vzorové soubory">
       <div className="flex flex-col gap-150">
-        {ordersCsvSamples.map((sample, index) => (
-          <div className="flex flex-col gap-100 rounded-lg border border-border-primary p-200" key={sample.key}>
-            <div className="flex items-center gap-100">
-              <Badge size="sm" variant="secondary">
-                {String(index + 1)}
-              </Badge>
-              <span className="font-medium text-sm">{sample.title}</span>
+        {!canImport && (
+          <p className="text-fg-secondary text-sm">
+            Vzorové soubory obsahují objednávky celé firmy, proto jsou dostupné jen vedení obchodu s právem importu.
+            Šablonu s fiktivním příkladem si můžete stáhnout i bez tohoto oprávnění; popis formátu najdete vedle.
+          </p>
+        )}
+        {canImport &&
+          samples.map((sample, index) => (
+            <div className="flex flex-col gap-100 rounded-lg border border-border-primary p-200" key={sample.key}>
+              <div className="flex items-center gap-100">
+                <Badge size="sm" variant="secondary">
+                  {String(index + 1)}
+                </Badge>
+                <span className="font-medium text-sm">{sample.title}</span>
+              </div>
+              <span className="text-fg-secondary text-sm">{sample.description}</span>
+              <span className="font-mono text-fg-secondary text-xs">{sample.fileName}</span>
+              <div className="flex flex-wrap gap-100">
+                <Button
+                  icon="icon-[mdi--download]"
+                  onClick={() => downloadText(sample.fileName, sample.csv)}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  Stáhnout
+                </Button>
+                <Button
+                  icon="icon-[mdi--database-import-outline]"
+                  onClick={() => onImportSample({ csv: sample.csv, fileName: sample.fileName })}
+                  size="sm"
+                  theme="borderless"
+                  variant="secondary"
+                >
+                  Otevřít v importu
+                </Button>
+              </div>
             </div>
-            <span className="text-fg-secondary text-sm">{sample.description}</span>
-            <span className="font-mono text-fg-secondary text-xs">{sample.fileName}</span>
-            <div className="flex flex-wrap gap-100">
-              <Button
-                icon="icon-[mdi--download]"
-                onClick={() => downloadText(sample.fileName, sample.csv)}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                Stáhnout
-              </Button>
-              <Button
-                icon="icon-[mdi--database-import-outline]"
-                onClick={() => onImportSample({ csv: sample.csv, fileName: sample.fileName })}
-                size="sm"
-                theme="borderless"
-                variant="secondary"
-              >
-                Otevřít v importu
-              </Button>
-            </div>
-          </div>
-        ))}
+          ))}
       </div>
     </SectionCard>
   </div>
@@ -600,9 +615,7 @@ const ImportsContent = () => {
                 </Tabs.Content>
               )}
               <Tabs.Content className="pt-250" value="template">
-                <TemplateTab
-                  onImportSample={(draft) => (canImport ? openImport(draft) : downloadText(draft.fileName, draft.csv))}
-                />
+                <TemplateTab canImport={canImport} onImportSample={openImport} samples={records.importSamples ?? []} />
               </Tabs.Content>
             </Tabs>
             {detail !== undefined && (
@@ -620,7 +633,7 @@ const ImportsContent = () => {
               onClose={() => setBatchId(undefined)}
               records={records}
             />
-            {importOpen && (
+            {canImport && importOpen && (
               <ImportPanel
                 busy={busy}
                 {...(importDraft === undefined ? {} : { initial: importDraft })}

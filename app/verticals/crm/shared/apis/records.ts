@@ -20,6 +20,18 @@ export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 
 export const RecordsResponseSchema = Schema.Struct({
+  /** Company-wide seed samples; supplied only to viewers authorized to import orders. Never persisted. */
+  importSamples: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        csv: Schema.String,
+        description: Schema.String,
+        fileName: Schema.String,
+        key: Schema.String,
+        title: Schema.String,
+      }),
+    ),
+  ),
   /** Server time of the read (ISO). */
   now: Schema.String,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

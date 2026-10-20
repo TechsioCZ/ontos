@@ -10,7 +10,6 @@ import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { ImportRowOutcome } from '../../../../../shared/domain/imports.ts';
 import { parseOrdersCsv } from '../../../../../shared/imports/csv.ts';
 import { importOrders } from '../../../../../shared/imports/engine.ts';
-import { ordersCsvSamples } from '../../../../../shared/imports/samples.ts';
 import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import { RESIZE_LABEL, importRowsLabel, outcomeMeta } from './order-model.ts';
@@ -195,7 +194,7 @@ export const ImportPanel = ({
         <div className="flex flex-col gap-100">
           <span className="text-fg-secondary text-xs">Nebo použijte vzorový soubor:</span>
           <div className="flex flex-wrap gap-100">
-            {ordersCsvSamples.map((sample) => (
+            {(records.importSamples ?? []).map((sample) => (
               <Button
                 key={sample.key}
                 onClick={() => setDraft({ csv: sample.csv, fileName: sample.fileName })}
