@@ -10,6 +10,7 @@ export { clientSegments };
 
 export const segmentLabels: Record<ClientSegment, string> = {
   cafe: 'Kavárna / cukrárna',
+  bakery: 'Pekárna / výrobna',
   catering: 'Catering',
   hotel: 'Hotel',
   institution: 'Instituce / jídelna',

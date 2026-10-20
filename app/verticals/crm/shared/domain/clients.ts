@@ -45,7 +45,16 @@ export const ClientSchema = Schema.Struct({
 export type Client = typeof ClientSchema.Type;
 
 /** Segments offered by the client form (stored as the key; labels are localised). */
-export const clientSegments = ['wholesale', 'retail', 'restaurant', 'hotel', 'catering', 'cafe', 'institution'] as const;
+export const clientSegments = [
+  'wholesale',
+  'retail',
+  'bakery',
+  'restaurant',
+  'hotel',
+  'catering',
+  'cafe',
+  'institution',
+] as const;
 
 export const ContactPersonSchema = Schema.Struct({
   archivedAt: Schema.optionalKey(IsoTimeSchema),
