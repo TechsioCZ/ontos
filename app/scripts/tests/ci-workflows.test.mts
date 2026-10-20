@@ -4,9 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Array as EffectArray, Order, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
+
+import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
+import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
 const WorkflowSchema = Schema.Struct({
@@ -1913,11 +1916,9 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
   }
 });
 
-const RUNTIME_IDENTITY_URLS = {
-  PARTY_REGISTRY_DATABASE_URL: 'party_registry_runtime',
-  PARTY_REGISTRY_WORKER_DATABASE_URL: 'party_registry_worker',
-  SHELL_GATEWAY_ISSUER_DATABASE_URL: 'shell_gateway_issuer',
-} as const;
+const RUNTIME_IDENTITY_URLS = Object.fromEntries(
+  DATABASE_IDENTITIES.filter(({ urlKey }) => urlKey !== 'DATABASE_URL').map(({ role, urlKey }) => [urlKey, role]),
+);
 const IDENTITY_STEP_ENV_FILTER = /printenv \| grep -E '(?<pattern>[^']+)'/gu;
 const AUDIT_STEP = 'Audit runtime database identities against the checked-in grant manifest';
 const IdentityGateJobSchema = Schema.Struct({
@@ -1928,6 +1929,18 @@ const IdentityGateJobSchema = Schema.Struct({
 const IdentityGateJobsSchema = Schema.Struct({
   jobs: Schema.Struct({
     'cloudflare-artifact-build': IdentityGateJobSchema,
+    'node-artifact-build': Schema.Struct({
+      ...IdentityGateJobSchema.fields,
+      services: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          env: Schema.Record(Schema.String, Schema.String),
+          image: Schema.String,
+          options: Schema.String,
+          ports: Schema.Array(Schema.String),
+        }),
+      ),
+    }),
     'service-integration': IdentityGateJobSchema,
   }),
 });
@@ -1961,4 +1974,51 @@ it('gives every CI database tool a separate login per runtime identity and audit
   expect(audit).toBe(migrations + 1);
   expect(steps[audit]?.if).toBe("matrix.suite == 'integration'");
   expect(steps[audit]?.run).toBe('mise exec -- pnpm database-trust:audit');
+});
+
+it.effect('proves Node artifacts against a migrated PostgreSQL database with every declared login identity', () =>
+  Effect.gen(function* proveNodeDatabaseIdentities() {
+    const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+    const node = jobs['node-artifact-build'];
+    const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(node.env);
+    const service = node.services['proof-postgres'];
+    expect(service?.image).toBe(expression("matrix.proof == 'node' && 'postgres:18.6-alpine' || ''"));
+    expect(service?.ports).toContain('5433:5432');
+    const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment.DATABASE_ADMIN_URL);
+    expect(admin.username).toBe(service?.env.POSTGRES_USER);
+    expect(admin.password).toBe(service?.env.POSTGRES_PASSWORD);
+    expect(admin.pathname).toBe(`/${service?.env.POSTGRES_DB ?? ''}`);
+    expect(service?.options).toContain(`pg_isready -U ${admin.username} -d ${service?.env.POSTGRES_DB ?? ''}`);
+    const provision = node.steps.findIndex(
+      ({ name }) => name === 'Migrate the Node proof database and provision its runtime identities',
+    );
+    const proof = node.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
+    expect(provision).toBeGreaterThanOrEqual(0);
+    expect(provision).toBeLessThan(proof);
+    expect(node.steps[provision]?.if).toBe("matrix.proof == 'node'");
+    expect(node.steps[provision]?.run).toBe('mise exec -- pnpm db:migrate');
+    expect(node.steps[proof]?.env).toBeUndefined();
+    for (const identity of DATABASE_IDENTITIES) {
+      const connection = yield* loadDatabaseConfig({ environment, envPath: '/dev/null', identity });
+      expect(connection.user).toBe(identity.role);
+      expect(connection.database).toBe(service?.env.POSTGRES_DB);
+      expect(connection.host).toBe(admin.hostname);
+      expect(connection.port).toBe(Number(admin.port));
+    }
+  }),
+);
+
+it('gives the workerd SSR proof every dedicated Hyperdrive connection from the canonical identity URL', () => {
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  const outputs = jobs['cloudflare-artifact-build'].steps.find(
+    ({ run }) => run?.includes('pnpm cloudflare:ssr-proof') === true,
+  );
+  expect(outputs).toBeDefined();
+  for (const identity of DATABASE_IDENTITIES.filter(({ id }) => id !== 'shared_runtime')) {
+    if (identity.cloudflareHyperdrive !== null) {
+      expect(outputs?.run).toContain(
+        `export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${identity.cloudflareHyperdrive.binding}="$${identity.urlKey}"`,
+      );
+    }
+  }
 });

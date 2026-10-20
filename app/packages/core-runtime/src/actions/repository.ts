@@ -408,6 +408,15 @@ const resolveIdempotentInvocation = (
     .limit(1)
     .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
 
+/**
+ * Native SQL settlement reports COMMIT, rollback and savepoint failures as defects. Recover only
+ * SqlError at this reviewed persistence boundary; owners then map it to their declared error.
+ * Unrelated defects retain their defect channel.
+ */
+export const recoverSqlTransactionError = Effect.catchDefect((defect) =>
+  isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+);
+
 export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositoryService => {
   const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = Effect.fn(
     'makeActionRepository.createOrResolveInvocation',
@@ -480,13 +489,11 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     });
 
     return yield* executor.transaction(transactionBody).pipe(
+      recoverSqlTransactionError,
       Effect.catchTags({
         OperationContextUnavailable: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
         SqlError: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
       }),
-      Effect.catchDefect((defect) =>
-        isSqlError(defect) ? Effect.fail(persistenceFailure(failureReason, defect)) : Effect.die(defect),
-      ),
     );
   });
 
@@ -577,13 +584,11 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
           ),
       )
       .pipe(
+        recoverSqlTransactionError,
         Effect.catchTags({
           OperationContextUnavailable: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
           SqlError: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
         }),
-        Effect.catchDefect((defect) =>
-          isSqlError(defect) ? Effect.fail(persistenceFailure(failureReason, defect)) : Effect.die(defect),
-        ),
       );
   };
 
@@ -692,13 +697,11 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     );
 
     return yield* executor.transaction(transactionBody).pipe(
+      recoverSqlTransactionError,
       Effect.catchTags({
         OperationContextUnavailable: (failure) => Effect.fail(transactionFailure(failureReason, failure)),
         SqlError: (failure) => Effect.fail(transactionFailure(failureReason, failure)),
       }),
-      Effect.catchDefect((defect) =>
-        isSqlError(defect) ? Effect.fail(transactionFailure(failureReason, defect)) : Effect.die(defect),
-      ),
     );
   });
 
@@ -779,13 +782,11 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     });
 
     return yield* executor.transaction(transactionBody).pipe(
+      recoverSqlTransactionError,
       Effect.catchTags({
         OperationContextUnavailable: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
         SqlError: (failure) => Effect.fail(persistenceFailure(failureReason, failure)),
       }),
-      Effect.catchDefect((defect) =>
-        isSqlError(defect) ? Effect.fail(persistenceFailure(failureReason, defect)) : Effect.die(defect),
-      ),
     );
   });
 

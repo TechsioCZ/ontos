@@ -640,7 +640,25 @@ jobs:
               proof: node,
               units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects,
             }
+    # Only the proving shard starts PostgreSQL; its complete handler layers acquire real pools.
+    services:
+      proof-postgres:
+        image: ${{ matrix.proof == 'node' && 'postgres:18.6-alpine' || '' }}
+        env:
+          POSTGRES_DB: ontos_proof
+          POSTGRES_PASSWORD: ontos_proof_admin
+          POSTGRES_USER: ontos_proof_admin
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U ontos_proof_admin -d ontos_proof"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     env:
+      DATABASE_ADMIN_URL: postgresql://ontos_proof_admin:ontos_proof_admin@localhost:5433/ontos_proof
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_proof
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_proof
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_proof
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_proof
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
@@ -721,14 +739,14 @@ jobs:
           mise exec -- pnpm mf:types
           mise exec -- pnpm performance:readiness
 
+      - name: Migrate the Node proof database and provision its runtime identities
+        if: matrix.proof == 'node'
+        working-directory: app
+        run: mise exec -- pnpm db:migrate
+
       - name: Prove Node backend-federation artifacts
         if: matrix.proof == 'node'
         working-directory: app
-        env:
-          DATABASE_URL: postgresql://ontos_proof:ontos_proof@localhost:5432/ontos_proof
-          PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5432/ontos_proof
-          PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5432/ontos_proof
-          SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5432/ontos_proof
         run: mise exec -- pnpm node:proof
 
       # The deployed publisher derives the snapshot from exactly these artifact kinds; this proves its output
@@ -946,6 +964,8 @@ jobs:
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
           mise exec -- pnpm mf:types --target cloudflare
           mise exec -- pnpm cloudflare-output:verify
+          export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_GATEWAY_ISSUER_HYPERDRIVE="$SHELL_GATEWAY_ISSUER_DATABASE_URL"
+          export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_PARTY_REGISTRY_HYPERDRIVE="$PARTY_REGISTRY_DATABASE_URL"
           mise exec -- pnpm cloudflare:ssr-proof
 
       # The built Workers, run together in workerd against real PostgreSQL and SpiceDB, prove the

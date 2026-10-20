@@ -23,7 +23,7 @@ import {
   CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareWorkerConfig,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { build as bundleSource, transform } from 'esbuild';
 
 import { MicroVerticalReadinessSchema } from '@modern-js/bff-effect/microvertical-api';
@@ -2233,7 +2233,7 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
         harnessPath,
         `import * as effect from ${JSON.stringify(effectModuleUrl)};
 import * as sharedBuild from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/shared-contracts/tooling/modern-config.ts')).href)};
-import * as databaseIdentities from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/core-runtime/src/db/database-identities.ts')).href)};
+import * as databaseIdentities from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/core-runtime/src/db/database-identity-manifest.ts')).href)};
 import { runInNewContext } from 'node:vm';
 import * as nodeUrl from 'node:url';
 import * as nodePath from 'node:path';
@@ -2261,7 +2261,7 @@ runInNewContext(${JSON.stringify(code)}, {
   module,
   URL,
   require: specifier => {
-    if (specifier === '../../packages/core-runtime/src/db/database-identities.ts') return databaseIdentities;
+    if (specifier === '../../packages/core-runtime/src/db/database-identity-manifest.ts') return databaseIdentities;
     return specifier === 'effect' ? effect : specifier === 'node:url' ? nodeUrl : specifier === 'node:path' ? nodePath : framework;
   },
 });

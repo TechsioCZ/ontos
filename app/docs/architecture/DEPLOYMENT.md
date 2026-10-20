@@ -144,7 +144,13 @@ Every bootstrap pass of the migrator re-sets the three passwords, resets role se
 
 Party requests fail closed during the first deploy of this change, from the end of the migrator until Shell finishes. The old Party Worker still connects as `ontos_runtime`, which no Party policy matches, or the new Party Worker receives assertions from an old Shell that registers no grants. The planner order (migrator, providers, workers, Shell) is unchanged, so announce that deploy as stage maintenance. Later deploys are unaffected.
 
-Rotation: change the `migrator` secret, run the migrator (it runs `ALTER ROLE ... PASSWORD`), run `cutover provision` to update the Hyperdrive password, then restart the services that use the credential. New connections fail between the migrator and `provision`, so run the steps back to back. The worker credential has no Hyperdrive step.
+Rotation (human operator, during stage maintenance):
+
+1. Change the relevant sensitive `migrator` service secret, then run the migrator to completion (it runs `ALTER ROLE ... PASSWORD`).
+2. For the Party runtime or gateway issuer credential, run `node scripts/ops/cloudflare-stage-cutover.mts provision` from the VPN host with `DATABASE_ADMIN_URL` set. Provision validates the existing Hyperdrive's non-secret settings, then sends `PUT /accounts/{accountId}/hyperdrive/configs/{id}` with the current origin password from the matching `migrator` service secret. Existing config IDs stay unchanged. Because Cloudflare does not reveal origin passwords, every provision re-applies them even when the other settings match; `--dry-run` only describes the update. A drift or update failure stops provisioning; do not treat it as a completed rotation.
+3. After provision succeeds, restart every service using the credential and verify fresh connections with its deployed runtime identity. `verify` checks non-secret settings, not password equality. For `PARTY_REGISTRY_WORKER_DB_PASSWORD`, skip the Hyperdrive step: the worker connects directly.
+
+New connections can fail after the migrator changes PostgreSQL's password until the Hyperdrive update and service restarts complete. Existing pooled connections can mask a stale credential, so run these steps back to back and confirm fresh connections before ending maintenance.
 
 `zerops.yaml` is shared with production. Production stays blocked until the same `migrator` secrets exist there.
 

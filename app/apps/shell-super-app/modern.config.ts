@@ -38,7 +38,7 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import {
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identities.ts';
+} from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import {
   CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareWorkerConfig,

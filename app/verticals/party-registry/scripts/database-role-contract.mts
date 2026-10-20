@@ -25,7 +25,12 @@ import type { PartyDatabaseExecutor } from '../src/db/types.ts';
 
 const TABLE_PRIVILEGES = ['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger'] as const;
 
-const LEGAL_ENTITY_TABLES = new Set(['counterparties', 'counterparty_role_periods', 'privacy_measure_executions']);
+const LEGAL_ENTITY_TABLES = new Set([
+  'counterparties',
+  'counterparty_role_periods',
+  'privacy_measure_executions',
+  'counterparty_admin_read_models',
+]);
 
 interface TablePrivilegeRow extends Readonly<Record<string, boolean | string>> {
   readonly granted: boolean;
@@ -374,6 +379,27 @@ const requestPolicyMismatches = (row: PolicyRow): readonly string[] => {
   const mismatches: string[] = [];
   if (containsUnscopedSetting(row.qual) || containsUnscopedSetting(row.with_check)) {
     mismatches.push(`Request policy ${row.policy_name} reads a session setting`);
+  }
+  for (const expression of [row.qual, row.with_check]) {
+    if (expression === '') {
+      continue;
+    }
+    if (
+      LEGAL_ENTITY_TABLES.has(row.table_name) &&
+      ((expression.match(/IS NULL/gu)?.length ?? 0) < 2 || (expression.match(/ OR /gu)?.length ?? 0) < 2)
+    ) {
+      mismatches.push(
+        `Request policy ${row.policy_name} must allow global rows and tenant-wide scope while checking sealed legal entity`,
+      );
+    }
+    if (
+      row.table_name === 'counterparty_role_admin_read_models' &&
+      (!expression.includes('counterparty_admin_read_models') ||
+        !expression.includes('parent.counterparty_id') ||
+        !expression.includes('parent.tenant_id'))
+    ) {
+      mismatches.push(`Request policy ${row.policy_name} must inherit its scoped counterparty projection`);
+    }
   }
   const accessors = LEGAL_ENTITY_TABLES.has(row.table_name)
     ? ['trust.current_tenant_id()', 'trust.current_legal_entity_id()']

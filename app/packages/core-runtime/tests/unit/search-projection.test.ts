@@ -11,6 +11,7 @@ import {
   CoreSearchProjectionInvalid,
   CoreSearchProjectionUnavailable,
   CoreSearchQueryRuntime,
+  CoreSearchQuerySchema,
   CoreSearchProjectionStore,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
@@ -748,14 +749,51 @@ it.effect('rejects a query whose selected Legal Entity differs from its operatio
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     for (const [input, scope] of [
       [{ ...query, selectedLegalEntityId: otherLegalEntityId }, searchScope(tenantId, legalEntityId)],
-      [{ ...query, selectedLegalEntityId: legalEntityId }, searchScope(tenantId)],
-      [query, searchScope(tenantId, legalEntityId)],
     ] as const) {
       const failure = yield* Effect.flip(runtime.search(input, scope));
       expect(Schema.is(CoreSearchProjectionUnavailable)(failure)).toBe(true);
     }
-    expect(
-      yield* runtime.search({ ...query, selectedLegalEntityId: legalEntityId }, searchScope(tenantId, legalEntityId)),
-    ).toEqual([]);
+    for (const [input, scope] of [
+      [{ ...query, selectedLegalEntityId: legalEntityId }, searchScope(tenantId, legalEntityId)],
+      [{ ...query, selectedLegalEntityId: legalEntityId }, searchScope(tenantId)],
+      [query, searchScope(tenantId, legalEntityId)],
+      [query, searchScope(tenantId)],
+    ] as const) {
+      expect(yield* runtime.search(input, scope)).toEqual([]);
+    }
   });
 });
+
+it.effect(
+  'Party global candidates remain visible with a selected legal entity without exposing entity documents',
+  () => {
+    const store = makeInMemoryCoreSearchProjectionStore();
+    return Effect.gen(function* globalSearchInSelectedScope() {
+      yield* store.apply({ document: party(), kind: 'upsert' }, workerContext());
+      yield* store.apply(
+        {
+          document: {
+            ...party(),
+            ref: { ...partyRef, resourceId: 'scoped-party' },
+            selectedLegalEntityId: legalEntityId,
+          },
+          kind: 'upsert',
+        },
+        workerContext(),
+      );
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+      const query = yield* Schema.decodeEffect(CoreSearchQuerySchema)({
+        includeArchived: false,
+        moduleId: partyRef.moduleId,
+        query: 'acme',
+        resourceType: partyRef.resourceType,
+        tenantId,
+      });
+      const scope = searchScope(tenantId, legalEntityId);
+      expect((yield* runtime.search(query, scope)).map(({ ref }) => ref.resourceId)).toEqual([partyRef.resourceId]);
+      expect((yield* store.queryCandidates(query, scope)).map(({ ref }) => ref.resourceId)).toEqual([
+        partyRef.resourceId,
+      ]);
+    });
+  },
+);

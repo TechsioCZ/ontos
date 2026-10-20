@@ -1,7 +1,7 @@
 import type { ConfigProvider, Effect } from 'effect';
 
 import type { DatabaseConfigError } from './config-error.ts';
-import type { DatabaseIdentity } from './database-identities.ts';
+import type { DatabaseIdentity } from './database-identity-manifest.ts';
 
 /**
  * Where the running platform takes a runtime identity's connection URL from. `#database-runtime`

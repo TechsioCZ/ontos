@@ -706,6 +706,24 @@ export const assertExplicitRole = (
       (rows) =>
         `Runtime role ${role} has schema USAGE outside its manifest: ${rows.map((row) => row.schema_name).join(', ')}`,
     );
+    // Explicit identities declare individual objects, never blanket access to future tables or sequences.
+    // Check every creator, global and schema ACL, including PUBLIC and reachable grantees.
+    yield* failWhenRowsExist<{ grant: string }>(
+      client,
+      `select creator.rolname || ':' || coalesce(namespace.nspname, '*') || ':' || defaults.defaclobjtype::text || ':' || acl.privilege_type as grant
+         from pg_catalog.pg_default_acl as defaults
+         join pg_catalog.pg_roles as creator on creator.oid = defaults.defaclrole
+         left join pg_catalog.pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
+         cross join lateral pg_catalog.aclexplode(defaults.defaclacl) as acl
+        where defaults.defaclobjtype in ('r', 'S')
+          and (defaults.defaclnamespace = 0 or (namespace.nspname not in ('pg_catalog', 'information_schema') and namespace.nspname !~ '^pg_'))
+          and case when acl.grantee = 0 then true else (acl.grantee = (select oid from pg_catalog.pg_roles where rolname = $1)
+               or pg_catalog.pg_has_role($1, acl.grantee, 'USAGE') or pg_catalog.pg_has_role($1, acl.grantee, 'SET')) end
+        order by 1`,
+      [role],
+      (rows) =>
+        `Runtime role ${role} has default privileges outside its manifest: ${rows.map((row) => row.grant).join(', ')}`,
+    );
     yield* assertManifestPrivilegesPresent(client, { grants, identity });
   });
 

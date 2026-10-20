@@ -252,16 +252,25 @@ it.effect('a session-setting role cannot verify a gateway grant scope', () =>
   }),
 );
 
-it.effect('roles without operational scope authority or outside the identity table fail closed', () =>
-  Effect.gen(function* rolesWithoutScopeAuthority() {
-    for (const role of ['shell_gateway_issuer', 'ontos_admin']) {
-      const { result } = yield* recordScopeInstallation(transactionScope(false), {
-        legal_entity_id: '',
-        role,
-        tenant_id: tenantId,
-      });
-      expectOperationContextUnavailable(result);
-    }
+it.effect('a role without operational scope authority fails closed', () =>
+  Effect.gen(function* roleWithoutScopeAuthority() {
+    const { result } = yield* recordScopeInstallation(transactionScope(false), {
+      legal_entity_id: '',
+      role: 'shell_gateway_issuer',
+      tenant_id: tenantId,
+    });
+    expectOperationContextUnavailable(result);
+  }),
+);
+
+it.effect('a login outside the runtime identities keeps session-setting scope', () =>
+  Effect.gen(function* migrationAdminSessionScope() {
+    const { result } = yield* recordScopeInstallation(transactionScope(false), {
+      legal_entity_id: '',
+      role: 'ontos_admin',
+      tenant_id: tenantId,
+    });
+    expect(Exit.isSuccess(result)).toBe(true);
   }),
 );
 
@@ -281,7 +290,7 @@ it('renders gateway-grant and session read policies with their exact predicates 
     'party_registry_runtime',
   );
   const tenantPredicate = '"fixture"."tenant_id" = (select trust.current_tenant_id())';
-  const legalEntityPredicate = `${tenantPredicate} and "fixture"."legal_entity_id" = (select trust.current_legal_entity_id())`;
+  const legalEntityPredicate = `${tenantPredicate} and ((select trust.current_legal_entity_id()) is null or "fixture"."legal_entity_id" is null or "fixture"."legal_entity_id" = (select trust.current_legal_entity_id()))`;
   expect(gatewayTenant.map((policy) => policy.name)).toEqual(['gw_select', 'gw_insert', 'gw_update', 'gw_delete']);
   for (const [policies, predicate] of [
     [gatewayTenant, tenantPredicate],

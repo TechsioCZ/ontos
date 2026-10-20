@@ -23,7 +23,7 @@ import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
-} from './database-identities.ts';
+} from './database-identity-manifest.ts';
 
 export const CORE_SCHEMA_NAME = 'core';
 
@@ -110,6 +110,10 @@ const PARTY_REGISTRY_MODULE_KEY = moduleKeyPolicyLiteral(PARTY_REGISTRY_REQUEST_
 const PARTY_REGISTRY_ACTION_KEY_PREFIX = moduleKeyPolicyLiteral(PARTY_REGISTRY_REQUEST_IDENTITY.ownerModuleKey, '.');
 const TRUSTED_TENANT_ID = sql`(select trust.current_tenant_id())`;
 const SESSION_TENANT_ID = sql`nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
+
+/** A sealed legal entity narrows non-global rows; an unselected scope is tenant-wide. */
+const trustedTenantLegalEntityPredicate = (tenantColumn: AnyPgColumn, legalEntityColumn: AnyPgColumn) =>
+  sql`${tenantColumn} = ${TRUSTED_TENANT_ID} and ((select trust.current_legal_entity_id()) is null or ${legalEntityColumn} is null or ${legalEntityColumn} = (select trust.current_legal_entity_id()))`;
 
 /** The shared runtime keeps its pre-pilot unrestricted access once RLS guards a Core table. */
 const sharedRuntimeAllPolicy = (tableName: string) =>
@@ -476,18 +480,18 @@ export const actionInvocations = enableCoreGovernedRls(
       pgPolicy('core_action_invocations_party_registry_request_select', {
         for: 'select',
         to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
+        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
       }),
       pgPolicy('core_action_invocations_party_registry_request_insert', {
         for: 'insert',
         to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
       }),
       pgPolicy('core_action_invocations_party_registry_request_update', {
         for: 'update',
         to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-        withCheck: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
+        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
       }),
       pgPolicy('core_action_invocations_party_registry_worker_select', {
         for: 'select',
@@ -583,12 +587,12 @@ export const auditEvents = enableCoreGovernedRls(
       pgPolicy('core_audit_events_party_registry_request_select', {
         for: 'select',
         to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
+        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
       }),
       pgPolicy('core_audit_events_party_registry_request_insert', {
         for: 'insert',
         to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
       }),
     ],
   ),
@@ -660,7 +664,7 @@ export const dataAccessEvents = enableCoreGovernedRls(
       pgPolicy('core_data_access_events_party_registry_request_insert', {
         for: 'insert',
         to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and ${table.servingModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.servingModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
     ],
   ),
@@ -715,7 +719,7 @@ export const domainEvents = enableCoreGovernedRls(
       pgPolicy('core_domain_events_party_registry_request_insert', {
         for: 'insert',
         to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and ${table.producerModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.producerModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       pgPolicy('core_domain_events_party_registry_worker_select', {
         for: 'select',
@@ -1119,7 +1123,7 @@ export const searchIndexEntries = enableCoreGovernedRls(
       pgPolicy('core_search_index_entries_party_registry_request_select', {
         for: 'select',
         to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and ${table.sourceModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
+        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.sourceModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       ...partyRegistryWorkerSearchPolicies('core_search_index_entries', table),
     ],

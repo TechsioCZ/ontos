@@ -6,7 +6,7 @@ import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import {
   createModernBuildContext,
   createWorkspaceModernConfig,

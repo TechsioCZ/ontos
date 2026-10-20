@@ -12,7 +12,7 @@ import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
-import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import {
   CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareWorkerConfig,

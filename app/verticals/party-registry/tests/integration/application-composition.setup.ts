@@ -1,13 +1,12 @@
-import {
-  DatabaseConfig,
-  loadDatabaseConnectionPair,
-  lockApplicationCompositionPublication,
-  publishApplicationCompositionAuthority,
-} from '@app/core-runtime';
+import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Layer } from 'effect';
 
-import { CoreDatabase, CoreDatabaseLive } from '../../../../packages/core-runtime/src/db/client.ts';
+import {
+  CoreDatabase,
+  CoreDatabaseLive,
+  publishTestApplicationCompositionAuthority,
+} from '@app/core-runtime/testing/owner-evidence';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 export const partyCompositionSnapshot = makeApplicationCompositionSnapshotFixture(
@@ -27,13 +26,8 @@ const adminDatabaseLive = CoreDatabaseLive.pipe(
 const partyAuthorityBootstrap = Layer.effectDiscard(
   Effect.gen(function* publishPartyCompositionAuthority() {
     const { executor } = yield* CoreDatabase;
-    yield* executor.transaction((transaction) =>
-      Effect.gen(function* publishInAuthorityTransaction() {
-        yield* lockApplicationCompositionPublication(transaction);
-        const snapshot = yield* partyCompositionSnapshot;
-        yield* publishApplicationCompositionAuthority(transaction, snapshot);
-      }),
-    );
+    const snapshot = yield* partyCompositionSnapshot;
+    yield* publishTestApplicationCompositionAuthority(executor, snapshot);
   }),
 ).pipe(Layer.provide(adminDatabaseLive));
 

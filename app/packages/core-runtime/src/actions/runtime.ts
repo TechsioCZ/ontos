@@ -126,6 +126,7 @@ import {
   computeCanonicalValueHash,
   logActionInvocationPersistenceFailureCause,
   logActionTransactionFailureCause,
+  recoverSqlTransactionError,
 } from './repository.ts';
 
 const requireIdempotencyKey = (idempotency: string, transport: ActionTransportMetadata) =>
@@ -1009,6 +1010,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     invocationScopeExecutor(scope)
       .transaction((transaction) => repository.loadRecordedRejection(transaction, invocationId))
       .pipe(
+        recoverSqlTransactionError,
         Effect.catchTags({
           OperationContextUnavailable: (failure) => Effect.fail(recordedRejectionPersistenceFailure(failure)),
           SqlError: (failure) => Effect.fail(recordedRejectionPersistenceFailure(failure)),

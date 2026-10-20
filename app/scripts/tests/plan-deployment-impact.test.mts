@@ -547,6 +547,8 @@ for (const changedPath of [
   'scripts/run-zerops-migrator.mjs',
   'scripts/verify-application-db-schema.mts',
   'scripts/postgres/bootstrap-runtime-role.mts',
+  'scripts/postgres/runtime-role-bootstrap.mts',
+  'app/scripts/postgres/runtime-role-bootstrap.mts',
   'scripts/postgres/database-login-roles.mts',
   'scripts/postgres/database-role-manifest.mts',
 ]) {

@@ -349,14 +349,26 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       const legalEntityScope = yield* partyRequestScope(issuer, principalId, tenantId, legalEntityId);
       const counterpartyHits = yield* counterpartySearch(legalEntityId, legalEntityScope);
       expect(counterpartyHits.map(({ ref }) => ref.resourceId)).toEqual([counterpartyId]);
-      // A selected Legal Entity outside the installed scope never reaches the database.
-      for (const [selectedLegalEntityId, searchScope] of [
-        [legalEntityId, scope],
-        [otherLegalEntityId, legalEntityScope],
-      ] as const) {
-        const failure = yield* Effect.flip(counterpartySearch(selectedLegalEntityId, searchScope));
-        expect(Predicate.isTagged(failure, 'CoreSearchProjectionUnavailable')).toBe(true);
-      }
+      // Tenant-wide grants may narrow to either entity. Entity grants cannot widen to another.
+      expect((yield* counterpartySearch(legalEntityId, scope)).map(({ ref }) => ref.resourceId)).toEqual([
+        counterpartyId,
+      ]);
+      expect((yield* counterpartySearch(otherLegalEntityId, scope)).map(({ ref }) => ref.resourceId)).toEqual([
+        otherCounterpartyId,
+      ]);
+      const failure = yield* Effect.flip(counterpartySearch(otherLegalEntityId, legalEntityScope));
+      expect(Predicate.isTagged(failure, 'CoreSearchProjectionUnavailable')).toBe(true);
+      const selectedScopePartyHits = yield* search.search(
+        {
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: 'private@example.test',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        legalEntityScope,
+      );
+      expect(selectedScopePartyHits).toEqual(partyHits);
       expect(
         yield* search.search(
           {

@@ -5,7 +5,7 @@ import { Reactivity } from 'effect/reactivity';
 import type { Connection } from 'effect/sql/SqlConnection';
 import type { SqlError } from 'effect/sql/SqlError';
 
-import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';

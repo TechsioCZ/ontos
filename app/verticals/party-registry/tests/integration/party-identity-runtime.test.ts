@@ -17,18 +17,14 @@ import {
 } from '@app/core-runtime/testing/gateway-scope-grant';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
-import type { PgClient } from '@effect/sql-pg';
-import { eq } from 'drizzle-orm';
+import { PgClient } from '@effect/sql-pg';
 import { Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
 
-import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
-import { coreRelations, outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
-import {
-  makeTestDatabaseFromClient,
-  makeTestPgClient,
-} from '../../../../packages/core-runtime/tests/support/database.ts';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
+import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { outboxTopic as partyCreatedTopic } from '../../shared/outbox/party-registry-party-created-v1.ts';
 import { addContactPointAction } from '../../src/actions/add-contact-point.action.ts';
@@ -219,28 +215,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const fixture = yield* openFixture;
           const other = yield* openFixture;
           const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
-          const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+          const coreAdmin = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
           yield* subscribePartyWorkers(adminClient);
           yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId, other.tenantId]);
           // Release only these disposable tenants' dispatch queues; retain append-only Core evidence.
           yield* Effect.addFinalizer(() =>
             Effect.forEach([fixture.tenantId, other.tenantId], (tenantId) =>
-              Effect.all([
-                query(
-                  adminClient,
-                  `delete from core.outbox_attempts where outbox_delivery_id in (
-                     select outbox_delivery_id from core.outbox_deliveries where outbox_message_id in (
-                       select outbox_message_id from core.outbox_messages where tenant_id = $1))`,
-                  [tenantId],
-                ),
-                query(
-                  adminClient,
-                  `delete from core.outbox_deliveries where outbox_message_id in (
-                     select outbox_message_id from core.outbox_messages where tenant_id = $1)`,
-                  [tenantId],
-                ),
-                coreAdmin.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-              ]),
+              deleteTestCoreOutbox(adminClient, tenantId),
             ).pipe(Effect.orDie),
           );
           const fixtureContext = yield* Layer.build(fixture.layer);

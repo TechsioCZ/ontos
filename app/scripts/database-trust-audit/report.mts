@@ -257,6 +257,7 @@ export type DatabaseTrustManifestEntry =
       readonly acceptedFindings: readonly DatabaseAcceptedFinding[];
       readonly identity: ManifestIdentity;
       readonly kind: 'legacy_shared';
+      readonly revokedSchemas: readonly string[];
       readonly roleSettings: readonly string[];
     }
   | {
@@ -789,6 +790,36 @@ const manifestGrants = (entry: DatabaseTrustManifestEntry | undefined): Database
   return entry.kind === 'explicit' ? entry.grants : undefined;
 };
 
+/** Withheld schemas are never part of the legacy non-pilot baseline, even without USAGE. */
+const revokedSchemaObjects = (snapshot: DatabaseTrustBoundarySnapshot, schemas: readonly string[]): string[] => {
+  const revoked = new Set(schemas);
+  return [
+    ...snapshot.schemas
+      .filter(({ create, schema, usage }) => revoked.has(schema) && (usage || create))
+      .map(({ schema }) => schema),
+    ...snapshot.tables
+      .filter((table) => revoked.has(table.schema) && Object.values(table.privileges).some(Boolean))
+      .map(tableName),
+    ...snapshot.columnPrivileges
+      .filter(({ schema }) => revoked.has(schema))
+      .map(({ column, schema, table }) => `${schema}.${table}(${column})`),
+    ...snapshot.sequences
+      .filter(({ privileges, schema }) => revoked.has(schema) && Object.values(privileges).some(Boolean))
+      .map(({ schema, sequence }) => `${schema}.${sequence}`),
+    ...snapshot.routines
+      .filter(({ executable, schema }) => revoked.has(schema) && executable)
+      .map(({ signature }) => signature),
+    ...snapshot.defaultPrivileges
+      .filter(
+        ({ objectType, schema }) =>
+          (schema === null || revoked.has(schema)) && ['table', 'sequence'].includes(objectType),
+      )
+      .map(
+        ({ objectType, owner, privilege, schema }) => `default:${owner}:${objectType}:${schema ?? '*'}:${privilege}`,
+      ),
+  ];
+};
+
 const forgeObjectsFor = (snapshot: DatabaseTrustBoundarySnapshot, scopeAuthority: DatabaseScopeAuthority): string[] => {
   const { trustedContext } = snapshot;
   const sessionPolicyTables = snapshot.policies.filter(({ readsSessionSetting }) => readsSessionSetting).map(tableName);
@@ -954,7 +985,9 @@ const buildIdentityFindings = (
   addFinding(findings, entry?.kind === 'legacy_shared' && dmlSchemas.size > 1, {
     code: 'runtime_role_has_cross_schema_dml',
     evidence: 'One runtime role has DML privileges in more than one audited application schema.',
-    objects: dmlTables.map(tableName),
+    objects: dmlTables
+      .filter(({ schema }) => entry?.kind !== 'legacy_shared' || !entry.revokedSchemas.includes(schema))
+      .map(tableName),
     severity: 'high',
   });
   addFinding(findings, snapshot.databasePrivileges.temporary, {
@@ -963,12 +996,29 @@ const buildIdentityFindings = (
     objects: [snapshot.database],
     severity: 'high',
   });
-  const differences = grants === undefined ? { extra: [], missing: [] } : manifestDifferences(snapshot, grants);
-  addFinding(findings, differences.extra.length > 0, {
+  const differences =
+    grants === undefined
+      ? {
+          extra: revokedSchemaObjects(snapshot, entry?.kind === 'legacy_shared' ? entry.revokedSchemas : []),
+          missing: [],
+        }
+      : manifestDifferences(snapshot, grants);
+  const extraPrivileges = [
+    ...differences.extra,
+    ...(entry?.kind === 'explicit'
+      ? snapshot.defaultPrivileges
+          .filter(({ objectType }) => objectType === 'table' || objectType === 'sequence')
+          .map(
+            ({ objectType, owner, privilege, schema }) =>
+              `default:${owner}:${objectType}:${schema ?? '*'}:${privilege}`,
+          )
+      : []),
+  ];
+  addFinding(findings, extraPrivileges.length > 0, {
     code: 'runtime_role_privilege_outside_manifest',
     evidence:
       'The runtime role holds a schema, table, column, sequence, or SECURITY DEFINER routine privilege that its grant manifest does not declare.',
-    objects: differences.extra,
+    objects: extraPrivileges,
     severity: 'high',
   });
   addFinding(findings, differences.missing.length > 0, {
@@ -1094,7 +1144,10 @@ export const buildDatabaseTrustBoundaryReport = (
     const acceptedFindings: AcceptedDatabaseTrustBoundaryFinding[] = [];
     const unacceptedFindings: DatabaseTrustBoundaryFinding[] = [];
     for (const finding of result.findings) {
-      const acceptance = findAcceptance(finding, accepted);
+      const acceptance =
+        entry?.kind === 'legacy_shared' && finding.code === 'runtime_role_privilege_outside_manifest'
+          ? Option.none<DatabaseAcceptedFinding>()
+          : findAcceptance(finding, accepted);
       if (Option.isSome(acceptance)) {
         acceptedFindings.push({ ...finding, reason: acceptance.value.reason });
       } else {

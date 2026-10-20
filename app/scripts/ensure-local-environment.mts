@@ -84,7 +84,7 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
   const remaining = new Map(
     Object.entries({
       // Only missing identity URLs are returned, so the replacement below never rewrites one.
-      ...localDatabaseIdentityValues(lines),
+      ...(yield* localDatabaseIdentityValues(lines)),
       ...localPublicClientValues(lines, publicClientTopology),
       ...localSpiceDbValues(
         lines,

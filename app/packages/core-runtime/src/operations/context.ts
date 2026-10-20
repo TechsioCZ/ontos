@@ -3,6 +3,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { Context, Crypto, Effect, Layer, Option } from 'effect';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import { recoverSqlTransactionError } from '../actions/repository.ts';
 import {
   AuthBindingIdSchema,
   AuthenticationNamespaceIdSchema,
@@ -164,6 +165,7 @@ export const makeOperationalScopeRepository = (database: {
         .where(eq(tenants.tenantId, principal.tenantId))
         .limit(1);
     }).pipe(
+      recoverSqlTransactionError,
       Effect.mapError(operationContextUnavailable),
       Effect.map(
         ([record]) =>

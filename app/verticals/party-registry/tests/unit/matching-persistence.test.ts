@@ -6,10 +6,7 @@ import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { makePartyRef, partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';

@@ -5,7 +5,7 @@ import { FileSystem, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect
 import { assert, expect, it } from 'effect-rstest';
 
 import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
-import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import {
   AresLookupApi,
   AresLookupAuthenticationProblemSchema,

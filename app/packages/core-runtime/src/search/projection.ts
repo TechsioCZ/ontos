@@ -7,7 +7,7 @@ import type { OperationalScope } from '../operations/context.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 
-import { CoreSearchProjectionStore } from './projection-store.ts';
+import { CoreSearchProjectionStore, coreSearchQueryMatchesScope } from './projection-store.ts';
 import type { CoreSearchProjectionStoreService } from './projection-store.ts';
 import type { CoreSearchQueryRuntimeService } from './query-runtime.ts';
 
@@ -465,13 +465,15 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
       return yield* Effect.void;
     },
   );
-  // The query may read only the installed scope: its tenant and exactly its legal entity, if any.
+  // Match the PostgreSQL scope guard, including tenant-global queries and tenant-wide authority.
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = (input, scope) =>
-    input.tenantId === scope.tenantId && input.selectedLegalEntityId === scope.legalEntityId
+    coreSearchQueryMatchesScope(input, scope)
       ? Effect.sync(() =>
           [
             ...(units.get(projectionUnitKey(input.tenantId, input.moduleId, input.resourceType))?.values() ?? []),
-          ].flatMap(({ document }) => (document === undefined ? [] : [document])),
+          ].flatMap(({ document }) =>
+            document === undefined || document.selectedLegalEntityId !== input.selectedLegalEntityId ? [] : [document],
+          ),
         )
       : Effect.fail(
           new CoreSearchProjectionUnavailable({

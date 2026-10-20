@@ -1,14 +1,17 @@
 import { readFileSync } from 'node:fs';
 
-import { Array as Arr, ConfigProvider, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
+import { Array as Arr, ConfigProvider, Console, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rs } from 'effect-rstest';
 
+import { CloudflareApiError } from '../ops/cloudflare-api-error.mts';
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
 import type { CloudflareVpcService } from '../ops/cloudflare-api.mts';
 import {
   CutoverConfiguration,
+  STAGE_HYPERDRIVES,
   activate,
+  ensureHyperdrives,
   ensureStageDatabaseIdentities,
   provision,
   spicedbGatewayHostname,
@@ -412,10 +415,9 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
     const placement = Schema.decodeUnknownSync(PlacementJson)(files.writes.get(PLACEMENT));
     expect(placement.buildEnvironment).toMatchObject({
       ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: COMPOSITION_KV_ID,
-      // The fake account numbers every created Hyperdrive config hyperdrive-1.
-      ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: HYPERDRIVE_ID,
+      ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: GATEWAY_ISSUER_HYPERDRIVE_ID,
       ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: HYPERDRIVE_ID,
-      ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: HYPERDRIVE_ID,
+      ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: PARTY_REGISTRY_HYPERDRIVE_ID,
       ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-2',
       ULTRAMODERN_MF_DEV_ORIGIN: SHELL_ORIGIN,
       ULTRAMODERN_PUBLIC_URL_PRICING: 'https://ontos-stage-pricing.stage.example.com',
@@ -554,6 +556,115 @@ it.effect('reuses every existing object on a re-run and creates nothing twice', 
       firstVariableSets,
     );
     expect(stage.commands.filter(({ args }) => args.includes('push'))).toHaveLength(1);
+  }),
+);
+
+it.effect('synchronizes rotated origin passwords on existing Hyperdrives without logging them or replacing IDs', () =>
+  Effect.gen(function* rotatesExistingHyperdriveCredentials() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+    const files = fakeFiles();
+    const roles = fakeLoginRoles();
+    yield* run(provision, { account, files, roles, stage });
+    const firstHyperdrives = [...account.hyperdrives];
+    const posts = account.requests.filter(({ method }) => method === 'POST').length;
+    const messages: unknown[] = [];
+    const consoleService = yield* Console.Console;
+    const rotatedPasswords = new Map<string, string>();
+    for (const spec of Object.values(STAGE_HYPERDRIVES)) {
+      const password = `${spec.role}-rotated-password-secret`;
+      stage.projectValues.set(spec.secretReference, password);
+      rotatedPasswords.set(spec.role, password);
+    }
+
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() =>
+        rs.spyOn(consoleService, 'log').mockImplementation((...args: readonly unknown[]) => {
+          messages.push(...args);
+        }),
+      ),
+      () => run(provision, { account, files, roles, stage }),
+      (spy) => Effect.sync(() => spy.mockRestore()),
+    );
+
+    const updates = account.requests.filter(
+      ({ method, url }) => method === 'PUT' && url.pathname.includes(`${HYPERDRIVE_CONFIGS_PATH}/`),
+    );
+    expect(updates).toHaveLength(3);
+    expect(account.hyperdrives).toStrictEqual(firstHyperdrives);
+    expect(account.requests.filter(({ method }) => method === 'POST')).toHaveLength(posts);
+    for (const { id, ...configuration } of firstHyperdrives) {
+      const update = updates.find(({ url }) => url.pathname.endsWith(`/${id}`));
+      expect(Option.getOrUndefined(update?.body ?? Option.none())).toStrictEqual({
+        ...configuration,
+        origin: { ...configuration.origin, password: rotatedPasswords.get(configuration.origin.user) },
+      });
+    }
+    expect(roles.calls.slice(3)).toContainEqual({
+      password: rotatedPasswords.get('party_registry_runtime'),
+      role: 'party_registry_runtime',
+    });
+    expect(roles.calls.slice(3)).toContainEqual({
+      password: rotatedPasswords.get('shell_gateway_issuer'),
+      role: 'shell_gateway_issuer',
+    });
+    expectNoSecretInArguments(stage, account);
+    const visible = [
+      ...messages.map(String),
+      ...stage.commands.map(({ args, command }) => [command, ...args].join(' ')),
+      ...account.requests.map(({ url }) => url.href),
+    ].join('\n');
+    for (const password of [...SECRETS, ...rotatedPasswords.values()]) {
+      expect(visible).not.toContain(password);
+    }
+    expect(messages.join('\n')).toContain('synchronize Hyperdrive');
+  }),
+);
+
+it.effect('plans credential synchronization for existing Hyperdrives without sending updates in a dry run', () =>
+  Effect.gen(function* dryRunHyperdriveCredentialSync() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+    const files = fakeFiles();
+    yield* run(provision, { account, files, stage });
+    const before = account.requests.length;
+    const existing = [...account.hyperdrives];
+
+    const ids = yield* run(ensureHyperdrives('vpc-1'), { account, dryRun: true, files, stage });
+
+    expect(ids).toStrictEqual({
+      gatewayIssuer: GATEWAY_ISSUER_HYPERDRIVE_ID,
+      partyRegistry: PARTY_REGISTRY_HYPERDRIVE_ID,
+      runtime: HYPERDRIVE_ID,
+    });
+    expect(account.hyperdrives).toStrictEqual(existing);
+    expect(account.requests.slice(before).every(({ method }) => method === 'GET')).toBe(true);
+  }),
+);
+
+it.effect('fails a Hyperdrive credential update for an unknown ID instead of creating a config', () =>
+  Effect.gen(function* refusesMissingHyperdriveUpdate() {
+    const account = fakeCloudflareAccount({});
+    const error = yield* run(
+      Effect.gen(function* updateUnknownHyperdrive() {
+        const api = yield* CloudflareApi;
+        return yield* api.updateHyperdrive('missing-config', {
+          database: Redacted.make('ontos'),
+          name: PARTY_REGISTRY_HYPERDRIVE,
+          originConnectionLimit: 10,
+          password: Redacted.make(PARTY_REGISTRY_CREDENTIAL),
+          serviceId: 'vpc-1',
+          user: 'party_registry_runtime',
+        });
+      }),
+      { account, files: fakeFiles(), stage: newStage() },
+    ).pipe(Effect.flip);
+
+    expect(Schema.is(CloudflareApiError)(error)).toBe(true);
+    expect(error.message).toContain('Hyperdrive update failed');
+    expect(error.message).not.toContain(PARTY_REGISTRY_CREDENTIAL);
+    expect(account.hyperdrives).toStrictEqual([]);
+    expect(account.requests.map(({ method }) => method)).toStrictEqual(['PUT']);
   }),
 );
 

@@ -1,4 +1,4 @@
-import { Option, Redacted } from 'effect';
+import { Config, ConfigProvider, Effect, Option, Redacted } from 'effect';
 
 import { DATABASE_IDENTITIES, SHARED_RUNTIME_IDENTITY } from '../packages/core-runtime/src/db/database-identities.ts';
 
@@ -91,20 +91,29 @@ const loopbackDatabaseUrl = (value: string | undefined): Option.Option<URL> => {
  * port and database of a loopback `DATABASE_URL`, with user and password equal to the role, as the local
  * bootstrap creates them. Present keys are never returned, so an existing value is never overwritten.
  */
-export const localDatabaseIdentityValues = (lines: readonly string[]): Readonly<Record<string, string>> => {
-  const existing = existingValues(lines);
-  return Option.match(loopbackDatabaseUrl(existing[SHARED_RUNTIME_IDENTITY.urlKey]), {
-    onNone: () => ({}),
-    onSome: (runtimeUrl) =>
-      Object.fromEntries(
-        DATABASE_IDENTITIES.filter(
-          (identity) => identity.id !== SHARED_RUNTIME_IDENTITY.id && existing[identity.urlKey] === undefined,
-        ).map((identity) => {
-          const url = new URL(runtimeUrl);
-          url.username = identity.role;
-          url.password = identity.role;
-          return [identity.urlKey, url.toString()] as const;
-        }),
+export const localDatabaseIdentityValues = (lines: readonly string[]) =>
+  Effect.gen(function* localDatabaseIdentityValuesEffect() {
+    const provider = ConfigProvider.fromDotEnvContents(lines.join('\n'), { preserveEmptyStrings: true });
+    const entries = yield* Effect.all(
+      DATABASE_IDENTITIES.map((identity) =>
+        Config.option(Config.String(identity.urlKey))
+          .parse(provider)
+          .pipe(Effect.map((value) => [identity.urlKey, Option.getOrUndefined(value)] as const)),
       ),
+    );
+    const existing = Object.fromEntries(entries);
+    return Option.match(loopbackDatabaseUrl(existing[SHARED_RUNTIME_IDENTITY.urlKey]), {
+      onNone: () => ({}),
+      onSome: (runtimeUrl) =>
+        Object.fromEntries(
+          DATABASE_IDENTITIES.filter(
+            (identity) => identity.id !== SHARED_RUNTIME_IDENTITY.id && existing[identity.urlKey] === undefined,
+          ).map((identity) => {
+            const url = new URL(runtimeUrl);
+            url.username = identity.role;
+            url.password = identity.role;
+            return [identity.urlKey, url.toString()] as const;
+          }),
+        ),
+    });
   });
-};
