@@ -12,6 +12,7 @@ import { demoId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { CrmStateSchema } from '../shared/apis/records.ts';
 import { crmRelations, crmStates } from '../src/database/schema.ts';
 import { seedVisits } from './seed/visits.mts';
+import { seedImports } from '../shared/imports/demo-seed.ts';
 
 class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputError', { reason: Schema.String }) {}
 
@@ -254,7 +255,15 @@ const seedState = (now: DateTime.Utc) => {
 
 const writeState = Effect.fn('Crm.writeDemoState')(function* writeDemoState() {
   const now = yield* DateTime.now;
-  const state = yield* Schema.decodeUnknownEffect(CrmStateSchema)(seedState(now));
+  const decoded = yield* Schema.decodeUnknownEffect(CrmStateSchema)(seedState(now));
+  // crm-imports: approved customer links + one completed CSV import (demo-data/01-uvodni-import-objednavek.csv).
+  const state = yield* seedImports(decoded, {
+    by: demoId('core.principal', 'hanak-vedouci'),
+    clientIdOf: (key) => demoId('crm.client', key),
+    importedAt: DateTime.formatIso(DateTime.subtract(now, { days: 1, hours: 3 })),
+    invocationId: demoId('crm.import', 'initial'),
+    linkedAt: DateTime.formatIso(DateTime.subtract(now, { days: 170 })),
+  });
   const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
   const db = yield* makeWithDefaults({ relations: crmRelations });
   yield* db
@@ -271,7 +280,7 @@ const writeState = Effect.fn('Crm.writeDemoState')(function* writeDemoState() {
       target: [crmStates.tenantId, crmStates.legalEntityId],
     });
   return yield* Console.log(
-    `CRM demo state reset: ${encoded.salespeople.length} salespeople, ${encoded.clients.items.length} clients, ${encoded.clients.contacts.length} contacts, ${encoded.visits.items.length} visits`,
+    `CRM demo state reset: ${encoded.salespeople.length} salespeople, ${encoded.clients.items.length} clients, ${encoded.clients.contacts.length} contacts, ${encoded.visits.items.length} visits, ${encoded.imports.orders.length} imported orders`,
   );
 });
 

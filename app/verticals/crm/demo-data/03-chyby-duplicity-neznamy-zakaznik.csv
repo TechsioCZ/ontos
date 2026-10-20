@@ -1,0 +1,11 @@
+zdroj;id_objednavky;cislo_objednavky;datum_objednavky;id_zakaznika;nazev_zakaznika;ico_zakaznika;email_zakaznika;castka;mena;stav;cas_udalosti;id_udalosti;polozky
+E-shop;;OBJ-2026-0296;2026-10-19;ESH-1001;Pekárna Malá s.r.o.;90000101;;3100.00;CZK;nova;2026-10-19T08:00:00+02:00;;
+E-shop;100297;OBJ-2026-0297;2026-10-19;ESH-1004;Bistro Král s.r.o.;90000107;;12,3,4;CZK;nova;2026-10-19T08:10:00+02:00;;
+E-shop;100298;OBJ-2026-0298;2026-10-19;ESH-1002;Restaurace U Zlaté husy;90000102;;5400.00;;nova;2026-10-19T08:20:00+02:00;;
+E-shop;100299;OBJ-2026-0299;31. 13. 2026;ESH-1003;Hotel Podhradí a.s.;90000104;;2200.00;CZK;nova;2026-10-19T08:30:00+02:00;;
+E-shop;100300;OBJ-2026-0300;2026-10-19;ESH-1006;Zámecká restaurace;90000108;;1800.00;Kč;nova;2026-10-19T08:40:00+02:00;;
+E-shop;100257;OBJ-2026-0257;2026-09-03;ESH-1004;Bistro Král s.r.o.;90000107;bistro@bistro-kral.demo;5480.00;CZK;dorucena;2026-09-06T12:10:00+02:00;e100257-3;
+E-shop;100257;;;;;;;;;reklamace;;;
+E-shop;100295;OBJ-2026-0295;2026-10-19;ESH-1120;Restaurace Na Statku;;objednavky@restaurace-u-zlate-husy.demo;7310.00;CZK;nova;2026-10-19T09:05:00+02:00;e100295-1;
+Účetní systém;UO-26-0140;OBJ-2026-0285;2026-10-14;UCT-511;Lázeňský hotel Morava;90000110;;1520.00;EUR;Přijatá;2026-10-15T09:00:00+02:00;u140-1;
+E-shop;100301;OBJ-2026-0301;2026-10-19;ESH-1007;Potraviny Černá;90000103;prodejna@potraviny-cerna.demo;4380.00;CZK;nova;2026-10-19T09:30:00+02:00;e100301-1;

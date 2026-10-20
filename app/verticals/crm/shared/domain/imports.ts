@@ -15,6 +15,19 @@ export const ImportRowErrorSchema = Schema.Struct({
   row: Schema.Int,
 });
 
+export const ImportRowOutcomeSchema = Schema.Literals(['created', 'updated', 'duplicate', 'review', 'error']);
+export type ImportRowOutcome = typeof ImportRowOutcomeSchema.Type;
+
+/** What happened to one CSV row (import history detail). */
+export const ImportRowResultSchema = Schema.Struct({
+  externalId: Schema.optionalKey(ShortTextSchema),
+  message: LongTextSchema,
+  orderId: Schema.optionalKey(EntityIdSchema),
+  outcome: ImportRowOutcomeSchema,
+  row: Schema.Int,
+});
+export type ImportRowResult = typeof ImportRowResultSchema.Type;
+
 export const ImportBatchSchema = Schema.Struct({
   accepted: Schema.Int,
   duplicates: Schema.Int,
@@ -30,6 +43,16 @@ export const ImportBatchSchema = Schema.Struct({
   /** Source system, e.g. "E-shop" or "Účetní systém". */
   source: ShortTextSchema,
   status: Schema.Literals(['completed', 'completed_with_errors', 'failed']),
+  /** New orders created by this batch. */
+  created: Schema.optionalKey(Schema.Int),
+  /** Status changes applied to existing orders. */
+  updated: Schema.optionalKey(Schema.Int),
+  /** Rows kept but flagged "vyžaduje kontrolu" (out-of-order event, cross-source duplicate). */
+  review: Schema.optionalKey(Schema.Int),
+  /** New orders without an approved customer link. */
+  unpaired: Schema.optionalKey(Schema.Int),
+  results: Schema.optionalKey(Schema.Array(ImportRowResultSchema)),
+  unknownColumns: Schema.optionalKey(Schema.Array(ShortTextSchema)),
 });
 export type ImportBatch = typeof ImportBatchSchema.Type;
 
@@ -41,7 +64,21 @@ export const OrderStatusEventSchema = Schema.Struct({
   rawStatus: ShortTextSchema,
   /** Order of events unknown / older than the confirmed one: kept, flagged, not applied (C03). */
   review: Schema.optionalKey(Schema.Boolean),
+  reviewReason: Schema.optionalKey(LongTextSchema),
+  /** Manual decision on a flagged event. */
+  resolution: Schema.optionalKey(
+    Schema.Struct({
+      at: IsoTimeSchema,
+      by: PrincipalIdSchema,
+      decision: Schema.Literals(['applied', 'dismissed']),
+      reason: LongTextSchema,
+    }),
+  ),
+  /** CSV line of the batch the event came from. */
+  row: Schema.optionalKey(Schema.Int),
+  source: Schema.optionalKey(ShortTextSchema),
 });
+export type OrderStatusEvent = typeof OrderStatusEventSchema.Type;
 
 export const OrderLineSchema = Schema.Struct({
   amount: Schema.optionalKey(DecimalStringSchema),
@@ -52,6 +89,22 @@ export const OrderLineSchema = Schema.Struct({
 });
 
 export const PairingStateSchema = Schema.Literals(['paired', 'unpaired', 'review']);
+
+/** Possible client for an order without an approved customer link. Never applied automatically (C03-04). */
+export const PairingCandidateSchema = Schema.Struct({
+  clientId: EntityIdSchema,
+  reason: ShortTextSchema,
+});
+export type PairingCandidate = typeof PairingCandidateSchema.Type;
+
+/** Manual review decision on an order (cross-source duplicate). */
+export const OrderDecisionSchema = Schema.Struct({
+  at: IsoTimeSchema,
+  by: PrincipalIdSchema,
+  decision: Schema.Literals(['confirmed_duplicate', 'distinct']),
+  reason: LongTextSchema,
+});
+export type OrderDecision = typeof OrderDecisionSchema.Type;
 
 export const ImportedOrderSchema = Schema.Struct({
   amount: Schema.optionalKey(DecimalStringSchema),
@@ -74,6 +127,12 @@ export const ImportedOrderSchema = Schema.Struct({
   receivedAt: IsoTimeSchema,
   source: ShortTextSchema,
   statusHistory: Schema.Array(OrderStatusEventSchema),
+  candidates: Schema.optionalKey(Schema.Array(PairingCandidateSchema)),
+  customerEmail: Schema.optionalKey(ShortTextSchema),
+  customerRegNo: Schema.optionalKey(ShortTextSchema),
+  decisions: Schema.optionalKey(Schema.Array(OrderDecisionSchema)),
+  /** Why the order is flagged (e.g. the same number from another source). */
+  reviewReason: Schema.optionalKey(LongTextSchema),
 });
 export type ImportedOrder = typeof ImportedOrderSchema.Type;
 
@@ -121,7 +180,9 @@ export const projectImportsSlice = (
   if (canSeeEverything(viewer)) {
     return slice;
   }
-  const orders = slice.orders.filter((order) => order.clientId !== undefined && visible.has(order.clientId));
+  const orders = slice.orders
+    .filter((order) => order.clientId !== undefined && visible.has(order.clientId))
+    .map(({ candidates: _candidates, ...order }) => order);
   const orderIds = new Set(orders.map((order) => order.id));
   return {
     batches: [],
@@ -130,3 +191,16 @@ export const projectImportsSlice = (
     pairingHistory: slice.pairingHistory.filter((change) => orderIds.has(change.orderId)),
   };
 };
+
+/** Open status events waiting for a manual decision. */
+export const openReviewEvents = (order: ImportedOrder) =>
+  order.statusHistory.flatMap((event, index) =>
+    event.review === true && event.resolution === undefined ? [{ event, index }] : [],
+  );
+
+/** A cross-source duplicate nobody has decided yet. */
+export const isOpenDuplicate = (order: ImportedOrder) =>
+  order.duplicateOf !== undefined && (order.decisions ?? []).length === 0;
+
+/** Order flagged "vyžaduje kontrolu": an undecided status event or cross-source duplicate. */
+export const needsReview = (order: ImportedOrder) => openReviewEvents(order).length > 0 || isOpenDuplicate(order);
