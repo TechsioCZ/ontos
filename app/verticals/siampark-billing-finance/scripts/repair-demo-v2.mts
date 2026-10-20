@@ -1,5 +1,6 @@
 // @effect-diagnostics *:off
 // Scoped, optimistic demo-fixture repair. Never reseeds, deletes, rewrites payments or changes historical exports.
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { PgClient } from '@effect/sql-pg';
 import { NodeRuntime } from '@effect/platform-node';
@@ -26,6 +27,7 @@ const program = Effect.gen(function* () {
   const original = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state);
   let state = alignRentalTemplates(original);
   const writes: { id: string; content: string }[] = [];
+  const repairedAt = yield* DateTime.now;
   state = {
     ...state,
     documents: (state.documents ?? []).map((document) => {
@@ -35,7 +37,13 @@ const program = Effect.gen(function* () {
         new URL(`./fixtures/${invoice.documentNumber.replaceAll('/', '-')}.pdf`, import.meta.url),
       );
       writes.push({ id: document.id, content: bytes.toString('base64') });
-      return { ...document, sizeBytes: bytes.length };
+      return {
+        ...document,
+        actorLabel: 'Finance · oprava DEMO dokladu',
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        sizeBytes: bytes.length,
+        uploadedAt: repairedAt,
+      };
     }),
   };
   // New version, not an in-place mutation of an accountant's historical signed/hash-verified snapshot.
