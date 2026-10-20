@@ -43,7 +43,6 @@
   --radius-input-sm: var(--dimension-8);
   --text-input-sm: var(--dimension-20);
   --text-label-sm: var(--dimension-20);
-  --font-weight-label: var(--font-weight-medium);
   --text-select-trigger-sm: var(--dimension-20);
   --text-select-value-sm: var(--dimension-20);
   --text-phone-input-sm: var(--dimension-20);
@@ -87,7 +86,6 @@
   --color-checkbox-bg-base: var(--color-base);
   --text-breadcrumb-sm: var(--dimension-16);
   --padding-breadcrumb-sm: 0px;
-  --spacing-breadcrumb-item: var(--dimension-4);
   --color-breadcrumb-bg: var(--akros-account-surface);
 }
 

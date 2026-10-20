@@ -1,0 +1,6 @@
+:root {
+  /* The accepted input surface stays white in every interactive state. */
+  --color-input-bg-base: var(--color-base);
+  --color-input-bg-hover: var(--color-base);
+  --color-input-bg-focus: var(--color-base);
+}

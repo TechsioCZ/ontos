@@ -1,0 +1,22 @@
+/* Accepted storefront geometry; responsive boundaries match globals.css. */
+:root {
+  --akros-content-max: 1663px;
+  --akros-page-gutter: var(--dimension-12);
+  --akros-section-gap: var(--dimension-48);
+  --akros-sidebar-width: 280px;
+  --akros-radius-lg: var(--dimension-16);
+  --akros-radius-md: var(--dimension-8);
+}
+
+@media (max-width: 1100px) {
+  :root {
+    --akros-page-gutter: var(--dimension-16);
+    --akros-sidebar-width: 240px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --akros-section-gap: var(--dimension-32);
+  }
+}

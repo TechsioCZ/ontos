@@ -18,6 +18,8 @@
     "test:account": "node tests/browser/account-profile.mjs && node tests/browser/account-area.mjs",
     "test:auth": "node tests/browser/auth.mjs",
     "test:content": "node tests/browser/content.mjs",
+    "test:audit": "node tests/browser/ui-audit.mjs",
+    "test:browser": "npm run test:responsive && npm run test:catalog && npm run test:shared-ui && npm run test:account && npm run test:auth && npm run test:content && npm run test:theme && npm run test:typography && npm run test:audit",
     "test:responsive": "node tests/browser/homepage-layout.mjs && node tests/browser/variant-table-layout.mjs && node tests/browser/cart-items-layout.mjs && node tests/browser/checkout-section.mjs && node tests/browser/checkout-typography-services.mjs",
     "lint": "oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin src tests",
     "format": "oxfmt --write .",

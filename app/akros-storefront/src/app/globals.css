@@ -1,7 +1,11 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
+/* App-wide mappings precede the component-specific overrides. */
 @import "../tokens/_akros-typography.css";
+@import "../tokens/_akros-layout.css";
 @import "../tokens/components/atoms/_akros-icon.css";
+@import "../tokens/components/atoms/_akros-input.css";
+@import "../tokens/components/atoms/_akros-textarea.css";
 @import "../tokens/components/molecules/_akros-accordion.css";
 @import "../tokens/components/molecules/_akros-breadcrumb.css";
 /* Homepage carousel color and icon-size mappings stay scoped to its wrapper. */
@@ -26,28 +30,6 @@
 @import "../styles/account-checkout.css";
 @source "../../node_modules/@techsio/ui-kit/dist";
 
-:root {
-  /* Figma keeps Input and Textarea on the white base surface in all interactive states. */
-  --color-input-bg-base: var(--color-base);
-  --color-input-bg-hover: var(--color-base);
-  --color-input-bg-focus: var(--color-base);
-  --color-textarea-bg: var(--color-base);
-  --color-textarea-bg-hover: var(--color-base);
-  --color-textarea-bg-focus: var(--color-base);
-  --akros-content-max: 1663px;
-  --akros-header-main-gutter: var(--dimension-44);
-  --akros-page-gutter: 12px;
-  --akros-section-gap: 48px;
-  --akros-sidebar-width: 280px;
-  --akros-radius-lg: 16px;
-  --akros-radius-md: 8px;
-  --akros-header-search-width: var(--dimension-container-xl);
-}
-
-* {
-  box-sizing: border-box;
-}
-
 html {
   min-width: 320px;
   background: var(--color-fill-surface);
@@ -56,7 +38,6 @@ html {
 
 body {
   min-height: 100vh;
-  margin: 0;
   background: var(--color-fill-surface);
   color: var(--color-fg-primary);
   font-family: var(--font-body);
@@ -680,11 +661,6 @@ body {
 }
 
 .akros-variant-table__order--package {
-  --color-button-bg-secondary-active: var(--color-base-dark);
-  --color-button-bg-secondary-base: var(--color-base-dark);
-  --color-button-bg-secondary-hover: var(--color-neutral-800);
-  --color-button-fg-secondary: var(--color-base-light);
-
   border-inline-start: 1px solid var(--akros-variant-table-cell-separator-color);
   grid-template-columns: 96px minmax(132px, 1fr);
   padding-inline-end: 0;
@@ -891,12 +867,6 @@ body {
 }
 
 @media (max-width: 1100px) {
-  :root {
-    --akros-header-main-gutter: var(--dimension-32);
-    --akros-page-gutter: 16px;
-    --akros-sidebar-width: 240px;
-  }
-
   .akros-header__utility-links a:nth-child(n + 7) {
     display: none;
   }
@@ -1013,12 +983,6 @@ body {
 }
 
 @media (max-width: 760px) {
-  :root {
-    --akros-header-main-gutter: var(--dimension-16);
-    --akros-page-gutter: 16px;
-    --akros-section-gap: 32px;
-  }
-
   .akros-page-grid {
     display: block;
   }

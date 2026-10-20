@@ -1,0 +1,5 @@
+:root {
+  --color-textarea-bg: var(--color-base);
+  --color-textarea-bg-hover: var(--color-base);
+  --color-textarea-bg-focus: var(--color-base);
+}

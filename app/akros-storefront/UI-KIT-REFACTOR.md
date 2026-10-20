@@ -11,7 +11,7 @@ tokens. Page composition and verified library limitations may retain local CSS/u
 | 3    | Cart and checkout appearance overrides                                      | Complete |
 | 4    | Account, login, registration and shared form styling                        | Complete |
 | 5    | FAQ, blog, news, contacts and delivery information                          | Complete |
-| 6    | Final token consolidation, exception audit and responsive regression checks | Pending  |
+| 6    | Final token consolidation, exception audit and responsive regression checks | Complete |
 
 ## Task 1 inventory
 
@@ -177,3 +177,85 @@ field remains a static prototype control.
 - `npm run check` passed formatting, lint, type checking, all 150 unit/component tests and the
   production build. Content, auth, theme, responsive, account, catalog, shared UI and actual-font
   browser suites all passed.
+
+## Task 6 inventory
+
+| Finding                                         | Classification                 | Final disposition                                                                                                                                                                                                 |
+| ----------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared Input/Textarea surface tokens in globals | `token-layer-misplacement`     | Moved six mappings into atom token files. The same white base/hover/focus surfaces remain in use.                                                                                                                 |
+| Storefront/header layout tokens in globals      | `token-layer-misplacement`     | Centralized accepted page/sidebar/gutter/radius values in `_akros-layout.css`; header gutters stay in `_akros-header.css`. Preserved every viewport boundary and removed one duplicate mobile gutter assignment.  |
+| Package-purchase Button colors in globals       | `token-layer-misplacement`     | Moved the four scoped color mappings into the variant DataTable token file.                                                                                                                                       |
+| Product-card favorite button                    | `prop-or-api-miss`             | Uses `size="sm"` with existing height, padding and radius tokens. Removed `size-11`, `rounded-full` and `p-0`; `w-11` remains width composition. Preserve inherited text metrics and the original icon gap.       |
+| Unused/ineffective token declarations           | `redundant-component-override` | Removed nine declarations listed below. Kept static container aliases and DataTable surface variables: those are consumed by generated utilities or JS inline styles rather than ordinary CSS `var()` references. |
+| Global border-box/body margin resets            | `redundant-component-override` | Removed two declarations already supplied by preflight.                                                                                                                                                           |
+
+Removed token declarations and source evidence in installed UI kit 0.56.1:
+
+- `--akros-variant-filter-background`, `--akros-variant-filter-label-color`: no app consumers.
+- Root `--akros-header-search-width`: every actual consumer inherits the header's own mapping.
+- `--font-weight-link`: `dist/atoms/link.js` is intentionally unstyled and consumes no Link tokens.
+- Two `--font-weight-label` declarations: `.font-label` only sets font family. Account/checkout
+  labels already inherit the accepted medium weight from their surrounding content.
+- `--spacing-breadcrumb-item`: Breadcrumb uses size-specific `gap-breadcrumb-{size}` and
+  `gap-breadcrumb-link-{size}` utilities; it never reads this alias.
+- `--height-numeric-input-sm`: NumericInput reads `--height-form-control-sm` instead.
+- `--shadow-slider-thumb`: compiled `.shadow-slider-thumb` reads `--shadow-sm`; the removed
+  assignment never disabled the rendered shadow. Preserve the actual accepted rendering.
+
+## Retained exceptions after the final audit
+
+| Surface                                                                        | Classification                     | Reason / boundary                                                                                                                                                                    |
+| ------------------------------------------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Page panels, category cards, headings, galleries and native content typography | `composition-inline` / app CSS     | Kit 0.56.1 has no equivalent generic surface/heading/gallery/category-card API. Existing semantic content and responsive composition remain app-owned.                               |
+| Product-card layout, names/prices, stock wrapping and editorial slot content   | `composition-inline`               | Flex/grid placement, image fitting, text alignment/case and minimum content height belong to the app's chosen card composition.                                                      |
+| ProductCard and mini-cart shadows                                              | `shared-library-gap`               | ProductCard hardcodes `shadow-sm`; Popover shadow aliases compile early. Retain the existing variable shadow utility and mini-cart `shadow-md`.                                      |
+| NumericInput cart slots and profile PhoneInput                                 | `shared-library-gap`               | The kit hardcodes input border/radius or transparent trigger styles. Keep the documented slot border/radius/background utilities.                                                    |
+| Accordion headings/disclosure and RadioGroup item text                         | `shared-library-gap`               | Current APIs lack the required line-height/rotation/item-weight tokens. Keep the existing narrow utilities; heading gaps and supported weights already use tokens.                   |
+| Button/LinkButton line height, underline and account-tab bottom border         | `shared-library-gap` / composition | No component line-height, decoration or per-edge current-tab border API. Keep semantic token references and local composition.                                                       |
+| Table total-column weight and responsive row/card borders                      | `composition-inline`               | Weight is column-specific content hierarchy; complete per-edge mobile row-card rendering is not covered by Table tokens.                                                             |
+| Header search popup and slider labels                                          | `shared-library-gap`               | Popup exposes no full viewport cap/positioner-width API; Slider's current-size Label has no corresponding label-size/line-height props. Preserve the scoped utilities.               |
+| Checkbox glyphs and select/country indicators                                  | `shared-library-gap`               | The kit has no required replacement-indicator props. Existing glyphs, visibility and sizing remain scoped.                                                                           |
+| Confirmation status icon                                                       | `composition-inline`               | Uses `--color-fg-status-success`; Icon's `color="success"` maps to a different semantic color (`--color-success`).                                                                   |
+| Local wrappers                                                                 | Intentional framework composition  | `ContentLink`, `AuthPageLink` and `PrimaryLinkButton` provide server/client boundaries; field wrappers compose existing form components. None reimplements a kit primitive.          |
+| Four inline style sites                                                        | `composition-inline`               | Feed asset dimensions, price-bound character count and two cart quantity-width measurements are data-dependent. No fixed appearance tokens remain assigned inline.                   |
+| Native controls                                                                | Intentional semantics              | Only one hidden search query input and two native progress elements remain. The kit has no Progress component. All visible input/button/select/textarea controls use kit components. |
+
+The static review covered all 119 CSS/TS/TSX source files present before task 6, including all
+kit imports, native controls, inline style sites and component-token files. Appearance findings
+were classified against the exact installed JS, declarations, token files and compiled CSS;
+distributed source TSX/stories are unavailable in this package.
+
+## Remaining shared-library issue
+
+`shared-library-gap`: UI-kit 0.56.1 / Zag RadioGroup leaves a disabled native input checked when
+its selected payment becomes unavailable. The visible item/control and persisted checkout draft
+clear correctly. Source: `@zag-js/radio-group/dist/radio-group.machine.js` synchronizes inputs
+through `getInputEls`; `radio-group.dom.js` explicitly excludes disabled inputs. This is a kit
+issue, not a reason to mutate DOM state in the storefront or remount payment groups and lose focus.
+
+Owner: UI-kit/Zag integration. Reproducer: select personal pickup, select store-card payment,
+then select DPD. `npm run test:audit` checks visible unchecked/disabled state, cleared draft,
+blocked continuation and recovery with GoPay at 1920, 1024 and 390px. It reports the hidden native
+state without requiring the library defect to persist. After a kit fix, native `checked` should
+also clear; retain the purchase-validation regression checks. Screen-reader behavior has not
+been manually verified, so this remaining native-state mismatch is explicitly recorded.
+
+## Task 6 verification
+
+- Before/after computed styles and geometry: 589 layouts on 31 routes at 19 widths from 320
+  to 2560px, including 430/431, 639/640, 760/761, 1023/1024, 1100/1101 and 1440/1441px edges.
+  All 169,210 measured rendered elements match. Equivalent transparent colors and inactive
+  flex properties on inline/block text links are normalized; measured geometry matches exactly
+  within the 0.1px comparison tolerance. Both runs use the same cart/address fixtures.
+- Visually reviewed homepage, cart, account and 404 screenshots at desktop/tablet/mobile widths.
+- `npm run test:audit` passed the 589-layout route matrix, actual favorite-button token probes
+  and payment-change validation/recovery at 1920, 1024 and 390px. The report records the known
+  disabled-native-radio mismatch for a future UI-kit fix.
+- The full `npm run check` passed formatting, lint, types and all 150 unit/component tests.
+  Its production-build worker ran out of memory during page-data collection. After stopping
+  the local dev server, `npm run build` passed compilation, types and all 30 static pages using
+  the same configuration and eleven workers. No validation or build settings were weakened.
+- `npm run test:browser` passed all nine browser suites: responsive purchase flow, catalog,
+  shared UI, account, auth, content, actual token consumption, actual rendered fonts and the
+  final route/payment audit. Browser assertions and screenshots use Chrome; this is not a
+  cross-browser or manual screen-reader certification.

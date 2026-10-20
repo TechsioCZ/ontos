@@ -36,7 +36,6 @@
   --akros-cart-primary-weight: var(--font-weight-medium);
   --akros-cart-price-weight: var(--font-weight-extrabold);
   --padding-table-cell-sm: var(--padding-table-cell-sm-y) var(--akros-cart-cell-padding);
-  --font-weight-link: var(--akros-cart-primary-weight);
 }
 
 [data-akros-cart-quantity] {

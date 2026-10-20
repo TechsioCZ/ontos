@@ -11,8 +11,6 @@
   --akros-product-detail-gallery-max-width: 600px;
   --akros-product-detail-image-aspect-ratio: 600 / 494;
   --akros-product-detail-thumbnail-width: 148px;
-  --akros-variant-filter-background: var(--color-base);
-  --akros-variant-filter-label-color: var(--color-fg-primary);
   --akros-variant-filter-padding: var(--dimension-8);
   --akros-variant-filter-label-font-size: 13px;
   --akros-variant-filter-label-line-height: var(--dimension-16);
@@ -96,7 +94,6 @@
   --color-slider-thumb-bg-hover: var(--color-bg-primary-hover);
   --color-slider-track-bg: var(--color-border-primary);
   --color-slider-track-bg-hover: var(--color-border-primary);
-  --shadow-slider-thumb: none;
 }
 
 .akros-variant-filter-range--price {

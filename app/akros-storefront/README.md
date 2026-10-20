@@ -15,6 +15,12 @@ Open <http://localhost:3000>.
 The six-part UI-kit refactor, its progress and component adoption inventories are tracked in
 [UI-KIT-REFACTOR.md](./UI-KIT-REFACTOR.md).
 
+With the storefront running, `npm run test:browser` runs all browser suites. `npm run check`
+remains the formatter/linter/type/unit-test/production-build gate; run the browser checks after
+the build. `npm run test:audit` checks 31 routes at 19 widths from 320 to 2560px, including
+breakpoint edges, actual favorite-button tokens and payment validation after delivery changes.
+Its compact report is written to `test-results/ui-audit/report.json`.
+
 `npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
 flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
 keyboard slider changes and preservation of the search query when paging through results.
@@ -58,6 +64,9 @@ AKROS Figma theme and released through the UI kit instead of being copied into t
 App component mappings live under `src/tokens/components/`; checkout-specific overrides
 are scoped to `[data-akros-checkout]`. They reuse UI-kit variables for component colors,
 typography and dimensions. Page composition uses inline Tailwind utilities.
+The accepted storefront dimensions live in `src/tokens/_akros-layout.css`; header dimensions
+stay with the header tokens. Shared Input/Textarea surface mappings live in their atom token
+files. Global CSS contains page composition rather than component-token assignments.
 Reviewed checkout nodes additionally define scoped Figma values for typography, borders,
 control shapes and colors. The root layout loads the existing local Inter font once
 and exposes it through `--font-akros` to the UI-kit font tokens. Pages and portalled
@@ -105,6 +114,12 @@ Popover's shadow alias is also resolved during compilation, so the mini-cart kee
 NumericInput hardcodes a borderless, square input and a transparent trigger; the cart's separate
 input border/radius and trigger surface still need slot utilities. Button has a font-weight token
 but no component line-height token, so checkout actions retain their line-height utility.
+
+The final audit also reproduces one UI-kit/Zag limitation: after store-card payment is selected
+for pickup and delivery changes to DPD, the disabled native radio can retain `checked`. The
+checkout draft and visible control both clear, and continuation is blocked until an available
+payment is selected. `test:audit` verifies that guard at desktop/tablet/mobile widths and records
+the native state for a future kit fix; the app does not patch the library's DOM state.
 Colors, input padding and font weights use scoped kit tokens. Layout and runtime measurements
 (such as the quantity's character count) remain app composition.
 The header account/favorites controls keep their widths as layout utilities; height, padding,

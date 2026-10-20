@@ -127,11 +127,11 @@ export function ProductGrid({
                 <LinkButton
                   aria-label="Zobrazit oblíbené produkty"
                   as={NextLink}
-                  className="akros-product-card__favorite absolute top-0 right-0 size-11 rounded-full p-0"
+                  className="akros-product-card__favorite absolute top-0 right-0 w-11"
                   href="/oblibene"
                   icon="icon-[mdi--heart-outline]"
                   iconSize="lg"
-                  size="current"
+                  size="sm"
                   theme="borderless"
                   variant="secondary"
                 />

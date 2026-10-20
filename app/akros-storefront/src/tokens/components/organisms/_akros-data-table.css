@@ -43,6 +43,13 @@
   --padding-numeric-input-input-sm: var(--dimension-4);
 }
 
+.akros-variant-table__order--package {
+  --color-button-bg-secondary-active: var(--color-base-dark);
+  --color-button-bg-secondary-base: var(--color-base-dark);
+  --color-button-bg-secondary-hover: var(--color-neutral-800);
+  --color-button-fg-secondary: var(--color-base-light);
+}
+
 /* Keep these boundaries aligned with the named container tokens above. */
 @container akros-variants (width < 1000px) {
   .akros-variant-data-table {
