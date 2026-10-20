@@ -21,9 +21,13 @@ export function LiveOrderStatus({
   useEffect(() => {
     let stopped = false;
     let timer: number | undefined;
+    // One request at a time; a focus during an in-flight read or after a final status is a no-op.
+    let busy = false;
+    let final = false;
     const load = async () => {
+      if (busy || final) return;
+      busy = true;
       window.clearTimeout(timer);
-      let final = false;
       try {
         const response = await fetch("/api/ontos/order-status", {
           method: "POST",
@@ -41,7 +45,11 @@ export function LiveOrderStatus({
             final?: unknown;
           };
           if (stopped) return;
-          if (typeof body.statusLabel !== "string" || typeof body.updatedAt !== "string")
+          if (
+            typeof body.statusLabel !== "string" ||
+            typeof body.updatedAt !== "string" ||
+            !Number.isFinite(Date.parse(body.updatedAt))
+          )
             setState({ kind: "error" });
           else {
             setState({ kind: "ready", statusLabel: body.statusLabel, updatedAt: body.updatedAt });
@@ -51,6 +59,7 @@ export function LiveOrderStatus({
       } catch {
         if (!stopped) setState({ kind: "error" });
       }
+      busy = false;
       if (!stopped && !final) timer = window.setTimeout(load, LIVE_ORDER_STATUS_POLL_MS);
     };
     const onFocus = () => void load();
