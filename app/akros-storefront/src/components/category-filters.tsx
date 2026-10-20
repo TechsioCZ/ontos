@@ -41,7 +41,7 @@ export function CategoryFilters({
       aria-label="Filtrování produktů"
       className="mb-6 grid min-w-0 gap-4 rounded-sm border-(length:--border-sm) border-base-dark bg-base p-4"
     >
-      <div className="grid min-w-0 items-end gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid min-w-0 items-end gap-4 sm:grid-cols-2">
         <FormInput
           id="category-query"
           name="q"
@@ -73,7 +73,7 @@ export function CategoryFilters({
             placeholder="Bez omezení"
           />
         </fieldset>
-        <div className="grid min-w-0 grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-2 lg:col-span-1">
+        <div className="grid min-w-0 grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-2">
           <Select
             id="category-availability"
             items={availabilityOptions}
