@@ -15,6 +15,8 @@ import { DateTime } from 'effect';
 import { useState } from 'react';
 import { readingRows } from '../../../../../../shared/domain/meters.ts';
 import type { Meter, MeterReading, ReadingRow } from '../../../../../../shared/domain/meters.ts';
+import { CommentThread } from '../../../../../ui/comment-thread.tsx';
+import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
 import { loadRecords } from '../../../../../ui/use-agenda.ts';
 import type { FailureReason } from '../../../../../ui/use-agenda.ts';
 import { MeterForm, ReadingForm } from './meter-forms.tsx';
@@ -377,6 +379,9 @@ export const MeterDetail = ({
           </figure>
         )}
       </SectionCard>
+
+      <CommentThread subject={{ id: meter.id, kind: 'meter', label: meter.serialNumber }} />
+      <LinkedDocuments hideWhenForbidden subject={{ id: meter.id, kind: 'meter', label: meter.serialNumber }} />
 
       <SectionCard title={t(`${k}.detail.masterData`)}>
         <DetailList
