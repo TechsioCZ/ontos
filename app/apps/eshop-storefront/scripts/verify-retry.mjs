@@ -33,7 +33,7 @@ globalThis.fetch = async (url, init) => {
   assert.equal(init.headers['x-ontos-composition-revision'], revision);
   if (mode === 'forbidden') return Response.json({ code: 'forbidden' }, { status: 403 });
   if (mode === 'invalid') return Response.json({ code: 'invalid' }, { status: 422 });
-  if (mode === 'unauthorized' || (mode === 'renew' && reads === 1)) return Response.json({}, { status: 401 });
+  if (mode === 'unauthorized' || (mode === 'renew' && reads < 4)) return Response.json({}, { status: 401 });
   if (mode === 'hung') {
     await new Promise((_, reject) => {
       if (init.signal.aborted) reject(init.signal.reason);
@@ -72,11 +72,11 @@ try {
 
   reset('renew');
   await readRecords('merchandise', 'records', {});
-  assert.equal(reads, 2);
+  assert.equal(reads, 4, 'release convergence can reject more than one newly requested context');
   reset('unauthorized');
   await assert.rejects(() => readRecords('merchandise', 'records', {}), rejected(401));
-  assert.equal(reads, 2, 'rejected read assertion is renewed only once');
-  console.log('PASS rejected read assertion renewed once, persistent rejection stays blocked');
+  assert.equal(reads, 8, 'persistent read authentication rejection exhausts the same finite budget');
+  console.log('PASS repeated read assertion rejection recovers; persistent rejection stays blocked');
 
   for (const [next, status] of [['forbidden', 403], ['invalid', 422], ['gateway-forbidden', 403], ['gateway-unauthorized', 401]]) {
     reset(next);

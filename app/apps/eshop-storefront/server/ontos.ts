@@ -1,6 +1,6 @@
 // OntOS client for the storefront BFF: the same nonhuman-principal path as tools/ontos-agent-mcp.
 //   1. POST {shell}/shell-super-app-api/auth/api-key/gateway-context  (x-api-key, audience, legalEntityId)
-//      -> single-use bearer assertion + apiBaseUrl of the vertical on the shell origin.
+//      -> short-lived bearer assertion + apiBaseUrl of the vertical on the shell origin.
 //   2. Reads:   POST {shell}{apiBaseUrl}/reads/{readName}
 //      Actions: POST {shell}{apiBaseUrl}/{vertical}/actions/{slug} with an `idempotency-key`.
 // Core evaluates permissions and legal-entity scope on every call; the key is never sent to the browser.
@@ -186,10 +186,9 @@ const post = async (
 const READ_BACKOFF_MS = [400, 800, 1200, 2000, 3000, 4000, 4000] as const;
 const READ_DEADLINE_MS = 20_000;
 
-/** Governed records read of a vertical (fresh assertion per call: assertions are single-use). */
+/** Governed records read: ask the gateway for an admitted context on every attempt. */
 export const readRecords = async (vertical: string, readName: string, query: unknown): Promise<unknown> => {
   const deadline = AbortSignal.timeout(READ_DEADLINE_MS);
-  let renewedAssertion = false;
   for (let attempt = 0; ; attempt += 1) {
     let reading = false;
     try {
@@ -198,13 +197,12 @@ export const readRecords = async (vertical: string, readName: string, query: unk
       return await post(context, `/reads/${segment(readName)}`, query, {}, deadline);
     } catch (error) {
       if (!(error instanceof OntosError)) throw error;
-      // A rejected read assertion may be renewed ONCE. Never retry gateway credential rejection,
-      // permission denial, business validation, or an Action; renewal must still pass Core checks.
-      const renew = reading && error.status === 401 && !renewedAssertion;
-      const retryable = [502, 503, 504, 409].includes(error.status) || renew;
+      // Release mismatch is also a read-side 401 while issuer/verifier composition views converge.
+      // Reacquire context within this SAME budget; never retry gateway credential rejection,
+      // permission denial, business validation, or an Action. Every attempt still passes Core.
+      const retryable = [502, 503, 504, 409].includes(error.status) || (reading && error.status === 401);
       const wait = READ_BACKOFF_MS[attempt];
       if (!retryable || error.code === 'storefront_not_configured' || wait === undefined || deadline.aborted) throw error;
-      if (renew) renewedAssertion = true;
       // Rediscover composition after *any* transient failure, not just a visible 409.
       liveRevision = undefined;
       await delay(wait, undefined, { signal: deadline }).catch(() => { throw error; });
