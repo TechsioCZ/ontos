@@ -143,16 +143,20 @@ const batchColumns = (records: RecordsResponse): ColumnDef<ImportBatch>[] => [
   },
   {
     accessorKey: 'fileName',
-    cell: (info) => <span className="truncate font-medium">{info.row.original.fileName}</span>,
+    cell: (info) => (
+      <span className="block truncate font-medium" title={info.row.original.fileName}>
+        {info.row.original.fileName}
+      </span>
+    ),
     header: 'Soubor',
-    meta: { type: 'string', width: 240 },
+    meta: { type: 'string', width: 300 },
   },
   { accessorKey: 'source', header: 'Zdroj', meta: { type: 'string', width: 160 } },
   {
     accessorFn: (batch) => principalLabel(records, batch.importedBy),
     header: 'Autor',
     id: 'importedBy',
-    meta: { type: 'string', width: 150 },
+    meta: { type: 'string', width: 190 },
   },
   { accessorKey: 'rowCount', header: 'Řádků', meta: { align: 'end', type: 'number', width: 80 } },
   { accessorFn: (batch) => batch.created ?? 0, header: 'Nové', id: 'created', meta: { align: 'end', type: 'number', width: 80 } },

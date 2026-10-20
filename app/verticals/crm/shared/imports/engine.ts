@@ -96,7 +96,15 @@ const definedEntries = <T extends Record<string, unknown>>(value: T) =>
     [K in keyof T]?: Exclude<T[K], undefined>;
   };
 
-const formatFor = (value: string | undefined) => value ?? 'bez času';
+const pragueTime = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Prague' });
+/** Readable Prague time for review reasons stored with the order. */
+const formatFor = (value: string | undefined) => {
+  if (value === undefined) {
+    return 'bez času';
+  }
+  const epoch = Date.parse(value);
+  return Number.isNaN(epoch) ? value : pragueTime.format(epoch);
+};
 
 /** Applies parsed rows to the slice. Pure; the caller persists the returned slice. */
 export const importOrders = (

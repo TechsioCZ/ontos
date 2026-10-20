@@ -144,15 +144,20 @@ export const PairingForm = ({
           </span>
           <div className="flex flex-wrap gap-100">
             {candidates.map((candidate) => (
-              <Button
+              <button
+                className={`flex flex-col items-start gap-50 rounded-lg border px-150 py-100 text-left text-sm ${clientId === candidate.clientId ? 'border-primary bg-surface' : 'border-border-primary bg-base'}`}
                 key={candidate.clientId}
                 onClick={() => setClientId(candidate.clientId)}
-                size="sm"
-                theme={clientId === candidate.clientId ? 'solid' : 'outlined'}
-                variant="secondary"
+                type="button"
               >
-                {`${clientLabel(records, candidate.clientId) ?? candidate.clientId} · ${candidate.reason}`}
-              </Button>
+                <span className="flex items-center gap-50 font-medium">
+                  {clientId === candidate.clientId && (
+                    <span aria-hidden="true" className="icon-[mdi--check-circle] size-200 text-success" />
+                  )}
+                  {clientLabel(records, candidate.clientId) ?? candidate.clientId}
+                </span>
+                <span className="text-fg-secondary text-xs">{candidate.reason}</span>
+              </button>
             ))}
           </div>
         </div>
@@ -346,7 +351,7 @@ const LinesTable = ({ order }: { readonly order: ImportedOrder }) => {
         <tr>
           <th className="py-50 pr-100 text-left font-normal">SKU</th>
           <th className="py-50 pr-100 text-left font-normal">Název</th>
-          <th className="py-50 pr-100 text-right font-normal">Množství</th>
+          <th className="py-50 pr-200 text-right font-normal">Množství</th>
           <th className="py-50 text-right font-normal">Částka</th>
         </tr>
       </thead>
@@ -355,7 +360,7 @@ const LinesTable = ({ order }: { readonly order: ImportedOrder }) => {
           <tr className="border-border-primary border-t" key={`${line.sku ?? line.name}-${String(index)}`}>
             <td className="py-50 pr-100 font-mono text-xs">{line.sku ?? '—'}</td>
             <td className="py-50 pr-100">{line.name}</td>
-            <td className="py-50 pr-100 text-right tabular-nums">{line.quantity.replace('.', ',')}</td>
+            <td className="py-50 pr-200 text-right tabular-nums">{line.quantity.replace('.', ',')}</td>
             <td className="py-50 text-right tabular-nums">{formatAmount(line.amount, order.currency)}</td>
           </tr>
         ))}
@@ -427,7 +432,7 @@ export const OrderDetailPanel = ({
               Potvrzená duplicita – mimo souhrny
             </Badge>
           )}
-          <Badge size="sm" variant="secondary">
+          <Badge size="sm" variant="outline">
             Import CSV – bez živého napojení
           </Badge>
         </div>

@@ -114,7 +114,7 @@ export const ClientOrdersTab = ({ client, records }: ClientCardTabProps) => {
                 <Fragment key={order.id}>
                   <tr
                     aria-expanded={open}
-                    className="cursor-pointer border-border-primary border-t hover:bg-surface-hover"
+                    className="cursor-pointer border-border-primary border-t"
                     onClick={() => setOpenId(open ? undefined : order.id)}
                   >
                     <td className="px-150 py-100">
@@ -146,7 +146,7 @@ export const ClientOrdersTab = ({ client, records }: ClientCardTabProps) => {
                     </td>
                   </tr>
                   {open && (
-                    <tr className="bg-surface-secondary">
+                    <tr className="bg-base">
                       <td className="px-150" colSpan={5}>
                         <OrderHistory order={order} />
                       </td>

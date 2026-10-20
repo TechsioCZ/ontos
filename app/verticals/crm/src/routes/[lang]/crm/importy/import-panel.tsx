@@ -134,7 +134,7 @@ export const ImportPanel = ({
     >
       <div className="flex flex-col gap-250">
         <div
-          className={`flex flex-col items-center gap-150 rounded-lg border-2 border-dashed p-300 text-center ${dragging ? 'border-border-info bg-surface-secondary' : 'border-border-primary'}`}
+          className={`flex flex-col items-center gap-150 rounded-lg border-2 border-dashed p-300 text-center ${dragging ? 'border-primary bg-base' : 'border-border-primary'}`}
           onDragLeave={() => setDragging(false)}
           onDragOver={(event) => {
             event.preventDefault();
