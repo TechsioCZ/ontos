@@ -13,6 +13,16 @@
 
   .crm-client-card-tabs [role='tab'] {
     flex: 1 0 45%;
+    border-bottom: 2px solid transparent;
     white-space: normal;
+  }
+
+  .crm-client-card-tabs [role='tab'][aria-selected='true'] {
+    border-bottom-color: currentColor;
+  }
+
+  /* The library's moving indicator assumes a single row. */
+  .crm-client-card-tabs [data-part='indicator'] {
+    display: none;
   }
 }
