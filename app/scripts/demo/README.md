@@ -71,8 +71,57 @@ The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 | 4117            | siampark-work                                                                                          |
 | 4118            | siampark-billing-finance                                                                               |
 | 4114–4116, 4119 | siampark property / occupancy / agreements (started by default), relationships (not started)                    |
+| 1025 / 8025     | Mailpit: SMTP (127.0.0.1 only) / web UI + API http://localhost:8025 |
+| 3096            | E-mail dispatcher: read-only delivery receipts (127.0.0.1) |
 | 5433            | Postgres (`siampark_demo` database, admin `ontos_admin`)                                               |
 | 50051 / 8443    | SpiceDB gRPC / HTTP (TLS)                                                                              |
+
+## Real e-mail (SMTP, Mailpit)
+
+Nothing is simulated: e-mails really go over SMTP. In the demo the SMTP server is Mailpit (container
+`ontos-demo-mailpit`), which captures every message instead of delivering it; open http://localhost:8025.
+
+What is sent, exactly once per event (after the database commit, by `scripts/demo/email-dispatcher/main.mts`):
+
+- AKROS e-shop orders (channel STOREFRONT): order received, then the status changes Potvrzená
+  (Zpracovává se), Předáno dopravci, Dokončená and Stornovaná. Only orders created after the dispatcher's first
+  start (`demo_email.settings.enabled_since`) get e-mails, so old fixtures are never mailed.
+- Siampark payment reminders („Připravit upomínku“ → „Odeslat e-mailem“ in Faktury a finance).
+
+The dispatcher claims each e-mail in its own ledger `demo_email.deliveries` (primary key = dedupe key) before
+sending. SMTP unreachable before any data was sent → `RETRY` (up to 20 attempts); a broken connection after
+the data → `UNKNOWN` and never resent. Staff UI and the AKROS confirmation page show „Odesláno e-mailem“ with
+the time the SMTP server accepted the message.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SMTP_HOST` | `127.0.0.1` | SMTP server |
+| `SMTP_PORT` | `1025` | SMTP port (Mailpit) |
+| `SMTP_SECURE` | `false` | `true` = implicit TLS (normally port 465). STARTTLS (587) is not supported. |
+| `SMTP_USER` / `SMTP_PASSWORD` | – | AUTH PLAIN; only accepted together with `SMTP_SECURE=true` |
+| `SMTP_TIMEOUT_MS` | `10000` | Socket timeout per attempt |
+| `SMTP_FROM` | `OntOS <oznameni@ontos.demo>` | Fallback sender |
+| `AKROS_EMAIL_FROM` | `AKROS e-shop <eshop@akros.demo>` | Sender of AKROS order e-mails |
+| `SIAMPARK_EMAIL_FROM` | `Siampark – finanční oddělení <finance@siampark.demo>` | Sender of payment reminders |
+| `AKROS_STOREFRONT_PUBLIC_URL` | `http://localhost:3070` | Link in AKROS e-mails |
+| `EMAIL_DISPATCHER_PORT` | `3096` | Receipts API (127.0.0.1 only) |
+| `EMAIL_DISPATCHER_INTERVAL_MS` | `2000` | Poll interval |
+| `EMAIL_DISPATCHER_ALLOWED_ORIGINS` | `http://localhost:3020,http://127.0.0.1:3020` | CORS origins of the staff app |
+| `EMAIL_DISPATCHER_URL` | `http://127.0.0.1:3096` | Used server-side by the AKROS storefront |
+
+A real SMTP server is configuration only: put e.g. `SMTP_HOST=smtp.vase-domena.cz`, `SMTP_PORT=465`,
+`SMTP_SECURE=true`, `SMTP_USER=…`, `SMTP_PASSWORD=…`, `AKROS_EMAIL_FROM=AKROS <eshop@vase-domena.cz>` into
+`app/.env` and run `scripts/demo/email-dispatcher/restart.sh`. Recipients then receive real e-mail.
+
+Checks:
+
+    curl -s http://127.0.0.1:3096/healthz
+    curl -s 'http://127.0.0.1:3096/v1/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026'
+    curl -s 'http://localhost:8025/api/v1/messages?limit=10'
+    curl -s 'http://localhost:8025/api/v1/search?query=subject:%22OBJ-2026-0026%22'
+
+Ledger: `select dedupe_key, status, sent_at from demo_email.deliveries order by created_at desc limit 20;`
+Restart only e-mail: `scripts/demo/email-dispatcher/restart.sh` (log `.scratch/demo-logs/email-dispatcher.log`).
 
 ## Portable rental data seeder
 

@@ -5,6 +5,7 @@
 #   DEMO_VERTICALS="party-registry siampark-work" scripts/demo/up.sh
 #   DEMO_REBUILD=1 scripts/demo/up.sh  # force native rebuild of every selected app
 #   DEMO_RESET=0 scripts/demo/up.sh    # keep database data (SpiceDB grants are still re-written)
+# Real e-mail: Mailpit (SMTP 127.0.0.1:1025, UI http://localhost:8025) + scripts/demo/email-dispatcher (receipts :3096).
 #
 # Re-running stops the previous demo processes first. Logs: app/.scratch/demo-logs/*.log.
 set -euo pipefail
@@ -118,7 +119,7 @@ step env-local-ensure pnpm_ env:local:ensure
 step spicedb-tls pnpm_ spicedb:tls:local
 load_env
 
-# 2. Containers (OrbStack). Isolated project/volume: ontos-demo-db + ontos-demo-spicedb on 5433/50051/8443.
+# 2. Containers (OrbStack). Isolated project/volume: ontos-demo-db + ontos-demo-spicedb on 5433/50051/8443, ontos-demo-mailpit on 1025/8025.
 step containers "${COMPOSE[@]}" up -d --wait
 
 # 3. Schema, base context, Siampark baseline, authorization. SpiceDB is in-memory: grants are re-written
@@ -214,6 +215,7 @@ assert_free() {
 assert_free "$SHELL_PORT" shell-super-app
 assert_free "$STOREFRONT_PORT" eshop-storefront
 assert_free "$COMPOSITION_PORT" composition
+assert_free "${EMAIL_DISPATCHER_PORT:-3096}" email-dispatcher
 for id in "${VERTICALS[@]}"; do assert_free "$(port_of "$id")" "$id"; done
 
 say "starting shell-super-app on :$SHELL_PORT and ${#VERTICALS[@]} verticals"
@@ -236,6 +238,11 @@ start outbox-worker-host "${WITH_ENV[@]}" node --experimental-strip-types ./scri
 sleep 3
 kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid")" 2>/dev/null ||
   say "WARN outbox worker host exited; see $LOG_DIR/outbox-worker-host.log"
+
+# Real e-mail: after-commit dispatcher (AKROS order e-mails, Siampark payment reminders) over SMTP (Mailpit by default).
+say "starting the e-mail dispatcher (SMTP ${SMTP_HOST:-127.0.0.1}:${SMTP_PORT:-1025})"
+start email-dispatcher "${WITH_ENV[@]}" node scripts/demo/email-dispatcher/main.mts
+wait_http "http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz" 60 email-dispatcher
 
 curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WARN shell root did not answer 2xx"
 
@@ -267,6 +274,7 @@ step akros-storefront "$APP/akros-storefront/scripts/demo-restart.sh"
 cat <<EOF
 
 [demo] AKROS: http://localhost:3070 (OntOS-backed standalone Next.js storefront)
+[demo] E-maily (Mailpit): http://localhost:8025   SMTP 127.0.0.1:1025   dispatcher: http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs   (composition :$COMPOSITION_PORT)
 [demo] Storefront: http://localhost:$STOREFRONT_PORT (Kavárna Doma, customer-facing DEMO)
 [demo] Verticals: ${VERTICALS[*]}
