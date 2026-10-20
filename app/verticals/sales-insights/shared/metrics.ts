@@ -444,7 +444,7 @@ const METRIC_DEFINITIONS = {
     allowedGroupings: PIPELINE_GROUPINGS,
     collect: (inputs) => openOpportunityRows(inputs, (o) => o.amountMinor),
     id: 'pipeline_open_value',
-    label: 'Pipeline (otevřené)',
+    label: 'Hodnota otevřených příležitostí',
     ratio: false,
     snapshot: true,
     source: `${SOURCE_OPPORTUNITIES} (open stages, current snapshot; dated by expectedCloseDate)`,
@@ -454,7 +454,7 @@ const METRIC_DEFINITIONS = {
     allowedGroupings: PIPELINE_GROUPINGS,
     collect: (inputs) => openOpportunityRows(inputs, (o) => Math.round((o.amountMinor * o.probability) / 100)),
     id: 'pipeline_weighted_value',
-    label: 'Vážená pipeline',
+    label: 'Vážená hodnota příležitostí',
     ratio: false,
     snapshot: true,
     source: `${SOURCE_OPPORTUNITIES} (amount × probability, current snapshot; dated by expectedCloseDate)`,
@@ -604,7 +604,7 @@ const METRIC_ORDER: readonly MetricId[] = [
  */
 const KPI_TILES: readonly { readonly id: MetricId; readonly label: string }[] = [
   { id: 'revenue_invoiced', label: 'Tržby (potvrzené)' },
-  { id: 'pipeline_open_value', label: 'Otevřená pipeline (k dnešku)' },
+  { id: 'pipeline_open_value', label: 'Otevřené příležitosti (k dnešku)' },
   { id: 'opportunities_won', label: 'Vyhráno' },
   { id: 'win_rate', label: 'Úspěšnost' },
 ];

@@ -30,7 +30,7 @@
       "home": {
         "title": "Domů",
         "welcomeKicker": "Pracovní prostor",
-        "welcomeTitle": "Vítejte, {{name}}",
+        "welcomeTitle": "Vítejte",
         "welcomeCompany": "Pracujete ve společnosti {{company}}",
         "welcomeHint": "Agendy, ke kterým máte přístup, najdete v levém menu.",
         "start": "Začít: {{destination}}",

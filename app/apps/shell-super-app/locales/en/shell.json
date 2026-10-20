@@ -30,7 +30,7 @@
       "home": {
         "title": "Home",
         "welcomeKicker": "Workspace",
-        "welcomeTitle": "Welcome, {{name}}",
+        "welcomeTitle": "Welcome",
         "welcomeCompany": "You are working in {{company}}",
         "welcomeHint": "The areas you can access are listed in the menu on the left.",
         "start": "Start: {{destination}}",

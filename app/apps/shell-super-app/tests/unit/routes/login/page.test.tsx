@@ -376,6 +376,32 @@ it.effect('keeps navigation on the login route when auth cache refresh fails', (
   }),
 );
 
+it.effect('keeps an unavailable explanation in the form after toast notifications are dismissed', () =>
+  Effect.gen(function* retainsUnavailableFeedback() {
+    signInMock.mockReturnValueOnce(Effect.fail({ _tag: 'AuthenticationUnavailableProblem' }));
+    yield* submitLogin('admin', 'secret');
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(screen.getByRole('alert').textContent).toContain('shell.login.error.unavailable');
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+      }),
+    );
+    toaster.remove();
+    expect(screen.getByRole('alert').textContent).toContain('shell.login.error.unavailable');
+    expect(getLogin()).toHaveProperty('value', 'admin');
+    expect(getPassword()).toHaveProperty('value', '');
+    const user = userEvent.setup();
+    yield* Effect.promise(() => user.type(getPassword(), 'secret'));
+    yield* Effect.promise(() => user.click(getSubmit()));
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(screen.queryByText('shell.login.error.unavailable')).toBeNull();
+        expect(navigateMock).toHaveBeenCalled();
+      }),
+    );
+  }),
+);
+
 it.effect('keeps the login and clears only the password after rejected credentials', () =>
   Effect.gen(function* keepsLoginAfterRejectedCredentials() {
     signInMock.mockReturnValueOnce(Effect.fail({ _tag: 'InvalidCredentialsProblem' }));

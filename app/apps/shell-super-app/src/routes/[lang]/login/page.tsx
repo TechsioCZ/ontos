@@ -59,14 +59,12 @@ const LoginPage = () => {
   const [attempt, setAttempt] = useState<'idle' | 'opening' | 'signing-in'>('idle');
   // A form action resets its uncontrolled fields after every attempt; keep the login so only the password is retyped.
   const [attemptedLogin, setAttemptedLogin] = useState('');
+  // Keep failures next to the form until retry; a short-lived toast is easy to miss during an outage.
+  const [submissionError, setSubmissionError] = useState<string>();
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;
-      toaster.create({
-        description: t(internalErrorMessageKey),
-        title: t(errorTitleKey),
-        type: 'error',
-      });
+      setSubmissionError(internalErrorMessageKey);
       loginRef.current?.focus();
     });
 
@@ -79,6 +77,7 @@ const LoginPage = () => {
     const password = formData.get('password');
     const loginValue = Predicate.isString(login) ? login : '';
     const passwordValue = Predicate.isString(password) ? password : '';
+    setSubmissionError(undefined);
     setAttemptedLogin(loginValue.trim());
     const nextValidation = {
       loginMissing: loginValue.trim().length === 0,
@@ -122,11 +121,7 @@ const LoginPage = () => {
         Effect.matchEffect({
           onFailure: (error) =>
             Effect.sync(() => {
-              toaster.create({
-                description: t(authenticationErrorMessageKey(error)),
-                title: t(errorTitleKey),
-                type: 'error',
-              });
+              setSubmissionError(authenticationErrorMessageKey(error));
               // The login stays filled after a failed attempt, so the retry starts at the password.
               passwordRef.current?.focus();
             }),
@@ -213,6 +208,12 @@ const LoginPage = () => {
                   validateStatus={validation.passwordMissing ? 'error' : 'default'}
                 />
               </div>
+              {submissionError === undefined ? null : (
+                <div className="rounded-md border border-border-primary bg-surface p-200 text-sm" role="alert">
+                  <p className="font-semibold">{t(errorTitleKey)}</p>
+                  <p>{t(submissionError)}</p>
+                </div>
+              )}
               <Button
                 block
                 disabled={attempt !== 'idle'}

@@ -74,8 +74,7 @@ export const HomeWelcome = ({
     .filter((group) => group.links.length > 0);
   const links = groups.flatMap((group) => group.links);
   const start =
-    preferredStart.map((key) => links.find((link) => link.key === key)).find((link) => link !== undefined) ??
-    links[0];
+    preferredStart.map((key) => links.find((link) => link.key === key)).find((link) => link !== undefined) ?? links[0];
   const profile = companyProfiles[legalEntityId?.slice(-3) ?? ''];
 
   return (
@@ -95,9 +94,8 @@ export const HomeWelcome = ({
               </Badge>
             )}
           </div>
-          <h2 className="font-semibold text-fg-primary text-xl">
-            {t('shell.dashboard.home.welcomeTitle', { name: displayName })}
-          </h2>
+          <h2 className="font-semibold text-fg-primary text-xl">{t('shell.dashboard.home.welcomeTitle')}</h2>
+          <p className="text-fg-secondary text-sm">{displayName}</p>
           <p className="text-fg-secondary text-sm">
             {profile === undefined
               ? t('shell.dashboard.home.welcomeHint')

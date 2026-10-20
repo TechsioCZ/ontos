@@ -323,7 +323,7 @@ it('computes the four headline KPIs over the period', () => {
   const byId = new Map(kpis.map((kpi) => [kpi.id, kpi.value]));
   expect(kpis.map((kpi) => [kpi.id, kpi.label, kpi.unit])).toEqual([
     ['revenue_invoiced', 'Tržby (potvrzené)', 'CZK'],
-    ['pipeline_open_value', 'Otevřená pipeline (k dnešku)', 'CZK'],
+    ['pipeline_open_value', 'Otevřené příležitosti (k dnešku)', 'CZK'],
     ['opportunities_won', 'Vyhráno', 'CZK'],
     ['win_rate', 'Úspěšnost', 'percent'],
   ]);
@@ -453,8 +453,8 @@ it('summarises the open pipeline today next to the opened, won and lost opportun
   expect(summary.open.count).toBe(2);
   expect(summary.open.valueMinor).toBe(480_000);
   expect(summary.open.byStage).toEqual([
-    { count: 1, label: 'Lead', stage: 'LEAD', valueMinor: 80_000 },
-    { count: 0, label: 'Kvalifikace', stage: 'QUALIFIED', valueMinor: 0 },
+    { count: 1, label: 'Nová', stage: 'LEAD', valueMinor: 80_000 },
+    { count: 0, label: 'Kvalifikovaná', stage: 'QUALIFIED', valueMinor: 0 },
     { count: 0, label: 'Nabídka', stage: 'PROPOSAL', valueMinor: 0 },
     { count: 1, label: 'Vyjednávání', stage: 'NEGOTIATION', valueMinor: 400_000 },
   ]);
