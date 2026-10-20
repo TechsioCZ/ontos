@@ -1,9 +1,13 @@
 // AREA: clients (C00/C01) — owned by the crm-clients lane. Command schemas + reducer.
 // To add a command: add a TaggedStruct to clientsCommandSchemas and a Match.tag branch in applyClientsCommand.
+//
+// Every change appends a readable ClientEvent (card "Historie" tab); archiving never deletes anything (C01-03),
+// removing a contact person only archives it, and reassignment keeps the full history (C00-03).
 import { Effect, Match, Schema } from 'effect';
-import type { Client, ContactPerson } from '../domain/clients.ts';
+import type { Client, ClientEvent, ClientEventKind, ClientsSlice, ContactPerson } from '../domain/clients.ts';
 import { ClientKindSchema } from '../domain/clients.ts';
 import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
+import type { CrmState } from '../domain/state.ts';
 import type { CommandContext, Reducer } from './context.ts';
 import {
   conflict,
@@ -23,11 +27,24 @@ const ClientFieldsSchema = {
   note: Schema.optionalKey(LongTextSchema),
   phone: OptionalText,
   regNo: OptionalText,
+  segment: OptionalText,
+  vatNo: OptionalText,
+  website: OptionalText,
 };
+const ContactFieldsSchema = {
+  email: OptionalText,
+  note: Schema.optionalKey(LongTextSchema),
+  phone: OptionalText,
+  primary: Schema.optionalKey(Schema.Boolean),
+  role: OptionalText,
+};
+const NewContactSchema = Schema.Struct({ ...ContactFieldsSchema, name: ShortTextSchema });
 
 export const clientsCommandSchemas = [
   Schema.TaggedStruct('CreateClient', {
     ...ClientFieldsSchema,
+    /** Contact persons created together with the client (C01-01). */
+    contacts: Schema.optionalKey(Schema.Array(NewContactSchema).check(Schema.isMaxLength(20))),
     kind: ClientKindSchema,
     name: ShortTextSchema,
     /** Defaults to the creating salesperson; only demo.crm.assign may choose someone else. */
@@ -35,17 +52,25 @@ export const clientsCommandSchemas = [
   }),
   Schema.TaggedStruct('UpdateClient', {
     id: EntityIdSchema,
-    patch: Schema.Struct({ ...ClientFieldsSchema, name: Schema.optionalKey(ShortTextSchema) }),
+    patch: Schema.Struct({
+      ...ClientFieldsSchema,
+      kind: Schema.optionalKey(ClientKindSchema),
+      name: Schema.optionalKey(ShortTextSchema),
+    }),
   }),
   Schema.TaggedStruct('ArchiveClient', { id: EntityIdSchema }),
+  Schema.TaggedStruct('RestoreClient', { id: EntityIdSchema }),
   Schema.TaggedStruct('AddContactPerson', {
+    ...ContactFieldsSchema,
     clientId: EntityIdSchema,
-    email: OptionalText,
     name: ShortTextSchema,
-    note: Schema.optionalKey(LongTextSchema),
-    phone: OptionalText,
-    role: OptionalText,
   }),
+  Schema.TaggedStruct('UpdateContactPerson', {
+    contactId: EntityIdSchema,
+    patch: Schema.Struct({ ...ContactFieldsSchema, name: Schema.optionalKey(ShortTextSchema) }),
+  }),
+  /** Archives the contact person (kept in history, hidden from the card). */
+  Schema.TaggedStruct('RemoveContactPerson', { contactId: EntityIdSchema }),
   Schema.TaggedStruct('AssignClient', {
     clientId: EntityIdSchema,
     reason: Schema.optionalKey(LongTextSchema),
@@ -59,8 +84,81 @@ export type ClientsCommand = typeof ClientsCommandSchema.Type;
 const replaceClient = (items: readonly Client[], next: Client) =>
   items.map((entry) => (entry.id === next.id ? next : entry));
 
-const requireSalesperson = (context: CommandContext, salespeople: readonly { id: string }[], id: string) =>
-  salespeople.some((person) => person.id === id) ? Effect.void : invalid('Obchodník neexistuje');
+const replaceContact = (items: readonly ContactPerson[], next: ContactPerson) =>
+  items.map((entry) => (entry.id === next.id ? next : entry));
+
+const requireSalesperson = (salespeople: readonly { id: string; active: boolean }[], id: string) =>
+  salespeople.some((person) => person.id === id && person.active)
+    ? Effect.void
+    : invalid('Obchodník neexistuje nebo není aktivní');
+
+const event = (
+  context: CommandContext,
+  suffix: string,
+  clientId: string,
+  kind: ClientEventKind,
+  extra: { readonly fields?: readonly string[]; readonly subject?: string } = {},
+): ClientEvent => ({
+  ...definedOnly({ subject: extra.subject }),
+  ...(extra.fields === undefined || extra.fields.length === 0 ? {} : { fields: extra.fields }),
+  at: context.now,
+  by: context.viewer.principalId,
+  clientId,
+  id: newId(context, `event-${suffix}`),
+  kind,
+});
+
+const withClients = (state: CrmState, clients: Partial<ClientsSlice>, events: readonly ClientEvent[]): CrmState => ({
+  ...state,
+  clients: { ...state.clients, ...clients, events: [...(state.clients.events ?? []), ...events] },
+});
+
+/**
+ * Applies a patch where `''` clears an optional field and `undefined` leaves it alone. Returns the next record
+ * and the keys that really changed.
+ */
+const applyPatch = <T extends Record<string, unknown>>(current: T, patch: Record<string, unknown>) => {
+  const changed: string[] = [];
+  const next: Record<string, unknown> = { ...current };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (value === '') {
+      if (key in next) {
+        delete next[key];
+        changed.push(key);
+      }
+      continue;
+    }
+    if (next[key] !== value) {
+      next[key] = value;
+      changed.push(key);
+    }
+  }
+  return { changed, next: next as T };
+};
+
+/** A contact person of a client the viewer may write. Foreign contacts answer "not found" (C00). */
+const requireWritableContact = (state: CrmState, context: CommandContext, contactId: string) =>
+  Effect.gen(function* writableContact() {
+    const contact = state.clients.contacts.find((entry) => entry.id === contactId);
+    if (contact === undefined) {
+      return yield* notFound('Kontaktní osoba neexistuje nebo k ní nemáte přístup');
+    }
+    yield* requireWritableClient(state, context, contact.clientId);
+    return contact;
+  });
+
+/** Only one primary contact per client: setting a new one clears the flag on the others. */
+const withPrimary = (contacts: readonly ContactPerson[], clientId: string, primaryId: string) =>
+  contacts.map((entry) => {
+    if (entry.clientId !== clientId || entry.id === primaryId || entry.primary !== true) {
+      return entry;
+    }
+    const { primary: _primary, ...rest } = entry;
+    return rest;
+  });
 
 export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, context) =>
   Match.value(command).pipe(
@@ -70,7 +168,7 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         const owner = value.ownerSalespersonId ?? context.viewer.salespersonId;
         if (owner !== undefined && owner !== context.viewer.salespersonId) {
           yield* requireAssign(context);
-          yield* requireSalesperson(context, state.salespeople, owner);
+          yield* requireSalesperson(state.salespeople, owner);
         }
         if (!context.viewer.writeAll && owner === undefined) {
           return yield* invalid('Obchodník bez záznamu obchodníka nemůže založit klienta');
@@ -83,7 +181,10 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
             note: value.note,
             ownerSalespersonId: owner,
             phone: value.phone,
-            regNo: value.regNo,
+            regNo: value.kind === 'organization' ? value.regNo : undefined,
+            segment: value.segment,
+            vatNo: value.kind === 'organization' ? value.vatNo : undefined,
+            website: value.website,
           }),
           createdAt: context.now,
           createdBy: context.viewer.principalId,
@@ -93,6 +194,19 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           status: 'active',
           updatedAt: context.now,
         };
+        const newContacts = value.contacts ?? [];
+        const firstPrimary = newContacts.findIndex((entry) => entry.primary === true);
+        const contacts: ContactPerson[] = newContacts.map((entry, index) => ({
+          ...definedOnly({ email: entry.email, note: entry.note, phone: entry.phone, role: entry.role }),
+          ...(index === firstPrimary ? { primary: true } : {}),
+          clientId: id,
+          createdAt: context.now,
+          createdBy: context.viewer.principalId,
+          id: newId(context, `contact-${index}`),
+          name: entry.name,
+          status: 'active',
+          updatedAt: context.now,
+        }));
         const history =
           owner === undefined
             ? state.clients.assignmentHistory
@@ -107,31 +221,43 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
                 },
               ];
         return {
-          entityIds: [id],
-          state: {
-            ...state,
-            clients: { ...state.clients, assignmentHistory: history, items: [...state.clients.items, client] },
-          },
+          entityIds: [id, ...contacts.map((entry) => entry.id)],
+          state: withClients(
+            state,
+            {
+              assignmentHistory: history,
+              contacts: [...state.clients.contacts, ...contacts],
+              items: [...state.clients.items, client],
+            },
+            [
+              event(context, 'created', id, 'client_created', { subject: value.name }),
+              ...contacts.map((entry, index) =>
+                event(context, `contact-${index}`, id, 'contact_added', { subject: entry.name }),
+              ),
+            ],
+          ),
         };
       }),
     ),
     Match.tag('UpdateClient', (value) =>
       Effect.gen(function* updateClient() {
         const client = yield* requireWritableClient(state, context, value.id);
-        const { name, ...optional } = value.patch;
-        // An empty string clears an optional field.
-        const cleared = Object.fromEntries(
-          Object.entries(client).filter(([key]) => optional[key as keyof typeof optional] !== ''),
-        );
-        const next = {
-          ...cleared,
-          ...definedOnly(optional),
-          name: name ?? client.name,
-          updatedAt: context.now,
-        } as Client;
+        if (client.status === 'archived') {
+          return yield* conflict('Archivovaného klienta nelze upravit; nejprve jej obnovte');
+        }
+        const kind = value.patch.kind ?? client.kind;
+        const patch =
+          kind === 'person' ? { ...value.patch, regNo: client.regNo === undefined ? undefined : '', vatNo: client.vatNo === undefined ? undefined : '' } : value.patch;
+        const { changed, next } = applyPatch(client, patch);
+        if (changed.length === 0) {
+          return { entityIds: [client.id], state };
+        }
+        const updated: Client = { ...next, updatedAt: context.now };
         return {
           entityIds: [client.id],
-          state: { ...state, clients: { ...state.clients, items: replaceClient(state.clients.items, next) } },
+          state: withClients(state, { items: replaceClient(state.clients.items, updated) }, [
+            event(context, 'updated', client.id, 'client_updated', { fields: changed, subject: updated.name }),
+          ]),
         };
       }),
     ),
@@ -144,7 +270,25 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         const next: Client = { ...client, archivedAt: context.now, status: 'archived', updatedAt: context.now };
         return {
           entityIds: [client.id],
-          state: { ...state, clients: { ...state.clients, items: replaceClient(state.clients.items, next) } },
+          state: withClients(state, { items: replaceClient(state.clients.items, next) }, [
+            event(context, 'archived', client.id, 'client_archived', { subject: client.name }),
+          ]),
+        };
+      }),
+    ),
+    Match.tag('RestoreClient', (value) =>
+      Effect.gen(function* restoreClient() {
+        const client = yield* requireWritableClient(state, context, value.id);
+        if (client.status === 'active') {
+          return yield* conflict('Klient je aktivní');
+        }
+        const { archivedAt: _archivedAt, ...rest } = client;
+        const next: Client = { ...rest, status: 'active', updatedAt: context.now };
+        return {
+          entityIds: [client.id],
+          state: withClients(state, { items: replaceClient(state.clients.items, next) }, [
+            event(context, 'restored', client.id, 'client_restored', { subject: client.name }),
+          ]),
         };
       }),
     ),
@@ -154,6 +298,7 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         const id = newId(context, 'contact');
         const contact: ContactPerson = {
           ...definedOnly({ email: value.email, note: value.note, phone: value.phone, role: value.role }),
+          ...(value.primary === true ? { primary: true } : {}),
           clientId: client.id,
           createdAt: context.now,
           createdBy: context.viewer.principalId,
@@ -162,9 +307,58 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           status: 'active',
           updatedAt: context.now,
         };
+        const others = value.primary === true ? withPrimary(state.clients.contacts, client.id, id) : state.clients.contacts;
         return {
           entityIds: [id],
-          state: { ...state, clients: { ...state.clients, contacts: [...state.clients.contacts, contact] } },
+          state: withClients(state, { contacts: [...others, contact] }, [
+            event(context, 'contact', client.id, 'contact_added', { subject: value.name }),
+          ]),
+        };
+      }),
+    ),
+    Match.tag('UpdateContactPerson', (value) =>
+      Effect.gen(function* updateContact() {
+        const contact = yield* requireWritableContact(state, context, value.contactId);
+        if (contact.status === 'archived') {
+          return yield* conflict('Odebranou kontaktní osobu nelze upravit');
+        }
+        const { primary, ...patch } = value.patch;
+        const { changed, next } = applyPatch(contact, patch);
+        let updated: ContactPerson = next;
+        if (primary === true && contact.primary !== true) {
+          updated = { ...updated, primary: true };
+          changed.push('primary');
+        } else if (primary === false && contact.primary === true) {
+          const { primary: _primary, ...rest } = updated;
+          updated = rest;
+          changed.push('primary');
+        }
+        if (changed.length === 0) {
+          return { entityIds: [contact.id], state };
+        }
+        updated = { ...updated, updatedAt: context.now };
+        const base = primary === true ? withPrimary(state.clients.contacts, contact.clientId, contact.id) : state.clients.contacts;
+        return {
+          entityIds: [contact.id],
+          state: withClients(state, { contacts: replaceContact(base, updated) }, [
+            event(context, 'contact', contact.clientId, 'contact_updated', { fields: changed, subject: updated.name }),
+          ]),
+        };
+      }),
+    ),
+    Match.tag('RemoveContactPerson', (value) =>
+      Effect.gen(function* removeContact() {
+        const contact = yield* requireWritableContact(state, context, value.contactId);
+        if (contact.status === 'archived') {
+          return yield* conflict('Kontaktní osoba je již odebrána');
+        }
+        const { primary: _primary, ...rest } = contact;
+        const next: ContactPerson = { ...rest, archivedAt: context.now, status: 'archived', updatedAt: context.now };
+        return {
+          entityIds: [contact.id],
+          state: withClients(state, { contacts: replaceContact(state.clients.contacts, next) }, [
+            event(context, 'contact', contact.clientId, 'contact_removed', { subject: contact.name }),
+          ]),
         };
       }),
     ),
@@ -176,7 +370,7 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           return yield* notFound('Klient neexistuje');
         }
         if (value.toSalespersonId !== undefined) {
-          yield* requireSalesperson(context, state.salespeople, value.toSalespersonId);
+          yield* requireSalesperson(state.salespeople, value.toSalespersonId);
         }
         if (client.ownerSalespersonId === value.toSalespersonId) {
           return yield* conflict('Klient je již přidělen tomuto obchodníkovi');
@@ -195,14 +389,14 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         };
         return {
           entityIds: [client.id],
-          state: {
-            ...state,
-            clients: {
-              ...state.clients,
+          state: withClients(
+            state,
+            {
               assignmentHistory: [...state.clients.assignmentHistory, change],
               items: replaceClient(state.clients.items, next),
             },
-          },
+            [event(context, 'assigned', client.id, 'assigned', { subject: client.name })],
+          ),
         };
       }),
     ),
