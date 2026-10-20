@@ -4,7 +4,10 @@
 import { Schema } from 'effect';
 import { EntityIdSchema, IsoTimeSchema, LongTextSchema, PrincipalIdSchema, ShortTextSchema } from './common.ts';
 
-export const VisitKindSchema = Schema.Literals(['visit', 'call', 'email']);
+/** visit = osobní návštěva, call = telefonát, video = videohovor, email = e-mail. */
+export const VisitKindSchema = Schema.Literals(['visit', 'call', 'video', 'email']);
+export type VisitKind = typeof VisitKindSchema.Type;
+export const visitKinds: readonly VisitKind[] = ['visit', 'call', 'video', 'email'];
 
 /** A correction of a recorded visit; the visit is never overwritten without this trail (C02-03). */
 export const VisitCorrectionSchema = Schema.Struct({
@@ -13,7 +16,10 @@ export const VisitCorrectionSchema = Schema.Struct({
   field: ShortTextSchema,
   next: Schema.optionalKey(LongTextSchema),
   previous: Schema.optionalKey(LongTextSchema),
+  /** Why the record was corrected (optional, free text). */
+  reason: Schema.optionalKey(LongTextSchema),
 });
+export type VisitCorrection = typeof VisitCorrectionSchema.Type;
 
 export const VisitSchema = Schema.Struct({
   /** Principal who wrote the record. */
@@ -28,6 +34,8 @@ export const VisitSchema = Schema.Struct({
   note: Schema.optionalKey(LongTextSchema),
   /** When the visit really happened (not when it was typed in). */
   occurredAt: IsoTimeSchema,
+  /** Plan item this visit fulfilled, when it was recorded by completing a planned contact. */
+  planItemId: Schema.optionalKey(EntityIdSchema),
   result: ShortTextSchema,
   /** Salesperson who made the visit; stays even when the client is reassigned later. */
   salespersonId: Schema.optionalKey(EntityIdSchema),
@@ -44,11 +52,19 @@ export const PlanItemSchema = Schema.Struct({
   createdBy: PrincipalIdSchema,
   doneAt: Schema.optionalKey(IsoTimeSchema),
   doneBy: Schema.optionalKey(PrincipalIdSchema),
+  /** Short outcome typed when the contact was marked done. */
+  doneNote: Schema.optionalKey(LongTextSchema),
+  /** Visit / call recorded when the contact was completed. */
+  doneVisitId: Schema.optionalKey(EntityIdSchema),
+  /** Calendar day (YYYY-MM-DD) to get in touch. */
   dueDate: IsoTimeSchema,
   id: EntityIdSchema,
   note: Schema.optionalKey(LongTextSchema),
   salespersonId: Schema.optionalKey(EntityIdSchema),
+  /** Visit whose next step created this item. */
+  sourceVisitId: Schema.optionalKey(EntityIdSchema),
   status: PlanItemStatusSchema,
+  updatedAt: Schema.optionalKey(IsoTimeSchema),
 });
 export type PlanItem = typeof PlanItemSchema.Type;
 
@@ -65,3 +81,19 @@ export const projectVisitsSlice = (slice: VisitsSlice, visible: ReadonlySet<stri
   items: slice.items.filter((visit) => visible.has(visit.clientId)),
   plan: slice.plan.filter((item) => visible.has(item.clientId)),
 });
+
+const byOccurredDesc = (left: Visit, right: Visit) => right.occurredAt.localeCompare(left.occurredAt);
+
+/** Visits of one client, newest first. */
+export const visitsOfClient = (visits: readonly Visit[], clientId: string): readonly Visit[] =>
+  visits.filter((visit) => visit.clientId === clientId).toSorted(byOccurredDesc);
+
+/** Latest recorded contact with the client (any kind), or undefined. Fact for the client card (C02/C06). */
+export const lastVisitOf = (visits: readonly Visit[], clientId: string): Visit | undefined =>
+  visitsOfClient(visits, clientId)[0];
+
+/** Earliest open manual plan item of the client, or undefined. */
+export const nextPlanItemOf = (plan: readonly PlanItem[], clientId: string): PlanItem | undefined =>
+  plan
+    .filter((item) => item.clientId === clientId && item.status === 'open')
+    .toSorted((left, right) => left.dueDate.localeCompare(right.dueDate))[0];

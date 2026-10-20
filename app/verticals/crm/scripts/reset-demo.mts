@@ -11,6 +11,7 @@ import { Command, Flag } from 'effect/unstable/cli';
 import { demoId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { CrmStateSchema } from '../shared/apis/records.ts';
 import { crmRelations, crmStates } from '../src/database/schema.ts';
+import { seedVisits } from './seed/visits.mts';
 
 class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputError', { reason: Schema.String }) {}
 
@@ -237,55 +238,12 @@ const seedState = (now: DateTime.Utc) => {
           ],
     ),
   ];
-  const visit = (
-    key: string,
-    client: string,
-    rep: (typeof SALESPEOPLE)[number],
-    days: number,
-    result: string,
-    note?: string,
-  ) => ({
-    ...defined({ note }),
-    authorPrincipalId: rep.principalId,
-    clientId: clientId(client),
-    corrections: [],
-    createdAt: at(days, -2),
-    id: demoId('crm.visit', key),
-    kind: 'visit',
-    occurredAt: at(days),
-    result,
-    salespersonId: rep.id,
-    updatedAt: at(days, -2),
+  const visits = seedVisits({
+    leadPrincipalId: demoId('core.principal', 'hanak-vedouci'),
+    now,
+    repA,
+    repB,
   });
-  const visits = {
-    items: [
-      visit('v1', 'pekarna-mala', repA, 21, 'Představení jarní nabídky mouky', 'Zájem o pravidelné dodávky 2× týdně.'),
-      visit('v2', 'zlata-husa', repA, 9, 'Dohodnuta zkušební objednávka'),
-      visit('v3', 'bistro-kral', repB, 14, 'Reklamace dodávky vyřešena', 'Dobropis vystaví účetní systém.'),
-      visit('v4', 'lazensky-hotel', repB, 5, 'Jednání o ročním kontraktu'),
-    ],
-    plan: [
-      {
-        clientId: clientId('potraviny-cerna'),
-        createdAt: at(3),
-        createdBy: repA.principalId,
-        dueDate: DateTime.formatIso(DateTime.add(now, { days: 4 })).slice(0, 10),
-        id: demoId('crm.plan', 'p1'),
-        note: 'Ozvat se k nové ceníkové nabídce.',
-        salespersonId: repA.id,
-        status: 'open',
-      },
-      {
-        clientId: clientId('zamecka-restaurace'),
-        createdAt: at(2),
-        createdBy: repB.principalId,
-        dueDate: DateTime.formatIso(DateTime.add(now, { days: 7 })).slice(0, 10),
-        id: demoId('crm.plan', 'p2'),
-        salespersonId: repB.id,
-        status: 'open',
-      },
-    ],
-  };
   return {
     clients: { assignmentHistory, contacts, items },
     imports: { batches: [], customerLinks: [], orders: [], pairingHistory: [] },
