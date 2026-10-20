@@ -124,19 +124,23 @@ function CheckoutCartProvider({
             ? previous
             : { signature, clientRequestId: `akros-${crypto.randomUUID()}` };
         storageRef.current.setItem(key, JSON.stringify(pending));
-        const checkResponse = await fetch("/api/ontos/cart", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cart }),
-        });
-        const check = await checkResponse.json();
-        if (!checkResponse.ok) throw new Error(check.message);
-        if (!check.canCheckout)
-          throw new Error(
-            check.priceChanged
-              ? "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu."
-              : check.issues.join(" "),
-          );
+        if (!pending.sent) {
+          const checkResponse = await fetch("/api/ontos/cart", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ cart }),
+          });
+          const check = await checkResponse.json();
+          if (!checkResponse.ok) throw new Error(check.message);
+          if (!check.canCheckout)
+            throw new Error(
+              check.priceChanged
+                ? "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu."
+                : check.issues.join(" "),
+            );
+        }
+        pending.sent = true;
+        storageRef.current.setItem(key, JSON.stringify(pending));
         const response = await fetch("/api/ontos/orders", {
           method: "POST",
           headers: { "content-type": "application/json" },

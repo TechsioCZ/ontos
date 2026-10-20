@@ -1,18 +1,19 @@
+"use client";
 import type { ReactNode } from "react";
 
 import { CatalogSidebar } from "@/components/catalog-sidebar";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
-import { getCatalog } from "@/ontos/catalog-server";
+import { useCatalog } from "@/ontos/catalog-provider";
 
-export async function StorefrontShell({
+export function StorefrontShell({
   activeCategorySlug,
   children,
 }: {
   activeCategorySlug?: string;
   children: ReactNode;
 }) {
-  const { getSidebarCategories } = await getCatalog();
+  const { getSidebarCategories } = useCatalog();
   return (
     <div className="akros-shell">
       <SiteHeader />
@@ -28,14 +29,14 @@ export async function StorefrontShell({
   );
 }
 
-export async function StorefrontWideShell({
+export function StorefrontWideShell({
   children,
   fullBleed = false,
 }: {
   children: ReactNode;
   fullBleed?: boolean;
 }) {
-  const { getSidebarCategories } = await getCatalog();
+  const { getSidebarCategories } = useCatalog();
   return (
     <div className="akros-shell">
       <SiteHeader />
