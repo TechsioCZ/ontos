@@ -33,7 +33,8 @@ export const formatAddressHeader = (value: string): string => {
 export const makeSmtpEmailDelivery = (config: SmtpConfiguration): EmailDeliveryServiceContract => ({
   send: (message: EmailDeliveryMessage) => Effect.tryPromise({
     try: async () => {
-      if (!address(config.from) || !config.host || !Number.isInteger(config.port) || config.port < 1 || config.port > 65535 || (config.user && !config.secure)) {
+      if (!address(config.from) || !config.host || !Number.isInteger(config.port) || config.port < 1 || config.port > 65535 || (config.user && !config.secure)
+        || (config.timeoutMs !== undefined && !(Number.isFinite(config.timeoutMs) && config.timeoutMs > 0))) {
         throw new EmailDeliveryUnavailable({ reason: 'configuration' });
       }
       if (!address(message.to) || !header(message.to)) throw new EmailDeliveryInvalidMessage({ field: 'to', reason: 'invalid_format' });

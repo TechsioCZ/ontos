@@ -104,6 +104,13 @@ describe('SMTP email delivery adapter', () => {
     expect(config.user).toBeUndefined();
   });
 
+  test('invalid timeout is a configuration error, not an indeterminate send', async () => {
+    const transport = makeSmtpEmailDelivery(smtpConfigurationFromEnvironment({ SMTP_TIMEOUT_MS: 'abc' }));
+    const error = await Effect.runPromise(Effect.flip(transport.send(message)));
+    expect(error._tag).toBe('EmailDeliveryUnavailable');
+    expect((error as { reason?: string }).reason).toBe('configuration');
+  });
+
   test('formats address headers with RFC 2047 encoded display names', () => {
     expect(formatAddressHeader('AKROS e-shop <eshop@akros.demo>')).toBe('AKROS e-shop <eshop@akros.demo>');
     const encodedName = formatAddressHeader('Siampark – finanční oddělení <finance@siampark.demo>');
