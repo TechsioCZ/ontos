@@ -266,6 +266,14 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
   const save = () => {
     setSubmitted(true);
     if (linesInvalid || shippingInvalid || addressInvalid || contactInvalid || busy) {
+      const invalid = parsedLines.find((entry) => entry.quantity === null || entry.price === null);
+      if (invalid !== undefined) {
+        const field = document.getElementById(
+          `edit-${invalid.quantity === null ? 'qty' : 'price'}-${invalid.line.key}`,
+        );
+        field?.scrollIntoView({ block: 'center' });
+        field?.focus();
+      }
       return;
     }
     const command = buildCommand();
@@ -608,7 +616,9 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
       <div className="flex flex-wrap items-center justify-between gap-150 rounded-md border border-border-primary p-200">
         <div className="flex flex-col">
           <span className="text-fg-secondary text-sm">Náhled celkové částky s DPH (přepočte server)</span>
-          <span className="font-semibold text-lg tabular-nums">{formatMoney(preview.totalMinor)}</span>
+          <span className="font-semibold text-lg tabular-nums">
+            {linesInvalid ? 'Zkontrolujte množství a ceny položek' : formatMoney(preview.totalMinor)}
+          </span>
         </div>
         <div className="flex gap-150">
           <Button disabled={busy} onClick={onCancel} theme="outlined" type="button" variant="secondary">

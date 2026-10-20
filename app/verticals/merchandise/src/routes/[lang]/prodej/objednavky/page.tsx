@@ -161,7 +161,7 @@ const OrdersPageContent = () => {
       <section className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
-            canWrite ? (
+            (ready?.records.canEditOrders ?? canWrite) ? (
               <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
                 {t(key('create.title'))}
               </Button>

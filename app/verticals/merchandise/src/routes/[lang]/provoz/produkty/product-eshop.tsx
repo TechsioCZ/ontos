@@ -77,6 +77,7 @@ const variantDraftsOf = (product: ProductRecord): readonly VariantDraft[] =>
 
 interface PanelProps {
   readonly canWrite: boolean;
+  readonly canMoveStock?: boolean;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
   readonly product: ProductRecord;
@@ -87,7 +88,14 @@ interface PanelProps {
  * Real variants: each has its own identity, SKU, net price (gross shown), stock and active flag. Saving sends one
  * UpdateProduct; the server keeps a per-variant price history, so a price change stays traceable.
  */
-export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
+export const VariantsPanel = ({
+  canWrite,
+  canMoveStock = canWrite,
+  onCommitted,
+  onReload,
+  product,
+  revision,
+}: PanelProps) => {
   const failure = useCommandFailure();
   const [drafts, setDrafts] = useState<readonly VariantDraft[]>(() => variantDraftsOf(product));
   const [variantPage, setVariantPage] = useState(0);
@@ -391,7 +399,7 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
       )}
       {(product.variantRecords ?? []).length > 0 && (
         <VariantStockForm
-          canWrite={canWrite}
+          canWrite={canMoveStock}
           onCommitted={onCommitted}
           onReload={onReload}
           product={product}
@@ -524,7 +532,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
 };
 
 export const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) => {
-  const rows = (product.variantRecords ?? []).flatMap((variant) =>
+  const variantRows = (product.variantRecords ?? []).flatMap((variant) =>
     variant.priceHistory.map((entry, index) => ({
       at: entry.effectiveFrom,
       gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
@@ -534,6 +542,17 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
       previous: entry.previousPriceMinor ?? (index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor),
     })),
   );
+  const rows = [
+    ...variantRows,
+    ...product.priceHistory.map((entry, index) => ({
+      at: entry.effectiveFrom,
+      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
+      key: `product-${index}`,
+      name: `Základní cena produktu · ${product.sku}`,
+      net: entry.priceMinor,
+      previous: entry.previousPriceMinor ?? product.priceHistory[index - 1]?.priceMinor,
+    })),
+  ];
   const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
   return (
     <SectionCard flush title="Historie cen variant">

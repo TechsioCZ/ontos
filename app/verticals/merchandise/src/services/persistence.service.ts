@@ -649,6 +649,7 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
   if (existing === undefined) {
     return yield* notFound('Order does not exist');
   }
+  if (existing.demoCleanup !== undefined) return yield* conflict('Odstraněnou DEMO objednávku nelze dále zpracovávat');
   const allowed: readonly OrderStatus[] = orderTransitions[existing.status];
   if (!allowed.includes(value.status)) {
     return yield* conflict('The requested order transition is not allowed');

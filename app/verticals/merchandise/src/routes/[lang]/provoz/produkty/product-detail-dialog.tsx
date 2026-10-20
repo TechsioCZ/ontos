@@ -751,6 +751,7 @@ export const ProductDetailView = ({
           <Tabs.Content className="py-200" value="variants">
             <VariantsPanel
               canWrite={canWrite}
+              canMoveStock={canMoveStock}
               key={`variants-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}
