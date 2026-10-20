@@ -1,3 +1,4 @@
+import { FinanceTableScroll } from './finance-table-scroll.tsx';
 // @effect-diagnostics asyncFunction:off
 // @effect-diagnostics newPromise:off
 // @effect-diagnostics globalTimers:off
@@ -310,51 +311,53 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             </div>
           </div>
         )}
-        <Table size="sm" variant="line">
-          <Table.Header>
-            <Table.Row>
-              <Table.ColumnHeader>Měsíc</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Příjmy uhrazené</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Výdaje uhrazené</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Očekávané příjmy</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Očekávané výdaje</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Plán (nepokrytý)</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Odhad zůstatku</Table.ColumnHeader>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {months.map((month) => (
-              <Table.Row key={month.month}>
-                <Table.Cell className={month.month === currentMonth ? 'font-semibold' : ''}>
-                  {monthLabel(month.month)}
-                  {month.month === currentMonth && (
-                    <Badge className="ml-100" size="sm" variant="primary">
-                      tento měsíc
-                    </Badge>
-                  )}
-                </Table.Cell>
-                <Table.Cell align="end" className="tabular-nums">
-                  {wholeKc(month.paidInMinor)}
-                </Table.Cell>
-                <Table.Cell align="end" className="tabular-nums">
-                  {wholeKc(month.paidOutMinor)}
-                </Table.Cell>
-                <Table.Cell align="end" className="tabular-nums text-fg-secondary">
-                  {wholeKc(month.expectedInMinor)}
-                </Table.Cell>
-                <Table.Cell align="end" className="tabular-nums text-fg-secondary">
-                  {wholeKc(month.expectedOutMinor)}
-                </Table.Cell>
-                <Table.Cell align="end" className="tabular-nums text-fg-secondary">
-                  {wholeKc(month.planInMinor - month.planOutMinor)}
-                </Table.Cell>
-                <Table.Cell align="end" className="font-medium tabular-nums">
-                  {month.forecastBalanceMinor === undefined ? '—' : wholeKc(month.forecastBalanceMinor)}
-                </Table.Cell>
+        <FinanceTableScroll label="Cash-flow po měsících">
+          <Table size="sm" variant="line">
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader>Měsíc</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Příjmy uhrazené</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Výdaje uhrazené</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Očekávané příjmy</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Očekávané výdaje</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Plán (nepokrytý)</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Odhad zůstatku</Table.ColumnHeader>
               </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
+            </Table.Header>
+            <Table.Body>
+              {months.map((month) => (
+                <Table.Row key={month.month}>
+                  <Table.Cell className={month.month === currentMonth ? 'font-semibold' : ''}>
+                    {monthLabel(month.month)}
+                    {month.month === currentMonth && (
+                      <Badge className="ml-100" size="sm" variant="primary">
+                        tento měsíc
+                      </Badge>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell align="end" className="tabular-nums">
+                    {wholeKc(month.paidInMinor)}
+                  </Table.Cell>
+                  <Table.Cell align="end" className="tabular-nums">
+                    {wholeKc(month.paidOutMinor)}
+                  </Table.Cell>
+                  <Table.Cell align="end" className="tabular-nums text-fg-secondary">
+                    {wholeKc(month.expectedInMinor)}
+                  </Table.Cell>
+                  <Table.Cell align="end" className="tabular-nums text-fg-secondary">
+                    {wholeKc(month.expectedOutMinor)}
+                  </Table.Cell>
+                  <Table.Cell align="end" className="tabular-nums text-fg-secondary">
+                    {wholeKc(month.planInMinor - month.planOutMinor)}
+                  </Table.Cell>
+                  <Table.Cell align="end" className="font-medium tabular-nums">
+                    {month.forecastBalanceMinor === undefined ? '—' : wholeKc(month.forecastBalanceMinor)}
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
+        </FinanceTableScroll>
       </SectionCard>
 
       <SectionCard
@@ -403,97 +406,99 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                 planned: budget.plannedMinor,
               }))}
             />
-            <Table size="sm" variant="line">
-              <Table.Header>
-                <Table.Row>
-                  <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
-                  <Table.ColumnHeader>Typ</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Plán</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Skutečnost</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Rozdíl</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Odchylka</Table.ColumnHeader>
-                  <Table.ColumnHeader>Vysvětlení</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end" />
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {budgetRows.map(({ actual, budget }) => {
-                  const variance = budgetVariance(budget.plannedMinor, actual);
-                  const over = budget.kind === 'COST' ? variance.differenceMinor > 0 : variance.differenceMinor < 0;
-                  return (
-                    <Table.Row key={budget.id}>
-                      <Table.Cell className="font-medium">{budget.category}</Table.Cell>
-                      <Table.Cell>
-                        <Badge size="sm" variant={budget.kind === 'COST' ? 'warning' : 'success'}>
-                          {budget.kind === 'COST' ? 'Výdaj' : 'Příjem'}
-                        </Badge>
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {formatMoney(budget.plannedMinor)}
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        <span className="flex flex-col items-end">
-                          {formatMoney(actual)}
-                          <span className="text-fg-secondary text-xs">
-                            {budget.actualManualMinor === undefined
-                              ? `z faktur (${formatMoney(invoiceActualMinor(budget, invoices))})`
-                              : 'zadáno ručně'}
-                          </span>
-                        </span>
-                      </Table.Cell>
-                      <Table.Cell
-                        align="end"
-                        className="tabular-nums"
-                        style={over ? { color: 'var(--color-danger)' } : undefined}
-                      >
-                        {formatMoney(variance.differenceMinor)}
-                      </Table.Cell>
-                      <Table.Cell align="end" className="tabular-nums">
-                        {variance.percent === undefined ? (
-                          <span className="text-fg-secondary text-xs">nelze vyhodnotit</span>
-                        ) : (
-                          <Badge size="sm" variant={over ? 'danger' : 'success'}>
-                            {percent(variance.percent)}
+            <FinanceTableScroll label="Rozpočet – plán a skutečnost">
+              <Table size="sm" variant="line">
+                <Table.Header>
+                  <Table.Row>
+                    <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
+                    <Table.ColumnHeader>Typ</Table.ColumnHeader>
+                    <Table.ColumnHeader align="end">Plán</Table.ColumnHeader>
+                    <Table.ColumnHeader align="end">Skutečnost</Table.ColumnHeader>
+                    <Table.ColumnHeader align="end">Rozdíl</Table.ColumnHeader>
+                    <Table.ColumnHeader align="end">Odchylka</Table.ColumnHeader>
+                    <Table.ColumnHeader>Vysvětlení</Table.ColumnHeader>
+                    <Table.ColumnHeader align="end" />
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
+                  {budgetRows.map(({ actual, budget }) => {
+                    const variance = budgetVariance(budget.plannedMinor, actual);
+                    const over = budget.kind === 'COST' ? variance.differenceMinor > 0 : variance.differenceMinor < 0;
+                    return (
+                      <Table.Row key={budget.id}>
+                        <Table.Cell className="font-medium">{budget.category}</Table.Cell>
+                        <Table.Cell>
+                          <Badge size="sm" variant={budget.kind === 'COST' ? 'warning' : 'success'}>
+                            {budget.kind === 'COST' ? 'Výdaj' : 'Příjem'}
                           </Badge>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell className="max-w-56 text-sm">{budget.explanation ?? '—'}</Table.Cell>
-                      <Table.Cell align="end">
-                        {vm.canWrite && (
-                          <span className="flex justify-end gap-50">
-                            <Button
-                              aria-label="Upravit"
-                              icon="icon-[mdi--pencil-outline]"
-                              onClick={() =>
-                                setDraft({
-                                  actual: minorToInput(budget.actualManualMinor),
-                                  category: budget.category,
-                                  explanation: budget.explanation ?? '',
-                                  id: budget.id,
-                                  kind: budget.kind,
-                                  planned: minorToInput(budget.plannedMinor),
-                                })
-                              }
-                              size="sm"
-                              theme="borderless"
-                              variant="secondary"
-                            />
-                            <Button
-                              aria-label="Smazat"
-                              icon="icon-[mdi--delete-outline]"
-                              onClick={() => setDeleteTarget(budget)}
-                              size="sm"
-                              theme="borderless"
-                              variant="secondary"
-                            />
+                        </Table.Cell>
+                        <Table.Cell align="end" className="tabular-nums">
+                          {formatMoney(budget.plannedMinor)}
+                        </Table.Cell>
+                        <Table.Cell align="end" className="tabular-nums">
+                          <span className="flex flex-col items-end">
+                            {formatMoney(actual)}
+                            <span className="text-fg-secondary text-xs">
+                              {budget.actualManualMinor === undefined
+                                ? `z faktur (${formatMoney(invoiceActualMinor(budget, invoices))})`
+                                : 'zadáno ručně'}
+                            </span>
                           </span>
-                        )}
-                      </Table.Cell>
-                    </Table.Row>
-                  );
-                })}
-              </Table.Body>
-            </Table>
+                        </Table.Cell>
+                        <Table.Cell
+                          align="end"
+                          className="tabular-nums"
+                          style={over ? { color: 'var(--color-danger)' } : undefined}
+                        >
+                          {formatMoney(variance.differenceMinor)}
+                        </Table.Cell>
+                        <Table.Cell align="end" className="tabular-nums">
+                          {variance.percent === undefined ? (
+                            <span className="text-fg-secondary text-xs">nelze vyhodnotit</span>
+                          ) : (
+                            <Badge size="sm" variant={over ? 'danger' : 'success'}>
+                              {percent(variance.percent)}
+                            </Badge>
+                          )}
+                        </Table.Cell>
+                        <Table.Cell className="max-w-56 text-sm">{budget.explanation ?? '—'}</Table.Cell>
+                        <Table.Cell align="end">
+                          {vm.canWrite && (
+                            <span className="flex justify-end gap-50">
+                              <Button
+                                aria-label="Upravit"
+                                icon="icon-[mdi--pencil-outline]"
+                                onClick={() =>
+                                  setDraft({
+                                    actual: minorToInput(budget.actualManualMinor),
+                                    category: budget.category,
+                                    explanation: budget.explanation ?? '',
+                                    id: budget.id,
+                                    kind: budget.kind,
+                                    planned: minorToInput(budget.plannedMinor),
+                                  })
+                                }
+                                size="sm"
+                                theme="borderless"
+                                variant="secondary"
+                              />
+                              <Button
+                                aria-label="Smazat"
+                                icon="icon-[mdi--delete-outline]"
+                                onClick={() => setDeleteTarget(budget)}
+                                size="sm"
+                                theme="borderless"
+                                variant="secondary"
+                              />
+                            </span>
+                          )}
+                        </Table.Cell>
+                      </Table.Row>
+                    );
+                  })}
+                </Table.Body>
+              </Table>
+            </FinanceTableScroll>
           </>
         )}
       </SectionCard>

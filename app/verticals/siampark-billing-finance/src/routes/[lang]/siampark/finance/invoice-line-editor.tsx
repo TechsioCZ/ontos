@@ -81,7 +81,7 @@ export const InvoiceLineEditor = ({
       aria-label={t(`${ns}.form.lineGroup`, { position })}
       className="m-0 flex min-w-0 flex-col gap-100 rounded-md border border-border-primary p-150"
     >
-      <div className="grid grid-cols-[12rem_minmax(0,1fr)_auto] items-end gap-150">
+      <div className="finance-invoice-line-identity grid items-end gap-150">
         <div className="min-w-0">
           <SelectTemplate
             items={kindItems}
@@ -141,7 +141,7 @@ export const InvoiceLineEditor = ({
           variant="secondary"
         />
       </div>
-      <div className="grid grid-cols-[6rem_9rem_7rem] items-end gap-150">
+      <div className="finance-invoice-line-values grid items-end gap-150">
         <div className="min-w-0">
           <FormNumericInput
             // Blur must not clamp a typed 0,001 to 1; `lineIssue` rejects it with a message instead.

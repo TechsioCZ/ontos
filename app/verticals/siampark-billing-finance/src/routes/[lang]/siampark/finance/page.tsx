@@ -140,6 +140,7 @@ const RecordsPageContent = () => {
               />
               <StatCard label={t(`${ns}.kpi.drafts`)} value={kpi((source) => formatNumber(source.draftCount))} />
             </StatRow>
+            <p className="text-fg-secondary text-sm">{t(`${ns}.kpi.revenuePeriod`)}</p>
             {(feedback === 'forbidden' ||
               feedback === 'conflict' ||
               feedback === 'unavailable' ||

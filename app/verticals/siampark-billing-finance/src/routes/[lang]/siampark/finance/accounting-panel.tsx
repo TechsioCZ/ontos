@@ -1,3 +1,4 @@
+import { FinanceTableScroll } from './finance-table-scroll.tsx';
 // @effect-diagnostics asyncFunction:off
 // @effect-diagnostics newPromise:off
 // @effect-diagnostics globalTimers:off
@@ -359,111 +360,116 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             />
           </div>
         ) : (
-          <Table size="sm" variant="line">
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>Balíček</Table.ColumnHeader>
-                <Table.ColumnHeader>Formát</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Doklady</Table.ColumnHeader>
-                <Table.ColumnHeader>Vytvořil / kdy</Table.ColumnHeader>
-                <Table.ColumnHeader>Otisk SHA-256</Table.ColumnHeader>
-                <Table.ColumnHeader>Stav</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Akce</Table.ColumnHeader>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {exports.map((entry) => (
-                <Table.Row key={entry.id}>
-                  <Table.Cell>
-                    <span className="flex flex-col">
-                      <span className="font-medium">{entry.batchNumber}</span>
-                      <span className="text-fg-secondary text-xs">
-                        verze {entry.version} · schéma {entry.schemaVersion}
+          <FinanceTableScroll label="Historie účetních předání">
+            <Table size="sm" variant="line">
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeader>Balíček</Table.ColumnHeader>
+                  <Table.ColumnHeader>Formát</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Doklady</Table.ColumnHeader>
+                  <Table.ColumnHeader>Vytvořil / kdy</Table.ColumnHeader>
+                  <Table.ColumnHeader>Otisk SHA-256</Table.ColumnHeader>
+                  <Table.ColumnHeader>Stav</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Akce</Table.ColumnHeader>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {exports.map((entry) => (
+                  <Table.Row key={entry.id}>
+                    <Table.Cell>
+                      <span className="flex flex-col">
+                        <span className="font-medium">{entry.batchNumber}</span>
+                        <span className="text-fg-secondary text-xs">
+                          verze {entry.version} · schéma {entry.schemaVersion}
+                        </span>
+                        {entry.format !== 'POHODA_XML_SIMULATION' &&
+                          !entry.content.includes('/cs/siampark/finance?resourceId=') && (
+                            <span className="text-fg-secondary text-xs">
+                              Historická verze bez webových odkazů. Použijte novější balíček; původní soubor i otisk
+                              zůstávají zachovány.
+                            </span>
+                          )}
                       </span>
-                      {entry.format !== 'POHODA_XML_SIMULATION' &&
-                        !entry.content.includes('/cs/siampark/finance?resourceId=') && (
+                    </Table.Cell>
+                    <Table.Cell>
+                      {entry.format === 'POHODA_XML_SIMULATION' ? (
+                        <SimulationBadge>Pohoda XML – SIMULACE</SimulationBadge>
+                      ) : (
+                        entry.format
+                      )}
+                    </Table.Cell>
+                    <Table.Cell align="end" className="tabular-nums">
+                      <details>
+                        <summary className="cursor-pointer whitespace-nowrap text-sm">
+                          Doklady ({entry.invoiceResourceIds.length})
+                        </summary>
+                        <ul className="flex flex-col gap-50 py-100 text-xs">
+                          {entry.invoiceResourceIds.map((id) => {
+                            const invoice = state?.invoices.find((item) => item.ref.resourceId === id);
+                            return (
+                              <li key={id}>
+                                <a
+                                  className="whitespace-nowrap underline"
+                                  href={`?resourceId=${encodeURIComponent(id)}`}
+                                >
+                                  {invoice?.number ?? invoice?.documentNumber ?? 'Doklad není dostupný'}
+                                </a>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </details>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <span className="flex flex-col">
+                        <span>{entry.actorLabel ?? 'neznámý uživatel'}</span>
+                        <span className="text-fg-secondary text-xs">{at(entry.createdAt)}</span>
+                      </span>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <code className="text-xs">{entry.sha256.slice(0, 16)}…</code>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <span className="flex flex-col gap-50">
+                        {statusBadge(entry)}
+                        {entry.confirmedAt !== undefined && (
                           <span className="text-fg-secondary text-xs">
-                            Historická verze bez webových odkazů. Použijte novější balíček; původní soubor i otisk
-                            zůstávají zachovány.
+                            {entry.confirmedByLabel ?? ''} · {at(entry.confirmedAt)}
+                            {entry.confirmationEvidence === undefined ? '' : ` · ${entry.confirmationEvidence}`}
                           </span>
                         )}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell>
-                    {entry.format === 'POHODA_XML_SIMULATION' ? (
-                      <SimulationBadge>Pohoda XML – SIMULACE</SimulationBadge>
-                    ) : (
-                      entry.format
-                    )}
-                  </Table.Cell>
-                  <Table.Cell align="end" className="tabular-nums">
-                    <details>
-                      <summary className="cursor-pointer whitespace-nowrap text-sm">
-                        Doklady ({entry.invoiceResourceIds.length})
-                      </summary>
-                      <ul className="flex flex-col gap-50 py-100 text-xs">
-                        {entry.invoiceResourceIds.map((id) => {
-                          const invoice = state?.invoices.find((item) => item.ref.resourceId === id);
-                          return (
-                            <li key={id}>
-                              <a className="whitespace-nowrap underline" href={`?resourceId=${encodeURIComponent(id)}`}>
-                                {invoice?.number ?? invoice?.documentNumber ?? 'Doklad není dostupný'}
-                              </a>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </details>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <span className="flex flex-col">
-                      <span>{entry.actorLabel ?? 'neznámý uživatel'}</span>
-                      <span className="text-fg-secondary text-xs">{at(entry.createdAt)}</span>
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <code className="text-xs">{entry.sha256.slice(0, 16)}…</code>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <span className="flex flex-col gap-50">
-                      {statusBadge(entry)}
-                      {entry.confirmedAt !== undefined && (
-                        <span className="text-fg-secondary text-xs">
-                          {entry.confirmedByLabel ?? ''} · {at(entry.confirmedAt)}
-                          {entry.confirmationEvidence === undefined ? '' : ` · ${entry.confirmationEvidence}`}
-                        </span>
-                      )}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell align="end">
-                    <span className="flex justify-end gap-50">
-                      <Button
-                        className="whitespace-nowrap"
-                        icon="icon-[mdi--download]"
-                        onClick={() => downloadText(entry.content, MIME[entry.format], entry.fileName)}
-                        size="sm"
-                        theme="borderless"
-                        variant="secondary"
-                      >
-                        Stáhnout
-                      </Button>
-                      {vm.canWrite && entry.status === 'HANDED_OVER' && (
+                      </span>
+                    </Table.Cell>
+                    <Table.Cell align="end">
+                      <span className="flex justify-end gap-50">
                         <Button
                           className="whitespace-nowrap"
-                          onClick={() => setConfirmTarget(entry)}
+                          icon="icon-[mdi--download]"
+                          onClick={() => downloadText(entry.content, MIME[entry.format], entry.fileName)}
                           size="sm"
-                          theme="outlined"
+                          theme="borderless"
                           variant="secondary"
                         >
-                          Potvrzení účetní
+                          Stáhnout
                         </Button>
-                      )}
-                    </span>
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
+                        {vm.canWrite && entry.status === 'HANDED_OVER' && (
+                          <Button
+                            className="whitespace-nowrap"
+                            onClick={() => setConfirmTarget(entry)}
+                            size="sm"
+                            theme="outlined"
+                            variant="secondary"
+                          >
+                            Potvrzení účetní
+                          </Button>
+                        )}
+                      </span>
+                    </Table.Cell>
+                  </Table.Row>
+                ))}
+              </Table.Body>
+            </Table>
+          </FinanceTableScroll>
         )}
       </SectionCard>
       <Dialog

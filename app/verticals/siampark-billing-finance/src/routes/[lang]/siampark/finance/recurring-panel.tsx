@@ -1,3 +1,4 @@
+import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import { formatCzechDays } from '@app/shared-contracts';
 // @effect-diagnostics asyncFunction:off
 // @effect-diagnostics newPromise:off
@@ -238,99 +239,101 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         />
       ) : (
         <SectionCard flush>
-          <Table size="sm" variant="line">
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>Šablona</Table.ColumnHeader>
-                <Table.ColumnHeader>Nájemce</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Měsíčně s DPH</Table.ColumnHeader>
-                <Table.ColumnHeader>Vystavení / splatnost</Table.ColumnHeader>
-                <Table.ColumnHeader>Vygenerovaná období</Table.ColumnHeader>
-                <Table.ColumnHeader>Stav</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Akce</Table.ColumnHeader>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {templates.map((template) => {
-                const periods = [...new Set(generated(template).map((invoice) => invoice.recurringPeriod ?? ''))]
-                  .filter((value) => value !== '')
-                  .sort();
-                return (
-                  <Table.Row key={template.id}>
-                    <Table.Cell>
-                      <span className="flex flex-col">
-                        <span className="font-medium">{template.name}</span>
-                        <span className="text-fg-secondary text-xs">{template.lines[0]?.description}</span>
-                      </span>
-                    </Table.Cell>
-                    <Table.Cell>
-                      {vm.references.customerById.get(template.partyId ?? template.counterpartyRef.resourceId)
-                        ?.displayName ??
-                        template.counterpartyName ??
-                        '—'}
-                    </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
-                      {formatMoney(templateTotal(template))}
-                    </Table.Cell>
-                    <Table.Cell>
-                      {template.issueDay}. den v měsíci · {formatCzechDays(template.dueDays)}
-                    </Table.Cell>
-                    <Table.Cell>
-                      <span className="flex flex-wrap gap-50">
-                        {periods.length === 0
-                          ? '—'
-                          : periods.map((value) => (
-                              <Badge key={value} size="sm" variant={value === period ? 'primary' : 'info'}>
-                                {value}
-                              </Badge>
-                            ))}
-                      </span>
-                    </Table.Cell>
-                    <Table.Cell>
-                      <Badge size="sm" variant={template.active ? 'success' : 'warning'}>
-                        {template.active ? 'Aktivní' : 'Pozastavená'}
-                      </Badge>
-                    </Table.Cell>
-                    <Table.Cell align="end">
-                      {vm.canWrite && (
-                        <span className="flex flex-wrap justify-end gap-50">
-                          {template.active && (
+          <FinanceTableScroll label="Opakované faktury – šablony">
+            <Table size="sm" variant="line">
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeader>Šablona</Table.ColumnHeader>
+                  <Table.ColumnHeader>Nájemce</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Měsíčně s DPH</Table.ColumnHeader>
+                  <Table.ColumnHeader>Vystavení / splatnost</Table.ColumnHeader>
+                  <Table.ColumnHeader>Vygenerovaná období</Table.ColumnHeader>
+                  <Table.ColumnHeader>Stav</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Akce</Table.ColumnHeader>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {templates.map((template) => {
+                  const periods = [...new Set(generated(template).map((invoice) => invoice.recurringPeriod ?? ''))]
+                    .filter((value) => value !== '')
+                    .sort();
+                  return (
+                    <Table.Row key={template.id}>
+                      <Table.Cell>
+                        <span className="flex flex-col">
+                          <span className="font-medium">{template.name}</span>
+                          <span className="text-fg-secondary text-xs">{template.lines[0]?.description}</span>
+                        </span>
+                      </Table.Cell>
+                      <Table.Cell>
+                        {vm.references.customerById.get(template.partyId ?? template.counterpartyRef.resourceId)
+                          ?.displayName ??
+                          template.counterpartyName ??
+                          '—'}
+                      </Table.Cell>
+                      <Table.Cell align="end" className="tabular-nums">
+                        {formatMoney(templateTotal(template))}
+                      </Table.Cell>
+                      <Table.Cell>
+                        {template.issueDay}. den v měsíci · {formatCzechDays(template.dueDays)}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <span className="flex flex-wrap gap-50">
+                          {periods.length === 0
+                            ? '—'
+                            : periods.map((value) => (
+                                <Badge key={value} size="sm" variant={value === period ? 'primary' : 'info'}>
+                                  {value}
+                                </Badge>
+                              ))}
+                        </span>
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Badge size="sm" variant={template.active ? 'success' : 'warning'}>
+                          {template.active ? 'Aktivní' : 'Pozastavená'}
+                        </Badge>
+                      </Table.Cell>
+                      <Table.Cell align="end">
+                        {vm.canWrite && (
+                          <span className="flex flex-wrap justify-end gap-50">
+                            {template.active && (
+                              <Button
+                                className="whitespace-nowrap"
+                                disabled={running}
+                                onClick={() => void generate([template])}
+                                size="sm"
+                                theme="outlined"
+                                variant="secondary"
+                              >
+                                Připravit {period}
+                              </Button>
+                            )}
                             <Button
-                              className="whitespace-nowrap"
-                              disabled={running}
-                              onClick={() => void generate([template])}
+                              onClick={() =>
+                                void vm.execute(
+                                  {
+                                    _tag: 'SetRecurringTemplateActive',
+                                    active: !template.active,
+                                    templateId: template.id,
+                                  },
+                                  template.active ? 'Šablona pozastavena' : 'Šablona obnovena',
+                                )
+                              }
                               size="sm"
-                              theme="outlined"
+                              theme="borderless"
                               variant="secondary"
                             >
-                              Připravit {period}
+                              {template.active ? 'Pozastavit' : 'Obnovit'}
                             </Button>
-                          )}
-                          <Button
-                            onClick={() =>
-                              void vm.execute(
-                                {
-                                  _tag: 'SetRecurringTemplateActive',
-                                  active: !template.active,
-                                  templateId: template.id,
-                                },
-                                template.active ? 'Šablona pozastavena' : 'Šablona obnovena',
-                              )
-                            }
-                            size="sm"
-                            theme="borderless"
-                            variant="secondary"
-                          >
-                            {template.active ? 'Pozastavit' : 'Obnovit'}
-                          </Button>
-                        </span>
-                      )}
-                    </Table.Cell>
-                  </Table.Row>
-                );
-              })}
-            </Table.Body>
-          </Table>
+                          </span>
+                        )}
+                      </Table.Cell>
+                    </Table.Row>
+                  );
+                })}
+              </Table.Body>
+            </Table>
+          </FinanceTableScroll>
         </SectionCard>
       )}
       <Dialog

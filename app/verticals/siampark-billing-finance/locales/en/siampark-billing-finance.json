@@ -84,7 +84,8 @@
       },
       "cancel": "Cancel",
       "kpi": {
-        "revenue": "Confirmed revenue",
+        "revenue": "Confirmed revenue (2026)",
+        "revenuePeriod": "Revenue includes confirmed outgoing invoices issued from 1 January to 31 December 2026. Statistics use the selected reporting period; invoices from 2025 are therefore excluded here.",
         "outstanding": "Unpaid",
         "overdue": "Overdue",
         "drafts": "Drafts"
