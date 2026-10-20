@@ -31,7 +31,7 @@
         "title": "Home",
         "welcomeKicker": "Workspace",
         "welcomeTitle": "Welcome, {{name}}",
-        "welcomeCompany": "You are working in {{company}}.",
+        "welcomeCompany": "You are working in {{company}}",
         "welcomeHint": "The areas you can access are listed in the menu on the left."
       },
       "legalEntity": {
