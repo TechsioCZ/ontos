@@ -6,7 +6,6 @@ APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$APP"
 LOG_DIR="$APP/.scratch/demo-logs"
 PID_DIR="$APP/.scratch/demo-pids"
-PORT="${EMAIL_DISPATCHER_PORT:-3096}"
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
 load_env() {
@@ -29,6 +28,7 @@ load_env() {
 }
 
 load_env
+PORT="${EMAIL_DISPATCHER_PORT:-3096}" # after load_env so app/.env can override it
 
 docker --context orbstack compose -f docker-compose.yml -f scripts/demo/compose.demo.yml up -d --wait ontos-mailpit
 if [ -f "$PID_DIR/email-dispatcher.pid" ]; then
