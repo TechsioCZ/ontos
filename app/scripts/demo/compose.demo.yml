@@ -22,6 +22,8 @@ services:
       MP_MAX_MESSAGES: '5000'
       MP_SMTP_AUTH_ACCEPT_ANY: '1'
       MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+      # Reverse DNS of the Docker gateway times out, which delayed every SMTP greeting by 8 s.
+      MP_SMTP_DISABLE_RDNS: '1'
       TZ: Europe/Prague
     volumes:
       - ontos_mailpit_data:/data
