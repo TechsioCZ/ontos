@@ -207,15 +207,15 @@ export const RecurringTemplateSchema = Schema.Struct({
   unitRef: Schema.optionalKey(UnitRefSchema),
 });
 export type RecurringTemplate = typeof RecurringTemplateSchema.Type;
-/** Payment reminder. Delivery is simulated: no e-mail provider is configured in the demo. */
+/** Payment reminder. SIMULATED = legacy record (never sent). EMAIL = sent once over SMTP after commit by the demo e-mail dispatcher; the receipt lives in its ledger. */
 export const InvoiceReminderSchema = Schema.Struct({
   ...ActorFields,
   createdAt: Schema.DateTimeUtcFromString,
-  deliveryMode: Schema.Literal('SIMULATED'),
+  deliveryMode: Schema.Literals(['SIMULATED', 'EMAIL']),
   id: FinanceTextSchema,
   invoiceResourceId: FinanceTextSchema,
   recipient: FinanceTextSchema,
-  status: Schema.Literal('SIMULATED_SENT'),
+  status: Schema.Literals(['SIMULATED_SENT', 'QUEUED']),
   text: FinanceLongTextSchema,
 });
 export type InvoiceReminder = typeof InvoiceReminderSchema.Type;

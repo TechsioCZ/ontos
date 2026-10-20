@@ -25,6 +25,7 @@ import {
   SimulationBadge,
 } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
+import { ReminderEmailStatus, useReminderEmailReceipts } from './reminder-email-receipts.tsx';
 
 /** Stored instants are Effect DateTime values; the shared formatter takes ISO strings. */
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
@@ -411,7 +412,7 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
   );
 };
 
-/** S07.R7 / S07-04: reminder text from a template; delivery is simulated because no e-mail provider is configured. */
+/** S07.R7 / S07-04: reminder text from a template; sent once over real SMTP by the demo e-mail dispatcher after commit. */
 export const InvoiceReminders = ({
   counterpartyName,
   invoice,
@@ -423,6 +424,9 @@ export const InvoiceReminders = ({
 }) => {
   const reminders = (vm.snapshot?.state.reminders ?? []).filter(
     (reminder) => reminder.invoiceResourceId === invoice.ref.resourceId,
+  );
+  const receipts = useReminderEmailReceipts(
+    reminders.filter((reminder) => reminder.deliveryMode === 'EMAIL').map((reminder) => reminder.id),
   );
   const open = invoice.businessState === 'CONFIRMED' && remainingOf(invoice) > 0;
   const [editing, setEditing] = useState(false);
@@ -455,7 +459,7 @@ export const InvoiceReminders = ({
         recipient: recipient.trim(),
         text,
       },
-      'Upomínka zaznamenána (simulace odeslání)',
+      'Upomínka uložena a předána k odeslání e-mailem.',
     );
     if (outcome.ok) {
       setEditing(false);
@@ -479,9 +483,9 @@ export const InvoiceReminders = ({
       <div className="flex flex-col gap-150 print:hidden">
         {editing && (
           <div className="flex flex-col gap-150 rounded-md border border-border-primary p-200">
-            <StatusText showIcon size="sm" status="warning">
-              E-mailový poskytovatel není nakonfigurován. Skutečné odeslání není dostupné – lze text zkopírovat, nebo
-              odeslání pouze simulovat (bude označeno SIMULACE).
+            <StatusText showIcon size="sm" status="default">
+              Po uložení se upomínka skutečně odešle e-mailem přes nakonfigurovaný SMTP server (v ukázce ji zachytí
+              Mailpit). Stav odeslání se zobrazí v seznamu upomínek.
             </StatusText>
             {message !== undefined && (
               <StatusText showIcon size="sm" status={message.kind}>
@@ -528,7 +532,7 @@ export const InvoiceReminders = ({
                 size="sm"
                 variant="primary"
               >
-                Odeslat (simulace)
+                Odeslat e-mailem
               </Button>
             </div>
           </div>
@@ -546,7 +550,11 @@ export const InvoiceReminders = ({
               <li className="flex flex-wrap items-center gap-150 py-100" key={reminder.id}>
                 <span className="tabular-nums">{at(reminder.createdAt)}</span>
                 <span className="font-medium">{reminder.recipient}</span>
-                <SimulationBadge>SIMULACE – „odesláno“</SimulationBadge>
+                {reminder.deliveryMode === 'EMAIL' ? (
+                  <ReminderEmailStatus receipts={receipts} reminderId={reminder.id} />
+                ) : (
+                  <SimulationBadge>SIMULACE – starší záznam, neodesláno</SimulationBadge>
+                )}
                 <span className="text-fg-secondary text-xs">
                   {actorText(reminder.actorLabel, reminder.actorPrincipalId)}
                 </span>
