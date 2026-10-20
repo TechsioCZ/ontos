@@ -93,6 +93,8 @@ export const FinanceLongTextSchema = Schema.Trim.check(Schema.isMinLength(1), Sc
 export const SourceOrderSchema = Schema.Struct({ id: FinanceTextSchema, number: FinanceTextSchema });
 /** Optional invoice fields added for the sales demo v2; all optional so stored states keep decoding. */
 export const InvoiceDemoFields = {
+  /** Auditable replacement: the original issued document keeps its identity and customer snapshot. */
+  correctsInvoiceRef: Schema.optionalKey(InvoiceRefSchema),
   sourceOrder: Schema.optionalKey(SourceOrderSchema),
   budgetCategory: Schema.optionalKey(FinanceTextSchema),
   counterpartyCompanyId: Schema.optionalKey(FinanceTextSchema),

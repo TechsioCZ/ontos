@@ -213,7 +213,6 @@ const program = Effect.gen(function* seed() {
   const kavarna = tenantNamed('Kavárna', 'Kavárna U Parku s.r.o.');
   const horak = tenantNamed('Horák', 'Ateliér Horák');
   const technoservis = tenantNamed('Technoservis', 'Technoservis Praha s.r.o.');
-  const lekarna = tenantNamed('Lékárna', 'Lékárna Na Nábřeží s.r.o.');
   const outgoing = [
     {
       amount: 2_500_000,
@@ -231,7 +230,7 @@ const program = Effect.gen(function* seed() {
       paid: 'NONE',
       paidOn: '',
       text: 'Nájemné R101 – říjen 2026',
-      who: technoservis,
+      who: kavarna,
     },
     {
       amount: 2_500_000,
@@ -258,7 +257,7 @@ const program = Effect.gen(function* seed() {
       paid: 'NONE',
       paidOn: '',
       text: 'Nájemné A101 – říjen 2026',
-      who: lekarna,
+      who: technoservis,
     },
   ] as const;
   for (const entry of outgoing) {
@@ -300,9 +299,9 @@ const program = Effect.gen(function* seed() {
 
   // ---- S07.R3: recurring rent templates ----
   const templates = [
-    { amount: 4_500_000, name: 'Nájem R101 – kancelář', unit: 'R101', who: technoservis },
+    { amount: 4_500_000, name: 'Nájem R101 – kavárna', unit: 'R101', who: kavarna },
     { amount: 2_500_000, name: 'Nájem R201 – ateliér', unit: 'R201', who: horak },
-    { amount: 1_800_000, name: 'Nájem A101 – lékárna', unit: 'A101', who: lekarna },
+    { amount: 1_800_000, name: 'Nájem A101 – služební byt', unit: 'A101', who: technoservis },
   ] as const;
   for (const template of templates) {
     yield* apply({

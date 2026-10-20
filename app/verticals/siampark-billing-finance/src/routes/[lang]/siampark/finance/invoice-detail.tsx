@@ -153,6 +153,26 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
         )}${incoming ? ` · ${counterpartyName}` : ''}`}
         title={number}
       />
+      {(invoice.correctsInvoiceRef !== undefined ||
+        vm.invoices.some((entry) => entry.correctsInvoiceRef?.resourceId === invoice.ref.resourceId)) && (
+        <SectionCard title="Oprava odběratele · DEMO">
+          <p className="text-sm">
+            {invoice.correctsInvoiceRef === undefined
+              ? 'Původní doklad byl stornován kvůli chybnému odběrateli. Historické údaje zůstávají zachované.'
+              : 'Náhradní doklad po stornu faktury s chybným odběratelem. Částka a účtované období zůstávají stejné.'}
+          </p>
+          <a
+            className="underline"
+            href={`?resourceId=${encodeURIComponent(
+              invoice.correctsInvoiceRef?.resourceId ??
+                vm.invoices.find((entry) => entry.correctsInvoiceRef?.resourceId === invoice.ref.resourceId)!.ref
+                  .resourceId,
+            )}`}
+          >
+            {invoice.correctsInvoiceRef === undefined ? 'Otevřít náhradní doklad' : 'Otevřít původní stornovaný doklad'}
+          </a>
+        </SectionCard>
+      )}
       {isDraft && (
         <div className="flex">
           <Badge size="sm" variant="warning">

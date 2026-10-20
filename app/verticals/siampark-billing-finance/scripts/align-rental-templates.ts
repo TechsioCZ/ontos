@@ -47,10 +47,19 @@ export const alignRentalTemplates = (state: FinanceState): FinanceState => {
     recurringTemplates: templates,
     invoices: state.invoices.map((invoice) => {
       // Never rewrite issued invoices, payment history or immutable accountant packages.
-      const template = templates.find((entry) => entry.id === invoice.recurringTemplateId);
+      const template = templates.find(
+        (entry) =>
+          entry.id === invoice.recurringTemplateId ||
+          (invoice.documentNumber.startsWith('NAJ-') &&
+            invoice.occupancyRef !== undefined &&
+            entry.occupancyRef?.resourceId === invoice.occupancyRef.resourceId),
+      );
       if (template === undefined || invoice.businessState !== 'DRAFT') return invoice;
       return {
         ...invoice,
+        documentKind: 'RECURRING',
+        recurringTemplateId: template.id,
+        recurringPeriod: invoice.issueDate.slice(0, 7),
         ...computeInvoiceTotals(template.lines),
         ...(template.contractRef === undefined ? {} : { contractRef: template.contractRef }),
         ...(template.counterpartyName === undefined ? {} : { counterpartyName: template.counterpartyName }),
