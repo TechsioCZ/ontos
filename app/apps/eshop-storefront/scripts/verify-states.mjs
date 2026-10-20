@@ -70,7 +70,7 @@ try {
     await page.getByText('Ceny a dostupnost ověřeny', { exact: false }).waitFor();
     assert(!(await page.getByRole('button', { name: 'Pokračovat', exact: false }).isDisabled()));
     await setCart([asItem(unknown)]);
-    await page.getByText('Dostupnost nelze ověřit', { exact: true }).waitFor();
+    await page.locator('.cart-line__notice').getByText('Dostupnost nelze ověřit', { exact: true }).waitFor();
     assert(await page.getByRole('button', { name: 'Pokračovat', exact: false }).isDisabled());
     await shot('18-cart-blocked');
     await page.locator('.cart-line__qty').getByRole('button', { name: 'Odebrat' }).click();
@@ -85,7 +85,7 @@ try {
     await shot('20-catalog-error');
     await page.unroute('**/api/products?**', catalogFault);
     await page.getByRole('button', { name: 'Zkusit znovu' }).click();
-    await page.locator('.product-card').waitFor();
+    await page.locator('.product-card:not(.product-card--skeleton)').first().waitFor();
     assert.equal(await page.locator('.product-card').count(), 1);
 
     const noPrice = async (route) => {
@@ -161,10 +161,12 @@ try {
     report.admin = `${saved.orderNumber}: one row and persisted detail; records ${recordsUrl}`;
     if (recordsUrl) {
       const anonymous = await browser.newContext();
-      const denied = await anonymous.request.post(recordsUrl, { data: {} });
+      const active = await fetch('http://localhost:3041/active').then((r) => r.json());
+      const headers = { 'x-ontos-composition-revision': active.composition.revision };
+      const denied = await anonymous.request.post(recordsUrl, { headers, data: {} });
       assert([401, 403].includes(denied.status()), `anonymous records returned ${denied.status()}`);
       const actionUrl = recordsUrl.replace(/\/reads\/records.*$/u, '/merchandise/actions/apply-command');
-      const action = await anonymous.request.post(actionUrl, { data: { expectedRevision: 0, command: { _tag: 'ChangePrice', id: coffee.id, priceMinor: 100 } } });
+      const action = await anonymous.request.post(actionUrl, { headers, data: { expectedRevision: 0, command: { _tag: 'ChangePrice', id: coffee.id, priceMinor: 100 } } });
       assert([401, 403].includes(action.status()), `anonymous action returned ${action.status()}`);
       report.anonymous = `records ${denied.status()}, staff action ${action.status()}`;
       await anonymous.close();

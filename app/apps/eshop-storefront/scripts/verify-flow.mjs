@@ -33,13 +33,12 @@ const run = async (browser, name, viewport) => {
   const shot = async (step) => {
     // Full-page capture must load lazy artwork below the fold, especially on a 390px viewport.
     await page.evaluate(async () => {
-      const start = window.scrollY;
       for (let y = 0; y < document.documentElement.scrollHeight; y += window.innerHeight) {
-        window.scrollTo(0, y);
+        window.scrollTo({ top: y, behavior: 'instant' });
         await new Promise((resolve) => setTimeout(resolve, 80));
       }
       await Promise.all([...document.images].map((image) => image.decode().catch(() => {})));
-      window.scrollTo(0, start);
+      window.scrollTo({ top: 0, behavior: 'instant' });
     });
     await page.waitForTimeout(200);
     return page.screenshot({ fullPage: true, scale: 'css', path: `${OUT}/${name}-${step}.png` });
@@ -68,6 +67,7 @@ const run = async (browser, name, viewport) => {
   await page.waitForSelector('.listing__count');
   await page.waitForFunction(() => !document.querySelector('.listing__count')?.textContent?.includes('Načítám'));
   const categoryCount = await page.locator('.product-card').count();
+  assert(await page.locator('.product-card .availability').evaluateAll((badges) => badges.every((badge) => badge.scrollWidth <= badge.clientWidth + 1)), 'availability labels fit their cards');
   await shot('02-category');
   await page.goto(`${BASE}${firstCategory}?razeni=cena-vzestupne&dostupnost=skladem`, { waitUntil: 'networkidle' });
   await page.reload({ waitUntil: 'networkidle' });

@@ -1005,7 +1005,14 @@ p {
   white-space: nowrap;
 }
 
+.product-card .availability {
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.35;
+}
+
 .availability i {
+  flex: 0 0 7px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
