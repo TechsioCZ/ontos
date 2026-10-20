@@ -195,7 +195,12 @@ const loadCustomerNames = ({ setCustomers, setReferenceFailed, settle }: Referen
           Effect.logWarning('Customer list unavailable.', error).pipe(
             Effect.andThen(
               Effect.sync(() => {
-                setReferenceFailed(true);
+                if (
+                  !['CustomerListForbiddenProblem', 'RecordsForbiddenProblem', 'GatewayForbiddenProblem'].includes(
+                    error._tag,
+                  )
+                )
+                  setReferenceFailed(true);
                 settle('customers');
               }),
             ),
@@ -219,7 +224,8 @@ const loadOpportunityNames = ({ setOpportunities, setReferenceFailed, settle }: 
           Effect.logWarning('Opportunity list unavailable.', error).pipe(
             Effect.andThen(
               Effect.sync(() => {
-                setReferenceFailed(true);
+                if (!['RecordsForbiddenProblem', 'GatewayForbiddenProblem'].includes(error._tag))
+                  setReferenceFailed(true);
                 settle('opportunities');
               }),
             ),
