@@ -6,7 +6,8 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
 import { getProductStockStatus } from "@/lib/product-stock";
-import { getCatalog } from "@/ontos/catalog-server";
+import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
+import { isOntos } from "@/ontos/config";
 import type { CatalogSearchResult } from "@/mock-storefront/types";
 
 export const metadata: Metadata = { title: cs.search.results };
@@ -55,16 +56,37 @@ export default async function SearchPage({
   const { searchCatalog, toProductSummary } = await getCatalog();
   const { page = "1", q = "" } = await searchParams;
   const requestedPage = Number.parseInt(page, 10);
-  const results = searchCatalog(q);
-  const totalPages = Math.max(1, Math.ceil(results.length / productsPerPage));
-  const currentPage = Math.min(
-    Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1),
-    totalPages,
-  );
-  const visibleResults = results.slice(
-    (currentPage - 1) * productsPerPage,
-    currentPage * productsPerPage,
-  );
+  const requested = Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1);
+  const term = q.trim();
+  let visibleResults: CatalogSearchResult[] = [];
+  let itemCount = 0;
+  let currentPage = 1;
+  if (isOntos()) {
+    // OntOS searches the whole permitted catalog server-side and returns one page plus the total.
+    if (term) {
+      let listing = await getCatalogPage({ q: term, page: requested, pageSize: productsPerPage });
+      const lastPage = Math.max(1, Math.ceil(listing.total / productsPerPage));
+      if (requested > lastPage && listing.total > 0)
+        listing = await getCatalogPage({ q: term, page: lastPage, pageSize: productsPerPage });
+      const matches = new Map(
+        listing.model.searchCatalog(term).map((result) => [result.product.id, result] as const),
+      );
+      visibleResults = listing.products.map(
+        (product) => matches.get(product.id) ?? { product, matchingVariants: [] },
+      );
+      itemCount = listing.total;
+      currentPage = Math.min(requested, lastPage);
+    }
+  } else {
+    const results = searchCatalog(q);
+    itemCount = results.length;
+    const totalPages = Math.max(1, Math.ceil(results.length / productsPerPage));
+    currentPage = Math.min(requested, totalPages);
+    visibleResults = results.slice(
+      (currentPage - 1) * productsPerPage,
+      currentPage * productsPerPage,
+    );
+  }
 
   return (
     <StorefrontShell>
@@ -79,7 +101,7 @@ export default async function SearchPage({
           <h1 id="search-results-title">{cs.search.results}</h1>
           {q && <p>Dotaz: „{q}“</p>}
         </div>
-        {results.length > 0 ? (
+        {itemCount > 0 && visibleResults.length > 0 ? (
           <>
             <ProductGrid
               products={visibleResults.map((result) =>
@@ -88,7 +110,7 @@ export default async function SearchPage({
             />
             <CatalogPagination
               currentPage={currentPage}
-              itemCount={results.length}
+              itemCount={itemCount}
               pageSize={productsPerPage}
               pathname="/vyhledavani"
               searchParams={{ q }}
