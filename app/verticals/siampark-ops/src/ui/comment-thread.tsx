@@ -50,6 +50,11 @@ export interface CommentThreadProps {
   readonly onOpenAttachment?: (attachment: SubjectRef) => void;
   /** Render nothing (instead of a quiet note) when the viewer may not read comments. */
   readonly hideWhenForbidden?: boolean;
+  /**
+   * Optional: the page's own `useAgendaRecords([...,'documents'])` result, so the page and the thread share one
+   * documents revision (avoids a stale-revision conflict when the page also writes documents).
+   */
+  readonly records?: ReturnType<typeof useAgendaRecords>;
 }
 
 const CommentItem = ({
@@ -229,13 +234,15 @@ export const CommentThread = ({
   allowAttachment,
   hideWhenForbidden = false,
   onOpenAttachment,
+  records,
   subject,
   title,
   variant = 'thread',
 }: CommentThreadProps) => {
   const { t } = useModernI18n();
   const toast = useToast();
-  const ops = useAgendaRecords(['documents']);
+  const own = useAgendaRecords(records === undefined ? ['documents'] : []);
+  const ops = records ?? own;
   const envelope = ops.data?.agendas.documents;
   const state: DocumentsState | undefined = envelope?.state;
   const [body, setBody] = useState('');
