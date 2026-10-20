@@ -58,8 +58,9 @@ const InvoiceAnchors = ({ invoice }: { readonly invoice: Invoice }) => {
         {links.map((link) => (
           <li key={link.label}>
             <a
-              className="inline-flex items-center gap-50 text-fg-link underline-offset-2 hover:underline"
+              className="inline-flex items-center gap-50 underline"
               href={link.href}
+              style={{ color: 'var(--color-link)' }}
             >
               <span aria-hidden className="icon-[mdi--link-variant] size-4" />
               {link.label}
