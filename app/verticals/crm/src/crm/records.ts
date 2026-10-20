@@ -23,6 +23,9 @@ const correlation = (purpose: string) => randomToken.pipe(Effect.map((token) => 
 const isForbidden = (error: unknown) =>
   typeof error === 'object' && error !== null && '_tag' in error && String(error._tag).includes('Forbidden');
 
+const isConflict = (error: unknown) =>
+  typeof error === 'object' && error !== null && '_tag' in error && String(error._tag).includes('Conflict');
+
 export const loadCrmRecords = (clientId?: string) =>
   correlation('records').pipe(
     Effect.flatMap((requestCorrelation) =>
@@ -83,6 +86,11 @@ export const useCrmRecords = (clientId?: string) => {
       return browserRuntime
         .runPromise(
           runCrmCommand(command, revision).pipe(
+            // Another user changed the CRM since our last read (several personas demo at once): re-read the
+            // current revision and try once more. Domain checks run again on the server, so this is safe.
+            Effect.catchIf(isConflict, () =>
+              loadCrmRecords().pipe(Effect.flatMap((latest) => runCrmCommand(command, latest.revision))),
+            ),
             Effect.match({
               onFailure: (error): CrmCommandOutcome => {
                 const message = commandErrorMessage(error);

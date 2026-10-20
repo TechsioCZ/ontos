@@ -170,7 +170,9 @@ export const ClientFormDialog = ({
     }
     void submit(command).then((outcome) => {
       if (!outcome.ok) {
-        setFailure(outcome.message ?? 'Uložení se nezdařilo. Zkuste to prosím znovu.');
+        const message = outcome.message ?? 'Uložení se nezdařilo. Zkuste to prosím znovu.';
+        setFailure(message);
+        toaster.create({ description: message, title: 'Klienta se nepodařilo uložit', type: 'error' });
         return;
       }
       toaster.create({
