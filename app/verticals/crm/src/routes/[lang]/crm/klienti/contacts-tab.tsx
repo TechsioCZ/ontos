@@ -198,7 +198,7 @@ const ContactCard = ({
       </div>
       <div className="flex flex-col gap-50 text-sm">
         <span className="flex items-center gap-100">
-          <span aria-hidden className="icon-[mdi--phone-outline] size-4 text-fg-secondary" />
+          <span aria-hidden className="icon-[mdi--phone-outline] size-200 text-fg-secondary" />
           {contact.phone === undefined ? (
             <span className="text-fg-secondary">telefon neuveden</span>
           ) : (
@@ -206,7 +206,7 @@ const ContactCard = ({
           )}
         </span>
         <span className="flex min-w-0 items-center gap-100">
-          <span aria-hidden className="icon-[mdi--email-outline] size-4 text-fg-secondary" />
+          <span aria-hidden className="icon-[mdi--email-outline] size-200 text-fg-secondary" />
           {contact.email === undefined ? (
             <span className="text-fg-secondary">e-mail neuveden</span>
           ) : (

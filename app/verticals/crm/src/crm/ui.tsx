@@ -55,7 +55,7 @@ export const CrmScopeNote = ({ records }: { readonly records: RecordsResponse })
     <p className="inline-flex w-fit items-center gap-100 rounded-full border border-border-primary bg-surface px-150 py-50 text-fg-secondary text-xs">
       <span
         aria-hidden
-        className={all ? 'icon-[mdi--account-group-outline] size-4' : 'icon-[mdi--shield-account-outline] size-4'}
+        className={all ? 'icon-[mdi--account-group-outline] size-200' : 'icon-[mdi--shield-account-outline] size-200'}
       />
       {t(key)}
     </p>

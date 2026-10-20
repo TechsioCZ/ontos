@@ -21,7 +21,7 @@ export const SalespersonChip = ({ name }: { readonly name: string | undefined })
     <span className="inline-flex min-w-0 items-center gap-100">
       <span
         aria-hidden
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-primary-light font-semibold text-primary text-xs"
+        className="inline-flex size-300 shrink-0 items-center justify-center rounded-full bg-primary-light font-semibold text-primary text-xs"
       >
         {initials(name)}
       </span>

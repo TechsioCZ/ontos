@@ -67,7 +67,7 @@ const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
           <span className="flex min-w-0 items-center gap-100">
             <span
               aria-hidden
-              className={`${row.client.kind === 'person' ? 'icon-[mdi--account-outline]' : 'icon-[mdi--office-building-outline]'} size-4 shrink-0 text-fg-secondary`}
+              className={`${row.client.kind === 'person' ? 'icon-[mdi--account-outline]' : 'icon-[mdi--office-building-outline]'} size-200 shrink-0 text-fg-secondary`}
             />
             <span className="truncate font-medium">{row.client.name}</span>
             {row.client.status === 'archived' && (

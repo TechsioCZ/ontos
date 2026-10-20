@@ -154,7 +154,7 @@ export const crmManifest = defineOntosModuleManifest({
           contributionKey: 'demo.crm.navigation.pairing',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: 'demo.crm.read_all' },
             entrypointKey: 'demo.crm.page.pairing',
             moduleKey,
             role: 'page',
@@ -243,7 +243,7 @@ export const crmManifest = defineOntosModuleManifest({
           contributionKey: 'demo.crm.page.pairing',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'context_permission', permission: 'demo.crm.read_all' },
             entrypointKey: 'demo.crm.page.pairing',
             moduleKey,
             role: 'page',
