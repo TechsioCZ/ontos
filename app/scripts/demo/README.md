@@ -172,6 +172,28 @@ redeems the key for a new single-use gateway assertion, so `reset-permissions.mt
 `agent-bot` keys (`auth.apikey.rate_limit_enabled = false`). Without it the agent gets `429
 GatewayRateLimitedProblem` after ten calls.
 
+### CRM and e-shop companies (demo v2)
+
+The same step creates **Velkoobchod Hanák s.r.o.** (`…0022`, CRM) and **Kavárna Doma s.r.o.** (`…0023`,
+e-shop) and their personas. Each persona is a member of its own company only, so the company switcher shows
+exactly one company and a switch to any other company answers 403.
+
+| Login                    | Name            | Company | Role            | Access                                                                               |
+| ------------------------ | --------------- | ------- | --------------- | ------------------------------------------------------------------------------------ |
+| `spravce@hanak.demo`     | Karel Hanák     | Hanák   | Správce         | CRM `read_all` + `write_all` + `assign`, customers, tasks, employees, identity admin |
+| `vedouci@hanak.demo`     | Lucie Dvořáková | Hanák   | Vedoucí obchodu | CRM `read_all` + `write_all` + `assign`, tasks, employees; customers read            |
+| `obchodnik.a@hanak.demo` | Jan Novák       | Hanák   | Obchodník A     | CRM `read_assigned` + `write_assigned` only, tasks; employees read                   |
+| `obchodnik.b@hanak.demo` | Petra Svobodová | Hanák   | Obchodník B     | same as A                                                                            |
+| `eshop@kavarna.demo`     | Tereza Malá     | Kavárna | Správce e-shopu | products, orders, customers, tasks, employees                                        |
+| `expedice@kavarna.demo`  | Ondřej Kříž     | Kavárna | Expedice        | merchandise only (orders, products)                                                  |
+| `kavarna-storefront`     | service         | Kavárna | Storefront BFF  | merchandise read + `demo.merchandise.apply-command` (managed API key)                |
+
+The storefront key lands in `app/.env.demo.local` as `ONTOS_STOREFRONT_API_KEY` (with
+`ONTOS_STOREFRONT_PRINCIPAL_ID` and `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`); it is verified against a
+`merchandise` gateway assertion in company 0023 and runs without the Better Auth rate limit. The Siampark
+accounts (`management@`, `operations@`, `finance@`, `external@siampark.demo`) also get their roles in the
+Siampark company 0021 (`siamparkRentalPersonas`).
+
 ### Proofs
 
 `node scripts/demo/prove-sales-demo.mts` checks requirements 5, 7d and 10 over HTTP against the running stack:
