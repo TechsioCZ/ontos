@@ -21,16 +21,18 @@ export const useCartValidation = (items: readonly CartItem[]): CartValidationSta
   const [nonce, setNonce] = useState(0);
   const ticket = useRef(0);
   useEffect(() => {
+    const mine = ++ticket.current;
     if (items.length === 0) {
       setState({ checking: false });
       return;
     }
-    const mine = ++ticket.current;
-    setState((previous) => ({ ...previous, checking: true }));
+    const controller = new AbortController();
+    setState((previous) => ({ validation: previous.validation, checking: true }));
     const timer = window.setTimeout(() => {
       request<CartValidation>('/api/cart/validate', {
         body: JSON.stringify({ lines: items.map(({ priceMinor, productId, quantity, variantId }) => ({ priceMinor, productId, quantity, variantId })) }),
         method: 'POST',
+        signal: controller.signal,
       })
         .then((validation) => {
           if (mine === ticket.current) setState({ checking: false, key, validation });
@@ -39,7 +41,11 @@ export const useCartValidation = (items: readonly CartItem[]): CartValidationSta
           if (mine === ticket.current) setState({ checking: false, error: error instanceof ApiError ? error : new ApiError(0, { code: 'unknown', message: String(error) }), key });
         });
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => {
+      ++ticket.current;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, nonce]);
   const revalidate = useCallback(() => setNonce((value) => value + 1), []);

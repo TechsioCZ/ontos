@@ -5,6 +5,7 @@
 //      Actions: POST {shell}{apiBaseUrl}/{vertical}/actions/{slug} with an `idempotency-key`.
 // Core evaluates permissions and legal-entity scope on every call; the key is never sent to the browser.
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { getConfig } from './config.ts';
 
 const GATEWAY_CONTEXT_PATH = '/shell-super-app-api/auth/api-key/gateway-context';
@@ -32,9 +33,12 @@ interface GatewayContext {
 
 let liveRevision: string | undefined;
 
-const fetchActiveRevision = async (): Promise<string | undefined> => {
+const requestSignal = (timeout: number, deadline?: AbortSignal): AbortSignal =>
+  deadline === undefined ? AbortSignal.timeout(timeout) : AbortSignal.any([deadline, AbortSignal.timeout(timeout)]);
+
+const fetchActiveRevision = async (deadline?: AbortSignal): Promise<string | undefined> => {
   try {
-    const response = await fetch(getConfig().compositionUrl, { signal: AbortSignal.timeout(4000) });
+    const response = await fetch(getConfig().compositionUrl, { signal: requestSignal(4000, deadline) });
     if (!response.ok) return undefined;
     const body = (await response.json()) as { composition?: { revision?: unknown } };
     const revision = body.composition?.revision;
@@ -57,7 +61,15 @@ const reach = async (url: string, init: RequestInit): Promise<Response> => {
   }
 };
 
-const requestContext = async (audience: string, revision: string): Promise<Response> => {
+const responseText = async (response: Response): Promise<string> => {
+  try {
+    return await response.text();
+  } catch {
+    throw new OntosError('OntOS response interrupted', 503, 'backend_unreachable');
+  }
+};
+
+const requestContext = async (audience: string, revision: string, deadline?: AbortSignal): Promise<Response> => {
   const config = getConfig();
   return await reach(`${config.shellUrl}${GATEWAY_CONTEXT_PATH}`, {
     body: JSON.stringify({ audience, compositionRevision: revision, legalEntityId: config.legalEntityId }),
@@ -67,7 +79,7 @@ const requestContext = async (audience: string, revision: string): Promise<Respo
       'x-correlation-id': randomUUID(),
     },
     method: 'POST',
-    signal: AbortSignal.timeout(10_000),
+    signal: requestSignal(10_000, deadline),
   });
 };
 
@@ -84,29 +96,29 @@ const parseProblem = (text: string): { code?: string; detail?: string; title?: s
   }
 };
 
-const gatewayContext = async (audience: string): Promise<GatewayContext> => {
+const gatewayContext = async (audience: string, deadline?: AbortSignal): Promise<GatewayContext> => {
   const config = getConfig();
   if (config.apiKey === undefined) {
     throw new OntosError('ONTOS_STOREFRONT_API_KEY is not configured', 503, 'storefront_not_configured');
   }
-  let revision = liveRevision ?? (await fetchActiveRevision()) ?? config.compositionRevision;
+  let revision = liveRevision ?? (await fetchActiveRevision(deadline)) ?? config.compositionRevision;
   if (revision === undefined) {
     throw new OntosError('No composition revision (publisher unreachable)', 503, 'composition_unavailable');
   }
-  let response = await requestContext(audience, revision);
+  let response = await requestContext(audience, revision, deadline);
   if (response.status === 409 || response.status === 400) {
-    const refreshed = await fetchActiveRevision();
+    const refreshed = await fetchActiveRevision(deadline);
     if (refreshed !== undefined && refreshed !== revision) {
       revision = refreshed;
-      response = await requestContext(audience, refreshed);
+      response = await requestContext(audience, refreshed, deadline);
     }
   }
-  const text = await response.text();
+  const text = await responseText(response);
   if (!response.ok) {
     const problem = parseProblem(text);
     throw new OntosError(
       `Gateway assertion for ${audience} failed: HTTP ${response.status} ${problem.code ?? ''}`.trim(),
-      response.status === 401 || response.status === 403 ? 503 : response.status,
+      response.status,
       problem.code ?? 'gateway_context_failed',
       problem.detail ?? problem.title,
     );
@@ -132,6 +144,7 @@ const post = async (
   path: string,
   body: unknown,
   headers: Record<string, string> = {},
+  deadline?: AbortSignal,
 ): Promise<unknown> => {
   const { shellUrl } = getConfig();
   const correlationId = randomUUID();
@@ -145,9 +158,9 @@ const post = async (
       ...headers,
     },
     method: 'POST',
-    signal: AbortSignal.timeout(20_000),
+    signal: requestSignal(20_000, deadline),
   });
-  const text = await response.text();
+  const text = await responseText(response);
   if (!response.ok) {
     const problem = parseProblem(text);
     console.error(`[ontos] ${path} -> HTTP ${response.status} ${problem.code ?? ''} (correlation ${correlationId})`);
@@ -168,18 +181,33 @@ const post = async (
   return JSON.parse(text) as unknown;
 };
 
+// Cover short local rebuilds, not an indefinite outage. One deadline bounds discovery, assertions,
+// reads and backoff together; no stale snapshot can turn an unsuccessful validation into success.
+const READ_BACKOFF_MS = [400, 800, 1200, 2000, 3000, 4000, 4000] as const;
+const READ_DEADLINE_MS = 20_000;
+
 /** Governed records read of a vertical (fresh assertion per call: assertions are single-use). */
 export const readRecords = async (vertical: string, readName: string, query: unknown): Promise<unknown> => {
-  // Reads are safe to repeat: ride out a shell/vertical restart (503) or a just-published composition (409).
+  const deadline = AbortSignal.timeout(READ_DEADLINE_MS);
+  let renewedAssertion = false;
   for (let attempt = 0; ; attempt += 1) {
+    let reading = false;
     try {
-      const context = await gatewayContext(vertical);
-      return await post(context, `/reads/${segment(readName)}`, query);
+      const context = await gatewayContext(vertical, deadline);
+      reading = true;
+      return await post(context, `/reads/${segment(readName)}`, query, {}, deadline);
     } catch (error) {
-      const retryable = error instanceof OntosError && (error.status === 503 || error.status === 409 || error.status === 502) && error.code !== 'storefront_not_configured';
-      if (!retryable || attempt >= 2) throw error;
-      if (error.status === 409) liveRevision = undefined;
-      await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+      if (!(error instanceof OntosError)) throw error;
+      // A rejected read assertion may be renewed ONCE. Never retry gateway credential rejection,
+      // permission denial, business validation, or an Action; renewal must still pass Core checks.
+      const renew = reading && error.status === 401 && !renewedAssertion;
+      const retryable = [502, 503, 504, 409].includes(error.status) || renew;
+      const wait = READ_BACKOFF_MS[attempt];
+      if (!retryable || error.code === 'storefront_not_configured' || wait === undefined || deadline.aborted) throw error;
+      if (renew) renewedAssertion = true;
+      // Rediscover composition after *any* transient failure, not just a visible 409.
+      liveRevision = undefined;
+      await delay(wait, undefined, { signal: deadline }).catch(() => { throw error; });
     }
   }
 };
