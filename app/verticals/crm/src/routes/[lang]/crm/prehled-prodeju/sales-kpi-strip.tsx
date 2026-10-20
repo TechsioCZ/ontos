@@ -17,6 +17,19 @@ const ordersWord = (count: number) => {
 export const excludedSummary = (report: SalesReport) =>
   report.excluded.map((entry) => `${formatNumber(entry.count)} ${exclusionReasonLabels[entry.reason]}`).join(', ');
 
+/** "21 objednávek · z toho stornované 1 240 Kč · není to tržba" — status categories stay visible beside the sum. */
+const valueHint = (report: SalesReport, currency: string, count: number) => {
+  const cancelled = report.byStatus
+    .find((group) => group.key === 'cancelled')
+    ?.totals.find((total) => total.currency === currency);
+  const parts = [`${formatNumber(count)} ${ordersWord(count)}`];
+  if (cancelled !== undefined) {
+    parts.push(`z toho stornované ${formatDecimalMoney(cancelled.amount, currency)}`);
+  }
+  parts.push('není to tržba ani zisk');
+  return parts.join(' · ');
+};
+
 /** KPI tiles for a computed report. */
 export const SalesKpiTiles = ({ report, scopeAll }: { readonly report: SalesReport; readonly scopeAll: boolean }) => {
   const { t } = useModernI18n();
@@ -33,7 +46,7 @@ export const SalesKpiTiles = ({ report, scopeAll }: { readonly report: SalesRepo
       ) : (
         report.totals.map((total) => (
           <StatCard
-            hint={`${formatNumber(total.count)} ${ordersWord(total.count)} v ${total.currency} · není to tržba ani zisk`}
+            hint={valueHint(report, total.currency, total.count)}
             key={total.currency}
             label={`Hodnota objednávek v ${total.currency}`}
             value={formatDecimalMoney(total.amount, total.currency)}
