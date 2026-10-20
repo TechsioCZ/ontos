@@ -225,6 +225,8 @@ curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WAR
 
 # 6. Sales-demo accounts, role grants and the agent-bot API key (needs the running shell; idempotent).
 step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
+# People administration (Lidé a role): company administrators may run core.identity.manage-demo-account.
+step accounts-admin-grants "${WITH_ENV[@]}" node scripts/demo/accounts-admin-grants.mts
 cat <<EOF
 
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs/siampark/work   (composition :$COMPOSITION_PORT)
