@@ -62,7 +62,7 @@ const writeStates = Effect.fn('SiamparkOps.writeDemoStates')(function* writeDemo
   const db = yield* makeWithDefaults({ relations: siamparkOpsRelations });
   const now = DateTime.toDateUtc(yield* DateTime.now);
   // Optional SIAMPARK_OPS_SEED_ONLY=documents,meters reseeds only those agendas (lane-local reseed; default: all).
-  const only = (yield* Config.string('SIAMPARK_OPS_SEED_ONLY').pipe(Config.withDefault('')))
+  const only = (yield* Config.String('SIAMPARK_OPS_SEED_ONLY').pipe(Config.withDefault('')))
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value !== '');
