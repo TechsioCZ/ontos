@@ -24,6 +24,7 @@ import {
 import type { useFinanceRecords } from './use-finance-records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { InvoicePrint } from './invoice-print.tsx';
+import { useInvoiceIssuer } from './use-invoice-issuer.ts';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import {
   CounterpartyHistory,
@@ -95,6 +96,7 @@ interface FinanceInvoiceDetailProps {
 
 export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps) => {
   const { busy, canWrite, closeDetail, confirmInvoice, referenceDate, references, requestVoid, t } = vm;
+  const issuerName = useInvoiceIssuer() ?? 'Údaj neposkytnut';
   const number = invoice.number ?? invoice.documentNumber;
   const isDraft = invoice.businessState === 'DRAFT';
   const lines = invoice.lines ?? [];
@@ -120,7 +122,7 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
 
   return (
     <article className="flex min-w-0 flex-col gap-250" data-finance-invoice="">
-      <InvoicePrint counterpartyName={counterpartyName} invoice={invoice} issuerName={t(`${ns}.supplierName`)} />
+      <InvoicePrint counterpartyName={counterpartyName} invoice={invoice} issuerName={issuerName} />
       <div className="print:hidden">
         <Button
           className="whitespace-nowrap"
@@ -192,12 +194,12 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                   ]}
                 />
               ) : (
-                <p className="text-sm">{t(`${ns}.supplierName`)}</p>
+                <p className="text-sm">{issuerName}</p>
               )}
             </SectionCard>
             <SectionCard title={t(`${ns}.customer`)}>
               {incoming ? (
-                <p className="text-sm">{t(`${ns}.supplierName`)}</p>
+                <p className="text-sm">{issuerName}</p>
               ) : (
                 <DetailList
                   items={[
