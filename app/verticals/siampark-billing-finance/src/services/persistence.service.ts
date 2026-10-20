@@ -845,7 +845,10 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
         ? []
         : [
             {
-              counterpartyName: invoice.counterpartyName ?? invoice.counterpartyRef.resourceId,
+              counterpartyName:
+                invoice.counterpartyName ??
+                command.counterpartyNames?.[invoice.ref.resourceId] ??
+                invoice.counterpartyRef.resourceId,
               documentLink:
                 documentsByInvoice.get(invoice.ref.resourceId) === undefined
                   ? ''

@@ -130,6 +130,8 @@ export const FinanceCommandSchema = Schema.Union([
   }),
   Schema.TaggedStruct('CreateAccountingExport', {
     actorLabel,
+    /** Display names of registry counterparties keyed by invoice id, as the user saw them. */
+    counterpartyNames: Schema.optionalKey(Schema.Record(Schema.String, FinanceTextSchema)),
     format: AccountingExportFormatSchema,
     invoiceResourceIds: Schema.Array(FinanceTextSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
   }),

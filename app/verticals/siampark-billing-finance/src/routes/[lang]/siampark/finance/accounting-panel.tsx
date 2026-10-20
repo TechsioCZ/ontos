@@ -113,6 +113,13 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       {
         _tag: 'CreateAccountingExport',
         ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
+        counterpartyNames: Object.fromEntries(
+          ids.flatMap((id) => {
+            const invoice = confirmed.find((entry) => entry.ref.resourceId === id);
+            const name = invoice === undefined ? undefined : nameOf(invoice);
+            return name === undefined || name === '—' ? [] : [[id, name]];
+          }),
+        ),
         format,
         invoiceResourceIds: ids,
       },
