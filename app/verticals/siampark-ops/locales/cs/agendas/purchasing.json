@@ -90,7 +90,8 @@
     "adjustment": "Korekce",
     "planned": "Plánovat výdej",
     "issuePlanned": "Vydat",
-    "cancelPlanned": "Zrušit plán"
+    "cancelPlanned": "Zrušit plán",
+    "edit": "Upravit"
   },
   "filters": {
     "search": "Hledat kód nebo název",
@@ -300,7 +301,8 @@
     "createTitle": "Nová skladová položka",
     "createSubmit": "Založit položku",
     "created": "Položka založena",
-    "maxBelowMin": "Maximum nesmí být nižší než minimum."
+    "maxBelowMin": "Maximum nesmí být nižší než minimum.",
+    "editTitle": "Upravit parametry položky"
   },
   "lines": {
     "item": "Řádek {{index}}",

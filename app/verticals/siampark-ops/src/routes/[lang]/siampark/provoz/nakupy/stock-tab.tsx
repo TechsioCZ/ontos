@@ -13,7 +13,10 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
@@ -37,6 +40,7 @@ import type { MaterialPlan, StockLevel } from '../../../../../../shared/domain/p
 import { MovementForm } from './movement-form.tsx';
 import type { MovementKind } from './movement-form.tsx';
 import {
+  failureKey,
   formatStamp,
   dateTimeIso,
   formatAmount,
@@ -244,10 +248,12 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
   const [form, setForm] = useState<{ readonly kind: MovementKind; readonly planned?: StockPlannedIssue } | undefined>(
     undefined,
   );
+  const [editing, setEditing] = useState(false);
   const lookup = lookupOf(state);
   const item: StockItem | undefined = state.items.find((entry) => entry.id === itemId);
   const close = () => {
     setForm(undefined);
+    setEditing(false);
     onClose();
   };
   if (item === undefined) {
@@ -272,7 +278,7 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
   };
   return (
     <SidePanel
-      closeOnInteractOutside={form === undefined}
+      closeOnInteractOutside={form === undefined && !editing}
       description={`${item.sku} · ${k(`category.${item.category}`)}`}
       onOpenChange={(open) => !open && close()}
       open
@@ -290,7 +296,7 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
             </Badge>
           )}
         </div>
-        {canWrite && form === undefined && (
+        {canWrite && form === undefined && !editing && (
           <div className="flex flex-wrap gap-100">
             <Button
               icon="icon-[mdi--package-down]"
@@ -337,8 +343,12 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
             >
               {k('actions.planned')}
             </Button>
+            <Button icon="icon-[mdi--pencil]" onClick={() => setEditing(true)} size="sm" theme="borderless" variant="secondary">
+              {k('actions.edit')}
+            </Button>
           </div>
         )}
+        {editing && <ItemEditForm item={item} onDone={() => setEditing(false)} run={run} state={state} />}
         {form !== undefined && (
           <MovementForm
             item={item}
@@ -619,5 +629,108 @@ export const MovementTable = ({
         })}
       </Table.Body>
     </Table>
+  );
+};
+
+const ItemEditForm = ({
+  item,
+  onDone,
+  run,
+  state,
+}: {
+  readonly item: StockItem;
+  readonly state: PurchasingState;
+  readonly run: RunCommand;
+  readonly onDone: () => void;
+}) => {
+  const k = usePurchasingT();
+  const { t } = useModernI18n();
+  const toast = useToast();
+  const [values, setValues] = useState<Record<string, string>>({
+    leadTimeDays: String(item.leadTimeDays),
+    maximum: String(item.maximum),
+    minimum: String(item.minimum),
+    name: item.name,
+    note: item.note ?? '',
+    supplierId: item.supplierId ?? 'none',
+  });
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const set = (name: string, next: string) => setValues((current) => ({ ...current, [name]: next }));
+  const submit = async () => {
+    setError(undefined);
+    const minimum = Number(values['minimum']);
+    const maximum = Number(values['maximum']);
+    const lead = Number(values['leadTimeDays']);
+    const name = (values['name'] ?? '').trim();
+    if (name === '' || ![minimum, maximum, lead].every((entry) => Number.isInteger(entry) && entry >= 0)) {
+      setError(t('siampark-ops.common.required'));
+      return;
+    }
+    if (maximum > 0 && maximum < minimum) {
+      setError(k('items.maxBelowMin'));
+      return;
+    }
+    const supplier = state.suppliers.find((entry) => entry.id === values['supplierId']);
+    setBusy(true);
+    const outcome = await run({
+      _tag: 'StockItemUpdate',
+      itemId: item.id,
+      leadTimeDays: lead,
+      maximum,
+      minimum,
+      name,
+      note: (values['note'] ?? '').trim(),
+      ...(supplier === undefined ? {} : { supplierId: supplier.id }),
+    });
+    setBusy(false);
+    if (outcome.ok) {
+      toast.create({ duration: 5000, title: t('siampark-ops.common.saved'), type: 'success' });
+      onDone();
+    } else {
+      setError(t(failureKey(outcome.reason)));
+    }
+  };
+  const input = (name: string, label: string, numeric = false) => (
+    <FormInput
+      id={`item-edit-${name}`}
+      inputMode={numeric ? 'numeric' : undefined}
+      label={label}
+      maxLength={200}
+      onChange={(event) => set(name, event.target.value)}
+      value={values[name] ?? ''}
+    />
+  );
+  return (
+    <SectionCard title={k('items.editTitle')}>
+      {error !== undefined && (
+        <StatusText showIcon status="error">
+          {error}
+        </StatusText>
+      )}
+      {input('name', k('fields.name'))}
+      <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
+        {input('minimum', k('fields.minimum'), true)}
+        {input('maximum', k('fields.maximum'), true)}
+        {input('leadTimeDays', k('fields.leadTimeDays'), true)}
+      </div>
+      <Select
+        items={state.suppliers.map((entry) => ({ displayValue: entry.name, label: entry.name, value: entry.id }))}
+        label={k('fields.supplier')}
+        name="item-edit-supplier"
+        onValueChange={({ value }) => set('supplierId', value[0] ?? 'none')}
+        size="md"
+        value={values['supplierId'] === 'none' ? [] : [values['supplierId'] ?? '']}
+      />
+      {input('note', t('siampark-ops.common.note'))}
+      <div className="flex justify-end gap-100">
+        <Button onClick={onDone} size="sm" theme="outlined" variant="secondary">
+          {t('siampark-ops.common.cancel')}
+        </Button>
+        <Button isLoading={busy} loadingText={t('siampark-ops.common.saving')} onClick={() => void submit()} size="sm" variant="primary">
+          {t('siampark-ops.common.save')}
+        </Button>
+      </div>
+    </SectionCard>
   );
 };

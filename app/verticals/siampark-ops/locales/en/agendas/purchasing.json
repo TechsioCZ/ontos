@@ -90,7 +90,8 @@
     "adjustment": "Correction",
     "planned": "Plan issue",
     "issuePlanned": "Issue",
-    "cancelPlanned": "Cancel plan"
+    "cancelPlanned": "Cancel plan",
+    "edit": "Edit"
   },
   "filters": {
     "search": "Search code or name",
@@ -300,7 +301,8 @@
     "createTitle": "New stock item",
     "createSubmit": "Create item",
     "created": "Item created",
-    "maxBelowMin": "Maximum must not be lower than minimum."
+    "maxBelowMin": "Maximum must not be lower than minimum.",
+    "editTitle": "Edit item parameters"
   },
   "lines": {
     "item": "Line {{index}}",
