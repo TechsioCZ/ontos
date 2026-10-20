@@ -189,6 +189,14 @@ it.effect('a synchronous body construction throw rolls back', () =>
   }),
 );
 
+// Effect SQL keeps a failed COMMIT as its typed SqlError and turns a failed ROLLBACK into a defect.
+const surfacesSettlementFailure = (cause: Cause.Cause<unknown>, phase: string, failure: SqlError): boolean =>
+  cause.reasons.some((reason) =>
+    phase === 'COMMIT'
+      ? Cause.isFailReason(reason) && reason.error === failure
+      : Cause.isDieReason(reason) && reason.defect === failure,
+  );
+
 for (const phase of ['COMMIT', 'ROLLBACK']) {
   it.effect(`native ${phase} failure surfaces the SQL defect`, () =>
     Effect.gen(function* surfaceSettlementFailure() {
@@ -203,7 +211,7 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
       if (!Exit.isFailure(exit)) {
         throw new Error('Expected assertion to hold');
       }
-      expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure)).toBe(true);
+      expect(surfacesSettlementFailure(exit.cause, phase, failure)).toBe(true);
       expect(h.events).toEqual(['BEGIN', phase]);
     }),
   );
@@ -286,8 +294,8 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
         if (!Exit.isFailure(exit)) {
           throw new Error('Expected assertion to hold');
         }
-        // Native settlement defects take precedence over pending interruption.
-        expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure)).toBe(true);
+        // Native settlement failures take precedence over pending interruption.
+        expect(surfacesSettlementFailure(exit.cause, phase, failure)).toBe(true);
       }),
     2000,
   );
