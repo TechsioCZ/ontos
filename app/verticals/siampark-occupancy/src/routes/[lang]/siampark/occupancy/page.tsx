@@ -57,6 +57,7 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/siampark-occupancy.json';
 import enResource from '../../../../../locales/en/siampark-occupancy.json';
 import '../../../index.css';
+import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
 
 const RecordsSearchSchema = Schema.Struct({ resourceId: Schema.optional(OccupancyRefSchema.fields.resourceId) });
 const LABEL_CHOOSE = 'siampark-occupancy.demo.choose';
@@ -652,7 +653,8 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
   const tasks = loadedList(state.related.tasks);
   const invoices = loadedList(state.related.invoices);
   const isLease = selected.kind === 'LONG_TERM_LEASE';
-  const canEditRent = isLease && (selected.state === 'DRAFT' || selected.state === 'CONFIRMED' || selected.state === 'ACTIVE');
+  const canEditRent =
+    isLease && (selected.state === 'DRAFT' || selected.state === 'CONFIRMED' || selected.state === 'ACTIVE');
   const firstInvoice = invoices[0];
   return (
     <>
@@ -702,7 +704,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               value: unitName(selected.unitRef.resourceId),
             },
             {
-              href: tenant === undefined ? undefined : `/${language}/siampark/work?partyId=${tenant.partyId}`,
+              href: `/${language}/siampark/occupancy?resourceId=${selected.occupancyRef.resourceId}#tenant`,
               label: t('siampark-occupancy.story.tenant'),
               value: tenant?.displayName ?? customerName,
             },
@@ -755,7 +757,9 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               action={
                 canEditRent ? (
                   <Button disabled={busy} onClick={state.openRentEditor} size="sm" theme="outlined" variant="secondary">
-                    {t(selected.rentTerms === undefined ? 'siampark-occupancy.rent.set' : 'siampark-occupancy.rent.edit')}
+                    {t(
+                      selected.rentTerms === undefined ? 'siampark-occupancy.rent.set' : 'siampark-occupancy.rent.edit',
+                    )}
                   </Button>
                 ) : undefined
               }
@@ -803,6 +807,19 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               </SectionCard>
             )}
           </div>
+          {isLease && snapshot !== undefined && (
+            <TenantDossierCard
+              busy={busy}
+              dossier={snapshot.tenantDossiers?.find(
+                (item) => item.counterpartyId === selected.customerCounterpartyRef?.resourceId,
+              )}
+              key={`tenant:${snapshot.revision}`}
+              language={language}
+              newContactId={newUuid}
+              onCommand={state.runCommand}
+              record={selected}
+            />
+          )}
           {customerNameFeedback !== undefined && (
             <p className="siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">
               {t('siampark-occupancy.detail.customerUnavailable')}{' '}
@@ -854,56 +871,56 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               </Badge>
             </div>
             <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
-            {selected.state === 'DRAFT' && (
-              <Button disabled={busy} onClick={editDraft} size="sm" theme="outlined" variant="secondary">
-                {t(LABEL_EDIT_DRAFT)}
-              </Button>
-            )}
-            {selected.state === 'DRAFT' && (
-              <Button
-                disabled={busy}
-                onClick={() => runCommand({ _tag: 'Confirm', occupancyRef: selected.occupancyRef })}
-                size="sm"
-                variant="warning"
-              >
-                {t('siampark-occupancy.demo.confirm')}
-              </Button>
-            )}
-            {selected.state === 'CONFIRMED' && (
-              <>
-                <a
-                  className="siamparkoccupancy:inline-flex siamparkoccupancy:items-center siamparkoccupancy:text-sm siamparkoccupancy:underline siamparkoccupancy:underline-offset-4"
-                  href={`/${language}/siampark/agreements`}
-                >
-                  {t('siampark-occupancy.demo.contract')}
-                </a>
-                <Button disabled={busy} onClick={() => activate(selected)} size="sm" variant="warning">
-                  {t('siampark-occupancy.demo.activate')}
+              {selected.state === 'DRAFT' && (
+                <Button disabled={busy} onClick={editDraft} size="sm" theme="outlined" variant="secondary">
+                  {t(LABEL_EDIT_DRAFT)}
                 </Button>
-              </>
-            )}
-            {selected.state === 'ACTIVE' && (
-              <Button
-                disabled={busy}
-                onClick={() => runCommand({ _tag: 'Complete', occupancyRef: selected.occupancyRef })}
-                size="sm"
-                variant="warning"
-              >
-                {t('siampark-occupancy.demo.complete')}
-              </Button>
-            )}
-            {(selected.state === 'DRAFT' || selected.state === 'CONFIRMED') && (
-              <Button
-                disabled={busy}
-                onClick={() => runCommand({ _tag: 'Cancel', occupancyRef: selected.occupancyRef })}
-                size="sm"
-                theme="outlined"
-                variant="danger"
-              >
-                {t('siampark-occupancy.demo.cancel')}
-              </Button>
-            )}
-          </div>
+              )}
+              {selected.state === 'DRAFT' && (
+                <Button
+                  disabled={busy}
+                  onClick={() => runCommand({ _tag: 'Confirm', occupancyRef: selected.occupancyRef })}
+                  size="sm"
+                  variant="warning"
+                >
+                  {t('siampark-occupancy.demo.confirm')}
+                </Button>
+              )}
+              {selected.state === 'CONFIRMED' && (
+                <>
+                  <a
+                    className="siamparkoccupancy:inline-flex siamparkoccupancy:items-center siamparkoccupancy:text-sm siamparkoccupancy:underline siamparkoccupancy:underline-offset-4"
+                    href={`/${language}/siampark/agreements`}
+                  >
+                    {t('siampark-occupancy.demo.contract')}
+                  </a>
+                  <Button disabled={busy} onClick={() => activate(selected)} size="sm" variant="warning">
+                    {t('siampark-occupancy.demo.activate')}
+                  </Button>
+                </>
+              )}
+              {selected.state === 'ACTIVE' && (
+                <Button
+                  disabled={busy}
+                  onClick={() => runCommand({ _tag: 'Complete', occupancyRef: selected.occupancyRef })}
+                  size="sm"
+                  variant="warning"
+                >
+                  {t('siampark-occupancy.demo.complete')}
+                </Button>
+              )}
+              {(selected.state === 'DRAFT' || selected.state === 'CONFIRMED') && (
+                <Button
+                  disabled={busy}
+                  onClick={() => runCommand({ _tag: 'Cancel', occupancyRef: selected.occupancyRef })}
+                  size="sm"
+                  theme="outlined"
+                  variant="danger"
+                >
+                  {t('siampark-occupancy.demo.cancel')}
+                </Button>
+              )}
+            </div>
           </SectionCard>
           {isLease && <ContractCard contract={contract} language={language} t={t} />}
           <UnitCard language={language} property={property} t={t} unit={unit} />
@@ -1132,7 +1149,9 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
           </div>
           {editor === 'lease' && (
             <section className="siamparkoccupancy:space-y-3">
-              <h3 className="siamparkoccupancy:text-sm siamparkoccupancy:font-semibold">{t('siampark-occupancy.rent.title')}</h3>
+              <h3 className="siamparkoccupancy:text-sm siamparkoccupancy:font-semibold">
+                {t('siampark-occupancy.rent.title')}
+              </h3>
               <RentFields state={state} />
             </section>
           )}
@@ -1192,7 +1211,10 @@ const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useReco
   const active = leases.filter((record) => record.state === 'ACTIVE');
   const upcoming = leases.filter((record) => record.state === 'CONFIRMED' || record.state === 'DRAFT');
   const ended = leases.filter((record) => record.state === 'COMPLETED');
-  const monthly = active.reduce((sum, record) => sum + (record.rentTerms === undefined ? 0 : monthlyTotal(record.rentTerms)), 0);
+  const monthly = active.reduce(
+    (sum, record) => sum + (record.rentTerms === undefined ? 0 : monthlyTotal(record.rentTerms)),
+    0,
+  );
   const withoutRent = active.filter((record) => record.rentTerms === undefined).length;
   return (
     <div className="siamparkoccupancy:grid siamparkoccupancy:gap-4 siamparkoccupancy:sm:grid-cols-2 siamparkoccupancy:xl:grid-cols-4">
@@ -1275,6 +1297,14 @@ const RecordsPageContent = () => {
               title={t('siampark-occupancy.pages.records.title')}
             />
             {snapshot !== undefined && <OccupancySummary state={state} />}
+            <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
+              <LinkButton href="#tenants" size="sm" theme="outlined" variant="secondary">
+                Nájemci a kontaktní osoby ↓
+              </LinkButton>
+              <LinkButton href={`/${state.language}/siampark/overview`} size="sm" theme="outlined" variant="secondary">
+                Kalendář a přehled nemovitostí →
+              </LinkButton>
+            </div>
             <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:items-center siamparkoccupancy:justify-between siamparkoccupancy:gap-4 siamparkoccupancy:border-b siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:pb-4">
               <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
                 {(['ALL', 'LONG_TERM_LEASE', 'SHORT_STAY'] as const).map((kind) => (
@@ -1325,7 +1355,8 @@ const RecordsPageContent = () => {
                       </Table.Cell>
                       <Table.Cell>{state.tenantOf(record)?.displayName ?? '—'}</Table.Cell>
                       <Table.Cell>
-                        {formatDate(record.startDate)} – {record.endDate === null ? t('siampark-occupancy.demo.openEnd') : formatDate(record.endDate)}
+                        {formatDate(record.startDate)} –{' '}
+                        {record.endDate === null ? t('siampark-occupancy.demo.openEnd') : formatDate(record.endDate)}
                       </Table.Cell>
                       <Table.Cell>
                         <span className="siamparkoccupancy:tabular-nums">
@@ -1370,6 +1401,14 @@ const RecordsPageContent = () => {
                 </Table.Body>
               </Table>
             </div>
+            {snapshot !== undefined && (
+              <TenantDirectory
+                language={state.language}
+                snapshot={snapshot}
+                tenantOf={state.tenantOf}
+                unitName={unitName}
+              />
+            )}
             <section className="siamparkoccupancy:space-y-4 siamparkoccupancy:rounded-lg siamparkoccupancy:border siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:bg-(--color-surface) siamparkoccupancy:p-5">
               <h2 className="siamparkoccupancy:text-lg siamparkoccupancy:font-semibold">
                 {t('siampark-occupancy.demo.bookingObservations')}

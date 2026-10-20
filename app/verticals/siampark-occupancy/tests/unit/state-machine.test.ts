@@ -384,3 +384,115 @@ describe('Occupancy state transitions', () => {
     rejected(Schema.decodeEffect(OccupancySchema)({ ...draft, startDate: '2026-02-31' })),
   );
 });
+
+it.effect(
+  'persists tenant contacts, server-authored communication, case changes and archival without erasing lease history',
+  () =>
+    Effect.gen(function* tenantDossierLifecycle() {
+      const actor = { ...scope, principalId: '72000000-0000-4000-8000-000000000021' };
+      const initial = { bookingObservations: [], occupancies: [draft] };
+      const contacts = [
+        {
+          id: '81000000-0000-4000-8000-000000000001',
+          name: 'Lucie Parková',
+          role: 'Jednatelka',
+          email: 'lucie@kavarna.demo',
+          phone: '+420 777 101 101',
+        },
+        {
+          id: '81000000-0000-4000-8000-000000000002',
+          name: 'Petr Novák',
+          role: 'Provozní',
+          email: 'petr@kavarna.demo',
+          phone: '+420 777 101 102',
+        },
+      ];
+      const created = yield* transitionOccupancy(
+        initial,
+        { _tag: 'UpdateTenantDossier', occupancyRef, contacts },
+        actor,
+        unavailableOccupancyValidators,
+      );
+      const call = yield* transitionOccupancy(
+        created.snapshot,
+        {
+          _tag: 'UpdateTenantDossier',
+          occupancyRef,
+          activity: { kind: 'CALL', summary: 'Domluven termín předání jednotky.' },
+          caseState: 'IN_PROGRESS',
+        },
+        actor,
+        unavailableOccupancyValidators,
+      );
+      const archived = yield* transitionOccupancy(
+        call.snapshot,
+        { _tag: 'UpdateTenantDossier', occupancyRef, archived: true },
+        actor,
+        unavailableOccupancyValidators,
+      );
+      const dossier = archived.snapshot.tenantDossiers?.[0];
+      expect(dossier?.contacts).toEqual(contacts);
+      expect(dossier?.caseState).toBe('IN_PROGRESS');
+      expect(dossier?.archived).toBe(true);
+      expect(dossier?.history.map((entry) => entry.kind)).toEqual(['CONTACTS', 'CASE', 'CALL', 'ARCHIVE']);
+      expect(
+        dossier?.history.every(
+          (entry) => entry.authorPrincipalId === actor.principalId && entry.occurredAt.length > 10,
+        ),
+      ).toBe(true);
+      expect(archived.snapshot.occupancies).toEqual(initial.occupancies);
+      const restored = yield* transitionOccupancy(
+        archived.snapshot,
+        { _tag: 'UpdateTenantDossier', occupancyRef, archived: false },
+        actor,
+        unavailableOccupancyValidators,
+      );
+      expect(restored.snapshot.tenantDossiers?.[0]?.history).toHaveLength(5);
+      expect(restored.snapshot.tenantDossiers?.[0]?.archived).toBe(false);
+    }),
+);
+
+it.effect('rejects dossier updates without trusted author, for another tenant and with duplicate contacts', () =>
+  Effect.gen(function* tenantDossierGuard() {
+    const initial = { bookingObservations: [], occupancies: [draft] };
+    const command = {
+      _tag: 'UpdateTenantDossier' as const,
+      occupancyRef,
+      activity: { kind: 'NOTE' as const, summary: 'Předání.' },
+    };
+    expect(
+      Exit.isFailure(yield* Effect.exit(transitionOccupancy(initial, command, scope, unavailableOccupancyValidators))),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        yield* Effect.exit(
+          transitionOccupancy(
+            initial,
+            { ...command, occupancyRef: { ...occupancyRef, tenantId: '99999999-9999-4999-8999-999999999999' } },
+            { ...scope, principalId: 'actor' },
+            unavailableOccupancyValidators,
+          ),
+        ),
+      ),
+    ).toBe(true);
+    const contact = {
+      id: '81000000-0000-4000-8000-000000000001',
+      name: 'Lucie Parková',
+      role: '',
+      email: '',
+      phone: '',
+    };
+    expect(
+      Exit.isFailure(
+        yield* Effect.exit(
+          transitionOccupancy(
+            initial,
+            { ...command, contacts: [contact, contact] },
+            { ...scope, principalId: 'actor' },
+            unavailableOccupancyValidators,
+          ),
+        ),
+      ),
+    ).toBe(true);
+  }),
+);

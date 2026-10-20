@@ -31,6 +31,7 @@ type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, n
 export interface OccupancyGuardScope {
   readonly legalEntityId: string;
   readonly tenantId: string;
+  readonly principalId?: string;
 }
 export interface OccupancyValidators {
   readonly contract: (
@@ -240,6 +241,7 @@ const importBooking = Effect.fn('Occupancy.importBooking')(function* importBooki
   return {
     resourceRef,
     snapshot: {
+      ...state,
       bookingObservations: [
         ...state.bookingObservations.filter((value) => value.observationId !== command.observationId),
         {
@@ -269,6 +271,75 @@ export const transitionOccupancy = (
   validators: OccupancyValidators,
 ): Effect.Effect<OccupancyTransition, OccupancyError> =>
   Match.value(command).pipe(
+    Match.tag(
+      'UpdateTenantDossier',
+      Effect.fn('Occupancy.UpdateTenantDossier')(function* updateTenantDossier(
+        command: Extract<OccupancyCommand, { readonly _tag: 'UpdateTenantDossier' }>,
+      ) {
+        const record = yield* findOccupancy(state, command.occupancyRef, scope);
+        const counterpartyId = record.customerCounterpartyRef?.resourceId;
+        if (counterpartyId === undefined || scope.principalId === undefined)
+          return yield* rejected('tenant_dossier_requires_customer_and_actor');
+        const previous = state.tenantDossiers?.find((item) => item.counterpartyId === counterpartyId) ?? {
+          counterpartyId,
+          contacts: [],
+          caseState: 'NEW' as const,
+          archived: false,
+          history: [],
+        };
+        if (
+          command.contacts !== undefined &&
+          new Set(command.contacts.map((item) => item.id)).size !== command.contacts.length
+        )
+          return yield* rejected('duplicate_contact_id');
+        const principalId = scope.principalId;
+        const occurredAt = DateTime.formatIso(yield* DateTime.now);
+        const event = (
+          kind: 'CALL' | 'EMAIL' | 'MEETING' | 'NOTE' | 'CONTACTS' | 'CASE' | 'ARCHIVE',
+          summary: string,
+        ) => ({ kind, summary, occurredAt, authorPrincipalId: principalId });
+        const history = [...previous.history];
+        if (command.contacts !== undefined)
+          history.push(event('CONTACTS', `Kontaktní osoby aktualizovány (${command.contacts.length}).`));
+        const states = {
+          NEW: 'Nový',
+          IN_PROGRESS: 'Řešený',
+          CONFIRMED: 'Potvrzený',
+          CLOSED: 'Uzavřený',
+          CANCELLED: 'Zrušený',
+        };
+        if (command.caseState !== undefined && command.caseState !== previous.caseState)
+          history.push(event('CASE', `Stav případu: ${states[previous.caseState]} → ${states[command.caseState]}.`));
+        if (command.archived !== undefined && command.archived !== previous.archived)
+          history.push(
+            event(
+              'ARCHIVE',
+              command.archived
+                ? 'Evidence nájemce archivována. Smlouvy a nájmy zůstávají zachovány.'
+                : 'Evidence nájemce obnovena z archivu.',
+            ),
+          );
+        if (command.activity !== undefined) history.push(event(command.activity.kind, command.activity.summary));
+        if (history.length === previous.history.length) return yield* rejected('tenant_dossier_requires_change');
+        const updated = {
+          ...previous,
+          contacts: command.contacts ?? previous.contacts,
+          caseState: command.caseState ?? previous.caseState,
+          archived: command.archived ?? previous.archived,
+          history,
+        };
+        return {
+          resourceRef: record.occupancyRef,
+          snapshot: {
+            ...state,
+            tenantDossiers: [
+              ...(state.tenantDossiers ?? []).filter((item) => item.counterpartyId !== counterpartyId),
+              updated,
+            ],
+          },
+        };
+      }),
+    ),
     Match.tag(
       'CreateDraft',
       Effect.fn('Occupancy.CreateDraft')(function* createDraft({
@@ -460,6 +531,9 @@ export const filterOccupancyRecords = (
                   observation.occupancyRef !== null && refMatches(record.occupancyRef, observation.occupancyRef),
               ),
           ),
+    tenantDossiers: (state.tenantDossiers ?? []).filter((dossier) =>
+      occupancies.some((record) => record.customerCounterpartyRef?.resourceId === dossier.counterpartyId),
+    ),
     occupancies,
     revision,
   };
@@ -494,7 +568,7 @@ export const persistenceService = (
           Effect.mapError(unavailable),
           Effect.flatMap(([row]) =>
             row === undefined
-              ? Effect.succeed({
+              ? Effect.succeed<{ readonly revision: number; readonly snapshot: OccupancyState }>({
                   revision: 0,
                   snapshot: { bookingObservations: [], occupancies: [] } satisfies OccupancyState,
                 })

@@ -56,7 +56,37 @@ export const BookingObservationSchema = Schema.Struct({
   state: Schema.Literals(['SUCCESS', 'FAILED', 'CONFLICT']),
 });
 export type BookingObservation = typeof BookingObservationSchema.Type;
+/** Siampark tenant relationship evidence, scoped with the same company as the lease aggregate. */
+export const TenantContactSchema = Schema.Struct({
+  id: Schema.String.check(Schema.isUUID()),
+  name: TextSchema,
+  role: Schema.String.check(Schema.isMaxLength(200)),
+  email: Schema.String.check(Schema.isMaxLength(200)),
+  phone: Schema.String.check(Schema.isMaxLength(100)),
+});
+export const TenantCaseStateSchema = Schema.Literals(['NEW', 'IN_PROGRESS', 'CONFIRMED', 'CLOSED', 'CANCELLED']);
+export const TenantActivityInputSchema = Schema.Struct({
+  kind: Schema.Literals(['CALL', 'EMAIL', 'MEETING', 'NOTE']),
+  summary: TextSchema,
+});
+export const TenantDossierSchema = Schema.Struct({
+  counterpartyId: Schema.String.check(Schema.isUUID()),
+  contacts: Schema.Array(TenantContactSchema),
+  caseState: TenantCaseStateSchema,
+  archived: Schema.Boolean,
+  history: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literals(['CALL', 'EMAIL', 'MEETING', 'NOTE', 'CASE', 'CONTACTS', 'ARCHIVE']),
+      summary: TextSchema,
+      occurredAt: Schema.String,
+      authorPrincipalId: Schema.String,
+    }),
+  ),
+});
+export type TenantDossier = typeof TenantDossierSchema.Type;
+export type TenantContact = typeof TenantContactSchema.Type;
 export const OccupancyStateSchema = Schema.Struct({
+  tenantDossiers: Schema.optionalKey(Schema.Array(TenantDossierSchema)),
   bookingObservations: Schema.Array(BookingObservationSchema),
   occupancies: Schema.Array(OccupancySchema),
 });

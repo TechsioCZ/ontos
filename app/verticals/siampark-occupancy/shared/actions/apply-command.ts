@@ -5,10 +5,23 @@ import { OccupancyRejected } from './errors/occupancy-rejected.ts';
 import { ContractRefSchema } from '@app/siampark-agreements/resources/contract';
 import { Match, Schema } from 'effect';
 
-import { OccupancySchema, RentTermsSchema } from '../apis/records.ts';
+import {
+  OccupancySchema,
+  RentTermsSchema,
+  TenantContactSchema,
+  TenantCaseStateSchema,
+  TenantActivityInputSchema,
+} from '../apis/records.ts';
 import { OccupancyRefSchema } from '../resources/occupancy.ts';
 
 export const OccupancyCommandSchema = Schema.Union([
+  Schema.TaggedStruct('UpdateTenantDossier', {
+    occupancyRef: OccupancyRefSchema,
+    contacts: Schema.optionalKey(Schema.Array(TenantContactSchema).check(Schema.isMaxLength(50))),
+    caseState: Schema.optionalKey(TenantCaseStateSchema),
+    archived: Schema.optionalKey(Schema.Boolean),
+    activity: Schema.optionalKey(TenantActivityInputSchema),
+  }),
   Schema.TaggedStruct('CreateDraft', { record: OccupancySchema }),
   Schema.TaggedStruct('UpdateDraft', {
     endDate: OccupancySchema.fields.endDate,

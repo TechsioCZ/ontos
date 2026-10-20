@@ -40,7 +40,11 @@ const handleApplyCommand = Effect.fn('Occupancy.applyCommand')(function* handleA
   const changed = yield* transitionOccupancy(
     current.snapshot,
     payload.command,
-    { legalEntityId: context.scope.legalEntityId, tenantId: context.scope.tenantId },
+    {
+      legalEntityId: context.scope.legalEntityId,
+      tenantId: context.scope.tenantId,
+      principalId: context.scope.principalId,
+    },
     context.services.validators,
   );
   const revision = yield* context.services.save(changed.snapshot, payload.expectedRevision);
