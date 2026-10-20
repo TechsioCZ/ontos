@@ -10,6 +10,8 @@
 set -euo pipefail
 # Demo builds skip the build-time type checker (lint suggestions in tests would fail them); typecheck per package.
 export DEMO_DISABLE_TS_CHECKER="${DEMO_DISABLE_TS_CHECKER:-1}"
+export TMPDIR="${TMPDIR:-/Volumes/TraceDecayKingston/techsio-demo/tmp}"
+export pnpm_config_verify_deps_before_run=false
 
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP"
@@ -24,6 +26,9 @@ STUB_DIR="$SCRATCH/demo-bin"
 # Not Siampark's 3031: on the demo machine launchd still owns 3031 for the old Siampark composition service.
 COMPOSITION_PORT="${DEMO_COMPOSITION_PORT:-3041}"
 SHELL_PORT=3020
+STOREFRONT_PORT=3060
+BUILD_JOBS="${DEMO_BUILD_JOBS:-2}"
+[[ "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "DEMO_BUILD_JOBS must be a positive integer" >&2; exit 1; }
 DOCKER=(docker --context orbstack)
 COMPOSE=("${DOCKER[@]}" compose -f docker-compose.yml -f scripts/demo/compose.demo.yml)
 mkdir -p "$LOG_DIR" "$PID_DIR" "$STAMP_DIR" "$STUB_DIR"
@@ -121,7 +126,8 @@ step db-migrate pnpm_ db:migrate
 step local-initialize pnpm_ local:initialize
 if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-reset pnpm_ demo:reset
-  # Sales-demo owners seed after the Siampark baseline; the bot API key is issued later (needs the shell).
+  # Sales-demo owners include crm + siampark-ops (reset-demo.mts dependency order); do not reseed them twice.
+  # The bot API key is issued later, once the shell and composition are running.
   step demo-reset-sales pnpm_ demo:reset:sales
   # E-shop company (Kavárna Doma, LE …023): merges the seed, keeps live demo orders (use --reset to wipe).
   step demo-seed-eshop pnpm_ demo:seed:eshop
@@ -164,6 +170,8 @@ build_ids=()
 for id in "${APPS[@]}"; do
   if needs_build "$id"; then
     script="$(build_script "$id")" || die "unexpected build script shape for $id"
+    # Keep native builds bounded: an all-at-once cold start exhausts the shared demo machine.
+    while [ "$(jobs -pr | wc -l | tr -d ' ')" -ge "$BUILD_JOBS" ]; do sleep 1; done
     say "building $id (log: $LOG_DIR/build-$id.log)"
     touch "$STAMP_DIR/$id.building"
     ("${NO_GIT[@]}" "${WITH_ENV[@]}" pnpm --dir "$(dir_of "$id")" exec sh -c "$script" >"$LOG_DIR/build-$id.log" 2>&1 &&
@@ -181,6 +189,11 @@ for id in "${failed[@]}"; do
 done
 [ ${#failed[@]} -eq 0 ] || die "build failed: ${failed[*]} (logs: $LOG_DIR/build-<id>.log)"
 
+# Standalone storefront is not a federated vertical; its dist is served by its own BFF.
+if [ "${DEMO_SKIP_BUILD:-0}" != 1 ] || [ ! -f apps/eshop-storefront/dist/index.html ]; then
+  step build-eshop-storefront pnpm_ --dir apps/eshop-storefront build
+fi
+
 # 5. Servers. Each runs in its own process group so down.sh can stop the whole tree.
 set -m
 start() { # start <name> <command...>
@@ -197,6 +210,7 @@ assert_free() {
   fi
 }
 assert_free "$SHELL_PORT" shell-super-app
+assert_free "$STOREFRONT_PORT" eshop-storefront
 assert_free "$COMPOSITION_PORT" composition
 for id in "${VERTICALS[@]}"; do assert_free "$(port_of "$id")" "$id"; done
 
@@ -227,9 +241,26 @@ curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WAR
 step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
 # People administration (Lidé a role): company administrators may run core.identity.manage-demo-account.
 step accounts-admin-grants "${WITH_ENV[@]}" node scripts/demo/accounts-admin-grants.mts
+# reset-permissions deliberately logs AI errors without failing; this explicit step makes a cold start honest.
+step ai-profiles pnpm_ demo:ai-profiles
+# Rental data uses public reads/Actions, so it must run AFTER composition, company setup and grants.
+if [ "${DEMO_RESET:-1}" != 0 ]; then
+  step demo-seed-rental env \
+    "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
+    ONTOS_DEMO_SEED_TENANT_ID=70000000-0000-4000-8000-000000000020 \
+    ONTOS_DEMO_SEED_LEGAL_ENTITY_ID=71000000-0000-4000-8000-000000000021 \
+    ONTOS_DEMO_SEED_EMAIL=management@siampark.demo \
+    "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
+    mise exec -- pnpm demo:seed:rental --apply
+fi
+# Config reads app/.env.demo.local server-side; start only after the storefront managed key exists.
+start eshop-storefront env "ESHOP_STOREFRONT_PORT=$STOREFRONT_PORT" "${WITH_ENV[@]}" \
+  pnpm --dir apps/eshop-storefront start
+wait_http "http://127.0.0.1:$STOREFRONT_PORT/api/home" 120 eshop-storefront
 cat <<EOF
 
-[demo] UP. Shell: http://localhost:$SHELL_PORT/cs/siampark/work   (composition :$COMPOSITION_PORT)
+[demo] UP. Shell: http://localhost:$SHELL_PORT/cs   (composition :$COMPOSITION_PORT)
+[demo] Storefront: http://localhost:$STOREFRONT_PORT (Kavárna Doma, customer-facing DEMO)
 [demo] Verticals: ${VERTICALS[*]}
 [demo] Login: management@siampark.demo / password1234  (also operations@, finance@, external@)
 [demo] Sales demo: obchod@ / obchodnik@ / ucetni@ / sklad@demo.ontos, password1234; bot key in app/.env.demo.local

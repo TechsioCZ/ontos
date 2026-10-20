@@ -1,5 +1,7 @@
 @import '@techsio/ui-kit/tokens-with-tailwind';
 @source '../../node_modules/@techsio/ui-kit/dist';
+/* Shell UI uses unprefixed ui-kit utilities too (home tiles, frame, selectors). */
+@source '..';
 @source '../../../../packages/admin-ui/src';
 /* A glob segment cannot resolve to a directory, so the scan needs an explicit file glob or it matches nothing. */
 @source '../../../../verticals/*/src/**/*';
@@ -8,4 +10,14 @@
 :root {
   --radius-checkbox: 0.25rem;
   --radius-checkbox-indeterminate: 0.25rem;
+}
+
+/* Calm admin controls, shared by the shell and federated pages; keep validation and focus tokens intact. */
+:root.light[data-theme='akros'] {
+  --border-width-form-control: 1px;
+  --color-form-control-bg: var(--color-base);
+  --color-form-control-border: var(--color-border-primary);
+  --color-form-control-border-hover: var(--color-fg-secondary);
+  --color-form-control-bg-hover: var(--color-base);
+  --color-form-control-bg-focus: var(--color-base);
 }

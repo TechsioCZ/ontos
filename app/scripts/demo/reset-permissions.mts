@@ -28,7 +28,7 @@ import {
   demoCompanyTenantId,
   rentalDemoCompany,
 } from '@app/core-runtime/demo-company-profiles';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import {
   Config,
   ConfigProvider,
@@ -48,7 +48,7 @@ import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResp
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { legalEntities, principals } from '../../packages/core-runtime/src/db/schema.ts';
+import { legalEntities, principals, tenants } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { account, apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
@@ -108,6 +108,11 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
   });
   yield* executor.transaction((transaction) =>
     Effect.gen(function* writeIdentityRows() {
+      // One neutral tenant contains all four demo companies; never label Hanák or Kavárna as Siampark.
+      yield* transaction
+        .update(tenants)
+        .set({ name: 'OntOS DEMO', updatedAt: now })
+        .where(eq(tenants.tenantId, demoTenantId));
       // The CRM and e-shop companies exist before their personas' grants; the audited Core Action
       // (`core.identity.configure-demo-companies`) creates the same rows when the shell is newer than this script.
       for (const company of additionalDemoCompanies) {
@@ -245,7 +250,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
     },
     modules: [crmModuleState, siamparkOpsModuleState],
     relationships,
-    tenant: { defaultLocale: 'cs', displayName: 'Siampark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
+    tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
   });
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'sales-demo-permissions-' });
   const file = path.join(directory, 'context.json');

@@ -228,6 +228,13 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         key: 'crmReports',
         moduleId: 'demo.crm',
       },
+      {
+        entrypoints: ['demo.crm.page.ai'],
+        hrefs: ['/crm/schvalovani-ai'],
+        icon: 'icon-[mdi--robot-outline]',
+        key: 'crmAiApprovals',
+        moduleId: 'demo.crm',
+      },
     ],
     key: 'crm',
   },

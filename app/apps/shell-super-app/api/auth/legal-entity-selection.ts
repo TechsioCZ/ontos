@@ -71,6 +71,9 @@ export const resolveAuthorizedLegalEntities = Effect.fn('LegalEntitySelection.re
     }
     // Sales demo: a person in several companies starts in the first one (lowest id, e.g. Obchodní firma 0020)
     // instead of an empty "select a legal entity" page; the switcher still offers the others.
+    if (available.length > 1 && input.tenantId !== '70000000-0000-4000-8000-000000000020') {
+      return { available, state: 'selection_required' } as const;
+    }
     const [first] = available.toSorted((left, right) => left.legalEntityId.localeCompare(right.legalEntityId));
     return first === undefined
       ? ({ available, state: 'selection_required' } as const)

@@ -127,3 +127,14 @@ it.effect('fails closed for authorization uncertainty and validates a switch ind
     ).toEqual(beta);
   }),
 );
+
+it.effect('starts the shared demo tenant in a stable authorized company without changing other tenants', () =>
+  Effect.gen(function* verifyDemoDefault() {
+    const selected = yield* provideSelectionServices(
+      resolveAuthorizedLegalEntities({ principalId, tenantId: '70000000-0000-4000-8000-000000000020' }),
+      context([beta, alpha]),
+      access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
+    );
+    expect(selected).toEqual({ available: [beta, alpha], selected: alpha, state: 'selected' });
+  }),
+);
