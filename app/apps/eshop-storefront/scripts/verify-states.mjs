@@ -19,14 +19,21 @@ try {
   const coffee = await productOf('etiopie-yirgacheffe');
   const unknown = await productOf('rwanda-nyamasheke');
   const asItem = (product, variant = product.variants[0]) => ({ productId: product.id, variantId: variant.id, name: product.name, slug: product.slug, image: product.image, variantLabel: variant.label, quantity: 1, priceMinor: variant.priceMinor });
-  for (const [name, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+  for (const [name, viewport] of (process.env.VERIFY_STAFF_ONLY === '1' ? [] : [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]])) {
     const context = await browser.newContext({ viewport, deviceScaleFactor: 1, locale: 'cs-CZ' });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     const goto = async (path) => { await page.goto(BASE + path, { waitUntil: 'networkidle' }); };
     const shot = async (id) => {
-      await page.waitForTimeout(200);
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+      if (name === 'mobile' && /^(12|13|21)-/u.test(id)) {
+        await page.locator('.buy-box').evaluate((element) => window.scrollTo({ top: element.getBoundingClientRect().top + window.scrollY - 105, behavior: 'instant' }));
+      }
+      if (name === 'mobile' && /^(22|23)-/u.test(id)) {
+        await page.locator('.checkout__alerts').evaluate((element) => window.scrollTo({ top: element.getBoundingClientRect().top + window.scrollY - 105, behavior: 'instant' }));
+      }
+      await page.waitForTimeout(300);
       assert((await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 1, `${id} overflow`);
       await page.screenshot({ path: `${OUT}/${name}-${id}.png`, fullPage: false });
     };
@@ -162,9 +169,9 @@ try {
     if (recordsUrl) {
       const anonymous = await browser.newContext();
       const active = await fetch('http://localhost:3041/active').then((r) => r.json());
-      const headers = { 'x-ontos-composition-revision': active.composition.revision };
+      const headers = { 'x-ontos-composition-revision': active.composition.revision, 'x-correlation-id': crypto.randomUUID() };
       const denied = await anonymous.request.post(recordsUrl, { headers, data: {} });
-      assert([401, 403].includes(denied.status()), `anonymous records returned ${denied.status()}`);
+      assert([401, 403].includes(denied.status()), `anonymous records ${recordsUrl} returned ${denied.status()}: ${await denied.text()}`);
       const actionUrl = recordsUrl.replace(/\/reads\/records.*$/u, '/merchandise/actions/apply-command');
       const action = await anonymous.request.post(actionUrl, { headers, data: { expectedRevision: 0, command: { _tag: 'ChangePrice', id: coffee.id, priceMinor: 100 } } });
       assert([401, 403].includes(action.status()), `anonymous action returned ${action.status()}`);

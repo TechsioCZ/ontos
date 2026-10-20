@@ -93,7 +93,7 @@ export const ErrorState = ({ error, onRetry, title }: { readonly error: ApiError
       </div>
       <h2>{title ?? (forbidden ? 'Nepovoleno' : 'Data se nepodařilo načíst')}</h2>
       <p>{error?.problem.message ?? 'Neznámá chyba.'}</p>
-      <p className="state__hint">Nezobrazujeme žádná náhradní ani smyšlená data. {error?.problem.code === undefined ? '' : `Kód: ${error.problem.code}`}</p>
+      <p className="state__hint">Nezobrazujeme žádná náhradní ani smyšlená data.</p>
       {onRetry === undefined ? null : (
         <button className="button button--primary" onClick={onRetry} type="button">
           <Icon name="refresh" size={18} /> Zkusit znovu
