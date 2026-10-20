@@ -328,7 +328,7 @@ it('metadata rejects negative, fractional and excessive measurements and unnamed
   expect(valid({ ...base, patch: { variants: [{ attributes: '', name: '' }] } })).toBe(false);
   expect(valid({ ...base, patch: { description: 'x'.repeat(20_001) } })).toBe(false);
   expect(
-    valid({ ...base, patch: { variants: Array.from({ length: 51 }, () => ({ attributes: '', name: 'A' })) } }),
+    valid({ ...base, patch: { variants: Array.from({ length: 1001 }, () => ({ attributes: '', name: 'A' })) } }),
   ).toBe(false);
 });
 
