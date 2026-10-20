@@ -45,6 +45,8 @@ import type {
 import type { StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
 import { merchandiseStates } from '../database/schema.ts';
+import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
+import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -1005,7 +1007,12 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
   if (existing === undefined) {
     return yield* notFound('Order does not exist');
   }
-  if (existing.status === 'DELIVERED' || existing.status === 'CANCELLED' || existing.status === 'SHIPPED') {
+  if (
+    existing.demoCleanup !== undefined ||
+    existing.status === 'DELIVERED' ||
+    existing.status === 'CANCELLED' ||
+    existing.status === 'SHIPPED'
+  ) {
     return yield* conflict('Only open orders before the carrier hand-over can be edited');
   }
   const history: OrderHistoryEntry[] = [];
@@ -1023,6 +1030,20 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
       }
       seen.add(key);
       const kept = previous.get(key);
+      if (existing.channel === 'STOREFRONT' && kept?.quantity !== request.quantity) {
+        const product = yield* findProduct(state.products, request.productId);
+        const record = toProductRecord(
+          product,
+          state.movements.filter((movement) => movement.productId === product.id),
+        );
+        const unit =
+          request.variantId === undefined
+            ? record
+            : record.variantRecords?.find((variant) => variant.id === request.variantId);
+        if (unit === undefined || !isOrderQuantityValid(request.quantity, orderQuantityRules(unit))) {
+          return yield* conflict('Množství musí odpovídat dostupné zásobě, minimu a velikosti balení varianty');
+        }
+      }
       if (kept !== undefined) {
         nextLines.push({
           ...kept,
@@ -1168,6 +1189,35 @@ export const evolveMerchandiseState = (
     Match.tag('ChangeOrderStatus', (value) => changeOrderStatus(state, value, input)),
     Match.tag('PlaceStorefrontOrder', (value) => placeStorefrontOrder(state, value, input)),
     Match.tag('EditOrder', (value) => editOrder(state, value, input)),
+    Match.tag('RemoveDemoOrder', (value) =>
+      Effect.gen(function* removeDemoOrder() {
+        const order = state.orders.find((entry) => entry.id === value.id);
+        if (order === undefined) return yield* notFound('Order does not exist');
+        if (order.demo !== true || order.channel !== 'STOREFRONT') {
+          return yield* conflict('Odstranit lze pouze DEMO objednávku z e-shopu');
+        }
+        const entity = yield* entityIdOf(order.id);
+        if (order.demoCleanup !== undefined) return { entityIds: [entity], state };
+        const removed: Order = {
+          ...order,
+          updatedAt: input.now,
+          demoCleanup: { at: input.now, actor: input.actor, reason: value.reason },
+          history: [
+            ...(order.history ?? []),
+            historyEntry(input, {
+              kind: 'NOTE',
+              before: 'Viditelná DEMO objednávka',
+              after: 'Odstraněna z prezentačního seznamu; audit zachován',
+              reason: value.reason,
+            }),
+          ],
+        };
+        return {
+          entityIds: [entity],
+          state: { ...state, orders: state.orders.map((entry) => (entry.id === order.id ? removed : entry)) },
+        };
+      }),
+    ),
     Match.exhaustive,
   );
 
@@ -1205,6 +1255,15 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         return yield* referenceUnavailable();
       }
       return decisions[0]?.decision === 'allowed';
+    });
+    // Existing trusted identity-administrator capability; no email, browser flag or principal-id allowlist.
+    const administrator = Effect.fn('Merchandise.administrator')(function* administrator() {
+      const decisions = yield* access.tenants({
+        permission: 'manage_identity',
+        principalId: scope.principalId,
+        tenantIds: [scope.tenantId],
+      });
+      return decisions.length === 1 && decisions[0]?.key === scope.tenantId && decisions[0]?.decision === 'allowed';
     });
     const whereScope = and(
       eq(merchandiseStates.tenantId, scope.tenantId),
@@ -1254,6 +1313,14 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           reason: 'Merchandise changes require write permission',
         });
       }
+      if (scope.authMethod === 'session' || scope.authMethod === 'support_impersonation') {
+        if (!staffCommandAllowed(legalEntityId, yield* administrator(), command._tag)) {
+          return yield* new MerchandisePermissionDenied({
+            code: 'merchandise_permission_denied',
+            reason: 'Tato změna vyžaduje oprávnění správce; expedice může zpracovávat objednávky a skladové pohyby',
+          });
+        }
+      }
       const snapshot = yield* load();
       // Storefront guests cannot know the aggregate revision; their command re-validates against current state.
       if (command._tag !== 'PlaceStorefrontOrder' && snapshot.revision !== expectedRevision) {
@@ -1274,7 +1341,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     const records = Effect.fn('Merchandise.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();
       const view = request.view ?? {};
-      const { movements, orders, products } = snapshot.state;
+      const { movements, products } = snapshot.state;
+      const orders = snapshot.state.orders.filter((order) => order.demoCleanup === undefined);
       // Partition once: large variant catalogs otherwise scan the complete ledger for every variant.
       const byProduct = new Map<string, StockMovement[]>();
       for (const movement of movements) {
@@ -1327,10 +1395,16 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           ? []
           : orders.filter((order) => order.clientRequestId === view.orderClientRequestId)
         : orders.filter((order) => view.orderStatus === undefined || order.status === view.orderStatus);
+      const canWrite = yield* contextGrant('write_all');
+      const isAdministrator = storefront ? false : yield* administrator();
+      const canManageCatalog = canWrite && (legalEntityId !== AKROS_LEGAL_ENTITY_ID || isAdministrator);
       const response: RecordsResponse = {
         totalProducts: matchingProducts.length,
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-        canWrite: yield* contextGrant('write_all'),
+        canWrite,
+        canManageCatalog: !storefront && canManageCatalog,
+        canEditOrders: !storefront && canManageCatalog,
+        canCleanupDemo: !storefront && canWrite && isAdministrator,
         // The storefront view never reveals staff totals: its indicators cover only what the view returns.
         indicators: {
           lowStockCount: (storefront ? filteredProducts : allProducts).filter((record) => record.lowStock).length,

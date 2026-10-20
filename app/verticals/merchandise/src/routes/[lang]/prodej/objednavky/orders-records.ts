@@ -140,3 +140,6 @@ export const useOrders = () => {
     state,
   };
 };
+
+export const removeDemoOrder = (id: Order['id'], reason: string, revision: number) =>
+  submitCommand({ _tag: 'RemoveDemoOrder', id, reason }, revision);

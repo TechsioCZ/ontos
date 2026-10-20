@@ -16,6 +16,7 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'BulkUpdateProducts',
   'ChangePrice',
   'EditOrder',
+  'RemoveDemoOrder',
 ]);
 const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
 
@@ -90,3 +91,12 @@ export const withCommandGuard =
       ),
       Effect.flatMap(() => handler(payload, context)),
     );
+
+/** AKROS dispatch is operational only; catalog and money edits require a trusted administrator decision. */
+export const staffCommandAllowed = (legalEntityId: string, administrator: boolean, commandTag: string): boolean =>
+  commandTag === 'RemoveDemoOrder'
+    ? administrator
+    : legalEntityId !== AKROS_LEGAL_ENTITY_ID ||
+      administrator ||
+      commandTag === 'RecordStockMovement' ||
+      commandTag === 'ChangeOrderStatus';

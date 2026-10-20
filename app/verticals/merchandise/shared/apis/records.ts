@@ -60,6 +60,9 @@ export const RecordsResponseSchema = Schema.Struct({
   totalProducts: Schema.optionalKey(Schema.Int),
   actorPrincipalRef: PrincipalRefSchema,
   canWrite: Schema.Boolean,
+  canManageCatalog: Schema.optionalKey(Schema.Boolean),
+  canEditOrders: Schema.optionalKey(Schema.Boolean),
+  canCleanupDemo: Schema.optionalKey(Schema.Boolean),
   indicators: Schema.Struct({
     lowStockCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     openOrderValueMinor: MinorAmountSchema,

@@ -18,6 +18,7 @@ import {
   shippingMethodFor,
   shippingMethods,
 } from '../../../../../shared/domain/merchandise-model.ts';
+import { isOrderQuantityValid, orderQuantityRules } from '../../../../../shared/domain/order-quantity.ts';
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
@@ -64,7 +65,7 @@ const parseCzk = (text: string): number | null => {
 
 const parseQuantity = (text: string): number | null => {
   const value = Number(text.replace(/\s/gu, '').replace(',', '.'));
-  return Number.isInteger(value) && value >= 1 && value <= 999 ? value : null;
+  return Number.isFinite(value) && value > 0 && value <= 1_000_000 ? value : null;
 };
 
 const draftOf = (order: Order): Draft => ({
@@ -171,11 +172,21 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
 
-  const parsedLines = draft.lines.map((line) => ({
-    line,
-    price: parseCzk(line.priceText),
-    quantity: parseQuantity(line.quantityText),
-  }));
+  const rulesFor = (line: Pick<DraftLine, 'productId' | 'variantId'>) => {
+    const product = products.find((entry) => entry.id === line.productId);
+    const unit =
+      line.variantId === undefined ? product : product?.variantRecords?.find((entry) => entry.id === line.variantId);
+    return orderQuantityRules(unit ?? { stockOnHand: 1_000_000 });
+  };
+  const parsedLines = draft.lines.map((line) => {
+    const quantity = parseQuantity(line.quantityText);
+    const original = order.lines.find(
+      (entry) => entry.productId === line.productId && entry.variantId === line.variantId,
+    );
+    const rules = rulesFor(line);
+    const valid = quantity !== null && (quantity === original?.quantity || isOrderQuantityValid(quantity, rules));
+    return { line, price: parseCzk(line.priceText), quantity: valid ? quantity : null, rules };
+  });
   const linesInvalid =
     draft.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
   const shippingPrice = parseCzk(draft.shippingPriceText);
@@ -292,7 +303,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
     const existing = draft.lines.find((line) => line.productId === unit.productId && line.variantId === unit.variantId);
     if (existing !== undefined) {
       const quantity = parseQuantity(existing.quantityText) ?? 0;
-      patchLine(existing.key, { quantityText: String(quantity + 1) });
+      patchLine(existing.key, { quantityText: String(quantity + rulesFor(existing).step) });
       setPick(null);
       return;
     }
@@ -305,7 +316,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
           name: unit.name,
           priceText: moneyInputText(unitPrice / 100),
           productId: unit.productId,
-          quantityText: '1',
+          quantityText: String(Math.ceil(rulesFor(unit).minimum / rulesFor(unit).step) * rulesFor(unit).step),
           sku: unit.sku,
           ...(unit.variantId === undefined ? {} : { variantId: unit.variantId }),
           ...(unit.variantName === undefined ? {} : { variantName: unit.variantName }),
@@ -338,100 +349,108 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
         skutečné zásoby se nemění.
       </p>
       <SectionCard flush title="Položky">
-        <Table size="sm" variant="line">
-          <Table.Header>
-            <Table.Row>
-              <Table.ColumnHeader>Položka</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Množství</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">{gross ? 'Cena/j s DPH (Kč)' : 'Cena/j bez DPH (Kč)'}</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Celkem s DPH</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">
-                <span className="sr-only">Akce</span>
-              </Table.ColumnHeader>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {parsedLines.map(({ line, price, quantity }) => (
-              <Table.Row key={line.key}>
-                <Table.Cell>
-                  <div className="flex min-w-32 flex-col">
-                    <span className="font-medium">{line.name}</span>
-                    <span className="text-fg-secondary text-xs">
-                      {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
-                    </span>
-                  </div>
-                </Table.Cell>
-                <Table.Cell align="end">
-                  <div className="ml-auto w-16">
-                    <FormNumericInput
-                      formatOptions={WHOLE_NUMBER_FORMAT}
-                      id={`edit-qty-${line.key}`}
-                      label={<span className="sr-only">Množství</span>}
-                      locale="cs-CZ"
-                      min={1}
-                      name={`qty-${line.key}`}
-                      onValueChange={(details) => patchLine(line.key, { quantityText: details.value })}
-                      size="sm"
-                      step={1}
-                      value={line.quantityText}
-                      {...(submitted && quantity === null
-                        ? { helpText: '1–999 ks', validateStatus: 'error' as const }
-                        : {})}
-                    >
-                      <NumericInput.Control>
-                        <NumericInput.Input aria-valuemax={undefined} />
-                      </NumericInput.Control>
-                    </FormNumericInput>
-                  </div>
-                </Table.Cell>
-                <Table.Cell align="end">
-                  <div className="ml-auto w-24">
-                    <FormNumericInput
-                      formatOptions={MONEY_FORMAT}
-                      id={`edit-price-${line.key}`}
-                      label={<span className="sr-only">Cena za jednotku</span>}
-                      locale="cs-CZ"
-                      min={0}
-                      name={`price-${line.key}`}
-                      onValueChange={(details) => patchLine(line.key, { priceText: details.value })}
-                      size="sm"
-                      value={line.priceText}
-                      {...(submitted && price === null
-                        ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const }
-                        : {})}
-                    >
-                      <NumericInput.Control>
-                        <NumericInput.Input />
-                      </NumericInput.Control>
-                    </FormNumericInput>
-                  </div>
-                </Table.Cell>
-                <Table.Cell align="end" className="tabular-nums">
-                  {price === null || quantity === null
-                    ? '—'
-                    : formatMoney(
-                        lineGrossMinor(
-                          { quantity, unitPriceMinor: price, vatRate: line.vatRate },
-                          order.pricesIncludeVat,
-                        ),
-                      )}
-                </Table.Cell>
-                <Table.Cell align="end">
-                  <Button
-                    aria-label={`Odebrat ${line.name}`}
-                    disabled={draft.lines.length <= 1}
-                    icon="icon-[mdi--delete-outline]"
-                    onClick={() => patch({ lines: draft.lines.filter((entry) => entry.key !== line.key) })}
-                    size="sm"
-                    theme="borderless"
-                    type="button"
-                    variant="secondary"
-                  />
-                </Table.Cell>
+        <div role="region" aria-label="Položky objednávky" tabIndex={0} style={{ overflowX: 'auto' }}>
+          <Table size="sm" variant="line">
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeader>Položka</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Množství</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">
+                  {gross ? 'Cena/j s DPH (Kč)' : 'Cena/j bez DPH (Kč)'}
+                </Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Celkem s DPH</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">
+                  <span className="sr-only">Akce</span>
+                </Table.ColumnHeader>
               </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
+            </Table.Header>
+            <Table.Body>
+              {parsedLines.map(({ line, price, quantity, rules }) => (
+                <Table.Row key={line.key}>
+                  <Table.Cell>
+                    <div className="flex min-w-32 flex-col">
+                      <span className="font-medium">{line.name}</span>
+                      <span className="text-fg-secondary text-xs">
+                        {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
+                      </span>
+                    </div>
+                  </Table.Cell>
+                  <Table.Cell align="end">
+                    <div className="ml-auto" style={{ minWidth: 100 }}>
+                      <FormNumericInput
+                        formatOptions={WHOLE_NUMBER_FORMAT}
+                        id={`edit-qty-${line.key}`}
+                        label={<span className="sr-only">Množství</span>}
+                        locale="cs-CZ"
+                        min={rules.minimum}
+                        name={`qty-${line.key}`}
+                        onValueChange={(details) => patchLine(line.key, { quantityText: details.value })}
+                        size="sm"
+                        step={rules.step}
+                        clampValueOnBlur={false}
+                        value={line.quantityText}
+                        {...(submitted && quantity === null
+                          ? {
+                              helpText: `Minimum ${rules.minimum.toLocaleString('cs-CZ')}, balení po ${rules.step.toLocaleString('cs-CZ')}, dostupné ${rules.maximum.toLocaleString('cs-CZ')}`,
+                              validateStatus: 'error' as const,
+                            }
+                          : {})}
+                      >
+                        <NumericInput.Control>
+                          <NumericInput.Input aria-valuemax={undefined} />
+                        </NumericInput.Control>
+                      </FormNumericInput>
+                    </div>
+                  </Table.Cell>
+                  <Table.Cell align="end">
+                    <div className="ml-auto w-24">
+                      <FormNumericInput
+                        formatOptions={MONEY_FORMAT}
+                        id={`edit-price-${line.key}`}
+                        label={<span className="sr-only">Cena za jednotku</span>}
+                        locale="cs-CZ"
+                        min={0}
+                        name={`price-${line.key}`}
+                        onValueChange={(details) => patchLine(line.key, { priceText: details.value })}
+                        size="sm"
+                        value={line.priceText}
+                        {...(submitted && price === null
+                          ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const }
+                          : {})}
+                      >
+                        <NumericInput.Control>
+                          <NumericInput.Input />
+                        </NumericInput.Control>
+                      </FormNumericInput>
+                    </div>
+                  </Table.Cell>
+                  <Table.Cell align="end" className="tabular-nums">
+                    {price === null || quantity === null
+                      ? '—'
+                      : formatMoney(
+                          lineGrossMinor(
+                            { quantity, unitPriceMinor: price, vatRate: line.vatRate },
+                            order.pricesIncludeVat,
+                          ),
+                        )}
+                  </Table.Cell>
+                  <Table.Cell align="end">
+                    <Button
+                      aria-label={`Odebrat ${line.name}`}
+                      disabled={draft.lines.length <= 1}
+                      icon="icon-[mdi--delete-outline]"
+                      onClick={() => patch({ lines: draft.lines.filter((entry) => entry.key !== line.key) })}
+                      size="sm"
+                      theme="borderless"
+                      type="button"
+                      variant="secondary"
+                    />
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
+        </div>
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150 p-200">
           <Combobox
             clearable={false}

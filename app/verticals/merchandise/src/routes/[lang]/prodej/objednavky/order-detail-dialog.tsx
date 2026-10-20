@@ -5,7 +5,11 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { DetailList, formatDateTime, formatMoney, SectionCard, SidePanel, StatusBadge } from '@app/admin-ui';
-import { DateTime } from 'effect';
+import { DateTime, Effect } from 'effect';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
+import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { removeDemoOrder } from './orders-records.ts';
 import { useState } from 'react';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
@@ -26,6 +30,8 @@ import { actionLabelKey, transitionsFrom } from './orders-model.ts';
 interface OrderDetailDialogProps {
   readonly busy: boolean;
   readonly canWrite: boolean;
+  readonly canEditOrders?: boolean;
+  readonly canCleanupDemo?: boolean;
   readonly currentPrincipalId: string | undefined;
   readonly customers: CustomerDirectory;
   readonly onClose: () => void;
@@ -137,6 +143,8 @@ const OrderHistory = ({
 export const OrderDetailDialog = ({
   busy,
   canWrite,
+  canEditOrders = canWrite,
+  canCleanupDemo = false,
   currentPrincipalId,
   customers,
   onClose,
@@ -255,7 +263,7 @@ export const OrderDetailDialog = ({
                 Simulace předání dopravci
               </Badge>
             )}
-            {canWrite && isOrderEditable(order) && (
+            {canEditOrders && isOrderEditable(order) && (
               <span className="ml-auto">
                 <Button
                   disabled={busy}
@@ -275,6 +283,16 @@ export const OrderDetailDialog = ({
               <span className="font-semibold text-fg-primary">DEMO: </span>
               {DEMO_NOTICE} Změny stavu neodesílají zásilku ani výzvu k platbě.
             </p>
+          )}
+          {canCleanupDemo && order.demo === true && storefront && (
+            <DemoOrderCleanup
+              order={order}
+              revision={revision}
+              onRemoved={() => {
+                onClose();
+                onEdited('DEMO objednávka odstraněna; audit zůstal zachován');
+              }}
+            />
           )}
           <WorkflowSteps status={order.status} />
           <DetailList
@@ -411,5 +429,88 @@ export const OrderDetailDialog = ({
         </div>
       )}
     </SidePanel>
+  );
+};
+
+/** Demo-only soft removal, with an explicit reason and separate destructive confirmation. */
+const DemoOrderCleanup = ({
+  order,
+  revision,
+  onRemoved,
+}: {
+  readonly order: Order;
+  readonly revision: number;
+  readonly onRemoved: () => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('Úklid prezentační DEMO objednávky');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  const remove = () => {
+    if (busy || reason.trim().length < 5) return;
+    setBusy(true);
+    setError(false);
+    void browserRuntime.runPromise(
+      removeDemoOrder(order.id, reason.trim(), revision).pipe(
+        Effect.match({
+          onFailure: () => {
+            setBusy(false);
+            setError(true);
+          },
+          onSuccess: () => {
+            setBusy(false);
+            setOpen(false);
+            onRemoved();
+          },
+        }),
+      ),
+    );
+  };
+  return (
+    <>
+      <div>
+        <Button theme="outlined" variant="danger" size="sm" onClick={() => setOpen(true)}>
+          Odstranit DEMO objednávku
+        </Button>
+      </div>
+      <Dialog
+        customTrigger
+        open={open}
+        onOpenChange={({ open: next }) => {
+          if (!busy) setOpen(next);
+        }}
+        closeLabel="Zavřít"
+        title={`Odstranit DEMO objednávku ${order.number}?`}
+        description="Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečné objednávky nelze odstranit."
+        actions={
+          <>
+            <Button disabled={busy} theme="outlined" variant="secondary" onClick={() => setOpen(false)}>
+              Zachovat objednávku
+            </Button>
+            <Button
+              disabled={reason.trim().length < 5}
+              isLoading={busy}
+              loadingText="Odstraňuji…"
+              variant="danger"
+              onClick={remove}
+            >
+              Potvrdit odstranění DEMO
+            </Button>
+          </>
+        }
+      >
+        <FormInput
+          id="demo-cleanup-reason"
+          label="Důvod odstranění (audit)"
+          name="reason"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          maxLength={500}
+        />
+        {error && (
+          <StatusText status="error">Objednávku se nepodařilo odstranit. Obnovte data a zkuste to znovu.</StatusText>
+        )}
+      </Dialog>
+    </>
   );
 };

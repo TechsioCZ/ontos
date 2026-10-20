@@ -140,7 +140,7 @@ const RecordsPageContent = () => {
     products.map((product) => product.id),
   );
   const tagFilter = useSubjectTagFilter(productTags);
-  const canWrite = ready?.canWrite === true;
+  const canWrite = (ready?.canManageCatalog ?? ready?.canWrite) === true;
   const revision = ready?.revision ?? 0;
   const categories = [...new Set(products.map((product) => product.category))].toSorted((left, right) =>
     left.localeCompare(right, 'cs'),

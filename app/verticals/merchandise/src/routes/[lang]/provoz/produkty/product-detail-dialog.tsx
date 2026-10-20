@@ -41,11 +41,12 @@ import {
   useProductLabel,
 } from './product-forms.tsx';
 import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirty } from './product-movements.tsx';
-import { AvailabilityBadge, EshopPanel, VariantsPanel } from './product-eshop.tsx';
+import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
 import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailViewProps {
   readonly canWrite: boolean;
+  readonly canMoveStock?: boolean;
   readonly movements: readonly StockMovement[];
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
@@ -65,6 +66,7 @@ const REQUIRED_MESSAGE_KEY = 'validation.required';
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const k = useProductLabel();
+  if ((product.variantRecords ?? []).length > 0) return <VariantPriceHistory product={product} />;
   const rows = product.priceHistory.toSorted(
     (left, right) => DateTime.toEpochMillis(right.effectiveFrom) - DateTime.toEpochMillis(left.effectiveFrom),
   );
@@ -617,6 +619,7 @@ const DetailForm = (props: DetailFormProps) => {
  */
 export const ProductDetailView = ({
   canWrite,
+  canMoveStock = canWrite,
   movements,
   onBack,
   onCommitted,
@@ -770,7 +773,7 @@ export const ProductDetailView = ({
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
             <MovementsTable movements={movements} />
-            {canWrite && (
+            {canMoveStock && (
               <MovementForm
                 draft={movementDraft}
                 onCommitted={onCommitted}

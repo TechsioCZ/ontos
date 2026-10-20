@@ -523,13 +523,13 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
   );
 };
 
-const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) => {
+export const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const rows = (product.variantRecords ?? []).flatMap((variant) =>
     variant.priceHistory.map((entry, index) => ({
       at: entry.effectiveFrom,
       gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
       key: `${variant.id}-${index}`,
-      name: variant.name,
+      name: `${variant.name} · ${variant.sku}`,
       net: entry.priceMinor,
       previous: entry.previousPriceMinor ?? (index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor),
     })),
@@ -537,34 +537,36 @@ const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) =
   const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
   return (
     <SectionCard flush title="Historie cen variant">
-      <Table size="sm" variant="line">
-        <Table.Header>
-          <Table.Row>
-            <Table.ColumnHeader>Platí od</Table.ColumnHeader>
-            <Table.ColumnHeader>Varianta</Table.ColumnHeader>
-            <Table.ColumnHeader align="end">Původní cena bez DPH</Table.ColumnHeader>
-            <Table.ColumnHeader align="end">Cena bez DPH</Table.ColumnHeader>
-            <Table.ColumnHeader align="end">Cena s DPH</Table.ColumnHeader>
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {sorted.map((row) => (
-            <Table.Row key={row.key}>
-              <Table.Cell>{formatDateTime(DateTime.formatIso(row.at))}</Table.Cell>
-              <Table.Cell>{row.name}</Table.Cell>
-              <Table.Cell align="end" className="tabular-nums">
-                {row.previous === undefined ? 'počáteční cena' : formatMoney(row.previous)}
-              </Table.Cell>
-              <Table.Cell align="end" className="tabular-nums">
-                {formatMoney(row.net)}
-              </Table.Cell>
-              <Table.Cell align="end" className="tabular-nums">
-                {formatMoney(row.gross)}
-              </Table.Cell>
+      <div role="region" aria-label="Historie cen variant" tabIndex={0} style={{ overflowX: 'auto' }}>
+        <Table size="sm" variant="line">
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeader>Platí od</Table.ColumnHeader>
+              <Table.ColumnHeader>Varianta</Table.ColumnHeader>
+              <Table.ColumnHeader align="end">Původní cena bez DPH</Table.ColumnHeader>
+              <Table.ColumnHeader align="end">Cena bez DPH</Table.ColumnHeader>
+              <Table.ColumnHeader align="end">Cena s DPH</Table.ColumnHeader>
             </Table.Row>
-          ))}
-        </Table.Body>
-      </Table>
+          </Table.Header>
+          <Table.Body>
+            {sorted.map((row) => (
+              <Table.Row key={row.key}>
+                <Table.Cell>{formatDateTime(DateTime.formatIso(row.at))}</Table.Cell>
+                <Table.Cell>{row.name}</Table.Cell>
+                <Table.Cell align="end" className="tabular-nums">
+                  {row.previous === undefined ? 'počáteční cena' : formatMoney(row.previous)}
+                </Table.Cell>
+                <Table.Cell align="end" className="tabular-nums">
+                  {formatMoney(row.net)}
+                </Table.Cell>
+                <Table.Cell align="end" className="tabular-nums">
+                  {formatMoney(row.gross)}
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      </div>
     </SectionCard>
   );
 };

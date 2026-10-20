@@ -118,6 +118,10 @@ export const MerchandiseCommandSchema = Schema.Union([
     opportunityId: Schema.optionalKey(OpportunityIdSchema),
     partyId: PartyIdSchema,
   }),
+  Schema.TaggedStruct('RemoveDemoOrder', {
+    id: OrderIdSchema,
+    reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
+  }),
   Schema.TaggedStruct('ChangeOrderStatus', {
     id: OrderIdSchema,
     reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),

@@ -87,7 +87,8 @@ const ProductDetailPageContent = ({ routeParams }: ProductDetailPageProps) => {
       )}
       {state.status === 'ready' ? (
         <ProductDetailView
-          canWrite={state.response.canWrite}
+          canWrite={state.response.canManageCatalog ?? state.response.canWrite}
+          canMoveStock={state.response.canWrite}
           key={state.product.id}
           movements={state.response.movements.filter((movement) => movement.productId === state.product.id)}
           onBack={back}

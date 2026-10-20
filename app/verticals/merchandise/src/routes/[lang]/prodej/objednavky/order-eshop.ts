@@ -42,6 +42,8 @@ export const historyKindLabels: Readonly<Record<OrderHistoryKind, string>> = {
 
 /** Known demo principals, so the history names people instead of opaque ids. */
 const knownPrincipals: Readonly<Record<string, string>> = {
+  '1aaf0c53-beaf-50b6-819e-fa0c055f5b26': 'Správce e-shopu AKROS',
+  'a36f17f1-aafb-529b-b05e-835b255f6a27': 'Expedice AKROS',
   '2bdc200d-ad86-5101-b48f-a52339718354': 'Obchodník',
   '3952547a-564f-5468-9038-8dce11185c44': 'Skladník',
   '3f488baf-7be5-5d9d-994d-186eb91d2f3f': 'AI asistent',

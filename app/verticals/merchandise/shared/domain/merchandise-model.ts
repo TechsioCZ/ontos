@@ -293,6 +293,14 @@ export const OrderSchema = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   /** DEMO marker: a presentation order, never paid, reserved or shipped. */
   demo: Schema.optionalKey(Schema.Boolean),
+  /** Soft removal preserves the receipt, audit history and clientRequestId replay identity. */
+  demoCleanup: Schema.optionalKey(
+    Schema.Struct({
+      at: Schema.DateTimeUtcFromString,
+      actor: PrincipalRefSchema,
+      reason: TextSchema(500),
+    }),
+  ),
   deliveryAddress: Schema.optionalKey(OrderAddressSchema),
   history: Schema.optionalKey(Schema.Array(OrderHistoryEntrySchema)),
   id: OrderIdSchema,

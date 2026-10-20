@@ -353,6 +353,8 @@ const OrdersPageContent = () => {
         <OrderDetailDialog
           busy={busy}
           canWrite={canWrite}
+          canEditOrders={ready?.records.canEditOrders ?? canWrite}
+          canCleanupDemo={ready?.records.canCleanupDemo === true}
           currentPrincipalId={ready?.records.actorPrincipalRef.principalId}
           customers={directory}
           onClose={() => setDetailId(null)}
