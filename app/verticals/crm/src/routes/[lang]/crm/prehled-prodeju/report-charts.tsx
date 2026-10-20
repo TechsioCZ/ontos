@@ -3,15 +3,31 @@
 import { EmptyState, SectionCard } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
-import { useState } from 'react';
+import { Component, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { SalesReport } from '../../../../../shared/domain/reports.ts';
 import { statusMeaningLabels, statusMeanings } from '../../../../../shared/domain/reports.ts';
 import { formatDecimalMoney, totalIn } from './report-format.ts';
 
-const shortMonth = (label: string) => {
-  const [name = '', year = ''] = label.split(' ');
-  return `${name.slice(0, 3)} ${year.slice(2)}`;
-};
+const shortMonths = ['led', 'úno', 'bře', 'dub', 'kvě', 'čvn', 'čvc', 'srp', 'zář', 'říj', 'lis', 'pro'];
+
+/** "2026-06" -> "čvn 26" (unique per month; June and July differ). */
+const shortMonth = (key: string) => `${shortMonths[Number(key.slice(5, 7)) - 1] ?? key.slice(5, 7)} ${key.slice(2, 4)}`;
+
+/** A chart failure must never take the report down; the numbers stay in the tables. */
+class ChartBoundary extends Component<{ readonly children: ReactNode }, { readonly failed: boolean }> {
+  override state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  override render() {
+    return this.state.failed ? (
+      <p className="text-fg-secondary text-sm">Graf se nepodařilo vykreslit; čísla najdete v tabulce Souhrn.</p>
+    ) : (
+      this.props.children
+    );
+  }
+}
 
 interface CountDatum {
   readonly count: number;
@@ -46,7 +62,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
   const countData: CountDatum[] = report.byMonth.flatMap((month) =>
     presentMeanings.map((meaning) => ({
       count: counts.get(`${month.key}|${meaning}`) ?? 0,
-      month: shortMonth(month.label),
+      month: shortMonth(month.key),
       status: statusMeaningLabels[meaning],
     })),
   );
@@ -54,7 +70,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
     currency === undefined
       ? []
       : report.byMonth.map((month) => ({
-          month: shortMonth(month.label),
+          month: shortMonth(month.key),
           value: Number(totalIn(month.totals, currency)?.amount ?? '0'),
         }));
   const firstMonth = report.byMonth[0]?.label ?? '';
@@ -64,18 +80,20 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
     <div className="grid min-w-0 grid-cols-1 gap-250 xl:grid-cols-2">
       <SectionCard title="Počet objednávek po měsících">
         <p className="text-fg-secondary text-sm">Barva = význam stavu podle schváleného mapování. Měna nehraje roli.</p>
-        <Chart
-          ariaDescription={`Sloupcový graf počtu započtených objednávek od ${firstMonth} do ${lastMonth}, rozdělený podle významu stavu. Přesná čísla jsou v tabulce Souhrn.`}
-          ariaLabel="Počet objednávek po měsících podle stavu"
-          data={countData}
-          formatValue={(value) => String(Math.round(value))}
-          height={260}
-          series="status"
-          stacked
-          type="bar"
-          x="month"
-          y="count"
-        />
+        <ChartBoundary>
+          <Chart
+            ariaDescription={`Sloupcový graf počtu započtených objednávek od ${firstMonth} do ${lastMonth}, rozdělený podle významu stavu. Přesná čísla jsou v tabulce Souhrn.`}
+            ariaLabel="Počet objednávek po měsících podle stavu"
+            data={countData}
+            formatValue={(value) => String(Math.round(value))}
+            height={260}
+            series="status"
+            stacked
+            type="bar"
+            x="month"
+            y="count"
+          />
+        </ChartBoundary>
       </SectionCard>
       <SectionCard
         actions={
@@ -109,16 +127,18 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
               Součet importovaných částek jen v {currency}
               {report.currencies.length > 1 ? '; ostatní měny přepněte vpravo nahoře, nikdy se nesčítají' : ''}.
             </p>
-            <Chart
-              ariaDescription={`Sloupcový graf hodnoty započtených objednávek v ${currency} od ${firstMonth} do ${lastMonth}.`}
-              ariaLabel={`Hodnota objednávek v ${currency} po měsících`}
-              data={valueData}
-              formatValue={(value) => formatDecimalMoney(String(Math.round(value)), currency)}
-              height={260}
-              type="bar"
-              x="month"
-              y="value"
-            />
+            <ChartBoundary>
+              <Chart
+                ariaDescription={`Sloupcový graf hodnoty započtených objednávek v ${currency} od ${firstMonth} do ${lastMonth}.`}
+                ariaLabel={`Hodnota objednávek v ${currency} po měsících`}
+                data={valueData}
+                formatValue={(value) => formatDecimalMoney(String(Math.round(value)), currency)}
+                height={260}
+                type="bar"
+                x="month"
+                y="value"
+              />
+            </ChartBoundary>
           </>
         )}
       </SectionCard>
