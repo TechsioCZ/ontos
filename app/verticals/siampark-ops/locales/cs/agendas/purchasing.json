@@ -1,17 +1,320 @@
 {
   "title": "Sklad a nákupy",
-  "description": "Skladové položky, zásoby a nákupní objednávky (S05, S06).",
+  "description": "Skladové zásoby se stavem počítaným z pohybů, nabídky dodavatelů, nákupní objednávky s částečnými dodávkami a vazbou na přijatou fakturu.",
+  "footer": "Stav zásob se vždy počítá z uložených pohybů. Návrhy doplnění jsou pravidlové (minimum/maximum, dodací lhůta), nejde o predikci spotřeby. Přijaté faktury eviduje Finance; zde je jen odkaz.",
   "fields": {
     "sku": "Kód položky",
     "name": "Název",
-    "unit": "Měrná jednotka"
+    "unit": "Měrná jednotka",
+    "category": "Kategorie",
+    "tracking": "Evidence",
+    "warehouse": "Sklad",
+    "onHand": "Skladem",
+    "minMax": "Min / max",
+    "minimum": "Minimum",
+    "maximum": "Maximum",
+    "level": "Stav zásoby",
+    "expected": "Očekávaný příjem",
+    "projected": "Plán",
+    "supplier": "Dodavatel",
+    "supplierName": "Název dodavatele",
+    "leadTime": "Dodací lhůta",
+    "leadTimeDays": "Dodací lhůta (dny)",
+    "lastPrice": "Poslední nákupní cena",
+    "date": "Datum",
+    "reason": "Důvod",
+    "batch": "Šarže",
+    "serialNumbers": "Sériová čísla",
+    "refs": "Vazby",
+    "author": "Autor",
+    "kind": "Druh pohybu",
+    "item": "Položka",
+    "quantity": "Množství",
+    "description": "Popis",
+    "unitPrice": "Cena / jedn.",
+    "unitPriceCzk": "Cena za jednotku (Kč)",
+    "lineTotal": "Celkem",
+    "lines": "Položky",
+    "total": "Celkem bez DPH",
+    "order": "Objednávka",
+    "quote": "Nabídka",
+    "status": "Stav",
+    "delivered": "Dodáno",
+    "ordered": "Objednáno",
+    "received": "Přijato",
+    "remaining": "Zbývá",
+    "receivedNow": "Přijímám nyní",
+    "expectedDate": "Očekávané dodání",
+    "validUntil": "Platnost do",
+    "quoteNumber": "Číslo nabídky dodavatele",
+    "quoteDate": "Datum nabídky",
+    "deliverTo": "Dodat do skladu",
+    "deliveryNote": "Dodací list",
+    "invoices": "Přijaté faktury",
+    "invoiceNumber": "Číslo přijaté faktury",
+    "invoiceDate": "Datum faktury",
+    "invoiceAmount": "Částka dle faktury (Kč)",
+    "currency": "Měna",
+    "ico": "IČO",
+    "contact": "Kontaktní osoba",
+    "email": "E-mail a telefon",
+    "phone": "Telefon"
   },
-  "create": {
-    "title": "Nová skladová položka",
-    "submit": "Založit položku"
+  "tabs": {
+    "stock": "Zásoby",
+    "replenish": "Doplnění",
+    "orders": "Objednávky",
+    "quotes": "Nabídky dodavatelů",
+    "movements": "Pohyby",
+    "suppliers": "Dodavatelé"
   },
-  "created": "Položka založena",
   "stats": {
-    "count": "Skladových položek"
+    "count": "Skladových položek",
+    "items": "Skladové položky",
+    "warehouses": "Skladů: {{count}}",
+    "belowMin": "Pod minimem",
+    "aboveMax": "Nad maximem: {{count}}",
+    "openOrders": "Otevřené objednávky",
+    "openValue": "Zbývá dodat za {{value}}",
+    "quotes": "Nabídky k rozhodnutí",
+    "drafts": "Návrhy objednávek: {{count}}"
+  },
+  "actions": {
+    "newItem": "Nová položka",
+    "newOrder": "Nová objednávka",
+    "newQuote": "Zapsat nabídku",
+    "newSupplier": "Nový dodavatel",
+    "receipt": "Příjem",
+    "issue": "Výdej",
+    "transfer": "Přesun",
+    "adjustment": "Korekce",
+    "planned": "Plánovat výdej",
+    "issuePlanned": "Vydat",
+    "cancelPlanned": "Zrušit plán"
+  },
+  "filters": {
+    "search": "Hledat kód nebo název",
+    "allWarehouses": "Všechny sklady",
+    "alertsOnly": "Jen pod minimem / nad maximem",
+    "openOrders": "Jen rozpracované a otevřené"
+  },
+  "category": {
+    "consumable": "Spotřební materiál",
+    "spare_part": "Náhradní díl",
+    "cleaning": "Úklid a hygiena",
+    "chemical": "Chemie",
+    "tool": "Nářadí"
+  },
+  "tracking": {
+    "none": "Bez šarží",
+    "batch": "Šarže",
+    "serial": "Sériová čísla"
+  },
+  "level": {
+    "below_minimum": "Pod minimem",
+    "above_maximum": "Nad maximem",
+    "ok": "V normě"
+  },
+  "movementKind": {
+    "receipt": "Příjem",
+    "issue": "Výdej",
+    "transfer": "Přesun",
+    "adjustment": "Korekce"
+  },
+  "refKind": {
+    "purchase_order": "Objednávka",
+    "task": "Úkol",
+    "unit": "Jednotka",
+    "property": "Nemovitost",
+    "asset": "Zařízení",
+    "document": "Doklad"
+  },
+  "orderStatus": {
+    "draft": "Návrh",
+    "approved": "Schváleno",
+    "ordered": "Objednáno",
+    "partially_delivered": "Částečně dodáno",
+    "completed": "Dokončeno",
+    "cancelled": "Zrušeno"
+  },
+  "quoteStatus": {
+    "received": "K rozhodnutí",
+    "accepted": "Objednáno",
+    "rejected": "Odmítnuto"
+  },
+  "historyEvent": {
+    "created": "Objednávka založena",
+    "approved": "Schváleno",
+    "ordered": "Odesláno dodavateli",
+    "delivery": "Přijata dodávka",
+    "invoice": "Připojena přijatá faktura",
+    "cancelled": "Zrušeno",
+    "completed": "Dokončeno"
+  },
+  "leadTimeDays": "{{count}} dní",
+  "panel": {
+    "detail": "Údaje",
+    "plan": "Materiálový plán",
+    "byWarehouse": "Stav podle skladů",
+    "batches": "Šarže na skladě",
+    "serials": "Sériová čísla na skladě",
+    "movements": "Skladové pohyby ({{count}})"
+  },
+  "plan": {
+    "expected": "Očekávané příjmy",
+    "plannedIssues": "Plánované výdeje",
+    "availableFrom": "Předpokládaná dostupnost: {{date}} (dodací lhůta {{lead}} dní).",
+    "suggest": "Doporučeno objednat {{quantity}} (doplnění do maxima)."
+  },
+  "movement": {
+    "title": {
+      "receipt": "Příjem na sklad",
+      "issue": "Výdej ze skladu",
+      "transfer": "Přesun mezi sklady",
+      "adjustment": "Korekce stavu",
+      "planned": "Plánovaný výdej"
+    },
+    "submit": {
+      "receipt": "Přijmout",
+      "issue": "Vydat",
+      "transfer": "Přesunout",
+      "adjustment": "Uložit korekci",
+      "planned": "Naplánovat"
+    },
+    "done": {
+      "receipt": "Příjem uložen",
+      "issue": "Výdej uložen",
+      "transfer": "Přesun uložen",
+      "adjustment": "Korekce uložena",
+      "planned": "Plánovaný výdej uložen"
+    },
+    "quantity": "Množství ({{unit}})",
+    "delta": "Změna stavu ({{unit}}, záporná = úbytek)",
+    "available": "Na tomto skladu: {{available}}",
+    "insufficient": "Výdej odmítnut: na skladu je jen {{available}}. Stav se nezměnil.",
+    "serialCount": "Zadejte přesně {{count}} sériových čísel (jedno na kus).",
+    "batchRequired": "U této položky se eviduje šarže. Vyplňte ji.",
+    "sameWarehouse": "Zdrojový a cílový sklad se musí lišit.",
+    "fromWarehouse": "Ze skladu",
+    "toWarehouse": "Do skladu",
+    "plannedDate": "Plánované datum",
+    "reasonRequired": "Korekce vždy vyžaduje důvod.",
+    "pickBatch": "Vyberte šarži",
+    "pickSerials": "Vyberte vydávaná sériová čísla",
+    "noSerials": "Žádná sériová čísla na skladě.",
+    "serialHelp": "Jedno sériové číslo na řádek nebo oddělené čárkou."
+  },
+  "refs": {
+    "task": "Úkol (údržba)",
+    "noTask": "Bez úkolu",
+    "place": "Nemovitost nebo jednotka",
+    "noPlace": "Bez vazby"
+  },
+  "replenish": {
+    "ruleBadge": "Pravidlo",
+    "rule": "Návrh vzniká, když plán (skladem + očekávané příjmy − plánované výdeje) klesne pod minimum. Doporučené množství doplní do maxima. Nejde o predikci spotřeby.",
+    "none": "Žádná položka teď nepotřebuje doplnit.",
+    "createOrder": "Vytvořit návrh objednávky",
+    "draftExists": "Pro tohoto dodavatele už existuje návrh objednávky {{number}}.",
+    "suggested": "Doporučeno",
+    "availability": "Dostupnost",
+    "leadTime": "{{date}} (lhůta {{days}} dní)"
+  },
+  "movements": {
+    "byMonth": "Výdeje podle měsíců",
+    "issuedUnits": "Vydáno {{units}} jedn.",
+    "issueCount": "Výdejek: {{count}}",
+    "search": "Hledat položku, důvod, šarži nebo sériové číslo",
+    "allKinds": "Všechny druhy",
+    "count": "Pohybů: {{count}}"
+  },
+  "orders": {
+    "createTitle": "Nová nákupní objednávka",
+    "createDescription": "Samostatná objednávka dodavateli. Ceny se uloží do objednávky a později se nemění.",
+    "createSubmit": "Založit návrh objednávky",
+    "created": "Návrh objednávky založen",
+    "panelTitle": "Objednávka {{number}}",
+    "openValue": "Zbývá dodat za {{value}}",
+    "approve": "Schválit",
+    "markOrdered": "Označit jako objednáno",
+    "receive": "Příjem dodávky",
+    "linkInvoice": "Připojit přijatou fakturu",
+    "linkInvoiceSubmit": "Připojit fakturu",
+    "invoiceLinked": "Faktura připojena k objednávce",
+    "close": "Uzavřít se zbytkem",
+    "closeTitle": "Uzavřít objednávku bez zbývajícího množství",
+    "closeSubmit": "Uzavřít objednávku",
+    "cancel": "Zrušit objednávku",
+    "cancelTitle": "Zrušit objednávku",
+    "cancelSubmit": "Zrušit objednávku",
+    "transitioned": {
+      "approved": "Objednávka schválena",
+      "ordered": "Objednávka označena jako objednaná",
+      "cancelled": "Objednávka zrušena",
+      "completed": "Objednávka uzavřena"
+    },
+    "lines": "Položky",
+    "deliveries": "Dodávky ({{count}})",
+    "noDeliveries": "Zatím nebylo nic dodáno.",
+    "receivedBy": "Přijal",
+    "invoices": "Přijaté faktury",
+    "invoiceNote": "Odkaz na fakturu dodavatele. Doklad samotný eviduje a účtuje Finance.",
+    "noInvoice": "bez faktury",
+    "history": "Historie stavů",
+    "direct": "Přímá objednávka",
+    "fromQuote": "Z nabídky {{number}}",
+    "receiveTitle": "Příjem dodávky na sklad",
+    "receiveSubmit": "Přijmout dodávku",
+    "received": "Dodávka přijata na sklad",
+    "remainingOf": "Objednáno {{ordered}} {{unit}}, zbývá dodat {{remaining}} {{unit}}",
+    "overRemaining": "U položky {{item}} lze přijmout nejvýše {{remaining}}.",
+    "batchFor": "U položky {{item}} vyplňte šarži.",
+    "serialsFor": "U položky {{item}} zadejte {{count}} sériových čísel.",
+    "nothingReceived": "Zadejte alespoň jedno přijaté množství."
+  },
+  "quotes": {
+    "createTitle": "Zapsat nabídku dodavatele",
+    "createDescription": "Přijatá cenová nabídka. Z nabídky lze jedním krokem vytvořit objednávku se stejnými cenami.",
+    "createSubmit": "Uložit nabídku",
+    "created": "Nabídka uložena",
+    "panelTitle": "Nabídka {{number}}",
+    "lineCount": "Řádků: {{count}}",
+    "toOrderTitle": "Objednat podle nabídky",
+    "toOrderHint": "Objednávka převezme položky, množství i ceny z nabídky a zůstane s ní provázaná.",
+    "toOrder": "Vytvořit objednávku",
+    "ordered": "Objednávka z nabídky založena",
+    "reject": "Odmítnout nabídku",
+    "rejectConfirm": "Opravdu odmítnout?",
+    "rejected": "Nabídka odmítnuta"
+  },
+  "suppliers": {
+    "createTitle": "Nový dodavatel",
+    "createSubmit": "Uložit dodavatele",
+    "created": "Dodavatel uložen",
+    "invalid": "Vyplňte název. IČO má 8 číslic, lhůta je celé číslo dní.",
+    "items": "Položek",
+    "orders": "Objednávek"
+  },
+  "items": {
+    "createTitle": "Nová skladová položka",
+    "createSubmit": "Založit položku",
+    "created": "Položka založena",
+    "maxBelowMin": "Maximum nesmí být nižší než minimum."
+  },
+  "lines": {
+    "item": "Řádek {{index}}",
+    "free": "Služba / volný text",
+    "remove": "Odebrat řádek",
+    "add": "Přidat řádek",
+    "service": "služba (bez skladu)",
+    "invalid": "Vyberte dodavatele a u každého řádku vyplňte popis, množství a cenu."
+  },
+  "empty": {
+    "items": "Založte první skladovou položku.",
+    "movements": "Položka zatím nemá žádné pohyby.",
+    "noStock": "Na žádném skladu není zásoba.",
+    "orders": "Zatím žádné nákupní objednávky.",
+    "quotes": "Zatím žádné nabídky dodavatelů.",
+    "suppliers": "Zatím žádní dodavatelé."
   }
 }

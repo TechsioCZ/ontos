@@ -246,10 +246,11 @@ export const PurchaseOrderSchema = Schema.Struct({
 });
 export type PurchaseOrder = typeof PurchaseOrderSchema.Type;
 
+/** `items` first: the overview counts the first array of each agenda state as its record count. */
 export const PurchasingStateSchema = Schema.Struct({
+  items: Schema.Array(StockItemSchema),
   warehouses: Schema.Array(StockWarehouseSchema),
   suppliers: Schema.Array(SupplierSchema),
-  items: Schema.Array(StockItemSchema),
   movements: Schema.Array(StockMovementSchema),
   plannedIssues: Schema.Array(StockPlannedIssueSchema),
   quotes: Schema.Array(SupplierQuoteSchema),

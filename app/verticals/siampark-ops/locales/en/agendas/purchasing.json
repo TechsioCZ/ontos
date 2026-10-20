@@ -1,17 +1,320 @@
 {
   "title": "Stock and purchasing",
-  "description": "Stock items, inventory and purchase orders (S05, S06).",
+  "description": "Stock levels computed from movements, supplier quotes, purchase orders with partial deliveries and a link to the received invoice.",
+  "footer": "Stock is always computed from stored movements. Replenishment suggestions are rule-based (minimum/maximum, lead time), not a consumption forecast. Received invoices live in Finance; only a reference is kept here.",
   "fields": {
     "sku": "Item code",
     "name": "Name",
-    "unit": "Unit of measure"
+    "unit": "Unit of measure",
+    "category": "Category",
+    "tracking": "Tracking",
+    "warehouse": "Warehouse",
+    "onHand": "On hand",
+    "minMax": "Min / max",
+    "minimum": "Minimum",
+    "maximum": "Maximum",
+    "level": "Stock level",
+    "expected": "Expected receipt",
+    "projected": "Projected",
+    "supplier": "Supplier",
+    "supplierName": "Supplier name",
+    "leadTime": "Lead time",
+    "leadTimeDays": "Lead time (days)",
+    "lastPrice": "Last purchase price",
+    "date": "Date",
+    "reason": "Reason",
+    "batch": "Batch",
+    "serialNumbers": "Serial numbers",
+    "refs": "Links",
+    "author": "Author",
+    "kind": "Movement type",
+    "item": "Item",
+    "quantity": "Quantity",
+    "description": "Description",
+    "unitPrice": "Unit price",
+    "unitPriceCzk": "Unit price (CZK)",
+    "lineTotal": "Total",
+    "lines": "Lines",
+    "total": "Total excl. VAT",
+    "order": "Order",
+    "quote": "Quote",
+    "status": "Status",
+    "delivered": "Delivered",
+    "ordered": "Ordered",
+    "received": "Received",
+    "remaining": "Remaining",
+    "receivedNow": "Receiving now",
+    "expectedDate": "Expected delivery",
+    "validUntil": "Valid until",
+    "quoteNumber": "Supplier quote number",
+    "quoteDate": "Quote date",
+    "deliverTo": "Deliver to warehouse",
+    "deliveryNote": "Delivery note",
+    "invoices": "Received invoices",
+    "invoiceNumber": "Received invoice number",
+    "invoiceDate": "Invoice date",
+    "invoiceAmount": "Invoice amount (CZK)",
+    "currency": "Currency",
+    "ico": "Company ID",
+    "contact": "Contact person",
+    "email": "E-mail and phone",
+    "phone": "Phone"
   },
-  "create": {
-    "title": "New stock item",
-    "submit": "Create item"
+  "tabs": {
+    "stock": "Stock",
+    "replenish": "Replenishment",
+    "orders": "Orders",
+    "quotes": "Supplier quotes",
+    "movements": "Movements",
+    "suppliers": "Suppliers"
   },
-  "created": "Item created",
   "stats": {
-    "count": "Stock items"
+    "count": "Stock items",
+    "items": "Stock items",
+    "warehouses": "Warehouses: {{count}}",
+    "belowMin": "Below minimum",
+    "aboveMax": "Above maximum: {{count}}",
+    "openOrders": "Open orders",
+    "openValue": "{{value}} still to deliver",
+    "quotes": "Quotes to decide",
+    "drafts": "Draft orders: {{count}}"
+  },
+  "actions": {
+    "newItem": "New item",
+    "newOrder": "New order",
+    "newQuote": "Record quote",
+    "newSupplier": "New supplier",
+    "receipt": "Receipt",
+    "issue": "Issue",
+    "transfer": "Transfer",
+    "adjustment": "Correction",
+    "planned": "Plan issue",
+    "issuePlanned": "Issue",
+    "cancelPlanned": "Cancel plan"
+  },
+  "filters": {
+    "search": "Search code or name",
+    "allWarehouses": "All warehouses",
+    "alertsOnly": "Only below minimum / above maximum",
+    "openOrders": "Only drafts and open"
+  },
+  "category": {
+    "consumable": "Consumables",
+    "spare_part": "Spare part",
+    "cleaning": "Cleaning and hygiene",
+    "chemical": "Chemicals",
+    "tool": "Tools"
+  },
+  "tracking": {
+    "none": "No batches",
+    "batch": "Batch",
+    "serial": "Serial numbers"
+  },
+  "level": {
+    "below_minimum": "Below minimum",
+    "above_maximum": "Above maximum",
+    "ok": "OK"
+  },
+  "movementKind": {
+    "receipt": "Receipt",
+    "issue": "Issue",
+    "transfer": "Transfer",
+    "adjustment": "Correction"
+  },
+  "refKind": {
+    "purchase_order": "Order",
+    "task": "Task",
+    "unit": "Unit",
+    "property": "Property",
+    "asset": "Asset",
+    "document": "Document"
+  },
+  "orderStatus": {
+    "draft": "Draft",
+    "approved": "Approved",
+    "ordered": "Ordered",
+    "partially_delivered": "Partially delivered",
+    "completed": "Completed",
+    "cancelled": "Cancelled"
+  },
+  "quoteStatus": {
+    "received": "To decide",
+    "accepted": "Ordered",
+    "rejected": "Rejected"
+  },
+  "historyEvent": {
+    "created": "Order created",
+    "approved": "Approved",
+    "ordered": "Sent to supplier",
+    "delivery": "Delivery received",
+    "invoice": "Received invoice linked",
+    "cancelled": "Cancelled",
+    "completed": "Completed"
+  },
+  "leadTimeDays": "{{count}} days",
+  "panel": {
+    "detail": "Details",
+    "plan": "Material plan",
+    "byWarehouse": "Stock by warehouse",
+    "batches": "Batches in stock",
+    "serials": "Serial numbers in stock",
+    "movements": "Stock movements ({{count}})"
+  },
+  "plan": {
+    "expected": "Expected receipts",
+    "plannedIssues": "Planned issues",
+    "availableFrom": "Expected availability: {{date}} (lead time {{lead}} days).",
+    "suggest": "Suggested order: {{quantity}} (up to maximum)."
+  },
+  "movement": {
+    "title": {
+      "receipt": "Receipt into stock",
+      "issue": "Issue from stock",
+      "transfer": "Transfer between warehouses",
+      "adjustment": "Stock correction",
+      "planned": "Planned issue"
+    },
+    "submit": {
+      "receipt": "Receive",
+      "issue": "Issue",
+      "transfer": "Transfer",
+      "adjustment": "Save correction",
+      "planned": "Plan"
+    },
+    "done": {
+      "receipt": "Receipt saved",
+      "issue": "Issue saved",
+      "transfer": "Transfer saved",
+      "adjustment": "Correction saved",
+      "planned": "Planned issue saved"
+    },
+    "quantity": "Quantity ({{unit}})",
+    "delta": "Change ({{unit}}, negative = decrease)",
+    "available": "In this warehouse: {{available}}",
+    "insufficient": "Issue refused: only {{available}} in stock. Nothing changed.",
+    "serialCount": "Enter exactly {{count}} serial numbers (one per unit).",
+    "batchRequired": "This item is batch-tracked. Enter the batch.",
+    "sameWarehouse": "Source and target warehouse must differ.",
+    "fromWarehouse": "From warehouse",
+    "toWarehouse": "To warehouse",
+    "plannedDate": "Planned date",
+    "reasonRequired": "A correction always needs a reason.",
+    "pickBatch": "Pick a batch",
+    "pickSerials": "Pick the serial numbers to issue",
+    "noSerials": "No serial numbers in stock.",
+    "serialHelp": "One serial number per line or comma-separated."
+  },
+  "refs": {
+    "task": "Task (maintenance)",
+    "noTask": "No task",
+    "place": "Property or unit",
+    "noPlace": "No link"
+  },
+  "replenish": {
+    "ruleBadge": "Rule",
+    "rule": "A suggestion appears when the projection (on hand + expected receipts − planned issues) falls below the minimum. The suggested quantity tops up to the maximum. This is not a consumption forecast.",
+    "none": "No item needs replenishment right now.",
+    "createOrder": "Create draft order",
+    "draftExists": "A draft order {{number}} already exists for this supplier.",
+    "suggested": "Suggested",
+    "availability": "Availability",
+    "leadTime": "{{date}} (lead time {{days}} days)"
+  },
+  "movements": {
+    "byMonth": "Issues by month",
+    "issuedUnits": "{{units}} units issued",
+    "issueCount": "Issue slips: {{count}}",
+    "search": "Search item, reason, batch or serial number",
+    "allKinds": "All types",
+    "count": "Movements: {{count}}"
+  },
+  "orders": {
+    "createTitle": "New purchase order",
+    "createDescription": "A direct order to a supplier. Prices are stored on the order and never change later.",
+    "createSubmit": "Create draft order",
+    "created": "Draft order created",
+    "panelTitle": "Order {{number}}",
+    "openValue": "{{value}} still to deliver",
+    "approve": "Approve",
+    "markOrdered": "Mark as ordered",
+    "receive": "Receive delivery",
+    "linkInvoice": "Link received invoice",
+    "linkInvoiceSubmit": "Link invoice",
+    "invoiceLinked": "Invoice linked to the order",
+    "close": "Close with remainder",
+    "closeTitle": "Close the order without the remaining quantity",
+    "closeSubmit": "Close order",
+    "cancel": "Cancel order",
+    "cancelTitle": "Cancel order",
+    "cancelSubmit": "Cancel order",
+    "transitioned": {
+      "approved": "Order approved",
+      "ordered": "Order marked as ordered",
+      "cancelled": "Order cancelled",
+      "completed": "Order closed"
+    },
+    "lines": "Lines",
+    "deliveries": "Deliveries ({{count}})",
+    "noDeliveries": "Nothing delivered yet.",
+    "receivedBy": "Received by",
+    "invoices": "Received invoices",
+    "invoiceNote": "Reference to the supplier invoice. Finance records and books the document itself.",
+    "noInvoice": "no invoice",
+    "history": "Status history",
+    "direct": "Direct order",
+    "fromQuote": "From quote {{number}}",
+    "receiveTitle": "Receive delivery into stock",
+    "receiveSubmit": "Receive delivery",
+    "received": "Delivery received into stock",
+    "remainingOf": "Ordered {{ordered}} {{unit}}, {{remaining}} {{unit}} still to deliver",
+    "overRemaining": "At most {{remaining}} can be received for {{item}}.",
+    "batchFor": "Enter the batch for {{item}}.",
+    "serialsFor": "Enter {{count}} serial numbers for {{item}}.",
+    "nothingReceived": "Enter at least one received quantity."
+  },
+  "quotes": {
+    "createTitle": "Record supplier quote",
+    "createDescription": "A received price quote. One step turns it into an order with the same prices.",
+    "createSubmit": "Save quote",
+    "created": "Quote saved",
+    "panelTitle": "Quote {{number}}",
+    "lineCount": "Lines: {{count}}",
+    "toOrderTitle": "Order from this quote",
+    "toOrderHint": "The order takes over items, quantities and prices of the quote and stays linked to it.",
+    "toOrder": "Create order",
+    "ordered": "Order created from the quote",
+    "reject": "Reject quote",
+    "rejectConfirm": "Really reject?",
+    "rejected": "Quote rejected"
+  },
+  "suppliers": {
+    "createTitle": "New supplier",
+    "createSubmit": "Save supplier",
+    "created": "Supplier saved",
+    "invalid": "Enter a name. Company ID has 8 digits, lead time is whole days.",
+    "items": "Items",
+    "orders": "Orders"
+  },
+  "items": {
+    "createTitle": "New stock item",
+    "createSubmit": "Create item",
+    "created": "Item created",
+    "maxBelowMin": "Maximum must not be lower than minimum."
+  },
+  "lines": {
+    "item": "Line {{index}}",
+    "free": "Service / free text",
+    "remove": "Remove line",
+    "add": "Add line",
+    "service": "service (no stock)",
+    "invalid": "Pick a supplier and fill description, quantity and price on every line."
+  },
+  "empty": {
+    "items": "Create the first stock item.",
+    "movements": "No movements yet.",
+    "noStock": "No stock in any warehouse.",
+    "orders": "No purchase orders yet.",
+    "quotes": "No supplier quotes yet.",
+    "suppliers": "No suppliers yet."
   }
 }

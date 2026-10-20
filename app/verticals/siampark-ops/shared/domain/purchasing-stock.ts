@@ -1,5 +1,6 @@
 // Pure stock computations over the purchasing ledger (S05). Used by the reducer (guards) and the UI (overview,
 // material plan, replenishment suggestions). OWNED BY THE `purchasing` LANE (ops-purchasing).
+import { DateTime } from 'effect';
 import type {
   PurchaseOrder,
   PurchasingState,
@@ -109,15 +110,21 @@ export const batchesInStock = (
 };
 
 /** Ordered but not yet received quantity of an item on open purchase orders. */
-export const OPEN_ORDER_STATUSES: ReadonlySet<PurchaseOrder['status']> = new Set(['approved', 'ordered', 'partially_delivered']);
+export const OPEN_ORDER_STATUSES: ReadonlySet<PurchaseOrder['status']> = new Set([
+  'approved',
+  'ordered',
+  'partially_delivered',
+]);
 
-export const lineRemaining = (line: PurchaseOrder['lines'][number]) => Math.max(0, line.quantity - line.receivedQuantity);
+export const lineRemaining = (line: PurchaseOrder['lines'][number]) =>
+  Math.max(0, line.quantity - line.receivedQuantity);
 
 export const orderRemainingQuantity = (order: PurchaseOrder) =>
   order.lines.reduce((sum, line) => sum + lineRemaining(line), 0);
 
-export const orderTotalMinor = (order: Pick<PurchaseOrder, 'lines'>) =>
-  order.lines.reduce((sum, line) => sum + line.quantity * line.unitPriceMinor, 0);
+export const orderTotalMinor = (order: {
+  readonly lines: ReadonlyArray<{ readonly quantity: number; readonly unitPriceMinor: number }>;
+}) => order.lines.reduce((sum, line) => sum + line.quantity * line.unitPriceMinor, 0);
 
 export const orderOpenValueMinor = (order: PurchaseOrder) =>
   order.lines.reduce((sum, line) => sum + lineRemaining(line) * line.unitPriceMinor, 0);

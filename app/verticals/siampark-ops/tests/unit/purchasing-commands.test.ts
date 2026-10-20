@@ -48,15 +48,31 @@ const base = (tracking: 'none' | 'batch' | 'serial' = 'none') =>
     return item.state;
   });
 
-const receipt = (state: PurchasingState, quantity: number, resourceId: string, extra: Partial<Record<string, unknown>> = {}) =>
-  apply(state, { _tag: 'StockReceipt', date: '2026-10-20', itemId: 'item', quantity, reason: 'Příjem', ...extra } as CommandInput, resourceId);
+const receipt = (
+  state: PurchasingState,
+  quantity: number,
+  resourceId: string,
+  extra: Partial<Record<string, unknown>> = {},
+) =>
+  apply(
+    state,
+    { _tag: 'StockReceipt', date: '2026-10-20', itemId: 'item', quantity, reason: 'Příjem', ...extra } as CommandInput,
+    resourceId,
+  );
 
 it.effect('S05-01: issuing 3 of 10 leaves 7 and keeps a ledger row with the author', () =>
   Effect.gen(function* s0501() {
     const stocked = yield* receipt(yield* base(), 10, 'r1');
     const issued = yield* apply(
       stocked.state,
-      { _tag: 'StockIssue', date: '2026-10-20', itemId: 'item', quantity: 3, reason: 'Oprava', refs: [{ id: 't1', kind: 'task', label: 'Úkol' }] },
+      {
+        _tag: 'StockIssue',
+        date: '2026-10-20',
+        itemId: 'item',
+        quantity: 3,
+        reason: 'Oprava',
+        refs: [{ id: 't1', kind: 'task', label: 'Úkol' }],
+      },
       'i1',
     );
     expect(onHandOf(issued.state, itemId('item'))).toBe(7);
@@ -117,13 +133,29 @@ it.effect('S05-04: serial numbers are required per unit and traceable to their m
 it.effect('A correction needs a non-zero delta and cannot make stock negative; transfer keeps the total', () =>
   Effect.gen(function* corrections() {
     const stocked = yield* receipt(yield* base(), 5, 'r1');
-    const zero = yield* apply(stocked.state, { _tag: 'StockAdjustment', date: '2026-10-20', delta: 0, itemId: 'item', reason: 'x' }, 'a0').pipe(Effect.flip);
+    const zero = yield* apply(
+      stocked.state,
+      { _tag: 'StockAdjustment', date: '2026-10-20', delta: 0, itemId: 'item', reason: 'x' },
+      'a0',
+    ).pipe(Effect.flip);
     expect(isConflict(zero)).toBe(true);
-    const below = yield* apply(stocked.state, { _tag: 'StockAdjustment', date: '2026-10-20', delta: -6, itemId: 'item', reason: 'Inventura' }, 'a1').pipe(Effect.flip);
+    const below = yield* apply(
+      stocked.state,
+      { _tag: 'StockAdjustment', date: '2026-10-20', delta: -6, itemId: 'item', reason: 'Inventura' },
+      'a1',
+    ).pipe(Effect.flip);
     expect(isConflict(below)).toBe(true);
     const moved = yield* apply(
       stocked.state,
-      { _tag: 'StockTransfer', date: '2026-10-20', fromWarehouseId: 'wh', itemId: 'item', quantity: 2, reason: 'Do dílny', toWarehouseId: 'wh2' },
+      {
+        _tag: 'StockTransfer',
+        date: '2026-10-20',
+        fromWarehouseId: 'wh',
+        itemId: 'item',
+        quantity: 2,
+        reason: 'Do dílny',
+        toWarehouseId: 'wh2',
+      },
       't1',
     );
     expect(onHandOf(moved.state, itemId('item'))).toBe(5);
@@ -135,36 +167,102 @@ it.effect('S06-01/02: order from a quote keeps line and price; 1 of 2 delivered 
     const start = yield* base();
     const quote = yield* apply(
       start,
-      { _tag: 'PurchaseQuoteCreate', currency: 'CZK', date: '2026-10-20', lines: [{ description: 'Detektor', itemId: 'item', quantity: 2, unitPriceMinor: 129_000 }], number: 'N-1', supplierId: 'sup' },
+      {
+        _tag: 'PurchaseQuoteCreate',
+        currency: 'CZK',
+        date: '2026-10-20',
+        lines: [{ description: 'Detektor', itemId: 'item', quantity: 2, unitPriceMinor: 129_000 }],
+        number: 'N-1',
+        supplierId: 'sup',
+      },
       'q1',
     );
-    const ordered = yield* apply(quote.state, { _tag: 'PurchaseOrderCreateFromQuote', quoteId: 'q1', warehouseId: 'wh' }, 'po');
+    const ordered = yield* apply(
+      quote.state,
+      { _tag: 'PurchaseOrderCreateFromQuote', quoteId: 'q1', warehouseId: 'wh' },
+      'po',
+    );
     const order = ordered.state.orders[0];
     expect(order?.quoteId).toBe('q1');
     expect(order?.lines[0]?.quantity).toBe(2);
     expect(order?.lines[0]?.unitPriceMinor).toBe(129_000);
     expect(order?.status).toBe('draft');
     expect(ordered.state.quotes[0]?.status).toBe('accepted');
-    const again = yield* apply(ordered.state, { _tag: 'PurchaseOrderCreateFromQuote', quoteId: 'q1', warehouseId: 'wh' }, 'po2').pipe(Effect.flip);
+    const again = yield* apply(
+      ordered.state,
+      { _tag: 'PurchaseOrderCreateFromQuote', quoteId: 'q1', warehouseId: 'wh' },
+      'po2',
+    ).pipe(Effect.flip);
     expect(isConflict(again)).toBe(true);
-    const early = yield* apply(ordered.state, { _tag: 'PurchaseOrderReceive', date: '2026-10-20', lines: [{ lineId: 'po:line-1', quantity: 1 }], orderId: 'po' }, 'd0').pipe(Effect.flip);
+    const early = yield* apply(
+      ordered.state,
+      {
+        _tag: 'PurchaseOrderReceive',
+        date: '2026-10-20',
+        lines: [{ lineId: 'po:line-1', quantity: 1 }],
+        orderId: 'po',
+      },
+      'd0',
+    ).pipe(Effect.flip);
     expect(isConflict(early)).toBe(true);
-    const approved = yield* apply(ordered.state, { _tag: 'PurchaseOrderTransition', orderId: 'po', to: 'approved' }, 'x1');
+    const approved = yield* apply(
+      ordered.state,
+      { _tag: 'PurchaseOrderTransition', orderId: 'po', to: 'approved' },
+      'x1',
+    );
     const sent = yield* apply(approved.state, { _tag: 'PurchaseOrderTransition', orderId: 'po', to: 'ordered' }, 'x2');
-    const partial = yield* apply(sent.state, { _tag: 'PurchaseOrderReceive', date: '2026-10-21', lines: [{ lineId: 'po:line-1', quantity: 1 }], orderId: 'po' }, 'd1');
+    const partial = yield* apply(
+      sent.state,
+      {
+        _tag: 'PurchaseOrderReceive',
+        date: '2026-10-21',
+        lines: [{ lineId: 'po:line-1', quantity: 1 }],
+        orderId: 'po',
+      },
+      'd1',
+    );
     const after = partial.state.orders[0];
     expect(after?.status).toBe('partially_delivered');
     expect((after?.lines[0]?.quantity ?? 0) - (after?.lines[0]?.receivedQuantity ?? 0)).toBe(1);
     expect(onHandOf(partial.state, itemId('item'))).toBe(1);
     expect(partial.state.movements.at(-1)?.purchaseOrderId).toBe('po');
-    const over = yield* apply(partial.state, { _tag: 'PurchaseOrderReceive', date: '2026-10-21', lines: [{ lineId: 'po:line-1', quantity: 2 }], orderId: 'po' }, 'd2').pipe(Effect.flip);
+    const over = yield* apply(
+      partial.state,
+      {
+        _tag: 'PurchaseOrderReceive',
+        date: '2026-10-21',
+        lines: [{ lineId: 'po:line-1', quantity: 2 }],
+        orderId: 'po',
+      },
+      'd2',
+    ).pipe(Effect.flip);
     expect(isConflict(over)).toBe(true);
-    const done = yield* apply(partial.state, { _tag: 'PurchaseOrderReceive', date: '2026-10-22', lines: [{ lineId: 'po:line-1', quantity: 1 }], orderId: 'po' }, 'd3');
+    const done = yield* apply(
+      partial.state,
+      {
+        _tag: 'PurchaseOrderReceive',
+        date: '2026-10-22',
+        lines: [{ lineId: 'po:line-1', quantity: 1 }],
+        orderId: 'po',
+      },
+      'd3',
+    );
     expect(done.state.orders[0]?.status).toBe('completed');
-    expect(done.state.orders[0]?.history.map((entry) => entry.event)).toEqual(['created', 'approved', 'ordered', 'delivery', 'delivery', 'completed']);
+    expect(done.state.orders[0]?.history.map((entry) => entry.event)).toEqual([
+      'created',
+      'approved',
+      'ordered',
+      'delivery',
+      'delivery',
+      'completed',
+    ]);
     const linked = yield* apply(done.state, { _tag: 'PurchaseOrderLinkInvoice', number: 'FA-1', orderId: 'po' }, 'inv');
     expect(linked.state.orders[0]?.invoices[0]?.number).toBe('FA-1');
-    const cancel = yield* apply(done.state, { _tag: 'PurchaseOrderTransition', orderId: 'po', to: 'cancelled' }, 'c1').pipe(Effect.flip);
+    const cancel = yield* apply(
+      done.state,
+      { _tag: 'PurchaseOrderTransition', orderId: 'po', to: 'cancelled' },
+      'c1',
+    ).pipe(Effect.flip);
     expect(isConflict(cancel)).toBe(true);
   }),
 );

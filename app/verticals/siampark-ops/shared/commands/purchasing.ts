@@ -430,7 +430,10 @@ const issue = Effect.fn('SiamparkOps.Purchasing.issue')(function* issue(
     kind: 'issue',
     quantity: -value.quantity,
     reason: value.reason,
-    refs: [...(value.refs ?? []), ...(planned?.refs ?? []).filter((ref) => !(value.refs ?? []).some((own) => own.id === ref.id))],
+    refs: [
+      ...(value.refs ?? []),
+      ...(planned?.refs ?? []).filter((ref) => !(value.refs ?? []).some((own) => own.id === ref.id)),
+    ],
     warehouseId,
     ...optional('batch', value.batch),
     ...optional('serialNumbers', value.serialNumbers),
@@ -666,18 +669,15 @@ const createOrderFromQuote = Effect.fn('SiamparkOps.Purchasing.orderFromQuote')(
   yield* requireWarehouse(state, value.warehouseId);
   const id = yield* mintId(PurchaseOrderIdSchema, input.resourceId);
   const lines = yield* Effect.forEach(quote.lines, (line, index) =>
-    Effect.map(
-      lineIdOf(input, index),
-      (lineId): PurchaseOrderLine => ({
-        description: line.description,
-        id: lineId,
-        quantity: line.quantity,
-        quoteLineId: line.id,
-        receivedQuantity: 0,
-        unitPriceMinor: line.unitPriceMinor,
-        ...optional('itemId', line.itemId),
-      }),
-    ),
+    Effect.map(lineIdOf(input, index), (lineId): PurchaseOrderLine => ({
+      description: line.description,
+      id: lineId,
+      quantity: line.quantity,
+      quoteLineId: line.id,
+      receivedQuantity: 0,
+      unitPriceMinor: line.unitPriceMinor,
+      ...optional('itemId', line.itemId),
+    })),
   );
   const order = newOrder(state, input, id, {
     currency: quote.currency,
@@ -692,18 +692,21 @@ const createOrderFromQuote = Effect.fn('SiamparkOps.Purchasing.orderFromQuote')(
     ...state,
     orders: [...state.orders, order],
     quotes: state.quotes.map((entry) =>
-      entry.id === quote.id ? auditUpdated({ ...entry, purchaseOrderId: id, status: 'accepted' as const }, input) : entry,
+      entry.id === quote.id
+        ? auditUpdated({ ...entry, purchaseOrderId: id, status: 'accepted' as const }, input)
+        : entry,
     ),
   });
 });
 
-const allowedTransitions: Readonly<Record<CommandOf<'PurchaseOrderTransition'>['to'], ReadonlyArray<PurchaseOrder['status']>>> =
-  {
-    approved: ['draft'],
-    cancelled: ['draft', 'approved', 'ordered'],
-    completed: ['partially_delivered'],
-    ordered: ['approved'],
-  };
+const allowedTransitions: Readonly<
+  Record<CommandOf<'PurchaseOrderTransition'>['to'], ReadonlyArray<PurchaseOrder['status']>>
+> = {
+  approved: ['draft'],
+  cancelled: ['draft', 'approved', 'ordered'],
+  completed: ['partially_delivered'],
+  ordered: ['approved'],
+};
 
 const transitionOrder = Effect.fn('SiamparkOps.Purchasing.orderTransition')(function* transitionOrder(
   state: PurchasingState,
@@ -796,7 +799,12 @@ const receiveOrder = Effect.fn('SiamparkOps.Purchasing.orderReceive')(function* 
   };
   const history = [
     ...order.history,
-    historyOf(input, 'delivery', status, value.deliveryNote === undefined ? undefined : `Dodací list ${value.deliveryNote}`),
+    historyOf(
+      input,
+      'delivery',
+      status,
+      value.deliveryNote === undefined ? undefined : `Dodací list ${value.deliveryNote}`,
+    ),
     ...(complete ? [historyOf(input, 'completed', 'completed')] : []),
   ];
   const next: PurchaseOrder = auditUpdated(
