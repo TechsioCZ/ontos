@@ -145,10 +145,17 @@ const PlanCard = ({
       <div
         aria-label={k(`depreciation.${plan.type}Plan`)}
         role="region"
-        style={{ maxWidth: '100%', minWidth: 0, overflowX: 'auto', overscrollBehaviorX: 'contain' }}
+        style={{ marginInline: '-1.25rem', minWidth: 0, overflowX: 'auto', overscrollBehaviorX: 'contain' }}
         tabIndex={0}
       >
-        <Table size="sm" style={{ minWidth: 840 }} variant="line">
+        <Table size="sm" style={{ minWidth: 840, tableLayout: 'fixed' }} variant="line">
+          <colgroup>
+            <col style={{ width: 70 }} />
+            <col style={{ width: 155 }} />
+            <col style={{ width: 210 }} />
+            <col style={{ width: 145 }} />
+            <col style={{ width: 260 }} />
+          </colgroup>
           <Table.Header>
             <Table.Row>
               <Table.ColumnHeader style={{ whiteSpace: 'nowrap' }}>{k('fields.period')}</Table.ColumnHeader>
