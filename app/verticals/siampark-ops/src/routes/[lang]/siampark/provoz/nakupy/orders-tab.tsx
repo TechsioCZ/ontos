@@ -14,6 +14,7 @@ import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { useState } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
+import { CommentThread } from '../../../../../ui/comment-thread.tsx';
 import type { PurchaseOrder, PurchasingState } from '../../../../../../shared/domain/purchasing.ts';
 import {
   OPEN_ORDER_STATUSES,
@@ -443,6 +444,13 @@ export const OrderPanel = ({
               ))}
             </ul>
           )}
+        </SectionCard>
+        <SectionCard title={k('orders.discussion')}>
+          <CommentThread
+            hideWhenForbidden
+            subject={{ id: order.id, kind: 'purchase', label: k('orders.panelTitle', { number: order.number }) }}
+            title={null}
+          />
         </SectionCard>
         <SectionCard title={k('orders.history')}>
           <ol className="flex flex-col gap-100 border-border-primary border-l pl-200 text-sm">

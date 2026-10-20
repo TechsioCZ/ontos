@@ -270,7 +270,8 @@
     "overRemaining": "At most {{remaining}} can be received for {{item}}.",
     "batchFor": "Enter the batch for {{item}}.",
     "serialsFor": "Enter {{count}} serial numbers for {{item}}.",
-    "nothingReceived": "Enter at least one received quantity."
+    "nothingReceived": "Enter at least one received quantity.",
+    "discussion": "Order comments"
   },
   "quotes": {
     "createTitle": "Record supplier quote",

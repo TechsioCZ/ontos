@@ -270,7 +270,8 @@
     "overRemaining": "U položky {{item}} lze přijmout nejvýše {{remaining}}.",
     "batchFor": "U položky {{item}} vyplňte šarži.",
     "serialsFor": "U položky {{item}} zadejte {{count}} sériových čísel.",
-    "nothingReceived": "Zadejte alespoň jedno přijaté množství."
+    "nothingReceived": "Zadejte alespoň jedno přijaté množství.",
+    "discussion": "Komentáře k objednávce"
   },
   "quotes": {
     "createTitle": "Zapsat nabídku dodavatele",
