@@ -147,7 +147,7 @@ export const unassignedOpenCount = (tasks: readonly Task[]) =>
 
 /**
  * "Moje úkoly": the employee bound to the signed-in principal. Undefined when no employee carries that
- * principal, so "mine" cannot narrow the list and the page shows every task with a note instead.
+ * principal. In that case "mine" still matches explicit principal ownership, never everyone else's tasks.
  */
 export const employeeIdOf = (actorPrincipalId: string, employees: readonly Employee[]) =>
   employees.find((employee) => employee.principalRef?.principalId === actorPrincipalId)?.id;
@@ -212,6 +212,7 @@ export const filterTasks = (
     employeeNames = noNames,
     filters,
     mineEmployeeId,
+    minePrincipalId,
     tab,
     today = todayIsoDate(),
   }: {
@@ -219,6 +220,7 @@ export const filterTasks = (
     readonly employeeNames?: ReadonlyMap<string, string>;
     readonly filters: TaskFilters;
     readonly mineEmployeeId?: string | undefined;
+    readonly minePrincipalId?: string | undefined;
     readonly tab: TaskTab;
     readonly today?: string;
   },
@@ -226,7 +228,9 @@ export const filterTasks = (
   const needle = foldSearchText(filters.search.trim());
   return tasks.filter(
     (task) =>
-      (tab === 'all' || mineEmployeeId === undefined || task.assigneeEmployeeId === mineEmployeeId) &&
+      (tab === 'all' ||
+        (mineEmployeeId !== undefined && task.assigneeEmployeeId === mineEmployeeId) ||
+        (minePrincipalId !== undefined && task.ownerPrincipalRef?.principalId === minePrincipalId)) &&
       (needle === '' || matchesSearch(task, needle, { customerNames, employeeNames })) &&
       matchesAssignee(task, filters.assignee) &&
       matchesDueFilter(task, filters.due, today) &&

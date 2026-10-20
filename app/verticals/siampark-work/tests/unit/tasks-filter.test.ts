@@ -25,6 +25,21 @@ const task = Schema.decodeUnknownSync(TaskSchema)({
   updatedAt: '2026-10-05T10:00:00Z',
 });
 
+it('never expands My tasks to everyone when the login has no employee binding', () => {
+  expect(filterTasks([task], { filters: initialTaskFilters, tab: 'mine' })).toHaveLength(0);
+  expect(filterTasks([task], { filters: initialTaskFilters, tab: 'all' })).toHaveLength(1);
+});
+
+it('matches explicit principal ownership as well as employee assignment', () => {
+  const owned = { ...task, ownerPrincipalRef: { principalId: tenantId, tenantId } };
+  expect(filterTasks([owned, task], {
+    filters: initialTaskFilters, minePrincipalId: tenantId, tab: 'mine',
+  })).toStrictEqual([owned]);
+  expect(filterTasks([owned], {
+    filters: initialTaskFilters, minePrincipalId: 'someone-else', tab: 'mine',
+  })).toHaveLength(0);
+});
+
 // The "all" tab ignores whose task it is, so any employee id works here.
 const search = (text: string) =>
   filterTasks([task], { filters: { ...initialTaskFilters, search: text }, mineEmployeeId: 'someone-else', tab: 'all' });

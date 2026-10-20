@@ -373,10 +373,13 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
   const visibleTasks =
     records === undefined || mineResolving
       ? []
-      : filterTasks(records.items, { customerNames, employeeNames, filters, mineEmployeeId, tab, today });
+      : filterTasks(records.items, {
+          customerNames, employeeNames, filters, mineEmployeeId,
+          minePrincipalId: records.actorPrincipalRef.principalId, tab, today,
+        });
   // The header shows the role only, so the "mine" tab names the employee it narrows to.
   const mineName = mineEmployeeId === undefined ? undefined : employeeNames.get(mineEmployeeId);
-  // Without an employee bound to this login, "mine" cannot narrow the list, so the page says so.
+  // A login without an employee binding still sees tasks explicitly owned by its principal.
   const mineUnlinked = tab === 'mine' && records !== undefined && mineEmployeeId === undefined && employees.length > 0;
   // A row selected before it closed drops out here, so a bulk command never carries a closed task.
   const selectedTasks = visibleTasks.filter(

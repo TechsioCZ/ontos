@@ -133,7 +133,7 @@
         "empty": "No tasks yet.",
         "emptyDescription": "Create the first task and assign it to an employee.",
         "emptyMine": "No tasks are assigned to you.",
-        "mineUnlinked": "Your account is not linked to an assignee, so all tasks are shown.",
+        "mineUnlinked": "Your account is not linked to an employee. Only tasks owned directly by your account are shown; other permitted tasks are under All.",
         "noResults": "No task matches the filters.",
         "unavailable": "Data could not be loaded.",
         "errorDescription": "Check the connection and try again.",

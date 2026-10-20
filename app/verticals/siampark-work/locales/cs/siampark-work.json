@@ -133,7 +133,7 @@
         "empty": "Zatím tu nejsou žádné úkoly.",
         "emptyDescription": "Založte první úkol a přiřaďte ho řešiteli.",
         "emptyMine": "Nemáte přiřazené žádné úkoly.",
-        "mineUnlinked": "Váš účet není propojen s řešitelem, proto se zobrazují všechny úkoly.",
+        "mineUnlinked": "Váš účet není propojen se zaměstnancem. Zobrazují se pouze úkoly přiřazené přímo vašemu účtu; ostatní povolené úkoly najdete v záložce Všechny.",
         "noResults": "Filtrům neodpovídá žádný úkol.",
         "unavailable": "Data se nepodařilo načíst.",
         "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
