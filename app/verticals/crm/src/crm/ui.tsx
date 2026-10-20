@@ -1,5 +1,5 @@
 // Shared CRM UI helpers (owned by crm-scaffold): load-state gate, scope note, Czech table labels.
-import { EmptyState, dataTableRowLabels, paginationTranslations } from '@app/admin-ui';
+import { EmptyState, PageHeader, dataTableRowLabels, paginationTranslations } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -12,16 +12,33 @@ import type { CrmRecordsState } from './records.ts';
 /** Renders children only with loaded records; loading / error / forbidden states otherwise. */
 export const CrmStateGate = ({
   children,
+  loadingTitle,
   onRetry,
   state,
 }: {
   readonly children: (records: RecordsResponse) => ReactNode;
+  readonly loadingTitle?: string;
   readonly onRetry: () => void;
   readonly state: CrmRecordsState;
 }) => {
   const { t } = useModernI18n();
   if (state.kind === 'loading') {
-    return <StatusText status="default">{t('crm.common.loading')}</StatusText>;
+    return (
+      <div aria-busy="true" className="flex min-w-0 flex-col gap-250">
+        {loadingTitle !== undefined && <PageHeader title={loadingTitle} />}
+        <StatusText status="default">{t('crm.common.loading')}</StatusText>
+        {loadingTitle !== undefined && (
+          <div
+            aria-hidden="true"
+            className="flex flex-col gap-150 rounded-lg border border-border-primary bg-surface p-250"
+          >
+            {[0, 1, 2, 3, 4].map((row) => (
+              <div className="h-500 animate-pulse rounded-md bg-surface-secondary" key={row} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
   }
   if (state.kind === 'forbidden') {
     return <EmptyState title={t('crm.common.forbiddenTitle')} />;

@@ -246,7 +246,8 @@ const BatchPanel = ({
             { label: 'Duplicity (beze změny)', value: formatNumber(batch.duplicates) },
             { label: 'Vyžaduje kontrolu', value: formatNumber(batch.review ?? 0) },
             { label: 'Nové bez klienta', value: formatNumber(batch.unpaired ?? 0) },
-            { label: 'ID dávky', value: <span className="font-mono text-xs">{batch.id}</span> },
+            { label: 'Soubor dávky', value: batch.fileName },
+            { label: 'Importováno', value: formatDateTime(batch.importedAt) },
           ]}
         />
         {batch.errors.length > 0 && (

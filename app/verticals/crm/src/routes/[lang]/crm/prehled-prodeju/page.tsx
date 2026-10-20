@@ -136,8 +136,8 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
         )}
         {report.rowsWithReceivedDate > 0 && (
           <p className="text-fg-secondary">
-            * Počet objednávek bez data objednávky od zdroje: {report.rowsWithReceivedDate}. Pro období se použije
-            čas přijetí.
+            * Počet objednávek bez data objednávky od zdroje: {report.rowsWithReceivedDate}. Pro období se použije čas
+            přijetí.
           </p>
         )}
       </div>
@@ -204,7 +204,7 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
 const ReportsContent = () => {
   const { load, state } = useCrmRecords();
   return (
-    <CrmStateGate onRetry={load} state={state}>
+    <CrmStateGate loadingTitle="Přehled prodejů" onRetry={load} state={state}>
       {(records) => <ReportView records={records} />}
     </CrmStateGate>
   );

@@ -173,8 +173,9 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       return { entityIds: [...change.entityIds], revision };
     });
     const records = Effect.fn('Crm.records')(function* records(request: RecordsRequest) {
-      const has = yield* grantedPermissions(access, scope);
-      const snapshot = yield* load();
+      // Permission resolution and the company-scoped snapshot are independent reads. Do not hold the
+      // database read behind the remote permission round trip; still project only after BOTH succeed.
+      const [has, snapshot] = yield* Effect.all([grantedPermissions(access, scope), load()], { concurrency: 2 });
       const viewer = viewerFor(snapshot.state, scope.principalId, has);
       const projected = projectCrmState(snapshot.state, viewer);
       const narrowed =

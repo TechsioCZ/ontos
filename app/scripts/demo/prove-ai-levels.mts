@@ -9,7 +9,8 @@
  *   - the real MCP server (tools/ontos-agent-mcp, stdio JSON-RPC, ONTOS_AGENT_PROFILE=A|B), and
  *   - direct HTTP calls to the vertical Action API with the same key, bypassing the MCP tool list, to show that the
  *     backend (not the hidden tool) refuses the write: HTTP 403 + a denied Core audit event.
- * Writes performed: exactly one task created by level B (plus an idempotent replay that must not create another).
+ * Writes performed: one task created by B (+ idempotent replay), then cancelled through the same governed Action.
+ * Cleanup also cancels older open tasks carrying this proof's exact title/description signature; history is retained.
  */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -383,109 +384,156 @@ record(
 
 // Level B over MCP
 const mcpB = await startMcp('B');
-const toolsB = await mcpB.tools();
-const leakedB = toolsB.filter((name) => WRITE_TOOLS.includes(name) && name !== 'create_task' && name !== 'update_task');
-record(
-  'B',
-  'MCP nabízí čtení + úkoly',
-  'MCP lists reads + tasks',
-  'create_task, update_task',
-  `${toolsB.includes('create_task') ? 'create_task ✓' : 'create_task chybí'}${leakedB.length === 0 ? ', nic dalšího' : `, navíc: ${leakedB.join(', ')}`}`,
-  toolsB.includes('create_task') && leakedB.length === 0,
-);
-const employees =
-  (employeesA.value as { items?: { active: boolean; id: string; name: string; role: string }[] }).items ?? [];
-const assignee =
-  employees.find((employee) => employee.active && employee.role === 'SALES_REP') ??
-  employees.find((employee) => employee.active) ??
-  employees[0];
-const due = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
-const stamp = new Date().toLocaleString('cs-CZ', { timeZone: 'Europe/Prague' });
-const requestId = `prove-ai-${randomUUID()}`;
-const taskInput = {
-  ...(assignee === undefined ? {} : { assigneeEmployeeId: assignee.id }),
-  description: `Vytvořil AI agent úrovně B (důkaz ${stamp}).`,
-  dueDate: due,
-  priority: 'HIGH',
-  requestId,
-  title: `AI: zavolat zákazníkovi kvůli nabídce (${stamp})`,
-};
-const createdB = await mcpB.call('create_task', taskInput);
-const createdTask = (createdB.value as { task?: { id: string } | null }).task ?? null;
-record(
-  'B',
-  'Založí úkol (create_task)',
-  'Creates a task',
-  'OK',
-  createdB.isError
-    ? String(createdB.value)
-    : `OK, úkol ${createdTask?.id.slice(0, 8) ?? '?'}… pro ${assignee?.name ?? 'bez přiřazení'}`,
-  !createdB.isError && createdTask !== null,
-);
-const reread = await mcpB.call('list_tasks', {});
-const matching = ((reread.value as { items?: { id: string; title: string }[] }).items ?? []).filter(
-  (task) => task.title === taskInput.title,
-);
-record(
-  'B',
-  'Úkol je znovu načten (list_tasks)',
-  'Task re-read',
-  '1 úkol',
-  `${matching.length}× nalezen`,
-  matching.length === 1,
-);
-const replay = await mcpB.call('create_task', taskInput);
-const reread2 = await mcpB.call('list_tasks', {});
-const matching2 = ((reread2.value as { items?: { title: string }[] }).items ?? []).filter(
-  (task) => task.title === taskInput.title,
-);
-record(
-  'B',
-  'Opakované volání se stejným requestId',
-  'Replay with the same requestId',
-  'žádný duplikát',
-  `deduplicated=${String((replay.value as { deduplicated?: boolean }).deduplicated)}, úkolů ${matching2.length}`,
-  matching2.length === 1,
-);
-mcpB.close();
-
-// Level B direct API: everything except tasks must be refused.
-if (firstOpp !== undefined) {
-  const stageB = await applyCommandAs(levelB, 'sales-pipeline', {
-    _tag: 'ChangeOpportunityStage',
-    id: firstOpp.id,
-    toStage: firstOpp.stage,
-  });
+try {
+  const toolsB = await mcpB.tools();
+  const leakedB = toolsB.filter(
+    (name) => WRITE_TOOLS.includes(name) && name !== 'create_task' && name !== 'update_task',
+  );
   record(
     'B',
-    'Přímé API: změnit příležitost',
-    'Direct API: update opportunity',
-    'HTTP 403',
-    describe(stageB),
-    stageB.status === 403,
+    'MCP nabízí čtení + úkoly',
+    'MCP lists reads + tasks',
+    'create_task, update_task',
+    `${toolsB.includes('create_task') ? 'create_task ✓' : 'create_task chybí'}${leakedB.length === 0 ? ', nic dalšího' : `, navíc: ${leakedB.join(', ')}`}`,
+    toolsB.includes('create_task') && leakedB.length === 0,
   );
-}
-const tagB = await applyCommandAs(levelB, 'tagging', {
-  _tag: 'CreateTag',
-  color: 'gray',
-  name: `AI test ${requestId.slice(-6)}`,
-  subjectKinds: ['customer'],
-});
-record('B', 'Přímé API: založit štítek', 'Direct API: create tag', 'HTTP 403', describe(tagB), tagB.status === 403);
-if (firstOrder !== undefined) {
-  const orderB = await applyCommandAs(levelB, 'merchandise', {
-    _tag: 'ChangeOrderStatus',
-    id: firstOrder.id,
-    status: firstOrder.status,
-  });
+  const employees =
+    (employeesA.value as { items?: { active: boolean; id: string; name: string; role: string }[] }).items ?? [];
+  const assignee =
+    employees.find((employee) => employee.active && employee.role === 'SALES_REP') ??
+    employees.find((employee) => employee.active) ??
+    employees[0];
+  const due = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+  const stamp = new Date().toLocaleString('cs-CZ', { timeZone: 'Europe/Prague' });
+  const requestId = `prove-ai-${randomUUID()}`;
+  const taskInput = {
+    ...(assignee === undefined ? {} : { assigneeEmployeeId: assignee.id }),
+    description: `Vytvořil AI agent úrovně B (důkaz ${stamp}).`,
+    dueDate: due,
+    priority: 'HIGH',
+    requestId,
+    title: `AI: zavolat zákazníkovi kvůli nabídce (${stamp})`,
+  };
+  const createdB = await mcpB.call('create_task', taskInput);
+  const createdTask = (createdB.value as { task?: { id: string } | null }).task ?? null;
   record(
     'B',
-    'Přímé API: změnit objednávku',
-    'Direct API: change order',
-    'HTTP 403',
-    describe(orderB),
-    orderB.status === 403,
+    'Založí úkol (create_task)',
+    'Creates a task',
+    'OK',
+    createdB.isError
+      ? String(createdB.value)
+      : `OK, úkol ${createdTask?.id.slice(0, 8) ?? '?'}… pro ${assignee?.name ?? 'bez přiřazení'}`,
+    !createdB.isError && createdTask !== null,
   );
+  const reread = await mcpB.call('list_tasks', {});
+  const matching = ((reread.value as { items?: { id: string; title: string }[] }).items ?? []).filter(
+    (task) => task.title === taskInput.title,
+  );
+  record(
+    'B',
+    'Úkol je znovu načten (list_tasks)',
+    'Task re-read',
+    '1 úkol',
+    `${matching.length}× nalezen`,
+    matching.length === 1,
+  );
+  const replay = await mcpB.call('create_task', taskInput);
+  const reread2 = await mcpB.call('list_tasks', {});
+  const matching2 = ((reread2.value as { items?: { title: string }[] }).items ?? []).filter(
+    (task) => task.title === taskInput.title,
+  );
+  record(
+    'B',
+    'Opakované volání se stejným requestId',
+    'Replay with the same requestId',
+    'žádný duplikát',
+    `deduplicated=${String((replay.value as { deduplicated?: boolean }).deduplicated)}, úkolů ${matching2.length}`,
+    matching2.length === 1,
+  );
+  // Level B direct API: everything except tasks must be refused.
+  if (firstOpp !== undefined) {
+    const stageB = await applyCommandAs(levelB, 'sales-pipeline', {
+      _tag: 'ChangeOpportunityStage',
+      id: firstOpp.id,
+      toStage: firstOpp.stage,
+    });
+    record(
+      'B',
+      'Přímé API: změnit příležitost',
+      'Direct API: update opportunity',
+      'HTTP 403',
+      describe(stageB),
+      stageB.status === 403,
+    );
+  }
+  const tagB = await applyCommandAs(levelB, 'tagging', {
+    _tag: 'CreateTag',
+    color: 'gray',
+    name: `AI test ${requestId.slice(-6)}`,
+    subjectKinds: ['customer'],
+  });
+  record('B', 'Přímé API: založit štítek', 'Direct API: create tag', 'HTTP 403', describe(tagB), tagB.status === 403);
+  if (firstOrder !== undefined) {
+    const orderB = await applyCommandAs(levelB, 'merchandise', {
+      _tag: 'ChangeOrderStatus',
+      id: firstOrder.id,
+      status: firstOrder.status,
+    });
+    record(
+      'B',
+      'Přímé API: změnit objednávku',
+      'Direct API: change order',
+      'HTTP 403',
+      describe(orderB),
+      orderB.status === 403,
+    );
+  }
+} finally {
+  // A timeout can hide a successful create response. Re-read by the proof signature rather than relying
+  // only on createdTask; never touch a human task that merely happens to have a similar title.
+  try {
+    const listed = await mcpB.call('list_tasks');
+    if (listed.isError) throw new Error(String(listed.value));
+    const tasks =
+      (listed.value as { items?: { id: string; title: string; description?: string; state: string }[] }).items ?? [];
+    const leftovers = tasks.filter(
+      (task) =>
+        task.title.startsWith('AI: zavolat zákazníkovi kvůli nabídce (') &&
+        task.description?.startsWith('Vytvořil AI agent úrovně B (důkaz ') === true &&
+        ['NEW', 'IN_PROGRESS', 'WAITING'].includes(task.state),
+    );
+    for (const task of leftovers) {
+      const cancelled = await mcpB.call('update_task', { id: task.id, state: 'CANCELLED' });
+      if (cancelled.isError) throw new Error(`Úklid ${task.id}: ${String(cancelled.value)}`);
+      process.stdout.write(
+        `ÚKLID: důkazový úkol ${task.id} zrušen agentem B přes governed Action; historie zachována.\n`,
+      );
+    }
+    const verified = await mcpB.call('list_tasks');
+    if (verified.isError) throw new Error(String(verified.value));
+    const after = (verified.value as { items?: { id: string; state: string }[] }).items ?? [];
+    const clean = leftovers.every((task) => after.some((item) => item.id === task.id && item.state === 'CANCELLED'));
+    record(
+      'Úklid',
+      'Důkazové úkoly zrušeny přes Action',
+      'Proof tasks cancelled via Action',
+      'žádný otevřený důkazový úkol',
+      `${leftovers.length} zrušeno; historie zachována`,
+      clean,
+    );
+  } catch (error) {
+    record(
+      'Úklid',
+      'Důkazové úkoly zrušeny přes Action',
+      'Proof tasks cancelled via Action',
+      'žádný otevřený důkazový úkol',
+      `RUČNÍ ÚKLID NUTNÝ: ${String(error)}`,
+      false,
+    );
+  } finally {
+    mcpB.close();
+  }
 }
 
 // Core audit evidence for both principals since the proof started.

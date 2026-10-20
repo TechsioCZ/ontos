@@ -155,7 +155,7 @@ const startMcp = async (level: 'C'): Promise<McpSession> => {
 };
 
 const mcp = await startMcp('C');
-let appliedBatch: string | undefined;
+const runId = `proof-c-${randomUUID()}`;
 try {
   const tools = await mcp.tools();
   assert.deepEqual(tools, ['list_crm', 'propose_crm_changes', 'whoami']);
@@ -167,7 +167,6 @@ try {
   const client = before.state.clients.items.find((entry: { status: string }) => entry.status === 'active');
   assert.ok(client);
   const phone = client.phone === '+420 577 700 101' ? '+420 577 700 102' : '+420 577 700 101';
-  const runId = `proof-c-${randomUUID()}`;
   const proposalArgs = {
     instruction: 'Ověřte změnu telefonu klienta podle posledního kontaktu',
     runId,
@@ -183,7 +182,6 @@ try {
   let current = await read();
   const batch = current.state.aiChanges.batches.find((entry: { runId: string }) => entry.runId === runId);
   assert.ok(batch);
-  appliedBatch = batch.id;
   const changes = current.state.aiChanges.changes.filter((entry: { batchId: string }) => entry.batchId === batch.id);
   assert.equal(changes[0].status, 'pending');
   assert.deepEqual(
@@ -231,7 +229,6 @@ try {
   );
   pass('Lidské schválení provedlo normální CRM příkaz; nový telefon načten z backendu');
   await command({ _tag: 'AiRevertBatch', batchId: batch.id, note: 'Obnovení původních údajů po ukázce' });
-  appliedBatch = undefined;
   current = await read();
   assert.deepEqual(
     current.state.clients.items.find((entry: { id: string }) => entry.id === client.id),
@@ -271,12 +268,29 @@ try {
   pass('Zamítnutí položky nic nemění a zůstává v historii');
   console.log('VŠE PROŠLO / ALL PASS — AI level C');
 } finally {
-  if (appliedBatch !== undefined) {
-    try {
-      await command({ _tag: 'AiRevertBatch', batchId: appliedBatch, note: 'Bezpečný úklid přerušeného důkazu' });
-    } catch (error) {
-      console.error('POZOR: dávku je třeba vrátit v UI', appliedBatch, String(error));
+  try {
+    // Also find a proposal committed before a lost MCP response, including the second (reject) scenario.
+    // Limit cleanup to this run; the presenter's pending proposals must never be touched.
+    const current = await read();
+    const owned = current.state.aiChanges.batches.filter(
+      (entry: { runId: string }) => entry.runId === runId || entry.runId === `${runId}-reject`,
+    );
+    const ownedIds = new Set(owned.map((entry: { id: string }) => entry.id));
+    const active = (state: typeof current) =>
+      state.state.aiChanges.changes.filter(
+        (entry: { batchId: string; status: string }) =>
+          ownedIds.has(entry.batchId) && (entry.status === 'pending' || entry.status === 'applied'),
+      );
+    const activeIds = new Set(active(current).map((entry: { batchId: string }) => entry.batchId));
+    for (const batchId of activeIds) {
+      await command({ _tag: 'AiRevertBatch', batchId, note: 'Bezpečný úklid přerušeného důkazu' });
     }
+    assert.equal(active(await read()).length, 0, 'Zůstaly otevřené změny tohoto důkazu');
+    pass('ÚKLID ověřen: žádný otevřený návrh tohoto běhu; původní údaje obnoveny, historie zachována');
+  } catch (error) {
+    console.error('POZOR: úklid důkazu C selhal; zkontrolujte vlastní běh v AI změnách', runId, String(error));
+    process.exitCode = 1;
+  } finally {
+    mcp.close();
   }
-  mcp.close();
 }

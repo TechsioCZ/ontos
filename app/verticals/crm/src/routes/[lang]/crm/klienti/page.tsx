@@ -270,7 +270,11 @@ const ClientsList = ({
           label="Kontaktní osoby"
           value={formatNumber(active.reduce((sum, row) => sum + row.contactCount, 0))}
         />
-        <StatCard hint="podle zapsaných kontaktů" label="Kontaktováno za 30 dní" value={formatNumber(visitedRecently)} />
+        <StatCard
+          hint="podle zapsaných kontaktů"
+          label="Kontaktováno za 30 dní"
+          value={formatNumber(visitedRecently)}
+        />
       </StatRow>
       <CrmSalesKpiStrip records={records} />
       <div className="flex flex-wrap items-end gap-150">
@@ -436,7 +440,7 @@ const ClientsContent = () => {
   const { busy, load, state, submit } = useCrmRecords();
   const [openId, setOpenId] = useClientParam();
   return (
-    <CrmStateGate onRetry={load} state={state}>
+    <CrmStateGate loadingTitle="Klienti" onRetry={load} state={state}>
       {(records) => (
         <>
           <ClientsList busy={busy} onOpen={setOpenId} records={records} submit={submit} />
