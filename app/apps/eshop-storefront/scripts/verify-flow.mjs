@@ -21,6 +21,11 @@ const run = async (browser, name, viewport) => {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(String(error)));
+  page.on('response', async (response) => {
+    if (response.url().includes('/api/orders') || (response.url().includes('/api/') && response.status() >= 400)) {
+      console.log('  ', response.status(), response.request().method(), response.url().replace(BASE, ''), (await response.text().catch(() => '')).slice(0, 200));
+    }
+  });
   const shot = async (step) => page.screenshot({ fullPage: true, path: `${OUT}/${name}-${step}.png` });
   const noHorizontalScroll = async (label) => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -133,7 +138,10 @@ const run = async (browser, name, viewport) => {
     if (request.url().endsWith('/api/orders') && request.method() === 'POST') orderPosts.push(JSON.parse(request.postData()).submissionId);
   });
   await page.locator('button[type="submit"]').dblclick();
-  await page.waitForURL(/\/objednavka\//u, { timeout: 30000 });
+  await page.waitForURL(/\/objednavka\//u, { timeout: 30000 }).catch(async (error) => {
+    await shot('99-submit-failed');
+    throw error;
+  });
   await page.waitForSelector('.order-number');
   const number = (await page.textContent('.order-number')).trim();
   assert(/\S/u.test(number), 'order number shown');

@@ -81,6 +81,7 @@ export const CheckoutPage = () => {
   const [form, setForm] = useState<FormState>(readForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [waiting, setWaiting] = useState(false);
   const [failure, setFailure] = useState<ApiError | undefined>();
   const [issues, setIssues] = useState<readonly OrderIssue[]>([]);
   const lock = useRef(false);
@@ -89,6 +90,15 @@ export const CheckoutPage = () => {
   useEffect(() => {
     window.sessionStorage.setItem(FORM_KEY, JSON.stringify(form));
   }, [form]);
+  useEffect(() => {
+    if (!waiting) return;
+    if (check.error !== undefined) setWaiting(false);
+    else if (check.current) {
+      setWaiting(false);
+      if (check.validation?.canCheckout === true) void send();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting, check.current, check.error]);
 
   if (cart.items.length === 0 && !submitting) {
     return (
@@ -108,9 +118,9 @@ export const CheckoutPage = () => {
   const subtotal = check.validation?.subtotalMinor ?? null;
   const blocked = check.current && check.validation?.canCheckout !== true;
 
-  const submit = async (event: FormEvent) => {
+  const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (lock.current) return; // double-click guard; the server also de-duplicates by submission id
+    if (lock.current || waiting) return; // double-click guard; the server also de-duplicates by submission id
     const found = validate(form);
     setErrors(found);
     setFailure(undefined);
@@ -119,10 +129,17 @@ export const CheckoutPage = () => {
       window.setTimeout(() => errorSummary.current?.focus(), 0);
       return;
     }
-    if (!check.current || check.validation?.canCheckout !== true) {
-      check.revalidate();
+    if (!check.current) {
+      // The cart check is still running: submit as soon as it confirms current prices and availability.
+      setWaiting(true);
+      if (!check.checking) check.revalidate();
       return;
     }
+    if (check.validation?.canCheckout !== true) return;
+    void send();
+  };
+
+  const send = async () => {
     lock.current = true;
     setSubmitting(true);
     const id = submissionId();
@@ -362,14 +379,26 @@ export const CheckoutPage = () => {
               </div>
             </div>
           ) : null}
+          {check.error === undefined ? null : (
+            <div className="notice notice--danger" role="alert">
+              <Icon name="warning" size={18} />
+              <div>
+                <strong>Košík teď nelze ověřit</strong>
+                <span>{check.error.problem.message}</span>
+                <button className="button button--secondary button--sm" onClick={check.revalidate} type="button">
+                  Zkusit znovu
+                </button>
+              </div>
+            </div>
+          )}
           <p className="disclaimer" role="note">
             <Icon name="info" size={18} />
             <span>{DEMO_DISCLAIMER}</span>
           </p>
-          <button aria-busy={submitting} className="button button--primary button--lg button--block" disabled={submitting || blocked || check.error !== undefined} type="submit">
-            {submitting ? (
+          <button aria-busy={submitting} className="button button--primary button--lg button--block" disabled={submitting || waiting || blocked || check.error !== undefined} type="submit">
+            {submitting || waiting ? (
               <>
-                <span className="dot dot--pulse dot--light" /> Ukládám objednávku…
+                <span className="dot dot--pulse dot--light" /> {waiting ? 'Ověřuji ceny…' : 'Ukládám objednávku…'}
               </>
             ) : (
               <>
