@@ -1,4 +1,5 @@
 export interface IncomingInvoiceLink {
+  readonly sourceOrder?: { readonly id: string; readonly number: string };
   readonly number: string;
   readonly supplier: string | undefined;
   readonly resourceId: string;

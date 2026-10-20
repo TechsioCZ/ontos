@@ -39,6 +39,7 @@ import {
 import type { RunCommand } from './purchasing-model.ts';
 import { TextLink } from './stock-tab.tsx';
 import { FinanceInvoiceLink, useIncomingInvoiceLinks } from './finance-links.tsx';
+import { InvoiceDraftForm } from './invoice-draft-form.tsx';
 
 const statusVariant: Readonly<Record<PurchaseOrder['status'], 'outline' | 'info' | 'warning' | 'success' | 'danger'>> =
   {
@@ -156,7 +157,7 @@ export const OrdersTab = ({
   );
 };
 
-type OrderAction = 'receive' | 'invoice' | 'close' | 'cancel';
+type OrderAction = 'receive' | 'invoice' | 'prepare-invoice' | 'close' | 'cancel';
 
 export const OrderPanel = ({
   canWrite,
@@ -180,7 +181,8 @@ export const OrderPanel = ({
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const toast = useToast();
-  const financeLinks = useIncomingInvoiceLinks();
+  const [financeRefresh, setFinanceRefresh] = useState(0);
+  const financeLinks = useIncomingInvoiceLinks(financeRefresh);
   const [action, setAction] = useState<OrderAction | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -189,6 +191,11 @@ export const OrderPanel = ({
   if (order === undefined) {
     return null;
   }
+  const sourceInvoices =
+    financeLinks.status === 'ready'
+      ? financeLinks.invoices.filter((invoice) => invoice.sourceOrder?.id === order.id)
+      : [];
+  const supplier = lookup.supplier(order.supplierId);
   const you = t('siampark-ops.common.you');
   const quote = state.quotes.find((entry) => entry.id === order.quoteId);
   const transition = async (to: 'approved' | 'ordered' | 'cancelled' | 'completed', note?: string) => {
@@ -270,6 +277,21 @@ export const OrderPanel = ({
                 {k('orders.receive')}
               </Button>
             )}
+            {order.status !== 'draft' &&
+              order.status !== 'cancelled' &&
+              supplier !== undefined &&
+              sourceInvoices.length === 0 && (
+                <Button
+                  icon="icon-[mdi--file-document-plus-outline]"
+                  disabled={financeLinks.status !== 'ready'}
+                  onClick={() => setAction('prepare-invoice')}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  Připravit návrh faktury
+                </Button>
+              )}
             {order.status !== 'draft' && order.status !== 'cancelled' && (
               <Button
                 icon="icon-[mdi--file-link]"
@@ -296,6 +318,18 @@ export const OrderPanel = ({
         )}
         {action === 'receive' && (
           <ReceiveForm onDone={() => setAction(undefined)} order={order} run={run} state={state} />
+        )}
+        {action === 'prepare-invoice' && supplier !== undefined && (
+          <InvoiceDraftForm
+            order={order}
+            supplier={supplier}
+            onCancel={() => setAction(undefined)}
+            onCreated={() => {
+              setAction(undefined);
+              setFinanceRefresh((value) => value + 1);
+              toast.create({ duration: 5000, title: 'Návrh faktury byl uložen ve Financích', type: 'success' });
+            }}
+          />
         )}
         {action === 'invoice' && <InvoiceForm onDone={() => setAction(undefined)} order={order} run={run} />}
         {(action === 'close' || action === 'cancel') && (
@@ -426,8 +460,20 @@ export const OrderPanel = ({
           )}
         </SectionCard>
         <SectionCard title={k('orders.invoices')}>
+          {sourceInvoices.map((invoice) => (
+            <div
+              className="flex flex-wrap items-center gap-100 rounded-md bg-surface-secondary p-150 text-sm"
+              key={invoice.resourceId}
+            >
+              <Badge size="sm" variant="warning">
+                Návrh z objednávky
+              </Badge>
+              <span>{invoice.number}</span>
+              <FinanceInvoiceLink links={financeLinks} number={invoice.number} supplier={supplier?.name ?? ''} />
+            </div>
+          ))}
           <p className="text-fg-secondary text-xs">{k('orders.invoiceNote')}</p>
-          {order.invoices.length === 0 ? (
+          {order.invoices.length === 0 && sourceInvoices.length === 0 ? (
             <p className="text-fg-secondary text-sm">{k('orders.noInvoice')}</p>
           ) : (
             <ul className="flex flex-col gap-100 text-sm">

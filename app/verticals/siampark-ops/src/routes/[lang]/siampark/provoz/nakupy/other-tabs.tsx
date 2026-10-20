@@ -94,48 +94,50 @@ export const ReplenishTab = ({
                   {k('replenish.draftExists', { number: draft.number })}
                 </StatusText>
               )}
-              <Table size="sm" variant="line">
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
-                    <Table.ColumnHeader align="end">{k('fields.onHand')}</Table.ColumnHeader>
-                    <Table.ColumnHeader align="end">{k('fields.projected')}</Table.ColumnHeader>
-                    <Table.ColumnHeader align="end">{k('fields.minMax')}</Table.ColumnHeader>
-                    <Table.ColumnHeader align="end">{k('replenish.suggested')}</Table.ColumnHeader>
-                    <Table.ColumnHeader>{k('replenish.availability')}</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {plans.map((plan) => (
-                    <Table.Row key={plan.item.id}>
-                      <Table.Cell>
-                        <TextLink onClick={() => onOpenItem(plan.item.id)}>
-                          {`${plan.item.sku} · ${plan.item.name}`}
-                        </TextLink>
-                      </Table.Cell>
-                      <Table.Cell align="end">
-                        <span className="flex items-center justify-end gap-100">
-                          <LevelBadge level={plan.level} />
-                          {formatQuantity(plan.onHand, plan.item.unit)}
-                        </span>
-                      </Table.Cell>
-                      <Table.Cell align="end">{formatQuantity(plan.projected, plan.item.unit)}</Table.Cell>
-                      <Table.Cell align="end">{`${plan.item.minimum} / ${plan.item.maximum}`}</Table.Cell>
-                      <Table.Cell align="end">
-                        <span className="font-semibold tabular-nums">
-                          {formatQuantity(plan.suggestedQuantity, plan.item.unit)}
-                        </span>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {k('replenish.leadTime', {
-                          date: formatDate(plan.availableFrom ?? addDays(today, plan.item.leadTimeDays)),
-                          days: plan.item.leadTimeDays,
-                        })}
-                      </Table.Cell>
+              <div className="overflow-x-auto" role="region" aria-label="Doporučené doplnění zásob" tabIndex={0}>
+                <Table size="sm" style={{ minWidth: '40rem' }} variant="line">
+                  <Table.Header>
+                    <Table.Row>
+                      <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
+                      <Table.ColumnHeader align="end">{k('fields.onHand')}</Table.ColumnHeader>
+                      <Table.ColumnHeader align="end">{k('fields.projected')}</Table.ColumnHeader>
+                      <Table.ColumnHeader align="end">{k('fields.minMax')}</Table.ColumnHeader>
+                      <Table.ColumnHeader align="end">{k('replenish.suggested')}</Table.ColumnHeader>
+                      <Table.ColumnHeader>{k('replenish.availability')}</Table.ColumnHeader>
                     </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table>
+                  </Table.Header>
+                  <Table.Body>
+                    {plans.map((plan) => (
+                      <Table.Row key={plan.item.id}>
+                        <Table.Cell>
+                          <TextLink onClick={() => onOpenItem(plan.item.id)}>
+                            {`${plan.item.sku} · ${plan.item.name}`}
+                          </TextLink>
+                        </Table.Cell>
+                        <Table.Cell align="end">
+                          <span className="flex items-center justify-end gap-100">
+                            <LevelBadge level={plan.level} />
+                            {formatQuantity(plan.onHand, plan.item.unit)}
+                          </span>
+                        </Table.Cell>
+                        <Table.Cell align="end">{formatQuantity(plan.projected, plan.item.unit)}</Table.Cell>
+                        <Table.Cell align="end">{`${plan.item.minimum} / ${plan.item.maximum}`}</Table.Cell>
+                        <Table.Cell align="end">
+                          <span className="font-semibold tabular-nums">
+                            {formatQuantity(plan.suggestedQuantity, plan.item.unit)}
+                          </span>
+                        </Table.Cell>
+                        <Table.Cell>
+                          {k('replenish.leadTime', {
+                            date: formatDate(plan.availableFrom ?? addDays(today, plan.item.leadTimeDays)),
+                            days: plan.item.leadTimeDays,
+                          })}
+                        </Table.Cell>
+                      </Table.Row>
+                    ))}
+                  </Table.Body>
+                </Table>
+              </div>
             </SectionCard>
           );
         })

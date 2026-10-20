@@ -167,6 +167,21 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                 <DetailList
                   items={[
                     { label: 'Dodavatel', value: counterpartyName },
+                    ...(invoice.sourceOrder === undefined
+                      ? []
+                      : [
+                          {
+                            label: 'Zdrojová nákupní objednávka',
+                            value: (
+                              <a
+                                className="font-medium text-fg-primary underline"
+                                href={`/cs/siampark/provoz/nakupy?orderId=${encodeURIComponent(invoice.sourceOrder.id)}`}
+                              >
+                                {invoice.sourceOrder.number}
+                              </a>
+                            ),
+                          },
+                        ]),
                     { label: t(`${ns}.companyId`), value: customer?.companyId ?? invoice.counterpartyCompanyId ?? '—' },
                     { label: 'Číslo dokladu dodavatele', value: invoice.documentNumber },
                     { label: 'Kategorie rozpočtu', value: invoice.budgetCategory ?? '—' },

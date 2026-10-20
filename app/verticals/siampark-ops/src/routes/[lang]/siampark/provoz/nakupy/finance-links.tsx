@@ -13,7 +13,7 @@ type FinanceLinks =
   | { readonly status: 'loading' | 'unavailable' }
   | { readonly status: 'ready'; readonly invoices: readonly IncomingInvoiceLink[] };
 
-export const useIncomingInvoiceLinks = (): FinanceLinks => {
+export const useIncomingInvoiceLinks = (refresh = 0): FinanceLinks => {
   const [state, setState] = useState<FinanceLinks>({ status: 'loading' });
   useEffect(() => {
     let alive = true;
@@ -29,6 +29,7 @@ export const useIncomingInvoiceLinks = (): FinanceLinks => {
                 number: invoice.documentNumber,
                 resourceId: invoice.ref.resourceId,
                 supplier: invoice.counterpartyName,
+                ...(invoice.sourceOrder === undefined ? {} : { sourceOrder: invoice.sourceOrder }),
               })),
           }),
         }),
@@ -42,7 +43,7 @@ export const useIncomingInvoiceLinks = (): FinanceLinks => {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [refresh]);
   return state;
 };
 

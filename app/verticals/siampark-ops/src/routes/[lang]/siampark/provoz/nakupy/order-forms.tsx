@@ -259,7 +259,7 @@ export const PurchaseDocumentPanel = ({
             onClick={() => void submit()}
             variant="primary"
           >
-            {k(kind === 'order' ? 'orders.createSubmit' : 'quotes.createSubmit')}
+            {kind === 'order' ? 'Založit návrh' : k('quotes.createSubmit')}
           </Button>
         </>
       }

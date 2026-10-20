@@ -72,8 +72,13 @@ const PurchasingView = () => {
   const state = envelope?.state;
   const canWrite = envelope?.canWrite === true;
   const me = ops.data?.actorPrincipalRef;
-  const [tab, setTab] = useState<Tab>('stock');
-  const [panel, setPanel] = useState<Panel | undefined>(undefined);
+  const [tab, setTab] = useState<Tab>(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('orderId') ? 'orders' : 'stock',
+  );
+  const [panel, setPanel] = useState<Panel | undefined>(() => {
+    const id = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('orderId');
+    return id === null ? undefined : { kind: 'order', id };
+  });
   const close = () => setPanel(undefined);
   const openItem = (id: string) => setPanel({ id, kind: 'item' });
   const openOrder = (id: string) => setPanel({ id, kind: 'order' });

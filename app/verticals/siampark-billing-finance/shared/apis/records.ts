@@ -89,8 +89,11 @@ export type InvoiceDocumentKind = typeof InvoiceDocumentKindSchema.Type;
 /** Calendar month `YYYY-MM`. */
 export const CalendarMonthSchema = Schema.String.check(Schema.isPattern(/^\d{4}-(0[1-9]|1[0-2])$/u));
 export const FinanceLongTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
+/** Purchase-order identity in the same tenant/legal-entity finance aggregate. */
+export const SourceOrderSchema = Schema.Struct({ id: FinanceTextSchema, number: FinanceTextSchema });
 /** Optional invoice fields added for the sales demo v2; all optional so stored states keep decoding. */
 export const InvoiceDemoFields = {
+  sourceOrder: Schema.optionalKey(SourceOrderSchema),
   budgetCategory: Schema.optionalKey(FinanceTextSchema),
   counterpartyCompanyId: Schema.optionalKey(FinanceTextSchema),
   /** Name snapshot shown when the counterparty is not (or no longer) in the party registry. */

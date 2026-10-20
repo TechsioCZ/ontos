@@ -555,6 +555,25 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
   context: FinanceTransitionContext,
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
   const { input, scope, state, validators } = context;
+  if (command.sourceOrder !== undefined) {
+    if (command.lines === undefined) {
+      return yield* rejected('source_order_lines_required');
+    }
+    if (
+      state.invoices.some(
+        (record) =>
+          record.direction === 'INCOMING' &&
+          record.businessState !== 'VOIDED' &&
+          record.sourceOrder?.id === command.sourceOrder?.id,
+      )
+    ) {
+      return yield* conflict('source_order_invoice_already_prepared');
+    }
+  }
+  const totals = yield* draftTotals({
+    ...command,
+    ...(command.lines === undefined ? {} : { lines: command.lines.map((line) => ({ ...line })) }),
+  });
   const supplierKey = command.counterpartyRef?.resourceId ?? command.supplierName.toLocaleLowerCase('cs');
   if (
     state.invoices.some(
@@ -575,7 +594,8 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
     accountingCorrelation: `demo-accounting:${input.resourceId}`,
     accountingSyncState: 'NOT_SYNCED',
     ...(command.budgetCategory === undefined ? {} : { budgetCategory: command.budgetCategory }),
-    businessState: 'CONFIRMED',
+    businessState: command.sourceOrder === undefined ? 'CONFIRMED' : 'DRAFT',
+    ...(command.sourceOrder === undefined ? {} : { sourceOrder: { ...command.sourceOrder } }),
     ...(command.supplierCompanyId === undefined ? {} : { counterpartyCompanyId: command.supplierCompanyId }),
     counterpartyName: command.supplierName,
     counterpartyRef: command.counterpartyRef ?? {
@@ -596,7 +616,7 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
     paymentState: 'UNPAID',
     ...(command.propertyRef === undefined ? {} : { propertyRef: command.propertyRef }),
     ref: invoiceRefFor(scope, input.resourceId),
-    totalMinor: command.totalMinor,
+    ...totals,
     updatedAt: input.now,
   };
   yield* validate(invoice, scope, validators);

@@ -20,6 +20,7 @@ import {
   FinanceTextSchema,
   InvoiceDraftCommandFields,
   InvoiceLinesSchema,
+  SourceOrderSchema,
   InvoiceSchema,
   MoneyMinorSchema,
 } from '../apis/records.ts';
@@ -69,6 +70,8 @@ export const FinanceCommandSchema = Schema.Union([
   // ---- Sales demo v2 (S07 – S09) ----
   /** Received invoice entered by hand, optionally with the scanned/PDF document attached. */
   Schema.TaggedStruct('RecordIncomingInvoice', {
+    lines: Schema.optionalKey(InvoiceLinesSchema),
+    sourceOrder: Schema.optionalKey(SourceOrderSchema),
     actorLabel,
     budgetCategory: Schema.optionalKey(FinanceTextSchema),
     counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
