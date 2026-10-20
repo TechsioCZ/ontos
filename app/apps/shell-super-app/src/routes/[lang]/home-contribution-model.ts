@@ -16,8 +16,12 @@ export type HomeContribution =
  */
 const homeComponentCandidates = [
   // Prefer the CRM's own data over a generic sales dashboard for Hanák's managers.
-  { entrypointKey: 'demo.crm.component.home-summary', moduleId: 'demo.crm' },
-  { entrypointKey: 'demo.sales-insights.component.crm-dashboard', moduleId: 'demo.sales-insights' },
+  { entrypointKey: 'demo.crm.component.home-summary', moduleId: 'demo.crm', sources: ['demo.crm'] },
+  {
+    entrypointKey: 'demo.sales-insights.component.crm-dashboard',
+    moduleId: 'demo.sales-insights',
+    sources: ['demo.sales-insights', 'demo.sales-pipeline', 'siampark.work', 'siampark.billing-finance'],
+  },
 ] as const;
 
 const resolveCandidate = (
@@ -70,7 +74,9 @@ export const loadHomeContribution = (
   if (!/^\/(?:[a-z]{2}\/?)?$/u.test(new URL(request.url).pathname)) {
     return Effect.succeedNone;
   }
-  const candidates = homeComponentCandidates.filter(({ moduleId }) => navigationModuleIds.has(moduleId));
+  const candidates = homeComponentCandidates.filter(({ sources }) =>
+    sources.every((moduleId) => navigationModuleIds.has(moduleId)),
+  );
   const tryFrom = (index: number): Effect.Effect<HomeContribution> => {
     const candidate = candidates[index];
     if (candidate === undefined) {

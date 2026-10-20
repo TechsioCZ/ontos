@@ -150,6 +150,8 @@
       "switcher": "Jazyk"
     },
     "login": {
+      "welcome": "Jeden pracovní prostor pro obchod, CRM, správu areálu a e-shop.",
+      "contextHint": "Po přihlášení uvidíte jen své firmy a agendy podle přidělené role.",
       "back": "← Zpět na hlavní stránku",
       "error": {
         "forbidden": "Tento účet nemá přístup do OntOS.",
@@ -202,6 +204,13 @@
         "readOnly": "Jen pro čtení"
       },
       "unavailable": "Přístup k modulu je dočasně nedostupný. Zkuste to znovu."
+    },
+    "recovery": {
+      "missing": "Stránka nebyla nalezena",
+      "forbidden": "Tato agenda není přístupná",
+      "unavailable": "Pracovní prostor je dočasně nedostupný",
+      "home": "Zpět na přehled",
+      "retry": "Zkusit znovu"
     },
     "moduleTarget": {
       "forbidden": "K otevření tohoto modulu nemáte oprávnění.",

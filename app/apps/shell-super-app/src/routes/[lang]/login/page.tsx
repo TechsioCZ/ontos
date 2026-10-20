@@ -1,6 +1,8 @@
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Icon } from '@techsio/ui-kit/atoms/icon';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
@@ -163,14 +165,21 @@ const LoginPage = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:px-4 shell:py-10 shell:text-(--color-page-fg) shell:md:px-20 shell:md:pt-[120px] shell:md:pb-10">
-        <section className="shell:flex shell:w-full shell:max-w-[360px] shell:flex-col">
-          <Link as={LocalizedLink} className="shell:self-center" to="/">
-            {t('shell.login.back')}
-          </Link>
+      <main className="flex min-h-dvh items-center justify-center bg-surface px-200 py-400 text-fg-primary">
+        <section className="flex w-full max-w-md flex-col gap-200 rounded-lg border border-border-primary bg-base p-300 md:p-400">
+          <div className="flex items-center gap-150">
+            <span className="flex size-icon-control-lg items-center justify-center rounded-md bg-primary">
+              <Icon icon="icon-[mdi--hexagon-multiple-outline]" size="md" />
+            </span>
+            <span className="flex-1 font-semibold text-xl">OntOS</span>
+            <Badge size="sm" variant="outline">
+              DEMO
+            </Badge>
+          </div>
+          <p className="text-fg-secondary text-sm">{t('shell.login.welcome')}</p>
           {/* Once signed in the URL has moved on, so the title and fields step aside while the next page loads.
               They are hidden, not unmounted, so their refs survive a failed navigation; the submit button stays. */}
-          <div className="shell:mt-6">
+          <div>
             <h1 className="shell:text-2xl shell:font-bold" hidden={attempt === 'opening'}>
               {t('shell.login.title')}
             </h1>
@@ -218,6 +227,12 @@ const LoginPage = () => {
               </Button>
             </form>
           </div>
+          <p className="border-border-primary border-t pt-200 text-fg-secondary text-xs">
+            {t('shell.login.contextHint')}
+          </p>
+          <Link as={LocalizedLink} className="self-start text-sm" to="/">
+            {t('shell.login.back')}
+          </Link>
         </section>
       </main>
       <Toaster

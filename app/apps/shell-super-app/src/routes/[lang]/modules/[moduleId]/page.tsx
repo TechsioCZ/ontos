@@ -9,6 +9,7 @@ import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from '../../../module-entrypoint-loader.ts';
 import { remotePageIdentity } from '../../../remote-page-loader.ts';
+import { ShellStatusPanel } from '../../../shell-status-panel.tsx';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { signInHref } from '../../../sign-in-return.ts';
 import { useShellControls } from '../../../use-shell-controls.ts';
@@ -193,9 +194,7 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
     model.state === 'resolved' && !controls.reloadRequired ? (
       <ResolvedTarget model={model} />
     ) : (
-      <StatusText aria-live="polite" showIcon status="error">
-        {t(`shell.moduleTarget.${status}`)}
-      </StatusText>
+      <ShellStatusPanel status={status} />
     );
   return (
     <ShellContentLayout

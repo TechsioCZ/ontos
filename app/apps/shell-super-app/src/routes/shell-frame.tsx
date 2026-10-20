@@ -1,3 +1,4 @@
+import { Helmet } from '@modern-js/runtime/head';
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -1128,6 +1129,9 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
 
   return (
     <>
+      <Helmet>
+        <title>{`${props.title ?? model.current?.link.label ?? t('shell.dashboard.home.title')} | OntOS`}</title>
+      </Helmet>
       {props.compositionRevision === undefined ? null : (
         <meta content={props.compositionRevision} name="ontos-composition-revision" />
       )}

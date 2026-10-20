@@ -150,6 +150,8 @@
       "switcher": "Language"
     },
     "login": {
+      "welcome": "One workspace for sales, CRM, estate management and online retail.",
+      "contextHint": "After signing in, you see only the companies and areas allowed by your role.",
       "back": "← Back to the home page",
       "error": {
         "forbidden": "This account is not permitted to access OntOS.",
@@ -202,6 +204,13 @@
         "readOnly": "Read only"
       },
       "unavailable": "Module access is temporarily unavailable. Try again."
+    },
+    "recovery": {
+      "missing": "Page not found",
+      "forbidden": "This area is not accessible",
+      "unavailable": "Workspace temporarily unavailable",
+      "home": "Back to home",
+      "retry": "Try again"
     },
     "moduleTarget": {
       "forbidden": "You do not have permission to open this module.",
