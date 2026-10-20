@@ -224,6 +224,9 @@ jobs:
         working-directory: app
         env:
           COMMANDS: ${{ matrix.commands }}
+          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
+          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
+          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
