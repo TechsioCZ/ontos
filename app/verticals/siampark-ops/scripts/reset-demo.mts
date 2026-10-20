@@ -11,10 +11,11 @@ import { Reactivity } from 'effect/unstable/reactivity';
 import { rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { agendaDefinitions, agendaIds } from '../shared/agendas.ts';
 import type { AgendaId } from '../shared/domain/common.ts';
-import { agendaStates, siamparkOpsRelations } from '../src/database/schema.ts';
+import { sql } from 'drizzle-orm';
+import { agendaStates, files, siamparkOpsRelations } from '../src/database/schema.ts';
 import { seedAgendaState } from './seed/agenda.mts';
 import { seedAssetsState } from './seed/assets.mts';
-import { seedDocumentsState } from './seed/documents.mts';
+import { seedDocumentFiles, seedDocumentsState } from './seed/documents.mts';
 import { seedMetersState } from './seed/meters.mts';
 import { seedPurchasingState } from './seed/purchasing.mts';
 import { seedSecurityState } from './seed/security.mts';
@@ -60,7 +61,12 @@ const writeStates = Effect.fn('SiamparkOps.writeDemoStates')(function* writeDemo
 ) {
   const db = yield* makeWithDefaults({ relations: siamparkOpsRelations });
   const now = DateTime.toDateUtc(yield* DateTime.now);
-  for (const { agenda, encoded } of states) {
+  // Optional SIAMPARK_OPS_SEED_ONLY=documents,meters reseeds only those agendas (lane-local reseed; default: all).
+  const only = (yield* Config.string('SIAMPARK_OPS_SEED_ONLY').pipe(Config.withDefault('')))
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value !== '');
+  for (const { agenda, encoded } of states.filter((entry) => only.length === 0 || only.includes(entry.agenda))) {
     yield* db
       .insert(agendaStates)
       .values({
@@ -74,6 +80,28 @@ const writeStates = Effect.fn('SiamparkOps.writeDemoStates')(function* writeDemo
       .onConflictDoUpdate({
         set: { revision: 0, state: encoded, updatedAt: now },
         target: [agendaStates.tenantId, agendaStates.legalEntityId, agendaStates.agenda],
+      });
+  }
+  // documents lane: real seed files (PDF/PNG) referenced by the documents seed state, upserted by id.
+  const seedFiles = seedDocumentFiles();
+  for (const file of seedFiles) {
+    const values = {
+      bytes: sql`decode(${file.bytes.toString('base64')}, 'base64')`,
+      createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(file.createdAt)),
+      createdBy: file.createdBy,
+      id: file.id,
+      legalEntityId: siamparkLegalEntityId,
+      mime: file.mime,
+      name: file.name,
+      size: file.bytes.length,
+      tenantId: demoTenantId,
+    };
+    yield* db
+      .insert(files)
+      .values(values)
+      .onConflictDoUpdate({
+        set: { bytes: values.bytes, mime: file.mime, name: file.name, size: values.size },
+        target: [files.tenantId, files.legalEntityId, files.id],
       });
   }
   yield* Console.log(`siampark-ops demo state reset for ${states.length} agendas (legal entity ${siamparkLegalEntityId})`);
