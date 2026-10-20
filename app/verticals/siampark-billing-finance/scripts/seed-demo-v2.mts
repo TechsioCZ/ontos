@@ -26,7 +26,7 @@ const argValue = (flag: string) => {
 const LEGAL_ENTITY = argValue('--legal-entity') ?? '71000000-0000-4000-8000-000000000021';
 const FORCE = process.argv.includes('--force');
 const MARKER = 'demo-v2-seed';
-const ACTOR = 'Jana Dvořáková (finance)';
+const ACTOR = 'Finance (finance@siampark.demo)';
 
 /** A tiny valid one-page PDF with readable invoice text, generated so the stored document opens in any viewer. */
 const pdfFor = (lines: readonly string[]) => {

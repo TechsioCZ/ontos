@@ -164,7 +164,7 @@ const failureReason = (error: unknown): string | undefined => {
 
 /** Signed-in user's display name from the shell session; used as a readable author label next to the principal. */
 // @effect-diagnostics-next-line globalFetch:off
-const fetchSession = () => fetch('/api/auth/get-session', { credentials: 'include' });
+const fetchSession = () => fetch('/shell-super-app-api/auth/session', { credentials: 'include' });
 const useActorLabel = () => {
   const [label, setLabel] = useState<string>();
   useEffect(() => {
@@ -172,12 +172,18 @@ const useActorLabel = () => {
     void fetchSession()
       .then((response) => (response.ok ? response.json() : undefined))
       .then((body: unknown) => {
-        const user =
+        const identity =
           typeof body === 'object' && body !== null
-            ? (body as { readonly user?: Record<string, unknown> }).user
+            ? (body as { readonly identity?: Record<string, unknown> }).identity
             : undefined;
-        const rawName = user?.['name'];
-        const name = typeof rawName === 'string' && rawName.trim() !== '' ? rawName : user?.['email'];
+        const rawName = identity?.['displayName'];
+        const email = identity?.['email'];
+        const name =
+          typeof rawName === 'string' && rawName.trim() !== ''
+            ? typeof email === 'string'
+              ? `${rawName} (${email})`
+              : rawName
+            : email;
         if (active && typeof name === 'string') {
           setLabel(name.slice(0, 200));
         }
