@@ -2,11 +2,12 @@
   "name": "@app/email-delivery",
   "version": "0.1.0",
   "private": true,
-  "description": "Provider-neutral transactional email delivery ports and the Resend adapter.",
+  "description": "Provider-neutral transactional email delivery ports, the Resend adapter and a minimal SMTP adapter.",
   "type": "module",
   "exports": {
     "./server": "./src/server.ts",
-    "./resend": "./src/resend.ts"
+    "./resend": "./src/resend.ts",
+    "./smtp": "./src/smtp.ts"
   },
   "scripts": {
     "test:unit": "rstest --project unit",
