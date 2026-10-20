@@ -1,0 +1,58 @@
+:root {
+  --color-product-card-bg: var(--color-base);
+  --aspect-product-card-image: 373 / 282;
+  --font-weight-product-card-price: var(--font-weight-bold);
+  --radius-product-card: var(--radius-sm);
+  --radius-product-card-image: var(--radius-none);
+  --spacing-product-card-col-layout: var(--dimension-10);
+  --spacing-product-card-padding: var(--dimension-10);
+  --text-product-card-name-size: var(--text-base);
+  --text-product-card-price-size: var(--text-md);
+  --text-product-card-stock-size: var(--text-sm);
+}
+
+.akros-product-card {
+  --border-product-card-width: var(--dimension-0);
+  /* ProductCard's static shadow-sm needs the explicit variable utility at its callsite. */
+  --shadow-sm: 0 2px 6px rgb(0 0 0 / 20%);
+  /* Close to Figma's #28a745, with AA contrast for small text on white. */
+  --color-product-card-stock-fg-in-stock: #218838;
+  --font-weight-badge-sm: var(--font-weight-medium);
+  --height-form-control-sm: var(--dimension-44);
+  --padding-badge-sm: var(--dimension-2) var(--dimension-6);
+  --radius-badge: var(--radius-full);
+  --radius-button-sm: var(--radius-xs);
+  --text-button-sm: var(--text-sm);
+}
+
+.akros-product-card [data-akros-product-tags] {
+  --color-badge-bg-discount: #e30400;
+}
+
+.akros-product-card [data-akros-product-actions] {
+  --font-weight-button: var(--font-weight-bold);
+}
+
+.akros-product-card__favorite {
+  --color-button-fg-secondary-borderless: var(--color-neutral-400);
+}
+
+.akros-product-card__stock-row {
+  --color-badge-bg-secondary: var(--color-base-dark);
+  --color-badge-border-secondary: var(--color-base-dark);
+  --color-badge-fg-secondary: var(--color-base-light);
+}
+
+@media (max-width: 760px) {
+  :root {
+    --text-product-card-price-size: var(--text-base);
+  }
+
+  [data-akros-product-listing] .akros-product-card {
+    --spacing-product-card-col-layout: var(--dimension-8);
+    --spacing-product-card-padding: var(--dimension-8);
+    --text-product-card-name-size: var(--text-sm);
+    --text-product-card-stock-size: var(--text-xs);
+    --padding-button-sm: var(--dimension-4) var(--dimension-6);
+  }
+}

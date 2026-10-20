@@ -1,0 +1,73 @@
+/* Keep the app collection separate from the UI kit's default Iconify loader. */
+@plugin "@iconify/tailwind4" {
+  prefix: "akros-checkout-icon";
+  square: false;
+  icon-sets: from-folder(akros-checkout, "./src/icons/akros-checkout");
+}
+
+@utility token-icon-akros-checkout-cart {
+  @apply akros-checkout-icon-[akros-checkout--cart];
+}
+
+@utility token-icon-akros-checkout-remove {
+  @apply akros-checkout-icon-[akros-checkout--remove];
+}
+
+@utility token-icon-akros-checkout-shipping {
+  @apply akros-checkout-icon-[akros-checkout--shipping];
+}
+
+@utility token-icon-akros-checkout-return {
+  @apply akros-checkout-icon-[akros-checkout--return];
+}
+
+@utility token-icon-akros-account-disclosure {
+  @apply akros-checkout-icon-[akros-checkout--account-disclosure];
+}
+
+@utility token-icon-akros-account-select-chevron {
+  @apply akros-checkout-icon-[akros-checkout--account-select-chevron];
+  @apply text-(length:--akros-account-select-glyph-size);
+}
+
+@plugin "@iconify/tailwind4" {
+  prefix: "akros-icon";
+  square: true;
+  icon-sets: from-folder(akros, "./src/icons/akros");
+}
+
+/* Preserve the non-square frames exported for the product detail actions. */
+@plugin "@iconify/tailwind4" {
+  prefix: "akros-product-icon";
+  square: false;
+  icon-sets: from-folder(akros-product-actions, "./src/icons/akros-product-actions");
+}
+
+@utility token-icon-akros-product-watch {
+  @apply akros-product-icon-[akros-product-actions--watch];
+}
+
+@utility token-icon-akros-product-question {
+  @apply akros-product-icon-[akros-product-actions--question];
+}
+
+@utility token-icon-akros-product-email {
+  @apply akros-product-icon-[akros-product-actions--email];
+}
+
+@utility token-icon-akros-facebook {
+  @apply akros-icon-[akros--facebook];
+}
+
+@utility token-icon-akros-instagram {
+  @apply akros-icon-[akros--instagram];
+}
+
+@utility token-icon-akros-youtube {
+  @apply akros-icon-[akros--youtube];
+}
+
+@utility token-icon-akros-checkbox-selected {
+  @apply akros-icon-[akros--checkbox-selected];
+  @apply size-(--akros-variant-filter-checkbox-indicator-size);
+}

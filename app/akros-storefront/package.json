@@ -1,0 +1,55 @@
+{
+  "name": "akros-storefront",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "catalog:generate": "node scripts/generate-akros-catalog.mjs",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:component": "vitest run tests/component",
+    "test:home": "node tests/browser/homepage-layout.mjs",
+    "test:catalog": "node tests/browser/catalog.mjs",
+    "test:shared-ui": "node tests/browser/shared-ui.mjs",
+    "test:account": "node tests/browser/account-profile.mjs && node tests/browser/account-area.mjs",
+    "test:responsive": "node tests/browser/homepage-layout.mjs && node tests/browser/variant-table-layout.mjs && node tests/browser/cart-items-layout.mjs && node tests/browser/checkout-section.mjs && node tests/browser/checkout-typography-services.mjs",
+    "lint": "oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin src tests",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "test:typography": "node tests/browser/global-typography.mjs",
+    "test:theme": "node tests/browser/ui-kit-theme.mjs"
+  },
+  "dependencies": {
+    "@techsio/ui-kit": "0.56.1",
+    "next": "16.3.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@iconify/tailwind4": "1.2.3",
+    "@tailwindcss/postcss": "4.3.3",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
+    "@types/node": "26.4.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "fflate": "0.8.3",
+    "jsdom": "30.1.1",
+    "oxfmt": "0.66.0",
+    "oxlint": "1.81.0",
+    "playwright-core": "1.58.2",
+    "saxes": "6.0.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vitest": "5.0.2"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "packageManager": "npm@11.16.0"
+}
