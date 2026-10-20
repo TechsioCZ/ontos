@@ -48,6 +48,8 @@ import { merchandiseStates } from '../database/schema.ts';
 import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
+import { cachedProductRecords, getCachedState, setCachedState, stateCacheKey } from './state-cache.ts';
+import { storefrontCatalogPage, storefrontOrderStatusOf } from './storefront-catalog.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -202,6 +204,17 @@ export const toProductRecord = (product: Product, movements: readonly StockMovem
     ),
     variantRecords: variants,
   };
+};
+
+/** All product records of one state; movements are partitioned once so large catalogs stay linear. */
+export const computeProductRecords = (state: MerchandiseState): readonly ProductRecord[] => {
+  const byProduct = new Map<string, StockMovement[]>();
+  for (const movement of state.movements) {
+    const bucket = byProduct.get(movement.productId) ?? [];
+    bucket.push(movement);
+    byProduct.set(movement.productId, bucket);
+  }
+  return state.products.map((product) => toProductRecord(product, byProduct.get(product.id) ?? []));
 };
 
 /** Result of applying one command to the state. */
@@ -1291,6 +1304,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         reason: 'A scoped company transaction is required',
       });
     }
+    const scopeLegalEntityId: string = legalEntityId;
     const access = yield* ContextAccess;
     const contextGrant = Effect.fn('Merchandise.contextGrant')(function* contextGrant(
       permission: 'read_all' | 'write_all',
@@ -1327,6 +1341,22 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       eq(merchandiseStates.legalEntityId, legalEntityId),
     );
     const load = Effect.fn('Merchandise.load')(function* load() {
+      const heads = yield* transaction
+        .select({ revision: merchandiseStates.revision, updatedAt: merchandiseStates.updatedAt })
+        .from(merchandiseStates)
+        .where(whereScope)
+        .limit(1)
+        .pipe(Effect.mapError(unavailable));
+      const [head] = heads;
+      if (head === undefined) {
+        return yield* unavailable();
+      }
+      const cached = getCachedState(
+        stateCacheKey({ legalEntityId: scopeLegalEntityId, revision: head.revision, tenantId: scope.tenantId, updatedAt: head.updatedAt }),
+      );
+      if (cached !== undefined) {
+        return { revision: head.revision, state: cached };
+      }
       const rows = yield* transaction
         .select()
         .from(merchandiseStates)
@@ -1340,14 +1370,18 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const state = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(row.state).pipe(
         Effect.mapError(unavailable),
       );
+      setCachedState(
+        stateCacheKey({ legalEntityId: scopeLegalEntityId, revision: row.revision, tenantId: scope.tenantId, updatedAt: row.updatedAt }),
+        state,
+      );
       return { revision: row.revision, state };
     });
     const save = Effect.fn('Merchandise.save')(function* save(expectedRevision: number, state: MerchandiseState) {
       const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(state).pipe(Effect.mapError(unavailable));
-      const updatedAt = yield* DateTime.now;
+      const updatedAtDate = DateTime.toDateUtc(yield* DateTime.now);
       const rows = yield* transaction
         .update(merchandiseStates)
-        .set({ revision: expectedRevision + 1, state: encoded, updatedAt: DateTime.toDateUtc(updatedAt) })
+        .set({ revision: expectedRevision + 1, state: encoded, updatedAt: updatedAtDate })
         .where(and(whereScope, eq(merchandiseStates.revision, expectedRevision)))
         .returning({ revision: merchandiseStates.revision })
         .pipe(Effect.mapError(unavailable));
@@ -1357,6 +1391,11 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           reason: 'Merchandise changed; refresh before another operation',
         });
       }
+      // Warm the cache with what we just wrote; a rolled-back write can never match a committed key.
+      setCachedState(
+        stateCacheKey({ legalEntityId: scopeLegalEntityId, revision: expectedRevision + 1, tenantId: scope.tenantId, updatedAt: updatedAtDate }),
+        state,
+      );
       return expectedRevision + 1;
     });
     const applyOnce = Effect.fn('Merchandise.applyOnce')(function* applyOnce(
@@ -1411,17 +1450,54 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     const records = Effect.fn('Merchandise.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();
       const view = request.view ?? {};
-      const { movements, products } = snapshot.state;
+      const { movements } = snapshot.state;
       const orders = snapshot.state.orders.filter((order) => order.demoCleanup === undefined);
-      // Partition once: large variant catalogs otherwise scan the complete ledger for every variant.
-      const byProduct = new Map<string, StockMovement[]>();
-      for (const movement of movements) {
-        const bucket = byProduct.get(movement.productId) ?? [];
-        bucket.push(movement);
-        byProduct.set(movement.productId, bucket);
-      }
-      const allProducts = products.map((product) => toProductRecord(product, byProduct.get(product.id) ?? []));
       const storefront = view.storefront === true;
+      if (storefront && (view.storefrontCatalog !== undefined || view.storefrontOrderStatus !== undefined)) {
+        const canWriteStorefront = yield* contextGrant('write_all');
+        const catalogPage =
+          view.storefrontCatalog === undefined
+            ? undefined
+            : storefrontCatalogPage({
+                query: view.storefrontCatalog,
+                records: cachedProductRecords(snapshot.state, computeProductRecords),
+                state: snapshot.state,
+              });
+        const pageProducts = catalogPage?.products ?? [];
+        const storefrontResponse: RecordsResponse = {
+          actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+          canCleanupDemo: false,
+          canEditOrders: false,
+          canManageCatalog: false,
+          canWrite: canWriteStorefront,
+          indicators: {
+            lowStockCount: pageProducts.filter((record) => record.lowStock).length,
+            openOrderValueMinor: 0,
+            orderCount: 0,
+            productCount: pageProducts.length,
+            stockValueMinor: 0,
+          },
+          movements: [],
+          orders: [],
+          products: [...pageProducts],
+          revision: snapshot.revision,
+          ...(catalogPage === undefined
+            ? {}
+            : {
+                homepageFeaturedProductIds: [...catalogPage.homepageFeaturedProductIds],
+                page: catalogPage.page,
+                pageSize: catalogPage.pageSize,
+                total: catalogPage.total,
+                totalProducts: catalogPage.total,
+                ...(catalogPage.categories === undefined ? {} : { categories: [...catalogPage.categories] }),
+              }),
+          ...(view.storefrontOrderStatus === undefined
+            ? {}
+            : { orderStatus: storefrontOrderStatusOf(snapshot.state.orders, view.storefrontOrderStatus) }),
+        };
+        return storefrontResponse;
+      }
+      const allProducts = cachedProductRecords(snapshot.state, computeProductRecords);
       const matchingProducts = allProducts.filter(
         (record) =>
           (!storefront || (record.active && record.published !== false)) &&
@@ -1490,6 +1566,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         orders: filteredOrders,
         products: filteredProducts,
         revision: snapshot.revision,
+        ...(view.includeCategories === true && !storefront ? { categories: [...(snapshot.state.categories ?? [])] } : {}),
       };
       return response;
     });
