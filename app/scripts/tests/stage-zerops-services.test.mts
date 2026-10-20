@@ -68,6 +68,12 @@ const VERTICAL_KEYS = [
   'ULTRAMODERN_MF_DEV_ORIGIN',
   'ULTRAMODERN_ZEROPS_SERVICE',
 ];
+const PARTY_KEYS = [...VERTICAL_KEYS.filter((key) => key !== 'DATABASE_URL'), 'PARTY_REGISTRY_DATABASE_URL'];
+const MIGRATOR_IDENTITY_SECRET_KEYS = [
+  'PARTY_REGISTRY_DB_PASSWORD',
+  'PARTY_REGISTRY_WORKER_DB_PASSWORD',
+  'SHELL_GATEWAY_ISSUER_DB_PASSWORD',
+];
 const SHELL_KEYS = [
   'BETTER_AUTH_SECRET',
   'BETTER_AUTH_TRUSTED_ORIGINS',
@@ -76,13 +82,20 @@ const SHELL_KEYS = [
   'MODERN_PUBLIC_SITE_URL',
   'ONTOS_GATEWAY_ISSUER',
   'ONTOS_GATEWAY_PRIVATE_JWK',
+  'SHELL_GATEWAY_ISSUER_DATABASE_URL',
 ];
 
 const liveStage = (overrides: { readonly deployTarget?: string } = {}) =>
   fakeStage({
-    projectUserKeys: [...PROJECT_KEYS, 'partyregistry_DATABASE_URL', 'shellsuperapp_BETTER_AUTH_SECRET'],
+    projectUserKeys: [
+      ...PROJECT_KEYS,
+      ...MIGRATOR_IDENTITY_SECRET_KEYS.map((key) => `migrator_${key}`),
+      'partyregistry_PARTY_REGISTRY_DATABASE_URL',
+      'shellsuperapp_BETTER_AUTH_SECRET',
+    ],
     services: [
       { hostname: 'db18', id: 'db18-id', status: 'ACTIVE' },
+      { hostname: 'migrator', id: 'migrator-id', status: 'ACTIVE' },
       { hostname: 'spicedb', id: 'spicedb-id', status: 'ACTIVE' },
       { hostname: 'outboxworkerhost', id: 'host-id', status: 'ACTIVE' },
       ...OUTBOX_WORKERS.map((hostname) => ({ hostname, id: `${hostname}-id`, status: 'STOPPED' })),
@@ -92,12 +105,20 @@ const liveStage = (overrides: { readonly deployTarget?: string } = {}) =>
         status: 'ACTIVE',
       })),
     ],
-    serviceUserKeys: Object.fromEntries(
-      RETIRED_STAGE_SERVICES.map(({ hostname }) => [
-        hostname,
-        hostname === 'shellsuperapp' ? SHELL_KEYS : VERTICAL_KEYS,
-      ]),
-    ),
+    serviceUserKeys: {
+      ...Object.fromEntries(
+        RETIRED_STAGE_SERVICES.map(({ hostname }) => [
+          hostname,
+          hostname === 'shellsuperapp' ? SHELL_KEYS : VERTICAL_KEYS,
+        ]),
+      ),
+      migrator: MIGRATOR_IDENTITY_SECRET_KEYS,
+      partyregistry: PARTY_KEYS,
+      partyregistryworker: [
+        ...VERTICAL_KEYS.filter((key) => key !== 'DATABASE_URL'),
+        'PARTY_REGISTRY_WORKER_DATABASE_URL',
+      ],
+    },
     variables: {
       stage: {
         DEPLOY_TARGET: overrides.deployTarget ?? 'cloudflare',
@@ -178,12 +199,12 @@ it('retires exactly the application services zerops-import.yaml declares, each w
 it('splits service keys into zerops.yaml, inherited project and service-secret keys', () => {
   expect(
     classifyEnvironmentKeys({
-      projectKeys: [...PROJECT_KEYS, 'partyregistry_DATABASE_URL'],
+      projectKeys: [...PROJECT_KEYS, 'partyregistry_PARTY_REGISTRY_DATABASE_URL'],
       serviceHostnames: ['partyregistry', 'db18'],
-      serviceKeys: VERTICAL_KEYS,
+      serviceKeys: PARTY_KEYS,
       zeropsYamlKeys: new Set([
-        'DATABASE_URL',
         'NODE_ENV',
+        'PARTY_REGISTRY_DATABASE_URL',
         'PORT',
         'SPICEDB_CA_CERT',
         'SPICEDB_ENDPOINT',
@@ -194,8 +215,8 @@ it('splits service keys into zerops.yaml, inherited project and service-secret k
     }),
   ).toStrictEqual({
     fromZeropsYaml: [
-      'DATABASE_URL',
       'NODE_ENV',
+      'PARTY_REGISTRY_DATABASE_URL',
       'PORT',
       'SPICEDB_CA_CERT',
       'SPICEDB_ENDPOINT',
@@ -234,6 +255,11 @@ it.effect('records every service without --confirm and deletes nothing', () =>
     expect(shell?.importEntry).toStrictEqual(
       Option.some({ enableSubdomainAccess: true, hostname: 'shellsuperapp', type: 'nodejs@24' }),
     );
+    expect(shell?.environmentKeys.fromZeropsYaml).toContain('SHELL_GATEWAY_ISSUER_DATABASE_URL');
+    const party = record.services.find(({ hostname }) => hostname === 'partyregistry');
+    expect(party?.environmentKeys.fromZeropsYaml).toContain('PARTY_REGISTRY_DATABASE_URL');
+    expect(party?.environmentKeys.fromZeropsYaml).not.toContain('DATABASE_URL');
+    expect(party?.environmentKeys.serviceSecrets).toStrictEqual(['ONTOS_GATEWAY_PUBLIC_JWKS']);
     // The record holds keys and IDs only; no service ever had its values read.
     expect(stage.commands.some(({ args }) => args.some((argument) => argument.includes('.Value')))).toBe(false);
   }),
@@ -283,6 +309,7 @@ it.effect('records, then deletes each retired service by ID with --confirm, keep
     // The Cloudflare target still deploys the migrator, SpiceDB and the host, and reads the stopped workers.
     expect(stage.services.map(({ hostname }) => hostname)).toStrictEqual([
       'db18',
+      'migrator',
       'spicedb',
       'outboxworkerhost',
       ...OUTBOX_WORKERS,
@@ -360,10 +387,20 @@ it.effect('re-imports the retired services with their secrets, re-points the var
     expect(document.services.map(({ hostname }) => hostname)).toStrictEqual(
       RETIRED_STAGE_SERVICES.map(({ hostname }) => hostname),
     );
-    expect(document.services.find(({ hostname }) => hostname === 'shellsuperapp')?.envSecrets).toMatchObject({
+    expect(document.services.find(({ hostname }) => hostname === 'shellsuperapp')?.envSecrets).toStrictEqual({
       BETTER_AUTH_SECRET: AUTH_SECRET,
+      BETTER_AUTH_TRUSTED_ORIGINS: STAGE_SHELL_ORIGIN,
+      BETTER_AUTH_URL: STAGE_SHELL_ORIGIN,
       ONTOS_GATEWAY_PRIVATE_JWK: '{"d":"private-jwk-secret"}',
     });
+    expect(document.services.find(({ hostname }) => hostname === 'partyregistry')?.envSecrets).toStrictEqual({
+      ONTOS_GATEWAY_PUBLIC_JWKS: PUBLIC_JWKS,
+    });
+    // Dedicated passwords stay on the retained migrator; the next deploy rebuilds the identity URLs.
+    expect(stage.services.find(({ hostname }) => hostname === 'migrator')?.id).toBe('migrator-id');
+    expect(stage.serviceUserKeys.get('migrator')).toStrictEqual(MIGRATOR_IDENTITY_SECRET_KEYS);
+    expect(stage.serviceUserKeys.get('partyregistryworker')).toContain('PARTY_REGISTRY_WORKER_DATABASE_URL');
+    expect(stage.serviceUserKeys.get('partyregistryworker')).not.toContain('DATABASE_URL');
     const newIds = new Map(stage.services.map(({ hostname, id }) => [hostname, id]));
     for (const { hostname, setup } of RETIRED_STAGE_SERVICES) {
       expect(stage.variables.get('stage')?.get(serviceIdVariable(setup))).toBe(newIds.get(hostname));

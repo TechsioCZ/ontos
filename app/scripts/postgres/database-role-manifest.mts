@@ -19,7 +19,6 @@ import {
 } from '../../verticals/party-registry/src/db/database-grants.ts';
 
 export { TRUST_ROUTINES } from '../../packages/core-runtime/src/db/database-identities.ts';
-export type { TrustRoutine } from '../../packages/core-runtime/src/db/database-identities.ts';
 
 const routinesExecutableBy = (role: string): readonly string[] =>
   TRUST_ROUTINES.flatMap(({ executableBy, signature }) => (executableBy.includes(role) ? [signature] : []));

@@ -49,6 +49,7 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
       return Effect.succeed([
         {
           legal_entity_id: legalEntityId,
+          role: 'ontos_runtime',
           tenant_id: tenantId,
         },
       ]);

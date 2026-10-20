@@ -102,7 +102,13 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
     let resourceChecks = 0;
     const stages: string[] = [];
     const database = {
-      executor: yield* makeTestDatabase(() => Effect.succeed([])),
+      executor: yield* makeTestDatabase((text) =>
+        Effect.succeed(
+          text.includes('current_setting')
+            ? [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]
+            : [],
+        ),
+      ),
     };
     const runtime = makeReadRuntime(
       database,

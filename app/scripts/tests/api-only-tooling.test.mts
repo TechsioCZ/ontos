@@ -2233,6 +2233,7 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
         harnessPath,
         `import * as effect from ${JSON.stringify(effectModuleUrl)};
 import * as sharedBuild from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/shared-contracts/tooling/modern-config.ts')).href)};
+import * as databaseIdentities from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/core-runtime/src/db/database-identities.ts')).href)};
 import { runInNewContext } from 'node:vm';
 import * as nodeUrl from 'node:url';
 import * as nodePath from 'node:path';
@@ -2259,7 +2260,10 @@ runInNewContext(${JSON.stringify(code)}, {
   exports: module.exports,
   module,
   URL,
-  require: specifier => specifier === 'effect' ? effect : specifier === 'node:url' ? nodeUrl : specifier === 'node:path' ? nodePath : framework,
+  require: specifier => {
+    if (specifier === '../../packages/core-runtime/src/db/database-identities.ts') return databaseIdentities;
+    return specifier === 'effect' ? effect : specifier === 'node:url' ? nodeUrl : specifier === 'node:path' ? nodePath : framework;
+  },
 });
 process.stdout.write(JSON.stringify(module.exports.default.source.globalVars));
 `,

@@ -162,7 +162,7 @@ it.effect('a redeemed party-registry assertion establishes the scope through the
       role: 'party_registry_runtime',
       tenant_id: tenantId,
     });
-    expect(result._tag).toBe('Success');
+    expect(Exit.isSuccess(result)).toBe(true);
     expect(statements).toEqual([
       {
         params: [assertionValue],
@@ -189,7 +189,7 @@ it.effect('a gateway grant whose derived scope differs from the request fails cl
       tenant_id: tenantId,
     });
     for (const { result } of [foreignTenant, missingLegalEntity]) {
-      expect(result._tag).toBe('Failure');
+      expect(Exit.isFailure(result)).toBe(true);
       if (Exit.isFailure(result)) {
         expect(Predicate.isTagged(Option.getOrThrow(Exit.findErrorOption(result)), 'OperationContextUnavailable')).toBe(
           true,
@@ -207,7 +207,7 @@ it.effect('non-enrolled audiences and contexts without an assertion keep the ses
         role: 'ontos_runtime',
         tenant_id: tenantId,
       });
-      expect(result._tag).toBe('Success');
+      expect(Exit.isSuccess(result)).toBe(true);
       expect(statements.length).toBe(2);
       expect(statements[0]?.sql).toContain("set_config('ontos.tenant_id'");
       expect(statements[0]?.params).toEqual([tenantId, '']);
@@ -219,7 +219,7 @@ it.effect('non-enrolled audiences and contexts without an assertion keep the ses
 );
 
 const expectOperationContextUnavailable = <A, E>(result: Exit.Exit<A, E>) => {
-  expect(result._tag).toBe('Failure');
+  expect(Exit.isFailure(result)).toBe(true);
   if (Exit.isFailure(result)) {
     expect(Predicate.isTagged(Option.getOrThrow(Exit.findErrorOption(result)), 'OperationContextUnavailable')).toBe(
       true,
