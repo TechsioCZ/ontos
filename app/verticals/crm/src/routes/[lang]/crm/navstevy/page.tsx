@@ -139,7 +139,7 @@ const ClientFocus = ({
       actions={
         <>
           <a
-            className="inline-flex items-center gap-50 text-link text-sm underline-offset-2 hover:underline"
+            className="inline-flex items-center gap-50 font-medium underline text-sm underline-offset-2 hover:underline"
             href={`/${language ?? 'cs'}/crm/klienti?klient=${encodeURIComponent(clientId)}`}
           >
             <span aria-hidden="true" className="icon-[mdi--card-account-details-outline] size-200" />
@@ -280,7 +280,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                 aria-label="Hledat v návštěvách"
                 className="w-64"
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Hledat klienta, výsledek, poznámku"
+                placeholder="Hledat v záznamech"
                 size="sm"
                 type="search"
                 value={search}

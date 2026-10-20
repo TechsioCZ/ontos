@@ -200,7 +200,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
             Naplánovat kontakt
           </Button>
           <a
-            className="inline-flex items-center gap-50 px-100 text-link text-sm underline-offset-2 hover:underline"
+            className="inline-flex items-center gap-50 px-100 font-medium underline text-sm underline-offset-2 hover:underline"
             href={`/${language ?? 'cs'}/crm/navstevy?klient=${encodeURIComponent(client.id)}`}
           >
             Časová osa v Návštěvách
@@ -302,7 +302,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
             ))}
           </ul>
           <a
-            className="text-link text-xs underline-offset-2 hover:underline"
+            className="font-medium underline text-xs underline-offset-2 hover:underline"
             href={`/${language ?? 'cs'}/crm/k-osloveni`}
           >
             Vyřídit v plánu K oslovení

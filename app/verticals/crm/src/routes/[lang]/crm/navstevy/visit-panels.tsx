@@ -528,7 +528,7 @@ export const VisitDetailPanel = ({
                   clientLabel(records, visit.clientId)
                 ) : (
                   <button
-                    className="cursor-pointer text-link underline-offset-2 hover:underline"
+                    className="cursor-pointer font-medium underline underline-offset-2"
                     onClick={() => onOpenClient(visit.clientId)}
                     type="button"
                   >

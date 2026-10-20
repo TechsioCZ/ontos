@@ -83,7 +83,8 @@ const TimelineEntry = ({
             </span>
           </span>
         )}
-        {author !== salesperson && <span className="text-fg-secondary text-xs">{`Zapsal(a): ${author}`}</span>}
+        {records.state.salespeople.find((person) => person.id === visit.salespersonId)?.principalId !==
+          visit.authorPrincipalId && <span className="text-fg-secondary text-xs">{`Zapsal(a): ${author}`}</span>}
       </button>
     </li>
   );

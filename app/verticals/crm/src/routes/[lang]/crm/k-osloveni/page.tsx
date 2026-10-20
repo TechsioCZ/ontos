@@ -101,11 +101,11 @@ const PlanRow = ({
   return (
     <li className="flex flex-wrap items-center gap-200 border-border-primary border-t px-250 py-200 first:border-t-0">
       <div
-        className={`flex w-700 shrink-0 flex-col items-center rounded-md border px-100 py-50 ${
+        className={`flex w-700 shrink-0 flex-col items-center whitespace-nowrap rounded-md border px-100 py-50 ${
           bucket === 'overdue' ? 'border-danger text-danger' : 'border-border-primary'
         }`}
       >
-        <span className="font-semibold text-md tabular-nums">{formatShortDay(item.dueDate)}</span>
+        <span className="font-semibold text-sm tabular-nums">{formatShortDay(item.dueDate)}</span>
         <span className="text-fg-secondary text-xs">{formatWeekday(item.dueDate)}</span>
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-50">
