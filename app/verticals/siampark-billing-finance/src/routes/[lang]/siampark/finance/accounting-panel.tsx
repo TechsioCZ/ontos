@@ -96,8 +96,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const missing = SETUP_FIELDS.filter(([key]) => setup[key] === undefined);
   const candidates = confirmed.filter((invoice) => !onlyNew || !handedOver.has(invoice.ref.resourceId));
   const withoutVatBreakdown = confirmed.filter(
-    (invoice) =>
-      selected.has(invoice.ref.resourceId) && invoice.vatRecap === undefined && invoice.lines === undefined,
+    (invoice) => selected.has(invoice.ref.resourceId) && invoice.vatRecap === undefined && invoice.lines === undefined,
   ).length;
   const nameOf = (invoice: Invoice) =>
     customerOf(vm.references.customerById, invoice)?.displayName ?? invoice.counterpartyName ?? '—';
@@ -283,45 +282,45 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
           </div>
         ) : (
           <>
-          <dl className="grid grid-cols-1 gap-x-400 gap-y-150 text-sm md:grid-cols-2 xl:grid-cols-3">
-            {SETUP_FIELDS.map(([key, label]) => (
-              <div className="flex flex-col gap-50" key={key}>
-                <dt className="text-fg-secondary text-xs">{label}</dt>
-                <dd>
-                  {setup[key] === undefined ? (
-                    <Badge size="sm" variant="warning">
-                      ČEKÁ NA VSTUP
-                    </Badge>
-                  ) : key === 'approvalDate' ? (
-                    formatDate(setup[key])
-                  ) : (
-                    setup[key]
-                  )}
-                </dd>
-              </div>
-            ))}
-          </dl>
-          <div className="flex flex-col gap-100 pt-150">
-            <h3 className="font-medium text-sm">Účetní jednotka (vystavitel dokladů)</h3>
             <dl className="grid grid-cols-1 gap-x-400 gap-y-150 text-sm md:grid-cols-2 xl:grid-cols-3">
-              <div className="flex flex-col gap-50">
-                <dt className="text-fg-secondary text-xs">Název (vybraná firma)</dt>
-                <dd>{issuerName ?? 'Údaj neposkytnut'}</dd>
-              </div>
-              {ISSUER_FIELDS.map(([key, label]) => (
+              {SETUP_FIELDS.map(([key, label]) => (
                 <div className="flex flex-col gap-50" key={key}>
                   <dt className="text-fg-secondary text-xs">{label}</dt>
                   <dd>
-                    {setup[key] ?? (
+                    {setup[key] === undefined ? (
                       <Badge size="sm" variant="warning">
                         ČEKÁ NA VSTUP
                       </Badge>
+                    ) : key === 'approvalDate' ? (
+                      formatDate(setup[key])
+                    ) : (
+                      setup[key]
                     )}
                   </dd>
                 </div>
               ))}
             </dl>
-          </div>
+            <div className="flex flex-col gap-100 pt-150">
+              <h3 className="font-medium text-sm">Účetní jednotka (vystavitel dokladů)</h3>
+              <dl className="grid grid-cols-1 gap-x-400 gap-y-150 text-sm md:grid-cols-2 xl:grid-cols-3">
+                <div className="flex flex-col gap-50">
+                  <dt className="text-fg-secondary text-xs">Název (vybraná firma)</dt>
+                  <dd>{issuerName ?? 'Údaj neposkytnut'}</dd>
+                </div>
+                {ISSUER_FIELDS.map(([key, label]) => (
+                  <div className="flex flex-col gap-50" key={key}>
+                    <dt className="text-fg-secondary text-xs">{label}</dt>
+                    <dd>
+                      {setup[key] ?? (
+                        <Badge size="sm" variant="warning">
+                          ČEKÁ NA VSTUP
+                        </Badge>
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
           </>
         )}
       </SectionCard>
@@ -378,22 +377,22 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         {format === 'POHODA_XML' && (
           <div className="flex flex-col gap-100">
             <StatusText showIcon size="sm" status="default">
-              Soubor odpovídá oficiálnímu schématu STORMWARE POHODA XML (dataPack 2.0, vydané i přijaté faktury).
-              Import do POHODA a zaúčtování provádí účetní.
+              Soubor odpovídá oficiálnímu schématu STORMWARE POHODA XML (dataPack 2.0, vydané i přijaté faktury). Import
+              do POHODA a zaúčtování provádí účetní.
             </StatusText>
             <StatusText showIcon size="sm" status="default">
               DUZP se vyplní datem vystavení a forma úhrady „příkazem“ – OntOS je u dokladu samostatně neeviduje.
             </StatusText>
             {setup.issuerIco === undefined && (
               <StatusText showIcon size="sm" status="warning">
-                IČO účetní jednotky není vyplněné – soubor ho neponese a POHODA ho naimportuje do právě otevřené
-                účetní jednotky. Doplňte IČO v sekci Účetní jednotka výše.
+                IČO účetní jednotky není vyplněné – soubor ho neponese a POHODA ho naimportuje do právě otevřené účetní
+                jednotky. Doplňte IČO v sekci Účetní jednotka výše.
               </StatusText>
             )}
             {withoutVatBreakdown > 0 && (
               <StatusText showIcon size="sm" status="warning">
-                Vybrané doklady bez rozpisu DPH: {withoutVatBreakdown}. V POHODA budou označené „Nezahrnovat do DPH“
-                s poznámkou, aby účetní doplnila členění podle originálu dokladu.
+                Vybrané doklady bez rozpisu DPH: {withoutVatBreakdown}. V POHODA budou označené „Nezahrnovat do DPH“ s
+                poznámkou, aby účetní doplnila členění podle originálu dokladu.
               </StatusText>
             )}
           </div>
