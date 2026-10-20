@@ -85,7 +85,9 @@
     "invoiceDue": "Invoice due",
     "task": "Task",
     "event": "Event",
-    "opsDeadline": "Operations deadline"
+    "opsDeadline": "Operations deadline",
+    "delivery": "Expected delivery",
+    "validity": "Validity ends"
   },
   "urgency": {
     "done": "Done",
@@ -268,7 +270,9 @@
       "invoiceDue": "Invoice due",
       "task": "Task",
       "event": "Event",
-      "opsDeadline": "Operations deadline"
+      "opsDeadline": "Operations deadline",
+      "delivery": "Expected delivery",
+      "validity": "Validity ends"
     }
   },
   "kpi": {

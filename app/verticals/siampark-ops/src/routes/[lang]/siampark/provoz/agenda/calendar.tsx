@@ -181,7 +181,7 @@ export const CalendarView = ({
                 key={value}
                 onClick={() => setMode(value)}
                 style={{
-                  background: mode === value ? 'var(--color-surface, #fff)' : 'transparent',
+                  background: mode === value ? '#ffffff' : 'transparent',
                   boxShadow: mode === value ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
                   color: 'inherit',
                 }}
@@ -219,7 +219,7 @@ export const CalendarView = ({
                 })
               }
               style={{
-                background: off ? 'transparent' : 'var(--color-surface, #fff)',
+                background: off ? 'transparent' : '#ffffff',
                 border: '1px solid var(--color-border-primary, #d1d5db)',
                 color: 'inherit',
                 opacity: off ? 0.5 : 1,
@@ -242,7 +242,7 @@ export const CalendarView = ({
           className="siamparkops:ml-auto siamparkops:min-w-[200px] siamparkops:rounded-lg siamparkops:px-3 siamparkops:py-1.5 siamparkops:text-sm"
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t(`${k}.calendar.filter`)}
-          style={{ background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border-primary, #d1d5db)' }}
+          style={{ background: '#ffffff', border: '1px solid var(--color-border-primary, #d1d5db)' }}
           type="search"
           value={query}
         />
@@ -336,7 +336,7 @@ const MonthGrid = ({
   const days = Array.from({ length: 42 }, (_, index) => addDays(start, index));
   return (
     <div className="siamparkops:overflow-hidden siamparkops:rounded-2xl" data-testid="calendar-month" style={{ border: '1px solid var(--color-border-primary, #e5e7eb)' }}>
-      <div className="siamparkops:grid siamparkops:grid-cols-7" style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}>
+      <div className="siamparkops:grid siamparkops:grid-cols-7" style={{ background: '#f4f5f7' }}>
         {weekdayHeaders(lang, start).map((label) => (
           <div className="siamparkops:px-2 siamparkops:py-2 siamparkops:text-xs siamparkops:font-semibold siamparkops:uppercase" key={label} style={muted}>
             {label}
@@ -355,7 +355,7 @@ const MonthGrid = ({
               data-date={date}
               key={date}
               style={{
-                background: outside ? 'var(--color-surface-subtle, #f8fafc)' : weekend ? 'var(--color-surface-subtle, #fbfbfc)' : 'var(--color-surface, #fff)',
+                background: outside ? '#f4f5f7' : weekend ? '#fafafb' : '#ffffff',
                 borderTop: '1px solid var(--color-border-muted, #eef0f3)',
                 borderLeft: '1px solid var(--color-border-muted, #eef0f3)',
               }}
@@ -417,7 +417,7 @@ const WeekGrid = ({
             data-date={date}
             key={date}
             style={{
-              background: 'var(--color-surface, #fff)',
+              background: '#ffffff',
               border: `1px solid ${isToday ? toneColors('primary').accent : 'var(--color-border-primary, #e5e7eb)'}`,
               boxShadow: isToday ? `0 0 0 2px ${toneColors('primary').ring}` : 'none',
             }}
@@ -481,7 +481,7 @@ const ListView = ({
                   data-key={row.key}
                   key={row.key}
                   onClick={() => onOpen(row)}
-                  style={{ background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border-primary, #e5e7eb)', color: 'inherit', font: 'inherit' }}
+                  style={{ background: '#ffffff', border: '1px solid var(--color-border-primary, #e5e7eb)', color: 'inherit', font: 'inherit' }}
                   type="button"
                 >
                   <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>

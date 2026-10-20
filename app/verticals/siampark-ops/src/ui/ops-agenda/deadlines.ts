@@ -19,6 +19,8 @@ export type DeadlineCategory =
   | 'invoiceDue'
   | 'task'
   | 'event'
+  | 'delivery'
+  | 'validity'
   | 'opsDeadline';
 
 export interface Deadline {
@@ -370,6 +372,12 @@ const categoryOfField = (field: string, agenda: string): DeadlineCategory => {
   }
   if (/service|maintenance|due/iu.test(field) && agenda === 'assets') {
     return 'assetService';
+  }
+  if (/expected|delivery/iu.test(field)) {
+    return 'delivery';
+  }
+  if (/valid|expir/iu.test(field)) {
+    return 'validity';
   }
   return 'opsDeadline';
 };

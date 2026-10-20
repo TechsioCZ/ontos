@@ -85,7 +85,9 @@
     "invoiceDue": "Splatnost faktury",
     "task": "Úkol",
     "event": "Událost",
-    "opsDeadline": "Provozní termín"
+    "opsDeadline": "Provozní termín",
+    "delivery": "Očekávané dodání",
+    "validity": "Konec platnosti"
   },
   "urgency": {
     "done": "Hotovo",
@@ -286,7 +288,9 @@
       "invoiceDue": "Splatnost faktury",
       "task": "Úkol",
       "event": "Událost",
-      "opsDeadline": "Provozní termín"
+      "opsDeadline": "Provozní termín",
+      "delivery": "Očekávané dodání",
+      "validity": "Konec platnosti"
     }
   },
   "kpi": {

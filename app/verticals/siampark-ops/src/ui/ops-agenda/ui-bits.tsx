@@ -49,6 +49,7 @@ export const categoryTone: Record<DeadlineCategory, Tone> = {
   contractEnd: 'warning',
   contractNotice: 'warning',
   contractStart: 'success',
+  delivery: 'info',
   event: 'primary',
   inspection: 'danger',
   invoiceDue: 'info',
@@ -57,6 +58,7 @@ export const categoryTone: Record<DeadlineCategory, Tone> = {
   meterReading: 'info',
   opsDeadline: 'neutral',
   task: 'primary',
+  validity: 'warning',
 };
 
 export const urgencyTone: Record<Urgency, Tone> = {

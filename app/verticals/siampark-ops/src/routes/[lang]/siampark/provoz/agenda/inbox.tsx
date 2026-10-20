@@ -72,7 +72,7 @@ export const NotificationCenter = ({
                 key={value}
                 onClick={() => setFilter(value)}
                 style={{
-                  background: filter === value ? 'var(--color-surface, #fff)' : 'transparent',
+                  background: filter === value ? '#ffffff' : 'transparent',
                   boxShadow: filter === value ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
                   color: 'inherit',
                 }}
@@ -117,7 +117,7 @@ export const NotificationCenter = ({
                 data-unread={isUnread}
                 key={entry.id}
                 style={{
-                  background: isUnread ? toneColors(tone).bg : 'var(--color-surface, #fff)',
+                  background: isUnread ? toneColors(tone).bg : '#ffffff',
                   border: `1px solid ${isUnread ? toneColors(tone).ring : 'var(--color-border-primary, #e5e7eb)'}`,
                 }}
               >

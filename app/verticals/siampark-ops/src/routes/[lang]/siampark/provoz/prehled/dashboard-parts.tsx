@@ -31,7 +31,7 @@ import type { IconName } from '../../../../../ui/ops-agenda/ui-bits.tsx';
 const k = 'siampark-ops.agenda';
 const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
 const card = {
-  background: 'var(--color-surface, #fff)',
+  background: '#ffffff',
   border: '1px solid var(--color-border-primary, #e5e7eb)',
 } as const;
 
@@ -159,7 +159,7 @@ export const Hero = ({
       className="siamparkops:grid siamparkops:grid-cols-1 siamparkops:gap-6 siamparkops:rounded-2xl siamparkops:p-6 siamparkops:lg:grid-cols-[minmax(0,1fr)_auto]"
       style={{
         background:
-          'radial-gradient(1200px 300px at 0% 0%, var(--color-primary-100, #fef3c7) 0%, transparent 60%), linear-gradient(135deg, var(--color-surface, #ffffff) 0%, var(--color-surface-subtle, #f8fafc) 100%)',
+          'radial-gradient(1200px 300px at 0% 0%, var(--color-primary-100, #fef3c7) 0%, transparent 60%), linear-gradient(135deg, #ffffff 0%, var(--color-surface-subtle, #f8fafc) 100%)',
         border: '1px solid var(--color-border-primary, #e5e7eb)',
       }}
     >
@@ -194,7 +194,7 @@ export const Hero = ({
             id="ops-global-search"
             onChange={(event) => onQuery(event.target.value)}
             placeholder={t(`${k}.search.placeholder`)}
-            style={{ background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border-primary, #d1d5db)', boxShadow: '0 1px 2px rgba(0,0,0,.04)' }}
+            style={{ background: '#ffffff', border: '1px solid var(--color-border-primary, #d1d5db)', boxShadow: '0 1px 2px rgba(0,0,0,.04)' }}
             type="search"
             value={query}
           />
