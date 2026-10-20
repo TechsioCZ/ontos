@@ -147,7 +147,7 @@ export const ConfirmationPage = ({ submissionId }: { readonly submissionId: stri
         <aside className="confirmation__next">
           <h2>Co bude dál?</h2>
           <ol>
-            <li>Objednávka je teď ve stavu „Nová“ v administraci OntOS pod číslem {order.orderNumber}.</li>
+            <li>Objednávka je v administraci OntOS pod číslem {order.orderNumber}. Aktuální stav: „{STATUS[order.status] ?? order.status}“.</li>
             <li>Správce ji může upravit a provést stavy až po „Předáno dopravci (simulace)“ a „Dokončená“.</li>
             <li>Nic se vám neodešle – žádný e-mail, SMS, platba ani zásilka.</li>
           </ol>

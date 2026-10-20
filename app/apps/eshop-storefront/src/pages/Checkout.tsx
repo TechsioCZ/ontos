@@ -24,7 +24,7 @@ interface FormState {
 const EMPTY: FormState = { city: '', email: '', name: '', note: '', phone: '', postalCode: '', shippingMethod: '', street: '' };
 const SAMPLE: FormState = {
   city: 'Brno',
-  email: 'jana.novakova@example.cz',
+  email: 'jana.novakova@example.com',
   name: 'Jana Nováková',
   note: 'Ukázková objednávka pro prezentaci.',
   phone: '+420 600 000 000',
@@ -56,7 +56,7 @@ const validate = (form: FormState): Record<string, string> => {
   const errors: Record<string, string> = {};
   if (form.name.trim().length < 3) errors.name = 'Vyplňte jméno a příjmení (stačí fiktivní).';
   if (form.email.trim() === '') errors.email = 'Vyplňte e-mail (stačí fiktivní).';
-  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(form.email.trim())) errors.email = 'E-mail nemá platný tvar, například jana.novakova@example.cz.';
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(form.email.trim())) errors.email = 'E-mail nemá platný tvar, například jana.novakova@example.com.';
   if (form.street.trim() === '') errors.street = 'Vyplňte ulici a číslo popisné.';
   if (form.city.trim() === '') errors.city = 'Vyplňte město.';
   if (form.postalCode.trim() === '') errors.postalCode = 'Vyplňte PSČ.';
@@ -215,7 +215,7 @@ export const CheckoutPage = () => {
               <div className="notice notice--danger" role="alert">
                 <Icon name="warning" size={18} />
                 <div>
-                  <strong>Objednávka nebyla uložena.</strong>
+                  <strong>Uložení objednávky se nepodařilo potvrdit.</strong>
                   <span>{failure.problem.message}</span>
                   {issues.length > 0 ? (
                     <ul>

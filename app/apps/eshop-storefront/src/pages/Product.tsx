@@ -31,16 +31,25 @@ const dimensionsOf = (variants: readonly StoreVariant[]): string[] => {
 
 const Gallery = ({ images, name }: { readonly images: readonly string[]; readonly name: string }) => {
   const [active, setActive] = useState(0);
+  const [failedImage, setFailedImage] = useState<string>();
   useEffect(() => setActive(0), [images]);
+  const image = images[active] ?? images[0];
+  const missing = image === undefined || image === failedImage;
   return (
     <div className="gallery">
       <div className="gallery__main">
-        <img alt={`${name} – obrázek ${active + 1} z ${images.length}`} height={800} src={images[active]} width={800} />
+        <img
+          alt={missing ? `${name} – obrázek není k dispozici` : `${name} – obrázek ${active + 1} z ${images.length}`}
+          height={800}
+          onError={() => setFailedImage(image)}
+          src={missing ? '/img/bez-obrazku.svg' : image}
+          width={800}
+        />
       </div>
       {images.length > 1 ? (
-        <div className="gallery__thumbs" role="tablist" aria-label="Obrázky produktu">
+        <div className="gallery__thumbs" role="group" aria-label="Obrázky produktu">
           {images.map((image, index) => (
-            <button aria-label={`Obrázek ${index + 1}`} aria-selected={index === active} className={index === active ? 'is-active' : undefined} key={image} onClick={() => setActive(index)} role="tab" type="button">
+            <button aria-label={`Obrázek ${index + 1}`} aria-pressed={index === active} className={index === active ? 'is-active' : undefined} key={image} onClick={() => setActive(index)} type="button">
               <img alt="" height={160} loading="lazy" src={image} width={160} />
             </button>
           ))}

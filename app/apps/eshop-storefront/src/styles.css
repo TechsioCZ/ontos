@@ -2493,6 +2493,19 @@ p {
   color: #a78f78;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 /* ------------------------------------------------------------------ small phones (390 px demo) */
 
 @media (max-width: 639px) {

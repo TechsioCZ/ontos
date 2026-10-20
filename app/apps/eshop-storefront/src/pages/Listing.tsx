@@ -120,11 +120,11 @@ export const ListingPage = ({ categorySlug }: { readonly categorySlug?: string }
             <div className="filters__group">
               <span className="filters__label">Kategorie</span>
               <div className="filters__options">
-                <Link className={`chip${categorySlug === undefined ? ' chip--active' : ''}`} to={withParams('/produkty', params)}>
+                <Link className={`chip${categorySlug === undefined ? ' chip--active' : ''}`} onClick={() => setDrawer(false)} to={withParams('/produkty', params)}>
                   Vše
                 </Link>
                 {(catalog.data?.categories ?? []).map((item) => (
-                  <Link className={`chip${item.slug === categorySlug ? ' chip--active' : ''}`} key={item.slug} to={withParams(`/kategorie/${item.slug}`, params)}>
+                  <Link className={`chip${item.slug === categorySlug ? ' chip--active' : ''}`} key={item.slug} onClick={() => setDrawer(false)} to={withParams(`/kategorie/${item.slug}`, params)}>
                     {item.name} <small>{item.productCount}</small>
                   </Link>
                 ))}

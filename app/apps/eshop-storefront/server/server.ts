@@ -70,7 +70,7 @@ const failure = (response: ServerResponse, error: unknown, path = ''): void => {
         code: invalid ? 'order_invalid' : 'order_save_failed',
         message: invalid
           ? `Backend objednávku odmítl jako neplatnou${error.detail === undefined ? '' : `: ${error.detail}`}.`
-          : 'Objednávku se teď nepodařilo uložit, nic nevzniklo. Zkuste ji odeslat znovu – objednávka nevznikne dvakrát.',
+          : 'Uložení objednávky se teď nepodařilo ověřit. Zkuste ji odeslat znovu – pokud už byla uložena, vrátí se stejné číslo, nevznikne druhá objednávka.',
       });
       return;
     }

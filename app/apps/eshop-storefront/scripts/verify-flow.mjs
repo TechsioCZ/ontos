@@ -30,7 +30,20 @@ const run = async (browser, name, viewport) => {
       console.log('  ', response.status(), response.request().method(), response.url().replace(BASE, ''), (await response.text().catch(() => '')).slice(0, 200));
     }
   });
-  const shot = async (step) => page.screenshot({ fullPage: true, path: `${OUT}/${name}-${step}.png` });
+  const shot = async (step) => {
+    // Full-page capture must load lazy artwork below the fold, especially on a 390px viewport.
+    await page.evaluate(async () => {
+      const start = window.scrollY;
+      for (let y = 0; y < document.documentElement.scrollHeight; y += window.innerHeight) {
+        window.scrollTo(0, y);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+      await Promise.all([...document.images].map((image) => image.decode().catch(() => {})));
+      window.scrollTo(0, start);
+    });
+    await page.waitForTimeout(200);
+    return page.screenshot({ fullPage: true, scale: 'css', path: `${OUT}/${name}-${step}.png` });
+  };
   const noHorizontalScroll = async (label) => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert(overflow <= 1, `${label}: horizontal overflow ${overflow}px`);
@@ -137,6 +150,11 @@ const run = async (browser, name, viewport) => {
   assert(disclaimer.includes('E-shop je prezentační demo. Žádné zboží vám nebude doručeno a nic neplatíte.'), 'exact disclaimer before submit');
   await noHorizontalScroll('checkout');
   await shot('09-checkout-filled');
+  if (process.env.VERIFY_NO_SUBMIT === '1') {
+    assert(errors.length === 0, `page errors: ${errors.join(' | ')}`);
+    await context.close();
+    return 'checkout verified without creating another order';
+  }
   const orderPosts = [];
   page.on('request', (request) => {
     if (request.url().endsWith('/api/orders') && request.method() === 'POST') orderPosts.push(JSON.parse(request.postData()).submissionId);
