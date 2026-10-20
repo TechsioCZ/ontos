@@ -168,7 +168,7 @@ export const EmployeeFormDialog = ({
     <>
       <SidePanel
         actions={
-          <>
+          <div className="workforce-employee-form-actions">
             <Button onClick={requestClose} theme="outlined" variant="secondary">
               {t(`${key}.form.cancel`)}
             </Button>
@@ -182,7 +182,7 @@ export const EmployeeFormDialog = ({
             >
               {t(employee === null ? `${key}.form.create` : `${key}.form.save`)}
             </Button>
-          </>
+          </div>
         }
         closeOnInteractOutside={false}
         // The first field takes focus, not the close button the panel renders first.

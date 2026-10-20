@@ -715,14 +715,17 @@ const PeoplePageContent = () => {
           />
         </StatRow>
 
-        <div className="flex flex-wrap items-end gap-150">
+        <div className="workforce-people-filters">
           <FormInput
             id="people-search"
+            size="sm"
             label={t(`${key}.search`)}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
           <SelectTemplate
+            size="sm"
+            labelProps={selectLabelProps}
             label={t(`${key}.table.status`)}
             value={[statusFilter]}
             onValueChange={({ value }) => setStatusFilter(value[0] ?? 'active')}
