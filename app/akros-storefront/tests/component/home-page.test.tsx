@@ -11,8 +11,8 @@ vi.mock("@/components/home-carousel", () => ({ HomeCarousel: () => null }));
 vi.mock("@/components/featured-product-grid", () => ({ FeaturedProductGrid: () => null }));
 
 describe("HomePage company introduction", () => {
-  it("renders four plain paragraphs with the emphasis from the redesign", () => {
-    render(<HomePage />);
+  it("renders four plain paragraphs with the emphasis from the redesign", async () => {
+    render(await HomePage());
 
     const introduction = screen.getByRole("region", { name: "O společnosti AKROS" });
     const paragraphs = introduction.querySelectorAll("p");

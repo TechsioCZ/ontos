@@ -19,12 +19,8 @@ function CartLines() {
 afterEach(cleanup);
 
 describe("NewsPage shared product cards", () => {
-  it("uses the catalog cards in both sections without invented discount percentages", () => {
-    const { container } = render(
-      <CartProvider storage={null}>
-        <NewsPage />
-      </CartProvider>,
-    );
+  it("uses the catalog cards in both sections without invented discount percentages", async () => {
+    const { container } = render(<CartProvider storage={null}>{await NewsPage()}</CartProvider>);
 
     expect(container.querySelectorAll(".akros-catalog-product-card")).toHaveLength(8);
     expect(container.querySelector(".akros-news-product-card")).toBeNull();
@@ -34,14 +30,10 @@ describe("NewsPage shared product cards", () => {
     expect(screen.getByText("Doprodej")).toBeDefined();
   });
 
-  it("links the clearance card to its exact variant and uses its price rather than the group minimum", () => {
+  it("links the clearance card to its exact variant and uses its price rather than the group minimum", async () => {
     const { product, variant } = getPromotionItems().find((item) => item.kind === "sale")!;
 
-    render(
-      <CartProvider storage={null}>
-        <NewsPage />
-      </CartProvider>,
-    );
+    render(<CartProvider storage={null}>{await NewsPage()}</CartProvider>);
 
     expect(screen.getByText("83,32 Kč")).toBeDefined();
     for (const link of screen.getAllByRole("link", { name: variant!.label })) {
@@ -58,7 +50,7 @@ describe("NewsPage shared product cards", () => {
 
     render(
       <CartProvider storage={null}>
-        <NewsPage />
+        {await NewsPage()}
         <CartLines />
       </CartProvider>,
     );

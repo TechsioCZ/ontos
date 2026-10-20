@@ -39,7 +39,7 @@ export function Unavailable({ reset }: { reset: () => void }) {
           onClick={reset}
           style={{
             background: "var(--color-button-bg-primary-base,#b70e15)",
-            color: "white",
+            color: "#111",
             fontSize: 16,
             fontWeight: 600,
             padding: "12px 24px",
