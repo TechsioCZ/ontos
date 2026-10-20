@@ -6,11 +6,8 @@ import { useEffect, useState } from 'react';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import { usePurchasingT } from './purchasing-model.ts';
 
-export interface IncomingInvoiceLink {
-  readonly number: string;
-  readonly supplier: string | undefined;
-  readonly resourceId: string;
-}
+import { matchingIncomingInvoice } from './purchase-invoice-match.ts';
+import type { IncomingInvoiceLink } from './purchase-invoice-match.ts';
 
 type FinanceLinks =
   | { readonly status: 'loading' | 'unavailable' }
@@ -49,22 +46,6 @@ export const useIncomingInvoiceLinks = (): FinanceLinks => {
   return state;
 };
 
-const normalize = (value: string) => value.trim().toLocaleLowerCase('cs-CZ');
-
-/** Never turn an ambiguous number or a different supplier's invoice into a link. */
-export const matchingIncomingInvoice = (
-  invoices: readonly IncomingInvoiceLink[],
-  number: string,
-  supplier: string,
-): IncomingInvoiceLink | undefined => {
-  const matches = invoices.filter(
-    (invoice) =>
-      normalize(invoice.number) === normalize(number) &&
-      (invoice.supplier === undefined || normalize(invoice.supplier) === normalize(supplier)),
-  );
-  return matches.length === 1 ? matches[0] : undefined;
-};
-
 export const FinanceInvoiceLink = ({
   links,
   number,
@@ -87,7 +68,7 @@ export const FinanceInvoiceLink = ({
   const lang = language.startsWith('en') ? 'en' : 'cs';
   return (
     <a
-      className="font-medium text-primary underline underline-offset-2"
+      className="font-medium text-fg-primary underline underline-offset-2"
       href={`/${lang}/siampark/finance?resourceId=${encodeURIComponent(match.resourceId)}`}
     >
       {k('orders.finance.open')}

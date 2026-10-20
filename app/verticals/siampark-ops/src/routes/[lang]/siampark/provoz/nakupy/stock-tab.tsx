@@ -59,7 +59,7 @@ const ALL = '__all__';
 /** Inline link-styled button (wraps like text, unlike the ui-kit Button). */
 export const TextLink = ({ children, onClick }: { readonly children: ReactNode; readonly onClick: () => void }) => (
   <button
-    className="cursor-pointer text-left font-medium text-primary underline-offset-2 hover:underline"
+    className="cursor-pointer text-left font-medium text-fg-primary underline underline-offset-2"
     onClick={onClick}
     type="button"
   >

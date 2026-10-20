@@ -309,56 +309,58 @@ export const OrderPanel = ({
           />
         )}
         <SectionCard title={k('orders.lines')}>
-          <Table size="sm" variant="line">
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{k('fields.ordered')}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{k('fields.received')}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{k('fields.remaining')}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{k('fields.unitPrice')}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{k('fields.lineTotal')}</Table.ColumnHeader>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {order.lines.map((line) => {
-                const item = lookup.item(line.itemId);
-                const unit = item?.unit ?? '';
-                return (
-                  <Table.Row key={line.id}>
-                    <Table.Cell>
-                      {item === undefined ? (
-                        <span className="flex flex-col">
-                          <span>{line.description}</span>
-                          <span className="text-fg-secondary text-xs">{k('lines.service')}</span>
+          <div className="overflow-x-auto">
+            <Table size="sm" style={{ minWidth: '40rem' }} variant="line">
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeader>{k('fields.item')}</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">{k('fields.ordered')}</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">{k('fields.received')}</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">{k('fields.remaining')}</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">{k('fields.unitPrice')}</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">{k('fields.lineTotal')}</Table.ColumnHeader>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {order.lines.map((line) => {
+                  const item = lookup.item(line.itemId);
+                  const unit = item?.unit ?? '';
+                  return (
+                    <Table.Row key={line.id}>
+                      <Table.Cell style={{ minWidth: '12rem' }}>
+                        {item === undefined ? (
+                          <span className="flex flex-col">
+                            <span>{line.description}</span>
+                            <span className="text-fg-secondary text-xs">{k('lines.service')}</span>
+                          </span>
+                        ) : (
+                          <span className="flex flex-col">
+                            <TextLink onClick={() => onOpenItem(item.id)}>{line.description}</TextLink>
+                            <span className="text-fg-secondary text-xs">{item.sku}</span>
+                          </span>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell align="end">{formatQuantity(line.quantity, unit)}</Table.Cell>
+                      <Table.Cell align="end">{formatQuantity(line.receivedQuantity, unit)}</Table.Cell>
+                      <Table.Cell align="end">
+                        <span
+                          className={
+                            lineRemaining(line) > 0 ? 'font-semibold tabular-nums' : 'text-fg-secondary tabular-nums'
+                          }
+                        >
+                          {formatQuantity(lineRemaining(line), unit)}
                         </span>
-                      ) : (
-                        <span className="flex flex-col">
-                          <TextLink onClick={() => onOpenItem(item.id)}>{line.description}</TextLink>
-                          <span className="text-fg-secondary text-xs">{item.sku}</span>
-                        </span>
-                      )}
-                    </Table.Cell>
-                    <Table.Cell align="end">{formatQuantity(line.quantity, unit)}</Table.Cell>
-                    <Table.Cell align="end">{formatQuantity(line.receivedQuantity, unit)}</Table.Cell>
-                    <Table.Cell align="end">
-                      <span
-                        className={
-                          lineRemaining(line) > 0 ? 'font-semibold tabular-nums' : 'text-fg-secondary tabular-nums'
-                        }
-                      >
-                        {formatQuantity(lineRemaining(line), unit)}
-                      </span>
-                    </Table.Cell>
-                    <Table.Cell align="end">{formatAmount(line.unitPriceMinor, order.currency)}</Table.Cell>
-                    <Table.Cell align="end">
-                      {formatAmount(line.unitPriceMinor * line.quantity, order.currency)}
-                    </Table.Cell>
-                  </Table.Row>
-                );
-              })}
-            </Table.Body>
-          </Table>
+                      </Table.Cell>
+                      <Table.Cell align="end">{formatAmount(line.unitPriceMinor, order.currency)}</Table.Cell>
+                      <Table.Cell align="end">
+                        {formatAmount(line.unitPriceMinor * line.quantity, order.currency)}
+                      </Table.Cell>
+                    </Table.Row>
+                  );
+                })}
+              </Table.Body>
+            </Table>
+          </div>
         </SectionCard>
         <SectionCard title={k('panel.detail')}>
           <DetailList
