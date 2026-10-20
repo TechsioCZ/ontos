@@ -13,6 +13,8 @@ export type { CrmViewer } from '../domain/access.ts';
 /** Optional narrowing; the read always applies the viewer's ACL first. */
 export const RecordsRequestSchema = Schema.Struct({
   clientId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  /** Distinguishes an explicit fresh read from the shell's URL/body read cache; never persisted. */
+  refreshToken: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
 export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;

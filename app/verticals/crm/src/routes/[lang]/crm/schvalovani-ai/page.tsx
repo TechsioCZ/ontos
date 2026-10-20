@@ -14,10 +14,20 @@ import { CrmStateGate } from '../../../../crm/ui.tsx';
 import './review.css';
 
 type Submit = (command: CrmCommand) => Promise<CrmCommandOutcome>;
-const nameOf = (records: RecordsResponse, principalId: string) =>
-  records.state.salespeople.find((entry) => entry.principalId === principalId)?.name ??
-  records.state.aiChanges?.batches.find((entry) => entry.agentPrincipalId === principalId)?.agentLabel ??
-  (records.viewer.principalId === principalId ? 'Vy (správce / vedoucí)' : 'Správce / vedoucí CRM');
+// Fixed Hanák demo accounts from scripts/demo/permissions.mts, keyed by their UUIDv5 principal identity.
+// Never attribute an unknown account to one of these people; keep its unambiguous account identifier.
+const hanakReviewers: Readonly<Record<string, string>> = {
+  '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák · spravce@hanak.demo',
+  '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková · vedouci@hanak.demo',
+};
+const nameOf = (records: RecordsResponse, principalId: string) => {
+  const name =
+    records.state.salespeople.find((entry) => entry.principalId === principalId)?.name ??
+    hanakReviewers[principalId] ??
+    records.state.aiChanges?.batches.find((entry) => entry.agentPrincipalId === principalId)?.agentLabel ??
+    `Účet schvalovatele ${principalId}`;
+  return records.viewer.principalId === principalId ? `${name} (vy)` : name;
+};
 
 const ChangeCard = ({
   change,

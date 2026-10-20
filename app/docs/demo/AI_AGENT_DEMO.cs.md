@@ -138,8 +138,8 @@ data. Druhé volání vrátí `deduplicated: true` a existující úkol. Důkaz:
   oprávnění a právo spouštět Actions. Úroveň A nemá právo spustit žádnou Action. Úroveň B může spustit jen Actions modulu úkolů.
 - **Dá se to zpětně dohledat?** Ano. Každý povolený i zamítnutý pokus je v Core auditu s identitou agenta,
   akcí, firmou, výsledkem a časem.
-- **Úroveň C** (změny objednávek a klientů se schvalováním a hromadným vrácením) zatím není součástí dema.
-  Úrovně A a B ukazují, že jde o rozšíření stejného modelu oprávnění, ne o nový systém.
+- **Úroveň C** pro CRM Hanák je součástí dema: návrhy klientských údajů a párování objednávek,
+  lidské schvalování a hromadné vrácení. Přesný rozsah a ukázkové pokyny jsou níže.
 
 ## Řešení potíží
 
@@ -209,8 +209,13 @@ mise exec -- pnpm demo:prove:ai      # původní A/B musí zůstat zelené
 - CRM Hanák neobsahuje obchodní příležitosti ani editovatelné účetní objednávky. C umí klienty,
   kontakty, přidělení obchodníkovi, plán kontaktu a **párování importované objednávky**. Cenu, položky,
   stav externí objednávky ani příležitosti jiného modulu měnit nesmí. Tyto části nejsou simulovány.
-- V jedné dávce navrhujte nejvýše jednu změnu téže existující entity. Pozdější změna záznamu zneplatní
-  původní porovnání: schválení ji odmítne a vyžádá nový návrh.
+- Jedna dávka může obsahovat více úprav stejného klienta (např. telefon a web). Schválit je lze společně
+  i jednotlivě v libovolném pořadí; „Vrátit vše“ obnoví původní stav celé dávky. Úprava mimo tuto dávku
+  zneplatní původní porovnání: schválení ji odmítne a vyžádá nový návrh.
+- U nového klienta se před schválením zobrazí každý údaj každého kontaktu: jméno, e-mail, telefon, role,
+  poznámka i skutečné označení hlavního kontaktu. „Obnovit seznam“ načte nové návrhy i v již otevřené relaci.
+- Deník rozlišuje oba pevné účty dema Hanák jménem a e-mailem; nejde o živý celopodnikový adresář.
+  U jiného účtu zachová jednoznačný identifikátor místo připsání akce nesprávnému člověku.
 - Vrácení je atomické a bezpečné: lidskou úpravu vzniklou po schválení nepřepíše. Pokud se záznam
   mezitím změnil nebo na nového klienta navazují další záznamy, backend vrácení odmítne bez částečného zápisu.
 - Tato stránka není vestavěný chat ani automaticky běžící LLM. Agent používá skutečné MCP nástroje

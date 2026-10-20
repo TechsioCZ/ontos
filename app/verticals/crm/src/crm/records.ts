@@ -29,7 +29,10 @@ const isConflict = (error: unknown) =>
 export const loadCrmRecords = (clientId?: string) =>
   correlation('records').pipe(
     Effect.flatMap((requestCorrelation) =>
-      executeRecords(clientId === undefined ? {} : { clientId }, requestCorrelation),
+      executeRecords(
+        { ...(clientId === undefined ? {} : { clientId }), refreshToken: requestCorrelation },
+        requestCorrelation,
+      ),
     ),
   );
 

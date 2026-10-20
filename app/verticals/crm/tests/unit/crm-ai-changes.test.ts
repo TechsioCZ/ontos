@@ -104,6 +104,110 @@ describe('AI level C governed pending batches', () => {
       'batch_reverted',
     ]);
   });
+  it('exposes every nested contact value, including the actual primary designation', () => {
+    const pending = proposal(base, {
+      _tag: 'CreateClient',
+      kind: 'organization',
+      name: 'Kavárna U lípy s.r.o.',
+      contacts: [
+        {
+          name: 'Eva Lipová',
+          email: 'eva@lipa.demo',
+          phone: '+420 777 123 456',
+          role: 'Provozní',
+          primary: true,
+          note: 'Volat ráno',
+        },
+        { name: 'Pavel Lipový', email: 'pavel@lipa.demo', primary: true },
+      ],
+    }).state;
+    const diff = Object.fromEntries(
+      pending.aiChanges?.changes[0]?.diff.map((entry) => [entry.field, entry.after]) ?? [],
+    );
+    expect(diff).toMatchObject({
+      'contacts.0.name': 'Eva Lipová',
+      'contacts.0.email': 'eva@lipa.demo',
+      'contacts.0.phone': '+420 777 123 456',
+      'contacts.0.role': 'Provozní',
+      'contacts.0.primary': 'ano',
+      'contacts.0.note': 'Volat ráno',
+      'contacts.1.name': 'Pavel Lipový',
+      'contacts.1.email': 'pavel@lipa.demo',
+      'contacts.1.primary': 'ne',
+    });
+    const applied = approve(pending).state;
+    expect(applied.clients.contacts.map((entry) => entry.primary === true)).toEqual([true, false]);
+    expect(revert(applied).state.clients.contacts.every((entry) => entry.status === 'archived')).toBe(true);
+  });
+  const twoEdits = () =>
+    ok(
+      base,
+      {
+        _tag: 'AiProposeChanges',
+        instruction: 'Aktualizuj telefon a web Bistra Král',
+        changes: [
+          {
+            operation: { _tag: 'UpdateClient', id: 'c1', patch: { phone: '+420 777 888 999' } },
+            reason: 'Ověřeno telefonicky',
+          },
+          {
+            operation: { _tag: 'UpdateClient', id: 'c1', patch: { website: 'https://bistro-kral.demo' } },
+            reason: 'Nový web klienta',
+          },
+        ],
+      },
+      agent,
+    ).state;
+  it('approves two edits to one client atomically and reverts the whole chain', () => {
+    const pending = twoEdits();
+    expect(pending.clients).toEqual(base.clients);
+    const applied = approve(pending).state;
+    expect(applied.clients.items[0]).toMatchObject({ phone: '+420 777 888 999', website: 'https://bistro-kral.demo' });
+    expect(applied.aiChanges?.changes.every((entry) => entry.status === 'applied')).toBe(true);
+    expect(revert(applied).state.clients.items).toEqual(base.clients.items);
+  });
+  it('supports separate item approval in reverse order, while retaining safe whole-batch undo', () => {
+    const pending = twoEdits();
+    let working = pending;
+    for (const change of pending.aiChanges?.changes.toReversed() ?? []) {
+      working = ok(working, { _tag: 'AiDecideChanges', changeIds: [change.id], decision: 'approve' }).state;
+    }
+    expect(working.clients.items[0]).toMatchObject({ phone: '+420 777 888 999', website: 'https://bistro-kral.demo' });
+    expect(revert(working).state.clients.items).toEqual(base.clients.items);
+  });
+  it('does not rebase over an intervening human or foreign-batch edit', () => {
+    const pending = twoEdits();
+    const [first, second] = pending.aiChanges?.changes ?? [];
+    const firstApplied = ok(pending, {
+      _tag: 'AiDecideChanges',
+      changeIds: [first?.id ?? ''],
+      decision: 'approve',
+    }).state;
+    const humanEdited = ok(firstApplied, {
+      _tag: 'UpdateClient',
+      id: 'c1',
+      patch: { email: 'clovek@bistro.demo' },
+    }).state;
+    const otherPending = proposal(firstApplied, {
+      _tag: 'UpdateClient',
+      id: 'c1',
+      patch: { email: 'jiny@bistro.demo' },
+    }).state;
+    const other = otherPending.aiChanges?.changes.at(-1);
+    const otherApplied = ok(otherPending, {
+      _tag: 'AiDecideChanges',
+      changeIds: [other?.id ?? ''],
+      decision: 'approve',
+    }).state;
+    for (const edited of [humanEdited, otherApplied]) {
+      expect(
+        Exit.isFailure(run(edited, { _tag: 'AiDecideChanges', changeIds: [second?.id ?? ''], decision: 'approve' })),
+      ).toBe(true);
+      expect(
+        Exit.isFailure(run(edited, { _tag: 'AiRevertBatch', batchId: pending.aiChanges?.batches[0]?.id ?? '' })),
+      ).toBe(true);
+    }
+  });
   it('round-trips client data exactly and records actor/time/result', () => {
     const pending = proposal(base, { _tag: 'UpdateClient', id: 'c1', patch: { phone: '+420 777 888 999' } }).state;
     expect(pending.clients.items).toEqual(base.clients.items);

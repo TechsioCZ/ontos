@@ -221,15 +221,17 @@ const describe = (state: CrmState, operation: AiOperation): Described => {
       CreateClient: (value): Described => ({
         diff: [
           ...newValueLines(state, value),
-          ...((value.contacts ?? []).length === 0
-            ? []
-            : [
-                {
-                  after: (value.contacts ?? []).map((contact) => contact.name).join(', '),
-                  field: 'contacts',
-                  label: fieldLabels['contacts'] ?? 'Kontaktní osoby',
-                },
-              ]),
+          ...(value.contacts ?? []).flatMap((contact, index, contacts) =>
+            newValueLines(state, {
+              ...contact,
+              // The owning reducer keeps only the first primary contact.
+              primary: index === contacts.findIndex((entry) => entry.primary === true),
+            }).map((entry) => ({
+              ...entry,
+              field: `contacts.${index}.${entry.field}`,
+              label: `Kontakt ${index + 1} · ${entry.label}`,
+            })),
+          ),
         ],
         summary: 'Založení nového klienta',
         target: { kind: 'client', label: value.name },
@@ -641,13 +643,28 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
             );
             continue;
           }
-          const stale = (change.proposedSnapshots ?? []).some(
-            (snapshot) =>
-              !same(
-                collections[snapshot.kind].get(working).find((entity) => entity.id === snapshot.id),
-                snapshot.before,
-              ),
-          );
+          const stale = (change.proposedSnapshots ?? []).some((snapshot) => {
+            // Proposals are independent dry runs against the same original state. An approved sibling
+            // may already have changed this entity. Follow only that batch's exact applied snapshot
+            // chain, never arbitrary current values or another batch's edits.
+            let expected = snapshot.before;
+            const siblings = slice.changes
+              .filter((entry) => entry.batchId === change.batchId && entry.status === 'applied')
+              .toSorted((left, right) => (left.applySequence ?? 0) - (right.applySequence ?? 0));
+            for (const sibling of siblings) {
+              const previous = sibling.snapshots?.find(
+                (entry) => entry.id === snapshot.id && entry.kind === snapshot.kind,
+              );
+              if (previous !== undefined) {
+                if (!same(expected, previous.before)) return true;
+                expected = previous.after;
+              }
+            }
+            return !same(
+              collections[snapshot.kind].get(working).find((entity) => entity.id === snapshot.id),
+              expected,
+            );
+          });
           if (stale) {
             return yield* conflict('Záznam se od návrhu změnil. Obnovte data a požádejte AI o nový návrh.');
           }
