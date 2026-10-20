@@ -17,6 +17,7 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'ChangePrice',
   'EditOrder',
   'RemoveDemoOrder',
+  'UpdateCategory',
 ]);
 const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
 

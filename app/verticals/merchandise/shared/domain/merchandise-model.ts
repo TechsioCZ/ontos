@@ -77,8 +77,16 @@ export const CatalogFieldsSchema = Schema.Struct({
   sourceUnit: Schema.optionalKey(Schema.String),
   imageSrc: Schema.optionalKey(Schema.String),
 });
+/** Storefront labels: akce / doporučujeme / výprodej / novinka. Absent means false. */
+export const CatalogFlagsSchema = Schema.Struct({
+  isAction: Schema.optionalKey(Schema.Boolean),
+  isRecommended: Schema.optionalKey(Schema.Boolean),
+  isSale: Schema.optionalKey(Schema.Boolean),
+  isNew: Schema.optionalKey(Schema.Boolean),
+});
 export const ProductVariantSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
+  ...CatalogFlagsSchema.fields,
   unit: Schema.optionalKey(Schema.String),
   active: Schema.optionalKey(Schema.Boolean),
   attributes: Schema.Trim.check(Schema.isMaxLength(1000)),
@@ -106,8 +114,36 @@ export const ImageRefSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.is
 const MeasurementSchema = Schema.OptionFromNullOr(
   Schema.Int.check(Schema.isBetween({ maximum: 1_000_000_000, minimum: 1 })),
 );
+/** One audited catalog-content change; `fields` are Czech field labels, `before`/`after` Czech summaries. */
+export const CatalogChangeSchema = Schema.Struct({
+  at: Schema.DateTimeUtcFromString,
+  actor: PrincipalRefSchema,
+  fields: Schema.Array(Schema.String),
+  before: Schema.String,
+  after: Schema.String,
+});
+export type CatalogChange = typeof CatalogChangeSchema.Type;
+/** Storefront category (AKROS source shape + optional audit history). `position` orders siblings ascending. */
+export const CatalogCategorySchema = Schema.Struct({
+  id: Schema.String,
+  parentId: Schema.NullOr(Schema.String),
+  name: TextSchema(200),
+  slug: TextSchema(200),
+  heading: Schema.String,
+  description: Schema.String,
+  longDescription: Schema.String,
+  position: Schema.Finite,
+  imageSrc: Schema.String,
+  imageAlt: Schema.String,
+  hasChildren: Schema.Boolean,
+  history: Schema.optionalKey(Schema.Array(CatalogChangeSchema)),
+});
+export type CatalogCategory = typeof CatalogCategorySchema.Type;
+
 export const ProductMetadataSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
+  /** Alt text of the main image (storefront `imageAlt`). The gallery is `images`; paragraphs derive from `description`. */
+  imageAlt: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
   sourceProductId: Schema.optionalKey(Schema.String),
   sourceGroupId: Schema.optionalKey(Schema.String),
   categoryId: Schema.optionalKey(Schema.String),
@@ -134,6 +170,8 @@ export const ProductMetadataSchema = Schema.Struct({
 export type ProductMetadata = typeof ProductMetadataSchema.Type;
 
 export const ProductSchema = Schema.Struct({
+  /** Catalog-content audit (name, descriptions, images, category, parameters, labels…), oldest first, max 50. */
+  contentHistory: Schema.optionalKey(Schema.Array(CatalogChangeSchema)),
   ...ProductMetadataSchema.fields,
   active: Schema.Boolean,
   category: TextSchema(120),
@@ -161,6 +199,7 @@ export const grossUnitPriceMinor = (netMinor: number, vatRate: number): number =
 /** Variant plus derived stock, availability and gross price. */
 export const VariantRecordSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
+  ...CatalogFlagsSchema.fields,
   unit: Schema.optionalKey(Schema.String),
   active: Schema.Boolean,
   attributes: Schema.String,
@@ -184,6 +223,9 @@ export const ProductRecordSchema = Schema.Struct({
   stockOnHand: Schema.Finite,
   stockValueMinor: Schema.Int,
   variantRecords: Schema.optionalKey(Schema.Array(VariantRecordSchema)),
+  /** Storefront-only derived fields: `description` split on blank lines, and `images` (or `[imageSrc]`). */
+  descriptionParagraphs: Schema.optionalKey(Schema.Array(Schema.String)),
+  gallery: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ProductRecord = typeof ProductRecordSchema.Type;
 

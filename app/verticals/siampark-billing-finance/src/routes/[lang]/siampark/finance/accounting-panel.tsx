@@ -25,13 +25,13 @@ const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 const FORMATS: readonly { readonly label: string; readonly value: AccountingExportFormat }[] = [
   { label: 'CSV (středník, UTF-8)', value: 'CSV' },
   { label: 'JSON', value: 'JSON' },
-  { label: 'Pohoda XML – SIMULACE', value: 'POHODA_XML_SIMULATION' },
+  { label: 'POHODA XML (dataPack 2.0)', value: 'POHODA_XML' },
 ];
 
 const MIME: Readonly<Record<AccountingExportFormat, string>> = {
   CSV: 'text/csv;charset=utf-8',
   JSON: 'application/json',
-  POHODA_XML_SIMULATION: 'application/xml',
+  POHODA_XML: 'application/xml',
 };
 
 const SETUP_FIELDS = [
@@ -272,7 +272,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
           <p className="text-fg-secondary text-sm">
             Vyberte potvrzené doklady. Balíček nese verzi schématu, identifikátory, protistranu, data, měnu, částky,
             objekt a odkaz na doklad.{' '}
-            {format === 'POHODA_XML_SIMULATION' && <SimulationBadge>SIMULACE formátu Pohoda</SimulationBadge>}
+            {format === 'POHODA_XML' && <SimulationBadge>SIMULACE formátu Pohoda</SimulationBadge>}
           </p>
           <FormCheckbox
             checked={onlyNew}
@@ -382,7 +382,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                         <span className="text-fg-secondary text-xs">
                           verze {entry.version} · schéma {entry.schemaVersion}
                         </span>
-                        {entry.format !== 'POHODA_XML_SIMULATION' &&
+                        {entry.format !== 'POHODA_XML' &&
                           !entry.content.includes('/cs/siampark/finance?resourceId=') && (
                             <span className="text-fg-secondary text-xs">
                               Historická verze bez webových odkazů. Použijte novější balíček; původní soubor i otisk
@@ -392,7 +392,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                       </span>
                     </Table.Cell>
                     <Table.Cell>
-                      {entry.format === 'POHODA_XML_SIMULATION' ? (
+                      {entry.format === 'POHODA_XML' ? (
                         <SimulationBadge>Pohoda XML – SIMULACE</SimulationBadge>
                       ) : (
                         entry.format

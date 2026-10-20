@@ -219,7 +219,27 @@ export const InvoiceReminderSchema = Schema.Struct({
   text: FinanceLongTextSchema,
 });
 export type InvoiceReminder = typeof InvoiceReminderSchema.Type;
+/** Czech company registration number (IČO), exactly 8 digits. */
+export const IssuerIcoSchema = Schema.String.check(Schema.isPattern(/^\d{8}$/u));
+/** Czech VAT id (DIČ): `CZ` followed by 8–10 digits. */
+export const IssuerVatIdSchema = Schema.String.check(Schema.isPattern(/^CZ\d{8,10}$/u));
+/** Accounting-unit identity of the selected legal entity; entered by an administrator, never invented. */
+export const AccountingIssuerFields = {
+  issuerCity: Schema.optionalKey(FinanceTextSchema),
+  issuerIco: Schema.optionalKey(IssuerIcoSchema),
+  issuerStreet: Schema.optionalKey(FinanceTextSchema),
+  issuerVatId: Schema.optionalKey(IssuerVatIdSchema),
+  issuerZip: Schema.optionalKey(FinanceTextSchema),
+};
+/** Counterparty identity the user saw in the party registry, sent with an export (POHODA partnerIdentity). */
+export const ExportCounterpartySchema = Schema.Struct({
+  city: Schema.optionalKey(FinanceTextSchema),
+  ico: Schema.optionalKey(IssuerIcoSchema),
+  vatId: Schema.optionalKey(IssuerVatIdSchema),
+});
+export type ExportCounterparty = typeof ExportCounterpartySchema.Type;
 export const AccountingSetupSchema = Schema.Struct({
+  ...AccountingIssuerFields,
   accountant: Schema.optionalKey(FinanceTextSchema),
   approvalDate: Schema.optionalKey(CalendarDateSchema),
   product: Schema.optionalKey(FinanceTextSchema),
@@ -229,9 +249,12 @@ export const AccountingSetupSchema = Schema.Struct({
   updatedByLabel: Schema.optionalKey(FinanceTextSchema),
 });
 export type AccountingSetup = typeof AccountingSetupSchema.Type;
-export const AccountingExportFormatSchema = Schema.Literals(['CSV', 'JSON', 'POHODA_XML_SIMULATION']);
+/** `POHODA_XML` is a STORMWARE POHODA XML import file (dataPack 2.0 with inv:invoice items). */
+export const AccountingExportFormatSchema = Schema.Literals(['CSV', 'JSON', 'POHODA_XML']);
 export type AccountingExportFormat = typeof AccountingExportFormatSchema.Type;
 export const ACCOUNTING_EXPORT_SCHEMA_VERSION = 'ontos-finance-export/1';
+/** Version of the STORMWARE POHODA XML `dat:dataPack` the POHODA_XML format produces. */
+export const POHODA_DATAPACK_VERSION = '2.0';
 /** A handover package for the accountant (S08). Never means "booked": at most "confirmed by the accountant". */
 export const AccountingExportSchema = Schema.Struct({
   ...ActorFields,
@@ -245,6 +268,9 @@ export const AccountingExportSchema = Schema.Struct({
   format: AccountingExportFormatSchema,
   id: FinanceTextSchema,
   invoiceResourceIds: Schema.Array(FinanceTextSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  /** Issuer snapshot at export time: the selected company's name and the IČO from the accounting setup. */
+  issuerIco: Schema.optionalKey(IssuerIcoSchema),
+  issuerName: Schema.optionalKey(FinanceTextSchema),
   schemaVersion: Schema.Literal(ACCOUNTING_EXPORT_SCHEMA_VERSION),
   sha256: FinanceTextSchema,
   status: Schema.Literals(['HANDED_OVER', 'CONFIRMED_BY_ACCOUNTANT']),

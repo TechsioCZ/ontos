@@ -45,6 +45,18 @@ export const BulkProductPatchSchema = Schema.Struct({
 });
 export type BulkProductPatch = typeof BulkProductPatchSchema.Type;
 
+/** Editable storefront category content. Slug and parent stay fixed (they are public URLs / the tree). */
+export const CategoryPatchSchema = Schema.Struct({
+  name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
+  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(5000))),
+  longDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(50_000))),
+  position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  imageSrc: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  imageAlt: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
+});
+export type CategoryPatch = typeof CategoryPatchSchema.Type;
+
 export const OrderLineRequestSchema = Schema.Struct({
   productId: ProductIdSchema,
   quantity: Schema.Finite.check(Schema.isGreaterThan(0)),
@@ -91,6 +103,11 @@ export const MerchandiseCommandSchema = Schema.Union([
     unit: ProductUnitSchema,
     vatRate: VatRateSchema,
   }),
+  /** Edits one storefront category; appends a history entry. A renamed category also renames its products' `category`. */
+  Schema.TaggedStruct('UpdateCategory', {
+    id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+    patch: CategoryPatchSchema,
+  }),
   Schema.TaggedStruct('UpdateProduct', {
     id: ProductIdSchema,
     patch: ProductPatchSchema,
@@ -130,7 +147,8 @@ export const MerchandiseCommandSchema = Schema.Union([
   /**
    * Guest DEMO order from the storefront. Idempotent by `clientRequestId`: a repeated id returns the stored order
    * (outcome REPLAYED) and saves nothing. Prices and availability are re-validated on the server; any mismatch
-   * returns outcome REJECTED with readable issues and the current prices, and saves nothing. Never moves stock.
+   * returns outcome REJECTED with readable issues and the current prices, and saves nothing. A PLACED order writes one
+   * negative ORDER stock movement per line (reference = order number) in the same save; cancelling returns it.
    */
   Schema.TaggedStruct('PlaceStorefrontOrder', {
     clientRequestId: Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120)),

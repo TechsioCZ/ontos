@@ -4,6 +4,7 @@ import { Schema } from 'effect';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import {
   MinorAmountSchema,
+  CatalogCategorySchema,
   OrderSchema,
   OrderStatusSchema,
   ProductIdSchema,
@@ -16,8 +17,56 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi'
 export { OrderSchema, ProductRecordSchema, ProductSchema, StockMovementSchema } from '../domain/merchandise-model.ts';
 export type { Order, OrderLine, Product, ProductRecord, StockMovement } from '../domain/merchandise-model.ts';
 
+/**
+ * Storefront catalog page (only with `storefront: true`). Filters combine with AND; `featured` lists the homepage
+ * products (`homepageFeaturedProductIds` order, then `isRecommended`). Defaults: page 1, pageSize 24, fields `full`,
+ * includeCategories true, source order unless `sort`. `availability` in-stock = IN_STOCK|LOW_STOCK,
+ * out-of-stock = OUT_OF_STOCK|UNKNOWN. `minMinor`/`maxMinor` compare the gross `grossPriceMinor`.
+ * `fields: 'card'` omits variantRecords, description, descriptionParagraphs and parameters (listing pages).
+ */
+export const StorefrontCatalogQuerySchema = Schema.Struct({
+  page: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  pageSize: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 250 }))),
+  slug: Schema.optionalKey(Schema.String),
+  categorySlug: Schema.optionalKey(Schema.String),
+  q: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  featured: Schema.optionalKey(Schema.Boolean),
+  label: Schema.optionalKey(Schema.Literals(['action', 'recommended', 'sale', 'new'])),
+  productIds: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMaxLength(200))),
+  minMinor: Schema.optionalKey(MinorAmountSchema),
+  maxMinor: Schema.optionalKey(MinorAmountSchema),
+  availability: Schema.optionalKey(Schema.Literals(['in-stock', 'out-of-stock'])),
+  sort: Schema.optionalKey(Schema.Literals(['name', 'price-asc', 'price-desc'])),
+  fields: Schema.optionalKey(Schema.Literals(['card', 'full'])),
+  includeCategories: Schema.optionalKey(Schema.Boolean),
+});
+export type StorefrontCatalogQuery = typeof StorefrontCatalogQuerySchema.Type;
+
+/** Customer-safe order status: no contact, address, lines or totals. `statusLabel` is Czech. */
+export const StorefrontOrderStatusSchema = Schema.Struct({
+  id: Schema.String,
+  number: Schema.String,
+  status: OrderStatusSchema,
+  statusLabel: Schema.String,
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+export type StorefrontOrderStatus = typeof StorefrontOrderStatusSchema.Type;
+
+/** Storefront status lookup: both the order id and the secret clientRequestId the storefront generated must match. */
+export const StorefrontOrderStatusLookupSchema = Schema.Struct({
+  orderId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  clientRequestId: Schema.String.check(Schema.isMinLength(8), Schema.isMaxLength(120)),
+});
+export type StorefrontOrderStatusLookup = typeof StorefrontOrderStatusLookupSchema.Type;
+
 /** Optional filters. Each field narrows only the collection it names; indicators ignore filters. */
 export const RecordsViewSchema = Schema.Struct({
+  /** Storefront catalog page; response adds total/page/pageSize/categories/homepageFeaturedProductIds. */
+  storefrontCatalog: Schema.optionalKey(StorefrontCatalogQuerySchema),
+  /** Storefront order status; response `orderStatus` (null when not found) and `products: []`. */
+  storefrontOrderStatus: Schema.optionalKey(StorefrontOrderStatusLookupSchema),
+  /** Staff reads: also return the company's storefront category tree as `categories`. */
+  includeCategories: Schema.optionalKey(Schema.Boolean),
   slug: Schema.optionalKey(Schema.String),
   categoryId: Schema.optionalKey(Schema.String),
   search: Schema.optionalKey(Schema.String),
@@ -37,6 +86,8 @@ export const RecordsViewSchema = Schema.Struct({
 export type RecordsView = typeof RecordsViewSchema.Type;
 
 export const MerchandiseStateSchema = Schema.Struct({
+  categories: Schema.optionalKey(Schema.Array(CatalogCategorySchema)),
+  homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(Schema.String)),
   movements: Schema.Array(StockMovementSchema),
   orders: Schema.Array(OrderSchema),
   products: Schema.Array(ProductSchema),
@@ -57,6 +108,12 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
  * - orderCount: all orders; openOrderValueMinor: totalMinor of NEW, CONFIRMED and SHIPPED orders
  */
 export const RecordsResponseSchema = Schema.Struct({
+  categories: Schema.optionalKey(Schema.Array(CatalogCategorySchema)),
+  homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(Schema.String)),
+  total: Schema.optionalKey(Schema.Int),
+  page: Schema.optionalKey(Schema.Int),
+  pageSize: Schema.optionalKey(Schema.Int),
+  orderStatus: Schema.optionalKey(Schema.NullOr(StorefrontOrderStatusSchema)),
   totalProducts: Schema.optionalKey(Schema.Int),
   actorPrincipalRef: PrincipalRefSchema,
   canWrite: Schema.Boolean,

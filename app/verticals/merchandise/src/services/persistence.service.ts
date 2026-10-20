@@ -47,6 +47,7 @@ import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '.
 import { merchandiseStates } from '../database/schema.ts';
 import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
+import { updateCategoryCommand } from './catalog-content.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -1190,6 +1191,7 @@ export const evolveMerchandiseState = (
     Match.tag('ChangeOrderStatus', (value) => changeOrderStatus(state, value, input)),
     Match.tag('PlaceStorefrontOrder', (value) => placeStorefrontOrder(state, value, input)),
     Match.tag('EditOrder', (value) => editOrder(state, value, input)),
+    Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
     Match.tag('RemoveDemoOrder', (value) =>
       Effect.gen(function* removeDemoOrder() {
         const order = state.orders.find((entry) => entry.id === value.id);

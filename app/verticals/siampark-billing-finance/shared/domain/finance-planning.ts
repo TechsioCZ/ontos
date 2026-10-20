@@ -9,6 +9,7 @@ import type {
 } from '../apis/records.ts';
 import { DateTime } from 'effect';
 import { ACCOUNTING_EXPORT_SCHEMA_VERSION } from '../apis/records.ts';
+import { buildPohodaDataPack } from './pohoda-xml.ts';
 
 /** Calendar date (YYYY-MM-DD) of the instant `epochMillis` in Europe/Prague. */
 export const pragueCalendarDate = (epochMillis: number): string =>
@@ -252,13 +253,28 @@ const csvCell = (value: string | number | undefined) => {
 
 const amount = (minor: number | undefined) => (minor === undefined ? '' : (minor / 100).toFixed(2));
 
-const xmlEscape = (value: string) =>
-  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+/** Accounting unit that issues / receives the exported invoices: the selected legal entity. */
+export interface ExportIssuer {
+  readonly city?: string;
+  readonly ico?: string;
+  readonly name?: string;
+  readonly street?: string;
+  readonly vatId?: string;
+  readonly zip?: string;
+}
+
+/** Registry identity of the invoice counterparty, when known. */
+export interface ExportPartnerIdentity {
+  readonly city?: string;
+  readonly ico?: string;
+  readonly vatId?: string;
+}
 
 export interface ExportMeta {
   readonly batchNumber: string;
   readonly createdAt: string;
   readonly createdBy: string;
+  readonly issuer?: ExportIssuer;
   readonly version: number;
 }
 
@@ -266,6 +282,7 @@ export interface ExportRow {
   readonly counterpartyName: string;
   readonly documentLink: string;
   readonly invoice: Invoice;
+  readonly partner?: ExportPartnerIdentity;
 }
 
 export const exportFileName = (format: AccountingExportFormat, meta: Pick<ExportMeta, 'batchNumber' | 'version'>) =>
@@ -276,7 +293,7 @@ const objectLabel = (invoice: Invoice) =>
     .filter((part) => part !== undefined)
     .join(' / ');
 
-/** Builds the exact handover file. The format version is part of every file; nothing claims a posting. */
+/** Builds the exact handover file. CSV/JSON carry the OntOS schema version; POHODA_XML is a STORMWARE dataPack. */
 export const buildAccountingExport = (
   format: AccountingExportFormat,
   rows: readonly ExportRow[],
@@ -363,25 +380,7 @@ export const buildAccountingExport = (
       2,
     )}\n`;
   }
-  const items = rows
-    .map(
-      ({ counterpartyName, invoice }) => `  <doklad id="${xmlEscape(invoice.ref.resourceId)}">
-    <cislo>${xmlEscape(invoice.number ?? invoice.documentNumber)}</cislo>
-    <typ>${invoice.direction === 'OUTGOING' ? 'issuedInvoice' : 'receivedInvoice'}</typ>
-    <partner>${xmlEscape(counterpartyName)}</partner>
-    <datumVystaveni>${invoice.issueDate}</datumVystaveni>
-    <datumSplatnosti>${invoice.dueDate}</datumSplatnosti>
-    <mena>${invoice.currency}</mena>
-    <celkem>${amount(invoice.totalMinor)}</celkem>
-  </doklad>`,
-    )
-    .join('\n');
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!-- SIMULACE: struktura inspirovaná importem Pohoda, neověřená proti schématu ani účetním systémem. -->
-<predavaciBalicek schema="${ACCOUNTING_EXPORT_SCHEMA_VERSION}" davka="${xmlEscape(meta.batchNumber)}" verze="${meta.version}" vytvoreno="${xmlEscape(meta.createdAt)}">
-${items}
-</predavaciBalicek>
-`;
+  return buildPohodaDataPack(rows, meta);
 };
 
 const czk = (minor: number) =>
