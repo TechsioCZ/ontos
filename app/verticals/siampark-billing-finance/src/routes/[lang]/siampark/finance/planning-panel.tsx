@@ -80,8 +80,12 @@ const PlanActualBars = ({
           <span className="flex flex-col gap-50">
             <span className="flex items-center gap-100">
               <span
-                className="h-3 rounded-sm bg-fg-secondary opacity-35"
-                style={{ width: `${Math.max(1, (row.planned / max) * 100)}%` }}
+                className="h-3 rounded-sm"
+                style={{
+                  background: 'var(--color-fg-secondary)',
+                  opacity: 0.35,
+                  width: `${Math.max(1, (row.planned / max) * 100)}%`,
+                }}
               />
               <span className="whitespace-nowrap text-fg-secondary text-xs tabular-nums">
                 plán {wholeKc(row.planned)}
@@ -89,8 +93,11 @@ const PlanActualBars = ({
             </span>
             <span className="flex items-center gap-100">
               <span
-                className={`h-3 rounded-sm ${row.over ? 'bg-danger' : 'bg-success'}`}
-                style={{ width: `${Math.max(1, (row.actual / max) * 100)}%` }}
+                className="h-3 rounded-sm"
+                style={{
+                  background: row.over ? 'var(--color-danger)' : 'var(--color-success)',
+                  width: `${Math.max(1, (row.actual / max) * 100)}%`,
+                }}
               />
               <span className="whitespace-nowrap text-xs tabular-nums">skutečnost {wholeKc(row.actual)}</span>
             </span>
@@ -430,7 +437,11 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                           </span>
                         </span>
                       </Table.Cell>
-                      <Table.Cell align="end" className={`tabular-nums ${over ? 'text-danger' : ''}`}>
+                      <Table.Cell
+                        align="end"
+                        className="tabular-nums"
+                        style={over ? { color: 'var(--color-danger)' } : undefined}
+                      >
                         {formatMoney(variance.differenceMinor)}
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">

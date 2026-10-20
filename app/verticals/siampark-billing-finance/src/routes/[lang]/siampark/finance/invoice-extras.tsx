@@ -600,7 +600,7 @@ export const CounterpartyHistory = ({ invoice, vm }: { readonly invoice: Invoice
       <div className="flex flex-col gap-100 text-sm">
         <span>
           {related.length} potvrzených dokladů · uhrazeno {paid} · po splatnosti{' '}
-          <strong className={overdue > 0 ? 'text-danger' : ''}>{overdue}</strong>
+          <strong style={overdue > 0 ? { color: 'var(--color-danger)' } : undefined}>{overdue}</strong>
         </span>
         <span>
           Celkem neuhrazeno <strong className="tabular-nums">{formatMoney(outstanding)}</strong>

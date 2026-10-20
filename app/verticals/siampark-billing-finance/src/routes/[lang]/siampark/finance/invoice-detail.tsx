@@ -23,6 +23,7 @@ import {
 } from './invoice-view.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import {
   CounterpartyHistory,
   InvoiceDocuments,
@@ -298,6 +299,42 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
           </SectionCard>
           <SectionCard title={t(`${ns}.columns.status`)}>
             <StatusBadge kind={status.kind} value={status.value} />
+            {!incoming && (
+              <div className="print:hidden">
+                <SelectTemplate
+                  disabled={!canWrite || !isDraft || busy}
+                  items={Object.entries(DOCUMENT_KIND_LABEL).map(([value, label]) => ({
+                    displayValue: label,
+                    label,
+                    value,
+                  }))}
+                  label="Druh dokladu"
+                  labelProps={{ className: 'font-label text-label-sm' }}
+                  onValueChange={({ value }) => {
+                    const [next] = value;
+                    if (
+                      next === 'STANDARD' ||
+                      next === 'ADVANCE' ||
+                      next === 'PARTIAL' ||
+                      next === 'FINAL' ||
+                      next === 'RECURRING'
+                    ) {
+                      void vm.execute(
+                        { _tag: 'SetInvoiceDetails', documentKind: next, invoiceRef: invoice.ref },
+                        'Druh dokladu uložen',
+                      );
+                    }
+                  }}
+                  size="sm"
+                  value={[invoice.documentKind ?? 'STANDARD']}
+                />
+                {(invoice.documentKind === 'FINAL' || invoice.documentKind === 'PARTIAL') && (
+                  <p className="mt-100 text-fg-secondary text-xs">
+                    Zohlednění dříve uhrazených záloh potvrzuje účetní ručně; OntOS daňové vyúčtování neprovádí.
+                  </p>
+                )}
+              </div>
+            )}
           </SectionCard>
           <div className="print:hidden">
             <InvoiceHandover invoice={invoice} vm={vm} />
