@@ -256,12 +256,12 @@ const CZ_MONTHS: readonly string[] = [
   'pro',
 ];
 const STAGE_LABELS = {
-  LEAD: 'Lead',
-  LOST: 'Prohráno',
+  LEAD: 'Nová',
+  LOST: 'Prohraná',
   NEGOTIATION: 'Vyjednávání',
   PROPOSAL: 'Nabídka',
-  QUALIFIED: 'Kvalifikace',
-  WON: 'Vyhráno',
+  QUALIFIED: 'Kvalifikovaná',
+  WON: 'Vyhraná',
 } as const satisfies Record<OpportunityStage, string>;
 
 const SOURCE_INVOICES = 'siampark-billing-finance · invoices';

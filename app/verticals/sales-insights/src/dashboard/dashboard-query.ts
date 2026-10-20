@@ -60,6 +60,7 @@ export const loadDashboard = Effect.gen(function* loadDashboardEffect() {
           Effect.map((response) => response.items),
         ),
       ),
+      // Keep this consumer rebuilt with the work contract: referenceDate is a calendar date, not a seed-day literal.
       tasks: settleDashboardSource(listTasks({}).pipe(Effect.map((response) => response.items))),
     },
     { concurrency: 3 },
@@ -73,7 +74,12 @@ export const loadDashboard = Effect.gen(function* loadDashboardEffect() {
     products: [],
     tasks: result.tasks.items,
   };
-  const today = yield* DateTime.now.pipe(Effect.map(DateTime.formatIsoDateUtc));
+  // Use the same Prague business day as the work producer (including around UTC midnight).
+  const today = yield* DateTime.now.pipe(
+    Effect.map((now) =>
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(DateTime.toDateUtc(now)),
+    ),
+  );
   return dashboardValues(
     inputs,
     { invoices: result.invoices.state, opportunities: result.opportunities.state, tasks: result.tasks.state },

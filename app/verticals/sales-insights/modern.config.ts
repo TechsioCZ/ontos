@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
@@ -31,6 +32,11 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import developmentOverlay from '../../topology/local-overlays/development.json';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 
+// Cross-vertical clients are compiled into this remote. Invalidate persisted bundles when the producer's wire
+// contract changes (notably work.referenceDate), even when this remote's own source is otherwise unchanged.
+const workContractDigest = createHash('sha256')
+  .update(readFileSync(new URL('../siampark-work/shared/apis/records.ts', import.meta.url)))
+  .digest('hex');
 const appId = 'sales-insights';
 const cloudflareWorkerName = 'app-sales-insights';
 const HttpUrlSchema = URLFromString.check(
@@ -233,7 +239,7 @@ export default defineConfig(
       },
       performance: {
         buildCache: {
-          cacheDigest: [appId, buildTarget],
+          cacheDigest: [appId, buildTarget, workContractDigest],
           cacheDirectory: buildCacheDirectory,
         },
       },
