@@ -54,7 +54,7 @@ it.effect('audiences without a gateway-grant identity register nothing', () =>
       statements.push({ params, sql });
       return Effect.succeed([]);
     });
-    expect(result._tag).toBe('Success');
+    expect(Exit.isSuccess(result)).toBe(true);
     expect(statements).toEqual([]);
   }),
 );
@@ -67,8 +67,8 @@ it.effect('a party-registry grant runs one register call with the exact token an
       statements.push({ params, sql });
       return Effect.succeed([]);
     };
-    expect((yield* registerWith(grant('party-registry'), record)).result._tag).toBe('Success');
-    expect((yield* registerWith(grant('party-registry', legalEntityId), record)).result._tag).toBe('Success');
+    expect(Exit.isSuccess((yield* registerWith(grant('party-registry'), record)).result)).toBe(true);
+    expect(Exit.isSuccess((yield* registerWith(grant('party-registry', legalEntityId), record)).result)).toBe(true);
     const registerSql =
       'select trust.register_gateway_scope_grant($1, $2, $3::uuid, $4::uuid, $5::uuid, $6::uuid, to_timestamp($7))';
     const fixed = [

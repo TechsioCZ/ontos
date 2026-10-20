@@ -306,8 +306,14 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
     let databaseCalls = 0;
     const stages: string[] = [];
     const database = {
-      executor: yield* makeTestDatabase(() => {
-        databaseCalls += 1;
+      executor: yield* makeTestDatabase((text) => {
+        if (text.includes('current_setting')) {
+          return Effect.succeed([{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
+        }
+        // Count persistence calls, not transaction controls or scope installation for denial evidence.
+        if (!/^(?:BEGIN|COMMIT|ROLLBACK)$/iu.test(text) && !text.includes('set_config')) {
+          databaseCalls += 1;
+        }
         return Effect.succeed([]);
       }),
     };

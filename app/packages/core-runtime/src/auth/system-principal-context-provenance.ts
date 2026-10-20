@@ -2,6 +2,10 @@ import { Data, Effect, Schema } from 'effect';
 import type { Redacted } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
+import {
+  readPrincipalContextProvenanceSeal,
+  sealPrincipalContextProvenance,
+} from './principal-context-provenance-seal.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 
 const SystemPrincipalContextSchema = Schema.Struct({
@@ -47,25 +51,18 @@ type PrincipalContextProvenanceToken =
   | typeof systemProvenance
   | typeof redeemedGatewayProvenance;
 
-interface PrincipalContextProvenance {
+export interface PrincipalContextProvenance {
   readonly actionRegistration?: object;
   readonly redeemedGateway?: RedeemedGatewayProvenance;
   readonly token: PrincipalContextProvenanceToken;
 }
-
-/**
- * Provenance keyed by the exact carrier object this module created. Nothing outside the module can
- * add an entry, and a copy of a carrier (spread, decode, structured clone) is a new object without one.
- */
-// oxlint-disable-next-line effect-native/no-unmanaged-mutable-state -- WeakMap entries are transient capability metadata keyed by carrier objects.
-const principalContextProvenance = new WeakMap<object, PrincipalContextProvenance>();
 
 const attachPrincipalContextProvenance = <Context extends TrustedPrincipalContext>(
   context: Context,
   provenance: PrincipalContextProvenance,
 ): Context => {
   const carrier = { ...context };
-  principalContextProvenance.set(carrier, Object.freeze(provenance));
+  sealPrincipalContextProvenance(carrier, provenance);
   return Object.isFrozen(context) ? Object.freeze(carrier) : carrier;
 };
 
@@ -76,7 +73,7 @@ const readPrincipalContextProvenance = <Context>(
   if (!Schema.is(TrustedPrincipalContextSchema)(context)) {
     return undefined;
   }
-  const provenance = principalContextProvenance.get(context);
+  const provenance = readPrincipalContextProvenanceSeal(context);
   return provenance?.token === token ? provenance : undefined;
 };
 

@@ -223,7 +223,15 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
   Effect.gen(function* denyBeforeOwnerResolution() {
     let businessChecks = 0;
     const stages: string[] = [];
-    const database = { executor: yield* makeTestDatabase(() => Effect.succeed([])) };
+    const database = {
+      executor: yield* makeTestDatabase((text) =>
+        Effect.succeed(
+          text.includes('current_setting')
+            ? [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]
+            : [],
+        ),
+      ),
+    };
     const runtime = makeReadRuntime(
       database,
       openModuleEntrypointGateway,

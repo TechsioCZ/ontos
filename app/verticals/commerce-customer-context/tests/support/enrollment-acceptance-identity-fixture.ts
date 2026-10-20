@@ -138,6 +138,8 @@ export interface EnrollmentAcceptanceIdentityFixture {
   readonly identityServicesLive: Layer.Layer<AuthenticationNamespaceRegistry | ContextAccess>;
   readonly registry: AuthenticationNamespaceRegistryService;
   readonly runtime: (typeof ActionRuntime)['Service'];
+  /** Runtime-role handle that owner repositories run through, as in production. */
+  readonly runtimeDatabase: CoreDatabaseHandle;
   /** The production operational-scope resolver over the real `core` tables. */
   readonly scopeResolver: OperationalScopeResolverService;
   readonly tenantId: string;
@@ -304,6 +306,7 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       identityServicesLive,
       registry: Context.get(context, AuthenticationNamespaceRegistry),
       runtime: Context.get(context, ActionRuntime),
+      runtimeDatabase,
       scopeResolver: Context.get(context, OperationalScopeResolver),
       tenantId,
     } satisfies EnrollmentAcceptanceIdentityFixture;
@@ -381,13 +384,16 @@ export const reserveBinding = (
   subject: CommercePortalAccountSubject,
   displayName: string,
 ) =>
-  withRepository(fixture.admin, fixtureRepositoryScope(fixture, `reserve-${subject.providerSubjectId}`), (repository) =>
-    repository.prepare({
-      displayName,
-      invocationId: randomUUID(),
-      subject: coreSubject(subject),
-      tenantId: fixture.tenantId,
-    }),
+  withRepository(
+    fixture.runtimeDatabase,
+    fixtureRepositoryScope(fixture, `reserve-${subject.providerSubjectId}`),
+    (repository) =>
+      repository.prepare({
+        displayName,
+        invocationId: randomUUID(),
+        subject: coreSubject(subject),
+        tenantId: fixture.tenantId,
+      }),
   );
 
 export const activateBinding = (
@@ -395,7 +401,7 @@ export const activateBinding = (
   authBindingId: string,
   expectedRevision: number,
 ) =>
-  withRepository(fixture.admin, fixtureRepositoryScope(fixture, `activate-${authBindingId}`), (repository) =>
+  withRepository(fixture.runtimeDatabase, fixtureRepositoryScope(fixture, `activate-${authBindingId}`), (repository) =>
     repository.activate({ authBindingId, expectedRevision, invocationId: randomUUID(), tenantId: fixture.tenantId }),
   );
 
@@ -405,7 +411,7 @@ export const changeBindingStatus = (
   expectedRevision: number,
   requestedStatus: ChangeExternalIdentityStatusInput['requestedStatus'],
 ) =>
-  withRepository(fixture.admin, fixtureRepositoryScope(fixture, `status-${authBindingId}`), (repository) =>
+  withRepository(fixture.runtimeDatabase, fixtureRepositoryScope(fixture, `status-${authBindingId}`), (repository) =>
     repository.changeStatus({
       authBindingId,
       expectedRevision,

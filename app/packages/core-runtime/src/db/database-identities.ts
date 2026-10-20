@@ -1,12 +1,14 @@
-import { Option, Schema } from 'effect';
+import { fromUndefinedOr } from 'effect/Option';
+import type { Option } from 'effect/Option';
+import { Literals } from 'effect/Schema';
 
-export const DatabaseScopeAuthoritySchema = Schema.Literals(['gateway_grant', 'session_setting', 'none']);
+export const DatabaseScopeAuthoritySchema = Literals(['gateway_grant', 'session_setting', 'none']);
 export type DatabaseScopeAuthority = typeof DatabaseScopeAuthoritySchema.Type;
 
-export const DatabaseTablePrivilegeSchema = Schema.Literals(['select', 'insert', 'update', 'delete']);
+const DatabaseTablePrivilegeSchema = Literals(['select', 'insert', 'update', 'delete']);
 export type DatabaseTablePrivilege = typeof DatabaseTablePrivilegeSchema.Type;
 
-export const DatabaseIdentityIdSchema = Schema.Literals([
+export const DatabaseIdentityIdSchema = Literals([
   'shared_runtime',
   'shell_gateway_issuer',
   'party_registry_request',
@@ -14,7 +16,7 @@ export const DatabaseIdentityIdSchema = Schema.Literals([
 ]);
 export type DatabaseIdentityId = typeof DatabaseIdentityIdSchema.Type;
 
-export const DatabaseUrlKeySchema = Schema.Literals([
+export const DatabaseUrlKeySchema = Literals([
   'DATABASE_URL',
   'SHELL_GATEWAY_ISSUER_DATABASE_URL',
   'PARTY_REGISTRY_DATABASE_URL',
@@ -137,8 +139,8 @@ export const DATABASE_IDENTITIES: readonly DatabaseIdentity[] = Object.freeze([
   PARTY_REGISTRY_WORKER_IDENTITY,
 ]);
 
-export const gatewayScopeGrantRoleForAudience = (audience: string): Option.Option<string> =>
-  Option.fromUndefinedOr(
+export const gatewayScopeGrantRoleForAudience = (audience: string): Option<string> =>
+  fromUndefinedOr(
     DATABASE_IDENTITIES.find(
       (identity) => identity.scopeAuthority === 'gateway_grant' && identity.gatewayScopeAudiences.includes(audience),
     )?.role,
