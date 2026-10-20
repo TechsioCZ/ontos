@@ -27,6 +27,10 @@ interface Variant {
   priceTiers: Tier[];
   parameters: Parameter[];
   imageSrc?: string;
+  isAction: boolean;
+  isRecommended: boolean;
+  isSale: boolean;
+  isNew: boolean;
 }
 interface SourceProduct {
   id: string;
@@ -40,8 +44,9 @@ interface SourceProduct {
   minimumQuantity: number;
   packageQuantity?: number;
   stockCount: number;
-  unit: Encoded['products'][number]['unit'];
+  unit: string;
   imageSrc: string;
+  imageAlt: string;
   secondaryImageSrc?: string;
   featuredPosition: number | null;
   isAction: boolean;
@@ -55,6 +60,13 @@ interface Category {
   parentId: string | null;
   name: string;
   slug: string;
+  heading?: string;
+  description?: string;
+  longDescription?: string;
+  position?: number;
+  imageSrc?: string;
+  imageAlt?: string;
+  hasChildren?: boolean;
 }
 const catalog = JSON.parse(
   readFileSync(
@@ -80,62 +92,9 @@ const pathFor = (id: string): string[] => {
   }
   return path;
 };
-const mainSlugs = [
-  'srouby',
-  'matice',
-  'podlozky',
-  'zavitove-tyce-a-svorniky',
-  'vruty',
-  'koliky',
-  'nyty',
-  'bezpecnostni-srouby-a-vruty',
-  'ostatni-spojovaci-material',
-  'lanaretezypantyjachtdopln',
-  'kotevni-technikalepidla',
-  'naradi-a-prislusenstvi',
-  'maziva',
-  'solar-system',
-  'nerez-cerny-design',
-  'plechy',
-  'trubky',
-  'profily',
-  'tyce',
-  'kolena',
-  'priruby',
-  'armatury-1',
-  'potravinarske-armatury',
-  'prislusenstvi',
-  'mazaci-hlavice',
-  'matice-km-a-podlozky-mb',
-];
-const selected = new Map<string, SourceProduct>();
-const add = (product: SourceProduct) => selected.set(product.id, product);
-// Preserve every homepage promotion/featured group, then spread the remaining budget across navigation.
-for (const product of catalog.products) {
-  if (
-    catalog.homepageFeaturedProductIds.includes(product.id) ||
-    product.featuredPosition !== null ||
-    product.isNew ||
-    product.isRecommended ||
-    product.isSale ||
-    product.isAction
-  )
-    add(product);
-}
-const buckets = mainSlugs.map((slug) => {
-  const category = categories.find((entry) => entry.slug === slug);
-  return category === undefined
-    ? []
-    : catalog.products.filter((product) => pathFor(product.categoryId).includes(category.id));
-});
-for (let index = 0; selected.size < 230 && index < catalog.products.length; index += 1) {
-  for (const bucket of buckets) {
-    const product = bucket[index];
-    if (product !== undefined) add(product);
-    if (selected.size >= 230) break;
-  }
-}
-export const akrosSourceProducts = [...selected.values()];
+const productUnitOf = (unit: string): Encoded['products'][number]['unit'] => (unit === 'm' || unit === 'tab' || unit === 'set' ? unit : 'ks');
+// Import every source group; never silently curate the live owner catalog.
+export const akrosSourceProducts = catalog.products;
 const at = '2026-10-19T08:00:00.000Z';
 const fieldsFor = (source: {
   minimumQuantity: number;
@@ -164,7 +123,7 @@ export const buildAkrosEncoded = (): Encoded => {
     name: product.name,
     sku: product.sku,
     slug: product.slug,
-    unit: product.unit,
+    unit: productUnitOf(product.unit),
     vatRate: 21,
     lowStockThreshold: 5,
     published: true,
@@ -177,6 +136,9 @@ export const buildAkrosEncoded = (): Encoded => {
     isRecommended: product.isRecommended,
     isSale: product.isSale,
     isNew: product.isNew,
+    shortDescription: product.description.slice(0, 500),
+    imageSrc: product.imageSrc,
+    imageAlt: product.imageAlt.slice(0, 300),
     description: product.detail.descriptionParagraphs.join('\n\n') || product.description,
     images: [product.imageSrc, ...(product.secondaryImageSrc === undefined ? [] : [product.secondaryImageSrc])],
     variants: product.detail.variants.map((variant) => ({
@@ -194,6 +156,10 @@ export const buildAkrosEncoded = (): Encoded => {
       imageSrc: variant.imageSrc ?? product.imageSrc,
       priceMinor: variant.priceTiers[0]?.priceExcludingVatMinor ?? Math.round(variant.priceMinor / 1.21),
       priceHistory: [],
+      isAction: variant.isAction,
+      isRecommended: variant.isRecommended,
+      isSale: variant.isSale,
+      isNew: variant.isNew,
     })),
   }));
   const movements: Encoded['movements'] = akrosSourceProducts.flatMap((product) => {
@@ -257,5 +223,20 @@ export const buildAkrosEncoded = (): Encoded => {
       history: [{ kind: 'CREATED', at, actorLabel: 'Zákazník – AKROS (DEMO)', after: status }],
     };
   });
-  return { products, movements, orders };
+  return {
+    products,
+    movements,
+    orders,
+    categories: categories.map((category) => ({
+      ...category,
+      heading: category.heading ?? category.name,
+      description: category.description ?? '',
+      longDescription: category.longDescription ?? '',
+      position: category.position ?? 0,
+      imageSrc: category.imageSrc ?? '',
+      imageAlt: category.imageAlt ?? category.name,
+      hasChildren: category.hasChildren ?? false,
+    })),
+    homepageFeaturedProductIds: catalog.homepageFeaturedProductIds,
+  };
 };
