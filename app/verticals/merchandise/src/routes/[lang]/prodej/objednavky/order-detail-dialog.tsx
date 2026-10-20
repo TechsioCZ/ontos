@@ -49,36 +49,46 @@ const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
     );
   }
   return (
-    <ol aria-label="Průběh objednávky" className="grid grid-cols-5 gap-100">
-      {workflowSteps.map((step, index) => {
-        const done = index < current;
-        const active = index === current;
-        return (
-          <li className="flex min-w-0 flex-col items-center gap-50 text-center" key={step.status}>
-            <span
-              aria-current={active ? 'step' : undefined}
-              style={{ height: 28, width: 28 }}
-              className={[
-                'flex items-center justify-center rounded-full border font-semibold text-xs',
-                active
-                  ? 'border-transparent bg-bg-primary-base text-fg-reverse'
-                  : done
-                    ? 'border-transparent bg-bg-success text-fg-reverse'
-                    : 'border-border-primary text-fg-secondary',
-              ].join(' ')}
-            >
-              {done ? '✓' : index + 1}
-            </span>
-            <span
-              className={`text-xs leading-tight ${active ? 'font-semibold' : 'text-fg-secondary'}`}
-              style={{ overflowWrap: 'anywhere', width: '100%' }}
-            >
-              {step.label}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
+    <>
+      <style>{`
+        @media (max-width: 639px) {
+          .merchandise-order-workflow { grid-template-columns: 1fr; }
+          .merchandise-order-workflow > li { flex-direction: row; gap: 8px; text-align: left; }
+          .merchandise-order-workflow > li > span:first-child { flex-shrink: 0; }
+          .merchandise-order-workflow > li > span:last-child { width: auto !important; overflow-wrap: normal !important; }
+        }
+      `}</style>
+      <ol aria-label="Průběh objednávky" className="merchandise-order-workflow grid grid-cols-5 gap-100">
+        {workflowSteps.map((step, index) => {
+          const done = index < current;
+          const active = index === current;
+          return (
+            <li className="flex min-w-0 flex-col items-center gap-50 text-center" key={step.status}>
+              <span
+                aria-current={active ? 'step' : undefined}
+                style={{ height: 28, width: 28 }}
+                className={[
+                  'flex items-center justify-center rounded-full border font-semibold text-xs',
+                  active
+                    ? 'border-transparent bg-bg-primary-base text-fg-reverse'
+                    : done
+                      ? 'border-transparent bg-bg-success text-fg-reverse'
+                      : 'border-border-primary text-fg-secondary',
+                ].join(' ')}
+              >
+                {done ? '✓' : index + 1}
+              </span>
+              <span
+                className={`text-xs leading-tight ${active ? 'font-semibold' : 'text-fg-secondary'}`}
+                style={{ overflowWrap: 'anywhere', width: '100%' }}
+              >
+                {step.label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 };
 
@@ -295,13 +305,22 @@ export const OrderDetailDialog = ({
                   ]),
               ...(order.shipping === undefined
                 ? []
-                : [{ label: 'Doprava', value: `${akros ? order.shipping.label.replace("Kavárna Doma, Brno", "AKROS") : order.shipping.label} · ${formatMoney(order.shipping.priceMinor)}` }]),
+                : [
+                    {
+                      label: 'Doprava',
+                      value: `${akros ? order.shipping.label.replace('Kavárna Doma, Brno', 'AKROS') : order.shipping.label} · ${formatMoney(order.shipping.priceMinor)}`,
+                    },
+                  ]),
               ...(storefront ? [{ label: 'Platba', value: 'Nic neplatíte (DEMO)' }] : []),
               ...(order.note === undefined || order.note === '' ? [] : [{ label: 'Poznámka', value: order.note }]),
               {
                 label: t('merchandise.pages.orders.detail.source'),
                 value: storefront ? (
-                  akros ? 'E-shop AKROS (DEMO)' : 'E-shop Kavárna Doma (DEMO)'
+                  akros ? (
+                    'E-shop AKROS (DEMO)'
+                  ) : (
+                    'E-shop Kavárna Doma (DEMO)'
+                  )
                 ) : order.opportunityId === undefined ? (
                   t('merchandise.pages.orders.source.manual')
                 ) : (
