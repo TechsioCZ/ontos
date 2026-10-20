@@ -75,30 +75,34 @@ const PlanActualBars = ({
   return (
     <ul aria-label="Plán a skutečnost podle kategorií" className="flex flex-col gap-150">
       {rows.map((row) => (
-        <li className="grid grid-cols-[10rem_1fr] items-center gap-200 text-sm" key={row.label}>
+        <li className="grid grid-cols-1 items-center gap-100 text-sm md:grid-cols-[10rem_1fr]" key={row.label}>
           <span className="truncate">{row.label}</span>
-          <span className="flex flex-col gap-50">
-            <span className="flex items-center gap-100">
-              <span
-                className="h-3 rounded-sm"
-                style={{
-                  background: 'var(--color-fg-secondary)',
-                  opacity: 0.35,
-                  width: `${Math.max(1, (row.planned / max) * 100)}%`,
-                }}
-              />
+          <span className="flex min-w-0 flex-col gap-50">
+            <span className="grid items-center gap-100" style={{ gridTemplateColumns: 'minmax(0, 1fr) 10rem' }}>
+              <span className="min-w-0" title={`Plán: ${formatMoney(row.planned)}`}>
+                <span
+                  className="block h-3 rounded-sm"
+                  style={{
+                    background: 'var(--color-fg-secondary)',
+                    opacity: 0.35,
+                    width: `${Math.max(0, (row.planned / max) * 100)}%`,
+                  }}
+                />
+              </span>
               <span className="whitespace-nowrap text-fg-secondary text-xs tabular-nums">
                 plán {wholeKc(row.planned)}
               </span>
             </span>
-            <span className="flex items-center gap-100">
-              <span
-                className="h-3 rounded-sm"
-                style={{
-                  background: row.over ? 'var(--color-danger)' : 'var(--color-success)',
-                  width: `${Math.max(1, (row.actual / max) * 100)}%`,
-                }}
-              />
+            <span className="grid items-center gap-100" style={{ gridTemplateColumns: 'minmax(0, 1fr) 10rem' }}>
+              <span className="min-w-0" title={`Skutečnost: ${formatMoney(row.actual)}`}>
+                <span
+                  className="block h-3 rounded-sm"
+                  style={{
+                    background: row.over ? 'var(--color-danger)' : 'var(--color-success)',
+                    width: `${Math.max(0, (row.actual / max) * 100)}%`,
+                  }}
+                />
+              </span>
               <span className="whitespace-nowrap text-xs tabular-nums">skutečnost {wholeKc(row.actual)}</span>
             </span>
           </span>
@@ -267,7 +271,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             ` Počáteční stav k ${formatDate(opening.openingDate)} potvrdil(a) ${opening.actorLabel ?? 'uživatel'} ${at(opening.confirmedAt)}.`}
         </StatusText>
         {months.length > 0 && (
-          <div className="grid grid-cols-1 gap-250 xl:grid-cols-[3fr_2fr]">
+          <div className="grid grid-cols-1 gap-250">
             <div className="flex flex-col gap-100">
               <span className="font-medium text-sm">Příjmy a výdaje</span>
               <Chart

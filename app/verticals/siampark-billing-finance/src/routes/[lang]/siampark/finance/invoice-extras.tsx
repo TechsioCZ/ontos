@@ -342,7 +342,13 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
         placement="center"
         role={confirming ? 'alertdialog' : 'dialog'}
         size="sm"
-        title={confirming ? 'Potvrdit přijetí platby?' : 'Zaznamenat úhradu'}
+        title={
+          confirming
+            ? invoice.direction === 'INCOMING'
+              ? 'Potvrdit odeslání platby?'
+              : 'Potvrdit přijetí platby?'
+            : 'Zaznamenat úhradu'
+        }
       >
         {confirming ? (
           <dl className="grid grid-cols-[auto_1fr] gap-x-300 gap-y-100 text-sm">
@@ -352,7 +358,7 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
             <dd className="font-semibold tabular-nums">{formatMoney(amountMinor ?? 0)}</dd>
             <dt className="text-fg-secondary">Datum úhrady</dt>
             <dd>{formatDate(paidOn)}</dd>
-            <dt className="text-fg-secondary">Po zaúčtování zbývá</dt>
+            <dt className="text-fg-secondary">Po potvrzení úhrady zbývá</dt>
             <dd className="tabular-nums">{formatMoney(remaining - (amountMinor ?? 0))}</dd>
           </dl>
         ) : (

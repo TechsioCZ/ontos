@@ -292,9 +292,10 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                     </Table.Cell>
                     <Table.Cell align="end">
                       {vm.canWrite && (
-                        <span className="flex justify-end gap-50">
+                        <span className="flex flex-wrap justify-end gap-50">
                           {template.active && (
                             <Button
+                              className="whitespace-nowrap"
                               disabled={running}
                               onClick={() => void generate([template])}
                               size="sm"

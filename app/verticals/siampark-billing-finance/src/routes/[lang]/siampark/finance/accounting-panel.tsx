@@ -390,7 +390,23 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                     )}
                   </Table.Cell>
                   <Table.Cell align="end" className="tabular-nums">
-                    {entry.invoiceResourceIds.length}
+                    <details>
+                      <summary className="cursor-pointer whitespace-nowrap text-sm">
+                        Doklady ({entry.invoiceResourceIds.length})
+                      </summary>
+                      <ul className="flex flex-col gap-50 py-100 text-xs">
+                        {entry.invoiceResourceIds.map((id) => {
+                          const invoice = state?.invoices.find((item) => item.ref.resourceId === id);
+                          return (
+                            <li key={id}>
+                              <a className="whitespace-nowrap underline" href={`?resourceId=${encodeURIComponent(id)}`}>
+                                {invoice?.number ?? invoice?.documentNumber ?? 'Doklad není dostupný'}
+                              </a>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </details>
                   </Table.Cell>
                   <Table.Cell>
                     <span className="flex flex-col">

@@ -153,6 +153,11 @@ const RecordsPageContent = () => {
                 {t(`${ns}.referencesError`)}
               </StatusText>
             )}
+            {vm.snapshot === undefined && feedback === 'loading' && (
+              <StatusText showIcon status="default">
+                Načítám finanční evidenci…
+              </StatusText>
+            )}
             <Tabs onValueChange={setTab} size="sm" value={tab} variant="line">
               <Tabs.List>
                 <Tabs.Trigger value="faktury">Faktury</Tabs.Trigger>
@@ -165,13 +170,13 @@ const RecordsPageContent = () => {
                 <FinanceInvoiceTable vm={vm} />
               </Tabs.Content>
               <Tabs.Content className="pt-250" value="opakovane">
-                {tab === 'opakovane' && <RecurringPanel vm={vm} />}
+                {tab === 'opakovane' && vm.snapshot !== undefined && <RecurringPanel vm={vm} />}
               </Tabs.Content>
               <Tabs.Content className="pt-250" value="predani">
-                {tab === 'predani' && <AccountingPanel vm={vm} />}
+                {tab === 'predani' && vm.snapshot !== undefined && <AccountingPanel vm={vm} />}
               </Tabs.Content>
               <Tabs.Content className="pt-250" value="plan">
-                {tab === 'plan' && <PlanningPanel vm={vm} />}
+                {tab === 'plan' && vm.snapshot !== undefined && <PlanningPanel vm={vm} />}
               </Tabs.Content>
             </Tabs>
           </>
