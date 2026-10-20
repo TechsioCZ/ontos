@@ -622,6 +622,7 @@ export const AssetDetailPanel = ({
           </>
         )
       }
+      className="lg:min-w-[62rem]"
       closeOnInteractOutside={mode.kind === 'view'}
       description={
         <span className="flex flex-wrap items-center gap-100">
