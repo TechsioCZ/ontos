@@ -391,7 +391,7 @@ export const DocumentFormPanel = ({
           value={description}
         />
 
-        <fieldset className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+        <fieldset className="siampark-document-fieldset flex flex-col gap-150 rounded-lg border border-border-primary p-200">
           <legend className="px-50 font-semibold text-sm">{t(`${k}.fields.links`)}</legend>
           <p className="text-fg-secondary text-xs">{t(`${k}.create.linksHelp`)}</p>
           {links.length > 0 && (
@@ -465,8 +465,8 @@ export const DocumentFormPanel = ({
               value={[]}
             />
           )}
-          <div className="flex items-end gap-100">
-            <div className="flex-1">
+          <div className="siampark-document-counterparty">
+            <div>
               <FormInput
                 autoComplete="off"
                 id="document-tenant"
@@ -500,7 +500,7 @@ export const DocumentFormPanel = ({
         </fieldset>
 
         {isContractCategory(category) && (
-          <fieldset className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+          <fieldset className="siampark-document-fieldset flex flex-col gap-150 rounded-lg border border-border-primary p-200">
             <legend className="px-50 font-semibold text-sm">{t(`${k}.contract.section`)}</legend>
             {category === 'amendment' && (
               <Select

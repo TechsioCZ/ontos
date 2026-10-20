@@ -309,7 +309,7 @@
     "leases": {
       "label": "Aktivní nájmy",
       "definition": "Právě probíhající nájmy a pobyty ve stavu Aktivní (začátek nejpozději dnes, konec až po dnešku). Rozkliknutí ukazuje přesně započtené záznamy; potvrzené budoucí nájmy jsou jen doplňkový údaj.",
-      "secondary": "+ {{confirmed}} potvrzených budoucích"
+      "secondary": "Potvrzené budoucí nájmy: {{confirmed}}"
     },
     "overdueInvoices": {
       "label": "Faktury po splatnosti",

@@ -16,6 +16,7 @@ import type {
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import type { CommandOutcome, FailureReason } from '../../../../../ui/use-agenda.ts';
 import type { OpsCommand } from '../../../../../../shared/agendas.ts';
+import { quantityUnitLabel } from '../../../../../ui/quantity-unit.ts';
 
 export type RunCommand = (command: OpsCommand) => Promise<CommandOutcome>;
 
@@ -27,7 +28,8 @@ export const usePurchasingT = () => {
 
 export const todayIso = () => DateTime.formatIsoDate(DateTime.nowUnsafe());
 
-export const formatQuantity = (value: number, unit: string) => `${formatNumber(value)} ${unit}`;
+export const formatQuantity = (value: number, unit: string) =>
+  `${formatNumber(value)} ${quantityUnitLabel(value, unit)}`;
 export const formatAmount = (minor: number, currency = 'CZK') => formatMoney(minor, currency);
 /** Whole CZK typed by the user → minor units; `undefined` when not a non-negative number. */
 export const parseAmountMinor = (text: string): number | undefined => {

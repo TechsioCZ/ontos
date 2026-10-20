@@ -121,6 +121,7 @@
   },
   "report": {
     "title": "Nahlásit poruchu",
+    "pickDevice": "Vyberte zařízení",
     "submit": "Nahlásit poruchu",
     "withTask": "Současně založit servisní úkol v agendě Úkoly",
     "withTaskHint": "Úkol dostane odkaz na zařízení a jeho nemovitost/jednotku.",

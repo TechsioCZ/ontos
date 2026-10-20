@@ -449,6 +449,7 @@ export const ReportFaultPanel = ({
         }))}
         label={k('fields.device')}
         name="deviceId"
+        placeholder={k('report.pickDevice')}
         onValueChange={({ value }) => setDeviceId(value[0] ?? '')}
         size="md"
         value={deviceId === '' ? [] : [deviceId]}

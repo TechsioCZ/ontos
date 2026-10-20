@@ -230,7 +230,12 @@ const AssetsView = () => {
             <Badge size="sm" variant={dueBadgeVariant(due)}>
               {isoDateLabel(next.nextDueOn)}
             </Badge>
-            <span className="truncate text-fg-secondary text-xs">{next.title}</span>
+            <span
+              className="text-fg-secondary text-xs"
+              style={{ maxWidth: '100%', overflowWrap: 'anywhere', whiteSpace: 'normal' }}
+            >
+              {next.title}
+            </span>
           </span>
         );
       },
@@ -338,7 +343,6 @@ const AssetsView = () => {
             value={formatNumber(stats.overdue)}
             {...(stats.overdue > 0 ? { delta: { trend: 'down' as const, value: k('due.overdue') } } : {})}
           />
-          <StatCard label={k('stats.openFollowUps')} value={formatNumber(stats.openFollowUps)} />
         </StatRow>
         <Tabs onValueChange={setTab} value={tab} variant="line">
           <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
@@ -483,6 +487,9 @@ const AssetsView = () => {
             </Table>
           </Tabs.Content>
           <Tabs.Content className="py-250" value="inventories">
+            <p className="mb-200 text-sm">
+              {k('stats.openFollowUps')}: <strong>{formatNumber(stats.openFollowUps)}</strong>
+            </p>
             <InventoryTab
               actor={actor}
               busy={busy}

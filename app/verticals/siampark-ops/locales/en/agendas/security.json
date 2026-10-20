@@ -121,6 +121,7 @@
   },
   "report": {
     "title": "Report fault",
+    "pickDevice": "Select a device",
     "submit": "Report fault",
     "withTask": "Also create a service task in Tasks",
     "withTaskHint": "The task links the device's property/unit.",

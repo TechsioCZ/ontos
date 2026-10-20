@@ -436,6 +436,7 @@ export const ReadingForm = ({
           })}
           label={t(`${k}.reading.meter`)}
           name="meter"
+          placeholder={t(`${k}.reading.pickMeter`)}
           onValueChange={({ value: picked }) => {
             setMeterId(picked[0] ?? '');
             setError(undefined);

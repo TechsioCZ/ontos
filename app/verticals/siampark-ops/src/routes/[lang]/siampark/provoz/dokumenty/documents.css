@@ -1,3 +1,30 @@
+/* Fieldsets default to min-inline-size: min-content, which can widen a nested mobile panel. */
+.siampark-document-fieldset {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.siampark-document-fieldset > [data-scope='select'][data-part='root'] {
+  min-inline-size: 0;
+}
+
+.siampark-document-counterparty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.siampark-document-counterparty > div {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+}
+
+.siampark-document-counterparty > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .siampark-documents-tabs {
   max-width: 100%;
   overflow-x: auto;
