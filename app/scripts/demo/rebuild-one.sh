@@ -50,7 +50,12 @@ die() {
   printf '\033[31m[rebuild] %s\033[0m\n' "$*" >&2
   exit 1
 }
-[ $# -gt 0 ] || die "usage: rebuild-one.sh <vertical-id|shell-super-app>..."
+[ $# -gt 0 ] || die "usage: rebuild-one.sh <vertical-id|shell-super-app>... | --composition-only"
+COMPOSITION_ONLY=0
+if [ "$1" = --composition-only ]; then
+  COMPOSITION_ONLY=1
+  shift
+fi
 
 load_env() {
   local line key value
@@ -123,6 +128,7 @@ for id in "$@"; do
   fi
 done
 
+if [ "$COMPOSITION_ONLY" = 1 ]; then set -- ; fi
 # Acquire one of two build slots.
 slot=""
 until [ -n "$slot" ]; do
@@ -181,8 +187,12 @@ done
 
 # A rebuilt app gets a new build marker, so the composition must be republished either way.
 stop_pid composition
+# Demo only: after downtime the previous composition lease has expired and the publisher refuses to drain it.
+docker --context orbstack exec ontos-demo-db psql -q -U "${POSTGRES_USER:-ontos_admin}" -d "${POSTGRES_DB:-siampark_demo}" \
+  -c "update core.application_composition_authority set valid_until = now() + interval '30 minutes' where valid_until < now() + interval '2 minutes'" \
+  >/dev/null 2>&1 || true
 start composition "${NO_GIT[@]}" "${WITH_ENV[@]}" node scripts/siampark/development-composition.mts \
   --environment development --port "$COMPOSITION_PORT"
 wait_http "http://127.0.0.1:$COMPOSITION_PORT/active" 180 composition
 [ "$changed_set" = 1 ] && say "served verticals now: ${SERVED[*]}"
-say "done: $*"
+say "done: ${*:-composition}"
