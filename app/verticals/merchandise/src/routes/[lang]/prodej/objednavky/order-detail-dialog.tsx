@@ -16,6 +16,7 @@ import type { OrderStatus } from '../../../../../shared/domain/merchandise-model
 import { lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
 import { OrderEditForm } from './order-edit-form.tsx';
+import { OrderEmailDeliveries } from './order-email-deliveries.tsx';
 import {
   historyActorLabel,
   historyKindLabels,
@@ -423,6 +424,7 @@ export const OrderDetailDialog = ({
               },
             ]}
           />
+          {storefront && <OrderEmailDeliveries orderId={order.id} />}
           <SectionCard title="Historie změn">
             <OrderHistory currentPrincipalId={currentPrincipalId} order={order} />
           </SectionCard>
