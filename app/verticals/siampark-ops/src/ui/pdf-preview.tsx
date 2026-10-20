@@ -45,10 +45,11 @@ export const PdfPreview = ({
       try {
         const renderer = await import('pdfjs-dist');
         if (!alive) return;
-        renderer.GlobalWorkerOptions.workerSrc = new URL(
-          'pdfjs-dist/build/pdf.worker.min.mjs',
-          import.meta.url,
-        ).toString();
+        // Federation's static server serves classic chunks without module-worker CORS headers.
+        // Bundle PDF.js's in-page worker handler instead of importing a cross-origin .mjs URL.
+        // Parsing still happens locally, on the exact bytes returned by the authorized read.
+        await import('pdfjs-dist/build/pdf.worker.mjs');
+        if (!alive) return;
         const task = renderer.getDocument({ url, isEvalSupported: false });
         destroy = () => {
           void task.destroy();
