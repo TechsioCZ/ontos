@@ -5,6 +5,7 @@ import type { OpsCommandInput } from '../../shared/domain/common.ts';
 import { DocumentsStateSchema, emptyDocumentsState } from '../../shared/domain/documents.ts';
 import type { DocumentsState } from '../../shared/domain/documents.ts';
 import { seedDocumentsState } from '../../scripts/seed/documents.mts';
+import { contractRegister, daysUntil, upcomingDeadlines } from '../../shared/domain/documents-deadlines.ts';
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const management = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
@@ -181,5 +182,30 @@ it.effect('the seed state decodes with the documents schema', () =>
         expect(ids.has(document.amendsDocumentId)).toBe(true);
       }
     }
+  }),
+);
+
+it.effect('S12-01: a contract ending in 5 days is in the upcoming deadlines; terminated ones are not', () =>
+  Effect.gen(function* deadlines() {
+    const state = yield* Schema.decodeUnknownEffect(DocumentsStateSchema)(seedDocumentsState());
+    const upcoming = upcomingDeadlines(state.documents, '2026-10-20');
+    const cleaning = upcoming.find((entry) => entry.document.id === 'seed-doc-uklid' && entry.kind === 'end');
+    expect(cleaning?.days).toBe(5);
+    expect(upcoming[0]?.document.id).toBe('seed-doc-uklid');
+    const terminated = state.documents.map((document) =>
+      document.contract === undefined ? document : { ...document, contract: { ...document.contract, status: 'terminated' as const } },
+    );
+    expect(upcomingDeadlines(terminated, '2026-10-20')).toEqual([]);
+    expect(daysUntil('2026-10-19', '2026-10-20')).toBe(-1);
+  }),
+);
+
+it.effect('the contract register lists each amendment right after its contract', () =>
+  Effect.gen(function* register() {
+    const state = yield* Schema.decodeUnknownEffect(DocumentsStateSchema)(seedDocumentsState());
+    const rows = contractRegister(state.documents);
+    const index = rows.findIndex((row) => row.document.id === 'seed-doc-r101');
+    expect(rows[index + 1]?.document.id).toBe('seed-doc-r101-d1');
+    expect(rows[index + 1]?.depth).toBe(1);
   }),
 );
