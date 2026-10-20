@@ -15,6 +15,7 @@ import type { ImportedOrder } from '../../../../../shared/domain/imports.ts';
 import { isOpenDuplicate } from '../../../../../shared/domain/imports.ts';
 import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import { salespersonName } from '../../../../crm/records.ts';
+import { orderStatusLabel, statusReviewReasonLabel } from '../../../../crm/order-status-presentation.ts';
 import {
   NOT_PROVIDED,
   RESIZE_LABEL,
@@ -86,8 +87,8 @@ export const PairingStateBadge = ({ order }: { readonly order: ImportedOrder }) 
 };
 
 export const RawStatusBadge = ({ status }: { readonly status: string }) => (
-  <Badge className="font-mono" size="sm" variant="outline">
-    {status}
+  <Badge size="sm" variant="outline">
+    {orderStatusLabel(status)}
   </Badge>
 );
 
@@ -302,7 +303,9 @@ const StatusTimeline = ({
                 .filter((part) => part !== undefined)
                 .join(' · ')}
             </span>
-            {flagged && event.reviewReason !== undefined && <span className="text-sm">{event.reviewReason}</span>}
+            {flagged && event.reviewReason !== undefined && (
+              <span className="text-sm">{statusReviewReasonLabel(event.reviewReason)}</span>
+            )}
             {event.resolution !== undefined && (
               <span className="text-fg-secondary text-xs">
                 {`Rozhodl(a) ${principalLabel(records, event.resolution.by)}, ${formatDateTime(event.resolution.at)}: ${event.resolution.reason}`}
@@ -315,7 +318,13 @@ const StatusTimeline = ({
                     label: 'Ponechat stávající stav',
                     run: (reason) =>
                       void run(
-                        { _tag: 'ResolveOrderStatusEvent', decision: 'dismiss', eventIndex: index, orderId: order.id, reason },
+                        {
+                          _tag: 'ResolveOrderStatusEvent',
+                          decision: 'dismiss',
+                          eventIndex: index,
+                          orderId: order.id,
+                          reason,
+                        },
                         'Rozhodnutí uloženo',
                       ),
                   },
@@ -324,7 +333,13 @@ const StatusTimeline = ({
                     primary: true,
                     run: (reason) =>
                       void run(
-                        { _tag: 'ResolveOrderStatusEvent', decision: 'apply', eventIndex: index, orderId: order.id, reason },
+                        {
+                          _tag: 'ResolveOrderStatusEvent',
+                          decision: 'apply',
+                          eventIndex: index,
+                          orderId: order.id,
+                          reason,
+                        },
                         'Stav aktualizován',
                       ),
                   },
@@ -343,7 +358,9 @@ const StatusTimeline = ({
 
 const LinesTable = ({ order }: { readonly order: ImportedOrder }) => {
   if (order.lines === undefined || order.lines.length === 0) {
-    return <span className="text-fg-secondary text-sm">Položky neposkytnuty – zdroj je u této objednávky neposlal.</span>;
+    return (
+      <span className="text-fg-secondary text-sm">Položky neposkytnuty – zdroj je u této objednávky neposlal.</span>
+    );
   }
   return (
     <table className="w-full text-sm">
@@ -393,10 +410,13 @@ export const OrderDetailPanel = ({
     order.duplicateOf === undefined
       ? undefined
       : records.state.imports.orders.find((entry) => entry.id === order.duplicateOf);
-  const history = records.state.imports.pairingHistory
-    .filter((change) => change.orderId === order.id)
-    .toReversed();
-  const customer = [order.customerName, order.externalCustomerId, order.customerRegNo && `IČO ${order.customerRegNo}`, order.customerEmail]
+  const history = records.state.imports.pairingHistory.filter((change) => change.orderId === order.id).toReversed();
+  const customer = [
+    order.customerName,
+    order.externalCustomerId,
+    order.customerRegNo && `IČO ${order.customerRegNo}`,
+    order.customerEmail,
+  ]
     .filter((part) => part !== undefined && part !== '')
     .join(' · ');
   return (
@@ -455,7 +475,9 @@ export const OrderDetailPanel = ({
           <Section title="Duplicita mezi zdroji">
             <span className="text-sm">
               {order.reviewReason ?? 'Stejná objednávka z jiného zdroje.'}
-              {twin === undefined ? null : ` Původní záznam: ${orderTitle(twin)} (${twin.source}, ID ${twin.externalId}).`}
+              {twin === undefined
+                ? null
+                : ` Původní záznam: ${orderTitle(twin)} (${twin.source}, ID ${twin.externalId}).`}
             </span>
             {(order.decisions ?? []).map((decision) => (
               <span className="text-fg-secondary text-xs" key={decision.at}>
@@ -468,7 +490,10 @@ export const OrderDetailPanel = ({
                   {
                     label: 'Jde o samostatnou objednávku',
                     run: (reason) =>
-                      void run({ _tag: 'ResolveOrderDuplicate', decision: 'distinct', orderId: order.id, reason }, 'Rozhodnutí uloženo'),
+                      void run(
+                        { _tag: 'ResolveOrderDuplicate', decision: 'distinct', orderId: order.id, reason },
+                        'Rozhodnutí uloženo',
+                      ),
                   },
                   {
                     label: 'Potvrdit duplicitu',
@@ -530,7 +555,13 @@ export const OrderDetailPanel = ({
           {canDecide && (
             <div className="flex flex-col gap-150">
               {order.clientId === undefined || repairOpen ? (
-                <PairingForm busy={busy} onDone={() => setRepairOpen(false)} order={order} records={records} submit={submit} />
+                <PairingForm
+                  busy={busy}
+                  onDone={() => setRepairOpen(false)}
+                  order={order}
+                  records={records}
+                  submit={submit}
+                />
               ) : (
                 <div className="flex flex-wrap gap-100">
                   <Button onClick={() => setRepairOpen(true)} size="sm" theme="outlined" variant="secondary">
@@ -572,7 +603,8 @@ const UnpairButton = ({
           {
             label: 'Vrátit do fronty k napárování',
             primary: true,
-            run: (reason) => void run({ _tag: 'UnpairOrder', orderId: order.id, reason }, 'Přiřazení zrušeno', () => setOpen(false)),
+            run: (reason) =>
+              void run({ _tag: 'UnpairOrder', orderId: order.id, reason }, 'Přiřazení zrušeno', () => setOpen(false)),
           },
         ]}
         busy={busy}

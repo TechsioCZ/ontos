@@ -23,6 +23,7 @@ import {
   unitsToDecimal,
 } from '../../../../../shared/domain/reports.ts';
 import { crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
+import { orderStatusLabel } from '../../../../crm/order-status-presentation.ts';
 import { downloadCsv, formatDecimalMoney, totalIn } from './report-format.ts';
 
 export type GroupingKey = 'salesperson' | 'client' | 'month' | 'status';
@@ -336,7 +337,9 @@ const orderColumns = (lang: string): ColumnDef<ReportOrderRow>[] => [
     accessorFn: (row) => row.order.rawStatus,
     cell: (info) => (
       <span className="flex flex-wrap items-center gap-100">
-        <code className="rounded-sm bg-surface-secondary px-50 text-xs">{info.getValue<string>()}</code>
+        <Badge size="sm" variant="outline">
+          {orderStatusLabel(info.getValue<string>())}
+        </Badge>
         <MeaningBadge meaning={info.row.original.meaning} />
         {info.row.original.order.statusHistory.some((event) => event.review === true) && (
           <Badge size="sm" variant="warning">

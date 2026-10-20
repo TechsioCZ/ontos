@@ -12,6 +12,7 @@ import {
   statusMeaningLabels,
   statusMeanings,
 } from '../../../../../shared/domain/reports.ts';
+import { orderStatusLabel } from '../../../../crm/order-status-presentation.ts';
 import type { PeriodOption } from './report-format.ts';
 import { periodOptions } from './report-format.ts';
 import type { GroupingKey } from './report-tables.tsx';
@@ -110,7 +111,7 @@ export const describeFilters = (
   if (query.status.startsWith('m:')) {
     parts.push(`stav ${statusMeaningLabels[query.status.slice(2) as StatusMeaningOrUnmapped] ?? '—'}`);
   } else if (query.status.startsWith('r:')) {
-    parts.push(`surový stav „${query.status.slice(2)}“`);
+    parts.push(`stav ze zdroje „${orderStatusLabel(query.status.slice(2))}“`);
   }
   return parts;
 };
@@ -145,7 +146,7 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
     { label: 'Všechny stavy', value: ALL },
     ...statusMeanings.map((meaning) => ({ label: `Význam: ${statusMeaningLabels[meaning]}`, value: `m:${meaning}` })),
     ...rawStatuses.map((status) => ({
-      label: `Ze zdroje: ${status.raw}`,
+      label: `Ze zdroje: ${orderStatusLabel(status.raw)}`,
       value: `r:${normalizeStatus(status.raw)}`,
     })),
   ];

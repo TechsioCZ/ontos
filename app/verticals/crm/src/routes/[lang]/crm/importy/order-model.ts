@@ -4,6 +4,7 @@ import { formatDate, formatDateTime } from '@app/admin-ui';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { ImportRowOutcome, ImportedOrder } from '../../../../../shared/domain/imports.ts';
 import { isOpenDuplicate, needsReview, openReviewEvents } from '../../../../../shared/domain/imports.ts';
+import { orderStatusLabel, statusReviewReasonLabel } from '../../../../crm/order-status-presentation.ts';
 
 export const RESIZE_LABEL = 'Změnit šířku panelu (šipky vlevo a vpravo)';
 export const NOT_PROVIDED = 'údaj neposkytnut';
@@ -90,7 +91,7 @@ export const reviewSummary = (order: ImportedOrder): string | undefined => {
   const [open] = openReviewEvents(order);
   return open === undefined
     ? undefined
-    : `Stav „${open.event.rawStatus}“: ${open.event.reviewReason ?? 'sporné pořadí'}`;
+    : `Stav „${orderStatusLabel(open.event.rawStatus)}“: ${statusReviewReasonLabel(open.event.reviewReason ?? 'sporné pořadí')}`;
 };
 
 export const reviewCount = (orders: readonly ImportedOrder[]) => orders.filter(needsReview).length;
@@ -107,6 +108,7 @@ export const orderSearchText = (records: RecordsResponse, order: ImportedOrder) 
     order.customerRegNo,
     order.customerEmail,
     order.rawStatus,
+    orderStatusLabel(order.rawStatus),
     clientLabel(records, order.clientId),
   ]
     .filter((value) => value !== undefined)

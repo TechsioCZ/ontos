@@ -229,24 +229,8 @@ const ClientsList = ({
   );
   const filtered = search.trim() !== '' || owner !== ALL || segment !== ALL || status !== 'active';
   const mine = records.viewer.salespersonId;
-
-  return (
+  const summaries = (
     <>
-      <PageHeader
-        actions={
-          canCreate ? (
-            <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
-              Nový klient
-            </Button>
-          ) : undefined
-        }
-        description={
-          manager
-            ? t('crm.pages.clients.description')
-            : 'Klienti, které máte přidělené: kontakty, návštěvy a objednávky na jednom místě.'
-        }
-        title={manager ? t('crm.pages.clients.title') : 'Mí klienti'}
-      />
       <StatRow>
         <StatCard
           {...(archivedCount > 0 ? { hint: `${formatNumber(archivedCount)} v archivu` } : {})}
@@ -277,6 +261,34 @@ const ClientsList = ({
         />
       </StatRow>
       <CrmSalesKpiStrip records={records} />
+    </>
+  );
+
+  return (
+    <>
+      <PageHeader
+        actions={
+          canCreate ? (
+            <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
+              Nový klient
+            </Button>
+          ) : undefined
+        }
+        description={
+          manager
+            ? t('crm.pages.clients.description')
+            : 'Klienti, které máte přidělené: kontakty, návštěvy a objednávky na jednom místě.'
+        }
+        title={manager ? t('crm.pages.clients.title') : 'Mí klienti'}
+      />
+      <div className="hidden flex-col gap-250 md:flex">{summaries}</div>
+      <details className="rounded-lg border border-border-primary bg-surface p-150 md:hidden">
+        <summary className="cursor-pointer font-medium text-sm">
+          Souhrny klientů a prodejů
+          <span className="mt-50 block text-fg-secondary text-xs">Aktivní klienti: {formatNumber(active.length)}</span>
+        </summary>
+        <div className="flex flex-col gap-250 pt-200">{summaries}</div>
+      </details>
       <div className="flex flex-wrap items-end gap-150">
         <Input
           aria-label="Hledat klienta"
