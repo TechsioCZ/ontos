@@ -1,23 +1,175 @@
 {
   "title": "Měřidla a energie",
-  "description": "Měřidla médií, odečty a spotřeba energií (S04).",
+  "description": "Měřidla médií u nemovitostí a jednotek, odečty, spotřeba a náklady za období. Spotřeba se počítá jen ze dvou navazujících odečtů stejného měřidla ve stejné jednotce.",
   "fields": {
     "serialNumber": "Výrobní číslo",
     "medium": "Médium",
-    "unit": "Jednotka"
+    "unit": "Jednotka měření",
+    "supplyPoint": "Odběrné místo",
+    "supplier": "Dodavatel",
+    "consumer": "Odběratel",
+    "contract": "Smlouva",
+    "status": "Stav",
+    "location": "Umístění",
+    "note": "Poznámka"
+  },
+  "fieldHelp": {
+    "serialNumber": "Číslo na štítku měřidla, musí být v evidenci jedinečné.",
+    "unit": "Např. kWh, m³ nebo GJ. Změna jednotky zahájí novou porovnatelnou řadu odečtů.",
+    "supplyPoint": "EAN, EIC nebo vlastní označení odběrného místa.",
+    "consumer": "Komu se médium přeúčtovává, např. nájemce jednotky."
   },
   "medium": {
     "ELECTRICITY": "Elektřina",
     "WATER": "Voda",
     "GAS": "Plyn",
-    "HEAT": "Teplo"
+    "HEAT": "Teplo",
+    "OTHER": "Jiné"
+  },
+  "status": {
+    "ACTIVE": "Aktivní",
+    "RETIRED": "Vyřazené"
+  },
+  "filters": {
+    "all": "Vše",
+    "mediumLabel": "Filtr podle média",
+    "search": "Hledat měřidlo, odběrné místo nebo jednotku",
+    "anomaliesOnly": "Jen neobvyklé nárůsty",
+    "noMatchTitle": "Žádné měřidlo neodpovídá filtru.",
+    "noMatchDescription": "Upravte hledání nebo zvolte jiné médium."
+  },
+  "columns": {
+    "meter": "Měřidlo",
+    "medium": "Médium",
+    "location": "Umístění",
+    "lastReading": "Poslední odečet",
+    "consumption": "Spotřeba za poslední období",
+    "trend": "Vývoj spotřeby",
+    "state": "Stav"
+  },
+  "stats": {
+    "count": "Aktivní měřidla",
+    "countHint": "{{total}} v evidenci celkem",
+    "readings30": "Odečty za 30 dní",
+    "readings30Hint": "Platné odečty s datem v posledních 30 dnech",
+    "anomalies": "Neobvyklé nárůsty",
+    "anomaliesHint": "Poslední období vyšší o více než 30 % proti předchozímu",
+    "anomaliesNone": "Bez neobvyklých nárůstů",
+    "cost": "Náklady za {{month}}",
+    "costHint": "Součet zapsaných nákladů období končících v tomto měsíci",
+    "costMissing": "{{count}} období bez zapsaného nákladu"
+  },
+  "row": {
+    "first": "bez předchozího odečtu",
+    "unitChanged": "jiná jednotka, rozdíl nelze určit",
+    "noReadings": "zatím bez odečtu",
+    "anomaly": "Nárůst {{change}}",
+    "normal": "V normě",
+    "retired": "Vyřazené",
+    "days": "za {{days}} dní",
+    "perDay": "{{value}} / den"
+  },
+  "actions": {
+    "newMeter": "Nové měřidlo",
+    "recordReading": "Zapsat odečet",
+    "edit": "Upravit měřidlo",
+    "void": "Stornovat",
+    "openDetail": "Detail měřidla",
+    "showPhoto": "Fotka",
+    "openProperty": "Otevřít v evidenci nemovitostí"
   },
   "create": {
     "title": "Nové měřidlo",
     "submit": "Založit měřidlo"
   },
   "created": "Měřidlo založeno",
-  "stats": {
-    "count": "Měřidel"
+  "edit": {
+    "title": "Upravit měřidlo {{serial}}",
+    "submit": "Uložit změny",
+    "saved": "Měřidlo uloženo",
+    "retire": "Měřidlo je vyřazené z provozu (nové odečty nelze zapsat)"
+  },
+  "reading": {
+    "title": "Zapsat odečet",
+    "titleFor": "Zapsat odečet: {{serial}}",
+    "meter": "Měřidlo",
+    "pickMeter": "Vyberte měřidlo",
+    "date": "Datum odečtu",
+    "value": "Stav měřidla ({{unit}})",
+    "valueHelp": "Celkový stav na displeji měřidla, ne spotřeba.",
+    "readBy": "Odpovědná osoba",
+    "cost": "Náklad za období (Kč)",
+    "costHelp": "Nepovinné. Částka za období končící tímto odečtem; prázdné pole se zobrazí jako „bez dat“.",
+    "note": "Poznámka",
+    "photo": "Fotka měřidla",
+    "photoHelp": "Nepovinné, JPG nebo PNG do 5 MB. Uloží se do dokumentů Siamparku.",
+    "photoTooLarge": "Soubor je větší než 5 MB.",
+    "photoFailed": "Fotku se nepodařilo nahrát, odečet nebyl uložen.",
+    "submit": "Uložit odečet",
+    "saved": "Odečet uložen",
+    "preview": "Spotřeba od předchozího odečtu ({{date}}): {{value}}",
+    "previewFirst": "Toto bude první odečet měřidla: spotřeba se zobrazí až od dalšího odečtu.",
+    "previewAnomaly": "Pozor: denní spotřeba je o {{change}} vyšší než v předchozím období.",
+    "invalidValue": "Zadejte nezáporné číslo.",
+    "invalidDate": "Zadejte datum odečtu.",
+    "invalidCost": "Náklad musí být nezáporná částka.",
+    "problems": {
+      "future": "Datum odečtu nesmí být v budoucnosti.",
+      "duplicateDate": "K tomuto datu už měřidlo má platný odečet. Chybný odečet nejdřív stornujte.",
+      "lowerThanPrevious": "Hodnota je nižší než předchozí odečet. Při výměně měřidla založte nové měřidlo.",
+      "higherThanNext": "Hodnota je vyšší než následující odečet tohoto měřidla.",
+      "retired": "Měřidlo je vyřazené, odečet nelze zapsat."
+    }
+  },
+  "void": {
+    "title": "Stornovat odečet ze dne {{date}}",
+    "reason": "Důvod storna",
+    "reasonHelp": "Odečet zůstane v historii, jen se přestane započítávat.",
+    "submit": "Stornovat odečet",
+    "done": "Odečet stornován",
+    "voided": "Stornováno",
+    "voidedBy": "Stornoval(a) {{who}} {{at}}: {{reason}}"
+  },
+  "detail": {
+    "masterData": "Údaje měřidla",
+    "history": "Historie odečtů",
+    "historyHint": "Rozdíl se zobrazuje jen mezi dvěma navazujícími platnými odečty ve stejné jednotce.",
+    "chart": "Spotřeba po obdobích",
+    "chartEmpty": "Graf se zobrazí po dvou platných odečtech.",
+    "chartAria": "Sloupcový graf spotřeby měřidla {{serial}} po obdobích",
+    "date": "Datum",
+    "value": "Stav",
+    "consumption": "Spotřeba",
+    "perDay": "Denní průměr",
+    "cost": "Náklad",
+    "readBy": "Odečetl(a)",
+    "note": "Poznámka",
+    "author": "Zapsal(a) {{who}} {{at}}",
+    "series": {
+      "normal": "Běžná spotřeba",
+      "anomaly": "Neobvyklý nárůst"
+    }
+  },
+  "byUnit": {
+    "title": "Spotřeba a náklady podle místa",
+    "description": "Měsíční spotřeba měřidel vybrané nemovitosti nebo jednotky. Média a jednotky měření se nikdy nesčítají dohromady.",
+    "place": "Místo",
+    "allPlaces": "Celý areál",
+    "medium": "Médium",
+    "chartAria": "Sloupcový graf měsíční spotřeby: {{medium}} v {{unit}}, {{place}}",
+    "empty": "Pro toto místo a médium zatím nejsou dva navazující odečty.",
+    "month": "Měsíc",
+    "consumption": "Spotřeba",
+    "cost": "Náklad",
+    "costPartial": "{{count}} obd. bez nákladu",
+    "meters": "Měřidla v součtu: {{count}}"
+  },
+  "people": {
+    "you": "vy",
+    "management": "Vedení Siamparku",
+    "operations": "Provoz Siamparku",
+    "finance": "Finance Siamparku",
+    "external": "Externí partner",
+    "other": "jiný uživatel"
   }
 }
