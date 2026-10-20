@@ -68,7 +68,7 @@ describe('CRM ACL', () => {
     const moved = Effect.runSync(
       dispatchCrmCommand(
         visited.state,
-        { _tag: 'AssignClient', clientId: 'x', toSalespersonId: 'b' },
+        { _tag: 'AssignClient', clientId: 'x', reason: 'Předání klienta při změně regionu', toSalespersonId: 'b' },
         {
           invocationId: 'i2',
           now: at,
