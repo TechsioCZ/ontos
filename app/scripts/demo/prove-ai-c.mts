@@ -161,7 +161,7 @@ try {
   assert.deepEqual(tools, ['list_crm', 'propose_crm_changes', 'whoami']);
   pass('MCP C nabízí jen čtení CRM a návrhy (nikoli přímý zápis ani schválení)');
   const identity = await mcp.call('whoami');
-  assert.equal(identity.isError, false);
+  assert.equal(identity.isError, false, JSON.stringify(identity.value));
   pass('Identita C / Hanák a gateway CRM fungují');
   const before = await read(false);
   const client = before.state.clients.items.find((entry: { status: string }) => entry.status === 'active');
