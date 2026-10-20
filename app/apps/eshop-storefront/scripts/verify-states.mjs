@@ -35,7 +35,7 @@ try {
       }
       await page.waitForTimeout(300);
       assert((await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 1, `${id} overflow`);
-      await page.screenshot({ path: `${OUT}/${name}-${id}.png`, fullPage: false });
+      await page.screenshot({ path: `${OUT}/${name}-${id}.png`, fullPage: id.startsWith('25-') });
     };
     const setCart = async (items) => {
       await page.evaluate(({ key, items }) => localStorage.setItem(key, JSON.stringify(items)), { key, items });
@@ -69,6 +69,17 @@ try {
     await page.getByRole('button', { name: 'Obrázek 2', exact: true }).click();
     assert.notEqual(await page.locator('.gallery__main img').getAttribute('src'), image);
     await shot('16-gallery');
+    await setCart(coffee.variants.slice(0, 2).map((variant) => asItem(coffee, variant)));
+    await page.getByText('Ceny a dostupnost ověřeny', { exact: false }).waitFor();
+    assert.equal(await page.locator('.cart-line').count(), 2, 'two variants remain separate lines');
+    await page.locator('.cart-line').first().getByRole('button', { name: 'Přidat kus' }).click();
+    await page.getByText('Ceny a dostupnost ověřeny', { exact: false }).waitFor();
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.getByText('Ceny a dostupnost ověřeny', { exact: false }).waitFor();
+    assert.equal(await page.locator('.cart-line').count(), 2);
+    assert.equal(await page.locator('.cart-line .stepper input').first().inputValue(), '2');
+    assert.equal(await page.locator('.cart-line .stepper input').last().inputValue(), '1');
+    await shot('25-two-variants');
     await setCart([{ ...asItem(coffee), priceMinor: coffee.variants[0].priceMinor - 100 }]);
     await page.getByText('Cena se změnila', { exact: true }).waitFor();
     assert(await page.getByRole('button', { name: 'Pokračovat', exact: false }).isDisabled());
@@ -138,6 +149,9 @@ try {
     if (SAVED) {
       await goto(`/objednavka/${SAVED}`);
       await page.locator('.order-number').waitFor();
+      const stored = await fetch(`${BASE}/api/orders/${SAVED}`).then((response) => response.json());
+      if (stored.status === 'CANCELLED') await page.getByText('Objednávka byla stornována.', { exact: false }).waitFor();
+      if (stored.status === 'DELIVERED') await page.getByText('Demonstrační zpracování je dokončené.', { exact: false }).waitFor();
       await shot('10-confirmation');
     }
     assert.deepEqual(errors, []);
