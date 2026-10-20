@@ -147,7 +147,7 @@ export const makeStockPositionService = ({
       }
       const createdAt = DateTime.formatIso(yield* DateTime.now);
       const crypto = yield* Crypto.Crypto;
-      const positionId = yield* crypto.randomUUIDv4.pipe(
+      const positionId = yield* crypto.randomUUIDv4().pipe(
         Effect.mapError(
           (cause) =>
             new StockPositionPersistenceUnavailable({

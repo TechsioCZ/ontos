@@ -194,7 +194,7 @@ const readComponent = Effect.fn('SetCompositionComponentCurrentBasis.readCompone
   const crypto = yield* Crypto.Crypto;
   const proof: SetComponentCurrentProof = {
     assessedAt,
-    attestationId: yield* crypto.randomUUIDv4,
+    attestationId: yield* crypto.randomUUIDv4(),
     componentId,
     divisible: current.unit.divisible,
     productKind: 'ATOMIC',

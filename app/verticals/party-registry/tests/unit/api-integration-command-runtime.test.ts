@@ -73,7 +73,7 @@ import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolut
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 const principal = {
   authBindingId: 'a1000000-0000-4000-8000-000000000001',

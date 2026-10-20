@@ -18,8 +18,6 @@ import {
   CLOUDFLARE_WORKER_OBSERVABILITY,
   createCloudflareDataPlaneBindings,
   createCloudflareWorkerConfig,
-  createModernBuildContext,
-  createModernConfig,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const HYPERDRIVE_ID = 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID';
@@ -145,33 +143,25 @@ it.each([
   ['stage', { enabled: true, head_sampling_rate: 1 }],
   ['production', { enabled: false }],
 ] as const)('writes the %s Workers Logs setting into the generated wrangler.json', (environment, observability) => {
-  const build = createModernBuildContext({
-    appId: 'pricing',
-    cloudflareHyperdrives: [SHARED_HYPERDRIVE],
-    cloudflarePublicUrlEnvironmentVariable: PRICING_PUBLIC_URL,
-    cloudflareWorkerName: PRICING_WORKER,
-    defaultPort: 3999,
-    deployTarget: 'cloudflare',
-    getBuildConfigEnvironment: reader({
-      [COMPOSITION_KV_ID]: COMPOSITION_KV,
-      [DEPLOYMENT_ENVIRONMENT]: environment,
-      [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
-      [PRICING_PUBLIC_URL]: 'https://ontos-stage-pricing.stage.example.com',
-      [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
-    }),
-    portEnvironmentVariable: 'PRICING_PORT',
-  });
-  const modernConfig = createModernConfig({
-    appId: 'pricing',
-    bffPrefix: '/pricing-api',
-    build,
-    chunkLoadingGlobal: '__PRICING__',
-    cloudflareWorkerName: PRICING_WORKER,
-    moduleUrl: import.meta.url,
-    plugins: [],
-    uniqueName: 'pricing',
-  });
-  const { deploy } = modernConfig;
+  const deploy = {
+    worker: {
+      ...createCloudflareWorkerConfig(
+        reader({
+          [COMPOSITION_KV_ID]: COMPOSITION_KV,
+          [DEPLOYMENT_ENVIRONMENT]: environment,
+          [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
+          [PRICING_PUBLIC_URL]: 'https://ontos-stage-pricing.stage.example.com',
+          [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
+        }),
+        {
+          cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical,
+          hyperdrives: [SHARED_HYPERDRIVE],
+          publicUrlVariable: PRICING_PUBLIC_URL,
+        },
+      ),
+      name: PRICING_WORKER,
+    },
+  };
   expect(deploy).toBeDefined();
   const wrangler = Schema.decodeUnknownSync(GeneratedWranglerObservabilitySchema)(
     createWranglerConfig(process.cwd(), deploy === undefined ? {} : { deploy }),
@@ -206,34 +196,18 @@ it.each([
 });
 
 it('generates Commerce without a retired mutable owner binding while preserving native infrastructure bindings', () => {
-  const appId = 'commerce-customer-context';
-  const cloudflareWorkerName = `app-${appId}`;
   const publicUrlVariable = 'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT';
-  const build = createModernBuildContext({
-    appId,
-    cloudflareHyperdrives: [SHARED_HYPERDRIVE],
-    cloudflarePublicUrlEnvironmentVariable: publicUrlVariable,
-    cloudflareWorkerName,
-    defaultPort: 3998,
-    deployTarget: 'cloudflare',
-    getBuildConfigEnvironment: reader({
-      [COMPOSITION_KV_ID]: COMPOSITION_KV,
-      [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
-      [publicUrlVariable]: 'https://ontos-stage-commerce-customer-context.stage.example.com',
-      [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
-    }),
-    portEnvironmentVariable: 'COMMERCE_CUSTOMER_CONTEXT_PORT',
-  });
-  const { deploy } = createModernConfig({
-    appId,
-    bffPrefix: '/commerce-customer-context-api',
-    build,
-    chunkLoadingGlobal: '__COMMERCE_CUSTOMER_CONTEXT__',
-    cloudflareWorkerName,
-    moduleUrl: import.meta.url,
-    plugins: [],
-    uniqueName: appId,
-  });
+  const deploy = {
+    worker: createCloudflareWorkerConfig(
+      reader({
+        [COMPOSITION_KV_ID]: COMPOSITION_KV,
+        [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
+        [publicUrlVariable]: 'https://ontos-stage-commerce-customer-context.stage.example.com',
+        [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
+      }),
+      { cpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical, hyperdrives: [SHARED_HYPERDRIVE], publicUrlVariable },
+    ),
+  };
   const GeneratedBindingsSchema = Schema.Struct({
     compatibility_flags: Schema.Array(Schema.String),
     dispatch_namespaces: Schema.optional(Schema.Array(Schema.Unknown)),
@@ -354,7 +328,7 @@ it('declares each unit Worker Hyperdrive from the database identities it serves'
 
   const shellConfig = readUnitConfig(topology.shell.path);
   expect(shellConfig).toMatch(
-    /hyperdrives:\s*\[\s*SHARED_RUNTIME_IDENTITY\.cloudflareHyperdrive,\s*SHELL_GATEWAY_ISSUER_IDENTITY\.cloudflareHyperdrive,?\s*\]/u,
+    /cloudflareHyperdrives:\s*\[\s*SHARED_RUNTIME_IDENTITY\.cloudflareHyperdrive,\s*SHELL_GATEWAY_ISSUER_IDENTITY\.cloudflareHyperdrive,?\s*\]/u,
   );
   expect(shellConfig).not.toMatch(/\bPARTY_REGISTRY_(?:REQUEST|WORKER)_IDENTITY\b/u);
 

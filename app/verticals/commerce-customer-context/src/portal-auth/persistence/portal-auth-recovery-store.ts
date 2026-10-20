@@ -203,9 +203,9 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         const digest = yield* digestToken(crypto, input.token).pipe(
           Effect.mapError((cause) => unavailable('verification-token-hash', cause)),
         );
-        const verificationId = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => unavailable('verification-token-id', cause)),
-        );
+        const verificationId = yield* crypto
+          .randomUUIDv4()
+          .pipe(Effect.mapError((cause) => unavailable('verification-token-id', cause)));
         const identifier = emailVerificationIdentifier(digest);
         const reservationDigest = yield* digestText(crypto, normalizeCommercePortalAuthEmail(input.email)).pipe(
           Effect.mapError((cause) => unavailable('verification-reservation-hash', cause)),
@@ -281,9 +281,9 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         Effect.mapError((cause) => unavailable('verification-reservation-hash', cause)),
       );
       const identifier = emailVerificationReservationIdentifier(emailDigest);
-      const reservationId = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => unavailable('verification-reservation-id', cause)),
-      );
+      const reservationId = yield* crypto
+        .randomUUIDv4()
+        .pipe(Effect.mapError((cause) => unavailable('verification-reservation-id', cause)));
       const expiresAt = DateTime.toDate(
         DateTime.add(DateTime.makeUnsafe(now), {
           seconds: COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds,
@@ -496,9 +496,9 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         .where(eq(user.email, email))
         .limit(1)
         .pipe(Effect.mapError(sweepAgedDispatchedRowUnavailable));
-      const reconciliationId = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)),
-      );
+      const reconciliationId = yield* crypto
+        .randomUUIDv4()
+        .pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)));
       yield* insertRecoveryReconciliationRow(transaction, {
         conflictClass: 'RESET_OUTCOME_INDETERMINATE',
         createdAt: now,
@@ -952,9 +952,9 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         readonly providerSubjectId: string;
       }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const id = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)),
-        );
+        const id = yield* crypto
+          .randomUUIDv4()
+          .pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)));
         yield* insertRecoveryReconciliationRow(database, {
           conflictClass: input.conflictClass,
           createdAt: now,

@@ -176,7 +176,7 @@ export const stockSharingEligibilityActionServiceForScope = Effect.fn('StockShar
     const validator = yield* Effect.serviceOption(StockSharingCommerceScopeValidatorService);
     return makeStockSharingEligibilityActionService({
       commerceValidator: Option.getOrElse(validator, () => unavailableStockSharingCommerceScopeValidator),
-      makeEligibilityId: crypto.randomUUIDv4,
+      makeEligibilityId: crypto.randomUUIDv4(),
       persistence: stockSharingEligibilityPersistenceForScope(transaction, operationScope),
     });
   },

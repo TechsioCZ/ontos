@@ -58,7 +58,7 @@ import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-v
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const T = '2026-06-01T10:00:00.000Z';
 
 /** One seller scope of one Tenant, fresh for each test. */

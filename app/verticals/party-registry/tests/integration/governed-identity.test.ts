@@ -76,7 +76,7 @@ const candidate = (ico: string, extra: Partial<EncodedPartyCandidate> = {}): Enc
   validFrom: '2020-01-01T00:00:00.000Z',
   ...extra,
 });
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const transport = (idempotencyKey: string) => ({
   correlationId: `live-${idempotencyKey}`,
   idempotencyKey,

@@ -26,7 +26,7 @@ import { evaluate, evaluationRequest, evaluationRequestInput, evaluationTime } f
  */
 const makeTaxRuleRef = Effect.gen(function* makeTaxRuleRef() {
   const crypto = yield* Crypto.Crypto;
-  const [resourceId, tenantId] = yield* Effect.all([crypto.randomUUIDv4, crypto.randomUUIDv4]);
+  const [resourceId, tenantId] = yield* Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]);
   return { moduleId: 'commerce.tax', resourceId, resourceType: 'commerce.tax.tax-rule', tenantId } as const;
 });
 

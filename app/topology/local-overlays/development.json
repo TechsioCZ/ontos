@@ -50,7 +50,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/party-registry",
-        "buildMarker": "ce1850eb4219ff1e"
+        "buildMarker": "aaebe4ee5a28e557"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -92,7 +92,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/party-registry",
-          "buildMarker": "ce1850eb4219ff1e"
+          "buildMarker": "aaebe4ee5a28e557"
         }
       }
     },
@@ -213,7 +213,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/commerce-market-catalog",
-        "buildMarker": "90197a2b7dff4653"
+        "buildMarker": "7d8efde38f752475"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -255,7 +255,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/commerce-market-catalog",
-          "buildMarker": "90197a2b7dff4653"
+          "buildMarker": "7d8efde38f752475"
         }
       }
     },
@@ -264,7 +264,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/catalog",
-        "buildMarker": "5a997e5dec1e8cee"
+        "buildMarker": "b5cf336487d950bb"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -306,7 +306,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/catalog",
-          "buildMarker": "5a997e5dec1e8cee"
+          "buildMarker": "b5cf336487d950bb"
         }
       }
     },
@@ -459,7 +459,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/inventory",
-        "buildMarker": "65701c1d6634cd7b"
+        "buildMarker": "5f588cb1d6d14d10"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -501,7 +501,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/inventory",
-          "buildMarker": "65701c1d6634cd7b"
+          "buildMarker": "5f588cb1d6d14d10"
         }
       }
     },
@@ -510,7 +510,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/assortment",
-        "buildMarker": "14fe7553819b4068"
+        "buildMarker": "02ac649d0cba4cca"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -552,7 +552,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/assortment",
-          "buildMarker": "14fe7553819b4068"
+          "buildMarker": "02ac649d0cba4cca"
         }
       }
     },
@@ -657,7 +657,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/privacy",
-        "buildMarker": "a9ef1effd4ab4d10"
+        "buildMarker": "c339e4f5077d2392"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -699,7 +699,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/privacy",
-          "buildMarker": "a9ef1effd4ab4d10"
+          "buildMarker": "c339e4f5077d2392"
         }
       }
     },
@@ -708,7 +708,7 @@
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
         "unitId": "app/projects",
-        "buildMarker": "fef92f196db4d5ee"
+        "buildMarker": "73f9b5b664d77c6a"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
@@ -750,7 +750,7 @@
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
           "unitId": "app/projects",
-          "buildMarker": "fef92f196db4d5ee"
+          "buildMarker": "73f9b5b664d77c6a"
         }
       }
     }

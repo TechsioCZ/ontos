@@ -592,7 +592,7 @@ export const attributeValuesPersistenceForScope = (
     );
     const affectedVariantRefs = yield* proveAffectedVariants();
     const crypto = yield* Crypto.Crypto;
-    const setId = current?.attributeValueSetId ?? (yield* crypto.randomUUIDv4.pipe(Effect.mapError(unavailable)));
+    const setId = current?.attributeValueSetId ?? (yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable)));
     const revision = (current?.currentRevision ?? 0) + 1;
     const persist = Effect.fn('AttributeValuesPersistence.persist')(function* persist() {
       if (current === undefined) {

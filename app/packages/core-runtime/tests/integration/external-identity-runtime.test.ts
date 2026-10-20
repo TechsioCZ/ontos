@@ -92,7 +92,7 @@ const makeAdmissionClock = (initial: DateTime.Utc) => {
   return { clock, set: (time: DateTime.Utc) => (currentMillis = DateTime.toEpochMillis(time)) };
 };
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 const makeSubject = () =>
   nextUuid.pipe(

@@ -182,9 +182,9 @@ export const compensateInventoryPreCommitAction = defineAction(
           release: makeInventoryReservationReleaseService({
             effects: reservationReleaseEffectPersistenceForScope(transaction, scope),
             ledger,
-            makeMutationId: crypto.randomUUIDv4.pipe(
-              Effect.map((mutationId) => ReservationReleaseMutationIdSchema.make(mutationId)),
-            ),
+            makeMutationId: crypto
+              .randomUUIDv4()
+              .pipe(Effect.map((mutationId) => ReservationReleaseMutationIdSchema.make(mutationId))),
             obligations: {
               read: (ref) =>
                 obligations

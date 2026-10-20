@@ -140,7 +140,7 @@ export const privacyMeasureExecutionService = (
 
       const now = yield* DateTime.nowAsDate;
       const crypto = yield* Crypto.Crypto;
-      const outcomeId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(persistenceUnavailable));
+      const outcomeId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(persistenceUnavailable));
       const outcome = makeOutcome({
         handoff,
         now,

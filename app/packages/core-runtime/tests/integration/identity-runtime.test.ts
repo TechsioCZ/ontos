@@ -70,7 +70,7 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 const relationship = (
   resourceType: string,

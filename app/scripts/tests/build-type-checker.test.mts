@@ -11,17 +11,11 @@ import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
-// Party Registry is the source-parity fixture for the published UltraModern app scaffold
-// (api-only-tooling.test.mts), which still emits `disableTsChecker: false`. It follows the
-// generator template when UltraModern flips it.
-const scaffoldParityConfig = 'verticals/party-registry/modern.config.ts';
-
 const modernConfigs = ['apps', 'verticals'].flatMap((group) =>
   readdirSync(path.join(workspaceRoot, group), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => `${group}/${entry.name}/modern.config.ts`)
-    .filter((config) => readdirSync(path.join(workspaceRoot, path.dirname(config))).includes('modern.config.ts'))
-    .filter((config) => config !== scaffoldParityConfig),
+    .filter((config) => readdirSync(path.join(workspaceRoot, path.dirname(config))).includes('modern.config.ts')),
 );
 
 // Loads every application config the way `modern build` does and reports the resolved checker switch.
@@ -37,7 +31,7 @@ process.stdout.write(JSON.stringify(result));
 const TsCheckerSwitchesSchema = Schema.Record(Schema.String, Schema.Boolean);
 
 it.live(
-  'no application build re-runs the TypeScript checker that pnpm typecheck owns',
+  'every application build keeps the published workspace preset TypeScript checker',
   Effect.fn(function* testEffect() {
     expect(modernConfigs.length).toBeGreaterThan(0);
     const result = yield* collectToolingProcess(
@@ -56,7 +50,7 @@ it.live(
     const switches = Schema.decodeUnknownSync(Schema.fromJsonString(TsCheckerSwitchesSchema))(result.stdout);
     expect(new Set(Object.keys(switches))).toEqual(new Set(modernConfigs));
     for (const [config, disabled] of Object.entries(switches)) {
-      expect(disabled, `${config} must set output.disableTsChecker: true`).toBe(true);
+      expect(disabled, `${config} must keep output.disableTsChecker: false`).toBe(false);
     }
   }),
 );

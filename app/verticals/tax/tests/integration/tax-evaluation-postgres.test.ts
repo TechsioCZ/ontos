@@ -80,7 +80,7 @@ import {
 } from '../unit/tax-evaluation-fixtures.ts';
 import { occurrenceInput, purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 interface FixtureIdentity {
   readonly principalId: string;
@@ -274,7 +274,7 @@ const concurrentRevisionWriter = (admin: AdminTestDatabase, scope: OperationalSc
   const state = { head: 1 };
   return Effect.suspend(() => {
     state.head += 1;
-    return Effect.all([crypto.randomUUIDv4, crypto.randomUUIDv4]);
+    return Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]);
   }).pipe(
     Effect.flatMap(([actionInvocationId, idempotencyKey]) =>
       admin.insert(taxSellerVatRegimeDeclarations).values({

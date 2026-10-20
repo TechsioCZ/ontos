@@ -74,7 +74,7 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
       kid: 'inventory-position-set-runtime',
       use: 'sig',
     };
-    const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+    const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: composition.composition.revision,

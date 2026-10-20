@@ -56,7 +56,7 @@ const dropSchema = (pool: PgClient.PgClient, schema: MigrationSchema) =>
 
 const makeMigrationSchema = (pool: PgClient.PgClient, crypto: Crypto.Crypto) =>
   Effect.gen(function* makeMigrationSchemaEffect() {
-    const name = `core_auth_namespace_${(yield* crypto.randomUUIDv4).replaceAll('-', '')}`;
+    const name = `core_auth_namespace_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
     const quotedName = `"${name}"`;
     yield* query(pool, `create schema ${quotedName}`);
     yield* query(

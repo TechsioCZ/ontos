@@ -1,80 +1,21 @@
-import { defineConfig } from '@modern-js/app-tools';
-import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
+import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
-import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-
 import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
-import {
-  createModernBuildContext,
-  createModernConfig,
-  installGlobalRequire,
-} from '../../packages/shared-contracts/tooling/modern-config.ts';
-
-installGlobalRequire(import.meta.url);
+import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'projects';
-const bffPrefix = '/projects-api';
-const cloudflareWorkerName = 'app-projects';
-const build = createModernBuildContext({
-  appId,
-  cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
-  cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_PROJECTS',
-  cloudflareWorkerName,
-  defaultPort: 4114,
-  deployTarget: resolveDeployTarget().target,
-  getBuildConfigEnvironment,
-  portEnvironmentVariable: 'VERTICAL_PROJECTS_PORT',
-});
 
 export default defineConfig(
-  presetUltramodern(
+  presetUltramodernWorkspace(
     {
-      ...createModernConfig({
+      ...createWorkspaceModernConfig({
         appId,
-        bffPrefix,
-        build,
-        chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_PROJECTS_LOADED_CHUNKS__',
-        cloudflareWorkerName,
+        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
         moduleUrl: import.meta.url,
-        plugins: [
-          ultramodernAppTools(),
-          tanstackRouterPlugin(),
-          i18nPlugin({
-            backend: {
-              enabled: true,
-              loadPath: '/locales/{{lng}}/{{ns}}.json',
-            },
-            localeDetection: {
-              fallbackLanguage: 'en',
-              ignoreRedirectRoutes: [
-                '/@mf-types',
-                '/assets',
-                '/bundles',
-                '/locales',
-                '/mf-manifest.json',
-                '/mf-stats.json',
-                '/projects-api',
-                '/remoteEntry.js',
-                '/robots.txt',
-                '/site.webmanifest',
-                '/sitemap.xml',
-                '/static',
-                '/zephyr-manifest.json',
-              ],
-              languages: ['en', 'cs'],
-              localePathRedirect: true,
-            },
-            reactI18next: false,
-          }),
-          bffPlugin(),
-          moduleFederationPlugin(),
-        ],
-        rsdoctorEnabled: build.getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
-        uniqueName: 'verticalProjects',
       }),
       bff: {
         effect: {
@@ -82,18 +23,43 @@ export default defineConfig(
           openapi: { path: '/openapi.json' },
           strictEffectApproach: true,
         },
-        prefix: bffPrefix,
+        prefix: '/projects-api',
         runtimeFramework: 'effect',
       },
       builderPlugins: [pluginTailwindcss()],
+      plugins: [
+        tanstackRouterPlugin(),
+        i18nPlugin({
+          backend: {
+            enabled: true,
+            loadPath: '/locales/{{lng}}/{{ns}}.json',
+          },
+          localeDetection: {
+            fallbackLanguage: 'en',
+            ignoreRedirectRoutes: [
+              '/@mf-types',
+              '/assets',
+              '/bundles',
+              '/locales',
+              '/mf-manifest.json',
+              '/mf-stats.json',
+              '/projects-api',
+              '/remoteEntry.js',
+              '/robots.txt',
+              '/site.webmanifest',
+              '/sitemap.xml',
+              '/static',
+              '/zephyr-manifest.json',
+            ],
+            languages: ['en', 'cs'],
+            localePathRedirect: true,
+          },
+          reactI18next: false,
+        }),
+        bffPlugin(),
+        moduleFederationPlugin(),
+      ],
     },
-    {
-      appId,
-      deliveryUnit: {
-        buildMarker: 'fef92f196db4d5ee',
-        unitId: 'app/projects',
-        version: '0.1.0',
-      },
-    },
+    { appId, from: import.meta.url },
   ),
 );

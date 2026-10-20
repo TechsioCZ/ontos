@@ -418,7 +418,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       );
       if (
         config?.includes("from '@modern-js/ultramodern-app-tools'") === true &&
-        /presetUltramodernWorkspace\(\s*\{[\s\S]*\{\s*appId,\s*from:\s*import\.meta\.url\s*\}\s*,?\s*\)/u.test(
+        /presetUltramodernWorkspace\(\s*\{[\s\S]*\{[^{}]*\bappId\b[^{}]*\bfrom:\s*import\.meta\.url\b[^{}]*\}\s*,?\s*\)/u.test(
           config,
         ) &&
         preset?.includes('const require = createRequire(from);') === true &&

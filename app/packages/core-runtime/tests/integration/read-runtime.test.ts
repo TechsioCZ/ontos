@@ -32,7 +32,7 @@ const readDatabaseClients = Effect.gen(function* acquireReadDatabaseClients() {
   return { admin, runtime };
 });
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 it('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
   const config = getTableConfig(dataAccessEvents);

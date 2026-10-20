@@ -48,7 +48,7 @@ type EncodedFixturePrincipal = typeof TrustedPrincipalContextSchema.Encoded;
 
 const testAuthenticationNamespaceId = 'test.party.identity-runtime.v1';
 const sharedIco = '27074358';
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const freshTransport = nextUuid.pipe(
   Effect.map((idempotencyKey) => ({
     correlationId: `identity-runtime-${idempotencyKey}`,

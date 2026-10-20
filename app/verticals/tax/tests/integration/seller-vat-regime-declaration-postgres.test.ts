@@ -20,7 +20,7 @@ import { taxRelations, taxSellerVatRegimeDeclarations } from '../../src/database
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 interface FixtureIdentity {
   readonly principalId: string;

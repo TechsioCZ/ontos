@@ -44,7 +44,7 @@ const notFound = (stockItemId: StockItem['stockItemRef']['resourceId']): StockIt
 const makeStockItemService = Effect.gen(function* makeStockItemService() {
   const crypto = yield* Crypto.Crypto;
   const repository = yield* StockItemRepository;
-  const nextStockItemId = crypto.randomUUIDv4.pipe(
+  const nextStockItemId = crypto.randomUUIDv4().pipe(
     Effect.mapError(
       (cause) =>
         new StockItemPersistenceUnavailable({

@@ -94,7 +94,7 @@ const publishAuthority = Effect.fn(function* publishAuthority(
 });
 const insertTenant = (database: CoreDatabaseExecutor) =>
   Effect.gen(function* insertTenantEffect() {
-    const tenantId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+    const tenantId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
     yield* database.insert(tenants).values({
       defaultLocale: 'en',
       name: 'Outbox Runtime Integration',
@@ -112,7 +112,7 @@ const activateConsumer = (database: CoreDatabaseExecutor, tenantId: string, stat
   });
 const insertMessage = (database: CoreDatabaseExecutor, tenantId: string, topic = 'producer.fixture.message-created') =>
   Effect.gen(function* insertMessageEffect() {
-    const messageKey = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+    const messageKey = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
     const event = Option.getOrThrow(
       Option.fromNullishOr(
         (yield* database

@@ -8,8 +8,8 @@
     "sourceRevision": "workspace",
     "unitId": "app/commerce-market-catalog",
     "version": "0.1.0",
-    "buildMarker": "90197a2b7dff4653",
-    "build": "90197a2b7dff4653"
+    "buildMarker": "7d8efde38f752475",
+    "build": "7d8efde38f752475"
   },
   "kind": "ultramodern-build-artifact",
   "schemaVersion": 2,
@@ -23,8 +23,8 @@
       "sourceRevision": "workspace",
       "unitId": "app/commerce-market-catalog",
       "version": "0.1.0",
-      "buildMarker": "90197a2b7dff4653",
-      "build": "90197a2b7dff4653",
+      "buildMarker": "7d8efde38f752475",
+      "build": "7d8efde38f752475",
       "surface": "api"
     },
     "ui": {
@@ -36,15 +36,15 @@
       "sourceRevision": "workspace",
       "unitId": "app/commerce-market-catalog",
       "version": "0.1.0",
-      "buildMarker": "90197a2b7dff4653",
-      "build": "90197a2b7dff4653",
+      "buildMarker": "7d8efde38f752475",
+      "build": "7d8efde38f752475",
       "surface": "ui",
       "rendererIdentity": {
         "renderer": "react",
         "appId": "commerce-market-catalog",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "90197a2b7dff4653"
+        "buildId": "7d8efde38f752475"
       },
       "rendererProfile": {
         "renderer": "react",
@@ -55,7 +55,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",

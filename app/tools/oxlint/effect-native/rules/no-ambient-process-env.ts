@@ -94,6 +94,12 @@ const ModernCompilerPackage = Schema.Struct({
   scripts: Schema.Struct({ build: Schema.String }),
 });
 
+/** Packages whose `defineConfig` is the native Modern configuration factory. */
+const MODERN_CONFIG_FACTORY_SOURCES: ReadonlySet<string> = new Set([
+  '@modern-js/app-tools',
+  '@modern-js/ultramodern-app-tools',
+]);
+
 /** The native compiler owns this define only in an application's compiled source tree. */
 const hasModernCompilerOwner = (filename: string): boolean => {
   let directory = nodePath.dirname(filename);
@@ -132,7 +138,7 @@ const hasModernCompilerOwner = (filename: string): boolean => {
       configuration.program.body.flatMap((statement) =>
         statement.type === 'ImportDeclaration' &&
         statement.importKind !== 'type' &&
-        statement.source.value === '@modern-js/app-tools'
+        MODERN_CONFIG_FACTORY_SOURCES.has(statement.source.value)
           ? statement.specifiers.flatMap((specifier) =>
               specifier.type === 'ImportSpecifier' &&
               specifier.importKind !== 'type' &&

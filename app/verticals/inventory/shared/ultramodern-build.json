@@ -8,8 +8,8 @@
     "sourceRevision": "workspace",
     "unitId": "app/inventory",
     "version": "0.1.0",
-    "buildMarker": "65701c1d6634cd7b",
-    "build": "65701c1d6634cd7b"
+    "buildMarker": "5f588cb1d6d14d10",
+    "build": "5f588cb1d6d14d10"
   },
   "kind": "ultramodern-build-artifact",
   "schemaVersion": 2,
@@ -23,8 +23,8 @@
       "sourceRevision": "workspace",
       "unitId": "app/inventory",
       "version": "0.1.0",
-      "buildMarker": "65701c1d6634cd7b",
-      "build": "65701c1d6634cd7b",
+      "buildMarker": "5f588cb1d6d14d10",
+      "build": "5f588cb1d6d14d10",
       "surface": "api"
     },
     "ui": {
@@ -36,15 +36,15 @@
       "sourceRevision": "workspace",
       "unitId": "app/inventory",
       "version": "0.1.0",
-      "buildMarker": "65701c1d6634cd7b",
-      "build": "65701c1d6634cd7b",
+      "buildMarker": "5f588cb1d6d14d10",
+      "build": "5f588cb1d6d14d10",
       "surface": "ui",
       "rendererIdentity": {
         "renderer": "react",
         "appId": "inventory",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "65701c1d6634cd7b"
+        "buildId": "5f588cb1d6d14d10"
       },
       "rendererProfile": {
         "renderer": "react",
@@ -55,7 +55,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",

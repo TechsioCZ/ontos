@@ -18,7 +18,7 @@ const fixture = Effect.gen(function* durableWorkFixture() {
   const configuration = yield* loadDatabaseConnectionPair();
   const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
   const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
-  const workId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+  const workId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
   yield* Effect.acquireRelease(Effect.void, () =>
     Effect.gen(function* removeOwnedDurableWorkFixture() {
       yield* adminDatabase

@@ -8,8 +8,8 @@
     "sourceRevision": "workspace",
     "unitId": "app/privacy",
     "version": "0.1.0",
-    "buildMarker": "a9ef1effd4ab4d10",
-    "build": "a9ef1effd4ab4d10"
+    "buildMarker": "c339e4f5077d2392",
+    "build": "c339e4f5077d2392"
   },
   "kind": "ultramodern-build-artifact",
   "schemaVersion": 2,
@@ -23,8 +23,8 @@
       "sourceRevision": "workspace",
       "unitId": "app/privacy",
       "version": "0.1.0",
-      "buildMarker": "a9ef1effd4ab4d10",
-      "build": "a9ef1effd4ab4d10",
+      "buildMarker": "c339e4f5077d2392",
+      "build": "c339e4f5077d2392",
       "surface": "api"
     },
     "ui": {
@@ -36,15 +36,15 @@
       "sourceRevision": "workspace",
       "unitId": "app/privacy",
       "version": "0.1.0",
-      "buildMarker": "a9ef1effd4ab4d10",
-      "build": "a9ef1effd4ab4d10",
+      "buildMarker": "c339e4f5077d2392",
+      "build": "c339e4f5077d2392",
       "surface": "ui",
       "rendererIdentity": {
         "renderer": "react",
         "appId": "privacy",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "a9ef1effd4ab4d10"
+        "buildId": "c339e4f5077d2392"
       },
       "rendererProfile": {
         "renderer": "react",
@@ -55,7 +55,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",

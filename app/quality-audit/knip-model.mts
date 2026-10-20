@@ -418,6 +418,12 @@ const exportedBindings = ({ program }: SourceFacts): readonly ExportedBinding[] 
     });
   });
 
+/** Packages whose `defineConfig` produces a Modern application configuration. */
+const MODERN_CONFIG_FACTORY_SOURCES: ReadonlySet<string> = new Set([
+  '@modern-js/app-tools',
+  '@modern-js/ultramodern-app-tools',
+]);
+
 /** Modern's file router consumes splat components and paired client data outside the import graph. */
 const modernRouteEvidence = (
   factsByPath: ReadonlyMap<string, SourceFacts>,
@@ -436,7 +442,9 @@ const modernRouteEvidence = (
     }
     const factories = new Set(
       facts.program.body.flatMap((node) =>
-        node.type === 'ImportDeclaration' && node.importKind !== 'type' && node.source.value === '@modern-js/app-tools'
+        node.type === 'ImportDeclaration' &&
+        node.importKind !== 'type' &&
+        MODERN_CONFIG_FACTORY_SOURCES.has(node.source.value)
           ? node.specifiers.flatMap((specifier) =>
               specifier.type === 'ImportSpecifier' && propertyName(specifier.imported) === 'defineConfig'
                 ? [specifier.local.name]

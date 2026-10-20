@@ -144,9 +144,9 @@ const transportParityProgram = Effect.gen(function* provesTransportParity() {
   const transports = yield* makeTransports;
   const crypto = yield* Crypto.Crypto;
   const [tenantId, memberId, strangerId] = yield* Effect.all([
-    crypto.randomUUIDv4,
-    crypto.randomUUIDv4,
-    crypto.randomUUIDv4,
+    crypto.randomUUIDv4(),
+    crypto.randomUUIDv4(),
+    crypto.randomUUIDv4(),
   ]);
 
   // WriteSchema: the bootstrapped schema rewrites idempotently; an invalid schema is rejected alike.

@@ -47,7 +47,7 @@ export const handleCreateProductCategory = Effect.fn('CreateProductCategoryActio
       return yield* crossTenantFailure();
     }
     const crypto = yield* Crypto.Crypto;
-    const categoryId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(categoryIdentityUnavailable));
+    const categoryId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(categoryIdentityUnavailable));
     const input = {
       actionInvocationId: context.actionInvocationId,
       categoryId,

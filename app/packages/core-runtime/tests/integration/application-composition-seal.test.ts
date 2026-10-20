@@ -37,11 +37,11 @@ const fixture = (drain = true) =>
     const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
     const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
     const crypto = yield* Crypto.Crypto;
-    const tenantId = yield* crypto.randomUUIDv4;
-    const domainEventId = yield* crypto.randomUUIDv4;
-    const messageId = yield* crypto.randomUUIDv4;
-    const workId = yield* crypto.randomUUIDv4;
-    const rejectedWorkId = yield* crypto.randomUUIDv4;
+    const tenantId = yield* crypto.randomUUIDv4();
+    const domainEventId = yield* crypto.randomUUIDv4();
+    const messageId = yield* crypto.randomUUIDv4();
+    const workId = yield* crypto.randomUUIDv4();
+    const rejectedWorkId = yield* crypto.randomUUIDv4();
     const composition = makeOutboxWorkerComposition();
     const snapshot = yield* freshOutboxWorkerCompositionSnapshot(composition);
     yield* Effect.acquireRelease(Effect.void, () =>

@@ -22,8 +22,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('principal management'
   suite.effect('persists managed key lifecycle without credential material and enforces global key cardinality', () =>
     Effect.gen(function* principalManagement1() {
       const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4;
-      const providerKeyId = `better-auth-principal-management-${yield* crypto.randomUUIDv4}`;
+      const tenantId = yield* crypto.randomUUIDv4();
+      const providerKeyId = `better-auth-principal-management-${yield* crypto.randomUUIDv4()}`;
       const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
       const database = yield* makeTestDatabaseFromClient(
         yield* makeTestPgClient(configuration.connectionString),
