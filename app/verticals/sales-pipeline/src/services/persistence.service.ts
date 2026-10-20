@@ -76,7 +76,9 @@ const targetIdsOf = (command: SalesPipelineCommand): readonly string[] =>
   Match.value(command).pipe(
     Match.tag('CreateOpportunity', () => []),
     Match.tag('BulkUpdateOpportunities', ({ ids }) => ids),
-    Match.tag('UpdateOpportunity', 'AssignOpportunity', 'ChangeOpportunityStage', ({ id }) => [id]),
+    Match.tag('UpdateOpportunity', 'AssignOpportunity', 'ChangeOpportunityStage', 'ArchiveOpportunity', ({ id }) => [
+      id,
+    ]),
     Match.exhaustive,
   );
 
@@ -377,6 +379,14 @@ export const evolveOpportunityState = Effect.fn('SalesPipeline.evolveState')(fun
     Match.tag('UpdateOpportunity', (value) => updateOpportunity(state, value, input.now)),
     Match.tag('AssignOpportunity', (value) => assignOpportunity(state, value, input.now)),
     Match.tag('ChangeOpportunityStage', (value) => changeOpportunityStage(state, value, input.now)),
+    Match.tag('ArchiveOpportunity', (value) =>
+      Effect.gen(function* archiveOpportunity() {
+        const existing = yield* findOpportunity(state, value.id);
+        if (isOpenStage(existing.stage)) return yield* transitionNotAllowed();
+        // Preserve the record, stage history and Core Action audit; archiving never emits a sale/win event.
+        return singleResult(state, { ...existing, archivedAt: input.now, updatedAt: input.now }, []);
+      }),
+    ),
     Match.exhaustive,
   );
 });
@@ -595,7 +605,10 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
     });
     const records = Effect.fn('SalesPipeline.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();
-      const visible = yield* visibleOpportunities(snapshot.state.opportunities, scope);
+      const visible = yield* visibleOpportunities(
+        snapshot.state.opportunities.filter((item) => item.archivedAt === undefined),
+        scope,
+      );
       const requestedIds = request.ids === undefined ? undefined : new Set(request.ids);
       const items = visible.filter(
         (opportunity) =>

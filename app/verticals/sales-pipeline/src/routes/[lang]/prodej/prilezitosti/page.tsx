@@ -11,6 +11,7 @@ import { Effect, Match, Option, Schema } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
 import { useReducer, useState } from 'react';
 import type { ApplyCommandResult } from '../../../../../shared/actions/apply-command.ts';
+import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import csResource from '../../../../../locales/cs/sales-pipeline.json';
@@ -25,7 +26,7 @@ import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from '
 import { PipelineFilters, PipelineStats } from './pipeline-filters.tsx';
 import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import { containsFolded, skipTally, sortNewestFirst } from './pipeline-model.ts';
+import { containsFolded, pipelineConflictKey, skipTally, sortNewestFirst } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage, SkipTally } from './pipeline-model.ts';
 import {
   PipelineEmptyState,
@@ -126,6 +127,7 @@ interface PipelineTableProps {
   readonly lookups: PipelineLookups;
   readonly onClearFilters: () => void;
   readonly onCreate: () => void;
+  readonly onArchive: (opportunity: Opportunity) => void;
   readonly onEdit: (opportunity: Opportunity) => void;
   readonly onOwner: (opportunity: Opportunity) => void;
   readonly onRetry: () => void;
@@ -145,6 +147,7 @@ const PipelineTable = ({
   lookups,
   onClearFilters,
   onCreate,
+  onArchive,
   onEdit,
   onOwner,
   onRetry,
@@ -194,6 +197,7 @@ const PipelineTable = ({
           ? [
               {
                 icon: 'icon-[mdi--pencil-outline]',
+                disabled: (row) => !isOpenStage(row.original.stage),
                 id: 'edit',
                 label: t(`${K}.actions.edit`),
                 onAction: (row) => onEdit(row.original),
@@ -206,9 +210,17 @@ const PipelineTable = ({
               },
               {
                 icon: 'icon-[mdi--account-arrow-right-outline]',
+                disabled: (row) => !isOpenStage(row.original.stage),
                 id: 'owner',
                 label: t(`${K}.actions.assignOwner`),
                 onAction: (row) => onOwner(row.original),
+              },
+              {
+                icon: 'icon-[mdi--archive-outline]',
+                id: 'archive',
+                label: t(`${K}.actions.archive`),
+                disabled: (row) => isOpenStage(row.original.stage),
+                onAction: (row) => onArchive(row.original),
               },
             ]
           : []
@@ -351,13 +363,15 @@ const RecordsPageContent = ({
         Effect.match({
           onFailure: (error) => {
             setBusy(false);
-            setDialogError(
-              Match.value(error).pipe(
-                Match.tag('ApplyCommandActionConflictProblem', () => t(`${K}.errors.conflict`)),
-                Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${K}.errors.forbidden`)),
-                Match.orElse(() => t(`${K}.errors.generic`)),
-              ),
+            const message = Match.value(error).pipe(
+              Match.tag('ApplyCommandActionConflictProblem', (problem) => t(pipelineConflictKey(problem.code))),
+              Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${K}.errors.forbidden`)),
+              Match.orElse(() => t(`${K}.errors.generic`)),
             );
+            setDialogError(message);
+            if (command._tag === 'ArchiveOpportunity') {
+              toaster.create({ title: message, type: 'error' });
+            }
             reload();
           },
           onSuccess: (result) => {
@@ -512,7 +526,13 @@ const RecordsPageContent = ({
         <PipelineBulkBar
           onClear={() => setSelection({})}
           onOwner={() => openOwner({ ids: selectedIds, mode: 'bulk' })}
-          onStage={() => openStage({ ids: selectedIds, mode: 'bulk' })}
+          onStage={() =>
+            openStage({
+              ids: selectedIds,
+              mode: 'bulk',
+              stages: rows.filter((row) => selection[row.id]).map((row) => row.stage),
+            })
+          }
           onTags={() => openDialog({ ids: selectedIds, kind: 'tags' })}
           selectedCount={selectedIds.length}
         />
@@ -526,6 +546,13 @@ const RecordsPageContent = ({
         loadError={loadError}
         loading={(response === undefined && loadError === undefined) || pending || tagState?.status === 'loading'}
         lookups={lookups}
+        onArchive={(opportunity) => {
+          if (!window.confirm(t(`${K}.archiveConfirm`, { title: opportunity.title }))) return;
+          runCommand({ _tag: 'ArchiveOpportunity', id: opportunity.id }, () => {
+            setSelection({});
+            toaster.create({ title: t(`${K}.toasts.archived`), type: 'success' });
+          });
+        }}
         onClearFilters={clearFilters}
         onCreate={openCreate}
         onEdit={(opportunity) => openDialog({ kind: 'form', opportunity })}

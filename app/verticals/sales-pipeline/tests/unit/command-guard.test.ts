@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 import { assertCommandAllowed, principalKindOf, withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { SalesPipelinePermissionDenied } from '../../shared/errors/sales-pipeline-permission-denied.ts';
 
-const deniedCommands = ['DeleteOpportunity'] as const;
+const deniedCommands = ['DeleteOpportunity', 'ArchiveOpportunity'] as const;
 const isRejection = Schema.is(SalesPipelinePermissionDenied);
 
 it('treats sessions as human and API keys or system jobs as non-human', () => {

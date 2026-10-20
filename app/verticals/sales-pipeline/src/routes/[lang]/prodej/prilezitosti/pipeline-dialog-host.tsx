@@ -16,7 +16,9 @@ const K = 'sales-pipeline.pages.records';
 type OpportunityId = Opportunity['id'];
 
 /** Dialog target: one row from the row menu, or the bulk selection. */
-export type Target = { mode: 'row'; opportunity: Opportunity } | { ids: readonly OpportunityId[]; mode: 'bulk' };
+export type Target =
+  | { mode: 'row'; opportunity: Opportunity }
+  | { ids: readonly OpportunityId[]; mode: 'bulk'; stages?: readonly OpportunityStage[] };
 
 export type DialogState =
   | { kind: 'form'; opportunity?: Opportunity }
@@ -135,6 +137,7 @@ export const PipelineDialogHost = ({
         busy={busy}
         currentStage={target.mode === 'row' ? target.opportunity.stage : undefined}
         description={description}
+        selectedStages={target.mode === 'bulk' ? target.stages : undefined}
         onOpenChange={close}
         onSubmit={onStageSubmit}
         serverError={error}

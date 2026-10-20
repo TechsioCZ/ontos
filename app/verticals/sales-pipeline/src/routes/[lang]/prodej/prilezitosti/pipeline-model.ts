@@ -2,6 +2,7 @@ import { foldSearchText, formatMoney, formatNumber } from '@app/admin-ui';
 import { Array as Arr, DateTime, Order, Option, Schema } from 'effect';
 import type { ApplyCommandResult, BulkSkipReason } from '../../../../../shared/actions/apply-command.ts';
 import { OpportunityLineSchema, opportunityAmountMinor } from '../../../../../shared/model/opportunity.ts';
+import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity, OpportunityLine } from '../../../../../shared/model/opportunity.ts';
 import { OpportunityStageSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import type { EmployeeIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
@@ -22,6 +23,15 @@ export const opportunityStages = [
 ] as const satisfies readonly OpportunityStage[];
 
 export const isOpportunityStage = Schema.is(OpportunityStageSchema);
+
+/** Terminal opportunities cannot reopen; mixed bulk selections keep closed records unchanged. */
+export const permittedStageTransitions = (stages: readonly OpportunityStage[]): readonly OpportunityStage[] =>
+  opportunityStages.filter((candidate) => stages.some((stage) => isOpenStage(stage) && candidate !== stage));
+
+export const pipelineConflictKey = (code: string): string =>
+  code === 'sales_pipeline_lifecycle_conflict'
+    ? 'sales-pipeline.pages.records.errors.closed'
+    : 'sales-pipeline.pages.records.errors.conflict';
 
 /** Position of a stage in the sales order, so sorting follows the pipeline rather than the code names. */
 export const stageRank = (stage: OpportunityStage): number => opportunityStages.indexOf(stage);

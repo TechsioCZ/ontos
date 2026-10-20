@@ -23,6 +23,7 @@ import {
   firstValue,
   isOpportunityStage,
   opportunityStages,
+  permittedStageTransitions,
 } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 import { PickerCombobox } from './pipeline-combobox.tsx';
@@ -385,6 +386,7 @@ export const OpportunityFormDialog = ({
 interface StageDialogProps {
   readonly busy: boolean;
   readonly currentStage?: OpportunityStage | undefined;
+  readonly selectedStages?: readonly OpportunityStage[] | undefined;
   readonly description: string;
   readonly onOpenChange: (open: boolean) => void;
   readonly onSubmit: (stage: OpportunityStage, note: string | undefined) => void;
@@ -396,6 +398,7 @@ interface StageDialogProps {
 export const StageDialog = ({
   busy,
   currentStage,
+  selectedStages,
   description,
   onOpenChange,
   onSubmit,
@@ -407,9 +410,13 @@ export const StageDialog = ({
   const [note, setNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const formId = useId();
-  const items = opportunityStages.flatMap((candidate) =>
-    candidate === currentStage ? [] : [{ label: statusPresentation('opportunity', candidate).label, value: candidate }],
+  const allowedStages = permittedStageTransitions(
+    selectedStages ?? (currentStage === undefined ? opportunityStages : [currentStage]),
   );
+  const items = allowedStages.map((candidate) => ({
+    label: statusPresentation('opportunity', candidate).label,
+    value: candidate,
+  }));
   const noteText = note.trim();
   const noteError = isValidNote(noteText) ? undefined : t(`${K}.create.errors.noteTooLong`);
 
@@ -418,7 +425,7 @@ export const StageDialog = ({
       return;
     }
     setSubmitted(true);
-    if (stage === '' || noteError !== undefined) {
+    if (stage === '' || !allowedStages.includes(stage) || noteError !== undefined) {
       return;
     }
     onSubmit(stage, showNote && noteText !== '' ? noteText : undefined);
@@ -432,6 +439,7 @@ export const StageDialog = ({
             {t(`${K}.stageDialog.cancel`)}
           </Button>
           <Button
+            disabled={items.length === 0}
             form={formId}
             isLoading={busy}
             loadingText={t(`${K}.stageDialog.submitting`)}
@@ -464,6 +472,7 @@ export const StageDialog = ({
             {serverError}
           </StatusText>
         )}
+        {items.length === 0 && <StatusText status="warning">{t(`${K}.errors.closed`)}</StatusText>}
         <SelectTemplate
           items={items}
           label={t(`${K}.stageDialog.stage`)}

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
@@ -31,6 +32,10 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import developmentOverlay from '../../topology/local-overlays/development.json';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 
+const localeDigest = createHash('sha256')
+  .update(readFileSync(new URL('./locales/cs/sales-pipeline.json', import.meta.url)))
+  .update(readFileSync(new URL('./locales/en/sales-pipeline.json', import.meta.url)))
+  .digest('hex');
 const appId = 'sales-pipeline';
 const cloudflareWorkerName = 'app-sales-pipeline';
 const HttpUrlSchema = URLFromString.check(
@@ -233,7 +238,7 @@ export default defineConfig(
       },
       performance: {
         buildCache: {
-          cacheDigest: [appId, buildTarget],
+          cacheDigest: [appId, buildTarget, localeDigest],
           cacheDirectory: buildCacheDirectory,
         },
       },

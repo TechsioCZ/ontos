@@ -45,6 +45,7 @@ export const OpportunityStageHistoryEntrySchema = Schema.Struct({
 
 export const OpportunitySchema = Schema.Struct({
   amountMinor: MinorUnitsSchema,
+  archivedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   closedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   createdAt: Schema.DateTimeUtcFromString,
   currency: OpportunityCurrencySchema,

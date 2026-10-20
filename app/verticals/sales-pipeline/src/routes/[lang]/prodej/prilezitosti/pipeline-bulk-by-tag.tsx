@@ -14,7 +14,13 @@ import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import { isOpportunityStage, opportunityCount, opportunityStages, skipTally } from './pipeline-model.ts';
+import {
+  isOpportunityStage,
+  pipelineConflictKey,
+  opportunityCount,
+  opportunityStages,
+  skipTally,
+} from './pipeline-model.ts';
 import type { OpportunityStage, SkipTally } from './pipeline-model.ts';
 import { useAllOpportunities, useSubjectIdsWithTag } from './pipeline-references.ts';
 import type { EmployeeOption, LoadState } from './pipeline-references.ts';
@@ -271,7 +277,7 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
             setBusy(false);
             setSubmitError(
               Match.value(error).pipe(
-                Match.tag('ApplyCommandActionConflictProblem', () => t(`${K}.bulkByTag.conflict`)),
+                Match.tag('ApplyCommandActionConflictProblem', (problem) => t(pipelineConflictKey(problem.code))),
                 Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${K}.errors.forbidden`)),
                 Match.orElse(() => t(`${K}.errors.generic`)),
               ),

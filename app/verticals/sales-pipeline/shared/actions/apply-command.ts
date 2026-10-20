@@ -51,6 +51,7 @@ export const SalesPipelineCommandSchema = Schema.Union([
     stage: Schema.optionalKey(OpportunityStageSchema),
     title: OpportunityTitleSchema,
   }),
+  Schema.TaggedStruct('ArchiveOpportunity', { id: OpportunityIdSchema }),
   Schema.TaggedStruct('UpdateOpportunity', {
     id: OpportunityIdSchema,
     patch: OpportunityPatchSchema,

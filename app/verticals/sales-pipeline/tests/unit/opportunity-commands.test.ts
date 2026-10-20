@@ -220,3 +220,17 @@ it.effect('create keeps the assignee and rejects a duplicate identity', () =>
     expect(Schema.is(SalesPipelineRevisionConflict)(duplicate)).toBe(true);
   }),
 );
+
+it.effect('archives a closed opportunity without deleting its history or emitting a new sale', () =>
+  Effect.gen(function* archiveClosed() {
+    const created = yield* run(emptyState, createInput(), opportunityA);
+    const rejected = yield* run(created.state, { _tag: 'ArchiveOpportunity', id: opportunityA }).pipe(Effect.flip);
+    expect(Schema.is(SalesPipelineLifecycleConflict)(rejected)).toBe(true);
+    const lost = yield* run(created.state, { _tag: 'ChangeOpportunityStage', id: opportunityA, toStage: 'LOST' });
+    const archived = yield* run(lost.state, { _tag: 'ArchiveOpportunity', id: opportunityA }, unusedInvocation, later);
+    expect(archived.state.opportunities).toHaveLength(1);
+    expect(archived.affected[0]?.archivedAt).toEqual(later);
+    expect(archived.affected[0]?.stageHistory).toEqual(lost.affected[0]?.stageHistory);
+    expect(archived.stageChanges).toEqual([]);
+  }),
+);

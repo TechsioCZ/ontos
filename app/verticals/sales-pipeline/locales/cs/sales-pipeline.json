@@ -102,7 +102,9 @@
           "title": "Název",
           "updatedAt": "Upraveno"
         },
+        "archiveConfirm": "Archivovat příležitost „{{title}}“? Zmizí z běžného seznamu, historie zůstane zachována.",
         "actions": {
+          "archive": "Archivovat",
           "assignOwner": "Přiřadit obchodníka",
           "changeStage": "Změnit fázi",
           "edit": "Upravit"
@@ -184,6 +186,7 @@
           "title": "Přiřadit obchodníka"
         },
         "toasts": {
+          "archived": "Příležitost byla archivována.",
           "created": "Příležitost vytvořena",
           "ownerAssigned": "Obchodník přiřazen",
           "ownerRemoved": "Obchodník odebrán",
@@ -199,6 +202,7 @@
           "bulkChanged": "Změněno {{changed}}, přeskočeno {{skipped}}"
         },
         "errors": {
+          "closed": "Příležitost je uzavřená. Její fázi, údaje ani přiřazení již nelze měnit. Uzavřené příležitosti zůstanou při hromadné změně beze změny.",
           "conflict": "Záznam mezitím upravil někdo jiný. Načtěte ho znovu a změnu zopakujte.",
           "forbidden": "K této operaci nemáte oprávnění.",
           "generic": "Změnu se nepodařilo uložit. Zkuste to znovu.",

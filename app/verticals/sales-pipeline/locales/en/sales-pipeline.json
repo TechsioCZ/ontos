@@ -102,7 +102,9 @@
           "title": "Title",
           "updatedAt": "Updated"
         },
+        "archiveConfirm": "Archive opportunity “{{title}}”? It will leave the active list; its history will be preserved.",
         "actions": {
+          "archive": "Archive",
           "assignOwner": "Assign owner",
           "changeStage": "Change stage",
           "edit": "Edit"
@@ -184,6 +186,7 @@
           "title": "Assign owner"
         },
         "toasts": {
+          "archived": "Opportunity archived.",
           "created": "Opportunity created",
           "ownerAssigned": "Owner assigned",
           "ownerRemoved": "Owner removed",
@@ -199,6 +202,7 @@
           "bulkChanged": "Changed {{changed}}, skipped {{skipped}}"
         },
         "errors": {
+          "closed": "The opportunity is closed. Its stage, details and assignment cannot be changed. Bulk changes leave closed opportunities unchanged.",
           "conflict": "Someone else changed the record in the meantime. Reload it and repeat your change.",
           "forbidden": "You are not allowed to do this.",
           "generic": "The change could not be saved. Try again.",

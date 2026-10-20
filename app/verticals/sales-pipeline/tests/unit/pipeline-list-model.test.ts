@@ -4,6 +4,8 @@ import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts'
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import {
   MAX_LINE_QUANTITY,
+  permittedStageTransitions,
+  pipelineConflictKey,
   manualOpportunityLine,
   isSafeOpportunityAmount,
   filterItemsByQuery,
@@ -118,4 +120,13 @@ it('rejects an unsafe quantity edit and an unsafe sum of individually valid rent
   expect(isSafeOpportunityAmount([line, line, line])).toBe(false);
   expect(isSafeOpportunityAmount([{ ...line, quantity: 3 }])).toBe(false);
   expect(isSafeOpportunityAmount([{ ...line, quantity: 2 }])).toBe(true);
+});
+
+it('offers no transitions for terminal opportunities or an all-closed bulk selection', () => {
+  expect(permittedStageTransitions(['WON'])).toEqual([]);
+  expect(permittedStageTransitions(['LOST'])).toEqual([]);
+  expect(permittedStageTransitions(['LOST', 'WON'])).toEqual([]);
+  expect(permittedStageTransitions(['LEAD', 'LOST'])).toEqual(['QUALIFIED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST']);
+  expect(pipelineConflictKey('sales_pipeline_lifecycle_conflict')).toBe('sales-pipeline.pages.records.errors.closed');
+  expect(pipelineConflictKey('sales_pipeline_revision_conflict')).toBe('sales-pipeline.pages.records.errors.conflict');
 });
