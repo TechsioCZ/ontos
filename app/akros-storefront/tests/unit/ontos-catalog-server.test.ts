@@ -62,7 +62,7 @@ describe("OntOS catalog server reads", () => {
   it("reads the homepage selection for the layout and strips long category texts", async () => {
     const snapshot = await server.getShellSnapshot();
     expect(vi.mocked(readRecords).mock.calls[0][2]).toEqual({
-      view: { storefront: true, storefrontCatalog: { featured: true, pageSize: 16 } },
+      view: { storefront: true, storefrontCatalog: { featured: true, pageSize: 20 } },
     });
     expect(snapshot.categories.categories[0]).toEqual({
       id: "c1",

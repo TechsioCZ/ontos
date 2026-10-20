@@ -38,7 +38,8 @@ export interface CatalogPage {
 /** Admin edits in OntOS are visible after at most this delay plus a page refresh. */
 export const CATALOG_CACHE_MS = 10_000;
 const CACHE_LIMIT = 100;
-const homeQuery: CatalogQuery = { featured: true, pageSize: 16 };
+// Kai's model shows 16 cards and skips placeholder groups (e.g. one named "AKCE"): read a few spares.
+const homeQuery: CatalogQuery = { featured: true, pageSize: 20 };
 const snapshots = new Map<string, { at: number; snapshot: CatalogSnapshot }>();
 
 /** Drop unset keys (and the storefront-only `flag`, which OntOS rejects) so equal queries share a cache key. */
