@@ -110,7 +110,7 @@ export const LinkedDocuments = ({
     `/${language ?? 'cs'}/siampark/provoz/dokumenty?doc=${encodeURIComponent(documentId)}`;
 
   return (
-    <section className="flex flex-col gap-150" data-testid="linked-documents">
+    <section className="siampark-linked-documents flex flex-col gap-150" data-testid="linked-documents">
       {documents.length === 0 ? (
         <p className="text-fg-secondary text-sm">{t(`${k}.linked.empty`)}</p>
       ) : (
@@ -152,7 +152,7 @@ export const LinkedDocuments = ({
         </ul>
       )}
       {canWrite && (
-        <div className="flex flex-wrap items-end gap-150">
+        <div className="siampark-linked-document-actions flex flex-wrap items-end gap-150">
           <label className={busy ? 'pointer-events-none opacity-60' : 'cursor-pointer'}>
             <input
               className="sr-only"
