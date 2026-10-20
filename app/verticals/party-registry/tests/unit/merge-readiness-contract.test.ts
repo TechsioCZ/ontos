@@ -299,7 +299,9 @@ it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
         ]),
       ),
       ([modernConfigSource, workspaceToolingSource]) => {
-        expect(modernConfigSource).toMatch(/createWorkspaceModernConfig\(\{\s*build,\s*moduleUrl: import\.meta\.url,/u);
+        expect(modernConfigSource).toMatch(
+          /createWorkspaceModernConfig\(\{\s*appId,\s*cloudflareHyperdrives: \[[^\]]+\],\s*moduleUrl: import\.meta\.url,/u,
+        );
         expect(modernConfigSource).toMatch(/ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
         expect(workspaceToolingSource).toMatch(
           /new URL\('\.dev-public\/\.well-known\/ontos-module-manifest\.json', moduleUrl\)/u,
@@ -309,7 +311,7 @@ it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
         );
         expect(workspaceToolingSource).toMatch(/response\.setHeader\('Content-Type', 'application\/json'\)/u);
         expect(workspaceToolingSource).toMatch(
-          /setupMiddlewares: \[createDevelopmentContractMiddleware\(moduleUrl\)\],\s*\},\s*plugins,\s*server: \{\s*publicDir: \['\.\/\.dev-public'\],/u,
+          /setupMiddlewares: appId === 'shell-super-app' \? \[\] : \[createDevelopmentContractMiddleware\(moduleUrl\)\],\s*\},\s*server: \{\s*publicDir: \['\.\/\.dev-public'\],/u,
         );
       },
     ),
