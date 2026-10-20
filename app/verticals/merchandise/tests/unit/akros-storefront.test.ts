@@ -85,7 +85,8 @@ it.effect('returns the exact current gross tier and snapshots the tier on placem
     expect(placed.storefrontOrder?.outcome).toBe('PLACED');
     expect(placed.state.orders[0]?.lines[0]?.unitPriceMinor).toBe(7);
     expect(placed.state.orders[0]?.totalMinor).toBe(700);
-    expect(placed.state.movements).toEqual(state.movements);
+    expect(placed.state.movements).toHaveLength(state.movements.length + 1);
+    expect(placed.state.movements.at(-1)?.delta).toBe(-100);
   }),
 );
 it.effect('AKROS API keys may only place storefront orders', () =>

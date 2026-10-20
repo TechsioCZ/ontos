@@ -47,7 +47,7 @@ import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '.
 import { merchandiseStates } from '../database/schema.ts';
 import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
-import { updateCategoryCommand } from './catalog-content.ts';
+import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -352,11 +352,18 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   input: MerchandiseCommandInput,
 ) {
   const product = yield* findProduct(state.products, value.id);
-  const { variants: patchVariants, ...patch } = value.patch;
+  // categoryPathIds is server-derived; categoryId moves the product inside the storefront category tree.
+  const { variants: patchVariants, categoryId: patchCategoryId, categoryPathIds: _clientPath, ...patch } = value.patch;
+  void _clientPath;
   const variants =
     patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
   const merged: Product = { ...product, ...patch, updatedAt: input.now };
-  const updated: Product = variants === undefined ? merged : { ...merged, variants };
+  const categorized =
+    patchCategoryId === undefined || patchCategoryId === product.categoryId
+      ? merged
+      : yield* assignCategory(merged, patchCategoryId, state.categories);
+  const withVariants: Product = variants === undefined ? categorized : { ...categorized, variants };
+  const updated = withContentHistory(product, withVariants, input);
   const entity = yield* entityIdOf(product.id);
   return { entityIds: [entity], state: withProduct(state, updated) };
 });
@@ -636,7 +643,7 @@ export const orderTransitions = {
   SHIPPED: ['DELIVERED'],
 } satisfies Readonly<Record<OrderStatus, readonly OrderStatus[]>>;
 
-/** ORDER movements this order wrote (storefront orders never move stock). */
+/** ORDER movements this order wrote (staff and storefront orders both write them). */
 const orderMovesStock = (state: MerchandiseState, order: Order) =>
   state.movements.some((movement) => movement.reason === 'ORDER' && movement.reference === order.number);
 
@@ -682,6 +689,7 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
           at: input.now,
           delta: line.quantity,
           id,
+          note: `Storno objednávky ${existing.number}`,
           productId: line.productId,
           reason: 'ORDER',
           reference: existing.number,
@@ -965,9 +973,27 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     updatedAt: input.now,
   };
   const entity = yield* entityIdOf(order.id);
+  // Atomic with the order: the same save writes one ORDER movement per line; cancelling returns it.
+  const placedMovements = yield* Effect.forEach(
+    lines,
+    (line, index) =>
+      movementIdOf(input.resourceId, index).pipe(
+        Effect.map((movementId): StockMovement => ({
+          at: input.now,
+          delta: -line.quantity,
+          id: movementId,
+          note: `Objednávka ${number} z e-shopu`,
+          productId: line.productId,
+          reason: 'ORDER',
+          reference: number,
+          ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
+        })),
+      ),
+    { concurrency: 1 },
+  );
   return {
     entityIds: [entity],
-    state: { ...state, orders: [...state.orders, order] },
+    state: { ...state, movements: [...state.movements, ...placedMovements], orders: [...state.orders, order] },
     storefrontOrder: storefrontResultOf(order, 'PLACED'),
   };
 });
@@ -1215,9 +1241,37 @@ export const evolveMerchandiseState = (
             }),
           ],
         };
+        // An open order that already moved stock gives it back when it is removed from the presentation.
+        const returnsStock =
+          (order.status === 'NEW' || order.status === 'CONFIRMED' || order.status === 'PACKING') &&
+          orderMovesStock(state, order);
+        const returned = returnsStock
+          ? yield* Effect.forEach(
+              order.lines,
+              (line, index) =>
+                movementIdOf(input.resourceId, index).pipe(
+                  Effect.map((id): StockMovement => ({
+                    at: input.now,
+                    delta: line.quantity,
+                    id,
+                    note: `Vráceno – odstraněná DEMO objednávka ${order.number}`,
+                    productId: line.productId,
+                    reason: 'ORDER',
+                    reference: order.number,
+                    ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
+                  })),
+                ),
+              { concurrency: 1 },
+            )
+          : [];
         return {
           entityIds: [entity],
-          state: { ...state, orders: state.orders.map((entry) => (entry.id === order.id ? removed : entry)) },
+          state: {
+            ...state,
+            // Keep the ledger reference when nothing is returned, so no-op removals stay identical.
+            movements: returned.length === 0 ? state.movements : [...state.movements, ...returned],
+            orders: state.orders.map((entry) => (entry.id === order.id ? removed : entry)),
+          },
         };
       }),
     ),
@@ -1305,6 +1359,28 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       return expectedRevision + 1;
     });
+    const applyOnce = Effect.fn('Merchandise.applyOnce')(function* applyOnce(
+      command: MerchandiseCommand,
+      expectedRevision: number,
+      resourceId: string,
+    ) {
+      const snapshot = yield* load();
+      // Storefront guests cannot know the aggregate revision; their command re-validates against current state.
+      if (command._tag !== 'PlaceStorefrontOrder' && snapshot.revision !== expectedRevision) {
+        return yield* new MerchandiseRevisionConflict({
+          code: 'merchandise_revision_conflict',
+          reason: 'Merchandise changed; refresh before another operation',
+        });
+      }
+      const now = yield* DateTime.now;
+      const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
+      const change = yield* evolveMerchandiseState(snapshot.state, command, { actor, now, resourceId });
+      const revision =
+        change.state === snapshot.state ? snapshot.revision : yield* save(snapshot.revision, change.state);
+      return change.storefrontOrder === undefined
+        ? { entityIds: [...change.entityIds], revision }
+        : { entityIds: [...change.entityIds], revision, storefrontOrder: change.storefrontOrder };
+    });
     const apply = Effect.fn('Merchandise.apply')(function* apply(
       command: MerchandiseCommand,
       expectedRevision: number,
@@ -1324,22 +1400,13 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           });
         }
       }
-      const snapshot = yield* load();
-      // Storefront guests cannot know the aggregate revision; their command re-validates against current state.
-      if (command._tag !== 'PlaceStorefrontOrder' && snapshot.revision !== expectedRevision) {
-        return yield* new MerchandiseRevisionConflict({
-          code: 'merchandise_revision_conflict',
-          reason: 'Merchandise changed; refresh before another operation',
-        });
-      }
-      const now = yield* DateTime.now;
-      const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
-      const change = yield* evolveMerchandiseState(snapshot.state, command, { actor, now, resourceId });
-      const revision =
-        change.state === snapshot.state ? snapshot.revision : yield* save(snapshot.revision, change.state);
-      return change.storefrontOrder === undefined
-        ? { entityIds: [...change.entityIds], revision }
-        : { entityIds: [...change.entityIds], revision, storefrontOrder: change.storefrontOrder };
+      // A concurrent storefront order may win the revision race; re-validate against the newer state (max 2 retries).
+      return yield* applyOnce(command, expectedRevision, resourceId).pipe(
+        Effect.retry({
+          times: 2,
+          while: (error) => command._tag === 'PlaceStorefrontOrder' && error._tag === 'MerchandiseRevisionConflict',
+        }),
+      );
     });
     const records = Effect.fn('Merchandise.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();

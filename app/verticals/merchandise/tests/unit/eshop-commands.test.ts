@@ -95,7 +95,7 @@ it.effect('PlaceStorefrontOrder saves once and replays the same order for the sa
     const [order] = first.state.orders;
     expect(order?.demo).toBe(true);
     expect(order?.status).toBe('NEW');
-    expect(first.state.movements).toHaveLength(state.movements.length);
+    expect(first.state.movements).toHaveLength(state.movements.length + (order?.lines.length ?? 0));
     const again = yield* apply(first.state, guestOrder(), 'inv-2');
     expect(again.storefrontOrder?.outcome).toBe('REPLAYED');
     expect(again.storefrontOrder?.orderNumber).toBe('OBJ-2026-0001');
