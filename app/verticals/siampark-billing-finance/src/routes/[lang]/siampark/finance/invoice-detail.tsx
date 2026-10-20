@@ -23,6 +23,7 @@ import {
 } from './invoice-view.ts';
 import type { useFinanceRecords } from './use-finance-records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { InvoicePrint } from './invoice-print.tsx';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import {
   CounterpartyHistory,
@@ -114,7 +115,8 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
   );
 
   return (
-    <>
+    <article className="flex min-w-0 flex-col gap-250" data-finance-invoice="">
+      <InvoicePrint counterpartyName={counterpartyName} invoice={invoice} issuerName={t(`${ns}.supplierName`)} />
       <div className="print:hidden">
         <Button
           className="whitespace-nowrap"
@@ -384,6 +386,6 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
           </div>
         </div>
       </div>
-    </>
+    </article>
   );
 };

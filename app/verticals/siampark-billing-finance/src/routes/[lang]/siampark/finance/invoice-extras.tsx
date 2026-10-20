@@ -155,6 +155,7 @@ export const InvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; r
       </div>
       <Dialog
         closeLabel={dialogCloseLabel}
+        contentStyle={{ maxWidth: 'calc(100vw - 2rem)', width: '72rem' }}
         customTrigger
         onOpenChange={(details) => {
           if (!details.open) {
