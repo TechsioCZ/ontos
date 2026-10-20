@@ -156,7 +156,11 @@ export const initialAiChangesSlice: AiChangesSlice = { batches: [], changes: [],
 export const projectAiChangesSlice = (slice: AiChangesSlice | undefined, viewer: CrmViewer): AiChangesSlice =>
   slice !== undefined && canSeeEverything(viewer) ? slice : initialAiChangesSlice;
 
-export const aiRiskLabel: Record<AiRisk, string> = { high: 'Vysoké riziko', low: 'Nízké riziko', medium: 'Střední riziko' };
+export const aiRiskLabel: Record<AiRisk, string> = {
+  high: 'Vysoké riziko',
+  low: 'Nízké riziko',
+  medium: 'Střední riziko',
+};
 
 export const aiStatusLabel: Record<AiChangeStatus, string> = {
   applied: 'Provedeno',

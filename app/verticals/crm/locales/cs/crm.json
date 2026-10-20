@@ -24,6 +24,7 @@
       "scopeNone": "Nemáte přidělené žádné klienty."
     },
     "pages": {
+      "ai": { "title": "AI změny ke schválení", "description": "Návrhy AI, lidské schvalování a bezpečné vrácení celé dávky." },
       "clients": { "title": "Klienti", "description": "Firemní klienti, kontaktní osoby a přidělení obchodníkům." },
       "visits": { "title": "Návštěvy", "description": "Historie návštěv, telefonátů a e-mailů u klientů." },
       "plan": { "title": "K oslovení", "description": "Ruční plán dalších kontaktů. Není to doporučení systému." },

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 /** AI agent levels (specs AGENT.md). A: read-only. B: reads + tasks. Unset: the legacy full `agent-bot`. */
-export type AgentProfile = 'A' | 'B';
+export type AgentProfile = 'A' | 'B' | 'C';
 
 /** Demo companies with AI principals (scripts/demo/ai-profiles.mts). */
 export const AGENT_COMPANIES = {
@@ -68,13 +68,16 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AgentConfig =>
   const read = (key: string): string | undefined => (env[key] ?? fileValues[key])?.trim() || undefined;
 
   const rawProfile = read('ONTOS_AGENT_PROFILE')?.toUpperCase();
-  if (rawProfile !== undefined && rawProfile !== 'A' && rawProfile !== 'B') {
-    throw new Error(`ONTOS_AGENT_PROFILE must be A or B (got ${JSON.stringify(rawProfile)}).`);
+  if (rawProfile !== undefined && rawProfile !== 'A' && rawProfile !== 'B' && rawProfile !== 'C') {
+    throw new Error(`ONTOS_AGENT_PROFILE must be A, B or C (got ${JSON.stringify(rawProfile)}).`);
   }
   const profile: AgentProfile | undefined = rawProfile;
-  const rawCompany = read('ONTOS_AGENT_COMPANY')?.toLowerCase() ?? 'obchod';
+  const rawCompany = read('ONTOS_AGENT_COMPANY')?.toLowerCase() ?? (profile === 'C' ? 'hanak' : 'obchod');
   if (rawCompany !== 'obchod' && rawCompany !== 'hanak') {
     throw new Error(`ONTOS_AGENT_COMPANY must be obchod or hanak (got ${JSON.stringify(rawCompany)}).`);
+  }
+  if (profile === 'C' && rawCompany !== 'hanak') {
+    throw new Error('Profile C is scoped to Hanák CRM only (ONTOS_AGENT_COMPANY=hanak).');
   }
   const company: AgentCompany | undefined = profile === undefined ? undefined : rawCompany;
 

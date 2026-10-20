@@ -57,10 +57,10 @@ server.registerTool(
   },
   async () => {
     try {
-      await getAssertion(PROBE_AUDIENCE);
+      await getAssertion(config.profile === 'C' ? 'crm' : PROBE_AUDIENCE);
       return textResult({
         ...profileInfo(),
-        assertionAudience: PROBE_AUDIENCE,
+        assertionAudience: config.profile === 'C' ? 'crm' : PROBE_AUDIENCE,
         assertionObtained: true,
         legalEntityIdConfigured: config.legalEntityId !== undefined,
         shellUrl: config.shellUrl,
@@ -69,7 +69,7 @@ server.registerTool(
       return textResult(
         {
           ...profileInfo(),
-          assertionAudience: PROBE_AUDIENCE,
+          assertionAudience: config.profile === 'C' ? 'crm' : PROBE_AUDIENCE,
           assertionObtained: false,
           error: errorMessage(error),
           legalEntityIdConfigured: config.legalEntityId !== undefined,

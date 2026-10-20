@@ -15,6 +15,7 @@ import { VisitsPage } from './src/routes/[lang]/crm/navstevy/page.tsx';
 import { PlanPage } from './src/routes/[lang]/crm/k-osloveni/page.tsx';
 import { ImportsPage } from './src/routes/[lang]/crm/importy/page.tsx';
 import { PairingPage } from './src/routes/[lang]/crm/parovani/page.tsx';
+import { AiApprovalsPage } from './src/routes/[lang]/crm/schvalovani-ai/page.tsx';
 import { ReportsPage } from './src/routes/[lang]/crm/prehled-prodeju/page.tsx';
 import { crmReadAllPermission } from './shared/permissions/crm-read-all.ts';
 import { crmWriteAllPermission } from './shared/permissions/crm-write-all.ts';
@@ -69,6 +70,7 @@ export const crmManifest = defineOntosModuleManifest({
     ],
     components: {
       // <generated-module-manifest-components>
+      'page-ai-approvals': AiApprovalsPage,
       'page-clients': ClientsPage,
       'page-visits': VisitsPage,
       'page-plan': PlanPage,
@@ -178,6 +180,20 @@ export const crmManifest = defineOntosModuleManifest({
           order: 150,
           pageKey: 'demo.crm.page.reports',
         }),
+        navigationContribution({
+          contributionKey: 'demo.crm.navigation.ai',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'demo.crm.write_all' },
+            entrypointKey: 'demo.crm.page.ai',
+            moduleKey,
+            role: 'page',
+            scope: 'tenant',
+          },
+          groupKey: 'shell.navigation.modules',
+          order: 160,
+          pageKey: 'demo.crm.page.ai',
+        }),
         // </generated-module-shell-navigation>
       ],
       pages: [
@@ -265,6 +281,20 @@ export const crmManifest = defineOntosModuleManifest({
           },
           expose: './PageReports',
           routePath: '/crm/prehled-prodeju',
+        }),
+        pageContribution({
+          componentKey: 'demo.crm.page-ai-approvals',
+          contributionKey: 'demo.crm.page.ai',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'demo.crm.write_all' },
+            entrypointKey: 'demo.crm.page.ai',
+            moduleKey,
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageAiApprovals',
+          routePath: '/crm/schvalovani-ai',
         }),
         // </generated-module-shell-pages>
       ],

@@ -3,7 +3,18 @@ import { expect, it } from 'effect-rstest';
 import { assertCommandAllowed, principalKindOf, withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { CrmPermissionDenied } from '../../shared/errors/crm-permission-denied.ts';
 
-const deniedCommands = ['ArchiveClient', 'AssignClient'] as const;
+const deniedCommands = [
+  'ArchiveClient',
+  'AssignClient',
+  'CreateClient',
+  'UpdateClient',
+  'AddContactPerson',
+  'UpdateContactPerson',
+  'RecordVisit',
+  'PairOrder',
+  'AiDecideChanges',
+  'AiRevertBatch',
+] as const;
 const isRejection = Schema.is(CrmPermissionDenied);
 
 it('treats sessions as human and API keys or system jobs as non-human', () => {
@@ -29,7 +40,9 @@ it.effect('rejects reserved commands for non-human principals', () =>
   ),
 );
 
-it.effect('lets non-human principals run RecordVisit', () => assertCommandAllowed('non_human', 'RecordVisit'));
+it.effect('lets non-human principals only propose AI changes', () =>
+  assertCommandAllowed('non_human', 'AiProposeChanges'),
+);
 
 it.effect('guards the wrapped handler before it runs', () =>
   Effect.gen(function* guardedHandler() {

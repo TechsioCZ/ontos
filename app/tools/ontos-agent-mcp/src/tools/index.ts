@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { registerCrmTools } from './crm.ts';
 import { registerBillingTools } from './billing.ts';
 import { registerCustomerTools } from './customers.ts';
 import { registerMerchandiseTools } from './merchandise.ts';
@@ -14,6 +15,7 @@ import { registerWorkforceTools } from './workforce.ts';
  * MCP stdio channel. Use process.stderr for diagnostics.
  */
 export const registerDomainTools = (server: McpServer): void => {
+  registerCrmTools(server);
   registerCustomerTools(server);
   registerWorkforceTools(server);
   registerSalesTools(server);

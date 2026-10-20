@@ -24,6 +24,7 @@
       "scopeNone": "No clients are assigned to you."
     },
     "pages": {
+      "ai": { "title": "AI změny ke schválení", "description": "Návrhy AI, lidské schvalování a bezpečné vrácení celé dávky." },
       "clients": { "title": "Clients", "description": "Business clients, contact persons and salesperson assignment." },
       "visits": { "title": "Visits", "description": "History of visits, calls and e-mails." },
       "plan": { "title": "To contact", "description": "Manual plan of next contacts. Not a system recommendation." },

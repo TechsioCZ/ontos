@@ -21,11 +21,13 @@ const READ_TOOLS = [
 ] as const;
 
 export const PROFILE_TOOLS = {
+  C: new Set<string>(['whoami', 'list_crm', 'propose_crm_changes']),
   A: new Set<string>(READ_TOOLS),
   B: new Set<string>([...READ_TOOLS, 'create_task', 'update_task']),
 } as const satisfies Record<AgentProfile, ReadonlySet<string>>;
 
 export const PROFILE_LABEL = {
+  C: 'Úroveň C — návrhy CRM; každý zápis schvaluje člověk v aplikaci',
   A: 'Úroveň A — jen čtení (objednávky, příležitosti, úkoly, zaměstnanci)',
   B: 'Úroveň B — čtení + vytváření a úprava úkolů (zápis jen do sekce Úkoly)',
 } as const satisfies Record<AgentProfile, string>;
