@@ -25,6 +25,45 @@ import type { useFinanceRecords } from './use-finance-records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { InvoiceDocuments, InvoiceHandover, InvoicePayments, InvoiceReminders } from './invoice-extras.tsx';
 
+/** Clickable chain from the invoice back to its property, unit, lease and contract. */
+const InvoiceAnchors = ({ invoice }: { readonly invoice: Invoice }) => {
+  const lang = typeof window === 'undefined' ? 'cs' : (window.location.pathname.split('/')[1] ?? 'cs');
+  const links = [
+    invoice.propertyRef === undefined
+      ? undefined
+      : { href: `/${lang}/siampark/properties?resourceId=${invoice.propertyRef.resourceId}`, label: 'Nemovitost' },
+    invoice.unitRef === undefined
+      ? undefined
+      : { href: `/${lang}/siampark/properties?resourceId=${invoice.unitRef.resourceId}`, label: 'Jednotka' },
+    invoice.occupancyRef === undefined
+      ? undefined
+      : { href: `/${lang}/siampark/occupancy?resourceId=${invoice.occupancyRef.resourceId}`, label: 'Nájem / pobyt' },
+    invoice.contractRef === undefined
+      ? undefined
+      : { href: `/${lang}/siampark/agreements?resourceId=${invoice.contractRef.resourceId}`, label: 'Smlouva' },
+  ].filter((link) => link !== undefined);
+  if (links.length === 0) {
+    return null;
+  }
+  return (
+    <SectionCard title="Vazby">
+      <ul className="flex flex-col gap-100 text-sm">
+        {links.map((link) => (
+          <li key={link.label}>
+            <a
+              className="inline-flex items-center gap-50 text-fg-link underline-offset-2 hover:underline"
+              href={link.href}
+            >
+              <span aria-hidden className="icon-[mdi--link-variant] size-4" />
+              {link.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
+  );
+};
+
 const DOCUMENT_KIND_LABEL: Readonly<Record<string, string>> = {
   ADVANCE: 'Zálohová faktura',
   FINAL: 'Konečná faktura',
@@ -257,6 +296,7 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
           <div className="print:hidden">
             <InvoiceHandover invoice={invoice} vm={vm} />
           </div>
+          <InvoiceAnchors invoice={invoice} />
           <div className="flex flex-wrap items-center gap-100 print:hidden">
             <Button
               className="whitespace-nowrap"
