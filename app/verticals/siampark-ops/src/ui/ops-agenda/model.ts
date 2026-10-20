@@ -13,6 +13,7 @@ import {
   occupancyDeadlines,
   openOpsIncidents,
   opsAgendaDeadlines,
+  opsRecordHref,
   opsSegments,
   outstandingMinor,
   projectDeadlines,
@@ -33,11 +34,14 @@ export const currentAgendaState = (sources: SiamparkSources, deadlines: readonly
   const currentKeys = new Set(deadlines.filter((row) => !row.done).map((row) =>
     `${row.key}:${row.date < today ? 'OVERDUE' : 'DEADLINE'}`,
   ));
+  const assignments = new Set((sources.work.data?.items ?? []).filter((task) => task.state !== 'DONE' && task.state !== 'CANCELLED')
+    .map((task) => `task-assigned:${task.ref.resourceId}:${task.ownerPrincipalRef?.principalId ?? ''}`));
   return {
     ...state,
     notifications: (state.notifications ?? []).filter((entry) => {
       const source = sourceKeys.find((key) => key === entry.source);
       if (source !== undefined && sources[source].status === 'forbidden') return false;
+      if (entry.eventKey.startsWith('task-assigned:') && sources.work.status === 'ready') return assignments.has(entry.eventKey);
       if (entry.category !== 'DEADLINE' && entry.category !== 'OVERDUE') return true;
       if (!/^(contract-|lease-|task-due:|invoice-due:|asset-service:|agenda-event:|ops:|project-)/u.test(entry.eventKey)) return true;
       return source === undefined || sources[source].status !== 'ready' || currentKeys.has(entry.eventKey);
@@ -564,13 +568,11 @@ export const buildSearchIndex = (sources: SiamparkSources, names: ReadonlyMap<st
             .find((value): value is string => typeof value === 'string' && value !== '');
           if (title === undefined) continue;
           const extra = Object.values(record).filter((value): value is string => typeof value === 'string' && value.length < 200);
-          const detailParam = field === 'assets' ? 'asset' : field === 'meters' ? 'meter' : field === 'documents' ? 'doc' : undefined;
-          const detailQuery = detailParam === undefined ? '' : `?${detailParam}=${encodeURIComponent(record['id'])}`;
           const location = loose(record['location']) ?? loose(record['related']);
           rows.push(
             row(
               {
-                href: `/siampark/provoz/${opsSegments[agenda] ?? agenda}${detailQuery}`,
+                href: opsRecordHref(agenda, field, record['id']),
                 id: record['id'],
                 kind: 'ops',
                 source: 'ops',

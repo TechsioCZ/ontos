@@ -96,6 +96,20 @@ export const NotificationCenter = ({
       }
       title={t(`${k}.notifications.title`)}
     >
+      <style>{`
+        .ops-inbox-card { display: grid; grid-template-columns: 36px minmax(0, 1fr); }
+        .ops-inbox-actions { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
+        .ops-inbox-title { overflow-wrap: anywhere; }
+        @media (min-width: 768px) {
+          .ops-inbox-card { grid-template-columns: 36px minmax(0, 1fr) auto; }
+          .ops-inbox-actions { grid-column: 3; grid-row: 1; max-width: 260px; justify-content: flex-end; }
+        }
+        @media (max-width: 639px) {
+          .ops-inbox-title { font-size: 16px; line-height: 1.5; }
+          .ops-inbox-meta { font-size: 14px; line-height: 1.5; }
+          .ops-inbox-actions > a, .ops-inbox-actions > button { min-height: 44px; }
+        }
+      `}</style>
       <p className="siamparkops:m-0 siamparkops:text-xs" style={muted}>
         {canWrite ? t(`${k}.notifications.explain`) : t(`${k}.notifications.readOnly`)}
       </p>
@@ -112,7 +126,7 @@ export const NotificationCenter = ({
             const from = personaOf(entry.createdBy.principalId);
             return (
               <li
-                className="siamparkops:flex siamparkops:items-start siamparkops:gap-3 siamparkops:rounded-xl siamparkops:p-3"
+                className="ops-inbox-card siamparkops:items-start siamparkops:gap-3 siamparkops:rounded-xl siamparkops:p-3"
                 data-event-key={entry.eventKey}
                 data-unread={isUnread}
                 key={entry.id}
@@ -127,21 +141,21 @@ export const NotificationCenter = ({
                     <Pill solid={isUnread} tone={tone}>
                       {t(`${k}.notifications.category.${entry.category}`)}
                     </Pill>
-                    <span className="siamparkops:font-medium">{entry.title}</span>
+                    <span className="ops-inbox-title siamparkops:w-full siamparkops:font-medium">{entry.title}</span>
                   </div>
-                  <span className="siamparkops:text-xs" style={muted}>
+                  <span className="ops-inbox-meta siamparkops:text-xs" style={muted}>
                     {[
                       t(`${k}.sources.${entry.source}`),
                       entry.dueDate === undefined ? undefined : t(`${k}.notifications.due`, { date: fmt.short(lang, entry.dueDate) }),
                       entry.detail === undefined ? undefined : t(`${k}.category.${entry.detail}`, { defaultValue: entry.detail }),
-                      from === undefined || entry.category !== 'ASSIGNED' ? undefined : t(`${k}.notifications.from`, { who: from.email }),
+                      from === undefined || entry.category !== 'ASSIGNED' || entry.source === 'work' ? undefined : t(`${k}.notifications.from`, { who: from.email }),
                       fmt.stamp(lang, DateTime.formatIso(entry.createdAt)),
                     ]
                       .filter((part) => part !== undefined)
                       .join(' · ')}
                   </span>
                 </div>
-                <div className="siamparkops:flex siamparkops:shrink-0 siamparkops:items-center siamparkops:gap-2">
+                <div className="ops-inbox-actions">
                   {entry.href !== undefined && (
                     <a className="siamparkops:inline-flex siamparkops:items-center siamparkops:gap-1 siamparkops:text-sm siamparkops:font-medium" href={`/${lang}${entry.href}`}>
                       {t(`${k}.open`)}

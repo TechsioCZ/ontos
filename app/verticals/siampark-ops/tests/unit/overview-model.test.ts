@@ -38,6 +38,16 @@ it('missing sources never produce a numeric zero and forbidden sources contribut
   expect(buildSearchIndex(source, new Map())).toEqual([]);
 });
 
+it('operations search preserves the camera and document selection in source links', () => {
+  const source = sources({ ops: { status: 'ready', data: { agendas: {
+    security: { state: { devices: [{ id: 'cam-12', name: 'Kamera K-12' }] } },
+    documents: { state: { documents: [{ id: 'doc-1', title: 'Úklid Parková' }] } },
+  } } as unknown as NonNullable<SiamparkSources['ops']['data']> } });
+  const index = buildSearchIndex(source, new Map());
+  expect(index.find((row) => row.id === 'cam-12')?.href).toBe('/siampark/provoz/bezpecnost?device=cam-12');
+  expect(index.find((row) => row.id === 'doc-1')?.href).toBe('/siampark/provoz/dokumenty?doc=doc-1');
+});
+
 it('S15-01 active property count and rows exclude disposed records', () => {
   const property = (id: string, lifecycleState: string) => ({ propertyRef: { resourceId: id }, lifecycleState, name: id, code: id });
   const source = sources({ property: { status: 'ready', data: { properties: [
@@ -48,6 +58,16 @@ it('S15-01 active property count and rows exclude disposed records', () => {
   expect(kpi?.value).toBe(5);
   expect(kpi?.rows).toHaveLength(5);
   expect(kpi?.rows.every((row) => row.id.startsWith('active-'))).toBe(true);
+});
+
+it('cancelled or reassigned task alerts leave the live inbox, while stored history is retained', () => {
+  const notifications = [{ category: 'ASSIGNED', eventKey: 'task-assigned:t1:me', source: 'work' }];
+  const source = sources({
+    work: { status: 'ready', data: { items: [{ ref: { resourceId: 't1' }, state: 'CANCELLED', ownerPrincipalRef: { principalId: 'me' } }] } as unknown as NonNullable<SiamparkSources['work']['data']> },
+    ops: { status: 'ready', data: { agendas: { agenda: { state: { events: [], notifications } } } } as unknown as NonNullable<SiamparkSources['ops']['data']> },
+  });
+  expect(currentAgendaState(source, [], '2026-10-20')?.notifications).toEqual([]);
+  expect(notifications).toHaveLength(1);
 });
 
 it('stale source deadlines are hidden without deleting stored notification history', () => {

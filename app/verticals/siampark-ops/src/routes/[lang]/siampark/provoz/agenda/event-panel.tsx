@@ -294,7 +294,8 @@ export const DeadlinePanel = ({
               </Button>
             </>
           ) : (
-            <>
+            <div className="ops-event-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+              <style>{`.ops-event-actions > button { flex: 1 1 165px; height: auto; min-height: 44px; white-space: normal; padding-block: 10px; }`}</style>
               {status === 'PLANNED' && (
                 <Button isLoading={busy} onClick={() => void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'CANCELLED' } as OpsCommand, true)} theme="borderless" variant="danger">
                   {t(`${k}.event.cancel`)}
@@ -312,7 +313,7 @@ export const DeadlinePanel = ({
               <Button onClick={() => setEditing(true)} variant="primary">
                 {t(`${k}.event.edit`)}
               </Button>
-            </>
+            </div>
           )
         ) : deadline !== undefined && deadline.eventId === undefined ? (
           <a className="siamparkops:font-medium" href={`/${lang}${deadline.href}`}>

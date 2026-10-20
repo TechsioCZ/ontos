@@ -345,6 +345,12 @@ export const opsSegments: Readonly<Record<string, string>> = {
   security: 'bezpecnost',
 };
 
+/** Detail links follow the source module's existing public query parameters. */
+export const opsRecordHref = (agenda: string, collection: string, id: string): string => {
+  const param = ({ assets: 'asset', meters: 'meter', documents: 'doc', devices: 'device', orders: 'orderId' } as Readonly<Record<string, string>>)[collection];
+  return `/siampark/provoz/${opsSegments[agenda] ?? agenda}${param === undefined ? '' : `?${param}=${encodeURIComponent(id)}`}`;
+};
+
 const DEADLINE_FIELD =
   /^(next[A-Z]\w*|\w*Due(On|Date|At)?|dueDate|dueOn|validUntil|validTo|expiresOn|expiresAt|expiryDate|expirationDate|expectedDate|deadline|reviewDate|plannedDate)$/u;
 const DATE_VALUE = /^\d{4}-\d{2}-\d{2}/u;
@@ -423,6 +429,7 @@ const locationOf = (record: Loose): string | undefined => {
 
 interface ScanHit {
   readonly agenda: string;
+  readonly href: string;
   readonly recordId: string;
   readonly field: string;
   readonly date: string;
@@ -440,8 +447,9 @@ const scanRecords = (
   agenda: string,
   records: readonly unknown[],
   depth: number,
-  parent: { readonly id: string; readonly title?: string; readonly location?: string; readonly closed: boolean } | undefined,
+  parent: { readonly id: string; readonly title?: string; readonly location?: string; readonly closed: boolean; readonly href: string } | undefined,
   hits: ScanHit[],
+  collection: string,
 ) => {
   for (const [index, entry] of records.entries()) {
     if (!isRecord(entry)) {
@@ -449,12 +457,14 @@ const scanRecords = (
     }
     const recordId = typeof entry['id'] === 'string' ? entry['id'] : `${parent?.id ?? agenda}#${index}`;
     const title = titleOf(entry) ?? parent?.title ?? recordId;
+    const href = parent?.href ?? opsRecordHref(agenda, collection, recordId);
     const closed = isClosedRecord(entry) || parent?.closed === true;
     const location = locationOf(entry) ?? parent?.location;
     for (const [field, value] of Object.entries(entry)) {
       if (typeof value === 'string' && DEADLINE_FIELD.test(field) && DATE_VALUE.test(value)) {
         hits.push({
           agenda,
+          href,
           closed,
           date: day(value),
           field,
@@ -470,7 +480,7 @@ const scanRecords = (
       } else if (depth < 3 && (Array.isArray(value) || isRecord(value))) {
         // Contract terms and inventory follow-ups are nested objects, not arrays.
         scanRecords(agenda, Array.isArray(value) ? value : [value], depth + 1,
-          { closed, id: `${recordId}:${field}`, title, ...withOptional('location', location) }, hits);
+          { closed, href, id: `${recordId}:${field}`, title, ...withOptional('location', location) }, hits, collection);
       }
     }
   }
@@ -485,9 +495,9 @@ export const opsAgendaDeadlines = (agenda: string, state: unknown): Deadline[] =
     return [];
   }
   const hits: ScanHit[] = [];
-  for (const value of Object.values(state)) {
+  for (const [collection, value] of Object.entries(state)) {
     if (Array.isArray(value)) {
-      scanRecords(agenda, value, 1, undefined, hits);
+      scanRecords(agenda, value, 1, undefined, hits, collection);
     }
   }
   const latest = new Map<string, ScanHit>();
@@ -503,7 +513,7 @@ export const opsAgendaDeadlines = (agenda: string, state: unknown): Deadline[] =
     detail: hit.parentTitle !== undefined && hit.parentTitle !== hit.title ? hit.parentTitle : hit.agenda,
     done: hit.closed,
     field: hit.field,
-    href: `/siampark/provoz/${opsSegments[hit.agenda] ?? hit.agenda}`,
+    href: hit.href,
     key: `ops:${hit.agenda}:${hit.recordId}:${hit.field}:${hit.date}`,
     source: 'ops',
     title: hit.title,
@@ -628,6 +638,19 @@ export const notificationCandidates = (
       },
     ];
   });
+
+/** Native assignments are independent of due dates. Repeated visits deduplicate by task + recipient. */
+export const taskAssignmentCandidates = (tasks: readonly TaskSource[], me: string | undefined) =>
+  tasks.flatMap((task) => me === undefined || task.ownerPrincipalRef?.principalId !== me || task.state === 'DONE' || task.state === 'CANCELLED'
+    ? []
+    : [{
+        category: 'ASSIGNED' as const,
+        eventKey: `task-assigned:${task.ref.resourceId}:${me}`,
+        href: `/siampark/work?resourceId=${encodeURIComponent(task.ref.resourceId)}`,
+        source: 'work',
+        title: task.title.slice(0, 300),
+        ...withOptional('dueDate', task.dueDate),
+      }]);
 
 // ---- CSV -------------------------------------------------------------------------------------------------------
 

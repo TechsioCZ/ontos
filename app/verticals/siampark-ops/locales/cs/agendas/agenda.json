@@ -175,7 +175,7 @@
     "readAt": "přečteno {{time}}",
     "due": "termín {{date}}",
     "from": "od {{who}}",
-    "explain": "Upozornění vznikají při přiřazení, změně termínu a u blížících se či prošlých termínů ve zdrojích, které smíte číst. Stejná událost se doručí jen jednou.",
+    "explain": "Při otevření agendy nebo kontrole načteme vaše přiřazené úkoly i bez termínu a blížící se či prošlé termíny z povolených zdrojů. Přiřazení a změny vlastních událostí se doručují při uložení. Stejná událost se doručí jen jednou.",
     "readOnly": "Upozornění můžete číst; označovat je nemůžete (jen čtecí oprávnění).",
     "empty": "Zatím žádná upozornění.",
     "emptyUnread": "Vše přečteno.",

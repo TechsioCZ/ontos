@@ -165,7 +165,7 @@
     "readAt": "read {{time}}",
     "due": "due {{date}}",
     "from": "from {{who}}",
-    "explain": "Notifications are created on assignment, on a date change and for approaching or overdue deadlines in sources you may read. The same event is delivered only once.",
+    "explain": "Opening the agenda or checking notifications loads your assigned tasks even without a due date, plus approaching and overdue deadlines from readable sources. Calendar event assignments and date changes are delivered on save. The same event is delivered only once.",
     "readOnly": "You can read notifications but not mark them (read-only permission).",
     "empty": "No notifications yet.",
     "emptyUnread": "All read.",

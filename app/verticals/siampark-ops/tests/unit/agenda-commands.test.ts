@@ -8,6 +8,7 @@ import { seedAgendaState } from '../../scripts/seed/agenda.mts';
 import {
   contractDeadlines,
   notificationCandidates,
+  taskAssignmentCandidates,
   openOpsIncidents,
   opsAgendaDeadlines,
   projectDeadlines,
@@ -254,6 +255,31 @@ it('project milestones follow source dates and completion flags without a copied
   ] }]);
   expect(rows).toHaveLength(4);
   expect(rows.filter((row) => !row.done).map((row) => row.date)).toEqual(['2026-12-15', '2026-11-30']);
+});
+
+it.effect('native task assignment without a deadline persists once in the recipient inbox', () =>
+  Effect.gen(function* () {
+    const task = { ref: { resourceId: 'task-1' }, title: 'Připravit harmonogram údržby', state: 'NEW', priority: 'NORMAL', contextRefs: [], ownerPrincipalRef: operations };
+    const items = taskAssignmentCandidates([task], operations.principalId);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.dueDate).toBeUndefined();
+    expect(taskAssignmentCandidates([task], management.principalId)).toEqual([]);
+    expect(taskAssignmentCandidates([{ ...task, state: 'CANCELLED' }], operations.principalId)).toEqual([]);
+    expect(taskAssignmentCandidates([{ ...task, state: 'DONE' }], operations.principalId)).toEqual([]);
+    const delivered = yield* apply(empty, { _tag: 'AgendaNotificationsDeliver', items }, 'native-assignment', operations);
+    const again = yield* apply(delivered.state, { _tag: 'AgendaNotificationsDeliver', items }, 'native-assignment-again', operations);
+    expect(mine(again.state, operations)).toHaveLength(1);
+    expect(mine(again.state, operations)[0]?.category).toBe('ASSIGNED');
+    expect(mine(again.state, operations)[0]?.href).toBe('/siampark/work?resourceId=task-1');
+    expect(again.entityIds).toEqual([]);
+  }),
+);
+
+it('nested source dates link to the root document and security inspections to the exact device', () => {
+  const documents = opsAgendaDeadlines('documents', { documents: [{ id: 'doc 1', title: 'Úklid', contract: { validTo: '2026-10-25' } }] });
+  expect(documents[0]?.href).toBe('/siampark/provoz/dokumenty?doc=doc%201');
+  const devices = opsAgendaDeadlines('security', { devices: [{ id: 'cam-12', name: 'Kamera K-12', nextInspectionDate: '2026-10-31' }] });
+  expect(devices[0]?.href).toBe('/siampark/provoz/bezpecnost?device=cam-12');
 });
 
 it('CSV neutralizes spreadsheet formulas without changing numeric amounts', () => {

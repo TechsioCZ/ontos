@@ -11,7 +11,7 @@ import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_LEAD_DAYS } from '../../../../../../shared/domain/agenda.ts';
 import { AgendaFrame } from '../../../../../ui/agenda-frame.tsx';
-import { notificationCandidates, pragueToday } from '../../../../../ui/ops-agenda/deadlines.ts';
+import { notificationCandidates, taskAssignmentCandidates, pragueToday } from '../../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../../ui/ops-agenda/deadlines.ts';
 import { currentAgendaState, buildDeadlines } from '../../../../../ui/ops-agenda/model.ts';
 import { allSettled, useSiamparkSources } from '../../../../../ui/ops-agenda/sources.ts';
@@ -94,9 +94,9 @@ const AgendaView = () => {
     }
   };
 
-  /** Offers due/overdue deadlines to the actor's inbox; the reducer drops anything already delivered (S13-03). */
+  /** Sync readable native assignments as well as deadlines; the reducer persists and deduplicates both. */
   const deliver = async (all: boolean) => {
-    const candidates = notificationCandidates(deadlines, today, leadDays, me);
+    const candidates = [...taskAssignmentCandidates(sources.work.data?.items ?? [], me), ...notificationCandidates(deadlines, today, leadDays, me)];
     const known = new Set(myNotifications(state, me).map((entry) => entry.eventKey));
     const items = (all ? candidates : candidates.filter((entry) => !known.has(entry.eventKey))).slice(0, 200);
     if (items.length === 0) {
