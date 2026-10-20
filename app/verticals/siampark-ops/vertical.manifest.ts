@@ -144,7 +144,7 @@ export const siamparkOpsManifest = defineOntosModuleManifest({
           contributionKey: 'demo.siampark-ops.navigation.meters',
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
+            authorization: restrictedAccess,
             entrypointKey: pageKey('meters'),
             moduleKey,
             role: 'page',
@@ -247,7 +247,7 @@ export const siamparkOpsManifest = defineOntosModuleManifest({
           contributionKey: pageKey('meters'),
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
+            authorization: restrictedAccess,
             entrypointKey: pageKey('meters'),
             moduleKey,
             role: 'page',

@@ -209,6 +209,7 @@ export const metersAgenda = defineAgenda({
   empty: emptyMetersState,
   evolve: evolveMeters,
   id: 'meters',
-  sensitivity: 'operational',
+  // Meter histories include tariffs and financial costs; operational-only identities must not receive them.
+  sensitivity: 'restricted',
   stateSchema: MetersStateSchema,
 });
