@@ -30,7 +30,9 @@ Local only. Nothing here deploys. Run everything from `app/`.
    (`scripts/outbox-worker-host.generated.mts`).
 6. `node scripts/demo/reset-permissions.mts`: all four companies, 14 staff personas, role grants and the
    agent/storefront API keys. The shared tenant is labelled **OntOS DEMO**; each company retains its own name.
-7. `node scripts/demo/accounts-admin-grants.mts` and `pnpm demo:ai-profiles` (AI A/B/C principals and keys).
+7. `node scripts/demo/accounts-admin-grants.mts`, `node scripts/demo/company-membership-hygiene.mts`
+   (removes only four stale commercial-company memberships of Siampark staff), and `pnpm demo:ai-profiles`
+   (AI A/B/C principals and keys).
 8. Unless `DEMO_RESET=0`, `pnpm demo:seed:rental --apply` against the running local shell, authenticated as
    `management@siampark.demo`, fixed Siampark company `…0021`. This uses public reads/Actions, not private DB writes.
 9. Starts the customer storefront BFF on **http://localhost:3060**, registers its PID for `down.sh`, and waits for

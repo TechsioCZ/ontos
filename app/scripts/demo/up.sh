@@ -241,6 +241,8 @@ curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WAR
 step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
 # People administration (Lidé a role): company administrators may run core.identity.manage-demo-account.
 step accounts-admin-grants "${WITH_ENV[@]}" node scripts/demo/accounts-admin-grants.mts
+# Old baseline grants Siampark staff to commercial 0020; only retain their intended Siampark company.
+step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membership-hygiene.mts
 # reset-permissions deliberately logs AI errors without failing; this explicit step makes a cold start honest.
 step ai-profiles pnpm_ demo:ai-profiles
 # Rental data uses public reads/Actions, so it must run AFTER composition, company setup and grants.
