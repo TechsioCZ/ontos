@@ -1,6 +1,6 @@
 # UI-kit refactor
 
-The remaining refactor has six tasks. Each task may contain several commits. Preserve the
+The UI-kit refactor has six tasks. Each task may contain several commits. Preserve the
 current appearance and behavior while moving supported appearance into UI-kit props and
 tokens. Page composition and verified library limitations may retain local CSS/utilities.
 
@@ -9,7 +9,7 @@ tokens. Page composition and verified library limitations may retain local CSS/u
 | 1    | Catalog categories/listings, variant filters and purchase tables            | Complete |
 | 2    | Shared search/suggestions, navigation and footer                            | Complete |
 | 3    | Cart and checkout appearance overrides                                      | Complete |
-| 4    | Account, login, registration and shared form styling                        | Pending  |
+| 4    | Account, login, registration and shared form styling                        | Complete |
 | 5    | FAQ, blog, news, contacts and delivery information                          | Pending  |
 | 6    | Final token consolidation, exception audit and responsive regression checks | Pending  |
 
@@ -111,3 +111,35 @@ but its disabled hidden native input retains `checked`. The installed Zag radio 
 `syncInputElements` excludes disabled inputs. This is existing library behavior; method handlers
 are unchanged by this refactor. The checkout blocks progression until a valid payment is chosen.
 Record it for the final UI-kit/accessibility audit rather than changing purchase behavior here.
+
+## Task 4 inventory
+
+| Surface                                            | Implementation                                                                | Result / retained exception                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Profile section headings                           | `Accordion`, `variant="borderless"`, `size="sm"`                              | Trigger gap uses the Button `--spacing-button-md` token consumed internally by Accordion.Header. Keep the heading line-height utility, custom disclosure rotation and mobile touch target: Accordion exposes no corresponding tokens/props.                                                                                      |
+| Profile checkboxes                                 | `FormCheckbox`, `size="sm"`                                                   | Removed descendant border-width utilities. Controls already consume `--border-width-checkbox`; a scoped `--border-width-validation` mapping preserves the existing 2px error border rather than the kit's 3px validation default. Keep the newsletter's custom circle indicator because FormCheckbox has no indicator-icon prop. |
+| Profile and account heading actions                | `Button`, `LinkButton`, `size="sm"`                                           | Profile buttons use `block`; heading actions use `--height-form-control-sm: auto` with their existing minimum-height/wrapping composition. Keep explicit line height because Button has no component line-height token.                                                                                                          |
+| Login/registration links                           | `LinkButton`, `theme="borderless"`, `variant="secondary"`, `size="current"`   | Weight and color use Button tokens; hover/active backgrounds stay transparent. Keep inline text composition and native underline offset. `AuthPageLink` provides the client boundary required by LinkButton's handlers inside the two server-rendered auth pages. The recovery anchor retains native hash navigation.            |
+| Login/registration panels                          | Native semantic content around existing `FormInput`, `FormCheckbox`, `Button` | Removed the duplicate paragraph/heading margin reset. Mapped 19 literal spacing/radius/weight values to existing kit variables. Keep the exact 26/14/13px content typography, panel geometry/shadow and divider composition: kit 0.56.1 has no general heading, card/surface or divider component.                               |
+| Phone/country controls                             | Existing `PhoneInput`, `Select`                                               | Already tokenized. Keep the phone input border and full trigger radius utilities: PhoneInput hardcodes a borderless input and a joined trigger corner. Keep the hidden redundant select glyph and custom account glyph; Select exposes no replacement-indicator prop.                                                            |
+| Account navigation, orders and other account pages | Existing `LinkButton`, `DataTable`, `Table`, `ProductCard`                    | Current navigation/field/table tokens remain appropriate. Per-edge current-tab border, disabled opacity, app content panels, table/card placement, local status text and responsive wrapping remain composition or verified API gaps.                                                                                            |
+
+This task removes six utility occurrences and three native CSS declarations, replaces three
+native/Next auth links with the shared component, and reuses existing tokens for 19 literal
+values. Authentication remains a local prototype; no credentials are persisted or sent to a
+backend, and existing profile validation/persistence behavior is unchanged.
+
+## Task 4 verification
+
+- Before/after comparison: nine routes, eleven UI states at thirteen widths (143 layouts,
+  12,765 rendered elements), including profile email errors and collapsed sections. Geometry
+  and effective visual styles match. Comparison normalizes equivalent transparent colors and
+  ignores flex gap/alignment properties on links that use inline/block text layout.
+- Visually reviewed login, registration and profile screenshots at desktop/mobile widths.
+- `npm run test:auth`: 26 layout/token checks at thirteen widths, required/email/consent
+  validation, keyboard links, recovery focus, demo login/registration and credential isolation
+  at 1920, 1024 and 390px.
+- Extended `npm run test:theme`: account heading gap/action height and checkbox border tokens
+  in both normal and invalid states.
+- `npm run check` passed formatting, lint, type checking, all 150 tests and the production build.
+  Auth, theme, account, responsive, catalog, shared UI and actual-font browser suites all passed.

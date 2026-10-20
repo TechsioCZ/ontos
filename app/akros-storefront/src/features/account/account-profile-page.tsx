@@ -46,7 +46,7 @@ function ProfileSection({
     <Accordion.Item value={value} id={id}>
       <Accordion.Header
         data-account-section-heading
-        className="w-fit [&>button]:gap-(--dimension-10) [&>button]:leading-(--akros-account-heading-leading) max-sm:[&>button]:min-h-(--dimension-44)"
+        className="w-fit [&>button]:leading-(--akros-account-heading-leading) max-sm:[&>button]:min-h-(--dimension-44)"
       >
         <Accordion.Title>{title}</Accordion.Title>
         <Accordion.Indicator
@@ -235,7 +235,7 @@ export function AccountProfilePage() {
                   </h2>
                   <div data-account-newsletter>
                     <FormCheckbox
-                      className="[&_[data-part=control]]:border-(length:--border-width-checkbox) [&_[data-part=indicator][data-state=checked]]:token-icon-circle [&_[data-part=indicator]]:text-(length:--dimension-16)"
+                      className="[&_[data-part=indicator][data-state=checked]]:token-icon-circle [&_[data-part=indicator]]:text-(length:--dimension-16)"
                       id="account-newsletter"
                       size="sm"
                       label="Chci odebírat novinky"
@@ -244,7 +244,6 @@ export function AccountProfilePage() {
                     />
                   </div>
                   <FormCheckbox
-                    className="[&_[data-part=control]]:border-(length:--border-width-checkbox)"
                     id="account-privacy"
                     size="sm"
                     label={
@@ -292,7 +291,8 @@ export function AccountProfilePage() {
                   size="sm"
                   variant="primary"
                   uppercase
-                  className="w-full max-w-(--akros-account-save-width) leading-(--akros-account-heading-leading)"
+                  block
+                  className="max-w-(--akros-account-save-width) leading-(--akros-account-heading-leading)"
                   onClick={() =>
                     setCompanyFeedback(
                       "ARES není v této ukázce připojený. Firemní údaje můžete vyplnit ručně.",
@@ -332,7 +332,8 @@ export function AccountProfilePage() {
               size="sm"
               variant="primary"
               uppercase
-              className="w-full leading-(--akros-account-heading-leading) md:w-(--akros-account-save-width)"
+              block
+              className="leading-(--akros-account-heading-leading) md:w-(--akros-account-save-width)"
             >
               Změnit údaje
             </Button>

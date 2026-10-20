@@ -130,6 +130,15 @@
 [data-account-section-heading] {
   --font-weight-accordion-title: var(--font-weight-bold);
   --font-weight-button: var(--font-weight-accordion-title);
+  --spacing-button-md: var(--dimension-10);
+}
+
+[data-account-heading-actions] > [data-account-action] {
+  --height-form-control-sm: auto;
+}
+
+[data-akros-account] [data-scope="checkbox"][data-part="root"] {
+  --border-width-validation: var(--border-width-checkbox);
 }
 
 [data-account-field][data-invalid] {

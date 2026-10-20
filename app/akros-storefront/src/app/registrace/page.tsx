@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import NextLink from "next/link";
 
-import { MockRegistrationForm } from "@/components/mock-auth-form";
+import { AuthPageLink, MockRegistrationForm } from "@/components/mock-auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export const metadata: Metadata = { title: "Registrace" };
@@ -32,7 +31,7 @@ export default function RegistrationPage() {
           </header>
           <MockRegistrationForm />
           <p>
-            Již jste registrováni? <NextLink href="/prihlaseni">Přihlaste se zde</NextLink>
+            Již jste registrováni? <AuthPageLink href="/prihlaseni">Přihlaste se zde</AuthPageLink>
           </p>
         </div>
         <aside className="akros-benefit-card">

@@ -20,6 +20,7 @@
 @import "../tokens/components/templates/_akros-product-detail.css";
 @import "../tokens/components/templates/_akros-checkout.css";
 @import "../tokens/components/templates/_akros-account.css";
+@import "../tokens/components/templates/_akros-auth.css";
 @import "../styles/content-pages.css";
 @import "../styles/account-checkout.css";
 @source "../../node_modules/@techsio/ui-kit/dist";

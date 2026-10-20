@@ -83,6 +83,14 @@ The theme check also probes product detail badge colors, favorite button colors/
 purchase quantity padding, including isolation from the neighboring favorite button.
 It also checks checkout method columns/spacing, named-cart text/spacing, step spacing/mobile
 title size and compact quantity text, including both sides of the 640px breakpoint.
+Account checks also probe accordion trigger spacing, heading action height and normal/invalid
+checkbox border tokens. Auth links use Button color/weight tokens through `LinkButton`; server
+pages render them through the small `AuthPageLink` client boundary.
+
+`npm run test:auth` checks login/registration layout and link tokens at thirteen widths from
+320 to 1920px, including the 760/761px and 960/961px layout edges. At desktop, tablet and mobile
+widths it also checks native required/email/consent validation, keyboard navigation and password
+anchor focus, demo submission and that credentials never enter browser storage.
 
 Keep remaining appearance utilities tied to a verified kit limitation. In UI kit `0.56.1`,
 ProductCard uses a static `shadow-sm`, so its app shadow still needs an explicit variable utility.

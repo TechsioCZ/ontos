@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import NextLink from "next/link";
 
-import { MockLoginForm } from "@/components/mock-auth-form";
+import { AuthPageLink, MockLoginForm } from "@/components/mock-auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export const metadata: Metadata = { title: "Přihlášení" };
@@ -20,7 +19,8 @@ export default function LoginPage() {
             <span>nebo</span>
           </div>
           <p>
-            Ještě u nás nemáte účet? <NextLink href="/registrace">Vytvořte si ho zde</NextLink>
+            Ještě u nás nemáte účet?{" "}
+            <AuthPageLink href="/registrace">Vytvořte si ho zde</AuthPageLink>
           </p>
         </div>
       </section>

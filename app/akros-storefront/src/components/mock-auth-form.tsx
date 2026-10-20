@@ -1,10 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+
+// Keep LinkButton's event handlers inside a client boundary for the auth server pages.
+export function AuthPageLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <LinkButton
+      as={NextLink}
+      href={href}
+      data-akros-auth-link
+      theme="borderless"
+      variant="secondary"
+      size="current"
+      className="inline"
+    >
+      {children}
+    </LinkButton>
+  );
+}
 
 export function MockLoginForm() {
   const router = useRouter();
@@ -35,7 +54,16 @@ export function MockLoginForm() {
       />
       <div className="akros-auth-form__row">
         <FormCheckbox label="Zapamatovat si mě" size="sm" />
-        <a href="#login-password">Zapomenuté heslo?</a>
+        <LinkButton
+          href="#login-password"
+          data-akros-auth-link
+          theme="borderless"
+          variant="secondary"
+          size="current"
+          className="inline"
+        >
+          Zapomenuté heslo?
+        </LinkButton>
       </div>
       <Button block size="md" type="submit" variant="primary">
         Přihlásit se
