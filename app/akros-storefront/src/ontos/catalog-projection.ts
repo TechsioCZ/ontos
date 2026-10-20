@@ -1,36 +1,90 @@
 import { purchaseConstraints } from "./purchase-constraints";
-import rawCatalog from "@/mock-storefront/generated/catalog.generated.json";
-import rawCategories from "@/mock-storefront/generated/categories.generated.json";
 import type {
   CatalogData,
   CategoryData,
+  CatalogCategory,
+  CatalogParameter,
   CatalogProduct,
   CatalogProductVariant,
 } from "@/mock-storefront/types";
 
 type Raw = Record<string, unknown>;
-const rows = (v: unknown): Raw[] => (Array.isArray(v) ? (v as Raw[]) : []);
+const rows = (v: unknown): Raw[] =>
+  Array.isArray(v) ? v.filter((x): x is Raw => Boolean(x) && typeof x === "object") : [];
 const number = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
+const text = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+const parameters = (v: unknown): CatalogParameter[] =>
+  rows(v)
+    .map((p) => ({ label: text(p.label), value: text(p.value), unit: text(p.unit) }))
+    .filter((p) => p.label.trim() !== "");
+
+export const imagePlaceholder = "/akros/products/image-unavailable.svg";
+const imageHosts = (): Set<string> =>
+  new Set([
+    "www.akros.cz",
+    ...(process.env.STOREFRONT_IMAGE_HOSTS ?? "")
+      .split(",")
+      .map((host) => host.trim())
+      .filter(Boolean),
+  ]);
+/** Only images next/image can serve: same-origin "/…" paths or https on a configured host. */
+export const safeImage = (v: unknown): string | undefined => {
+  const src = text(v).trim();
+  if (!src) return undefined;
+  if (src.startsWith("/") && !src.startsWith("//")) return src;
+  try {
+    const url = new URL(src);
+    if (url.protocol !== "https:" || !imageHosts().has(url.hostname)) return undefined;
+    if (url.hostname === "www.akros.cz" && !url.pathname.startsWith("/data/")) return undefined;
+    return src;
+  } catch {
+    return undefined;
+  }
+};
+const flags = (record: Raw) => {
+  const nested = record.flags && typeof record.flags === "object" ? (record.flags as Raw) : {};
+  const p: Raw = { ...record, ...nested };
+  const labels = strings(p.labels);
+  return {
+    isAction: p.isAction === true || labels.includes("action"),
+    isRecommended: p.isRecommended === true || labels.includes("recommended"),
+    isSale: p.isSale === true || labels.includes("sale"),
+    isNew: p.isNew === true || labels.includes("new"),
+  };
+};
+/** `description` is the owner's authoritative text; paragraphs are only a fallback when it is empty. */
+const paragraphsOf = (record: Raw): string[] => {
+  const description = text(record.description).trim();
+  if (description)
+    return description
+      .split(/\n\s*\n/)
+      .map((paragraph) => paragraph.trim())
+      .filter(Boolean);
+  const detail = record.detail && typeof record.detail === "object" ? (record.detail as Raw) : {};
+  return strings(record.descriptionParagraphs ?? detail.descriptionParagraphs)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+};
+
 export interface CatalogSnapshot {
   catalog: CatalogData;
   categories: CategoryData;
   mode: "mock" | "ontos";
   revision: number;
+  total?: number;
+  page?: number;
+  pageSize?: number;
 }
 
-/** Static content is presentation only. Identity, visibility, prices and stock ALWAYS come from the owner. */
+/** Project ONLY owner data. No prototype catalog/template lookup, including unknown/new identities. */
 export function project(body: Raw): CatalogSnapshot {
-  const prototype = rawCatalog as CatalogData;
   const products: CatalogProduct[] = [];
   for (const p of rows(body.products)) {
-    if (p.active === false || p.published === false) continue;
-    const template = prototype.products.find(
-      (t) => t.slug === p.slug || t.id === p.id || t.sku === p.sku,
-    );
-    if (!template) continue;
-    const liveVariants = rows(p.variantRecords).filter((v) => v.active !== false);
-    const convert = (v: Raw, original: CatalogProductVariant): CatalogProductVariant | null => {
+    if (p.active === false || p.published === false || !text(p.id) || !text(p.slug)) continue;
+    const convert = (v: Raw): CatalogProductVariant | null => {
       const gross = number(v.grossPriceMinor);
       const net = number(v.priceMinor);
       const stock = number(v.stockOnHand);
@@ -40,7 +94,7 @@ export function project(body: Raw): CatalogSnapshot {
         net === undefined ||
         stock === undefined ||
         minimum === undefined ||
-        typeof v.id !== "string"
+        !text(v.id)
       )
         return null;
       const tiers = rows(v.priceTiers)
@@ -50,31 +104,35 @@ export function project(body: Raw): CatalogSnapshot {
           priceExcludingVatMinor: number(t.priceExcludingVatMinor)!,
         }))
         .filter((t) => Object.values(t).every(Number.isFinite));
+      const packageQuantity = number(v.packageQuantity) ?? number(p.packageQuantity);
       return {
-        ...original,
-        id: v.id,
-        sku: String(v.sku),
-        label: typeof v.name === "string" ? v.name : original.label,
-        unit: String(v.sourceUnit ?? v.unit ?? p.sourceUnit ?? p.unit ?? original.unit),
+        id: text(v.id),
+        sourceId: text(v.sourceId, text(v.id)),
+        sku: text(v.sku),
+        label: text(v.name, text(v.label, text(v.sku))),
+        unit: text(v.sourceUnit, text(v.unit, text(p.sourceUnit, text(p.unit, "ks")))),
         vatRate: number(p.vatRate),
         priceMinor: gross,
-        originalPriceMinor: undefined,
         stockCount: stock,
-        ...purchaseConstraints(minimum, number(v.packageQuantity) ?? number(p.packageQuantity)),
-        packageQuantity: number(v.packageQuantity) ?? number(p.packageQuantity),
+        ...purchaseConstraints(minimum, packageQuantity),
+        packageQuantity,
         priceTiers: [
           { minimumQuantity: minimum, priceMinor: gross, priceExcludingVatMinor: net },
           ...tiers,
         ].sort((a, b) => a.minimumQuantity - b.minimumQuantity),
+        parameters: parameters(v.parameters),
+        imageSrc: safeImage(v.imageSrc),
+        ...flags(v),
       };
     };
-    const variants = liveVariants.flatMap((v) => {
-      const original = template.detail.variants.find((t) => t.id === v.id || t.sku === v.sku);
-      if (!original) return [];
-      const converted = convert(v, original);
-      return converted ? [converted] : [];
-    });
-    if (template.detail.variants.length && !variants.length) continue;
+    const variantRecords = rows(p.variantRecords);
+    const variants = variantRecords
+      .filter((v) => v.active !== false)
+      .flatMap((v) => {
+        const converted = convert(v);
+        return converted ? [converted] : [];
+      });
+    if (variantRecords.length && !variants.length) continue;
     const gross = number(p.grossPriceMinor);
     const net = number(p.currentPriceMinor);
     const stock = number(p.stockOnHand);
@@ -88,23 +146,35 @@ export function project(body: Raw): CatalogSnapshot {
       (a, b) => (!a || b.priceMinor < a.priceMinor ? b : a),
       undefined,
     );
+    const gallery = strings(p.gallery).flatMap((src) => safeImage(src) ?? []);
+    const primaryImage = safeImage(p.imageSrc) ?? gallery[0] ?? imagePlaceholder;
+    const paragraphs = paragraphsOf(p);
+    const detail = p.detail && typeof p.detail === "object" ? (p.detail as Raw) : {};
     products.push({
-      ...template,
-      id: String(p.id),
-      name: String(p.name),
-      categoryId: typeof p.categoryId === "string" ? p.categoryId : template.categoryId,
-      unit: String(p.sourceUnit ?? p.unit ?? template.unit),
+      id: text(p.id),
+      slug: text(p.slug),
+      sku: text(p.sku),
+      name: text(p.name),
+      categoryId: text(p.categoryId),
+      description: paragraphs[0] ?? text(p.shortDescription),
+      currency: "CZK",
+      unit: text(p.sourceUnit, text(p.unit, "ks")),
       vatRate: number(p.vatRate),
       priceMinor: first?.priceMinor ?? gross!,
-      originalPriceMinor: undefined,
       ...purchaseConstraints(
         first?.minimumQuantity ?? minimum!,
         first?.packageQuantity ?? number(p.packageQuantity),
       ),
       packageQuantity: first?.packageQuantity ?? number(p.packageQuantity),
-      stockCount: variants.length ? variants.reduce((s, v) => s + v.stockCount, 0) : stock!,
+      stockCount: variants.length ? variants.reduce((sum, v) => sum + v.stockCount, 0) : stock!,
+      imageSrc: primaryImage,
+      imageAlt: text(p.imageAlt, text(p.name)),
+      secondaryImageSrc: gallery.find((src) => src !== primaryImage),
+      featuredPosition: number(p.featuredPosition) ?? null,
+      ...flags(p),
       detail: {
-        ...template.detail,
+        descriptionParagraphs: paragraphs,
+        parameters: parameters(p.parameters ?? detail.parameters),
         variants,
         priceTiers: first?.priceTiers ?? [
           { minimumQuantity: minimum!, priceMinor: gross!, priceExcludingVatMinor: net! },
@@ -112,32 +182,46 @@ export function project(body: Raw): CatalogSnapshot {
       },
     });
   }
-  const allCategories = (rawCategories as CategoryData).categories;
-  const ids = new Set(products.map((p) => p.categoryId));
-  for (let i = 0; i < allCategories.length; i++)
-    for (const c of allCategories) if (ids.has(c.id) && c.parentId) ids.add(c.parentId);
-  const categories = allCategories
-    .filter((c) => ids.has(c.id))
+  const categories: CatalogCategory[] = rows(body.categories)
+    .filter((c) => text(c.id) && text(c.slug) && c.active !== false && c.published !== false)
     .map((c) => ({
-      ...c,
-      hasChildren: allCategories.some((child) => ids.has(child.id) && child.parentId === c.id),
+      id: text(c.id),
+      parentId: text(c.parentId) || null,
+      slug: text(c.slug),
+      name: text(c.name),
+      position: number(c.position) ?? 0,
+      hasChildren: false,
+      heading: text(c.heading) || undefined,
+      description: text(c.description) || undefined,
+      longDescription: text(c.longDescription) || undefined,
+      imageSrc: safeImage(c.imageSrc),
+      imageAlt: text(c.imageAlt, text(c.name)),
     }));
+  const parentIds = new Set(categories.map((category) => category.parentId));
+  for (const category of categories) category.hasChildren = parentIds.has(category.id);
+  const total = number(body.total) ?? products.length;
   const metadata = {
     sourceCategoryCount: categories.length,
-    sourceItemCount: products.length,
-    productGroupCount: products.length,
+    sourceItemCount: total,
+    productGroupCount: total,
   };
+  const homepageFeaturedProductIds = Array.isArray(body.homepageFeaturedProductIds)
+    ? strings(body.homepageFeaturedProductIds)
+    : products
+        .filter((product) => product.featuredPosition !== null || product.isRecommended)
+        .sort(
+          (a, b) =>
+            (a.featuredPosition ?? Number.MAX_SAFE_INTEGER) -
+            (b.featuredPosition ?? Number.MAX_SAFE_INTEGER),
+        )
+        .map((product) => product.id);
   return {
     mode: "ontos",
-    revision: Number(body.revision),
-    catalog: {
-      metadata,
-      products,
-      homepageFeaturedProductIds: [
-        ...prototype.homepageFeaturedProductIds.filter((id) => products.some((p) => p.id === id)),
-        ...products.map((p) => p.id),
-      ].slice(0, 16),
-    },
+    revision: number(body.revision) ?? 0,
+    total,
+    page: number(body.page) ?? 1,
+    pageSize: number(body.pageSize) ?? products.length,
+    catalog: { metadata, products, homepageFeaturedProductIds },
     categories: { metadata, categories },
   };
 }

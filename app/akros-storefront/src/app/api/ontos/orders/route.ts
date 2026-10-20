@@ -60,7 +60,8 @@ export async function POST(request: Request) {
       ),
     };
     for (let attempt = 0; attempt < 3; attempt++) {
-      const snapshot = await getSnapshot(true);
+      // Only the aggregate revision is needed: smallest possible fresh owner read.
+      const snapshot = await getSnapshot(true, { pageSize: 1 });
       const payload = { command, expectedRevision: snapshot.revision };
       const digest = createHash("sha256")
         .update(JSON.stringify(payload))

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { project } from "@/ontos/catalog-projection";
+import { imagePlaceholder, project } from "@/ontos/catalog-projection";
 import raw from "@/mock-storefront/generated/catalog.generated.json";
 import { createCatalog } from "@/ontos/catalog-model";
 import { createCheckoutDraft, getCheckoutTotals } from "@/mock-storefront/checkout";
@@ -40,17 +40,99 @@ describe("OntOS source-of-truth boundary", () => {
     });
     expect(s.revision).toBe(7);
   });
-  it("excludes unpublished, inactive, absent, and unknown products", () => {
+  it("excludes unpublished, inactive and identity-less products", () => {
     expect(
       project({
         products: [
           { ...live(), published: false },
           { ...live(), active: false },
-          { ...live(), id: "not-seeded", slug: "unknown", sku: "missing" },
+          { ...live(), id: "" },
+          { ...live(), slug: undefined },
         ],
       }).catalog.products,
     ).toEqual([]);
     expect(project({ products: [] }).catalog.products).toEqual([]);
+  });
+  it("offers a new owner product that Kai's prototype JSON does not know", () => {
+    const s = project({
+      products: [{ ...live(), id: "owner-new", slug: "novy-produkt", sku: "NEW-1" }],
+    });
+    expect(s.catalog.products.map((p) => p.slug)).toEqual(["novy-produkt"]);
+  });
+  it("takes every customer-visible text, image, parameter and label from the owner", () => {
+    const s = project({
+      revision: 3,
+      total: 1289,
+      page: 2,
+      pageSize: 24,
+      homepageFeaturedProductIds: [template.id],
+      categories: [
+        {
+          id: "c1",
+          parentId: null,
+          slug: "nerez",
+          name: "Nerez",
+          position: 2,
+          description: "Popis kategorie",
+        },
+        {
+          id: "c2",
+          parentId: "c1",
+          slug: "srouby",
+          name: "Šrouby",
+          position: 1,
+          imageSrc: "https://evil.example/x.jpg",
+        },
+      ],
+      products: [
+        {
+          ...live(),
+          name: "Upravený název z OntOS",
+          categoryId: "c2",
+          description: "První odstavec.\n\nDruhý odstavec.",
+          descriptionParagraphs: ["Starý odstavec"],
+          imageSrc: "https://www.akros.cz/data/product/a.jpg",
+          gallery: ["https://www.akros.cz/data/product/a.jpg", "/akros/products/product-02.jpg"],
+          parameters: [{ label: "Materiál", value: "A2", unit: "" }],
+          flags: { isNew: true, isSale: false, isAction: true, isRecommended: false },
+        },
+      ],
+    });
+    const product = s.catalog.products[0];
+    expect(product).toMatchObject({
+      name: "Upravený název z OntOS",
+      description: "První odstavec.",
+      imageSrc: "https://www.akros.cz/data/product/a.jpg",
+      secondaryImageSrc: "/akros/products/product-02.jpg",
+      isNew: true,
+      isAction: true,
+      isSale: false,
+    });
+    expect(product.detail.descriptionParagraphs).toEqual(["První odstavec.", "Druhý odstavec."]);
+    expect(product.detail.parameters).toEqual([{ label: "Materiál", value: "A2", unit: "" }]);
+    expect(s).toMatchObject({ revision: 3, total: 1289, page: 2, pageSize: 24 });
+    expect(s.catalog.homepageFeaturedProductIds).toEqual([template.id]);
+    const model = createCatalog(s.catalog, s.categories);
+    expect(model.getCategoryBySlug("nerez")).toMatchObject({
+      hasChildren: true,
+      description: "Popis kategorie",
+    });
+    expect(model.getCategoryBySlug("srouby")).toMatchObject({
+      hasChildren: false,
+      imageSrc: undefined,
+    });
+    expect(model.getCategoryTrail(model.getCategoryBySlug("srouby")!).map((c) => c.slug)).toEqual([
+      "nerez",
+      "srouby",
+    ]);
+  });
+  it("replaces images next/image cannot serve with the honest placeholder", () => {
+    const p = {
+      ...live(),
+      imageSrc: "http://www.akros.cz/data/x.jpg",
+      gallery: ["https://cdn.example/x.jpg"],
+    };
+    expect(project({ products: [p] }).catalog.products[0].imageSrc).toBe(imagePlaceholder);
   });
   it("never backfills an absent owner price or stock from JSON", () => {
     for (const field of ["grossPriceMinor", "priceMinor", "stockOnHand", "minimumQuantity"]) {

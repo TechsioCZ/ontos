@@ -30,7 +30,10 @@ export function assertCart(value: unknown): asserts value is CartState {
   }
 }
 export async function quoteCart(cart: CartState) {
-  const snapshot = await getSnapshot(true);
+  const snapshot = await getSnapshot(true, {
+    productIds: [...new Set(cart.lines.map((line) => line.productId))],
+    pageSize: 50,
+  });
   const model = createCatalog(snapshot.catalog, snapshot.categories);
   const issues: string[] = [];
   let priceChanged = false;

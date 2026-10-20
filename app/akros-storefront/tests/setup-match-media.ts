@@ -26,5 +26,14 @@ vi.mock("@/ontos/catalog-provider", async () => {
 });
 vi.mock("@/ontos/catalog-server", async () => {
   const model = await import("@/mock-storefront/catalog");
-  return { getCatalog: async () => model };
+  return {
+    getCatalog: async () => model,
+    // OntOS-only paths; component suites run in mock mode and must never reach them.
+    getCatalogPage: async () => {
+      throw new Error("getCatalogPage is only used in OntOS mode");
+    },
+    getShellSnapshot: async () => {
+      throw new Error("getShellSnapshot is only used by the root layout");
+    },
+  };
 });

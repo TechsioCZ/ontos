@@ -1,4 +1,4 @@
-import { getSnapshot } from "@/ontos/catalog-server";
+import { getShellSnapshot } from "@/ontos/catalog-server";
 import { CatalogProvider } from "@/ontos/catalog-provider";
 import type { Metadata } from "next";
 import localFont from "next/font/local";
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
-  const snapshot = await getSnapshot();
+  const snapshot = await getShellSnapshot();
   return (
     <html lang="cs" className={`${inter.variable} light`} data-scroll-behavior="smooth">
       <body>
