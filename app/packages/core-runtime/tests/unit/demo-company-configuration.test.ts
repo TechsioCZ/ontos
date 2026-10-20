@@ -110,11 +110,12 @@ it.effect(
       const first = yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
       const second = yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
       expect(first.previousCompanyCount).toBe(1);
-      expect(second.previousCompanyCount).toBe(4);
+      expect(second.previousCompanyCount).toBe(5);
       expect(state.rows.slice(0, 2)).toEqual([{ ...commercial, legalName: commercialDemoCompany.legalName }, rental]);
       expect(state.rows.map((row) => row.legalName).slice(2)).toEqual([
         'Velkoobchod Hanák s.r.o.',
         'Kavárna Doma s.r.o.',
+        'AKROS (demo)',
       ]);
       expect(state.calls).toEqual([
         'load',
@@ -122,6 +123,7 @@ it.effect(
         'create',
         'create:DEMO-HANAK-CRM',
         'create:DEMO-KAVARNA-ESHOP',
+        'create:DEMO-AKROS',
         'modules',
         'load',
         'modules',
