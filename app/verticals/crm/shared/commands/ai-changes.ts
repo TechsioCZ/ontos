@@ -521,6 +521,16 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
                 (batch) => batch.runId === value.runId && batch.agentPrincipalId === context.viewer.principalId,
               );
         if (repeated !== undefined) {
+          const existing = slice.changes.filter((change) => change.batchId === repeated.id);
+          if (
+            repeated.instruction !== value.instruction ||
+            !same(
+              existing.map((change) => ({ operation: change.operation, reason: change.reason })),
+              value.changes,
+            )
+          ) {
+            return yield* conflict('Toto označení běhu už patří jinému návrhu. Pro nový návrh použijte nové runId.');
+          }
           const ids = slice.changes.filter((change) => change.batchId === repeated.id).map((change) => change.id);
           return { entityIds: [repeated.id, ...ids], state } satisfies CommandChange;
         }

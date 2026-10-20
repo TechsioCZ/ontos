@@ -123,7 +123,7 @@ const BatchCard = ({
           ? decision === 'approve'
             ? 'Rozhodnutí uloženo. Zkontrolujte výsledek u jednotlivých změn.'
             : 'Návrhy zamítnuty. Data zůstala beze změny.'
-          : (result.message ?? 'Rozhodnutí se nepodařilo uložit. Obnovte seznam a zkuste to znovu.'),
+          : 'Rozhodnutí se nepodařilo uložit. Záznam se mohl od návrhu změnit. Obnovte seznam a připravte nový návrh.',
       ),
     );
   };
@@ -229,7 +229,7 @@ const BatchCard = ({
                         feedback(
                           result.ok
                             ? 'Celá dávka vrácena. Původní údaje obnoveny, historie zachována.'
-                            : (result.message ?? 'Dávku nelze vrátit. Zkontrolujte navazující změny.'),
+                            : 'Dávku nelze vrátit, některý záznam se mezitím změnil. Pozdější úpravy zůstaly zachovány.',
                         );
                         setConfirmRevert(false);
                       });

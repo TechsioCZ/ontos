@@ -7,7 +7,7 @@ const text = z.string().max(200).optional();
 const clientFields = {
   address: text,
   email: text,
-  note: z.string().max(10000).optional(),
+  note: z.string().max(4000).optional(),
   phone: text,
   regNo: text,
   segment: text,
@@ -16,7 +16,7 @@ const clientFields = {
 };
 const contactFields = {
   email: text,
-  note: z.string().max(10000).optional(),
+  note: z.string().max(4000).optional(),
   phone: text,
   primary: z.boolean().optional(),
   role: text,
@@ -94,14 +94,31 @@ export const registerCrmTools = (server: McpServer) => {
     async ({ instruction, runId, changes }) => {
       const result = await applyCommand(
         'crm',
-        Schema.Json,
+        Schema.Struct({ entityIds: Schema.Array(Schema.String), revision: Schema.Int }),
         { _tag: 'AiProposeChanges', agentLabel: 'AI asistent Hanák · úroveň C', instruction, runId, changes },
         async () => await readRevision('crm'),
       );
+      const current = await readRecordsOf(
+        'crm',
+        Schema.Struct({
+          state: Schema.Struct({
+            aiChanges: Schema.Struct({
+              changes: Schema.Array(Schema.Struct({ batchId: Schema.String, status: Schema.String })),
+            }),
+          }),
+        }),
+      );
+      const statuses = current.state.aiChanges.changes
+        .filter((change) => change.batchId === result.entityIds[0])
+        .map((change) => change.status);
+      const pending = statuses.length > 0 && statuses.every((status) => status === 'pending');
       return {
         result,
-        status: 'pending',
-        message: 'Návrh uložen. Data se nezměnila; čeká na schválení člověkem.',
+        statuses,
+        status: pending ? 'pending' : 'already_recorded',
+        message: pending
+          ? 'Návrh uložen. Data se nezměnila; čeká na schválení člověkem.'
+          : 'Tento běh už je evidován. Zkontrolujte skutečné výsledky položek v aplikaci; nový návrh nevznikl.',
         reviewUrl: 'http://localhost:3020/cs/crm/schvalovani-ai',
       };
     },

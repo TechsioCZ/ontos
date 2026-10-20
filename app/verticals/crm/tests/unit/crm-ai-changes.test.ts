@@ -187,6 +187,25 @@ describe('AI level C governed pending batches', () => {
       'run-1',
     ).state;
     expect(second.aiChanges?.batches).toHaveLength(1);
+    expect(
+      Exit.isFailure(
+        run(
+          second,
+          {
+            _tag: 'AiProposeChanges',
+            runId: 'run-1',
+            instruction: 'Jiný návrh se stejným během',
+            changes: [
+              {
+                operation: { _tag: 'UpdateClient', id: 'c1', patch: { phone: '+420 000 111 222' } },
+                reason: 'Nový odlišný požadavek',
+              },
+            ],
+          },
+          agent,
+        ),
+      ),
+    ).toBe(true);
     expect(projectCrmState(second, rep).aiChanges?.changes).toHaveLength(0);
     expect(
       Exit.isFailure(
