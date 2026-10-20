@@ -46,10 +46,13 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
   const valueData =
     currency === undefined
       ? []
-      : report.byMonth.map((month) => ({
-          month: shortMonth(month.key),
-          value: Number(totalIn(month.totals, currency)?.amount ?? '0'),
-        }));
+      : report.byMonth.flatMap((month) => {
+          const total = totalIn(month.totals, currency);
+          // A month with orders but no supplied amount in this currency is missing data, not a zero value.
+          return total === undefined && month.count > 0
+            ? []
+            : [{ month: shortMonth(month.key), value: Number(total?.amount ?? '0') }];
+        });
   const firstMonth = report.byMonth[0]?.label ?? '';
   const lastMonth = report.byMonth.at(-1)?.label ?? '';
   return (
@@ -101,7 +104,8 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
           ) : (
             <>
               <p className="text-fg-secondary text-sm">
-                Součet importovaných částek jen v {currency}; ostatní měny se nikdy nepřičítají. Nejde o tržbu.
+                Součet importovaných částek jen v {currency}; ostatní měny se nikdy nepřičítají. Nejde o tržbu. Měsíce
+                bez poskytnuté částky v této měně se nevykreslují.
               </p>
               <ChartBoundary>
                 <Chart

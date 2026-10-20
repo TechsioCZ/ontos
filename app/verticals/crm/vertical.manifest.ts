@@ -311,7 +311,7 @@ export const crmManifest = defineOntosModuleManifest({
           contributionKey: 'demo.crm.component.home-summary',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'authenticated_principal' },
             entrypointKey: 'demo.crm.component.home-summary',
             moduleKey,
             role: 'public_component',
