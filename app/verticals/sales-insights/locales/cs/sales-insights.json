@@ -38,6 +38,7 @@
         "chartDescription": "Období {{from}} – {{to}}",
         "chartLabel": "{{metric}}, {{from}} až {{to}}",
         "chartType": "Typ grafu",
+        "exportCsv": "Stáhnout CSV",
         "dateFuture": "Datum nesmí být v budoucnosti.",
         "dateInvalid": "Zadejte platné datum.",
         "description": "Vyberte ukazatel, typ grafu, období a seskupení",

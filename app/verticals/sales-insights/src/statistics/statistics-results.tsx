@@ -1,5 +1,6 @@
 import { EmptyState, SectionCard, StatCard, StatRow } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
@@ -18,6 +19,7 @@ import type {
 } from '../../shared/metrics.ts';
 import { formatAxisValue, formatMetricValue, formatPeriodDay } from './format-metric.ts';
 import { PipelineSummaryCard } from './pipeline-summary-card.tsx';
+import { statisticsCsv } from './statistics-csv.ts';
 import { chartScale, isTimeGrouping, PIE_SLICE_LIMIT, pieSlices, roundSeriesToTotal } from './statistics-query.ts';
 import type { ChartKind, StatisticsQuery } from './statistics-query.ts';
 
@@ -282,6 +284,26 @@ export const StatisticsResults = ({
         </div>
       </SectionCard>
 
+      {showTable && (
+        <div className="flex justify-end">
+          <Button
+            icon="icon-[mdi--download]"
+            onClick={() => {
+              const link = document.createElement('a');
+              link.href = `data:text/csv;charset=utf-8,${encodeURIComponent(
+                statisticsCsv(series, unit, [t(`${key}.table.group`), t(`${key}.table.value`)]),
+              )}`;
+              link.download = `statistiky-${query.metric}-${query.from}-${query.to}.csv`;
+              link.click();
+            }}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(`${key}.exportCsv`)}
+          </Button>
+        </div>
+      )}
       {showTable && (
         <DataTable
           // A new grouping starts unsorted, so a sort chosen for the previous grouping does not carry over.

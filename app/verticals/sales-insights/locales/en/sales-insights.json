@@ -38,6 +38,7 @@
         "chartDescription": "Period {{from}} – {{to}}",
         "chartLabel": "{{metric}}, {{from}} to {{to}}",
         "chartType": "Chart type",
+        "exportCsv": "Download CSV",
         "dateFuture": "The date cannot be in the future.",
         "dateInvalid": "Enter a valid date.",
         "description": "Choose a metric, chart type, period and grouping",
