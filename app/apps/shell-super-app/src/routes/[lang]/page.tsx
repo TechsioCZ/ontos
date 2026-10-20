@@ -4,6 +4,7 @@ import { Match } from 'effect';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 
+import { DemoGuideHomeCard } from '../../demo-guide/demo-guide-home-card.tsx';
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { useShellControls } from '../use-shell-controls.ts';
@@ -80,6 +81,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         unavailableDeployments={model.navigation.unavailableDeployments}
       >
         <section className="shell:flex shell:w-full shell:flex-col shell:gap-4">
+          <DemoGuideHomeCard legalEntityId={model.selectedLegalEntityId} />
           {Match.value(model.homeContribution).pipe(
             Match.when({ state: 'ready' }, (contribution) => (
               <ResolvedTarget

@@ -1,0 +1,60 @@
+import { expect, it } from 'effect-rstest';
+
+import { demoGuideFor, demoGuides } from '../../../src/demo-guide/demo-guide-registry.ts';
+
+/** Demo accounts of each company; a guide may only send the presenter to its own company's accounts. */
+const personaDomains: Readonly<Record<string, string>> = {
+  akros: '@akros.demo',
+  hanak: '@hanak.demo',
+  obchod: '@demo.ontos',
+  siampark: '@siampark.demo',
+};
+
+const legalEntities = {
+  akros: '71000000-0000-4000-8000-000000000024',
+  hanak: '71000000-0000-4000-8000-000000000022',
+  obchod: '71000000-0000-4000-8000-000000000020',
+  siampark: '71000000-0000-4000-8000-000000000021',
+} as const;
+
+it('selects the guide of the current company only', () => {
+  for (const [id, legalEntityId] of Object.entries(legalEntities)) {
+    expect(demoGuideFor(legalEntityId)?.id).toBe(id);
+  }
+  expect(demoGuideFor(undefined)).toBeUndefined();
+  // Kavárna Doma (legacy) has no guide.
+  expect(demoGuideFor('71000000-0000-4000-8000-000000000023')).toBeUndefined();
+});
+
+it.each(demoGuides.map((guide) => [guide.id, guide] as const))('guide %s is complete and well formed', (id, guide) => {
+  expect(guide.chapters.length).toBeGreaterThanOrEqual(3);
+  const steps = guide.chapters.flatMap((chapter) => chapter.steps);
+  expect(new Set(steps.map((step) => step.id)).size).toBe(steps.length);
+  expect(new Set(guide.chapters.map((chapter) => chapter.id)).size).toBe(guide.chapters.length);
+  for (const chapter of guide.chapters) {
+    expect(chapter.steps.length).toBeGreaterThan(0);
+  }
+  for (const step of steps) {
+    expect(step.id.startsWith(`${id}-`)).toBe(true);
+    expect(step.title.length).toBeGreaterThan(0);
+    expect(step.say.length).toBeGreaterThan(0);
+    expect(step.say.length).toBeLessThanOrEqual(260);
+    if (step.persona !== null) {
+      expect(step.persona.email.endsWith(personaDomains[id] ?? '-')).toBe(true);
+    }
+    if (step.target.kind === 'app') {
+      expect(step.target.path.startsWith('/')).toBe(true);
+      expect(step.target.path.startsWith('/cs')).toBe(false);
+      expect(step.target.path.includes('localhost')).toBe(false);
+    } else {
+      // Only the AKROS storefront is an external destination.
+      expect(id).toBe('akros');
+      expect(step.target.url.startsWith('http://localhost:3070/')).toBe(true);
+    }
+  }
+});
+
+it('has an AI agent chapter for Hanák and Obchodní firma', () => {
+  expect(demoGuideFor(legalEntities.hanak)?.chapters.some((chapter) => chapter.id === 'ai')).toBe(true);
+  expect(demoGuideFor(legalEntities.obchod)?.chapters.some((chapter) => chapter.id === 'ai')).toBe(true);
+});
