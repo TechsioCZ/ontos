@@ -21,6 +21,7 @@ import {
   isInvoiceOverdue,
   recurringIssueDate,
 } from '../../shared/domain/finance-planning.ts';
+import type { ExportIssuer, ExportPartnerIdentity } from '../../shared/domain/finance-planning.ts';
 import { MAX_DOCUMENT_BYTES } from '../../shared/actions/apply-command.ts';
 import type { DocumentUpload } from '../../shared/actions/apply-command.ts';
 
@@ -858,6 +859,25 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
   const version = exports.length + 1;
   const batchNumber = `UP-${DateTime.formatIsoDateUtc(input.now).slice(0, 4)}-${String(version).padStart(3, '0')}`;
   const createdBy = command.actorLabel ?? input.principalId ?? 'neznámý uživatel';
+  // Issuer = the selected legal entity: its name from the trusted shell session, its identity from the setup.
+  const setup = state.accountingSetup ?? {};
+  const issuer: ExportIssuer = {
+    ...(setup.issuerCity === undefined ? {} : { city: setup.issuerCity }),
+    ...(setup.issuerIco === undefined ? {} : { ico: setup.issuerIco }),
+    ...(command.issuerName === undefined ? {} : { name: command.issuerName }),
+    ...(setup.issuerStreet === undefined ? {} : { street: setup.issuerStreet }),
+    ...(setup.issuerVatId === undefined ? {} : { vatId: setup.issuerVatId }),
+    ...(setup.issuerZip === undefined ? {} : { zip: setup.issuerZip }),
+  };
+  const partnerOf = (invoice: Invoice): ExportPartnerIdentity => {
+    const seen = command.counterparties?.[invoice.ref.resourceId];
+    const ico = seen?.ico ?? invoice.counterpartyCompanyId;
+    return {
+      ...(seen?.city === undefined ? {} : { city: seen.city }),
+      ...(ico === undefined ? {} : { ico }),
+      ...(seen?.vatId === undefined ? {} : { vatId: seen.vatId }),
+    };
+  };
   const content = buildAccountingExport(
     command.format,
     selected.flatMap((invoice) =>
@@ -872,10 +892,11 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
               // Stable shell route: authentication, company scope and finance permissions are checked on opening.
               documentLink: `http://localhost:3020/cs/siampark/finance?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`,
               invoice,
+              partner: partnerOf(invoice),
             },
           ],
     ),
-    { batchNumber, createdAt: DateTime.formatIso(input.now), createdBy, version },
+    { batchNumber, createdAt: DateTime.formatIso(input.now), createdBy, issuer, version },
   );
   return stateOnly({
     ...state,
@@ -890,6 +911,8 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
         format: command.format,
         id: input.resourceId,
         invoiceResourceIds: ids,
+        ...(setup.issuerIco === undefined ? {} : { issuerIco: setup.issuerIco }),
+        ...(command.issuerName === undefined ? {} : { issuerName: command.issuerName }),
         schemaVersion: 'ontos-finance-export/1',
         sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
         status: 'HANDED_OVER',
