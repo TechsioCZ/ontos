@@ -727,11 +727,11 @@ const handleRecordReminder = Effect.fn('Finance.handleRecordReminder')(function*
         {
           ...actorOf(context, command.actorLabel),
           createdAt: context.input.now,
-          deliveryMode: 'SIMULATED',
+          deliveryMode: 'EMAIL',
           id: context.input.attemptId,
           invoiceResourceId: invoice.ref.resourceId,
           recipient: command.recipient,
-          status: 'SIMULATED_SENT',
+          status: 'QUEUED',
           text: command.text,
         },
       ],
