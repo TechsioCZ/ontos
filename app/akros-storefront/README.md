@@ -67,6 +67,8 @@ the mini-cart trigger and portalled preview, checkout actions and cart quantity 
 to their UI-kit tokens. It also checks the quantity input's hover/focus
 surfaces. Run it alongside the responsive, account and typography browser suites when changing
 token mappings; these browser checks are separate from `npm run check`.
+The theme check also probes product detail badge colors, favorite button colors/padding and
+purchase quantity padding, including isolation from the neighboring favorite button.
 
 Keep remaining appearance utilities tied to a verified kit limitation. In UI kit `0.56.1`,
 ProductCard uses a static `shadow-sm`, so its app shadow still needs an explicit variable utility.

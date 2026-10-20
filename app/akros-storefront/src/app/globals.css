@@ -16,6 +16,7 @@
 @import "../tokens/components/organisms/_akros-cart-items-table.css";
 @import "../tokens/components/organisms/_akros-header.css";
 @import "../tokens/components/organisms/_akros-footer.css";
+/* Product detail appearance uses kit tokens; control composition stays below. */
 @import "../tokens/components/templates/_akros-product-detail.css";
 @import "../tokens/components/templates/_akros-checkout.css";
 @import "../tokens/components/templates/_akros-account.css";
@@ -405,11 +406,6 @@ body {
   line-height: 1.2;
 }
 
-.akros-product-detail__variant-badge {
-  background: var(--akros-product-detail-badge-bg);
-  color: var(--akros-product-detail-badge-fg);
-}
-
 .akros-product-detail__description {
   margin: 0;
   line-height: 1.5;
@@ -513,13 +509,11 @@ body {
 
 .akros-purchase-form__quantity-control input {
   min-width: 0;
-  padding-inline: var(--dimension-4);
   text-align: center;
 }
 
 .akros-purchase-form__quantity-trigger {
   min-width: 40px;
-  padding-inline: var(--dimension-8);
 }
 
 .akros-purchase-form__quantity-trigger:first-child {
@@ -532,9 +526,6 @@ body {
 
 .akros-product-detail__favorite {
   min-width: 60px;
-  border-color: var(--color-border-primary);
-  color: var(--color-fg-primary);
-  padding-inline: 0;
 }
 
 .akros-price-tiers {

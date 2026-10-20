@@ -193,8 +193,66 @@ try {
     },
   );
 
+  await page.goto(
+    new URL("/produkt/vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2", baseUrl).href,
+    { waitUntil: "networkidle" },
+  );
+  const detailBadge = page.locator(".akros-product-detail__variant-badge");
+  await probe(
+    detailBadge,
+    {
+      "--color-badge-bg-secondary": "rgb(12, 34, 56)",
+      "--color-badge-fg-secondary": "rgb(234, 245, 250)",
+    },
+    async () => {
+      assert.equal(await style(detailBadge, "backgroundColor"), "rgb(12, 34, 56)");
+      assert.equal(await style(detailBadge, "color"), "rgb(234, 245, 250)");
+    },
+  );
+
+  await page.goto(new URL("/produkt/hacek-na-popruh-48mm-an-8541-a2", baseUrl).href, {
+    waitUntil: "networkidle",
+  });
+  const detailFavorite = page.locator(".akros-product-detail__favorite");
+  await probe(
+    detailFavorite,
+    {
+      "--color-button-border-secondary": "rgb(12, 34, 56)",
+      "--color-button-fg-outlined-secondary": "rgb(23, 45, 67)",
+      "--padding-button-md": "4px 6px",
+    },
+    async () => {
+      assert.equal(await style(detailFavorite, "borderColor"), "rgb(12, 34, 56)");
+      assert.equal(await style(detailFavorite, "color"), "rgb(23, 45, 67)");
+      assert.equal(await style(detailFavorite, "padding"), "4px 6px");
+    },
+  );
+  const purchase = page.locator(".akros-purchase-form");
+  const purchaseInput = purchase.locator("input");
+  const favoritePadding = await style(detailFavorite, "padding");
+  await probe(
+    purchase,
+    {
+      "--padding-input-md": "7px 9px",
+      "--padding-numeric-input-input-lg": "11px",
+      "--padding-numeric-input-trigger-x": "6px",
+    },
+    async () => {
+      assert.equal(await style(purchaseInput, "paddingTop"), "7px");
+      assert.equal(await style(purchaseInput, "paddingInlineStart"), "11px");
+      assert.equal(await style(purchaseInput, "paddingInlineEnd"), "9px");
+      for (const control of await purchase
+        .locator(".akros-purchase-form__quantity-trigger")
+        .all()) {
+        assert.equal(await style(control, "paddingInlineStart"), "6px");
+        assert.equal(await style(control, "paddingInlineEnd"), "6px");
+      }
+      assert.equal(await style(detailFavorite, "padding"), favoritePadding);
+    },
+  );
+
   console.log(
-    "UI-kit theme checks passed: carousel, product cards, header, mini-cart and checkout tokens.",
+    "UI-kit theme checks passed: carousel, product cards/details, header, mini-cart and checkout tokens.",
   );
 } finally {
   await browser.close();

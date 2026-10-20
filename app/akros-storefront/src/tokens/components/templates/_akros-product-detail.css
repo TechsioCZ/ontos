@@ -8,8 +8,6 @@
   --akros-product-detail-tier-bg: var(--color-fill-surface);
   --akros-product-detail-stock-fg: var(--color-fg-status-success);
   --akros-product-detail-stock-unavailable-fg: var(--color-fg-status-error);
-  --akros-product-detail-badge-bg: var(--color-fg-primary);
-  --akros-product-detail-badge-fg: var(--color-fg-reverse);
   --akros-product-detail-gallery-max-width: 600px;
   --akros-product-detail-image-aspect-ratio: 600 / 494;
   --akros-product-detail-thumbnail-width: 148px;
@@ -25,17 +23,27 @@
   --akros-variant-filter-checkbox-indicator-size: var(--dimension-12);
 }
 
+.akros-product-detail__variant-badge {
+  --color-badge-bg-secondary: var(--color-fg-primary);
+  --color-badge-fg-secondary: var(--color-fg-reverse);
+}
+
 .akros-purchase-form {
   --height-form-control-md: var(--dimension-60);
   --height-form-control-lg: var(--dimension-60);
   --padding-button-md: var(--padding-button-y-md) var(--dimension-16);
+  --padding-input-md: var(--spacing-150) var(--dimension-4);
+  --padding-numeric-input-input-lg: var(--dimension-4);
+  --padding-numeric-input-trigger-x: var(--dimension-8);
   --radius-button-md: var(--radius-sm);
   --radius-numeric-input-lg: var(--radius-sm);
   --spacing-button-md: var(--dimension-20);
 }
 
 .akros-product-detail__favorite {
+  --color-button-border-secondary: var(--color-border-primary);
   --height-form-control-md: var(--dimension-60);
+  --padding-button-md: var(--padding-button-y-md) var(--dimension-0);
   --radius-button-md: var(--radius-sm);
 }
 
