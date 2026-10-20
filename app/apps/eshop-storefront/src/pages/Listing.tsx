@@ -66,7 +66,11 @@ export const ListingPage = ({ categorySlug }: { readonly categorySlug?: string }
         <div>
           <h1>{category?.name ?? (unknownCategory ? 'Neznámá kategorie' : 'Celá nabídka')}</h1>
           <p className="listing__count" aria-live="polite">
-            {catalog.data === undefined ? 'Načítám nabídku…' : `${catalog.data.total} ${plural(catalog.data.total, 'produkt', 'produkty', 'produktů')}`}
+            {catalog.data === undefined
+              ? catalog.error === undefined
+                ? 'Načítám nabídku…'
+                : 'Nabídku se nepodařilo načíst'
+              : `${catalog.data.total} ${plural(catalog.data.total, 'produkt', 'produkty', 'produktů')}`}
             {catalog.loading && catalog.data !== undefined ? ' · aktualizuji…' : ''}
           </p>
         </div>
