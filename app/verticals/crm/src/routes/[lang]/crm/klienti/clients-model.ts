@@ -9,8 +9,8 @@ export type ClientSegment = (typeof clientSegments)[number];
 export { clientSegments };
 
 export const segmentLabels: Record<ClientSegment, string> = {
-  cafe: 'Kavárna / cukrárna',
   bakery: 'Pekárna / výrobna',
+  cafe: 'Kavárna / cukrárna',
   catering: 'Catering',
   hotel: 'Hotel',
   institution: 'Instituce / jídelna',
