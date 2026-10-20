@@ -814,6 +814,7 @@ const handleGenerateRecurringInvoice = Effect.fn('Finance.handleGenerateRecurrin
     issueDate,
     note: `Opakovaná faktura „${template.name}“ za období ${command.period}`,
     number,
+    ...(template.occupancyRef === undefined ? {} : { occupancyRef: template.occupancyRef }),
     paidMinor: 0,
     ...(template.partyId === undefined ? {} : { partyId: template.partyId }),
     paymentState: 'UNPAID',
@@ -857,7 +858,6 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
   const version = exports.length + 1;
   const batchNumber = `UP-${DateTime.formatIsoDateUtc(input.now).slice(0, 4)}-${String(version).padStart(3, '0')}`;
   const createdBy = command.actorLabel ?? input.principalId ?? 'neznámý uživatel';
-  const documentsByInvoice = new Map((state.documents ?? []).map((document) => [document.invoiceResourceId, document]));
   const content = buildAccountingExport(
     command.format,
     selected.flatMap((invoice) =>
@@ -869,10 +869,8 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
                 invoice.counterpartyName ??
                 command.counterpartyNames?.[invoice.ref.resourceId] ??
                 invoice.counterpartyRef.resourceId,
-              documentLink:
-                documentsByInvoice.get(invoice.ref.resourceId) === undefined
-                  ? ''
-                  : `ontos://siampark-billing-finance/documents/${documentsByInvoice.get(invoice.ref.resourceId)?.id}`,
+              // Stable shell route: authentication, company scope and finance permissions are checked on opening.
+              documentLink: `http://localhost:3020/cs/siampark/finance?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`,
               invoice,
             },
           ],

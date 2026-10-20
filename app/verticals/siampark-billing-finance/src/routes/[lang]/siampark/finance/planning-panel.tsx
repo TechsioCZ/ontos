@@ -38,7 +38,7 @@ import { BUDGET_CATEGORIES } from './incoming-invoice-dialog.tsx';
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 const wholeKc = (minor: number) => formatMoney(Math.round(minor / 100) * 100);
 const axisKc = (value: number) =>
-  `${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: Math.abs(value) >= 1_000_000 ? 3 : 0, notation: 'compact' }).format(value)} Kč`;
+  `${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 3, notation: 'compact' }).format(value)} Kč`;
 const percent = (value: number) =>
   `${value > 0 ? '+' : ''}${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 1 }).format(value * 100)} %`;
 

@@ -5,6 +5,7 @@ import { FinanceConflict } from './errors/finance-conflict.ts';
 import { FinanceRejected } from './errors/finance-rejected.ts';
 import { Schema } from 'effect';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { OccupancyRefSchema } from '@app/siampark-occupancy/resources/occupancy';
 import { ContractRefSchema } from '@app/siampark-agreements/resources/contract';
 import { PropertyRefSchema } from '@app/siampark-property/resources/property';
 import { UnitRefSchema } from '@app/siampark-property/resources/unit';
@@ -112,6 +113,7 @@ export const FinanceCommandSchema = Schema.Union([
     issueDay: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(28)),
     lines: InvoiceLinesSchema,
     name: FinanceTextSchema,
+    occupancyRef: Schema.optionalKey(OccupancyRefSchema),
     partyId: Schema.optionalKey(FinancePartyIdSchema),
     propertyRef: Schema.optionalKey(PropertyRefSchema),
     unitRef: Schema.optionalKey(UnitRefSchema),

@@ -199,6 +199,7 @@ export const RecurringTemplateSchema = Schema.Struct({
   issueDay: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(28)),
   lines: InvoiceLinesSchema,
   name: FinanceTextSchema,
+  occupancyRef: Schema.optionalKey(OccupancyRefSchema),
   partyId: Schema.optionalKey(FinancePartyIdSchema),
   propertyRef: Schema.optionalKey(PropertyRefSchema),
   unitRef: Schema.optionalKey(UnitRefSchema),

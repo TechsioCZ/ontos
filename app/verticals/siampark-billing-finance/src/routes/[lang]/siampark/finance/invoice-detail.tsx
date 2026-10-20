@@ -102,9 +102,13 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
   const customer = customerOf(references.customerById, invoice);
   const title = opportunityTitle(references.opportunityTitles, invoice);
   const sourceLabel =
-    invoice.opportunityId === undefined
-      ? t(`${ns}.sourceManual`)
-      : [t(`${ns}.sourceOpportunity`), title].filter((part) => part !== undefined && part !== '').join(' · ');
+    invoice.recurringTemplateId !== undefined
+      ? `Opakovaná faktura · ${invoice.recurringPeriod ?? 'období neuvedeno'}`
+      : invoice.sourceOrder !== undefined
+        ? `Objednávka ${invoice.sourceOrder.number}`
+        : invoice.opportunityId === undefined
+          ? t(`${ns}.sourceManual`)
+          : [t(`${ns}.sourceOpportunity`), title].filter((part) => part !== undefined && part !== '').join(' · ');
   const status = invoiceStatusBadge(invoice, referenceDate);
   const incoming = invoice.direction === 'INCOMING';
   const counterpartyName = customerDisplayName(

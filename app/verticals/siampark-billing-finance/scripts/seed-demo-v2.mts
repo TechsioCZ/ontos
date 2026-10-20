@@ -7,6 +7,8 @@
 //   node verticals/siampark-billing-finance/scripts/seed-demo-v2.mts [--legal-entity <uuid>] [--force]
 //
 // Idempotent: a state already carrying the seed marker is left alone unless --force.
+import { readFileSync } from 'node:fs';
+import { alignRentalTemplates } from './align-rental-templates.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Config, DateTime, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
@@ -27,35 +29,6 @@ const LEGAL_ENTITY = argValue('--legal-entity') ?? '71000000-0000-4000-8000-0000
 const FORCE = process.argv.includes('--force');
 const MARKER = 'demo-v2-seed';
 const ACTOR = 'Finance (finance@siampark.demo)';
-
-/** A tiny valid one-page PDF with readable invoice text, generated so the stored document opens in any viewer. */
-const pdfFor = (lines: readonly string[]) => {
-  const ascii = (text: string) =>
-    text
-      .normalize('NFD')
-      .replaceAll(/[̀-ͯ]/gu, '')
-      .replaceAll(/[()\\]/gu, ' ');
-  const body = lines
-    .map((line, index) => `BT /F1 ${index === 0 ? 18 : 11} Tf 60 ${770 - index * 22} Td (${ascii(line)}) Tj ET`)
-    .join('\n');
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
-    `<< /Length ${body.length} >>\nstream\n${body}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  ];
-  let pdf = '%PDF-1.4\n';
-  const offsets: number[] = [];
-  objects.forEach((object, index) => {
-    offsets.push(pdf.length);
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = pdf.length;
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}`;
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(pdf, 'latin1').toString('base64');
-};
 
 const AdminSql = Layer.effect(
   PgClient.PgClient,
@@ -197,15 +170,9 @@ const program = Effect.gen(function* seed() {
         actorLabel: ACTOR,
         budgetCategory: entry.category,
         document: {
-          contentBase64: pdfFor([
-            `${entry.supplier} - FAKTURA ${entry.number}`,
-            `ICO dodavatele: ${entry.ico}`,
-            'Odberatel: Siampark s.r.o.',
-            `Datum vystaveni: ${entry.issued}`,
-            `Datum splatnosti: ${entry.due}`,
-            `Celkem k uhrade: ${(entry.amount / 100).toFixed(2)} CZK`,
-            '(ukazkovy doklad pro demo OntOS)',
-          ]),
+          contentBase64: readFileSync(
+            new URL(`./fixtures/${entry.number.replaceAll('/', '-')}.pdf`, import.meta.url),
+          ).toString('base64'),
           fileName: `faktura-${entry.number.replaceAll('/', '-')}.pdf`,
           mimeType: 'application/pdf',
         },
@@ -357,6 +324,8 @@ const program = Effect.gen(function* seed() {
         : invoice;
     }),
   };
+
+  state = alignRentalTemplates(state);
 
   // ---- S09: budgets, opening balance ----
   const budgetPlan = [

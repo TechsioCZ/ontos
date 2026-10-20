@@ -380,6 +380,13 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                       <span className="text-fg-secondary text-xs">
                         verze {entry.version} · schéma {entry.schemaVersion}
                       </span>
+                      {entry.format !== 'POHODA_XML_SIMULATION' &&
+                        !entry.content.includes('/cs/siampark/finance?resourceId=') && (
+                          <span className="text-fg-secondary text-xs">
+                            Historická verze bez webových odkazů. Použijte novější balíček; původní soubor i otisk
+                            zůstávají zachovány.
+                          </span>
+                        )}
                     </span>
                   </Table.Cell>
                   <Table.Cell>

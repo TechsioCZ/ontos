@@ -8,6 +8,7 @@ import {
   isInvoiceOverdue,
   paymentEvents,
 } from '../../shared/domain/finance-planning.ts';
+import { alignRentalTemplates } from '../../scripts/align-rental-templates.ts';
 import { transitionFinance } from '../../src/services/persistence.service.ts';
 import type { FinanceValidators } from '../../src/services/persistence.service.ts';
 
@@ -98,6 +99,13 @@ describe('S07 invoices', () => {
       const created = yield* run(empty, {
         _tag: 'CreateRecurringTemplate',
         counterpartyRef,
+        counterpartyName: 'Kavárna U Parku s.r.o.',
+        occupancyRef: {
+          moduleId: 'siampark.occupancy',
+          resourceType: 'siampark.occupancy.occupancy',
+          resourceId: 'lease-1',
+          tenantId,
+        },
         dueDays: 14,
         issueDay: 1,
         lines: [{ description: 'Nájem jednotky A1', quantity: 1, unitPriceMinor: 2_500_000, vatRate: 21 }],
@@ -110,6 +118,9 @@ describe('S07 invoices', () => {
         period: '2026-11',
         templateId,
       });
+      expect(first.invoice?.occupancyRef?.resourceId).toBe('lease-1');
+      expect(first.invoice?.counterpartyName).toBe('Kavárna U Parku s.r.o.');
+      expect(first.invoice?.lines).toEqual(created.state.recurringTemplates?.[0]?.lines);
       expect(first.invoice?.issueDate).toBe('2026-11-01');
       expect(first.invoice?.dueDate).toBe('2026-11-15');
       const duplicate = yield* Effect.exit(
@@ -173,6 +184,10 @@ describe('S08 accounting handover', () => {
       expect(created?.status).toBe('HANDED_OVER');
       expect(created?.content.trim().split('\r\n').length).toBe(4);
       expect(created?.version).toBe(1);
+      for (const id of ['a', 'b', 'c']) {
+        expect(created?.content).toContain(`http://localhost:3020/cs/siampark/finance?resourceId=${id}`);
+      }
+      expect(created?.content).not.toContain('ontos://');
       const second = yield* run(first.state, {
         _tag: 'CreateAccountingExport',
         format: 'JSON',
@@ -222,5 +237,48 @@ describe('S09 planning', () => {
   it('S09-03 a zero budget has no percentage deviation', () => {
     expect(budgetVariance(0, 5_000).percent).toBeUndefined();
     expect(budgetVariance(10_000, 12_000).percent).toBeCloseTo(0.2);
+  });
+});
+
+describe('Rental demo consistency', () => {
+  it('uses the linked rental terms for templates and unissued drafts without rewriting issued history', () => {
+    const source = invoice('source', {
+      documentNumber: 'NAJ-R101-2026-11',
+      counterpartyName: 'Kavárna U Parku s.r.o.',
+      occupancyRef: {
+        moduleId: 'siampark.occupancy',
+        resourceType: 'siampark.occupancy.occupancy',
+        resourceId: 'lease',
+        tenantId,
+      },
+      lines: [
+        { description: 'Nájemné R101 – listopad 2026', quantity: 1, unitPriceMinor: 4_800_000, vatRate: 21 },
+        { description: 'Zálohy na služby R101 – listopad 2026', quantity: 1, unitPriceMinor: 650_000, vatRate: 21 },
+      ],
+    });
+    const legacy = invoice('legacy', { recurringTemplateId: 'template' });
+    const draft = invoice('draft', { businessState: 'DRAFT', recurringTemplateId: 'template' });
+    const result = alignRentalTemplates({
+      ...empty,
+      invoices: [source, legacy, draft],
+      recurringTemplates: [
+        {
+          active: true,
+          counterpartyRef,
+          counterpartyName: 'Technoservis',
+          createdAt: now,
+          dueDays: 14,
+          id: 'template',
+          issueDay: 1,
+          lines: [{ description: 'Nájemné R101', quantity: 1, unitPriceMinor: 4_500_000, vatRate: 21 }],
+          name: 'Nájem R101',
+        },
+      ],
+    });
+    expect(result.recurringTemplates?.[0]?.counterpartyName).toBe('Kavárna U Parku s.r.o.');
+    expect(result.recurringTemplates?.[0]?.lines.length).toBe(2);
+    expect(result.invoices[2]?.totalMinor).toBe(6_594_500);
+    expect(result.invoices[2]?.occupancyRef).toEqual(source.occupancyRef);
+    expect(result.invoices[1]).toEqual(legacy);
   });
 });

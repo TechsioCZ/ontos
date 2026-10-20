@@ -128,6 +128,12 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
     {
       accessorFn: (row) => opportunityTitle(references.opportunityTitles, row) ?? '',
       cell: (info) => {
+        if (info.row.original.recurringTemplateId !== undefined) {
+          return `Opakovaná · ${info.row.original.recurringPeriod ?? 'bez období'}`;
+        }
+        if (info.row.original.sourceOrder !== undefined) {
+          return `Objednávka ${info.row.original.sourceOrder.number}`;
+        }
         if (info.row.original.opportunityId === undefined) {
           return t(`${ns}.sourceManual`);
         }
