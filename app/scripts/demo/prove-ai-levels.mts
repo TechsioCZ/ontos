@@ -393,8 +393,12 @@ record(
   `${toolsB.includes('create_task') ? 'create_task ✓' : 'create_task chybí'}${leakedB.length === 0 ? ', nic dalšího' : `, navíc: ${leakedB.join(', ')}`}`,
   toolsB.includes('create_task') && leakedB.length === 0,
 );
-const employees = (employeesA.value as { items?: { id: string; fullName: string; active: boolean }[] }).items ?? [];
-const assignee = employees.find((employee) => employee.active) ?? employees[0];
+const employees =
+  (employeesA.value as { items?: { active: boolean; id: string; name: string; role: string }[] }).items ?? [];
+const assignee =
+  employees.find((employee) => employee.active && employee.role === 'SALES_REP') ??
+  employees.find((employee) => employee.active) ??
+  employees[0];
 const due = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
 const stamp = new Date().toLocaleString('cs-CZ', { timeZone: 'Europe/Prague' });
 const requestId = `prove-ai-${randomUUID()}`;
@@ -415,7 +419,7 @@ record(
   'OK',
   createdB.isError
     ? String(createdB.value)
-    : `OK, úkol ${createdTask?.id.slice(0, 8) ?? '?'}… pro ${assignee?.fullName ?? 'bez přiřazení'}`,
+    : `OK, úkol ${createdTask?.id.slice(0, 8) ?? '?'}… pro ${assignee?.name ?? 'bez přiřazení'}`,
   !createdB.isError && createdTask !== null,
 );
 const reread = await mcpB.call('list_tasks', {});
@@ -565,12 +569,12 @@ for (const row of auditRows.toReversed()) {
     `  ${actorOf(row.principalId)} · ${pad(row.actionKey ?? '(read/gateway)', 34)} · ${pad(`${row.outcome} ${row.outcomeCode}`, 42)} · ${row.occurredAt.toLocaleTimeString('cs-CZ', { timeZone: 'Europe/Prague' })}\n`,
   );
 }
-process.stdout.write(
-  `\n${pad('', 5)}  ${pad('Úroveň', 6)}  ${pad('Krok / Step', 46)}  ${pad('Očekáváno', 22)}  Výsledek\n`,
-);
+const short = (value: string) => value.replace(/ — .*$/u, '');
+const header = `${pad('', 5)}  ${pad('Úroveň', 6)}  ${pad('Krok', 40)}  ${pad('Step', 34)}  ${pad('Očekáváno / Expected', 22)}  Výsledek / Result`;
+process.stdout.write(`\n${header}\n${'─'.repeat(header.length + 12)}\n`);
 for (const row of rows) {
   process.stdout.write(
-    `${pad(row.pass ? 'PASS' : 'FAIL', 5)}  ${pad(row.level, 6)}  ${pad(`${row.cs} / ${row.en}`, 46)}  ${pad(row.expected, 22)}  ${row.actual}\n`,
+    `${pad(row.pass ? 'PASS' : 'FAIL', 5)}  ${pad(row.level, 6)}  ${pad(row.cs, 40)}  ${pad(row.en, 34)}  ${pad(row.expected, 22)}  ${short(row.actual)}\n`,
   );
 }
 const failed = rows.filter((row) => !row.pass).length;

@@ -172,7 +172,9 @@
             "action_succeeded": "uloženo",
             "succeeded": "uloženo",
             "action_policy_denied": "zamítnuto pravidlem",
-            "action_revision_conflict": "souběžná změna"
+            "action_revision_conflict": "souběžná změna",
+            "spicedb_permission_denied": "chybí oprávnění k zápisu",
+            "action_executed": "uloženo"
           }
         }
       },

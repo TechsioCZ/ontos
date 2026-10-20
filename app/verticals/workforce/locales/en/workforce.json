@@ -172,7 +172,9 @@
             "action_succeeded": "saved",
             "succeeded": "saved",
             "action_policy_denied": "denied by policy",
-            "action_revision_conflict": "concurrent change"
+            "action_revision_conflict": "concurrent change",
+            "spicedb_permission_denied": "no write permission",
+            "action_executed": "saved"
           }
         }
       },
