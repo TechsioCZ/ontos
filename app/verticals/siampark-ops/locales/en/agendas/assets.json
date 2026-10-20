@@ -157,7 +157,8 @@
     "recordEntry": "Record approved amount",
     "save": "Save",
     "back": "Back",
-    "close": "Close"
+    "close": "Close",
+    "exportCsv": "Export CSV"
   },
   "stats": {
     "count": "Assets",

@@ -80,7 +80,7 @@ const PlanCard = ({
   const horizon = [lastApproved, currentPeriod(plan)].toSorted().at(-1) ?? '';
   const visible = full
     ? schedule
-    : schedule.filter((row) => row.period <= horizon || entries.has(row.period)).slice(-8);
+    : schedule.filter((row) => row.period <= horizon || entries.has(row.period)).slice(-12);
   const extra = plan.entries.filter((entry) => !schedule.some((row) => row.period === entry.period));
   const total = approvedTotal(plan);
   const active = isActiveAsset(asset);

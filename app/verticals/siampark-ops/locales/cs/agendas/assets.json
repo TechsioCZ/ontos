@@ -157,7 +157,8 @@
     "recordEntry": "Zapsat schválenou částku",
     "save": "Uložit",
     "back": "Zpět",
-    "close": "Zavřít"
+    "close": "Zavřít",
+    "exportCsv": "Export CSV"
   },
   "stats": {
     "count": "Položek majetku",

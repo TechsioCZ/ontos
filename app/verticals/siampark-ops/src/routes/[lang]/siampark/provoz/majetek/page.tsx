@@ -43,6 +43,52 @@ type CreatePanel =
   | { readonly kind: 'template' }
   | { readonly kind: 'followUp'; readonly inventory: Inventory; readonly item: InventoryItem };
 
+const csvCell = (value: string) => (/[";\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value);
+const csvAmount = (minor: number | undefined) => (minor === undefined ? '' : (minor / 100).toFixed(2).replace('.', ','));
+
+/** Downloads the currently filtered register as CSV (semicolon separated, UTF-8 BOM for Excel). */
+const exportCsv = (rows: readonly Asset[], k: (key: string) => string) => {
+  const header = [
+    k('fields.inventoryNumber'),
+    k('fields.name'),
+    k('fields.kind'),
+    k('fields.category'),
+    k('fields.location'),
+    k('fields.status'),
+    k('fields.acquisitionDate'),
+    k('fields.acquisitionValue'),
+    k('fields.currentValue'),
+    k('columns.nextDue'),
+    k('fields.responsible'),
+  ];
+  const lines = rows.map((asset) =>
+    [
+      asset.inventoryNumber,
+      asset.name,
+      k(`kind.${asset.kind ?? 'equipment'}`),
+      asset.category,
+      asset.location?.label ?? '',
+      isActiveAsset(asset) ? k('status.active') : k(`disposal.${asset.disposal?.kind ?? 'retirement'}`),
+      asset.acquisitionDate ?? '',
+      csvAmount(asset.acquisitionValueMinor),
+      csvAmount(asset.currentValueMinor),
+      nextDueOf(asset)?.nextDueOn ?? '',
+      asset.responsible ?? '',
+    ]
+      .map(csvCell)
+      .join(';'),
+  );
+  const blob = new Blob([`\uFEFF${[header.map(csvCell).join(';'), ...lines].join('\r\n')}`], {
+    type: 'text/csv;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `siampark-majetek-${todayIsoDate()}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+};
+
 const AssetsView = () => {
   const { language: currentLanguage, t } = useModernI18n();
   const language = currentLanguage === 'en' ? 'en' : 'cs';
@@ -225,16 +271,23 @@ const AssetsView = () => {
     <>
       <PageHeader
         actions={
-          canWrite ? (
+          envelope === undefined ? undefined : (
             <>
-              <Button onClick={() => setPanel({ kind: 'inventory' })} size="sm" theme="outlined" variant="secondary">
-                {k('actions.newInventory')}
+              <Button onClick={() => exportCsv(rows, k)} size="sm" theme="borderless" variant="secondary">
+                {k('actions.exportCsv')}
               </Button>
-              <Button onClick={() => setPanel({ kind: 'asset' })} size="sm" variant="primary">
-                {k('actions.newAsset')}
-              </Button>
+              {canWrite && (
+                <>
+                  <Button onClick={() => setPanel({ kind: 'inventory' })} size="sm" theme="outlined" variant="secondary">
+                    {k('actions.newInventory')}
+                  </Button>
+                  <Button onClick={() => setPanel({ kind: 'asset' })} size="sm" variant="primary">
+                    {k('actions.newAsset')}
+                  </Button>
+                </>
+              )}
             </>
-          ) : undefined
+          )
         }
         description={k('description')}
         meta={
