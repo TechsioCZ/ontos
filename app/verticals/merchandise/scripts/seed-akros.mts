@@ -10,8 +10,8 @@ import { MerchandiseStateSchema } from '../shared/apis/records.ts';
 import type { MerchandiseState } from '../shared/apis/records.ts';
 import { merchandiseRelations, merchandiseStates } from '../src/database/schema.ts';
 
-
 import { buildAkrosEncoded } from './akros-catalog.mts';
+import { refreshAkrosOrderPresentation } from './order-presentation.ts';
 export const akrosLegalEntityId = '71000000-0000-4000-8000-000000000024';
 export const buildAkrosState = () => Schema.decodeUnknownEffect(MerchandiseStateSchema)(buildAkrosEncoded());
 
@@ -57,14 +57,37 @@ export const restoreCatalog = (current: MerchandiseState, seed: MerchandiseState
 const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshopState(
   reset: boolean,
   restore: boolean,
+  repairPresentation: boolean,
 ) {
+  if (repairPresentation && (reset || restore))
+    return yield* Effect.fail(new Error('Presentation repair cannot reset or restore the catalog'));
   const seed = yield* buildAkrosState();
   const encodedSeed = yield* Schema.encodeEffect(MerchandiseStateSchema)(seed);
-  yield* Console.log(`AKROS aggregate: ${JSON.stringify(encodedSeed).length} bytes; ${seed.products.length} groups; ${seed.products.reduce((sum, product) => sum + (product.variants?.length ?? 0), 0)} variants`);
+  yield* Console.log(
+    `AKROS aggregate: ${JSON.stringify(encodedSeed).length} bytes; ${seed.products.length} groups; ${seed.products.reduce((sum, product) => sum + (product.variants?.length ?? 0), 0)} variants`,
+  );
   const db = yield* makeWithDefaults({ relations: merchandiseRelations });
   const now = DateTime.toDateUtc(yield* DateTime.now);
   const rows = yield* db.select().from(merchandiseStates).where(whereEshop).limit(1);
   const [row] = rows;
+  if (repairPresentation) {
+    if (row === undefined) return yield* Effect.fail(new Error('AKROS aggregate must already exist'));
+    const repaired = refreshAkrosOrderPresentation(row.state as typeof MerchandiseStateSchema.Encoded);
+    if (JSON.stringify(repaired) === JSON.stringify(row.state))
+      return yield* Console.log('AKROS contacts already presentable; nothing changed');
+    const decoded = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(repaired);
+    const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(decoded);
+    const changed = yield* db
+      .update(merchandiseStates)
+      .set({ revision: row.revision + 1, state: encoded, updatedAt: now })
+      .where(and(whereEshop, eq(merchandiseStates.revision, row.revision)))
+      .returning({ revision: merchandiseStates.revision });
+    if (changed.length !== 1)
+      return yield* Effect.fail(new Error('AKROS changed concurrently; retry the scoped repair'));
+    return yield* Console.log(
+      'AKROS fixture contacts refreshed; orders, statuses, replay identities and catalog preserved',
+    );
+  }
   if (row === undefined || reset) {
     const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(seed);
     yield* db
@@ -113,11 +136,12 @@ const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshop
 const command = Command.make(
   'merchandise-seed-akros',
   {
+    repairOrderPresentation: Flag.Boolean('repair-order-presentation').pipe(Flag.withDefault(false)),
     reset: Flag.Boolean('reset').pipe(Flag.withDefault(false)),
     restoreCatalog: Flag.Boolean('restore-catalog').pipe(Flag.withDefault(false)),
     validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)),
   },
-  ({ reset, restoreCatalog: restore, validateOnly }) =>
+  ({ repairOrderPresentation, reset, restoreCatalog: restore, validateOnly }) =>
     validateOnly
       ? buildAkrosState().pipe(
           Effect.flatMap((state) =>
@@ -130,7 +154,11 @@ const command = Command.make(
             ),
           ),
         )
-      : Layer.build(Layer.effectDiscard(writeState(reset, restore)).pipe(Layer.provide(AdminDatabaseLive))).pipe(Effect.scoped),
+      : Layer.build(
+          Layer.effectDiscard(writeState(reset, restore, repairOrderPresentation)).pipe(
+            Layer.provide(AdminDatabaseLive),
+          ),
+        ).pipe(Effect.scoped),
 );
 
 const appRoot = new URL('../../..', import.meta.url).pathname;

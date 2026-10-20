@@ -19,6 +19,8 @@ import type { MerchandiseState } from '../shared/apis/records.ts';
 import { OrderLineSchema } from '../shared/domain/merchandise-model.ts';
 import { ORDER_NUMBER_PREFIX, orderTotals } from '../shared/domain/order-totals.ts';
 import { merchandiseRelations, merchandiseStates } from '../src/database/schema.ts';
+import { and, eq } from 'drizzle-orm';
+import { refreshObchodOrderPresentation } from './order-presentation.ts';
 
 class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputError', { reason: Schema.String }) {}
 
@@ -155,7 +157,7 @@ const buildDemoState = Effect.fn('Merchandise.buildDemoState')(function* buildDe
     orders: built.map((entry) => entry.order),
     products: catalog.map(productState),
   };
-  return yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(encoded);
+  return yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(refreshObchodOrderPresentation(encoded));
 });
 
 const AdminDatabaseLive = Layer.effect(
@@ -191,6 +193,33 @@ const writeState = Effect.fn('Merchandise.writeDemoState')(function* writeDemoSt
   );
 });
 
+/** Explicit non-destructive mode: patch only untouched old open fixtures in Obchodní firma. */
+const repairOrderPresentation = Effect.gen(function* repairOrderPresentation() {
+  const db = yield* makeWithDefaults({ relations: merchandiseRelations });
+  const scope = and(
+    eq(merchandiseStates.tenantId, demoTenantId),
+    eq(merchandiseStates.legalEntityId, demoLegalEntityId),
+  );
+  const [row] = yield* db.select().from(merchandiseStates).where(scope).limit(1);
+  if (row === undefined) return yield* Effect.fail(new Error('Obchodní firma aggregate must already exist'));
+  const repaired = refreshObchodOrderPresentation(row.state as EncodedMerchandiseState);
+  if (JSON.stringify(repaired) === JSON.stringify(row.state))
+    return yield* Console.log('Obchodní firma open orders already presentable; nothing changed');
+  const state = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(repaired);
+  const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(state);
+  const now = yield* DateTime.now;
+  const changed = yield* db
+    .update(merchandiseStates)
+    .set({ revision: row.revision + 1, state: encoded, updatedAt: DateTime.toDateUtc(now) })
+    .where(and(scope, eq(merchandiseStates.revision, row.revision)))
+    .returning({ revision: merchandiseStates.revision });
+  if (changed.length !== 1)
+    return yield* Effect.fail(new Error('Obchodní firma changed concurrently; retry the scoped repair'));
+  yield* Console.log(
+    'Obchodní firma: five old open fixture dates and matching stock timestamps refreshed; completed history, prices and statuses preserved',
+  );
+});
+
 const writeDemoState = (state: MerchandiseState) =>
   Layer.build(Layer.effectDiscard(writeState(state)).pipe(Layer.provide(AdminDatabaseLive))).pipe(Effect.scoped);
 
@@ -207,16 +236,22 @@ const validateDemoState = Effect.fn('Merchandise.validateDemoState')(function* v
 const command = Command.make(
   'merchandise-reset',
   {
+    repairOrderPresentation: Flag.Boolean('repair-order-presentation').pipe(Flag.withDefault(false)),
     salesDemo: Flag.Boolean('sales-demo').pipe(Flag.withDefault(false)),
     validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)),
   },
-  ({ salesDemo, validateOnly }) =>
+  ({ repairOrderPresentation: repair, salesDemo, validateOnly }) =>
     Effect.gen(function* resetMerchandiseDemo() {
       if (!salesDemo) {
         return yield* new ResetInputError({ reason: '--sales-demo is required' });
       }
       if (validateOnly) {
         return yield* validateDemoState();
+      }
+      if (repair) {
+        return yield* Layer.build(
+          Layer.effectDiscard(repairOrderPresentation).pipe(Layer.provide(AdminDatabaseLive)),
+        ).pipe(Effect.scoped);
       }
       return yield* buildDemoState().pipe(Effect.flatMap(writeDemoState));
     }),

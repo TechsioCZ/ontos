@@ -44,7 +44,9 @@ export const productColumns = (
             {(variants > 0 || product.published === false) && (
               <span className="truncate text-fg-secondary text-xs">
                 {[
-                  variants > 0 ? `${variants} ${variants < 5 ? 'varianty' : 'variant'}` : null,
+                  variants > 0
+                    ? `${variants} ${variants === 1 ? 'varianta' : variants < 5 ? 'varianty' : 'variant'}`
+                    : null,
                   product.published === false ? 'skryto v e-shopu' : null,
                 ]
                   .filter((part) => part !== null)
