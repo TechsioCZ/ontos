@@ -338,14 +338,24 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       )}
       <Dialog
         actions={
-          <>
-            <Button onClick={() => setDuplicateTarget(undefined)} theme="outlined" variant="secondary">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'flex-end', width: '100%' }}>
+            <Button
+              className="whitespace-nowrap"
+              onClick={() => setDuplicateTarget(undefined)}
+              theme="outlined"
+              variant="secondary"
+            >
               Nevytvářet
             </Button>
-            <Button disabled={vm.busy} onClick={() => void generateDuplicate()} variant="danger">
+            <Button
+              className="whitespace-nowrap"
+              disabled={vm.busy}
+              onClick={() => void generateDuplicate()}
+              variant="danger"
+            >
               Přesto vytvořit druhý návrh
             </Button>
-          </>
+          </div>
         }
         closeLabel={dialogCloseLabel}
         customTrigger
