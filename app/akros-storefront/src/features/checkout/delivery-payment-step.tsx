@@ -1,4 +1,5 @@
 "use client";
+import { useDataSource } from "@/ontos/catalog-provider";
 import Image from "next/image";
 import NextLink from "next/link";
 import { useRef, useState } from "react";
@@ -24,6 +25,7 @@ import { formatCheckoutPrice } from "./checkout-format";
 
 export function DeliveryPaymentStep() {
   const { draft, updateDraft } = useCheckout();
+  const ontos = useDataSource() === "ontos";
   const { cart } = useCart();
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
@@ -75,38 +77,43 @@ export function DeliveryPaymentStep() {
           >
             <RadioGroup.Label className="sr-only">Způsob dopravy</RadioGroup.Label>
             <RadioGroup.ItemGroup>
-              {checkoutDeliveryMethods.map((method) => {
-                const price =
-                  getCheckoutTotals(cart, { ...draft, deliveryId: method.id }).shipping ?? 0;
-                return (
-                  <RadioGroup.Item
-                    key={method.id}
-                    value={method.id}
-                    className="min-h-20 items-center border-b border-(--color-border-primary) py-3 last:border-b-0"
-                  >
-                    <RadioGroup.ItemHiddenInput />
-                    <RadioGroup.ItemControl />
-                    <span className="col-start-2 row-start-1">
-                      <Image
-                        alt=""
-                        src={method.logo}
-                        width={140}
-                        height={63}
-                        className={`h-9 w-20 max-sm:h-6 max-sm:w-14 ${method.id === "osobni" ? "object-contain" : "object-cover"}`}
-                      />
-                    </span>
-                    <RadioGroup.ItemContent className="col-start-3">
-                      <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
-                      <RadioGroup.ItemDescription>{method.description}</RadioGroup.ItemDescription>
-                    </RadioGroup.ItemContent>
-                    <span
-                      className={`col-start-4 row-start-1 whitespace-nowrap text-sm ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--akros-checkout-muted)"}`}
+              {checkoutDeliveryMethods
+                .filter((method) => !ontos || ["osobni", "zasilkovna"].includes(method.id))
+                .map((method) => {
+                  const price =
+                    getCheckoutTotals(cart, { ...draft, deliveryId: method.id }, ontos).shipping ??
+                    0;
+                  return (
+                    <RadioGroup.Item
+                      key={method.id}
+                      value={method.id}
+                      className="min-h-20 items-center border-b border-(--color-border-primary) py-3 last:border-b-0"
                     >
-                      {price === 0 ? "Zdarma" : formatCheckoutPrice(price)}
-                    </span>
-                  </RadioGroup.Item>
-                );
-              })}
+                      <RadioGroup.ItemHiddenInput />
+                      <RadioGroup.ItemControl />
+                      <span className="col-start-2 row-start-1">
+                        <Image
+                          alt=""
+                          src={method.logo}
+                          width={140}
+                          height={63}
+                          className={`h-9 w-20 max-sm:h-6 max-sm:w-14 ${method.id === "osobni" ? "object-contain" : "object-cover"}`}
+                        />
+                      </span>
+                      <RadioGroup.ItemContent className="col-start-3">
+                        <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
+                        <RadioGroup.ItemDescription>
+                          {method.description}
+                        </RadioGroup.ItemDescription>
+                      </RadioGroup.ItemContent>
+                      <span
+                        className={`col-start-4 row-start-1 whitespace-nowrap text-sm ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--akros-checkout-muted)"}`}
+                      >
+                        {price === 0 ? "Zdarma" : formatCheckoutPrice(price)}
+                      </span>
+                    </RadioGroup.Item>
+                  );
+                })}
             </RadioGroup.ItemGroup>
             {errors.deliveryId && (
               <RadioGroup.StatusText status="error">{errors.deliveryId}</RadioGroup.StatusText>

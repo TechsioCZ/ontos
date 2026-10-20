@@ -80,13 +80,17 @@ export function OrderConfirmation() {
           className="text-(--color-fg-status-success)"
         />
         <h1 id="confirmation-title" className="text-lg font-bold">
-          Ukázková objednávka je uložená
+          {order.source === "ontos"
+            ? "Objednávka je uložená v OntOS"
+            : "Ukázková objednávka je uložená"}
         </h1>
         <p>
           Číslo objednávky: <strong>{order.id}</strong>
         </p>
         <p className="text-sm text-(--color-fg-secondary)">
-          Jde o lokální prototyp. Objednávka ani e-mail nebyly odeslány, platba nebyla provedena.
+          {order.source === "ontos"
+            ? "DEMO – objednávka nebude doručena. Objednávka byla skutečně uložena v OntOS. Platba ani e-mail nebyly odeslány."
+            : "Jde o lokální prototyp. Objednávka ani e-mail nebyly odeslány, platba nebyla provedena."}
         </p>
       </header>
       <DataTable

@@ -6,14 +6,15 @@ import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
-import { getNewProducts, getPromotionItems, toProductSummary } from "@/mock-storefront/catalog";
+import { getCatalog } from "@/ontos/catalog-server";
 import { getProductStockStatus } from "@/lib/product-stock";
 
 export const metadata: Metadata = { title: "Novinky a akce" };
 
 const isGenericPromotionGroup = (name: string) => name.trim().toLocaleUpperCase("cs-CZ") === "AKCE";
 
-export default function NewsPage() {
+export default async function NewsPage() {
+  const { getNewProducts, getPromotionItems, toProductSummary } = await getCatalog();
   const promotedItems = getPromotionItems()
     .filter(({ product }) => !isGenericPromotionGroup(product.name))
     .filter(({ product, variant }) => {

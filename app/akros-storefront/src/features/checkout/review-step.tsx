@@ -1,4 +1,6 @@
 "use client";
+import { useDataSource } from "@/ontos/catalog-provider";
+import { useState } from "react";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
@@ -19,16 +21,24 @@ import {
 import { formatPrice } from "@/lib/format";
 
 export function ReviewStep() {
+  const ontos = useDataSource() === "ontos";
   const { cart } = useCart();
   const { draft, updateDraft, completeOrder, submitted } = useCheckout();
   const router = useRouter();
-  const totals = getCheckoutTotals(cart, draft);
+  const [sending, setSending] = useState(false);
+  const totals = getCheckoutTotals(cart, draft, ontos);
   return (
     <form
       data-akros-checkout-review
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault();
-        if (completeOrder()) router.push("/potvrzeni-objednavky");
+        if (sending) return;
+        setSending(true);
+        try {
+          if (await completeOrder()) router.push("/potvrzeni-objednavky");
+        } finally {
+          setSending(false);
+        }
       }}
     >
       <section className="rounded-sm bg-(--color-base) p-4 md:p-6" aria-labelledby="review-title">
@@ -132,9 +142,9 @@ export function ReviewStep() {
             variant="primary"
             size="sm"
             uppercase
-            disabled={submitted || !cart.lines.length}
+            disabled={sending || submitted || !cart.lines.length}
           >
-            Objednat s povinností platby
+            {sending ? "Odesílám do OntOS…" : "Objednat s povinností platby"}
           </Button>
           <p className="text-center text-xs leading-(--akros-checkout-body-leading)">
             Kliknutím na tlačítko Objednat s povinností platby souhlasíte s{" "}
@@ -148,7 +158,9 @@ export function ReviewStep() {
             .
           </p>
           <p className="text-center text-xs text-(--color-fg-secondary)">
-            Lokální ukázka: objednávka, platba ani e-mail se nikam neodesílají.
+            {ontos
+              ? "DEMO – objednávka se uloží v OntOS, nebude doručena. Platba ani e-mail se neodesílají."
+              : "Lokální ukázka: objednávka, platba ani e-mail se nikam neodesílají."}
           </p>
         </div>
       </div>

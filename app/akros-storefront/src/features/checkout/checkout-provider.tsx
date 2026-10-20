@@ -1,4 +1,5 @@
 "use client";
+import { useDataSource } from "@/ontos/catalog-provider";
 
 import { createContext, type ReactNode, useContext, useEffect, useReducer, useRef } from "react";
 import { useCart } from "@/features/cart/cart-provider";
@@ -23,7 +24,7 @@ interface CheckoutContextValue {
   storageError: string;
   submitted: boolean;
   updateDraft: (update: DraftUpdate) => void;
-  completeOrder: () => LocalOrder | null;
+  completeOrder: () => Promise<LocalOrder | null>;
 }
 
 const CheckoutContext = createContext<CheckoutContextValue | null>(null);
@@ -60,6 +61,7 @@ function CheckoutCartProvider({
   children: ReactNode;
   storage?: CheckoutStorage;
 }) {
+  const ontos = useDataSource() === "ontos";
   const { cart, dispatch, ready: cartReady, activeCartId } = useCart();
   const draftStorageKey =
     activeCartId === "default" ? legacyDraftStorageKey : `${legacyDraftStorageKey}:${activeCartId}`;
@@ -101,23 +103,79 @@ function CheckoutCartProvider({
     }
   }, [draft, hydrated, draftStorageKey]);
 
-  function completeOrder(): LocalOrder | null {
+  async function completeOrder(): Promise<LocalOrder | null> {
     if (completed.current) return completed.current;
     if (!hydrated || !cartReady || getReachableStep(3, cart, draft) !== 3) return null;
     const delivery = getDelivery(draft);
     const payment = getPayment(draft);
     if (!delivery || !payment) return null;
 
+    let orderNumber: string | undefined;
+    let serverTotals: { totalMinor?: number; totalVatMinor?: number } | undefined;
+    if (ontos) {
+      try {
+        if (!storageRef.current) throw new Error("Povolte úložiště pro tento web.");
+        // Store the exact request BEFORE sending. Retries, double-submit and refresh reuse it verbatim.
+        const key = `akros-ontos-pending:${activeCartId}`;
+        const signature = JSON.stringify({ cart, draft });
+        const previous = JSON.parse(storageRef.current.getItem(key) ?? "null");
+        const pending =
+          previous?.signature === signature
+            ? previous
+            : { signature, clientRequestId: `akros-${crypto.randomUUID()}` };
+        storageRef.current.setItem(key, JSON.stringify(pending));
+        const checkResponse = await fetch("/api/ontos/cart", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cart }),
+        });
+        const check = await checkResponse.json();
+        if (!checkResponse.ok) throw new Error(check.message);
+        if (!check.canCheckout)
+          throw new Error(
+            check.priceChanged
+              ? "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu."
+              : check.issues.join(" "),
+          );
+        const response = await fetch("/api/ontos/orders", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cart, draft, clientRequestId: pending.clientRequestId }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message);
+        orderNumber = result.orderNumber;
+        serverTotals = result;
+      } catch (error) {
+        checkoutDispatch({
+          type: "storage-result",
+          error:
+            error instanceof Error
+              ? error.message
+              : "Objednávku se nepodařilo uložit. Zkuste to znovu.",
+        });
+        return null;
+      }
+    }
+    const totals = getCheckoutTotals(cart, draft, ontos);
+    if (serverTotals?.totalMinor !== undefined) {
+      totals.total = serverTotals.totalMinor;
+      if (serverTotals.totalVatMinor !== undefined) {
+        totals.vat = serverTotals.totalVatMinor;
+        totals.net = totals.total - totals.vat;
+      }
+    }
     const order: LocalOrder = {
       version: 1,
-      id: `DEMO-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+      id: orderNumber ?? `DEMO-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       createdAt: new Date().toISOString(),
       cart: structuredClone(cart),
       draft: structuredClone(draft),
       deliveryTitle: delivery.title,
       paymentTitle: payment.title,
       paymentStatus: "not-processed",
-      totals: getCheckoutTotals(cart, draft),
+      totals,
+      ...(orderNumber ? { source: "ontos" as const } : {}),
     };
     try {
       if (!storageRef.current) throw new Error("Session storage unavailable");

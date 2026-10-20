@@ -16,7 +16,7 @@ import {
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
-import { getCategories, getCategoryTrail, searchCatalog } from "@/mock-storefront/catalog";
+import { useCatalog } from "@/ontos/catalog-provider";
 
 type SuggestionData =
   | { kind: "category"; trail: string }
@@ -29,12 +29,13 @@ type SuggestionData =
       currency: "CZK";
     };
 
-const searchableCategories = getCategories().map((category) => ({
-  category,
-  normalizedName: normalizeCatalogSearchTerm(category.name),
-}));
-
 export function HeaderSearch() {
+  const { getCategories, getCategoryTrail, searchCatalog } = useCatalog();
+  const searchableCategories = getCategories().map((category) => ({
+    category,
+    normalizedName: normalizeCatalogSearchTerm(category.name),
+  }));
+
   const router = useRouter();
   const id = useId();
   const [query, setQuery] = useState("");

@@ -1,4 +1,5 @@
 "use client";
+import { useDataSource } from "@/ontos/catalog-provider";
 
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
@@ -12,10 +13,18 @@ import { useCheckout } from "./checkout-provider";
 import { formatCheckoutPrice } from "./checkout-format";
 
 export function CartServices() {
+  const mode = useDataSource();
   const { cart } = useCart();
   const { draft, updateDraft } = useCheckout();
   const subtotal = getCartSubtotal(cart);
   const remaining = Math.max(0, demoFreeShippingThresholdMinor - subtotal);
+  if (mode === "ontos")
+    return (
+      <p className="py-4 text-sm">
+        DEMO – doprava a platba jsou simulované. Osobní odběr zdarma, Zásilkovna 79 Kč. Prodloužené
+        vrácení není v tomto režimu nabízeno.
+      </p>
+    );
   return (
     <div
       data-akros-cart-services

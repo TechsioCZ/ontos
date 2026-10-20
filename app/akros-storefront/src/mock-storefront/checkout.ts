@@ -146,13 +146,13 @@ export function getReachableStep(target: number, cart: CartState, draft: Checkou
   return Math.max(0, Math.min(target, 3));
 }
 
-export function getCheckoutTotals(cart: CartState, draft: CheckoutDraft) {
+export function getCheckoutTotals(cart: CartState, draft: CheckoutDraft, ontos = false) {
   const delivery = getDelivery(draft);
   const payment = getPayment(draft);
   const subtotal = getCartSubtotal(cart);
-  const freeShipping = subtotal >= demoFreeShippingThresholdMinor;
+  const freeShipping = !ontos && subtotal >= demoFreeShippingThresholdMinor;
   const shipping = delivery ? (freeShipping ? 0 : delivery.priceMinor) : null;
-  const extendedReturn = draft.extendedReturn ? demoExtendedReturn.priceMinor : 0;
+  const extendedReturn = !ontos && draft.extendedReturn ? demoExtendedReturn.priceMinor : 0;
   const paymentPrice =
     payment && (!payment.pickupOnly || delivery?.id === "osobni") ? payment.priceMinor : 0;
   const total = subtotal + (shipping ?? 0) + paymentPrice + extendedReturn;

@@ -4,6 +4,7 @@ import { type CheckoutDraft, getCheckoutTotals, isCheckoutDraft } from "./checko
 export const orderStorageKey = "akros-demo-order-v1";
 export interface LocalOrder {
   version: 1;
+  source?: "ontos";
   id: string;
   createdAt: string;
   cart: CartState;

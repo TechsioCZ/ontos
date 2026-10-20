@@ -14,13 +14,7 @@ import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
-import {
-  getCategoryById,
-  getCategoryTrail,
-  getProductBySlug,
-  getRecommendedProducts,
-  toProductSummary,
-} from "@/mock-storefront/catalog";
+import { getCatalog } from "@/ontos/catalog-server";
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
@@ -31,6 +25,13 @@ const isQuantityPricingCopy = (paragraph: string) =>
   /množstevních slev|snížená cena|snížení ceny/i.test(paragraph);
 
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
+  const {
+    getCategoryById,
+    getCategoryTrail,
+    getProductBySlug,
+    getRecommendedProducts,
+    toProductSummary,
+  } = await getCatalog();
   const { slug } = await params;
   const product = getProductBySlug(slug);
 
@@ -38,6 +39,13 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
 }
 
 export default async function ProductPage({ params, searchParams }: ProductPageProps) {
+  const {
+    getCategoryById,
+    getCategoryTrail,
+    getProductBySlug,
+    getRecommendedProducts,
+    toProductSummary,
+  } = await getCatalog();
   const { slug } = await params;
   const { variant: requestedVariantSearch } = await searchParams;
   const product = getProductBySlug(slug);

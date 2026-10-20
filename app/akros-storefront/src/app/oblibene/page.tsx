@@ -3,10 +3,11 @@ import { AccountLink } from "@/features/account/account-link";
 import { AccountShell } from "@/components/account-shell";
 import { ProductGrid } from "@/components/product-grid";
 import { AccountHeading } from "@/features/account/account-content";
-import { getProducts, toProductSummary } from "@/mock-storefront/catalog";
+import { getCatalog } from "@/ontos/catalog-server";
 
 export const metadata: Metadata = { title: "Oblíbené produkty" };
-export default function FavoritesPage() {
+export default async function FavoritesPage() {
+  const { getProducts, toProductSummary } = await getCatalog();
   return (
     <AccountShell active="favorites">
       <AccountHeading

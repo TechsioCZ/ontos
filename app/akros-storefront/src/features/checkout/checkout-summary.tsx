@@ -1,13 +1,15 @@
 "use client";
+import { useDataSource } from "@/ontos/catalog-provider";
 import { useCart } from "@/features/cart/cart-provider";
 import { useCheckout } from "./checkout-provider";
 import { getCheckoutTotals } from "@/mock-storefront/checkout";
 import { formatCheckoutPrice } from "./checkout-format";
 
 export function CheckoutSummary() {
+  const ontos = useDataSource() === "ontos";
   const { cart } = useCart();
   const { draft } = useCheckout();
-  const totals = getCheckoutTotals(cart, draft);
+  const totals = getCheckoutTotals(cart, draft, ontos);
   return (
     <aside
       className="rounded-sm bg-(--color-base) px-(--dimension-32) py-(--dimension-24)"

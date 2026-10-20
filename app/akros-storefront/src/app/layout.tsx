@@ -1,3 +1,5 @@
+import { getSnapshot } from "@/ontos/catalog-server";
+import { CatalogProvider } from "@/ontos/catalog-provider";
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import type { ReactNode } from "react";
@@ -23,14 +25,18 @@ export const metadata: Metadata = {
   description: "Klikací ukázka e-shopu AKROS s nerezovým, hutním a spojovacím materiálem.",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+export const dynamic = "force-dynamic";
+export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  const snapshot = await getSnapshot();
   return (
     <html lang="cs" className={`${inter.variable} light`} data-scroll-behavior="smooth">
       <body>
-        <CartProvider>
-          {children}
-          <CartNotifications />
-        </CartProvider>
+        <CatalogProvider snapshot={snapshot}>
+          <CartProvider>
+            {children}
+            <CartNotifications />
+          </CartProvider>
+        </CatalogProvider>
       </body>
     </html>
   );

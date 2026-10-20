@@ -24,6 +24,7 @@ export interface CartState {
 }
 
 export type CartAction =
+  | { type: "revalidate"; cart: CartState }
   | { type: "add"; item: CartItemSnapshot; quantity: number }
   | { type: "set-quantity"; productId: string; variantId?: string; quantity: number }
   | { type: "remove"; productId: string; variantId?: string }
@@ -65,6 +66,7 @@ const isSameLine = (line: CartLine, productId: string, variantId?: string) =>
   line.productId === productId && line.variantId === variantId;
 
 export const cartReducer = (state: CartState, action: CartAction): CartState => {
+  if (action.type === "revalidate") return action.cart;
   if (action.type === "clear") return createEmptyCart();
 
   if (action.type === "remove") {

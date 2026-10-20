@@ -6,7 +6,7 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
 import { getProductStockStatus } from "@/lib/product-stock";
-import { searchCatalog, toProductSummary } from "@/mock-storefront/catalog";
+import { getCatalog } from "@/ontos/catalog-server";
 import type { CatalogSearchResult } from "@/mock-storefront/types";
 
 export const metadata: Metadata = { title: cs.search.results };
@@ -15,6 +15,7 @@ const productsPerPage = 24;
 const toSearchGridItem = (
   { product, matchingVariants }: CatalogSearchResult,
   query: string,
+  toProductSummary: Awaited<ReturnType<typeof getCatalog>>["toProductSummary"],
 ): ProductGridItem => {
   const summary = toProductSummary(product);
   if (matchingVariants.length === 0) return summary;
@@ -50,6 +51,7 @@ export default async function SearchPage({
 }: {
   searchParams: Promise<{ page?: string; q?: string }>;
 }) {
+  const { searchCatalog, toProductSummary } = await getCatalog();
   const { page = "1", q = "" } = await searchParams;
   const requestedPage = Number.parseInt(page, 10);
   const results = searchCatalog(q);
@@ -78,7 +80,11 @@ export default async function SearchPage({
         </div>
         {results.length > 0 ? (
           <>
-            <ProductGrid products={visibleResults.map((result) => toSearchGridItem(result, q))} />
+            <ProductGrid
+              products={visibleResults.map((result) =>
+                toSearchGridItem(result, q, toProductSummary),
+              )}
+            />
             <CatalogPagination
               currentPage={currentPage}
               itemCount={results.length}

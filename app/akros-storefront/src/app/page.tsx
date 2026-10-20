@@ -2,9 +2,10 @@ import { FeaturedProductGrid } from "@/components/featured-product-grid";
 import { HomeCarousel } from "@/components/home-carousel";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
-import { getHomepageFeaturedProducts, toProductSummary } from "@/mock-storefront/catalog";
+import { getCatalog } from "@/ontos/catalog-server";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const { getHomepageFeaturedProducts, toProductSummary } = await getCatalog();
   return (
     <StorefrontShell>
       <HomeCarousel />

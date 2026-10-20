@@ -7,14 +7,7 @@ import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
-import {
-  getCategoryBySlug,
-  getCategoryTrail,
-  getChildCategories,
-  getFeaturedProducts,
-  getProductsByCategory,
-  toProductSummary,
-} from "@/mock-storefront/catalog";
+import { getCatalog } from "@/ontos/catalog-server";
 
 interface CategoryPageProps {
   params: Promise<{ slug: string }>;
@@ -24,6 +17,14 @@ interface CategoryPageProps {
 const productsPerPage = 24;
 
 export async function generateMetadata({ params }: CategoryPageProps): Promise<Metadata> {
+  const {
+    getCategoryBySlug,
+    getCategoryTrail,
+    getChildCategories,
+    getFeaturedProducts,
+    getProductsByCategory,
+    toProductSummary,
+  } = await getCatalog();
   const { slug } = await params;
   const category = getCategoryBySlug(slug);
 
@@ -31,6 +32,14 @@ export async function generateMetadata({ params }: CategoryPageProps): Promise<M
 }
 
 export default async function CategoryPage({ params, searchParams }: CategoryPageProps) {
+  const {
+    getCategoryBySlug,
+    getCategoryTrail,
+    getChildCategories,
+    getFeaturedProducts,
+    getProductsByCategory,
+    toProductSummary,
+  } = await getCatalog();
   const { slug } = await params;
   const requestedPage = Number.parseInt((await searchParams).page ?? "1", 10);
   const category = getCategoryBySlug(slug);

@@ -11,7 +11,7 @@ import { HeaderSearch } from "@/components/header-search";
 
 import { MiniCart } from "@/features/cart/mini-cart";
 import { cs } from "@/i18n/cs";
-import { getSidebarCategories } from "@/mock-storefront/catalog";
+import { useCatalog } from "@/ontos/catalog-provider";
 
 const utilityLinks = [
   { href: "/", label: cs.header.home },
@@ -30,10 +30,14 @@ const utilityLinks = [
 ];
 
 function MobileNavigation({ pathname }: { pathname: string }) {
+  const { getSidebarCategories } = useCatalog();
   const [open, setOpen] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const activeSlug = pathname.startsWith("/kategorie/") ? pathname.split("/")[2] : undefined;
-  const categories = useMemo(() => getSidebarCategories(activeSlug), [activeSlug]);
+  const categories = useMemo(
+    () => getSidebarCategories(activeSlug),
+    [activeSlug, getSidebarCategories],
+  );
 
   useEffect(() => {
     if (!window.matchMedia) return;
