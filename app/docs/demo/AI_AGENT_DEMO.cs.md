@@ -12,22 +12,38 @@ zapíše do auditu jako zamítnutý pokus.
 | B      | `ai-agent-b-obchod` (služba)       | totéž + vytvořit / upravit úkol                                      | příležitosti, štítky, objednávky, faktury, zákazníci |
 
 Obě identity patří jen firmě **Obchodní firma**. Pokus použít stejný klíč pro Siampark jádro odmítne.
-Až bude hotové CRM Velkoobchodu Hanák (`demo.crm`), vzniknou stejné dvě identity i pro tuto firmu
-(`ONTOS_AGENT_COMPANY=hanak`).
+Stejná dvojice identit existuje i pro **Velkoobchod Hanák s.r.o.** (`ai-agent-a-hanak`, `ai-agent-b-hanak`,
+`ONTOS_AGENT_COMPANY=hanak`). Čtení CRM klientů (`demo.crm`) zatím nemá vlastní MCP nástroj, takže se ukazuje
+hlavně na Obchodní firmě.
 
 ## Příprava (jednou, před schůzkou)
 
 Předpoklad: běží lokální demo (`http://localhost:3020/cs`).
 
 ```bash
-cd /Volumes/TraceDecayKingston/techsio-demo/ontos-demo/app
+# Běžící demo se spouští z runtime stromu; jeho .env obsahuje aktuální certifikát SpiceDB.
+cd /Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app
 mise exec -- node scripts/demo/ai-profiles.mts   # identity + oprávnění + API klíče (idempotentní)
-mise exec -- pnpm demo:prove:ai                  # důkaz A/B proti běžícímu demu, tabulka PASS/FAIL
+mise exec -- node scripts/demo/prove-ai-levels.mts   # důkaz A/B proti běžícímu demu (= pnpm demo:prove:ai)
 ```
 
 `ai-profiles.mts` se spouští i automaticky v `scripts/demo/reset-permissions.mts`, takže po `up.sh` už klíče
 obvykle existují. Klíče jsou v `app/.env.demo.local` (necommituje se):
-`ONTOS_AGENT_A_OBCHOD_API_KEY`, `ONTOS_AGENT_B_OBCHOD_API_KEY`.
+`ONTOS_AGENT_A_OBCHOD_API_KEY`, `ONTOS_AGENT_B_OBCHOD_API_KEY`, `ONTOS_AGENT_A_HANAK_API_KEY`,
+`ONTOS_AGENT_B_HANAK_API_KEY`.
+
+Výstup důkazu (zkráceně, 20. 10. 2026 02:57):
+
+```text
+PASS  A  Čte objednávky / příležitosti / úkoly / zaměstnance      OK (40 / 60 / 81 / 12)
+PASS  A  create_task přes MCP                                    nástroj není registrován
+PASS  A  Přímé API: založit úkol, změnit příležitost             HTTP 403 action_permission_denied
+PASS  A  Cizí firma (Siampark) se stejným klíčem                 HTTP 403
+PASS  B  Založí úkol, znovu ho načte, opakování bez duplikátu     OK, 1 úkol, deduplicated=true
+PASS  B  Přímé API: příležitost, štítek, objednávka              HTTP 403 action_permission_denied
+PASS  Audit  Core audit: 5 zamítnutých pokusů, 1 provedený úkol
+VŠE PROŠLO / ALL PASS (19 kroků)
+```
 
 ## Připojení Claude Code
 
