@@ -3602,6 +3602,9 @@ importers:
 
   verticals/siampark-property:
     dependencies:
+      '@app/siampark-ops':
+        specifier: workspace:*
+        version: link:../siampark-ops
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime

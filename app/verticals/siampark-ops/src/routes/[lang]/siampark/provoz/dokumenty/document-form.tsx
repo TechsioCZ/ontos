@@ -392,6 +392,7 @@ export const DocumentFormPanel = ({
               }))}
               label={t('siampark-ops.property.pick')}
               name="document-link-property"
+              placeholder={t('siampark-ops.property.pick')}
               onValueChange={({ value }) => {
                 const picked = properties.options.find((option) => option.value === value[0]);
                 if (picked !== undefined) {
@@ -407,6 +408,7 @@ export const DocumentFormPanel = ({
               items={linkableContracts.map((entry) => ({ displayValue: entry.title, label: entry.title, value: entry.id }))}
               label={t(`${k}.create.contractLink`)}
               name="document-link-contract"
+              placeholder={t(`${k}.contract.pickOriginal`)}
               onValueChange={({ value }) => {
                 const picked = linkableContracts.find((entry) => entry.id === value[0]);
                 if (picked !== undefined) {

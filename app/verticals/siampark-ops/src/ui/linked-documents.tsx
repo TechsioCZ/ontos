@@ -20,13 +20,16 @@ const k = 'siampark-ops.documents';
 export const LinkedDocuments = ({
   hideWhenForbidden = false,
   subject,
+  records,
 }: {
   readonly subject: SubjectRef;
+  readonly records?: ReturnType<typeof useAgendaRecords>;
   readonly hideWhenForbidden?: boolean;
 }) => {
   const { language, t } = useModernI18n();
   const principalLabel = usePrincipalLabel();
-  const ops = useAgendaRecords(['documents']);
+  const own = useAgendaRecords(records === undefined ? ['documents'] : []);
+  const ops = records ?? own;
   const [preview, setPreview] = useState<{ readonly file: StoredFileRef; readonly title: string } | undefined>(
     undefined,
   );

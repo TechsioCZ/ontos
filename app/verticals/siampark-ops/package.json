@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./ui/record-discussion": "./src/ui/record-discussion.tsx",
     "./agendas": "./shared/agendas.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/siampark-ops-client.ts",
