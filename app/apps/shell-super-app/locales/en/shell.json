@@ -28,7 +28,11 @@
         "label": "Dashboard header"
       },
       "home": {
-        "title": "Home"
+        "title": "Home",
+        "welcomeKicker": "Workspace",
+        "welcomeTitle": "Welcome, {{name}}",
+        "welcomeCompany": "You are working in {{company}}.",
+        "welcomeHint": "The areas you can access are listed in the menu on the left."
       },
       "legalEntity": {
         "accessBlocked": "No legal entity is available for this account.",

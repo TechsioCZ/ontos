@@ -28,7 +28,11 @@
         "label": "Záhlaví přehledu"
       },
       "home": {
-        "title": "Domů"
+        "title": "Domů",
+        "welcomeKicker": "Pracovní prostor",
+        "welcomeTitle": "Vítejte, {{name}}",
+        "welcomeCompany": "Pracujete ve společnosti {{company}}.",
+        "welcomeHint": "Agendy, ke kterým máte přístup, najdete v levém menu."
       },
       "legalEntity": {
         "accessBlocked": "Pro tento účet není dostupný žádný právní subjekt.",

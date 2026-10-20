@@ -49,6 +49,10 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     );
   }
 
+  const companyName = model.legalEntities.items.find(
+    ({ legalEntityId }) => legalEntityId === model.selectedLegalEntityId,
+  )?.legalName;
+
   return (
     <>
       <UltramodernRouteHead />
@@ -82,10 +86,22 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
                 model={{ routeParams: {}, shell: model, state: 'resolved', target: contribution.target }}
               />
             )),
+            // Roles without the sales dashboard (CRM and e-shop companies) get a welcome card instead of a denial.
             Match.when({ state: 'forbidden' }, () => (
-              <StatusText aria-live="polite" showIcon status="default">
-                {t('shell.moduleTarget.forbidden')}
-              </StatusText>
+              <div className="flex max-w-2xl flex-col gap-200 rounded-lg border border-border-primary bg-base p-300">
+                <span className="text-fg-secondary text-xs uppercase tracking-wide">
+                  {t('shell.dashboard.home.welcomeKicker')}
+                </span>
+                <h2 className="font-semibold text-fg-primary text-xl">
+                  {t('shell.dashboard.home.welcomeTitle', { name: model.identity.displayName })}
+                </h2>
+                {companyName === undefined ? null : (
+                  <p className="text-fg-primary">
+                    {t('shell.dashboard.home.welcomeCompany', { company: companyName })}
+                  </p>
+                )}
+                <p className="text-fg-secondary text-sm">{t('shell.dashboard.home.welcomeHint')}</p>
+              </div>
             )),
             Match.when({ state: 'unavailable' }, () => (
               <StatusText aria-live="polite" showIcon status="error">
