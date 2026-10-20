@@ -391,7 +391,11 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
           </div>
           {plan.availableFrom !== undefined && (
             <p className="text-sm">
-              {k('plan.availableFrom', { date: formatDate(plan.availableFrom), lead: item.leadTimeDays })}
+              {k('plan.availableFrom', {
+                count: item.leadTimeDays,
+                date: formatDate(plan.availableFrom),
+                lead: item.leadTimeDays,
+              })}
             </p>
           )}
           {plan.suggestedQuantity > 0 && (

@@ -153,7 +153,10 @@
     "cancelled": "Zrušeno",
     "completed": "Dokončeno"
   },
-  "leadTimeDays": "{{count}} dní",
+  "leadTimeDays_one": "{{count}} den",
+  "leadTimeDays_few": "{{count}} dny",
+  "leadTimeDays_many": "{{count}} dne",
+  "leadTimeDays_other": "{{count}} dní",
   "panel": {
     "detail": "Údaje",
     "plan": "Materiálový plán",
@@ -165,7 +168,10 @@
   "plan": {
     "expected": "Očekávané příjmy",
     "plannedIssues": "Plánované výdeje",
-    "availableFrom": "Předpokládaná dostupnost: {{date}} (dodací lhůta {{lead}} dní).",
+    "availableFrom_one": "Předpokládaná dostupnost: {{date}} (dodací lhůta {{count}} den).",
+    "availableFrom_few": "Předpokládaná dostupnost: {{date}} (dodací lhůta {{count}} dny).",
+    "availableFrom_many": "Předpokládaná dostupnost: {{date}} (dodací lhůta {{count}} dne).",
+    "availableFrom_other": "Předpokládaná dostupnost: {{date}} (dodací lhůta {{count}} dní).",
     "suggest": "Doporučeno objednat {{quantity}} (doplnění do maxima)."
   },
   "movement": {
@@ -220,7 +226,10 @@
     "draftExists": "Pro tohoto dodavatele už existuje návrh objednávky {{number}}.",
     "suggested": "Doporučeno",
     "availability": "Dostupnost",
-    "leadTime": "{{date}} (lhůta {{days}} dní)"
+    "leadTime_one": "{{date}} (lhůta {{count}} den)",
+    "leadTime_few": "{{date}} (lhůta {{count}} dny)",
+    "leadTime_many": "{{date}} (lhůta {{count}} dne)",
+    "leadTime_other": "{{date}} (lhůta {{count}} dní)"
   },
   "movements": {
     "byMonth": "Výdeje podle měsíců",

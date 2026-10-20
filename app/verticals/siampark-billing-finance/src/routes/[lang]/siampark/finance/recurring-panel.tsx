@@ -1,3 +1,4 @@
+import { formatCzechDays } from '@app/shared-contracts';
 // @effect-diagnostics asyncFunction:off
 // @effect-diagnostics newPromise:off
 // @effect-diagnostics globalTimers:off
@@ -272,7 +273,7 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                       {formatMoney(templateTotal(template))}
                     </Table.Cell>
                     <Table.Cell>
-                      {template.issueDay}. den v měsíci · {template.dueDays} dní
+                      {template.issueDay}. den v měsíci · {formatCzechDays(template.dueDays)}
                     </Table.Cell>
                     <Table.Cell>
                       <span className="flex flex-wrap gap-50">

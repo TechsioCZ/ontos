@@ -613,6 +613,35 @@ it('never substitutes a Counterparty ID for a missing Party ID in related invoic
   };
   expect(projectFinanceRecords(fixture, 0, { partyId: counterpartyRef.resourceId }).state.invoices).toEqual([]);
   expect(projectFinanceRecords(fixture, 0, { partyId }).state.invoices.map((item) => item.ref.resourceId)).toEqual([
+    ref.resourceId,
     'with-party',
   ]);
+});
+
+it('keeps legacy Party-filtered balances identical to Counterparty entry points without crossing identities', () => {
+  const partyId = 'party-linked';
+  const partial = { ...invoice, totalMinor: 100_000, paidMinor: 40_000, paymentState: 'PARTIALLY_PAID' as const };
+  const fixture: FinanceState = {
+    ...state,
+    invoices: [
+      partial,
+      { ...invoice, partyId, businessState: 'DRAFT', ref: { ...ref, resourceId: 'linked-draft' } },
+      { ...invoice, counterpartyRef: { ...counterpartyRef, tenantId: 'other-tenant' } },
+      { ...invoice, counterpartyRef: { ...counterpartyRef, resourceId: 'other-counterparty' } },
+      { ...invoice, partyId: 'explicitly-other-party', ref: { ...ref, resourceId: 'different-party' } },
+    ],
+  };
+  const related = projectFinanceRecords(fixture, 1, { partyId }, '2026-10-20');
+  expect(related.state.invoices.map((item) => item.ref.resourceId)).toEqual([ref.resourceId, 'linked-draft']);
+  expect(related.indicators.receivablesOutstandingMinor).toBe(60_000);
+  expect(related.indicators.overdueInvoices).toBe(1);
+  expect(projectFinanceRecords(fixture, 1, { partyId: 'unknown-party' }).state.invoices).toEqual([]);
+  // A resource/property filter must not erase the sibling invoice that establishes the Party relationship.
+  expect(projectFinanceRecords(fixture, 1, { partyId, resourceId: ref.resourceId }).state.invoices).toEqual([partial]);
+  expect(
+    projectFinanceRecords(fixture, 1, {
+      partyId,
+      counterpartyRef: { ...counterpartyRef, resourceId: 'other-counterparty' },
+    }).state.invoices,
+  ).toEqual([]);
 });

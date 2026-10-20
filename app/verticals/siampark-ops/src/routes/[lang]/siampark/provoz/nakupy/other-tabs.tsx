@@ -129,6 +129,7 @@ export const ReplenishTab = ({
                         </Table.Cell>
                         <Table.Cell>
                           {k('replenish.leadTime', {
+                            count: plan.item.leadTimeDays,
                             date: formatDate(plan.availableFrom ?? addDays(today, plan.item.leadTimeDays)),
                             days: plan.item.leadTimeDays,
                           })}

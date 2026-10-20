@@ -1043,12 +1043,28 @@ export const projectFinanceRecords = (
   request: RecordsRequest,
   businessDate: string = DEMO_BUSINESS_DATE,
 ): Omit<RecordsResponse, 'canWrite'> => {
+  // Legacy invoices may lack a Party snapshot. Resolve their full Counterparty ref from this
+  // company's existing Party-linked invoices/templates, never by equating the two ID domains.
+  const partyCounterparties =
+    request.partyId === undefined
+      ? []
+      : [...state.invoices, ...(state.recurringTemplates ?? [])]
+          .filter((record) => record.partyId === request.partyId)
+          .map((record) => record.counterpartyRef);
   const invoices = state.invoices.filter(
     (record) =>
       (request.resourceId === undefined || record.ref.resourceId === request.resourceId) &&
       (request.propertyId === undefined || record.propertyRef?.resourceId === request.propertyId) &&
-      // Party snapshots and commercial Counterparty refs are distinct identities.
-      (request.partyId === undefined || record.partyId === request.partyId) &&
+      (request.partyId === undefined ||
+        record.partyId === request.partyId ||
+        (record.partyId === undefined &&
+          partyCounterparties.some(
+            (ref) =>
+              ref.tenantId === record.counterpartyRef.tenantId &&
+              ref.moduleId === record.counterpartyRef.moduleId &&
+              ref.resourceType === record.counterpartyRef.resourceType &&
+              ref.resourceId === record.counterpartyRef.resourceId,
+          ))) &&
       (request.counterpartyRef === undefined ||
         (record.counterpartyRef.tenantId === request.counterpartyRef.tenantId &&
           record.counterpartyRef.moduleId === request.counterpartyRef.moduleId &&

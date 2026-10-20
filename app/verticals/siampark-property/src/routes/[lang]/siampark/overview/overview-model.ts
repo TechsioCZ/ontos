@@ -1,3 +1,4 @@
+import { formatCzechDays } from '@app/shared-contracts';
 import type { executeRecords as executeAgreements } from '@app/siampark-agreements/clients/records';
 import type { executeRecords as executeFinance } from '@app/siampark-billing-finance/clients/records';
 import type { executeRecords as executeOccupancy } from '@app/siampark-occupancy/clients/records';
@@ -127,7 +128,7 @@ export const attentionItems = (sources: OverviewSources, today: string, lang: st
     if (isOverdueInvoice(invoice, today)) {
       items.push({
         date: invoice.dueDate,
-        detail: `${invoice.direction === 'OUTGOING' ? 'Pohledávka' : 'Závazek'} ${formatCzk(invoice.totalMinor - invoice.paidMinor)} · ${daysBetween(invoice.dueDate, today)} dní po splatnosti`,
+        detail: `${invoice.direction === 'OUTGOING' ? 'Pohledávka' : 'Závazek'} ${formatCzk(invoice.totalMinor - invoice.paidMinor)} · ${formatCzechDays(daysBetween(invoice.dueDate, today))} po splatnosti`,
         href: `/${lang}/siampark/finance?resourceId=${invoice.ref.resourceId}`,
         id: `invoice:${invoice.ref.resourceId}`,
         kind: invoice.direction === 'OUTGOING' ? 'Vydaná faktura' : 'Přijatá faktura',
@@ -140,7 +141,7 @@ export const attentionItems = (sources: OverviewSources, today: string, lang: st
     if (isOpenTask(task) && task.dueDate !== undefined && task.dueDate < today) {
       items.push({
         date: task.dueDate,
-        detail: `Termín ${formatDay(task.dueDate)} · ${daysBetween(task.dueDate, today)} dní po termínu`,
+        detail: `Termín ${formatDay(task.dueDate)} · ${formatCzechDays(daysBetween(task.dueDate, today))} po termínu`,
         href: `/${lang}/siampark/work`,
         id: `task:${task.ref.resourceId}`,
         kind: 'Úkol po termínu',
@@ -161,7 +162,7 @@ export const attentionItems = (sources: OverviewSources, today: string, lang: st
     ) {
       items.push({
         date: contract.renewalNoticeDate,
-        detail: `Výpovědní / prodlužovací lhůta ${formatDay(contract.renewalNoticeDate)} · za ${daysBetween(today, contract.renewalNoticeDate)} dní`,
+        detail: `Výpovědní / prodlužovací lhůta ${formatDay(contract.renewalNoticeDate)} · za ${formatCzechDays(daysBetween(today, contract.renewalNoticeDate))}`,
         href: `/${lang}/siampark/agreements?resourceId=${contract.contractRef.resourceId}`,
         id: `notice:${contract.contractRef.resourceId}`,
         kind: 'Lhůta smlouvy',
@@ -172,7 +173,7 @@ export const attentionItems = (sources: OverviewSources, today: string, lang: st
     if (contract.endDate !== null && contract.endDate >= today && contract.endDate <= horizon) {
       items.push({
         date: contract.endDate,
-        detail: `Konec platnosti ${formatDay(contract.endDate)} · za ${daysBetween(today, contract.endDate)} dní${contract.hasSuccessorDraft ? ' · návrh navazující smlouvy existuje' : ' · bez navazující smlouvy'}`,
+        detail: `Konec platnosti ${formatDay(contract.endDate)} · za ${formatCzechDays(daysBetween(today, contract.endDate))}${contract.hasSuccessorDraft ? ' · návrh navazující smlouvy existuje' : ' · bez navazující smlouvy'}`,
         href: `/${lang}/siampark/agreements?resourceId=${contract.contractRef.resourceId}`,
         id: `end:${contract.contractRef.resourceId}`,
         kind: 'Končící smlouva',
@@ -185,7 +186,7 @@ export const attentionItems = (sources: OverviewSources, today: string, lang: st
     if (lease.state === 'CONFIRMED' && lease.startDate >= today && lease.startDate <= horizon) {
       items.push({
         date: lease.startDate,
-        detail: `Začátek ${formatDay(lease.startDate)} · za ${daysBetween(today, lease.startDate)} dní`,
+        detail: `Začátek ${formatDay(lease.startDate)} · za ${formatCzechDays(daysBetween(today, lease.startDate))}`,
         href: `/${lang}/siampark/occupancy?resourceId=${lease.occupancyRef.resourceId}`,
         id: `lease:${lease.occupancyRef.resourceId}`,
         kind: lease.kind === 'SHORT_STAY' ? 'Nástup pobytu' : 'Nástup nájemce',

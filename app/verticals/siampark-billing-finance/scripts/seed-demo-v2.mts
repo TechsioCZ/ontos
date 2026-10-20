@@ -42,6 +42,7 @@ const validators: FinanceValidators = { invoice: () => Effect.void };
 
 interface Counterparty {
   readonly id: string;
+  readonly partyId?: string;
   readonly name: string;
 }
 
@@ -60,17 +61,27 @@ const program = Effect.gen(function* seed() {
     return;
   }
   // Customers (tenants) from the party registry of this company, if the rental seed created them.
-  const parties = yield* sql<{ readonly counterparty_id: string; readonly display_name: string | null }>`
-    select c.counterparty_id::text as counterparty_id, p.current_display_name as display_name
+  const parties = yield* sql<{
+    readonly counterparty_id: string;
+    readonly party_id: string;
+    readonly display_name: string | null;
+  }>`
+    select c.counterparty_id::text as counterparty_id, c.party_id::text as party_id, p.current_display_name as display_name
     from party.counterparties c
     left join party.parties p on p.party_id = c.party_id and p.tenant_id = c.tenant_id
     where c.tenant_id = ${TENANT} and c.legal_entity_id = ${LEGAL_ENTITY} and c.archived_at is null`.pipe(
     Effect.orElseSucceed(
-      () => [] as readonly { readonly counterparty_id: string; readonly display_name: string | null }[],
+      () =>
+        [] as readonly {
+          readonly counterparty_id: string;
+          readonly party_id: string;
+          readonly display_name: string | null;
+        }[],
     ),
   );
   const tenants: readonly Counterparty[] = parties.map((row) => ({
     id: row.counterparty_id,
+    partyId: row.party_id,
     name: row.display_name ?? '',
   }));
   const tenantNamed = (fragment: string, fallback: string): Counterparty =>
@@ -256,6 +267,7 @@ const program = Effect.gen(function* seed() {
       yield* apply({
         _tag: 'CreateInvoiceDraft',
         counterpartyRef: ref(entry.who),
+        ...(entry.who.partyId === undefined ? {} : { partyId: entry.who.partyId }),
         currency: 'CZK',
         direction: 'OUTGOING',
         documentNumber: number,
@@ -297,6 +309,7 @@ const program = Effect.gen(function* seed() {
       _tag: 'CreateRecurringTemplate',
       counterpartyName: template.who.name,
       counterpartyRef: ref(template.who),
+      ...(template.who.partyId === undefined ? {} : { partyId: template.who.partyId }),
       dueDays: 14,
       issueDay: 1,
       lines: [{ description: `Nájemné ${template.unit}`, quantity: 1, unitPriceMinor: template.amount, vatRate: 21 }],

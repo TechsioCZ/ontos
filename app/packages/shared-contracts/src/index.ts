@@ -417,3 +417,4 @@ export const onUltramodernPerformanceSignal = (
 ) => onUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.performanceSignal, handler);
 
 export { CalendarDateSchema, CalendarDateWireSchema } from './calendar-date.ts';
+export { czechPlural, formatCzechDays } from './czech-plural.ts';
