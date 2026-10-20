@@ -384,6 +384,10 @@ record(
 
 // Level B over MCP
 const mcpB = await startMcp('B');
+// Only clean earlier proof tasks observed before this run and the task this run creates. A concurrent
+// rehearsal may be verifying its own still-open task; do not cancel tasks that appeared after our read.
+const earlierTaskIds = new Set(((tasksA.value as { items?: { id: string }[] }).items ?? []).map((task) => task.id));
+let proofTaskTitle: string | undefined;
 try {
   const toolsB = await mcpB.tools();
   const leakedB = toolsB.filter(
@@ -414,6 +418,7 @@ try {
     requestId,
     title: `AI: zavolat zákazníkovi kvůli nabídce (${stamp})`,
   };
+  proofTaskTitle = taskInput.title;
   const createdB = await mcpB.call('create_task', taskInput);
   const createdTask = (createdB.value as { task?: { id: string } | null }).task ?? null;
   record(
@@ -501,6 +506,7 @@ try {
       (task) =>
         task.title.startsWith('AI: zavolat zákazníkovi kvůli nabídce (') &&
         task.description?.startsWith('Vytvořil AI agent úrovně B (důkaz ') === true &&
+        (task.title === proofTaskTitle || earlierTaskIds.has(task.id)) &&
         ['NEW', 'IN_PROGRESS', 'WAITING'].includes(task.state),
     );
     for (const task of leftovers) {

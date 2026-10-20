@@ -8,6 +8,7 @@ import type { ReactNode } from 'react';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { canSeeEverything } from '../../shared/domain/access.ts';
 import type { CrmRecordsState } from './records.ts';
+import './loading-skeleton.css';
 
 /** Renders children only with loaded records; loading / error / forbidden states otherwise. */
 export const CrmStateGate = ({
@@ -33,7 +34,7 @@ export const CrmStateGate = ({
             className="flex flex-col gap-150 rounded-lg border border-border-primary bg-surface p-250"
           >
             {[0, 1, 2, 3, 4].map((row) => (
-              <div className="h-500 animate-pulse rounded-md bg-surface-secondary" key={row} />
+              <div className="crm-loading-skeleton-row" key={row} />
             ))}
           </div>
         )}
