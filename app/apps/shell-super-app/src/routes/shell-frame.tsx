@@ -19,11 +19,16 @@ import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
+import { DemoGuidePanel, DemoGuideToggleButton } from '../demo-guide/demo-guide-panel.tsx';
+import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
+import { useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
 import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-navigation.ts';
 import { useIdleRoutePreload } from './use-idle-route-preload.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
+  /** Sign-in e-mail; the demo guide marks steps whose persona is already signed in. */
+  readonly email?: string;
 }
 
 interface DashboardNavigationItem {
@@ -1039,6 +1044,7 @@ const handleSidebarExpandedChange = ({ expanded }: SidebarExpandedChangeDetails)
 };
 
 type SidebarOffsetStyle = CSSProperties & {
+  '--demo-guide-width'?: string;
   '--height-sidebar-viewport'?: string;
   '--spacing-sidebar-offset'?: string;
 };
@@ -1091,6 +1097,14 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const collapsed = useSyncExternalStore(subscribeSidebarChoice, readSidebarCollapsed, serverSidebarCollapsed);
   const expandedSides = collapsed ? collapsedSides : expandedSidesByDefault;
 
+  // Demo guide of the selected company: open state and width live in browser storage, so the panel stays open
+  // while the presenter moves between pages (each route mounts its own frame).
+  const guide = demoGuideFor(props.currentLegalEntityId);
+  const guideOpen = useDemoGuideOpen();
+  const guideWidth = useDemoGuideWidth();
+  const guideVisible = guide !== undefined && guideOpen && !props.logoutPending;
+  const sidebarStyle: SidebarOffsetStyle = { ...topBarOffsetStyle, '--demo-guide-width': `${guideWidth}px` };
+
   return (
     <>
       <Helmet>
@@ -1104,7 +1118,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         collapsible={{ start: 'icon' }}
         expanded={expandedSides}
         onExpandedChange={handleSidebarExpandedChange}
-        style={topBarOffsetStyle}
+        style={sidebarStyle}
       >
         <DrawerRouteSync />
         <Header
@@ -1127,6 +1141,11 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           </Header.Container>
           <Header.Container className="ms-auto w-auto shrink-0" position="end">
             <Header.Actions>
+              {guide === undefined || props.logoutPending ? null : (
+                <Header.ActionItem>
+                  <DemoGuideToggleButton open={guideOpen} />
+                </Header.ActionItem>
+              )}
               <Header.ActionItem>
                 <DashboardAccountMenu
                   identity={props.identity}
@@ -1159,7 +1178,8 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
               />
             }
           />
-          <Sidebar.Inset className="flex min-w-0 flex-1 flex-col">
+          {/* On desktop the open guide docks beside the page instead of covering it. */}
+          <Sidebar.Inset className={`flex min-w-0 flex-1 flex-col ${guideVisible ? 'lg:pe-(--demo-guide-width)' : ''}`}>
             <div className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250">
               {pendingHref === undefined ? null : (
                 <StatusText aria-live="polite" showIcon status="default">
@@ -1175,6 +1195,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             </div>
           </Sidebar.Inset>
         </div>
+        {guideVisible ? <DemoGuidePanel guide={guide} identityEmail={props.identity.email} /> : null}
       </Sidebar>
     </>
   );

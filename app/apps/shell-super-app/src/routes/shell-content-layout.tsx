@@ -29,7 +29,7 @@ export const ShellContentLayout = ({
       {...pageProps}
       currentTenantId={shell.identity.tenantId}
       homeCurrent={false}
-      identity={{ displayName: shell.identity.displayName }}
+      identity={{ displayName: shell.identity.displayName, email: shell.identity.email }}
       legalEntityChoices={shell.legalEntities.items}
       legalEntityState={shell.legalEntities.state}
       legalEntitySwitchFailed={controls.legalEntitySwitchFailed}

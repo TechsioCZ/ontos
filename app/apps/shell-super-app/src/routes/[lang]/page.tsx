@@ -62,7 +62,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         {...(model.compositionRevision === undefined ? {} : { compositionRevision: model.compositionRevision })}
         {...(model.selectedLegalEntityId === undefined ? {} : { currentLegalEntityId: model.selectedLegalEntityId })}
         currentTenantId={model.identity.tenantId}
-        identity={{ displayName: model.identity.displayName }}
+        identity={{ displayName: model.identity.displayName, email: model.identity.email }}
         legalEntityChoices={model.legalEntities.items}
         legalEntityState={model.legalEntities.state}
         legalEntitySwitchFailed={controls.legalEntitySwitchFailed}
