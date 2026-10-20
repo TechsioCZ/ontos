@@ -190,3 +190,24 @@ export const visitSearchText = (records: RecordsResponse, visit: Visit) =>
   ]
     .filter((value) => value !== undefined)
     .join(' ');
+
+/** Server reasons are Czech for domain errors; generic HTTP problem titles arrive in English, so translate them. */
+export const czechError = (message: string | undefined, fallback: string) => {
+  if (message === undefined || message === '') {
+    return fallback;
+  }
+  if (/[áčďéěíňóřšťúůýž]/iu.test(message)) {
+    return message;
+  }
+  const lower = message.toLowerCase();
+  if (lower.includes('not found')) {
+    return 'Klient neexistuje nebo k němu nemáte přístup.';
+  }
+  if (lower.includes('forbidden') || lower.includes('denied') || lower.includes('permission')) {
+    return 'K této operaci nemáte oprávnění.';
+  }
+  if (lower.includes('conflict') || lower.includes('revision')) {
+    return 'Data se mezitím změnila. Zkuste to prosím znovu.';
+  }
+  return fallback;
+};

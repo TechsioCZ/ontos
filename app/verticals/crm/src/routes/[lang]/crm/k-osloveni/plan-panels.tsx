@@ -16,6 +16,7 @@ import type { Submit, VisitDraft } from '../navstevy/visit-panels.tsx';
 import { VisitFields, emptyVisitDraft } from '../navstevy/visit-panels.tsx';
 import {
   clientLabel,
+  czechError,
   formatDay,
   formatVisitTime,
   isoFromLocal,
@@ -84,7 +85,7 @@ export const PlanContactPanel = ({
         });
         onClose();
       } else {
-        setServerError(outcome.message ?? 'Uložení se nezdařilo.');
+        setServerError(czechError(outcome.message, 'Uložení se nezdařilo.'));
       }
     });
   };
@@ -254,7 +255,7 @@ export const CompletePlanPanel = ({
         });
         onClose();
       } else {
-        setServerError(outcome.message ?? 'Uložení se nezdařilo.');
+        setServerError(czechError(outcome.message, 'Uložení se nezdařilo.'));
       }
     });
   };

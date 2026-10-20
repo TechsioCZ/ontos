@@ -19,6 +19,7 @@ import type { VisitDraft } from './visit-panels.tsx';
 import { VisitFields, emptyVisitDraft } from './visit-panels.tsx';
 import { VisitTimeline } from './visit-timeline.tsx';
 import {
+  czechError,
   formatDay,
   formatVisitTime,
   isoFromLocal,
@@ -130,7 +131,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
         toaster.create({ title: `${visitKindMeta[draft.kind].label} zapsán(a)`, type: 'success' });
         reset();
       } else {
-        setError(outcome.message ?? 'Záznam se nepodařilo uložit.');
+        setError(czechError(outcome.message, 'Záznam se nepodařilo uložit.'));
       }
     });
   };
@@ -149,7 +150,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
         toaster.create({ description: formatDay(planDate), title: 'Kontakt naplánován', type: 'success' });
         reset();
       } else {
-        setError(outcome.message ?? 'Uložení se nezdařilo.');
+        setError(czechError(outcome.message, 'Uložení se nezdařilo.'));
       }
     });
   };

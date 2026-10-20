@@ -19,6 +19,7 @@ import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import { VisitKindBadge } from './visit-timeline.tsx';
 import {
   clientLabel,
+  czechError,
   formatDay,
   formatVisitTime,
   isoFromLocal,
@@ -267,7 +268,7 @@ export const RecordVisitPanel = ({
         });
         close();
       } else {
-        setServerError(outcome.message ?? 'Záznam se nepodařilo uložit.');
+        setServerError(czechError(outcome.message, 'Záznam se nepodařilo uložit.'));
       }
     });
   };
@@ -406,7 +407,7 @@ export const CorrectVisitPanel = ({
         });
         onClose();
       } else {
-        setServerError(outcome.message ?? 'Opravu se nepodařilo uložit.');
+        setServerError(czechError(outcome.message, 'Opravu se nepodařilo uložit.'));
       }
     });
   };
