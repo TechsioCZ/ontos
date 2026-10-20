@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
@@ -30,6 +31,15 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import developmentOverlay from '../../topology/local-overlays/development.json';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
+
+// JSON-only locale edits must invalidate the served static chunks as well as contract bundles.
+const localeDigest = createHash('sha256');
+for (const language of ['cs', 'en']) {
+  for (const agenda of ['agenda', 'assets', 'documents', 'meters', 'purchasing', 'security']) {
+    localeDigest.update(readFileSync(new URL(`./locales/${language}/agendas/${agenda}.json`, import.meta.url)));
+  }
+}
+const localeCacheDigest = localeDigest.digest('hex');
 
 const appId = 'siampark-ops';
 const cloudflareWorkerName = 'app-siampark-ops';
@@ -233,7 +243,7 @@ export default defineConfig(
       },
       performance: {
         buildCache: {
-          cacheDigest: [appId, buildTarget],
+          cacheDigest: [appId, buildTarget, localeCacheDigest],
           cacheDirectory: buildCacheDirectory,
         },
       },
