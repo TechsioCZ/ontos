@@ -1,12 +1,11 @@
 // Storefront catalog projection: paged/filtered public product cards + category tree, and order status lookup.
-// SKELETON (lane akros-sync-backend): task "storefront-catalog" replaces the stub bodies; keep the exported signatures.
 import type {
   MerchandiseState,
   StorefrontCatalogQuery,
   StorefrontOrderStatus,
   StorefrontOrderStatusLookup,
 } from '../../shared/apis/records.ts';
-import type { CatalogCategory, Order, ProductRecord } from '../../shared/domain/merchandise-model.ts';
+import type { CatalogCategory, Order, OrderStatus, ProductRecord } from '../../shared/domain/merchandise-model.ts';
 
 export const DEFAULT_STOREFRONT_PAGE_SIZE = 24;
 
@@ -20,10 +19,56 @@ export interface StorefrontCatalogPage {
   readonly categories?: readonly CatalogCategory[];
 }
 
+const customerStatusLabels: Readonly<Record<OrderStatus, string>> = {
+  CANCELLED: 'Stornovaná',
+  CONFIRMED: 'Zpracovává se',
+  DELIVERED: 'Dokončená',
+  NEW: 'Přijatá',
+  PACKING: 'Připravujeme k předání',
+  SHIPPED: 'Předáno dopravci (simulace)',
+};
+const isInStock = (availability: ProductRecord['availability']) =>
+  availability === 'IN_STOCK' || availability === 'LOW_STOCK';
+const labelMatches = (record: ProductRecord, label: NonNullable<StorefrontCatalogQuery['label']>) =>
+  label === 'action' ? record.isAction === true
+  : label === 'recommended' ? record.isRecommended === true
+  : label === 'sale' ? record.isSale === true
+  : record.isNew === true;
+const searchTextOf = (record: ProductRecord) =>
+  [record.name, record.sku, record.shortDescription ?? '', ...(record.variantRecords ?? []).flatMap((variant) => [variant.name, variant.sku])]
+    .join(' ')
+    .toLocaleLowerCase('cs');
+const priceOf = (record: ProductRecord) => record.grossPriceMinor ?? Number.MAX_SAFE_INTEGER;
+
 /** Public shape of one product: no raw variants/price history/content history; derived paragraphs + gallery. */
 export const toStorefrontProduct = (record: ProductRecord, fields: 'card' | 'full'): ProductRecord => {
-  void fields;
-  return record;
+  const { variants: _rawVariants, contentHistory: _history, ...rest } = record;
+  void _rawVariants;
+  void _history;
+  const gallery =
+    record.images !== undefined && record.images.length > 0 ? [...record.images]
+    : record.imageSrc === undefined || record.imageSrc === '' ? []
+    : [record.imageSrc];
+  const descriptionParagraphs = (record.description ?? '')
+    .split(/\n\s*\n/u)
+    .map((part) => part.trim())
+    .filter((part) => part !== '');
+  const full: ProductRecord = {
+    ...rest,
+    descriptionParagraphs,
+    gallery,
+    priceHistory: [],
+    ...(record.variantRecords === undefined
+      ? {}
+      : { variantRecords: record.variantRecords.map((variant) => ({ ...variant, priceHistory: [] })) }),
+  };
+  if (fields === 'full') return full;
+  const { variantRecords: _v, description: _d, descriptionParagraphs: _p, parameters: _pa, ...card } = full;
+  void _v;
+  void _d;
+  void _p;
+  void _pa;
+  return card;
 };
 
 /** `records` are ALL product records of the state; this function applies active/published visibility itself. */
@@ -31,20 +76,105 @@ export const storefrontCatalogPage = (input: {
   readonly state: MerchandiseState;
   readonly records: readonly ProductRecord[];
   readonly query: StorefrontCatalogQuery;
-}): StorefrontCatalogPage => ({
-  homepageFeaturedProductIds: input.state.homepageFeaturedProductIds ?? [],
-  page: input.query.page ?? 1,
-  pageSize: input.query.pageSize ?? DEFAULT_STOREFRONT_PAGE_SIZE,
-  products: [],
-  total: 0,
-});
+}): StorefrontCatalogPage => {
+  const { state, records, query } = input;
+  const visible = records.filter((record) => record.active && record.published !== false);
+  const categories = state.categories ?? [];
+  const featuredIds = state.homepageFeaturedProductIds ?? [];
+
+  let list: readonly ProductRecord[] = visible;
+  if (query.featured === true) {
+    const byId = new Map<string, ProductRecord>(visible.map((record) => [record.id, record] as const));
+    const seen = new Set<string>();
+    const featured = featuredIds.flatMap((id) => {
+      const record = byId.get(id);
+      if (record === undefined || seen.has(id)) return [];
+      seen.add(id);
+      return [record];
+    });
+    list = [...featured, ...visible.filter((record) => record.isRecommended === true && !seen.has(record.id))];
+  }
+  if (query.productIds !== undefined) {
+    const byId = new Map<string, ProductRecord>(list.map((record) => [record.id, record] as const));
+    list = query.productIds.flatMap((id) => {
+      const record = byId.get(id);
+      return record === undefined ? [] : [record];
+    });
+  }
+  if (query.slug !== undefined) {
+    const slug = query.slug;
+    list = list.filter((record) => record.slug === slug);
+  }
+  if (query.categorySlug !== undefined) {
+    const category = categories.find((candidate) => candidate.slug === query.categorySlug);
+    list =
+      category === undefined
+        ? []
+        : list.filter(
+            (record) => record.categoryId === category.id || (record.categoryPathIds ?? []).includes(category.id),
+          );
+  }
+  if (query.label !== undefined) {
+    const label = query.label;
+    list = list.filter((record) => labelMatches(record, label));
+  }
+  const needle = (query.q ?? '').trim().toLocaleLowerCase('cs');
+  if (needle !== '') list = list.filter((record) => searchTextOf(record).includes(needle));
+  if (query.minMinor !== undefined) {
+    const minMinor = query.minMinor;
+    list = list.filter((record) => (record.grossPriceMinor ?? 0) >= minMinor);
+  }
+  if (query.maxMinor !== undefined) {
+    const maxMinor = query.maxMinor;
+    list = list.filter((record) => (record.grossPriceMinor ?? 0) <= maxMinor);
+  }
+  if (query.availability === 'in-stock') list = list.filter((record) => isInStock(record.availability));
+  if (query.availability === 'out-of-stock') list = list.filter((record) => !isInStock(record.availability));
+  if (query.sort === 'name') list = list.toSorted((a, b) => a.name.localeCompare(b.name, 'cs'));
+  if (query.sort === 'price-asc') list = list.toSorted((a, b) => priceOf(a) - priceOf(b));
+  if (query.sort === 'price-desc') list = list.toSorted((a, b) => priceOf(b) - priceOf(a));
+
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? DEFAULT_STOREFRONT_PAGE_SIZE;
+  const products = list
+    .slice((page - 1) * pageSize, page * pageSize)
+    .map((record) => toStorefrontProduct(record, query.fields ?? 'full'));
+  return {
+    products,
+    total: list.length,
+    page,
+    pageSize,
+    homepageFeaturedProductIds: featuredIds,
+    ...(query.includeCategories === false
+      ? {}
+      : {
+          categories: categories.map(({ history: _history, ...category }) => {
+            void _history;
+            return category;
+          }),
+        }),
+  };
+};
 
 /** Customer-safe status of one storefront order; null unless id AND clientRequestId match a visible order. */
 export const storefrontOrderStatusOf = (
   orders: readonly Order[],
   lookup: StorefrontOrderStatusLookup,
 ): StorefrontOrderStatus | null => {
-  void orders;
-  void lookup;
-  return null;
+  const order = orders.find(
+    (candidate) =>
+      candidate.id === lookup.orderId &&
+      candidate.clientRequestId === lookup.clientRequestId &&
+      candidate.channel === 'STOREFRONT' &&
+      candidate.demoCleanup === undefined,
+  );
+  return order === undefined
+    ? null
+    : {
+        id: order.id,
+        number: order.number,
+        status: order.status,
+        statusLabel: customerStatusLabels[order.status],
+        updatedAt: order.updatedAt,
+      };
 };
