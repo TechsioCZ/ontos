@@ -28,14 +28,12 @@ export const taskLookupAccess = Effect.fn('Work.taskLookupAccess')(function* tas
     properties: 'unavailable',
     contracts: 'unavailable',
   };
-  if (scope.legalEntityId === undefined || access.contextPermissions === undefined) return unavailable;
+  if (scope.legalEntityId === undefined) return unavailable;
   const input = { legalEntityId: scope.legalEntityId, principalId: scope.principalId, tenantId: scope.tenantId };
   const modules = Object.values(lookupModules);
-  const [entrypoints, moduleAccess, customerAccess] = yield* Effect.all([
-    access.contextPermissions({
-      ...input,
-      targets: modules.map((moduleId) => ({ moduleId, permission: 'module.access' })),
-    }),
+  // Core's read runtime resolves the special `module.access` entrypoint permission through modules(),
+  // not through a named context_permission relationship. Mirror that alias exactly.
+  const [moduleAccess, customerAccess] = yield* Effect.all([
     access.modules({ ...input, moduleIds: modules }),
     access.legalEntities({
       principalId: scope.principalId,
@@ -47,11 +45,11 @@ export const taskLookupAccess = Effect.fn('Work.taskLookupAccess')(function* tas
   const decision = (name: keyof LookupAccess): ContextAccessDecision => {
     const moduleId = lookupModules[name];
     return combine([
-      entrypoints.find((item) => item.key === `${moduleId}:module.access`)?.decision ?? 'unavailable',
-      // CustomerList uses a legal-entity permission target instead of a module target.
+      moduleAccess.find((item) => item.key === moduleId)?.decision ?? 'unavailable',
+      // CustomerList additionally requires the Legal Entity's read_counterparty permission.
       ...(name === 'customers'
         ? [customerAccess.find((item) => item.key === scope.legalEntityId)?.decision ?? 'unavailable']
-        : [moduleAccess.find((item) => item.key === moduleId)?.decision ?? 'unavailable']),
+        : []),
     ]);
   };
   return {

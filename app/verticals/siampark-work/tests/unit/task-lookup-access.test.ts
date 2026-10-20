@@ -17,15 +17,12 @@ const fakeAccess = (
   decision: ContextAccessDecision,
   customerDecision: ContextAccessDecision = decision,
 ): ContextAccessService => ({
-  contextPermissions: (input) => {
+  modules: (input) => {
     expect(input.legalEntityId).toBe(scope.legalEntityId);
     expect(input.principalId).toBe(scope.principalId);
     expect(input.tenantId).toBe(scope.tenantId);
-    return Effect.succeed(
-      input.targets.map(({ moduleId, permission }) => ({ key: `${moduleId}:${permission}`, decision })),
-    );
+    return Effect.succeed(input.moduleIds.map((key) => ({ key, decision })));
   },
-  modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ key, decision }))),
   legalEntities: ({ legalEntityIds, permission }) => {
     expect(permission).toBe('read_counterparty');
     return Effect.succeed(legalEntityIds.map((key) => ({ key, decision: customerDecision })));
@@ -46,7 +43,7 @@ it.effect('marks inaccessible optional directories denied rather than failed', (
     expect(Object.values(result)).toEqual(['denied', 'denied', 'denied', 'denied', 'denied']);
   }),
 );
-it.effect('requires customer legal-entity permission in addition to the entrypoint grant', () =>
+it.effect('requires customer legal-entity permission in addition to module access', () =>
   Effect.gen(function* () {
     const result = yield* taskLookupAccess(scope).pipe(
       Effect.provideService(ContextAccess, fakeAccess('allowed', 'denied')),
@@ -66,16 +63,20 @@ it.effect('fails closed for absent or mismatched permission results', () =>
     const result = yield* taskLookupAccess(scope).pipe(
       Effect.provideService(ContextAccess, {
         ...fakeAccess('allowed'),
-        contextPermissions: () => Effect.succeed([{ key: 'another:module.access', decision: 'allowed' }]),
+        modules: () => Effect.succeed([{ key: 'another-module', decision: 'allowed' }]),
       }),
     );
     expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable', 'unavailable']);
   }),
 );
-it.effect('does not infer access when an older authorization adapter lacks named permissions', () =>
+it.effect('uses the Core module.access alias, never an unrelated named permission', () =>
   Effect.gen(function* () {
-    const { contextPermissions: _, ...legacy } = fakeAccess('allowed');
-    const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, legacy));
-    expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable', 'unavailable']);
+    const result = yield* taskLookupAccess(scope).pipe(
+      Effect.provideService(ContextAccess, {
+        ...fakeAccess('allowed'),
+        contextPermissions: () => Effect.die('module.access must use modules()'),
+      }),
+    );
+    expect(Object.values(result)).toEqual(['allowed', 'allowed', 'allowed', 'allowed', 'allowed']);
   }),
 );
