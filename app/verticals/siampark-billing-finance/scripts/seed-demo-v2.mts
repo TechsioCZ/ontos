@@ -337,6 +337,27 @@ const program = Effect.gen(function* seed() {
     });
   }
 
+  // Rent invoices issued from a template carry its id and period, so the duplicate protection applies to them.
+  state = {
+    ...state,
+    invoices: state.invoices.map((invoice) => {
+      const description = invoice.lines?.[0]?.description ?? '';
+      const template = (state.recurringTemplates ?? []).find(
+        (entry) =>
+          entry.counterpartyRef.resourceId === invoice.counterpartyRef.resourceId &&
+          description.startsWith(`${entry.lines[0]?.description ?? '¤'} `),
+      );
+      return invoice.direction === 'OUTGOING' && invoice.note?.includes(MARKER) === true && template !== undefined
+        ? {
+            ...invoice,
+            documentKind: 'RECURRING' as const,
+            recurringPeriod: invoice.issueDate.slice(0, 7),
+            recurringTemplateId: template.id,
+          }
+        : invoice;
+    }),
+  };
+
   // ---- S09: budgets, opening balance ----
   const budgetPlan = [
     ['COST', 'Energie', 5_500_000, undefined, 'Vyšší spotřeba plynu kvůli chladnému říjnu.'],
