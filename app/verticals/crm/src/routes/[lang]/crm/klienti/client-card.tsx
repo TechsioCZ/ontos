@@ -26,6 +26,7 @@ import { activeContactsOf, kindLabels, segmentLabel } from './clients-model.ts';
 import { ContactsTab } from './contacts-tab.tsx';
 import { HistoryTab } from './history-tab.tsx';
 import { SalespersonChip } from './salesperson-chip.tsx';
+import './client-card.css';
 
 interface CardProps {
   readonly busy: boolean;
@@ -285,7 +286,7 @@ const CardBody = ({
           </div>
         )}
 
-        <Tabs onValueChange={setTab} value={tab} variant="line">
+        <Tabs className="crm-client-card-tabs" onValueChange={setTab} value={tab} variant="line">
           <Tabs.List>
             <Tabs.Trigger value="contacts">Kontakty ({contacts.length})</Tabs.Trigger>
             <Tabs.Trigger value="visits">Návštěvy ({visitCount})</Tabs.Trigger>

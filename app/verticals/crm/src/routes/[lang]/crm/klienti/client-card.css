@@ -1,0 +1,18 @@
+/* The drawer can be narrow even on a desktop: keep all four tab names readable. */
+.crm-client-card-tabs [role='tab'] {
+  min-width: 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+@media (max-width: 639px) {
+  .crm-client-card-tabs [role='tablist'] {
+    flex-wrap: wrap;
+    height: auto;
+  }
+
+  .crm-client-card-tabs [role='tab'] {
+    flex: 1 0 45%;
+    white-space: normal;
+  }
+}
