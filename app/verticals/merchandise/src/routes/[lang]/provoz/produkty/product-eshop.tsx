@@ -145,10 +145,10 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
 
   return (
     <div className="flex flex-col gap-250">
-      <StatusText showIcon status="default">
+      <p className="text-fg-secondary text-sm">
         Varianta má vlastní SKU, cenu, sklad a stav. Cena se zadává bez DPH, zákazník v e-shopu vidí cenu s DPH (
         {product.vatRate} %), kterou spočítá server.
-      </StatusText>
+      </p>
       <SectionCard flush title={`Varianty (${drafts.length})`}>
         {drafts.length === 0 ? (
           <p className="p-200 text-fg-secondary text-sm">

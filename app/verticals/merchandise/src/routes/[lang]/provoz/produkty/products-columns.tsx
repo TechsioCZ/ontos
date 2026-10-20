@@ -28,7 +28,10 @@ export const productColumns = (
           {image !== undefined && (
             <img
               alt=""
-              className="size-8 shrink-0 rounded-sm border border-border-primary object-cover"
+              className="shrink-0 rounded-sm border border-border-primary object-cover"
+              height={32}
+              style={{ height: 32, objectFit: 'cover', width: 32 }}
+              width={32}
               loading="lazy"
               onError={(event) => {
                 event.currentTarget.style.visibility = 'hidden';
@@ -58,7 +61,16 @@ export const productColumns = (
   { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
   {
     accessorKey: 'currentPriceMinor',
-    cell: (info) => <span className="tabular-nums">{formatMoney(info.getValue<number>())}</span>,
+    cell: (info) => {
+      const product = info.row.original;
+      const fromVariants = (product.variantRecords?.length ?? 0) > 0;
+      return (
+        <span className="flex flex-col items-end tabular-nums">
+          <span>{`${fromVariants ? 'od ' : ''}${formatMoney(product.grossPriceMinor ?? info.getValue<number>())}`}</span>
+          <span className="text-fg-secondary text-xs">s DPH</span>
+        </span>
+      );
+    },
     header: label('columns.price'),
     meta: { align: 'end', type: 'number', width: 100 },
   },

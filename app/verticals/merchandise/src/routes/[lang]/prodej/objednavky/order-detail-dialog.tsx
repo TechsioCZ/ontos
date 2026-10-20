@@ -57,8 +57,9 @@ const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
           <li className="flex min-w-0 flex-col items-center gap-50 text-center" key={step.status}>
             <span
               aria-current={active ? 'step' : undefined}
+              style={{ height: 28, width: 28 }}
               className={[
-                'flex size-7 items-center justify-center rounded-full border font-semibold text-xs',
+                'flex items-center justify-center rounded-full border font-semibold text-xs',
                 active
                   ? 'border-transparent bg-bg-primary-base text-fg-reverse'
                   : done
@@ -66,7 +67,7 @@ const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
                     : 'border-border-primary text-fg-secondary',
               ].join(' ')}
             >
-              {done ? <span aria-hidden className="icon-[mdi--check] size-4" /> : index + 1}
+              {done ? '✓' : index + 1}
             </span>
             <span className={`text-xs leading-tight ${active ? 'font-semibold' : 'text-fg-secondary'}`}>
               {step.label}
@@ -140,7 +141,8 @@ export const OrderDetailDialog = ({
   const editing = editingId === order.id;
   const storefront = isStorefrontOrder(order);
   const transitions = canWrite && !editing ? transitionsFrom(order.status) : [];
-  const forward = transitions.filter((status) => status !== 'CANCELLED');
+  // One forward step at a time keeps the footer short; the stepper shows the whole path.
+  const forward = transitions.filter((status) => status !== 'CANCELLED').slice(0, 1);
   const cancel = transitions.includes('CANCELLED');
   const label = (status: OrderStatus) => {
     const labelKey = actionLabelKey(status);
@@ -162,17 +164,6 @@ export const OrderDetailDialog = ({
       {cancel && (
         <Button disabled={busy} onClick={() => onStatus(order, 'CANCELLED')} theme="outlined" variant="danger">
           {label('CANCELLED')}
-        </Button>
-      )}
-      {canWrite && isOrderEditable(order) && (
-        <Button
-          disabled={busy}
-          icon="icon-[mdi--pencil-outline]"
-          onClick={() => setEditingId(order.id)}
-          theme="outlined"
-          variant="secondary"
-        >
-          Upravit objednávku
         </Button>
       )}
       {forward.map((status, index) => (
@@ -241,11 +232,26 @@ export const OrderDetailDialog = ({
                 Simulace předání dopravci
               </Badge>
             )}
+            {canWrite && isOrderEditable(order) && (
+              <span className="ml-auto">
+                <Button
+                  disabled={busy}
+                  icon="icon-[mdi--pencil-outline]"
+                  onClick={() => setEditingId(order.id)}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  Upravit objednávku
+                </Button>
+              </span>
+            )}
           </div>
           {order.demo === true && (
-            <StatusText showIcon status="warning">
+            <p className="rounded-md border border-border-primary p-150 text-fg-secondary text-sm">
+              <span className="font-semibold text-fg-primary">DEMO: </span>
               {DEMO_NOTICE} Změny stavu neodesílají zásilku ani výzvu k platbě.
-            </StatusText>
+            </p>
           )}
           <WorkflowSteps status={order.status} />
           <DetailList

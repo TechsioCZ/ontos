@@ -328,10 +328,10 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
         save();
       }}
     >
-      <StatusText showIcon status="default">
+      <p className="text-fg-secondary text-sm">
         Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník ani
         skutečné zásoby se nemění.
-      </StatusText>
+      </p>
       <SectionCard flush title="Položky">
         <Table size="sm" variant="line">
           <Table.Header>
