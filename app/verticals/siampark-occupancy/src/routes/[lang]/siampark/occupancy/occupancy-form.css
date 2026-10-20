@@ -1,0 +1,12 @@
+.sp-occupancy-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  width: 100%;
+}
+.sp-occupancy-form-actions > button {
+  flex: 0 0 auto;
+  max-width: 100%;
+  white-space: nowrap;
+}

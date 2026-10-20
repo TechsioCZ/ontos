@@ -59,6 +59,7 @@ import enResource from '../../../../../locales/en/siampark-occupancy.json';
 import '../../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
 import { OccupancyCalendar } from './occupancy-calendar.tsx';
+import './occupancy-form.css';
 
 const RecordsSearchSchema = Schema.Struct({
   resourceId: Schema.optional(OccupancyRefSchema.fields.resourceId),
@@ -1134,7 +1135,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
   return (
     <SidePanel
       actions={
-        <>
+        <div className="sp-occupancy-form-actions">
           <Button disabled={busy} onClick={() => state.setEditor(undefined)} theme="outlined" variant="secondary">
             {t('siampark-occupancy.demo.close')}
           </Button>
@@ -1166,7 +1167,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
               </Button>
             </>
           )}
-        </>
+        </div>
       }
       closeLabel={t('siampark-occupancy.demo.close')}
       closeOnInteractOutside={false}
