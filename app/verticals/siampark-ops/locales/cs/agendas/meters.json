@@ -43,7 +43,7 @@
     "medium": "Médium",
     "location": "Umístění",
     "lastReading": "Poslední odečet",
-    "consumption": "Spotřeba za poslední období",
+    "consumption": "Spotřeba období",
     "trend": "Vývoj spotřeby",
     "state": "Stav"
   },

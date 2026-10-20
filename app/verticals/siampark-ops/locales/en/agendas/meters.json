@@ -43,7 +43,7 @@
     "medium": "Medium",
     "location": "Location",
     "lastReading": "Last reading",
-    "consumption": "Consumption, last period",
+    "consumption": "Period consumption",
     "trend": "Consumption trend",
     "state": "State"
   },
