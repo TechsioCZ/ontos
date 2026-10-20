@@ -98,7 +98,7 @@ const VersionUpload = ({
             type="file"
           />
           <span className="inline-flex items-center gap-100 rounded-md border border-border-primary bg-surface px-150 py-100 font-medium text-sm hover:bg-highlight">
-            ⇪ {file === undefined ? t(`${k}.create.pick`) : t(`${k}.create.replace`)}
+            ⇪ {file === undefined ? `${t(`${k}.detail.newVersion`)}…` : t(`${k}.create.replace`)}
           </span>
         </label>
         {file !== undefined && (
