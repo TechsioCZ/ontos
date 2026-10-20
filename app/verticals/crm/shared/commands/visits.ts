@@ -282,7 +282,10 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
           status: 'open',
           updatedAt: context.now,
         };
-        return { entityIds: [id], state: { ...state, visits: { ...state.visits, plan: [...state.visits.plan, item] } } };
+        return {
+          entityIds: [id],
+          state: { ...state, visits: { ...state.visits, plan: [...state.visits.plan, item] } },
+        };
       }),
     ),
     Match.tag('UpdatePlanItem', (value) =>

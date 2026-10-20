@@ -96,7 +96,14 @@ describe('CRM visits (C02)', () => {
     const [visit] = corrected.visits.items;
     expect(visit?.note).toBe('Opravená poznámka');
     expect(visit?.corrections).toEqual([
-      { at: now, by: 'p-a', field: 'Poznámka', next: 'Opravená poznámka', previous: 'Původní poznámka', reason: 'Překlep' },
+      {
+        at: now,
+        by: 'p-a',
+        field: 'Poznámka',
+        next: 'Opravená poznámka',
+        previous: 'Původní poznámka',
+        reason: 'Překlep',
+      },
     ]);
     expect(visit?.authorPrincipalId).toBe('p-a');
   });
@@ -162,7 +169,9 @@ describe('CRM manual plan (C06)', () => {
   it('a rep cannot plan for a foreign client nor for another salesperson', () => {
     expect(Exit.isFailure(run(base, { _tag: 'PlanContact', clientId: 'y', dueDate: '2026-11-15' }, repA))).toBe(true);
     expect(
-      Exit.isFailure(run(base, { _tag: 'PlanContact', clientId: 'x', dueDate: '2026-11-15', salespersonId: 'b' }, repA)),
+      Exit.isFailure(
+        run(base, { _tag: 'PlanContact', clientId: 'x', dueDate: '2026-11-15', salespersonId: 'b' }, repA),
+      ),
     ).toBe(true);
   });
 
@@ -170,7 +179,11 @@ describe('CRM manual plan (C06)', () => {
     const planned = ok(base, { _tag: 'PlanContact', clientId: 'y', dueDate: '2026-11-01' }, lead);
     const planItemId = planned.entityIds[0] ?? '';
     expect(planned.state.visits.plan[0]?.salespersonId).toBe('b');
-    const moved = ok(planned.state, { _tag: 'UpdatePlanItem', dueDate: '2026-11-03', note: 'Po dovolené', planItemId }, repB);
+    const moved = ok(
+      planned.state,
+      { _tag: 'UpdatePlanItem', dueDate: '2026-11-03', note: 'Po dovolené', planItemId },
+      repB,
+    );
     expect(moved.state.visits.plan[0]?.dueDate).toBe('2026-11-03');
     expect(moved.state.visits.plan[0]?.note).toBe('Po dovolené');
   });

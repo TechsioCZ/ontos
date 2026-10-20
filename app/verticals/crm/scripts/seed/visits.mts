@@ -341,8 +341,22 @@ interface PlanSeed {
 
 const PLAN: readonly PlanSeed[] = [
   // A — open
-  { client: 'kavarna-na-rohu', createdDaysAgo: 12, dueInDays: -2, key: 'p-a-1', note: 'Zeptat se na reakci k ceníku dezertů', rep: 'a' },
-  { client: 'zs-blansko', createdDaysAgo: 6, dueInDays: 0, key: 'p-a-2', note: 'Potvrdit dodávky na listopad', rep: 'a' },
+  {
+    client: 'kavarna-na-rohu',
+    createdDaysAgo: 12,
+    dueInDays: -2,
+    key: 'p-a-1',
+    note: 'Zeptat se na reakci k ceníku dezertů',
+    rep: 'a',
+  },
+  {
+    client: 'zs-blansko',
+    createdDaysAgo: 6,
+    dueInDays: 0,
+    key: 'p-a-2',
+    note: 'Potvrdit dodávky na listopad',
+    rep: 'a',
+  },
   {
     client: 'zlata-husa',
     createdDaysAgo: 9,
@@ -370,7 +384,14 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'a',
     sourceVisit: 'a-10',
   },
-  { client: 'pekarna-mala', createdDaysAgo: 2, dueInDays: 13, key: 'p-a-5', note: 'Kontrola plnění rámcové dohody', rep: 'a' },
+  {
+    client: 'pekarna-mala',
+    createdDaysAgo: 2,
+    dueInDays: 13,
+    key: 'p-a-5',
+    note: 'Kontrola plnění rámcové dohody',
+    rep: 'a',
+  },
   // A — done
   {
     client: 'kavarna-na-rohu',
@@ -400,7 +421,14 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'b',
     sourceVisit: 'b-09',
   },
-  { client: 'zamecka-restaurace', createdDaysAgo: 2, dueInDays: 7, key: 'p2', note: 'Pozvat šéfkuchaře na zimní ochutnávku', rep: 'b' },
+  {
+    client: 'zamecka-restaurace',
+    createdDaysAgo: 2,
+    dueInDays: 7,
+    key: 'p2',
+    note: 'Pozvat šéfkuchaře na zimní ochutnávku',
+    rep: 'b',
+  },
   {
     client: 'lazensky-hotel',
     createdDaysAgo: 5,
@@ -410,8 +438,22 @@ const PLAN: readonly PlanSeed[] = [
     rep: 'b',
     sourceVisit: 'v4',
   },
-  { client: 'catering-vsetin', createdDaysAgo: 4, dueInDays: 1, key: 'p-b-3', note: 'Ověřit spokojenost po reklamaci', rep: 'b' },
-  { client: 'bistro-kral', createdDaysAgo: 1, dueInDays: 12, key: 'p-b-4', note: 'Domluvit prodloužení objednávky masa', rep: 'b' },
+  {
+    client: 'catering-vsetin',
+    createdDaysAgo: 4,
+    dueInDays: 1,
+    key: 'p-b-3',
+    note: 'Ověřit spokojenost po reklamaci',
+    rep: 'b',
+  },
+  {
+    client: 'bistro-kral',
+    createdDaysAgo: 1,
+    dueInDays: 12,
+    key: 'p-b-4',
+    note: 'Domluvit prodloužení objednávky masa',
+    rep: 'b',
+  },
   // B — done
   {
     client: 'catering-vsetin',
@@ -429,7 +471,9 @@ export const seedVisits = ({ leadPrincipalId, now, repA, repB }: VisitsSeedInput
   const today = DateTime.startOf(now, 'day');
   // Prague is UTC+1/UTC+2; one hour offset keeps every seeded time inside working hours either way.
   const localAt = (daysAgo: number, hour: number) =>
-    DateTime.formatIso(DateTime.add(DateTime.subtract(today, { days: daysAgo }), { minutes: Math.round((hour - 1) * 60) }));
+    DateTime.formatIso(
+      DateTime.add(DateTime.subtract(today, { days: daysAgo }), { minutes: Math.round((hour - 1) * 60) }),
+    );
   const day = (inDays: number) => DateTime.formatIso(DateTime.add(today, { days: inDays })).slice(0, 10);
   const clientId = (key: string) => demoId('crm.client', key);
   const visitId = (key: string) => demoId('crm.visit', key);
@@ -437,7 +481,9 @@ export const seedVisits = ({ leadPrincipalId, now, repA, repB }: VisitsSeedInput
     who === 'a' ? repA.principalId : who === 'b' ? repB.principalId : leadPrincipalId;
   const salesperson = (who: 'a' | 'b' | 'lead') => (who === 'a' ? repA.id : who === 'b' ? repB.id : undefined);
   const plannedBy = new Map(
-    PLAN.flatMap((item) => (item.done?.visit === undefined ? [] : [[item.done.visit, demoId('crm.plan', item.key)] as const])),
+    PLAN.flatMap((item) =>
+      item.done?.visit === undefined ? [] : [[item.done.visit, demoId('crm.plan', item.key)] as const],
+    ),
   );
 
   const items = VISITS.map((seed) => {
