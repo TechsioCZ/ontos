@@ -99,6 +99,7 @@ for id in "${VERTICALS[@]}"; do
   port_of "$id" >/dev/null || die "Unknown vertical in DEMO_VERTICALS: $id"
 done
 APPS=(shell-super-app "${VERTICALS[@]}")
+printf '%s\n' "${VERTICALS[*]}" >"$SCRATCH/demo-verticals"
 
 # 0. Stop processes from a previous run (containers stay up).
 "$APP/scripts/demo/down.sh" >/dev/null 2>&1 || true
@@ -242,6 +243,7 @@ curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WAR
 step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
 # People administration (Lidé a role): company administrators may run core.identity.manage-demo-account.
 step accounts-admin-grants "${WITH_ENV[@]}" node scripts/demo/accounts-admin-grants.mts
+step demo-seed-work-people "${WITH_ENV[@]}" node scripts/demo/seed-work-people.mts
 # Old baseline grants Siampark staff to commercial 0020; only retain their intended Siampark company.
 step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membership-hygiene.mts
 # reset-permissions deliberately logs AI errors without failing; this explicit step makes a cold start honest.
