@@ -11,6 +11,7 @@ import { type CartLine, formatQuantity, getLineTotal } from "@/mock-storefront/c
 import { formatPrice } from "@/lib/format";
 import { AddressText } from "./address-fields";
 import { LiveOrderStatus } from "./live-order-status";
+import { OrderEmailStatus } from "./order-email-status";
 
 const columns: ColumnDef<CartLine, unknown>[] = [
   {
@@ -102,10 +103,11 @@ export function OrderConfirmation() {
         )}
         <p className="text-sm text-(--color-fg-secondary)">
           {order.source === "ontos"
-            ? "DEMO – objednávka nebude doručena. Objednávka byla skutečně uložena v OntOS. Platba ani e-mail nebyly odeslány."
+            ? "DEMO – objednávka nebude doručena. Objednávka byla skutečně uložena v OntOS a potvrzení odesíláme e-mailem. Platba nebyla provedena."
             : "Jde o lokální prototyp. Objednávka ani e-mail nebyly odeslány, platba nebyla provedena."}
         </p>
       </header>
+      {order.source === "ontos" && <OrderEmailStatus email={order.draft.email} orderNumber={order.id} />}
       <div className={order.source === "ontos" ? "hidden sm:block" : undefined}>
         <DataTable
           data={order.cart.lines}

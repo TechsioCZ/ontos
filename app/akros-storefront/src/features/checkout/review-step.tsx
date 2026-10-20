@@ -184,7 +184,7 @@ export function ReviewStep() {
           )}
           <p className="text-center text-xs text-(--color-fg-secondary)">
             {ontos
-              ? "DEMO – objednávka se uloží v OntOS, nebude doručena. Platba ani e-mail se neodesílají."
+              ? "DEMO – objednávka se uloží v OntOS, nebude doručena a nic neplatíte. Potvrzení a změny stavu vám přijdou e-mailem."
               : "Lokální ukázka: objednávka, platba ani e-mail se nikam neodesílají."}
           </p>
         </div>
