@@ -135,6 +135,7 @@ const MetersView = () => {
       ),
       header: t(`${k}.columns.meter`),
       id: 'meter',
+      meta: { width: 180 },
     },
     {
       cell: ({ row }) => (
@@ -144,13 +145,17 @@ const MetersView = () => {
       ),
       header: t(`${k}.columns.medium`),
       id: 'medium',
+      meta: { width: 86 },
     },
     {
       cell: ({ row }) => (
-        <span className="text-sm">{row.original.location?.label ?? t('siampark-ops.common.notProvided')}</span>
+        <span className="line-clamp-2 text-sm" title={row.original.location?.label}>
+          {row.original.location?.label ?? t('siampark-ops.common.notProvided')}
+        </span>
       ),
       header: t(`${k}.columns.location`),
       id: 'location',
+      meta: { width: 205 },
     },
     {
       cell: ({ row }) => {
@@ -166,6 +171,7 @@ const MetersView = () => {
       },
       header: t(`${k}.columns.lastReading`),
       id: 'lastReading',
+      meta: { width: 128 },
     },
     {
       cell: ({ row }) => {
@@ -188,11 +194,13 @@ const MetersView = () => {
       },
       header: t(`${k}.columns.consumption`),
       id: 'consumption',
+      meta: { width: 160 },
     },
     {
       cell: ({ row }) => <Trend meter={row.original} />,
       header: t(`${k}.columns.trend`),
       id: 'trend',
+      meta: { width: 100 },
     },
     {
       cell: ({ row }) => {
@@ -235,6 +243,7 @@ const MetersView = () => {
       },
       header: t(`${k}.columns.state`),
       id: 'state',
+      meta: { width: 160 },
     },
   ];
 
@@ -344,6 +353,7 @@ const MetersView = () => {
             getRowId={(row) => row.id}
             getRowLabel={(row) => row.original.serialNumber}
             loading={false}
+            tableLayout="fixed"
             onRowClick={(row) => {
               setDetailId(row.original.id);
               setDetailMode('view');

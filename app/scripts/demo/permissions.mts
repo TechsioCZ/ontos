@@ -387,10 +387,12 @@ export const siamparkRentalPersonas = [
     email: 'external@siampark.demo',
     principalId: '72000000-0000-4000-8000-000000000024',
     role: {
-      contextPermissions: { 'demo.siampark-ops': ['demo.siampark_ops.read_operational'] },
+      contextPermissions: {
+        'demo.siampark-ops': ['demo.siampark_ops.read_operational', 'demo.siampark_ops.write_operational'],
+      },
       identityAdmin: false,
       label: 'Externí partner',
-      modules: { 'demo.siampark-ops': 'read' },
+      modules: { 'demo.siampark-ops': 'write' },
       restrictedModules: ['demo.siampark-ops'],
     },
   },
