@@ -316,6 +316,16 @@ const buildAssets = (): EncodedAsset[] => [
         title: 'Revize elektroinstalace (budova)',
       }),
       service({
+        documentRef: 'Revizní zpráva elektro – Riverside 2026',
+        kind: 'revision',
+        nextDueOn: '2029-09-18',
+        performedOn: '2026-09-18',
+        responsible: 'Tomáš Veselý',
+        result: 'ok',
+        note: 'Aktuální revize podle přiložené zprávy z 18. 9. 2026; nahrazuje termín revize z roku 2023.',
+        title: 'Revize elektroinstalace (budova)',
+      }),
+      service({
         kind: 'inspection',
         nextDueOn: '2026-12-15',
         performedOn: '2025-12-15',

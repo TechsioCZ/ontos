@@ -1,4 +1,4 @@
-import { RecordDiscussion } from '@app/siampark-ops/ui/record-discussion';
+import { PropertyEquipment, RecordDiscussion } from '@app/siampark-ops/ui/record-discussion';
 import { UnitRefSchema } from '../../../../../shared/resources/unit.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -504,7 +504,8 @@ const RecordsPageContent = () => {
               </form>
             )}
             {model.tables.flatMap((group) =>
-              group.kind !== 'properties' && model.property === undefined
+              (group.kind !== 'properties' && model.property === undefined) ||
+              (group.kind === 'assets' && group.rows.length === 0)
                 ? []
                 : [
                     <div className={tableWrapperClass} key={group.kind}>
@@ -560,6 +561,14 @@ const RecordsPageContent = () => {
                       </Table>
                     </div>,
                   ],
+            )}
+            {model.property !== undefined && (
+              <PropertyEquipment
+                key={`${model.property.propertyRef.resourceId}:${unit?.unitRef.resourceId ?? ''}`}
+                language={model.language}
+                propertyId={model.property.propertyRef.resourceId}
+                unitId={unit?.unitRef.resourceId}
+              />
             )}
             {model.property !== undefined && (
               <article aria-label={t(`${key}.detail`)} className={detailCardClass}>
