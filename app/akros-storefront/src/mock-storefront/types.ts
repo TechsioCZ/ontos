@@ -15,6 +15,7 @@ export interface CatalogCategory {
 }
 
 export interface CatalogProductVariant {
+  vatRate?: number;
   id: string;
   sourceId: string;
   sku: string;
@@ -54,6 +55,7 @@ export interface CatalogProductDetail {
 }
 
 export interface CatalogProduct {
+  vatRate?: number;
   id: string;
   slug: string;
   categoryId: string;

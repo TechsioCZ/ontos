@@ -1,4 +1,5 @@
 export interface CartItemSnapshot {
+  vatRate?: number;
   productId: string;
   variantId?: string;
   slug: string;

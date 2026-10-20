@@ -56,6 +56,7 @@ export async function quoteCart(cart: CartState) {
     return {
       ...line,
       name: p.name,
+      vatRate: p.vatRate,
       slug: p.slug,
       sku: item.sku,
       unit: item.unit,

@@ -93,14 +93,35 @@ export function OrderConfirmation() {
             : "Jde o lokální prototyp. Objednávka ani e-mail nebyly odeslány, platba nebyla provedena."}
         </p>
       </header>
-      <DataTable
-        data={order.cart.lines}
-        columns={columns}
-        size="sm"
-        variant="line"
-        enableSorting={false}
-        enablePagination={false}
-      />
+      <div className={order.source === "ontos" ? "hidden sm:block" : undefined}>
+        <DataTable
+          data={order.cart.lines}
+          columns={columns}
+          size="sm"
+          variant="line"
+          enableSorting={false}
+          enablePagination={false}
+        />
+      </div>
+      {order.source === "ontos" && (
+        <ul className="grid gap-4 sm:hidden" aria-label="Objednané položky">
+          {order.cart.lines.map((line) => (
+            <li
+              key={`${line.productId}:${line.variantId ?? ""}`}
+              className="border-b border-(--color-border-primary) pb-4"
+            >
+              <p className="font-bold">{line.name}</p>
+              <p className="text-sm text-(--color-fg-secondary)">{line.variantLabel}</p>
+              <div className="mt-3 flex justify-between gap-4">
+                <span>
+                  {formatQuantity(line.quantity)} {line.unit}
+                </span>
+                <strong className="whitespace-nowrap">{formatPrice(getLineTotal(line))}</strong>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
       <dl className="grid gap-3 text-sm">
         <div className="flex justify-between gap-4">
           <dt>Doprava – {order.deliveryTitle}</dt>

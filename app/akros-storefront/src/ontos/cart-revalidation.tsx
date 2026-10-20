@@ -30,6 +30,8 @@ export function CartRevalidation() {
           const body = await r.json();
           if (!r.ok) throw new Error(body.message);
           setQuote(body);
+          if (body.canCheckout && JSON.stringify(body.cart) !== JSON.stringify(cart))
+            dispatch({ type: "revalidate", cart: body.cart });
           setError("");
         })
         .catch((e) => {

@@ -157,15 +157,26 @@ export function getCheckoutTotals(cart: CartState, draft: CheckoutDraft, ontos =
     payment && (!payment.pickupOnly || delivery?.id === "osobni") ? payment.priceMinor : 0;
   const total = subtotal + (shipping ?? 0) + paymentPrice + extendedReturn;
   const hasNet = cart.lines.every((line) => line.priceExcludingVatMinor !== undefined);
-  const net = hasNet
-    ? cart.lines.reduce(
-        (sum, line) => sum + Math.round((line.priceExcludingVatMinor ?? 0) * line.quantity),
-        0,
-      ) +
-      (shipping ? (delivery?.priceExcludingVatMinor ?? 0) : 0) +
-      (paymentPrice > 0 ? (payment?.priceExcludingVatMinor ?? 0) : 0) +
-      (extendedReturn ? demoExtendedReturn.priceExcludingVatMinor : 0)
-    : null;
+  const net =
+    ontos && cart.lines.every((line) => line.vatRate !== undefined)
+      ? cart.lines.reduce(
+          (sum, line) =>
+            sum +
+            Math.floor(
+              (Math.round(line.quantity * line.priceMinor) * 100 + (100 + line.vatRate!) / 2) /
+                (100 + line.vatRate!),
+            ),
+          0,
+        ) + (shipping ? Math.floor((shipping * 100 + 121 / 2) / 121) : 0)
+      : hasNet
+        ? cart.lines.reduce(
+            (sum, line) => sum + Math.round((line.priceExcludingVatMinor ?? 0) * line.quantity),
+            0,
+          ) +
+          (shipping ? (delivery?.priceExcludingVatMinor ?? 0) : 0) +
+          (paymentPrice > 0 ? (payment?.priceExcludingVatMinor ?? 0) : 0) +
+          (extendedReturn ? demoExtendedReturn.priceExcludingVatMinor : 0)
+        : null;
   return {
     subtotal,
     shipping,

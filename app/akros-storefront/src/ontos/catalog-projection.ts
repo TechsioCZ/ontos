@@ -53,6 +53,9 @@ export function project(body: Raw): CatalogSnapshot {
         ...original,
         id: v.id,
         sku: String(v.sku),
+        label: typeof v.name === "string" ? v.name : original.label,
+        unit: String(v.sourceUnit ?? v.unit ?? p.sourceUnit ?? p.unit ?? original.unit),
+        vatRate: number(p.vatRate),
         priceMinor: gross,
         originalPriceMinor: undefined,
         stockCount: stock,
@@ -88,6 +91,9 @@ export function project(body: Raw): CatalogSnapshot {
       ...template,
       id: String(p.id),
       name: String(p.name),
+      categoryId: typeof p.categoryId === "string" ? p.categoryId : template.categoryId,
+      unit: String(p.sourceUnit ?? p.unit ?? template.unit),
+      vatRate: number(p.vatRate),
       priceMinor: first?.priceMinor ?? gross!,
       originalPriceMinor: undefined,
       minimumQuantity: first?.minimumQuantity ?? minimum!,
@@ -123,7 +129,10 @@ export function project(body: Raw): CatalogSnapshot {
     catalog: {
       metadata,
       products,
-      homepageFeaturedProductIds: products.slice(0, 16).map((p) => p.id),
+      homepageFeaturedProductIds: [
+        ...prototype.homepageFeaturedProductIds.filter((id) => products.some((p) => p.id === id)),
+        ...products.map((p) => p.id),
+      ].slice(0, 16),
     },
     categories: { metadata, categories },
   };

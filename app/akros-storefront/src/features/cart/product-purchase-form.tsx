@@ -207,6 +207,7 @@ const formatVariantLabel = (variant: CatalogProductVariant) => {
 };
 
 const getVariantCartItem = (product: CatalogProduct, variant: CatalogProductVariant) => ({
+  vatRate: product.vatRate,
   productId: product.id,
   variantId: variant.id,
   slug: product.slug,
@@ -554,6 +555,7 @@ export function ProductPurchaseForm({
   if (!variants?.length) {
     const purchaseItem = variant ?? product;
     const productCartItem = {
+      vatRate: product.vatRate,
       productId: product.id,
       variantId: variant?.id,
       slug: product.slug,

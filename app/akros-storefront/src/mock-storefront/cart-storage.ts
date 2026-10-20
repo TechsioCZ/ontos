@@ -49,6 +49,12 @@ export const parseStoredCart = (value: string | null): CartState => {
           (line.priceExcludingVatMinor ?? Infinity) <= line.priceMinor
             ? { priceExcludingVatMinor: line.priceExcludingVatMinor }
             : {}),
+          ...(typeof line.vatRate === "number" &&
+          Number.isFinite(line.vatRate) &&
+          line.vatRate >= 0 &&
+          line.vatRate <= 100
+            ? { vatRate: line.vatRate }
+            : {}),
           stockCount: line.stockCount,
           ...(typeof line.variantLabel === "string" ? { variantLabel: line.variantLabel } : {}),
         };

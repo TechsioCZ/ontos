@@ -66,6 +66,35 @@ describe("OntOS source-of-truth boundary", () => {
     p.variantRecords[0].active = false;
     expect(project({ products: [p] }).catalog.products).toEqual([]);
   });
+  it("matches the owner's gross-line VAT rounding instead of multiplying a rounded net unit", () => {
+    const draft = { ...createCheckoutDraft(), deliveryId: "osobni", paymentId: "store-card" };
+    const cart = {
+      version: 3 as const,
+      lines: [
+        {
+          productId: "p",
+          slug: "p",
+          name: "Materiál",
+          sku: "P",
+          imageSrc: "",
+          imageAlt: "",
+          unit: "ks",
+          minimumQuantity: 20,
+          stockCount: 1000,
+          priceMinor: 97,
+          priceExcludingVatMinor: 80,
+          quantity: 200,
+          vatRate: 21,
+        },
+      ],
+    };
+    expect(getCheckoutTotals(cart, draft, true)).toMatchObject({
+      net: 16033,
+      vat: 3367,
+      total: 19400,
+    });
+    expect(getCheckoutTotals(cart, draft, false)).toMatchObject({ net: 16000, total: 19400 });
+  });
   it("never mutates Kai's prototype snapshot", () => {
     const before = JSON.stringify(template);
     project({ products: [live()] });

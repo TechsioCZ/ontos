@@ -81,4 +81,4 @@ GoPay/Apple Pay are labels only; no payment authorization or charge occurs.
 Staff: `eshop@akros.demo`, `http://localhost:3020/cs/provoz/produkty` (AKROS company).
 Edit a variant net price, save, wait at most 15 seconds, reload the storefront. An existing cart
 shows a price-change acceptance state; new additions use the fresh price. Orders appear in
-`http://localhost:3020/cs/provoz/objednavky`.
+`http://localhost:3020/cs/prodej/objednavky`.
