@@ -122,7 +122,7 @@ const IncidentCard = ({
         </p>
       )}
       <div className="flex flex-wrap items-center gap-100 border-border-primary border-t pt-150 text-sm">
-        <span aria-hidden className="icon-[mdi--clipboard-check-outline] size-4 text-fg-secondary" />
+        <span aria-hidden className="icon-[mdi--clipboard-check-outline] size-5 text-fg-secondary" />
         {incident.task === undefined ? (
           <>
             <span className="text-fg-secondary">{k('detail.taskMissing')}</span>

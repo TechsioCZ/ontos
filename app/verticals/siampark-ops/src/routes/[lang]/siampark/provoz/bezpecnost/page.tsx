@@ -230,7 +230,7 @@ const SecurityView = () => {
           <span className="text-fg-secondary text-sm">{k('detail.taskMissing')}</span>
         ) : (
           <span className="flex min-w-0 items-center gap-50 text-sm">
-            <span aria-hidden className="icon-[mdi--clipboard-check-outline] size-4 shrink-0 text-fg-secondary" />
+            <span aria-hidden className="icon-[mdi--clipboard-check-outline] size-5 shrink-0 text-fg-secondary" />
             <span className="truncate">{row.original.task.title}</span>
           </span>
         ),
