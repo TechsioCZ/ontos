@@ -4,7 +4,10 @@
   "evidenceOnly": "Pouze evidence",
   "evidenceOnlyHint": "OntOS zařízení neovládá: žádné streamování kamer, ovládání alarmů, čteček ani dveří.",
   "restrictedHint": "Citlivá agenda: dostupná jen interním rolím Siamparku.",
-  "tabs": { "devices": "Zařízení", "incidents": "Poruchy a incidenty" },
+  "tabs": {
+    "devices": "Zařízení",
+    "incidents": "Poruchy a incidenty"
+  },
   "actions": {
     "newDevice": "Nové zařízení",
     "reportFault": "Nahlásit poruchu",
@@ -46,18 +49,48 @@
     "file": "Soubor",
     "taskDueDate": "Termín úkolu"
   },
-  "deviceType": { "camera": "Kamera", "access": "Přístupový systém", "alarm": "Alarm / EZS", "other": "Jiné" },
-  "state": { "in_operation": "V provozu", "fault": "Porucha", "in_service": "V servisu", "decommissioned": "Vyřazeno" },
-  "severity": { "low": "Nízká", "medium": "Střední", "high": "Vysoká", "critical": "Kritická" },
-  "incidentState": { "reported": "Nahlášeno", "in_progress": "V řešení", "resolved": "Vyřešeno" },
+  "deviceType": {
+    "camera": "Kamera",
+    "access": "Přístupový systém",
+    "alarm": "Alarm / EZS",
+    "other": "Jiné"
+  },
+  "state": {
+    "in_operation": "V provozu",
+    "fault": "Porucha",
+    "in_service": "V servisu",
+    "decommissioned": "Vyřazeno"
+  },
+  "severity": {
+    "low": "Nízká",
+    "medium": "Střední",
+    "high": "Vysoká",
+    "critical": "Kritická"
+  },
+  "incidentState": {
+    "reported": "Nahlášeno",
+    "in_progress": "V řešení",
+    "resolved": "Vyřešeno"
+  },
   "attachmentKind": {
     "revision_protocol": "Revizní protokol",
     "manual": "Manuál",
     "contract": "Servisní smlouva",
     "other": "Jiný dokument"
   },
-  "taskState": { "NEW": "Nový", "IN_PROGRESS": "Rozpracovaný", "WAITING": "Čeká", "DONE": "Hotovo", "CANCELLED": "Zrušeno" },
-  "filters": { "search": "Hledat zařízení, umístění, výrobní číslo…", "allTypes": "Všechny typy", "allStates": "Všechny stavy", "openOnly": "Jen otevřené" },
+  "taskState": {
+    "NEW": "Nový",
+    "IN_PROGRESS": "Rozpracovaný",
+    "WAITING": "Čeká",
+    "DONE": "Hotovo",
+    "CANCELLED": "Zrušeno"
+  },
+  "filters": {
+    "search": "Hledat zařízení, umístění, výrobní číslo…",
+    "allTypes": "Všechny typy",
+    "allStates": "Všechny stavy",
+    "openOnly": "Jen otevřené"
+  },
   "stats": {
     "count": "Zařízení",
     "countHint": "{{active}} aktivních, {{retired}} vyřazených",
@@ -81,7 +114,9 @@
     "taskLiveUnavailable": "Stav úkolu se nepodařilo načíst.",
     "maxSize": "PDF, obrázek nebo dokument do 5 MB.",
     "createdInfo": "Založeno {{at}} · {{by}}",
-    "updatedInfo": "Změněno {{at}} · {{by}}"
+    "updatedInfo": "Změněno {{at}} · {{by}}",
+    "comments": "Komentáře k zařízení",
+    "linkedDocuments": "Dokumenty z agendy Dokumenty"
   },
   "report": {
     "title": "Nahlásit poruchu",
@@ -94,10 +129,22 @@
     "doneWithTask": "Porucha nahlášena a servisní úkol založen",
     "taskFailed": "Porucha je uložená, ale úkol se nepodařilo založit. Zkuste „Založit servisní úkol“ v detailu."
   },
-  "create": { "title": "Nové zařízení", "submit": "Založit zařízení" },
-  "edit": { "title": "Upravit kartu zařízení", "submit": "Uložit změny" },
-  "inspection": { "title": "Zaznamenat kontrolu", "submit": "Uložit kontrolu" },
-  "resolveDialog": { "title": "Vyřešit poruchu", "submit": "Označit jako vyřešené" },
+  "create": {
+    "title": "Nové zařízení",
+    "submit": "Založit zařízení"
+  },
+  "edit": {
+    "title": "Upravit kartu zařízení",
+    "submit": "Uložit změny"
+  },
+  "inspection": {
+    "title": "Zaznamenat kontrolu",
+    "submit": "Uložit kontrolu"
+  },
+  "resolveDialog": {
+    "title": "Vyřešit poruchu",
+    "submit": "Označit jako vyřešené"
+  },
   "created": "Zařízení založeno",
   "saved": "Karta uložena",
   "inspectionSaved": "Kontrola zaznamenána",

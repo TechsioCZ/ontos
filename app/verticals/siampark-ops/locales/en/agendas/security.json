@@ -4,7 +4,10 @@
   "evidenceOnly": "Records only",
   "evidenceOnlyHint": "OntOS never controls devices: no camera streams, alarm, reader or door control.",
   "restrictedHint": "Sensitive agenda: internal Siampark roles only.",
-  "tabs": { "devices": "Devices", "incidents": "Faults and incidents" },
+  "tabs": {
+    "devices": "Devices",
+    "incidents": "Faults and incidents"
+  },
   "actions": {
     "newDevice": "New device",
     "reportFault": "Report fault",
@@ -46,18 +49,48 @@
     "file": "File",
     "taskDueDate": "Task due date"
   },
-  "deviceType": { "camera": "Camera", "access": "Access control", "alarm": "Alarm", "other": "Other" },
-  "state": { "in_operation": "In operation", "fault": "Fault", "in_service": "In service", "decommissioned": "Decommissioned" },
-  "severity": { "low": "Low", "medium": "Medium", "high": "High", "critical": "Critical" },
-  "incidentState": { "reported": "Reported", "in_progress": "In progress", "resolved": "Resolved" },
+  "deviceType": {
+    "camera": "Camera",
+    "access": "Access control",
+    "alarm": "Alarm",
+    "other": "Other"
+  },
+  "state": {
+    "in_operation": "In operation",
+    "fault": "Fault",
+    "in_service": "In service",
+    "decommissioned": "Decommissioned"
+  },
+  "severity": {
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "critical": "Critical"
+  },
+  "incidentState": {
+    "reported": "Reported",
+    "in_progress": "In progress",
+    "resolved": "Resolved"
+  },
   "attachmentKind": {
     "revision_protocol": "Inspection report",
     "manual": "Manual",
     "contract": "Service contract",
     "other": "Other document"
   },
-  "taskState": { "NEW": "New", "IN_PROGRESS": "In progress", "WAITING": "Waiting", "DONE": "Done", "CANCELLED": "Cancelled" },
-  "filters": { "search": "Search device, location, serial number…", "allTypes": "All types", "allStates": "All states", "openOnly": "Open only" },
+  "taskState": {
+    "NEW": "New",
+    "IN_PROGRESS": "In progress",
+    "WAITING": "Waiting",
+    "DONE": "Done",
+    "CANCELLED": "Cancelled"
+  },
+  "filters": {
+    "search": "Search device, location, serial number…",
+    "allTypes": "All types",
+    "allStates": "All states",
+    "openOnly": "Open only"
+  },
   "stats": {
     "count": "Devices",
     "countHint": "{{active}} active, {{retired}} decommissioned",
@@ -81,7 +114,9 @@
     "taskLiveUnavailable": "Task state could not be loaded.",
     "maxSize": "PDF, image or document up to 5 MB.",
     "createdInfo": "Created {{at}} · {{by}}",
-    "updatedInfo": "Changed {{at}} · {{by}}"
+    "updatedInfo": "Changed {{at}} · {{by}}",
+    "comments": "Device comments",
+    "linkedDocuments": "Documents from the Documents agenda"
   },
   "report": {
     "title": "Report fault",
@@ -94,10 +129,22 @@
     "doneWithTask": "Fault reported and service task created",
     "taskFailed": "The fault is saved but the task could not be created. Use „Create service task“ in the detail."
   },
-  "create": { "title": "New device", "submit": "Create device" },
-  "edit": { "title": "Edit device card", "submit": "Save changes" },
-  "inspection": { "title": "Record inspection", "submit": "Save inspection" },
-  "resolveDialog": { "title": "Resolve fault", "submit": "Mark resolved" },
+  "create": {
+    "title": "New device",
+    "submit": "Create device"
+  },
+  "edit": {
+    "title": "Edit device card",
+    "submit": "Save changes"
+  },
+  "inspection": {
+    "title": "Record inspection",
+    "submit": "Save inspection"
+  },
+  "resolveDialog": {
+    "title": "Resolve fault",
+    "submit": "Mark resolved"
+  },
   "created": "Device created",
   "saved": "Card saved",
   "inspectionSaved": "Inspection recorded",

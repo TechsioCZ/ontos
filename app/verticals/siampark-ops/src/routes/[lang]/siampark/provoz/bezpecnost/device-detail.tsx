@@ -17,6 +17,8 @@ import type {
   SecurityDevice,
   SecurityIncident,
 } from '../../../../../../shared/domain/security.ts';
+import { CommentThread } from '../../../../../ui/comment-thread.tsx';
+import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
 import { downloadFile, MAX_UPLOAD_BYTES, uploadFile } from '../../../../../ui/use-agenda.ts';
 import type { RunCommand } from './device-forms.tsx';
 import { linkNewTask } from './device-forms.tsx';
@@ -494,6 +496,14 @@ export const DeviceDetailPanel = ({
             </ul>
           )}
           {canWrite && <p className="text-fg-secondary text-xs">{k('detail.maxSize')}</p>}
+        </SectionCard>
+
+        <SectionCard title={k('detail.linkedDocuments')}>
+          <LinkedDocuments subject={{ id: device.id, kind: 'device', label: device.name }} />
+        </SectionCard>
+
+        <SectionCard>
+          <CommentThread subject={{ id: device.id, kind: 'device', label: device.name }} title={k('detail.comments')} />
         </SectionCard>
 
         <SectionCard title={k('detail.history')}>
