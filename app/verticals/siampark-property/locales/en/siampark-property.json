@@ -186,7 +186,7 @@
           "save": "Save",
           "cancel": "Cancel",
           "saved": "Property saved.",
-          "validation": "Enter a code, name and address (up to 300 characters).",
+          "validation": "Complete the required property fields (up to 300 characters each).",
           "conflict": "Data changed or the code is already used. Refresh properties and try again.",
           "forbidden": "You do not have permission to edit properties.",
           "unavailable": "Property could not be saved. Try again.",

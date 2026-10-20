@@ -985,12 +985,14 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               )}
               {selected.state === 'CONFIRMED' && (
                 <>
-                  <a
-                    className="siamparkoccupancy:inline-flex siamparkoccupancy:items-center siamparkoccupancy:text-sm siamparkoccupancy:underline siamparkoccupancy:underline-offset-4"
-                    href={`/${language}/siampark/agreements`}
-                  >
-                    {t('siampark-occupancy.demo.contract')}
-                  </a>
+                  {isLease && (
+                    <a
+                      className="siamparkoccupancy:inline-flex siamparkoccupancy:items-center siamparkoccupancy:text-sm siamparkoccupancy:underline siamparkoccupancy:underline-offset-4"
+                      href={`/${language}/siampark/agreements`}
+                    >
+                      {t('siampark-occupancy.demo.contract')}
+                    </a>
+                  )}
                   <Button disabled={busy} onClick={() => activate(selected)} size="sm" variant="warning">
                     {t('siampark-occupancy.demo.activate')}
                   </Button>

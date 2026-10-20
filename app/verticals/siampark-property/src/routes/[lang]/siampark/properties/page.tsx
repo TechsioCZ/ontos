@@ -14,6 +14,7 @@ import { Effect, Match, Option, Random, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { usePropertyEditor } from './use-property-editor.ts';
+import './property-editor.css';
 import { UnitStory, pragueToday } from './unit-story.tsx';
 import { executeRecords } from '../../../../api/records-client';
 import type { RecordsResponse } from '../../../../../shared/apis/records';
@@ -456,7 +457,7 @@ const RecordsPageContent = () => {
             )}
             {editor.draft !== undefined && (
               <form
-                className={detailCardClass}
+                className={`${detailCardClass} sp-property-editor`}
                 onSubmit={(event) => {
                   event.preventDefault();
                   editor.save();
@@ -477,7 +478,7 @@ const RecordsPageContent = () => {
                   />
                 ))}
                 {editor.draft.unitFor === undefined && (
-                  <label className={messageClass}>
+                  <label className="sp-property-state">
                     {t(`${key}.state`)}
                     <select
                       aria-label={t(`${key}.state`)}
@@ -492,7 +493,7 @@ const RecordsPageContent = () => {
                     </select>
                   </label>
                 )}
-                <div className="siamparkproperty:flex siamparkproperty:gap-3">
+                <div className="sp-property-editor-actions siamparkproperty:flex siamparkproperty:gap-3">
                   <Button disabled={editor.busy} type="submit" variant="warning">
                     {t(`${key}.editor.save`)}
                   </Button>
