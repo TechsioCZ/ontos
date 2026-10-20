@@ -125,10 +125,18 @@ export const callAction = async <S extends Schema.Codec<unknown>>(
   payload: JsonObject,
   schema: S,
   idempotencyKey: string = randomUUID(),
+  referenceAudiences: readonly string[] = [],
 ): Promise<S['Type']> => {
   const context = await getGatewayContext(vertical);
+  const references = await Promise.all(
+    referenceAudiences.map(async (audience) => {
+      const reference = await getGatewayContext(audience);
+      return { audience, authorization: `Bearer ${reference.token}` };
+    }),
+  );
   return await postJson(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, schema, {
     'idempotency-key': idempotencyKey,
+    ...(references.length === 0 ? {} : { 'x-ontos-reference-credentials': JSON.stringify(references) }),
   });
 };
 

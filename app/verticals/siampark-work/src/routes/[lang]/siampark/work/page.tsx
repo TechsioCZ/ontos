@@ -364,6 +364,20 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
   }, [invalidFilter, partyId]);
 
+  const linkedTaskOpened = useRef(false);
+  useEffect(() => {
+    const id = new URL(globalThis.location.href).searchParams.get('resourceId');
+    if (id === null || records === undefined || linkedTaskOpened.current) return;
+    linkedTaskOpened.current = true;
+    const linked = records.items.find((task) => task.ref.resourceId === id);
+    if (linked === undefined) {
+      setActionError(t(`${key}.forbidden`));
+      return;
+    }
+    setTab('all');
+    setFilters(initialTaskFilters);
+    openEditor({ mode: 'edit', task: linked });
+  }, [records, t]);
   const today = todayIsoDate();
   const employeeNames = new Map<string, string>(employees.map((employee) => [employee.id, employee.fullName]));
   const customerNames = new Map<string, string>(

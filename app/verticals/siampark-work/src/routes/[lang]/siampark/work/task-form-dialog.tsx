@@ -554,6 +554,11 @@ export const TaskFormDialog = ({
             onChange={(event) => set({ description: event.target.value })}
             value={values.description}
           />
+          {task?.partyId !== undefined && !readOnly && (
+            <a className="underline" href={`/cs/siampark/finance?partyId=${encodeURIComponent(task.partyId)}`}>
+              Faktury klienta
+            </a>
+          )}
           {/* The pickers sit high in the panel so their long lists open downward. Placed last, the list flipped up
               over Řešitel, Termín and Priorita. */}
           <ReferencePickers

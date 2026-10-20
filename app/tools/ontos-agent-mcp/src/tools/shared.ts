@@ -103,7 +103,16 @@ export const applyCommand = async <S extends Schema.Codec<unknown>>(
   idempotencyKey?: string,
 ): Promise<S['Type']> => {
   const send = async (revision: number, key: string | undefined) =>
-    await callAction(vertical, 'apply-command', { command, expectedRevision: revision }, schema, key);
+    await callAction(
+      vertical,
+      'apply-command',
+      { command, expectedRevision: revision },
+      schema,
+      key,
+      vertical === VERTICAL.siamparkWork && typeof command['assigneeEmployeeId'] === 'string'
+        ? [VERTICAL.workforce]
+        : [],
+    );
   try {
     return await send(expectedRevision ?? (await currentRevision()), idempotencyKey);
   } catch (error) {
