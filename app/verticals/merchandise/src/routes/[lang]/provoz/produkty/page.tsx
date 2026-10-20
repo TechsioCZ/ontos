@@ -135,12 +135,9 @@ const RecordsPageContent = () => {
 
   const ready = state.status === 'ready' ? state.response : undefined;
   const products = ready?.products ?? [];
-  const productTags = useSubjectTags(
-    'product',
-    products.map((product) => product.id),
-  );
-  const tagFilter = useSubjectTagFilter(productTags);
   const canWrite = (ready?.canManageCatalog ?? ready?.canWrite) === true;
+  const productTags = useSubjectTags('product', canWrite ? products.map((product) => product.id) : []);
+  const tagFilter = useSubjectTagFilter(productTags);
   const revision = ready?.revision ?? 0;
   const categories = [...new Set(products.map((product) => product.category))].toSorted((left, right) =>
     left.localeCompare(right, 'cs'),
@@ -278,9 +275,11 @@ const RecordsPageContent = () => {
               value={[category]}
             />
           </div>
-          <div className="w-48">
-            <TagFilter kind="product" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
-          </div>
+          {canWrite && (
+            <div className="w-48">
+              <TagFilter kind="product" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
+            </div>
+          )}
           <Switch checked={lowStockOnly} name="lowStockOnly" onCheckedChange={setLowStockOnly}>
             {k('filters.lowStockOnly')}
           </Switch>

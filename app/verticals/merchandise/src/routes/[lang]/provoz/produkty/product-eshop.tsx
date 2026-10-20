@@ -341,14 +341,20 @@ export const VariantsPanel = ({
                         )}
                       </Table.Cell>
                       <Table.Cell>
-                        <Switch
-                          checked={draft.active}
-                          disabled={!canWrite}
-                          name={`variant-active-${draft.key}`}
-                          onCheckedChange={(checked: boolean) => patchDraft(draft.key, { active: checked })}
-                        >
-                          <span className="sr-only">Aktivní</span>
-                        </Switch>
+                        {canWrite ? (
+                          <Switch
+                            checked={draft.active}
+                            disabled={!canWrite}
+                            name={`variant-active-${draft.key}`}
+                            onCheckedChange={(checked: boolean) => patchDraft(draft.key, { active: checked })}
+                          >
+                            <span className="sr-only">Aktivní</span>
+                          </Switch>
+                        ) : (
+                          <Badge size="sm" variant={draft.active ? 'success' : 'outline'}>
+                            {draft.active ? 'Aktivní' : 'Neaktivní'}
+                          </Badge>
+                        )}
                       </Table.Cell>
                     </Table.Row>
                   );

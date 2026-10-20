@@ -34,6 +34,8 @@
           "success": "Order status changed",
           "tags": "Tags",
           "selectHint": "Select orders in the table to change their status or tags together.",
+          "selectStatusHint": "Select orders in the table to change their status together.",
+          "finalStatusOnly": "Completed and cancelled orders cannot change status.",
           "selectionScope": "Actions apply to the selected orders in the current filter, including other pages.",
           "noCommonStatus": "The selected orders have no shared next status. You can still change their tags together.",
           "finalStatus": "Delivered and cancelled orders cannot change status. You can still change their tags together."

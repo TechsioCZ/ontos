@@ -37,6 +37,7 @@ export const useSubjectTagFilter = (rowTags: SubjectTags): SubjectTagFilter => {
 };
 
 export interface SubjectTags {
+  readonly canWrite: boolean;
   readonly refetch: () => void;
   readonly status: TagsStatus;
   readonly tagsOf: (id: string) => readonly Tag[];
@@ -44,9 +45,10 @@ export interface SubjectTags {
 
 /** Tags of the rows on screen. `tagsOf` returns no tags for a row that has none or whose lookup failed. */
 export const useSubjectTags = (kind: SubjectKind, ids: readonly string[]): SubjectTags => {
-  const { refetch, status, tagsBySubject } = useTagsFor(kind, toSubjectIds(ids));
+  const { canWrite, refetch, status, tagsBySubject } = useTagsFor(kind, toSubjectIds(ids));
   const byId = new Map<string, readonly Tag[]>(tagsBySubject);
   return {
+    canWrite: ids.length > 0 && canWrite === true,
     refetch,
     status,
     tagsOf: (id: string): readonly Tag[] => byId.get(id) ?? [],

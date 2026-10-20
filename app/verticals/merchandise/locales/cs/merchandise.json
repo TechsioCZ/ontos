@@ -34,6 +34,8 @@
           "success": "Stav objednávek změněn",
           "tags": "Štítky",
           "selectHint": "Vyberte objednávky v tabulce pro hromadnou změnu stavu nebo štítků.",
+          "selectStatusHint": "Vyberte objednávky v tabulce pro hromadnou změnu stavu.",
+          "finalStatusOnly": "U dokončených a stornovaných objednávek už stav změnit nelze.",
           "selectionScope": "Akce se týkají vybraných objednávek v aktuálním filtru, včetně dalších stránek.",
           "noCommonStatus": "Vybrané objednávky nemají společný další stav. Štítky můžete upravit společně.",
           "finalStatus": "U dokončených a stornovaných objednávek už stav změnit nelze. Štítky můžete upravit společně."

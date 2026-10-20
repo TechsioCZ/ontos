@@ -48,19 +48,23 @@ const loadInto = (setState: (next: DirectoryState) => void): void => {
 };
 
 /** Loads the customer list from party-registry once. Order names and the customer picker both read it. */
-export const useCustomerDirectory = (): CustomerDirectory => {
+export const useCustomerDirectory = (enabled = true): CustomerDirectory => {
   const [state, setState] = useState<DirectoryState>({ entries: [], status: 'loading' });
   useEffect(() => {
-    loadInto(setState);
-  }, []);
+    if (enabled) {
+      loadInto(setState);
+    }
+  }, [enabled]);
   const byId = new Map(state.entries.map((entry) => [entry.partyId, entry] as const));
   return {
     active: state.entries.filter((entry) => entry.status === 'ACTIVE'),
     nameOf: (partyId) => byId.get(partyId)?.name ?? null,
     reload: () => {
       setState((current) => ({ ...current, status: 'loading' }));
-      loadInto(setState);
+      if (enabled) {
+        loadInto(setState);
+      }
     },
-    status: state.status,
+    status: enabled ? state.status : 'ready',
   };
 };

@@ -95,14 +95,12 @@ const OrdersPageContent = () => {
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
-  const directory = useCustomerDirectory();
-
   const ready = state.kind === 'ready' ? state : undefined;
   const { canWrite, orders, stats } = ordersPageSummary(ready);
-  const orderTags = useSubjectTags(
-    'order',
-    orders.map((order) => order.id),
-  );
+  // Dispatch processes order snapshots; it has no customer-directory or tagging access.
+  const canEditOrders = (ready?.records.canEditOrders ?? canWrite) === true;
+  const directory = useCustomerDirectory(canEditOrders);
+  const orderTags = useSubjectTags('order', canEditOrders ? orders.map((order) => order.id) : []);
   const tagFilter = useSubjectTagFilter(orderTags);
   const statusItems = [{ label: t(key('filters.allStatuses')), value: ALL_STATUSES }, ...bulkStatusItems];
   const query = search.trim().toLowerCase();
@@ -212,9 +210,11 @@ const OrdersPageContent = () => {
               value={[statusFilter ?? ALL_STATUSES]}
             />
           </div>
-          <div className="w-48">
-            <TagFilter kind="order" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
-          </div>
+          {canEditOrders && (
+            <div className="w-48">
+              <TagFilter kind="order" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
+            </div>
+          )}
         </div>
         {tagFilter.status === 'error' && (
           <StatusText showIcon status="error">
@@ -225,19 +225,29 @@ const OrdersPageContent = () => {
         {canWrite && (
           <>
             <StatusText status="default">
-              {t(key(selected.length === 0 ? 'bulk.selectHint' : 'bulk.selectionScope'))}
+              {t(
+                key(
+                  selected.length === 0
+                    ? orderTags.canWrite
+                      ? 'bulk.selectHint'
+                      : 'bulk.selectStatusHint'
+                    : 'bulk.selectionScope',
+                ),
+              )}
             </StatusText>
             <BulkActionBar onClear={() => setSelection({})} selectedCount={selected.length}>
-              <Button
-                disabled={busy}
-                icon="icon-[mdi--tag-multiple-outline]"
-                onClick={() => setTagsOpen(true)}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {t(key('bulk.tags'))}
-              </Button>
+              {orderTags.canWrite && (
+                <Button
+                  disabled={busy}
+                  icon="icon-[mdi--tag-multiple-outline]"
+                  onClick={() => setTagsOpen(true)}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  {t(key('bulk.tags'))}
+                </Button>
+              )}
               {availableBulkStatuses.length > 0 ? (
                 <SelectTemplate
                   disabled={busy}
@@ -258,7 +268,15 @@ const OrdersPageContent = () => {
                 />
               ) : (
                 <StatusText showIcon status="default">
-                  {t(key(selectedOrdersAreFinal ? 'bulk.finalStatus' : 'bulk.noCommonStatus'))}
+                  {t(
+                    key(
+                      selectedOrdersAreFinal
+                        ? orderTags.canWrite
+                          ? 'bulk.finalStatus'
+                          : 'bulk.finalStatusOnly'
+                        : 'bulk.noCommonStatus',
+                    ),
+                  )}
                 </StatusText>
               )}
             </BulkActionBar>
@@ -323,7 +341,7 @@ const OrdersPageContent = () => {
             return (
               <EmptyState
                 action={
-                  canWrite ? (
+                  canEditOrders ? (
                     <Button onClick={() => setCreateOpen(true)} size="sm" theme="outlined" variant="secondary">
                       {t(key('create.title'))}
                     </Button>
