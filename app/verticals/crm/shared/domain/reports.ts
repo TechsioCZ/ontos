@@ -9,6 +9,9 @@
 //  - Raw source statuses stay visible. A status gets a business meaning only through the versioned mapping below;
 //    anything else is "bez schváleného významu". Totals are "hodnota evidovaných objednávek", never revenue.
 //  - Salesperson grouping follows the client's CURRENT owner (C04: summaries follow the valid binding).
+import { DateTime } from 'effect';
+import type { RecordsResponse } from '../apis/records.ts';
+import { canSeeEverything } from './access.ts';
 import type { ImportedOrder } from './imports.ts';
 import type { CrmState } from './state.ts';
 
@@ -47,7 +50,8 @@ export interface StatusMappingEntry {
  * returns separately (CRM-DEMO R04); the page says so next to the table.
  */
 export const statusMapping = {
-  approvedOn: '2026-10-19',
+  // Demo interpretation only. R04 customer approval has not been supplied.
+  approval: 'demo_only',
   entries: [
     { meaning: 'open', raw: ['nova', 'nová', 'prijata', 'přijatá', 'prijato', 'v reseni', 'new', 'received'] },
     { meaning: 'paid', raw: ['zaplacena', 'uhrazena', 'uhrazeno', 'paid'] },
@@ -567,6 +571,37 @@ export const clientSalesFacts = (state: CrmState, clientId: string, period?: Rep
     orderCount: report.count,
     totals: report.totals,
     withoutAmount: report.withoutAmount,
+  };
+};
+
+// Shell home facts reuse the same report and never run a second, broader data request.
+export const buildCrmHomeSummary = (records: RecordsResponse) => {
+  const all = canSeeEverything(records.viewer);
+  const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' }).format(
+    DateTime.toEpochMillis(DateTime.makeUnsafe(records.now)),
+  );
+  const activeClients = new Set(
+    records.state.clients.items.filter((client) => client.status === 'active').map((client) => client.id),
+  );
+  const open = records.state.visits.plan.filter(
+    (item) =>
+      item.status === 'open' &&
+      activeClients.has(item.clientId) &&
+      (all || item.salespersonId === records.viewer.salespersonId),
+  );
+  const month = buildSalesReport(records.state, { period: { from: `${today.slice(0, 7)}-01`, to: today } });
+  return {
+    clients: activeClients.size,
+    dueToday: open.filter((item) => item.dueDate.slice(0, 10) === today).length,
+    month,
+    openContacts: open.length,
+    overdue: open.filter((item) => item.dueDate.slice(0, 10) < today).length,
+    // Undefined is deliberate: a rep does not receive or learn the firm's unpaired-order count.
+    toResolve: all
+      ? buildSalesReport(records.state)
+          .excluded.filter((entry) => entry.reason !== 'confirmed_duplicate')
+          .reduce((sum, entry) => sum + entry.count, 0)
+      : undefined,
   };
 };
 

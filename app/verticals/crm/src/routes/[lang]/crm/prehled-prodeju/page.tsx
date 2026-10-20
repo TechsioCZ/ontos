@@ -5,11 +5,10 @@
 import { PageHeader, formatDateTime } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
-import { buildSalesReport, exclusionReasonLabels, groupsCsv, ordersCsv } from '../../../../../shared/domain/reports.ts';
+import { buildSalesReport, exclusionReasonLabels } from '../../../../../shared/domain/reports.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import { CrmStateGate } from '../../../../crm/ui.tsx';
@@ -26,7 +25,14 @@ import {
 } from './report-filters.tsx';
 import { downloadCsv } from './report-format.ts';
 import type { GroupingKey } from './report-tables.tsx';
-import { ItemsCard, OrdersTable, StatusMappingCard, SummaryTable, groupingLabels, groupsOf } from './report-tables.tsx';
+import {
+  ItemsCard,
+  OrdersTable,
+  StatusMappingCard,
+  SummaryTable,
+  groupingLabels,
+  summaryCsv,
+} from './report-tables.tsx';
 import { SalesKpiTiles } from './sales-kpi-strip.tsx';
 
 const fileSlug = (value: string) =>
@@ -67,18 +73,6 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
   return (
     <>
       <PageHeader
-        actions={
-          <Button
-            disabled={report.rows.length === 0}
-            icon="icon-[mdi--download]"
-            onClick={() => downloadCsv(ordersCsv(report), `${fileBase}-objednavky.csv`)}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            Export objednávek (CSV)
-          </Button>
-        }
         description="Počty a hodnoty importovaných objednávek spárovaných s klienty, po obdobích, obchodnících, klientech a stavech. Každá měna zvlášť."
         meta={
           scopeAll ? (
@@ -120,7 +114,7 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
                 <span className="font-semibold">Vyloučeno z přehledu: {report.excludedTotal} </span>
                 {report.excludedTotal === 1 ? 'objednávka' : report.excludedTotal < 5 ? 'objednávky' : 'objednávek'} (
                 {report.excluded.map((entry) => `${entry.count}× ${exclusionReasonLabels[entry.reason]}`).join('; ')}
-                ).{' '}
+                ). Počet vyloučených záznamů platí pro celé zvolené období, bez filtru klienta, obchodníka a stavu.{' '}
                 <a className="underline underline-offset-2" href={`/${lang}/crm/parovani`}>
                   Otevřít párování
                 </a>
@@ -157,7 +151,7 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
             lang={lang}
             onExport={() =>
               downloadCsv(
-                groupsCsv(groupingLabels[query.grouping], groupsOf(report, query.grouping), report.currencies),
+                summaryCsv(report, query.grouping, records.state),
                 `${fileBase}-souhrn-${fileSlug(groupingLabels[query.grouping])}.csv`,
               )
             }
@@ -173,7 +167,7 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
                 Kliknutím na klienta otevřete kartu klienta. Export obsahuje přesně tyto řádky.
               </span>
             </div>
-            <OrdersTable lang={lang} report={report} />
+            <OrdersTable fileName={`${fileBase}-objednavky.csv`} lang={lang} report={report} />
           </section>
           <ItemsCard report={report} />
         </>

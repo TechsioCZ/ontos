@@ -29,6 +29,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
+    './HomeSummary': './src/components/home-summary.tsx',
     './PageAiApprovals': './src/routes/[lang]/crm/schvalovani-ai/page.tsx',
     './PageClients': './src/routes/[lang]/crm/klienti/page.tsx',
     './PageImports': './src/routes/[lang]/crm/importy/page.tsx',

@@ -5,10 +5,12 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
+  ShellPublicComponentContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { HomeSummary } from './src/components/home-summary.tsx';
 import { RecordsApi } from './shared/apis/records.ts';
 import { ClientsPage } from './src/routes/[lang]/crm/klienti/page.tsx';
 import { VisitsPage } from './src/routes/[lang]/crm/navstevy/page.tsx';
@@ -31,6 +33,9 @@ const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+
+const publicComponentContribution = (value: typeof ShellPublicComponentContributionSchema.Encoded) =>
+  Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
 
 const moduleKey = 'demo.crm';
 
@@ -70,6 +75,7 @@ export const crmManifest = defineOntosModuleManifest({
     ],
     components: {
       // <generated-module-manifest-components>
+      'home-summary': HomeSummary,
       'page-ai-approvals': AiApprovalsPage,
       'page-clients': ClientsPage,
       'page-visits': VisitsPage,
@@ -300,6 +306,19 @@ export const crmManifest = defineOntosModuleManifest({
       ],
       publicComponents: [
         // <generated-module-shell-components>
+        publicComponentContribution({
+          componentKey: 'demo.crm.home-summary',
+          contributionKey: 'demo.crm.component.home-summary',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'demo.crm.component.home-summary',
+            moduleKey,
+            role: 'public_component',
+            scope: 'tenant',
+          },
+          expose: './HomeSummary',
+        }),
         // </generated-module-shell-components>
       ],
       reports: [

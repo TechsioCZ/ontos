@@ -21,6 +21,7 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
     },
     components: {
       // <generated-module-registration-components>
+      'home-summary': () => import('./src/components/home-summary.tsx'),
       // </generated-module-registration-components>
     },
     pages: {

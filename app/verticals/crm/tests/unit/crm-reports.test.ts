@@ -2,6 +2,7 @@ import { describe, expect, it } from '@rstest/core';
 import type { CrmViewer } from '../../shared/domain/access.ts';
 import type { ImportedOrder } from '../../shared/domain/imports.ts';
 import {
+  buildCrmHomeSummary,
   buildSalesReport,
   clientSalesFacts,
   decimalToUnits,
@@ -264,5 +265,54 @@ describe('CRM sales report — duplicate decisions', () => {
     expect(report.count).toBe(2);
     expect(report.totals).toEqual([{ amount: '140.00', count: 2, currency: 'CZK' }]);
     expect(report.excluded).toEqual([{ count: 1, reason: 'confirmed_duplicate' }]);
+  });
+});
+
+describe('CRM shell Home summary', () => {
+  it('counts only open manual contacts, scoped clients and this-month currency totals', () => {
+    const source = base([
+      order({ amount: '12.30', clientId: 'x', currency: 'CZK', orderedAt: '2026-10-01', pairing: 'paired' }),
+      order({ amount: '3.50', clientId: 'x', currency: 'EUR', orderedAt: '2026-10-02', pairing: 'paired' }),
+      order({ amount: '800.00', clientId: 'x', currency: 'CZK', orderedAt: '2026-09-30', pairing: 'paired' }),
+      order({ amount: '999.00', clientId: 'y', currency: 'CZK', orderedAt: '2026-10-01', pairing: 'paired' }),
+      order({ pairing: 'unpaired' }),
+    ]);
+    const plan = (id: string, dueDate: string, status: 'open' | 'done' = 'open', salespersonId = 'a') => ({
+      clientId: 'x',
+      createdAt: at,
+      createdBy: 'p-a',
+      dueDate,
+      id,
+      salespersonId,
+      status,
+    });
+    const state = {
+      ...source,
+      visits: {
+        ...source.visits,
+        plan: [
+          plan('today', '2026-10-20'),
+          plan('late', '2026-10-19'),
+          plan('future', '2026-10-21'),
+          plan('done', '2026-10-20', 'done'),
+          plan('other-rep', '2026-10-20', 'open', 'b'),
+        ],
+      },
+    };
+    const result = buildCrmHomeSummary({
+      state: projectCrmState(state, repA),
+      viewer: repA,
+      now: '2026-10-20T09:00:00.000Z',
+      revision: 1,
+    });
+    expect(result.clients).toBe(1);
+    expect(result.dueToday).toBe(1);
+    expect(result.overdue).toBe(1);
+    expect(result.openContacts).toBe(3);
+    expect(result.toResolve).toBeUndefined();
+    expect(result.month.totals).toEqual([
+      { amount: '12.30', count: 1, currency: 'CZK' },
+      { amount: '3.50', count: 1, currency: 'EUR' },
+    ]);
   });
 });

@@ -15,13 +15,15 @@ import {
   UNASSIGNED,
   clientSalesFacts,
   orderMoney,
+  ordersCsv,
+  toCsv,
   rawStatusesInUse,
   statusMapping,
   statusMeaningLabels,
   unitsToDecimal,
 } from '../../../../../shared/domain/reports.ts';
 import { crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
-import { formatDecimalMoney, totalIn } from './report-format.ts';
+import { downloadCsv, formatDecimalMoney, totalIn } from './report-format.ts';
 
 export type GroupingKey = 'salesperson' | 'client' | 'month' | 'status';
 
@@ -44,6 +46,31 @@ export const groupsOf = (report: SalesReport, grouping: GroupingKey): readonly R
       return report.byStatus;
   }
 };
+
+// Match the summary's displayed columns and order, including absent values (never invented zeroes).
+export const summaryCsv = (report: SalesReport, grouping: GroupingKey, state: CrmState) =>
+  toCsv(
+    [
+      groupingLabels[grouping],
+      'Počet objednávek',
+      ...report.currencies.map((currency) => `Hodnota ${currency}`),
+      'Poslední objednávka',
+      ...(grouping === 'client' ? ['Poslední návštěva'] : []),
+    ],
+    groupsOf(report, grouping).map((group) => [
+      group.label,
+      group.count,
+      ...report.currencies.map((currency) => totalIn(group.totals, currency)?.amount.replace('.', ',') ?? '—'),
+      group.lastOrderAt === undefined ? '—' : formatDate(group.lastOrderAt),
+      ...(grouping === 'client'
+        ? [
+            clientSalesFacts(state, group.key).lastVisitAt === undefined
+              ? 'bez záznamu'
+              : formatDate(clientSalesFacts(state, group.key).lastVisitAt),
+          ]
+        : []),
+    ]),
+  );
 
 const meaningVariant: Record<StatusMeaningOrUnmapped, 'outline' | 'info' | 'success' | 'warning' | 'danger'> = {
   cancelled: 'outline',
@@ -341,7 +368,15 @@ const orderColumns = (lang: string): ColumnDef<ReportOrderRow>[] => [
   },
 ];
 
-export const OrdersTable = ({ lang, report }: { readonly lang: string; readonly report: SalesReport }) => (
+export const OrdersTable = ({
+  fileName,
+  lang,
+  report,
+}: {
+  readonly fileName: string;
+  readonly lang: string;
+  readonly report: SalesReport;
+}) => (
   <DataTable
     columns={orderColumns(lang)}
     data={[...report.rows]}
@@ -351,6 +386,25 @@ export const OrdersTable = ({ lang, report }: { readonly lang: string; readonly 
     getRowLabel={(row) => row.original.order.number ?? row.original.order.externalId}
     pageSizeOptions={[25, 50, 100]}
     paginationProps={crmPaginationProps}
+    renderToolbar={(table) => (
+      <div className="flex flex-wrap items-center justify-between gap-150">
+        <span className="text-fg-secondary text-sm">
+          CSV obsahuje pouze aktuální stránku, ve zvoleném pořadí. Pro všechny řádky zvyšte počet na stránku.
+        </span>
+        <Button
+          disabled={table.getRowModel().rows.length === 0}
+          icon="icon-[mdi--download]"
+          onClick={() =>
+            downloadCsv(ordersCsv({ ...report, rows: table.getRowModel().rows.map((row) => row.original) }), fileName)
+          }
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          Export objednávek (CSV)
+        </Button>
+      </div>
+    )}
     size="sm"
     tableLayout="fixed"
     translations={{
@@ -367,9 +421,7 @@ export const OrdersTable = ({ lang, report }: { readonly lang: string; readonly 
 export const StatusMappingCard = ({ state }: { readonly state: CrmState }) => {
   const statuses = rawStatusesInUse(state);
   return (
-    <SectionCard
-      title={`Význam stavů a definice metrik (mapování ${statusMapping.version}, schváleno ${formatDate(statusMapping.approvedOn)})`}
-    >
+    <SectionCard title={`Význam stavů a definice metrik (demo mapování ${statusMapping.version})`}>
       <div className="grid min-w-0 grid-cols-1 gap-250 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         {statuses.length === 0 ? (
           <p className="text-fg-secondary text-sm">Zatím nebyla importována žádná objednávka — bez dat.</p>
@@ -428,8 +480,9 @@ export const StatusMappingCard = ({ state }: { readonly state: CrmState }) => {
           <div>
             <dt className="font-medium">Význam stavů</dt>
             <dd className="text-fg-secondary">
-              Stav ze zdroje zůstává vždy viditelný. Stav mimo mapování je „bez schváleného významu“. Definitivní význam
-              storen a vratek potvrdí zákazník (R04).
+              DEMO: mapování slouží pouze k ukázce kategorií, není potvrzené zákazníkem. Stav ze zdroje zůstává vždy
+              viditelný. Stav mimo tabulku je „bez schváleného významu“. Význam všech stavů, storen a vratek musí
+              potvrdit zákazník (R04).
             </dd>
           </div>
         </dl>
@@ -442,7 +495,7 @@ export const StatusMappingCard = ({ state }: { readonly state: CrmState }) => {
 
 /** Item sales by SKU — only from orders whose source really sent lines (C05-03: otherwise "bez dat", never 0). */
 export const ItemsCard = ({ report }: { readonly report: SalesReport }) => (
-  <SectionCard title="Prodejnost položek (SKU)">
+  <SectionCard title="Importované položky (SKU)">
     {report.items.ordersWithLines === 0 ? (
       <EmptyState
         description="Zdroj u započtených objednávek položky neposkytl. Nejde o nulový prodej."
@@ -457,7 +510,7 @@ export const ItemsCard = ({ report }: { readonly report: SalesReport }) => (
         </p>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[30rem] border-collapse text-sm">
-            <caption className="sr-only">Prodané množství podle SKU</caption>
+            <caption className="sr-only">Importované množství podle SKU, nikoli potvrzený prodej</caption>
             <thead>
               <tr className="border-border-primary border-b text-left text-fg-secondary">
                 <th className="py-100 pr-200 font-medium" scope="col">
