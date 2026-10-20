@@ -79,6 +79,7 @@ const PurchasingView = () => {
     const id = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('orderId');
     return id === null ? undefined : { kind: 'order', id };
   });
+  const [financeRefresh, setFinanceRefresh] = useState(0);
   const close = () => setPanel(undefined);
   const openItem = (id: string) => setPanel({ id, kind: 'item' });
   const openOrder = (id: string) => setPanel({ id, kind: 'order' });
@@ -175,7 +176,7 @@ const PurchasingView = () => {
                 />
               </Tabs.Content>
               <Tabs.Content className="py-200" value="orders">
-                <OrdersTab onOpen={openOrder} state={state} />
+                <OrdersTab financeRefresh={financeRefresh} onOpen={openOrder} state={state} />
               </Tabs.Content>
               <Tabs.Content className="py-200" value="quotes">
                 <QuotesTab onOpen={openQuote} state={state} />
@@ -206,6 +207,7 @@ const PurchasingView = () => {
                 onClose={close}
                 onOpenItem={openItem}
                 onOpenQuote={openQuote}
+                onInvoiceCreated={() => setFinanceRefresh((value) => value + 1)}
                 orderId={panel.id}
                 run={ops.run}
                 state={state}

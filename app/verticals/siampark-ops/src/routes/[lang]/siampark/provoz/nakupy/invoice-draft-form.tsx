@@ -131,8 +131,8 @@ export const InvoiceDraftForm = ({
         onValueChange={({ value }) => setRate(value[0] === undefined ? undefined : (Number(value[0]) as VatRate))}
       />
       <p className="text-fg-secondary text-xs">
-        Ceny objednávky se přebírají beze změny jako základ bez DPH. Pro tuto objednávku potvrďte jednotnou sazbu;
-        smíšené sazby upraví účetní v návrhu.
+        Ceny objednávky se přebírají beze změny jako základ bez DPH. Zvolená sazba se použije pro všechny řádky;
+        ověřte ji podle skutečného dokladu dodavatele.
       </p>
       {rate !== undefined && <p className="font-semibold text-sm">Celkem včetně DPH: {formatAmount(totalMinor)}</p>}
       <div className="flex flex-wrap justify-end gap-100">

@@ -78,16 +78,19 @@ const DeliveryProgress = ({ order }: { readonly order: PurchaseOrder }) => {
 };
 
 export const OrdersTab = ({
+  financeRefresh = 0,
   onOpen,
   state,
 }: {
   readonly state: PurchasingState;
+  readonly financeRefresh?: number;
   readonly onOpen: (orderId: string) => void;
 }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const lookup = lookupOf(state);
   const [openOnly, setOpenOnly] = useState(false);
+  const financeLinks = useIncomingInvoiceLinks(financeRefresh);
   const rows = state.orders
     .filter((order) => !openOnly || OPEN_ORDER_STATUSES.has(order.status) || order.status === 'draft')
     .toReversed();
@@ -127,12 +130,25 @@ export const OrdersTab = ({
       id: 'quote',
     },
     {
-      cell: ({ row }) =>
-        row.original.invoices.length === 0 ? (
-          <span className="text-fg-secondary">{k('orders.noInvoice')}</span>
+      cell: ({ row }) => {
+        const numbers = [
+          ...new Set([
+            ...row.original.invoices.map((invoice) => invoice.number),
+            ...(financeLinks.status === 'ready'
+              ? financeLinks.invoices
+                  .filter((invoice) => invoice.sourceOrder?.id === row.original.id)
+                  .map((invoice) => invoice.number)
+              : []),
+          ]),
+        ];
+        return numbers.length === 0 ? (
+          <span className="text-fg-secondary">
+            {k(financeLinks.status === 'ready' ? 'orders.noInvoice' : `orders.finance.${financeLinks.status}`)}
+          </span>
         ) : (
-          row.original.invoices.map((invoice) => invoice.number).join(', ')
-        ),
+          numbers.join(', ')
+        );
+      },
       header: k('fields.invoices'),
       id: 'invoices',
     },
@@ -165,6 +181,7 @@ export const OrderPanel = ({
   onClose,
   onOpenItem,
   onOpenQuote,
+  onInvoiceCreated,
   orderId,
   run,
   state,
@@ -177,6 +194,7 @@ export const OrderPanel = ({
   readonly onClose: () => void;
   readonly onOpenItem: (itemId: string) => void;
   readonly onOpenQuote: (quoteId: string) => void;
+  readonly onInvoiceCreated: () => void;
 }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
@@ -327,6 +345,7 @@ export const OrderPanel = ({
             onCreated={() => {
               setAction(undefined);
               setFinanceRefresh((value) => value + 1);
+              onInvoiceCreated();
               toast.create({ duration: 5000, title: 'Návrh faktury byl uložen ve Financích', type: 'success' });
             }}
           />
@@ -466,7 +485,7 @@ export const OrderPanel = ({
               key={invoice.resourceId}
             >
               <Badge size="sm" variant="warning">
-                Návrh z objednávky
+                Doklad z objednávky
               </Badge>
               <span>{invoice.number}</span>
               <FinanceInvoiceLink links={financeLinks} number={invoice.number} supplier={supplier?.name ?? ''} />
