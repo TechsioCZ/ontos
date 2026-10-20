@@ -10,7 +10,7 @@ tokens. Page composition and verified library limitations may retain local CSS/u
 | 2    | Shared search/suggestions, navigation and footer                            | Complete |
 | 3    | Cart and checkout appearance overrides                                      | Complete |
 | 4    | Account, login, registration and shared form styling                        | Complete |
-| 5    | FAQ, blog, news, contacts and delivery information                          | Pending  |
+| 5    | FAQ, blog, news, contacts and delivery information                          | Complete |
 | 6    | Final token consolidation, exception audit and responsive regression checks | Pending  |
 
 ## Task 1 inventory
@@ -143,3 +143,37 @@ backend, and existing profile validation/persistence behavior is unchanged.
   in both normal and invalid states.
 - `npm run check` passed formatting, lint, type checking, all 150 tests and the production build.
   Auth, theme, account, responsive, catalog, shared UI and actual-font browser suites all passed.
+
+## Task 5 inventory
+
+| Surface                                      | Implementation                                                                                   | Result / retained exception                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FAQ search                                   | `Input`, `size="md"`                                                                             | Removed the descendant appearance override. Height, padding, text size, radius and border states use scoped Input tokens; the existing global white input surface remains authoritative. Search icon placement stays composition.                                                                           |
+| FAQ categories                               | `Button`, `size="sm"`, `theme="borderless"`, `variant="secondary"`                               | Replaced four native buttons. Padding, gap, radius, text size/weight and current/hover colors use Button tokens. Keep left alignment and the original line height because the Button API does not expose line height. Category selection and cross-category normalized search are unchanged.                |
+| Contact anchor navigation                    | `LinkButton`, `size="sm"`, `theme="outlined"`, `variant="secondary"`                             | Replaced four native links. Border, padding, radius, text and surface use scoped Button tokens, including hover/focus border feedback. Keep the wrapping navigation and minimum height. Native hash navigation and telephone links are unchanged.                                                           |
+| Blog read-more links                         | `LinkButton`, `size="current"`, `theme="borderless"`, `variant="secondary"`                      | Replaced four native links. Weight and color use Button tokens; inline text composition and underline offset remain local. `ContentLink` is the required client boundary for LinkButton handlers inside server-rendered content pages.                                                                      |
+| Contact forms                                | Existing `FormInput`, `FormTextarea`, `Button`                                                   | Controls already consume kit tokens. Keep the compact/full form compositions, required/email validation and local-only confirmation; no backend or storage behavior was added.                                                                                                                              |
+| Blog, news, delivery and information content | Existing `Badge`, `ProductCard`, semantic panels/headings/lists, Next `Image`, native `progress` | Removed redundant preflight resets and the duplicate delivery-option grid rule. Mapped 81 literal values to existing kit tokens. Keep editorial grids, exact content typography, image geometry and browser progress semantics: kit 0.56.1 has no corresponding generic heading/panel/gallery/progress API. |
+
+This task replaces twelve native controls/links and removes a net 43 native CSS declarations
+from the two app style files; supported control appearance now lives in scoped component tokens.
+Delivery options retain their effective 12px gap. News product paragraphs retain a narrow margin
+reset: removing the old broad reset would activate the shared price slot's auto margin and shift
+card content. Layout widths, catalog data and editorial content are unchanged. The blog search
+field remains a static prototype control.
+
+## Task 5 verification
+
+- Before/after computed styles and geometry match across twelve routes and sixteen UI states
+  at twelve widths from 320 to 1920px: 192 layouts and 10,032 rendered elements. Includes FAQ
+  default, hover, expanded, matching/empty search and login/registration shared-style regressions.
+  Equivalent transparent color serializations and inactive flex properties on text links are
+  normalized; all measured geometry matches.
+- Visually reviewed FAQ, blog, contacts, delivery and news screenshots on desktop/mobile.
+- `npm run test:content` passed 120 layouts and desktop/tablet/mobile interactions: category
+  keyboard navigation, accent-insensitive search, accordion state, required/email/message
+  validation, both local forms without network submission/storage, keyboard anchors, news links
+  and actual Input/Button/LinkButton token consumption.
+- `npm run check` passed formatting, lint, type checking, all 150 unit/component tests and the
+  production build. Content, auth, theme, responsive, account, catalog, shared UI and actual-font
+  browser suites all passed.

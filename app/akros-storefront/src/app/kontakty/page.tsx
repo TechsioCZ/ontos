@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { ContentLink } from "@/components/content-link";
 
 import { MockContactForm } from "@/components/mock-contact-form";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
@@ -17,11 +18,26 @@ export default function ContactsPage() {
           <h1>Kontakty</h1>
           <nav className="akros-anchor-nav" aria-label="Pobočky a kontaktní formulář">
             {branches.map((branch) => (
-              <a href={`#${branch.id}`} key={branch.id}>
+              <ContentLink
+                href={`#${branch.id}`}
+                key={branch.id}
+                theme="outlined"
+                variant="secondary"
+                size="sm"
+                className="block"
+              >
                 {branch.city}
-              </a>
+              </ContentLink>
             ))}
-            <a href="#primy-kontakt">Přímé kontakty</a>
+            <ContentLink
+              href="#primy-kontakt"
+              theme="outlined"
+              variant="secondary"
+              size="sm"
+              className="block"
+            >
+              Přímé kontakty
+            </ContentLink>
           </nav>
         </header>
 

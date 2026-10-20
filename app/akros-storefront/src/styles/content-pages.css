@@ -1,53 +1,39 @@
 .akros-content-page,
 .akros-content-section {
   display: grid;
-  gap: 24px;
+  gap: var(--dimension-24);
 }
 
 .akros-content-page__heading,
 .akros-content-panel {
   display: grid;
-  gap: 16px;
-}
-
-.akros-content-page h1,
-.akros-content-page h2,
-.akros-content-page h3,
-.akros-content-page p,
-.akros-landing-page h1,
-.akros-landing-page h2,
-.akros-landing-page h3,
-.akros-landing-page p,
-.akros-blog-page h1,
-.akros-blog-page h2,
-.akros-blog-page h3,
-.akros-blog-page p,
-.akros-news-page h1,
-.akros-news-page h2,
-.akros-news-page h3,
-.akros-news-page p {
-  margin: 0;
+  gap: var(--dimension-16);
 }
 
 .akros-content-page h1,
 .akros-content-hero h1,
 .akros-blog-featured h1,
 .akros-news-hero h1 {
-  font-size: clamp(28px, 3vw, 40px);
+  font-size: clamp(var(--dimension-28), 3vw, var(--dimension-40));
   line-height: 1.15;
 }
 
 .akros-content-page h2,
 .akros-shipping-layout h2,
 .akros-blog-layout h2 {
-  font-size: 24px;
+  font-size: var(--dimension-24);
   line-height: 1.2;
 }
 
 .akros-news-section h2 {
-  font-size: 28px;
-  font-weight: 800;
+  font-size: var(--dimension-28);
+  font-weight: var(--font-weight-extrabold);
   line-height: normal;
+}
+
+/* Preserve this page's card spacing: the shared price slot otherwise uses an auto margin. */
+.akros-news-page .akros-product-card p {
+  margin: 0;
 }
 
 .akros-content-page p,
@@ -59,20 +45,19 @@
 
 .akros-content-panel {
   border-radius: var(--akros-radius-md);
-  padding: 24px;
+  padding: var(--dimension-24);
   background: var(--color-base);
 }
 
 .akros-content-gallery {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 360px));
-  gap: 20px;
+  gap: var(--dimension-20);
 }
 
 .akros-content-gallery figure {
   display: grid;
-  gap: 12px;
-  margin: 0;
+  gap: var(--dimension-12);
 }
 
 .akros-content-gallery img {
@@ -88,25 +73,22 @@
 
 .akros-service-list {
   display: grid;
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  gap: var(--dimension-12);
 }
 
 .akros-service-list li {
   position: relative;
   border-radius: var(--akros-radius-md);
-  padding: 16px 16px 16px 36px;
+  padding: var(--dimension-16) var(--dimension-16) var(--dimension-16) var(--dimension-36);
   background: var(--color-base);
 }
 
 .akros-service-list li::before {
   position: absolute;
   top: 50%;
-  left: 16px;
-  width: 8px;
-  height: 8px;
+  left: var(--dimension-16);
+  width: var(--dimension-8);
+  height: var(--dimension-8);
   border-radius: 50%;
   background: var(--color-primary);
   content: "";
@@ -116,34 +98,23 @@
 .akros-anchor-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--dimension-8);
 }
 
 .akros-anchor-nav a {
-  min-height: 36px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--akros-radius-md);
-  padding: 8px 14px;
-  background: var(--color-base);
-  color: var(--color-fg-primary);
-  text-decoration: none;
-}
-
-.akros-anchor-nav a:hover,
-.akros-anchor-nav a:focus-visible {
-  border-color: var(--color-primary);
+  min-height: var(--dimension-36);
 }
 
 .akros-branch {
   display: grid;
-  gap: 12px;
+  gap: var(--dimension-12);
   scroll-margin-top: 184px;
 }
 
 .akros-branch__body {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(220px, 0.7fr);
-  gap: 24px;
+  gap: var(--dimension-24);
   align-items: start;
 }
 
@@ -155,8 +126,8 @@
 
 .akros-branch address {
   display: grid;
-  gap: 12px;
-  padding-block: 8px;
+  gap: var(--dimension-12);
+  padding-block: var(--dimension-8);
   font-style: normal;
   line-height: 1.5;
 }
@@ -168,13 +139,13 @@
 .akros-contact-form {
   display: grid;
   max-width: 760px;
-  gap: 20px;
+  gap: var(--dimension-20);
 }
 
 .akros-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  gap: var(--dimension-20);
 }
 
 .akros-contact-form > button {
@@ -182,8 +153,8 @@
 }
 
 .akros-form-success {
-  border-left: 4px solid var(--color-success);
-  padding: 12px 16px;
+  border-left: var(--dimension-4) solid var(--color-success);
+  padding: var(--dimension-12) var(--dimension-16);
   background: var(--color-base);
   color: var(--color-fg-status-success);
 }
@@ -215,8 +186,8 @@
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 16px;
-  padding: 48px var(--akros-page-gutter);
+  gap: var(--dimension-16);
+  padding: var(--dimension-48) var(--akros-page-gutter);
   background: linear-gradient(90deg, rgb(9 18 37 / 88%), rgb(9 18 37 / 32%));
 }
 
@@ -227,19 +198,19 @@
 .akros-shipping-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.9fr);
-  gap: 40px;
-  padding: 40px var(--akros-page-gutter) 64px;
+  gap: var(--dimension-40);
+  padding: var(--dimension-40) var(--akros-page-gutter) var(--dimension-64);
 }
 
 .akros-shipping-layout > section {
   display: grid;
   align-content: start;
-  gap: 20px;
+  gap: var(--dimension-20);
 }
 
 .akros-option-list {
   display: grid;
-  gap: 16px;
+  gap: var(--dimension-12);
 }
 
 .akros-option-list article,
@@ -253,18 +224,18 @@
 
 .akros-option-list article {
   display: grid;
-  gap: 8px;
-  padding: 20px;
+  gap: var(--dimension-8);
+  padding: var(--dimension-20);
 }
 
 .akros-option-list h3 {
-  font-size: 16px;
+  font-size: var(--dimension-16);
 }
 
 .akros-option-list__heading {
   display: flex;
   justify-content: space-between;
-  gap: 20px;
+  gap: var(--dimension-20);
 }
 
 .akros-option-list__heading strong,
@@ -274,24 +245,24 @@
 
 .akros-option-list__status {
   color: var(--color-fg-status-success);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .akros-option-list--compact article {
-  padding: 16px;
+  padding: var(--dimension-16);
 }
 
 .akros-free-shipping {
   display: grid;
   gap: 14px;
   border-color: var(--color-primary);
-  padding: 20px;
+  padding: var(--dimension-20);
 }
 
 .akros-free-shipping div {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--dimension-16);
 }
 
 .akros-free-shipping progress {
@@ -302,17 +273,16 @@
 .akros-faq-hero {
   display: grid;
   justify-items: center;
-  gap: 24px;
+  gap: var(--dimension-24);
   border-bottom: 2px solid var(--color-fill-surface);
-  padding: 48px var(--akros-page-gutter);
+  padding: var(--dimension-48) var(--akros-page-gutter);
   background: var(--color-base);
   text-align: center;
 }
 
 .akros-faq-hero h1 {
-  margin: 0;
-  font-size: 36px;
-  font-weight: 800;
+  font-size: var(--dimension-36);
+  font-weight: var(--font-weight-extrabold);
   line-height: normal;
 }
 
@@ -333,40 +303,22 @@
   transform: translateY(-50%);
 }
 
-.akros-faq-search__input {
-  width: 100%;
-  height: var(--dimension-48);
-  border-color: transparent;
-  border-radius: var(--dimension-8);
-  padding-inline-end: var(--dimension-16);
-  padding-inline-start: var(--dimension-48);
-  background: var(--color-base);
-  font-size: 15px;
-}
-
-.akros-faq-search__input:hover,
-.akros-faq-search__input:focus {
-  border-color: transparent;
-  background: var(--color-base);
-}
-
 .akros-faq-layout {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
-  gap: 40px;
-  padding: 40px var(--akros-page-gutter);
+  gap: var(--dimension-40);
+  padding: var(--dimension-40) var(--akros-page-gutter);
 }
 
 .akros-faq-categories,
 .akros-faq-results {
   display: grid;
   align-content: start;
-  gap: 16px;
+  gap: var(--dimension-16);
 }
 
 .akros-faq-categories h2,
 .akros-faq-results h2 {
-  margin: 0;
   font-size: 18px;
   line-height: normal;
 }
@@ -376,13 +328,13 @@
   align-items: center;
   gap: var(--dimension-4);
   font-size: 22px;
-  font-weight: 800;
+  font-weight: var(--font-weight-extrabold);
 }
 
 .akros-faq-accordion-list {
   display: grid;
   width: 100%;
-  gap: 12px;
+  gap: var(--dimension-12);
 }
 
 .akros-faq-accordion-list [data-part="item-trigger"] {
@@ -396,67 +348,40 @@
   line-height: 1.5;
 }
 
-.akros-faq-answer-details p {
-  margin: 0;
-}
-
 .akros-faq-accordion-list [data-part="item"][data-state="open"] .akros-faq-answer-summary {
   display: none;
 }
 
 .akros-faq-categories {
-  gap: 4px;
+  gap: var(--dimension-4);
 }
 
 .akros-faq-categories h2 {
-  margin-bottom: 8px;
+  margin-bottom: var(--dimension-8);
   font-weight: var(--font-weight-bold);
 }
 
 .akros-faq-categories button {
-  display: flex;
-  align-items: center;
-  gap: var(--dimension-4);
-  border: 0;
-  border-radius: var(--akros-radius-md);
-  padding: 12px;
-  background: transparent;
-  color: var(--color-fg-secondary);
-  font-family: inherit;
-  font-size: 14px;
   line-height: normal;
   text-align: left;
-  cursor: pointer;
 }
 
 .akros-faq-results {
-  gap: 24px;
-}
-
-.akros-faq-categories button:hover,
-.akros-faq-categories button[aria-current="page"] {
-  background: color-mix(in oklab, var(--color-primary) 11%, transparent);
-  color: var(--color-primary);
-  font-weight: var(--font-weight-bold);
+  gap: var(--dimension-24);
 }
 
 .akros-faq-contact {
   display: grid;
   justify-items: center;
-  gap: 24px;
+  gap: var(--dimension-24);
   border-top: 2px solid var(--color-fill-surface);
-  padding: 48px var(--akros-page-gutter);
+  padding: var(--dimension-48) var(--akros-page-gutter);
   background: var(--color-base);
   text-align: center;
 }
 
-.akros-faq-contact h2,
-.akros-faq-contact p {
-  margin: 0;
-}
-
 .akros-faq-contact h2 {
-  font-size: 24px;
+  font-size: var(--dimension-24);
 }
 
 .akros-faq-contact > p {
@@ -466,12 +391,12 @@
 
 .akros-faq-contact .akros-contact-form {
   width: min(100%, 800px);
-  gap: 24px;
+  gap: var(--dimension-24);
   text-align: left;
 }
 
 .akros-faq-contact .akros-form-grid {
-  gap: 24px;
+  gap: var(--dimension-24);
 }
 
 .akros-faq-contact .akros-contact-form__message--compact {
@@ -485,9 +410,9 @@
 .akros-blog-featured {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 40px;
+  gap: var(--dimension-40);
   align-items: center;
-  padding: 48px var(--akros-page-gutter);
+  padding: var(--dimension-48) var(--akros-page-gutter);
   background: var(--color-base);
 }
 
@@ -500,7 +425,7 @@
 
 .akros-blog-featured > div {
   display: grid;
-  gap: 20px;
+  gap: var(--dimension-20);
 }
 
 .akros-blog-meta,
@@ -508,7 +433,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: var(--dimension-12);
 }
 
 .akros-blog-meta span,
@@ -520,19 +445,19 @@
 .akros-blog-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 40px;
-  padding: 40px var(--akros-page-gutter) 64px;
+  gap: var(--dimension-40);
+  padding: var(--dimension-40) var(--akros-page-gutter) var(--dimension-64);
 }
 
 .akros-blog-layout > section {
   display: grid;
-  gap: 24px;
+  gap: var(--dimension-24);
 }
 
 .akros-blog-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
+  gap: var(--dimension-24);
 }
 
 .akros-blog-card {
@@ -547,8 +472,8 @@
 
 .akros-blog-card__content {
   display: grid;
-  gap: 12px;
-  padding: 16px;
+  gap: var(--dimension-12);
+  padding: var(--dimension-16);
 }
 
 .akros-blog-card h3 {
@@ -556,22 +481,25 @@
   line-height: 1.25;
 }
 
-.akros-blog-card a,
 .akros-section__heading a {
   color: var(--color-link);
+  text-underline-offset: 3px;
+}
+
+.akros-blog-card a {
   text-underline-offset: 3px;
 }
 
 .akros-blog-sidebar {
   display: grid;
   align-content: start;
-  gap: 20px;
+  gap: var(--dimension-20);
 }
 
 .akros-blog-sidebar section {
   display: grid;
-  gap: 16px;
-  padding: 20px;
+  gap: var(--dimension-16);
+  padding: var(--dimension-20);
 }
 
 .akros-blog-sidebar h2 {
@@ -581,10 +509,7 @@
 .akros-blog-sidebar ul {
   display: grid;
   gap: 10px;
-  margin: 0;
-  padding: 0;
   color: var(--color-fg-secondary);
-  list-style: none;
 }
 
 .akros-news-hero {
@@ -600,27 +525,27 @@
   display: grid;
   min-height: 430px;
   grid-template-columns: minmax(0, 760px);
-  gap: 48px;
+  gap: var(--dimension-48);
   align-items: center;
-  padding: 48px var(--akros-page-gutter);
+  padding: var(--dimension-48) var(--akros-page-gutter);
   background: linear-gradient(90deg, rgb(7 17 33 / 92%), rgb(7 17 33 / 48%));
 }
 
 .akros-news-hero__overlay > div {
   display: grid;
   justify-items: start;
-  gap: 20px;
+  gap: var(--dimension-20);
 }
 
 .akros-news-section {
   display: grid;
-  gap: 24px;
-  padding: 48px var(--akros-page-gutter);
+  gap: var(--dimension-24);
+  padding: var(--dimension-48) var(--akros-page-gutter);
 }
 
 .akros-news-section--sale {
   border-top: 2px solid var(--color-fill-surface);
-  padding-bottom: 64px;
+  padding-bottom: var(--dimension-64);
   background: var(--color-base);
 }
 

@@ -92,6 +92,13 @@ pages render them through the small `AuthPageLink` client boundary.
 widths it also checks native required/email/consent validation, keyboard navigation and password
 anchor focus, demo submission and that credentials never enter browser storage.
 
+`npm run test:content` checks ten content routes at twelve widths from 320 to 1920px,
+including the 760/761px and 1100/1101px layout edges. At desktop, tablet and mobile it also
+checks FAQ category/search/accordion behavior, both local contact forms and native validation,
+keyboard anchors, news/catalog links and the actual Input/Button/LinkButton token consumption.
+Content links use the `ContentLink` client boundary on server-rendered pages. Blog search
+remains the existing static prototype field; contact forms only show local confirmation.
+
 Keep remaining appearance utilities tied to a verified kit limitation. In UI kit `0.56.1`,
 ProductCard uses a static `shadow-sm`, so its app shadow still needs an explicit variable utility.
 Popover's shadow alias is also resolved during compilation, so the mini-cart keeps `shadow-md`.

@@ -4,6 +4,7 @@ import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Input } from "@techsio/ui-kit/atoms/input";
 
 import { PrimaryLinkButton } from "@/components/primary-link-button";
+import { ContentLink } from "@/components/content-link";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 import { blogArticles } from "@/mock-storefront/fixtures/content";
 
@@ -68,7 +69,15 @@ export default function BlogPage() {
                     </p>
                     <h3>{article.title}</h3>
                     <p>{article.excerpt}</p>
-                    <a href="#featured-article-title">Číst více →</a>
+                    <ContentLink
+                      href="#featured-article-title"
+                      theme="borderless"
+                      variant="secondary"
+                      size="current"
+                      className="inline"
+                    >
+                      Číst více →
+                    </ContentLink>
                   </div>
                 </article>
               ))}

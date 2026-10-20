@@ -1,0 +1,53 @@
+.akros-faq-search {
+  --height-form-control-md: var(--dimension-48);
+  --radius-input-md: var(--dimension-8);
+  --text-input-md: 15px;
+  --padding-input-md: var(--spacing-150) var(--dimension-16) var(--spacing-150) var(--dimension-48);
+  --color-input-border-base: var(--color-transparent);
+  --color-input-border-hover: var(--color-transparent);
+  --color-input-border-focus: var(--color-transparent);
+}
+
+.akros-faq-categories {
+  --height-form-control-sm: auto;
+  --spacing-button-sm: var(--dimension-4);
+  --padding-button-sm: var(--dimension-12);
+  --radius-button-sm: var(--akros-radius-md);
+  --text-button-sm: 14px;
+  --font-weight-button: var(--font-weight-normal);
+  --color-button-fg-secondary-borderless: var(--color-fg-secondary);
+  --color-button-bg-borderless-hover: color-mix(in oklab, var(--color-primary) 11%, transparent);
+  --color-button-bg-borderless-active: var(--color-button-bg-borderless-hover);
+}
+
+.akros-faq-categories button:hover,
+.akros-faq-categories button[aria-current="page"] {
+  --font-weight-button: var(--font-weight-bold);
+  --color-button-fg-secondary-borderless: var(--color-primary);
+  --color-button-bg-borderless-base: var(--color-button-bg-borderless-hover);
+}
+
+.akros-anchor-nav {
+  --height-form-control-sm: auto;
+  --padding-button-sm: var(--dimension-8) 14px;
+  --radius-button-sm: var(--akros-radius-md);
+  --text-button-sm: var(--dimension-16);
+  --font-weight-button: var(--font-weight-normal);
+  --color-button-border-secondary: var(--color-border-primary);
+  --color-button-fg-outlined-secondary: var(--color-fg-primary);
+  --color-button-bg-outlined: var(--color-base);
+  --color-button-bg-outlined-secondary-hover: var(--color-base);
+  --color-button-bg-outlined-secondary-active: var(--color-base);
+}
+
+.akros-anchor-nav a:hover,
+.akros-anchor-nav a:focus-visible {
+  --color-button-border-secondary: var(--color-primary);
+}
+
+.akros-blog-card {
+  --font-weight-button: var(--font-weight-normal);
+  --color-button-fg-secondary-borderless: var(--color-link);
+  --color-button-bg-borderless-hover: var(--color-transparent);
+  --color-button-bg-borderless-active: var(--color-transparent);
+}

@@ -127,11 +127,6 @@
   color: var(--color-fg-secondary);
 }
 
-.akros-option-list {
-  display: grid;
-  gap: 12px;
-}
-
 @media (max-width: 960px) {
   .akros-registration-page {
     grid-template-columns: 1fr;
