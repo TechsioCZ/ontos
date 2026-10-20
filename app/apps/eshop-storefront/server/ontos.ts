@@ -48,9 +48,18 @@ const fetchActiveRevision = async (): Promise<string | undefined> => {
   return undefined;
 };
 
+/** fetch that reports an unreachable shell as a retryable 503 instead of a TypeError. */
+const reach = async (url: string, init: RequestInit): Promise<Response> => {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    throw new OntosError(`OntOS unreachable: ${url.replace(/\?.*$/u, '')} (${String((error as Error).cause ?? error)})`, 503, 'backend_unreachable');
+  }
+};
+
 const requestContext = async (audience: string, revision: string): Promise<Response> => {
   const config = getConfig();
-  return await fetch(`${config.shellUrl}${GATEWAY_CONTEXT_PATH}`, {
+  return await reach(`${config.shellUrl}${GATEWAY_CONTEXT_PATH}`, {
     body: JSON.stringify({ audience, compositionRevision: revision, legalEntityId: config.legalEntityId }),
     headers: {
       'content-type': 'application/json',
@@ -126,7 +135,7 @@ const post = async (
 ): Promise<unknown> => {
   const { shellUrl } = getConfig();
   const correlationId = randomUUID();
-  const response = await fetch(`${shellUrl}${context.apiBaseUrl}${path}`, {
+  const response = await reach(`${shellUrl}${context.apiBaseUrl}${path}`, {
     body: JSON.stringify(body),
     headers: {
       authorization: `Bearer ${context.token}`,

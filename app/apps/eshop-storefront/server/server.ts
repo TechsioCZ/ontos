@@ -53,7 +53,7 @@ const readBody = async (request: IncomingMessage): Promise<Record<string, unknow
 };
 
 /** Maps backend failures to customer-safe problems: never echo internal details, never pretend success. */
-const failure = (response: ServerResponse, error: unknown): void => {
+const failure = (response: ServerResponse, error: unknown, path = ''): void => {
   if (error instanceof HttpProblem) {
     sendJson(response, error.status, error.problem);
     return;
@@ -62,6 +62,16 @@ const failure = (response: ServerResponse, error: unknown): void => {
     console.error(`[bff] ${error.message}${error.detail === undefined ? '' : ` – ${error.detail}`}`);
     if (error.code === 'storefront_not_configured') {
       sendJson(response, 503, { code: 'storefront_not_configured', message: 'E-shop zatím není napojený na OntOS (chybí serverový přístup).' });
+      return;
+    }
+    if (path === '/api/orders') {
+      const invalid = error.status === 400 || error.status === 422;
+      sendJson(response, invalid ? 400 : 502, {
+        code: invalid ? 'order_invalid' : 'order_save_failed',
+        message: invalid
+          ? `Backend objednávku odmítl jako neplatnou${error.detail === undefined ? '' : `: ${error.detail}`}.`
+          : 'Objednávku se teď nepodařilo uložit, nic nevzniklo. Zkuste ji odeslat znovu – objednávka nevznikne dvakrát.',
+      });
       return;
     }
     if (error.status === 403) {
@@ -202,7 +212,7 @@ const serveStatic = (response: ServerResponse, url: URL): void => {
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
   if (url.pathname.startsWith('/api/')) {
-    api(request, response, url).catch((error: unknown) => failure(response, error));
+    api(request, response, url).catch((error: unknown) => failure(response, error, url.pathname));
     return;
   }
   try {
