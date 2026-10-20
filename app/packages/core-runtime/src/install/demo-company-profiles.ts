@@ -18,8 +18,13 @@ export const eshopDemoCompany = {
   legalEntityId: '71000000-0000-4000-8000-000000000023',
   legalName: 'Kavárna Doma s.r.o.',
 } as const;
+export const akrosDemoCompany = {
+  legalEntityId: '71000000-0000-4000-8000-000000000024',
+  legalName: 'AKROS (demo)',
+} as const;
 /** Every fixed synthetic company with its synthetic registration number. */
 export const additionalDemoCompanies = [
   { ...crmDemoCompany, registrationNumber: 'DEMO-HANAK-CRM' },
   { ...eshopDemoCompany, registrationNumber: 'DEMO-KAVARNA-ESHOP' },
+  { ...akrosDemoCompany, registrationNumber: 'DEMO-AKROS' },
 ] as const;

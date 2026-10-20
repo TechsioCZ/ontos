@@ -18,6 +18,12 @@ export type { Order, OrderLine, Product, ProductRecord, StockMovement } from '..
 
 /** Optional filters. Each field narrows only the collection it names; indicators ignore filters. */
 export const RecordsViewSchema = Schema.Struct({
+  slug: Schema.optionalKey(Schema.String),
+  categoryId: Schema.optionalKey(Schema.String),
+  search: Schema.optionalKey(Schema.String),
+  offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 250 }))),
+  summary: Schema.optionalKey(Schema.Boolean),
   active: Schema.optionalKey(Schema.Boolean),
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   lowStockOnly: Schema.optionalKey(Schema.Boolean),
@@ -51,6 +57,7 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
  * - orderCount: all orders; openOrderValueMinor: totalMinor of NEW, CONFIRMED and SHIPPED orders
  */
 export const RecordsResponseSchema = Schema.Struct({
+  totalProducts: Schema.optionalKey(Schema.Int),
   actorPrincipalRef: PrincipalRefSchema,
   canWrite: Schema.Boolean,
   indicators: Schema.Struct({

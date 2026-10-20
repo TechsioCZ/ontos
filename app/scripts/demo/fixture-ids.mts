@@ -14,6 +14,7 @@ export const demoLegalEntityId = '71000000-0000-4000-8000-000000000020' as const
 export const rentalDemoLegalEntityId = rentalDemoCompany.legalEntityId;
 /** CRM demo company „Velkoobchod Hanák s.r.o.“ and e-shop company „Kavárna Doma s.r.o.“ (same tenant). */
 export const crmDemoLegalEntityId = crmDemoCompany.legalEntityId;
+export const akrosDemoLegalEntityId = '71000000-0000-4000-8000-000000000024' as const;
 export const eshopDemoLegalEntityId = eshopDemoCompany.legalEntityId;
 
 /** RFC 9562 UUIDv5 of `name` inside `namespace`. */

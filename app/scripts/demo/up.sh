@@ -131,6 +131,7 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-reset-sales pnpm_ demo:reset:sales
   # E-shop company (Kavárna Doma, LE …023): merges the seed, keeps live demo orders (use --reset to wipe).
   step demo-seed-eshop pnpm_ demo:seed:eshop
+  step demo-seed-akros pnpm_ demo:seed:akros
 fi
 # Verifiers of owners whose sales seed is still a placeholder report a missing seeded aggregate; that must
 # not block the demo. DEMO_STRICT_VERIFY=1 makes the verification fatal again.
@@ -259,8 +260,11 @@ fi
 start eshop-storefront env "ESHOP_STOREFRONT_PORT=$STOREFRONT_PORT" "${WITH_ENV[@]}" \
   pnpm --dir apps/eshop-storefront start
 wait_http "http://127.0.0.1:$STOREFRONT_PORT/api/home" 120 eshop-storefront
+# AKROS remains an independent Next.js app. Its helper owns :3070 and registers the PID for down.sh.
+step akros-storefront "$APP/akros-storefront/scripts/demo-restart.sh"
 cat <<EOF
 
+[demo] AKROS: http://localhost:3070 (OntOS-backed standalone Next.js storefront)
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs   (composition :$COMPOSITION_PORT)
 [demo] Storefront: http://localhost:$STOREFRONT_PORT (Kavárna Doma, customer-facing DEMO)
 [demo] Verticals: ${VERTICALS[*]}

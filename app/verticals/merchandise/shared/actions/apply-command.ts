@@ -47,11 +47,11 @@ export type BulkProductPatch = typeof BulkProductPatchSchema.Type;
 
 export const OrderLineRequestSchema = Schema.Struct({
   productId: ProductIdSchema,
-  quantity: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  quantity: Schema.Finite.check(Schema.isGreaterThan(0)),
   variantId: Schema.optionalKey(VariantIdSchema),
 });
 
-const QuantitySchema = Schema.Int.check(Schema.isBetween({ maximum: 999, minimum: 1 }));
+const QuantitySchema = Schema.Finite.check(Schema.isBetween({ maximum: 1000000, minimum: 0.001 }));
 
 /** One storefront cart line: the gross unit price the customer saw is re-validated on the server. */
 export const StorefrontOrderLineRequestSchema = Schema.Struct({
@@ -162,6 +162,8 @@ export const StorefrontIssueCodeSchema = Schema.Literals([
   'OUT_OF_STOCK',
   'INSUFFICIENT_STOCK',
   'AVAILABILITY_UNKNOWN',
+  'MINIMUM_QUANTITY',
+  'PACKAGE_QUANTITY',
   'PRICE_CHANGED',
   'SHIPPING_PRICE_CHANGED',
 ]);
@@ -169,7 +171,7 @@ export type StorefrontIssueCode = typeof StorefrontIssueCodeSchema.Type;
 
 export const StorefrontIssueSchema = Schema.Struct({
   availability: Schema.optionalKey(AvailabilitySchema),
-  availableQuantity: Schema.optionalKey(Schema.Int),
+  availableQuantity: Schema.optionalKey(Schema.Finite),
   code: StorefrontIssueCodeSchema,
   currentUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
   expectedUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
@@ -183,7 +185,7 @@ export const StorefrontOrderLineResultSchema = Schema.Struct({
   lineTotalMinor: MinorAmountSchema,
   name: Schema.String,
   productId: Schema.String,
-  quantity: Schema.Int,
+  quantity: Schema.Finite,
   sku: Schema.String,
   unitPriceMinor: MinorAmountSchema,
   variantId: Schema.optionalKey(Schema.String),

@@ -135,6 +135,7 @@ const toVariantRecord = (
   const stockOnHand = variantStockOf(movements, product.id, variant.id);
   const active = product.active && variant.active !== false;
   return {
+    ...variant,
     active: variant.active !== false,
     attributes: variant.attributes,
     availability: availabilityOf({
@@ -143,7 +144,7 @@ const toVariantRecord = (
       stockTracked: product.stockTracked !== false,
       threshold: product.lowStockThreshold,
     }),
-    grossPriceMinor: grossUnitPriceMinor(variant.priceMinor, product.vatRate),
+    grossPriceMinor: variant.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(variant.priceMinor, product.vatRate),
     id: variant.id,
     name: variant.name,
     priceHistory: variant.priceHistory ?? [],
@@ -169,10 +170,10 @@ export const toProductRecord = (product: Product, movements: readonly StockMovem
         stockTracked: product.stockTracked !== false,
         threshold: product.lowStockThreshold,
       }),
-      grossPriceMinor: grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
+      grossPriceMinor: product.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
       lowStock: stockOnHand <= product.lowStockThreshold,
       stockOnHand,
-      stockValueMinor: stockOnHand * product.currentPriceMinor,
+      stockValueMinor: Math.round(stockOnHand * product.currentPriceMinor),
     };
   }
   const sellable = variants.filter((variant) => variant.active);
@@ -191,8 +192,8 @@ export const toProductRecord = (product: Product, movements: readonly StockMovem
     ),
     stockOnHand,
     stockValueMinor:
-      sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
-      (stockOnHand - variantStock) * product.currentPriceMinor,
+      Math.round(sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
+      (stockOnHand - variantStock) * product.currentPriceMinor),
     variantRecords: variants,
   };
 };
@@ -676,12 +677,17 @@ const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): Store
 interface PricedUnit {
   readonly availability: Availability;
   readonly grossPriceMinor: number;
+  readonly minimumQuantity?: number;
+  readonly packageQuantity?: number | undefined;
   readonly name: string;
   readonly stock: number;
   readonly sku: string;
   readonly variantId?: string;
   readonly variantName?: string;
 }
+
+export const tierPriceForQuantity = (tiers: Product['priceTiers'], quantity: number): number | undefined =>
+  tiers?.filter((tier) => tier.minimumQuantity <= quantity).toSorted((a, b) => b.minimumQuantity - a.minimumQuantity)[0]?.priceMinor;
 
 /** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
 const sellableUnitOf = (
@@ -712,7 +718,9 @@ const sellableUnitOf = (
       product,
       unit: {
         availability: variant.availability,
-        grossPriceMinor: variant.grossPriceMinor,
+        minimumQuantity: variant.minimumQuantity ?? 1,
+        packageQuantity: variant.packageQuantity,
+        grossPriceMinor: tierPriceForQuantity(variant.priceTiers, line.quantity) ?? variant.grossPriceMinor,
         name: product.name,
         sku: variant.sku,
         stock: variant.stockOnHand,
@@ -724,8 +732,10 @@ const sellableUnitOf = (
   return {
     product,
     unit: {
+      minimumQuantity: product.minimumQuantity ?? 1,
+      packageQuantity: product.packageQuantity,
       availability: record.availability ?? 'UNKNOWN',
-      grossPriceMinor: record.grossPriceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
+      grossPriceMinor: tierPriceForQuantity(product.priceTiers, line.quantity) ?? record.grossPriceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
       name: product.name,
       sku: product.sku,
       stock: record.stockOnHand,
@@ -758,6 +768,14 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     const quantity = (requested.get(key) ?? 0) + line.quantity;
     requested.set(key, quantity);
     const label = unit.variantName === undefined ? unit.name : `${unit.name} (${unit.variantName})`;
+    if (line.quantity < (unit.minimumQuantity ?? 1)) {
+      issues.push({ ...ids, code: 'MINIMUM_QUANTITY', message: `${label}: minimální množství je ${unit.minimumQuantity}.` });
+      continue;
+    }
+    if (unit.packageQuantity !== undefined && unit.packageQuantity > 0 && Math.abs(line.quantity / unit.packageQuantity - Math.round(line.quantity / unit.packageQuantity)) > 0.000001) {
+      issues.push({ ...ids, code: 'PACKAGE_QUANTITY', message: `${label}: objednávejte v násobcích balení ${unit.packageQuantity}.` });
+      continue;
+    }
     if (unit.availability === 'UNKNOWN') {
       issues.push({
         ...ids,
@@ -1187,15 +1205,31 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const snapshot = yield* load();
       const view = request.view ?? {};
       const { movements, orders, products } = snapshot.state;
-      const allProducts = products.map((product) => toProductRecord(product, movements));
+      // Partition once: large variant catalogs otherwise scan the complete ledger for every variant.
+      const byProduct = new Map<string, StockMovement[]>();
+      for (const movement of movements) {
+        const bucket = byProduct.get(movement.productId) ?? [];
+        bucket.push(movement);
+        byProduct.set(movement.productId, bucket);
+      }
+      const allProducts = products.map((product) => toProductRecord(product, byProduct.get(product.id) ?? []));
       const storefront = view.storefront === true;
-      const filteredProducts = allProducts.filter(
+      const matchingProducts = allProducts.filter(
         (record) =>
           (!storefront || (record.active && record.published !== false)) &&
+          (view.productId === undefined || record.id === view.productId) &&
+          (view.slug === undefined || record.slug === view.slug) &&
+          (view.categoryId === undefined || record.categoryId === view.categoryId || record.categoryPathIds?.includes(view.categoryId)) &&
+          (view.search === undefined || `${record.name} ${record.sku} ${record.variants?.map((variant) => `${variant.sku} ${variant.name}`).join(' ') ?? ''}`.toLocaleLowerCase('cs').includes(view.search.toLocaleLowerCase('cs'))) &&
           (view.active === undefined || record.active === view.active) &&
           (view.category === undefined || record.category === view.category) &&
           (view.lowStockOnly !== true || record.lowStock),
       );
+      const filteredProducts = matchingProducts.slice(view.offset ?? 0, view.limit === undefined ? undefined : (view.offset ?? 0) + view.limit).map((product) => {
+        if (view.summary !== true) return product;
+        const { variants: _variants, variantRecords: _records, ...summary } = product;
+        return { ...summary, priceHistory: [] };
+      });
       const filteredMovements = storefront
         ? []
         : movements.filter((movement) => view.productId === undefined || movement.productId === view.productId);
@@ -1205,6 +1239,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           : orders.filter((order) => order.clientRequestId === view.orderClientRequestId)
         : orders.filter((order) => view.orderStatus === undefined || order.status === view.orderStatus);
       const response: RecordsResponse = {
+        totalProducts: matchingProducts.length,
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite: yield* contextGrant('write_all'),
         // The storefront view never reveals staff totals: its indicators cover only what the view returns.

@@ -57,6 +57,7 @@ import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.
 import { setupAiProfiles } from './ai-profiles.mts';
 import { demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
 import {
+  akrosStorefrontPrincipal,
   agentBotPrincipal,
   companyHumanAccounts,
   demoHumanAccounts,
@@ -84,7 +85,7 @@ const siamparkOpsModuleState = {
   stateId: '78000000-0000-4000-8000-000000000202',
 } as const;
 /** Managed API keys that run unlimited (each request exchanges the key for a single-use gateway assertion). */
-const unlimitedKeyNames = [agentBotPrincipal.displayName, storefrontPrincipal.displayName];
+const unlimitedKeyNames = [agentBotPrincipal.displayName, storefrontPrincipal.displayName, akrosStorefrontPrincipal.displayName];
 const SECURE_COOKIE_PREFIX = '__Secure-';
 const [headOfSales] = demoHumanAccounts;
 
@@ -164,6 +165,16 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
           displayName: storefrontPrincipal.displayName,
           kind: storefrontPrincipal.kind,
           principalId: storefrontPrincipal.principalId,
+          status: 'active',
+          tenantId: demoTenantId,
+        })
+        .onConflictDoUpdate({ set: { status: 'active' }, target: principals.principalId });
+      yield* transaction
+        .insert(principals)
+        .values({
+          displayName: akrosStorefrontPrincipal.displayName,
+          kind: akrosStorefrontPrincipal.kind,
+          principalId: akrosStorefrontPrincipal.principalId,
           status: 'active',
           tenantId: demoTenantId,
         })
@@ -489,8 +500,20 @@ const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureB
       issueBotKey(shellUrl, { name: storefrontPrincipal.displayName, principalId: storefrontPrincipal.principalId }),
     onSome: Effect.succeed,
   });
+  const akrosTarget = { audience: STOREFRONT_KEY_AUDIENCE, legalEntityId: akrosStorefrontPrincipal.legalEntityId };
+  const oldAkrosKey = existing.get('ONTOS_AKROS_STOREFRONT_API_KEY');
+  const akrosReusable = oldAkrosKey === undefined ? false : yield* Option.match(revision, {
+    onNone: () => Effect.succeed(false),
+    onSome: (current) => keyWorks(shellUrl, Redacted.make(oldAkrosKey), current, akrosTarget),
+  });
+  const akrosKey = akrosReusable && oldAkrosKey !== undefined ? Redacted.make(oldAkrosKey) : yield* issueBotKey(shellUrl, {
+    name: akrosStorefrontPrincipal.displayName, principalId: akrosStorefrontPrincipal.principalId,
+  });
   const values = new Map([
     ...existing,
+    ['ONTOS_AKROS_STOREFRONT_API_KEY', Redacted.value(akrosKey)],
+    ['ONTOS_AKROS_STOREFRONT_PRINCIPAL_ID', akrosStorefrontPrincipal.principalId],
+    ['ONTOS_AKROS_STOREFRONT_LEGAL_ENTITY_ID', akrosStorefrontPrincipal.legalEntityId],
     ['ONTOS_STOREFRONT_API_KEY', Redacted.value(storefrontKey)],
     ['ONTOS_STOREFRONT_PRINCIPAL_ID', storefrontPrincipal.principalId],
     ['ONTOS_STOREFRONT_LEGAL_ENTITY_ID', eshopDemoLegalEntityId],

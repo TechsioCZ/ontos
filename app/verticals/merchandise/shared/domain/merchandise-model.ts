@@ -20,7 +20,7 @@ export type PartyId = typeof PartyIdSchema.Type;
 export const OpportunityIdSchema = idOf('OpportunityId');
 export type OpportunityId = typeof OpportunityIdSchema.Type;
 
-export const ProductUnitSchema = Schema.Literals(['ks', 'bal', 'hod', 'lic']);
+export const ProductUnitSchema = Schema.Literals(['ks', 'bal', 'hod', 'lic', 'm', 'tab', 'set', '0', '1']);
 export type ProductUnit = typeof ProductUnitSchema.Type;
 export const VatRateSchema = Schema.Literals([0, 10, 12, 21]);
 export type VatRate = typeof VatRateSchema.Type;
@@ -55,7 +55,20 @@ export type VariantId = typeof VariantIdSchema.Type;
  * identity (`id`), SKU, net price (`priceMinor`), stock (ledger movements with `variantId`) and `active` flag.
  * `name` is the customer-facing label, e.g. „250 g / zrnková“.
  */
+/** Source catalog gross tiers; legacy priceMinor remains net. */
+export const CatalogParameterSchema = Schema.Struct({ label: Schema.String, value: Schema.String, unit: Schema.String });
+export const PriceTierSchema = Schema.Struct({ minimumQuantity: Schema.Finite, priceMinor: MinorAmountSchema, priceExcludingVatMinor: MinorAmountSchema });
+export const CatalogFieldsSchema = Schema.Struct({
+  minimumQuantity: Schema.optionalKey(Schema.Finite),
+  packageQuantity: Schema.optionalKey(Schema.Finite),
+  priceTiers: Schema.optionalKey(Schema.Array(PriceTierSchema)),
+  parameters: Schema.optionalKey(Schema.Array(CatalogParameterSchema)),
+  sourceId: Schema.optionalKey(Schema.String),
+  sourceUnit: Schema.optionalKey(Schema.String),
+  imageSrc: Schema.optionalKey(Schema.String),
+});
 export const ProductVariantSchema = Schema.Struct({
+  ...CatalogFieldsSchema.fields,
   active: Schema.optionalKey(Schema.Boolean),
   attributes: Schema.Trim.check(Schema.isMaxLength(1000)),
   id: Schema.optionalKey(VariantIdSchema),
@@ -83,6 +96,16 @@ const MeasurementSchema = Schema.OptionFromNullOr(
   Schema.Int.check(Schema.isBetween({ maximum: 1_000_000_000, minimum: 1 })),
 );
 export const ProductMetadataSchema = Schema.Struct({
+  ...CatalogFieldsSchema.fields,
+  sourceProductId: Schema.optionalKey(Schema.String),
+  sourceGroupId: Schema.optionalKey(Schema.String),
+  categoryId: Schema.optionalKey(Schema.String),
+  categoryPathIds: Schema.optionalKey(Schema.Array(Schema.String)),
+  featuredPosition: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+  isAction: Schema.optionalKey(Schema.Boolean),
+  isRecommended: Schema.optionalKey(Schema.Boolean),
+  isSale: Schema.optionalKey(Schema.Boolean),
+  isNew: Schema.optionalKey(Schema.Boolean),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
   heightMm: Schema.optionalKey(MeasurementSchema),
   lengthMm: Schema.optionalKey(MeasurementSchema),
@@ -93,7 +116,7 @@ export const ProductMetadataSchema = Schema.Struct({
   slug: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   /** `false` means stock is not tracked here, so availability is reported as UNKNOWN („nelze ověřit“). */
   stockTracked: Schema.optionalKey(Schema.Boolean),
-  variants: Schema.optionalKey(Schema.Array(ProductVariantSchema).check(Schema.isMaxLength(50))),
+  variants: Schema.optionalKey(Schema.Array(ProductVariantSchema).check(Schema.isMaxLength(1000))),
   weightGrams: Schema.optionalKey(MeasurementSchema),
   widthMm: Schema.optionalKey(MeasurementSchema),
 });
@@ -126,6 +149,7 @@ export const grossUnitPriceMinor = (netMinor: number, vatRate: number): number =
 
 /** Variant plus derived stock, availability and gross price. */
 export const VariantRecordSchema = Schema.Struct({
+  ...CatalogFieldsSchema.fields,
   active: Schema.Boolean,
   attributes: Schema.String,
   availability: AvailabilitySchema,
@@ -135,7 +159,7 @@ export const VariantRecordSchema = Schema.Struct({
   priceHistory: Schema.Array(PriceHistoryEntrySchema),
   priceMinor: MinorAmountSchema,
   sku: Schema.String,
-  stockOnHand: Schema.Int,
+  stockOnHand: Schema.Finite,
 });
 export type VariantRecord = typeof VariantRecordSchema.Type;
 
@@ -145,7 +169,7 @@ export const ProductRecordSchema = Schema.Struct({
   availability: Schema.optionalKey(AvailabilitySchema),
   grossPriceMinor: Schema.optionalKey(MinorAmountSchema),
   lowStock: Schema.Boolean,
-  stockOnHand: Schema.Int,
+  stockOnHand: Schema.Finite,
   stockValueMinor: Schema.Int,
   variantRecords: Schema.optionalKey(Schema.Array(VariantRecordSchema)),
 });
@@ -154,7 +178,7 @@ export type ProductRecord = typeof ProductRecordSchema.Type;
 /** Signed quantity: positive for receipts, negative for issues. */
 export const StockMovementSchema = Schema.Struct({
   at: Schema.DateTimeUtcFromString,
-  delta: Schema.Int,
+  delta: Schema.Finite,
   id: StockMovementIdSchema,
   note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   productId: ProductIdSchema,
@@ -167,7 +191,7 @@ export type StockMovement = typeof StockMovementSchema.Type;
 export const OrderLineSchema = Schema.Struct({
   productId: ProductIdSchema,
   productName: TextSchema(200),
-  quantity: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  quantity: Schema.Finite.check(Schema.isGreaterThan(0)),
   sku: TextSchema(64),
   unitPriceMinor: MinorAmountSchema,
   variantId: Schema.optionalKey(VariantIdSchema),

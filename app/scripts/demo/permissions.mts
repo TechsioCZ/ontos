@@ -14,6 +14,7 @@ import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wirin
 import { Schema } from 'effect';
 
 import {
+  akrosDemoLegalEntityId,
   crmDemoLegalEntityId,
   demoId,
   demoLegalEntityId,
@@ -455,6 +456,11 @@ export const crmDemoRoles = {
 
 /** E-shop company „Kavárna Doma s.r.o.“ (0023). */
 export const eshopDemoRoles = {
+  akrosAdmin: {
+    identityAdmin: true,
+    label: 'Správce e-shopu',
+    modules: { 'demo.merchandise': 'write', 'party.registry': 'write', 'siampark.work': 'write', 'demo.workforce': 'write' },
+  },
   eshopAdmin: {
     identityAdmin: false,
     label: 'Správce e-shopu',
@@ -492,6 +498,8 @@ export const companyHumanAccounts = [
   persona('hanak-obchodnik-a', 'obchodnik.a@hanak.demo', 'Jan Novák', crmDemoLegalEntityId, 'crmRep'),
   persona('hanak-obchodnik-b', 'obchodnik.b@hanak.demo', 'Petra Svobodová', crmDemoLegalEntityId, 'crmRep'),
   persona('kavarna-eshop', 'eshop@kavarna.demo', 'Tereza Malá', eshopDemoLegalEntityId, 'eshopAdmin'),
+  persona('akros-eshop', 'eshop@akros.demo', 'Správce e-shopu', akrosDemoLegalEntityId, 'akrosAdmin'),
+  persona('akros-expedice', 'expedice@akros.demo', 'Expedice', akrosDemoLegalEntityId, 'fulfilment'),
   persona('kavarna-expedice', 'expedice@kavarna.demo', 'Ondřej Kříž', eshopDemoLegalEntityId, 'fulfilment'),
 ] as const;
 
@@ -512,10 +520,19 @@ export const storefrontPrincipal = {
   role: 'storefront',
 } as const;
 
+export const akrosStorefrontPrincipal = {
+  displayName: 'akros-storefront',
+  kind: 'service',
+  legalEntityId: akrosDemoLegalEntityId,
+  principalId: demoId('core.principal', 'akros-storefront'),
+  role: 'storefront',
+} as const;
+
 export const companyPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => [
   ...companyHumanAccounts.flatMap((account) =>
     principalRelationships(account.principalId, companyRoles[account.role], actions, account.legalEntityId),
   ),
+  ...principalRelationships(akrosStorefrontPrincipal.principalId, companyRoles.storefront, actions, akrosDemoLegalEntityId),
   ...principalRelationships(
     storefrontPrincipal.principalId,
     companyRoles[storefrontPrincipal.role],

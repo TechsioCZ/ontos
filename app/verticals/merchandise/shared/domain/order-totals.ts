@@ -15,7 +15,7 @@ export const orderTotals = (lines: readonly OrderLine[]): Pick<Order, 'totalMino
   let netMinor = 0;
   let totalVatMinor = 0;
   for (const line of lines) {
-    netMinor += line.quantity * line.unitPriceMinor;
+    netMinor += Math.round(line.quantity * line.unitPriceMinor);
     totalVatMinor += orderLineVatMinor(line);
   }
   return { totalMinor: netMinor + totalVatMinor, totalVatMinor };
@@ -58,7 +58,7 @@ export const fullOrderTotals = (order: {
   let totalMinor = shippingGross;
   let totalVatMinor = shippingVat;
   for (const line of order.lines) {
-    const gross = line.quantity * line.unitPriceMinor;
+    const gross = Math.round(line.quantity * line.unitPriceMinor);
     totalMinor += gross;
     totalVatMinor += vatInGrossMinor(gross, line.vatRate);
   }
@@ -71,5 +71,5 @@ export const lineGrossMinor = (
   pricesIncludeVat: boolean | undefined,
 ): number =>
   pricesIncludeVat === true
-    ? line.quantity * line.unitPriceMinor
-    : line.quantity * line.unitPriceMinor + orderLineVatMinor(line);
+    ? Math.round(line.quantity * line.unitPriceMinor)
+    : Math.round(line.quantity * line.unitPriceMinor) + orderLineVatMinor(line);

@@ -33,6 +33,8 @@ export const assertCommandAllowed = (
       );
 
 /** The e-shop demo company (Kavárna Doma). Its non-human principal is the storefront BFF key. */
+export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
+const isStorefrontCompany = (id: string | undefined) => id === ESHOP_LEGAL_ENTITY_ID || id === AKROS_LEGAL_ENTITY_ID;
 export const ESHOP_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000023';
 /** Commands a non-human principal may run inside the e-shop company: only the guest storefront order. */
 export const storefrontOnlyCommands: ReadonlySet<string> = new Set(['PlaceStorefrontOrder']);
@@ -43,7 +45,7 @@ export const assertStorefrontScope = (
   legalEntityId: string | undefined,
   commandTag: string,
 ): Effect.Effect<void, MerchandisePermissionDenied> =>
-  principalKind === 'human' || legalEntityId !== ESHOP_LEGAL_ENTITY_ID || storefrontOnlyCommands.has(commandTag)
+  principalKind === 'human' || !isStorefrontCompany(legalEntityId) || storefrontOnlyCommands.has(commandTag)
     ? Effect.void
     : Effect.fail(
         new MerchandisePermissionDenied({
@@ -62,7 +64,7 @@ export const storefrontReadRequest = <Request extends { readonly view?: { readon
   legalEntityId: string | undefined,
   request: Request,
 ): Request =>
-  principalKind === 'human' || legalEntityId !== ESHOP_LEGAL_ENTITY_ID
+  principalKind === 'human' || !isStorefrontCompany(legalEntityId)
     ? request
     : { ...request, view: { ...request.view, storefront: true } };
 
