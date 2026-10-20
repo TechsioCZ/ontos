@@ -45,10 +45,11 @@ export const HomePage = () => {
                 <strong>{home.data?.productCount ?? '–'}</strong> {plural(home.data?.productCount ?? 0, 'produkt', 'produkty', 'produktů')} v nabídce
               </li>
               <li>
-                <strong>0 Kč</strong> nic neplatíte (DEMO)
+                <strong>{home.data?.categories.length ?? '–'}</strong>{' '}
+                {plural(home.data?.categories.length ?? 0, 'kategorie', 'kategorie', 'kategorií')} sortimentu
               </li>
               <li>
-                <strong>48 h</strong> od pražení k vám – naoko
+                <strong>0 Kč</strong> nic neplatíte (DEMO)
               </li>
             </ul>
           </div>

@@ -9,10 +9,10 @@ import { formatCzk, formatDateTime } from '../shared/text.ts';
 
 const STATUS: Record<string, string> = {
   CANCELLED: 'Stornovaná',
-  CONFIRMED: 'Potvrzená',
+  CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
-  PACKING: 'Balí se',
+  PACKING: 'Připravená k předání',
   SHIPPED: 'Předáno dopravci (simulace)',
 };
 

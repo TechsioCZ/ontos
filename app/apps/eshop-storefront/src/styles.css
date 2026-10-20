@@ -470,6 +470,8 @@ p {
 
 .text-link {
   display: inline-flex;
+  flex-shrink: 0;
+  white-space: nowrap;
   align-items: center;
   gap: 6px;
   padding: 0;
@@ -2489,4 +2491,33 @@ p {
   border-top: 1px solid rgb(255 255 255 / 10%);
   font-size: 0.82rem;
   color: #a78f78;
+}
+
+/* ------------------------------------------------------------------ small phones (390 px demo) */
+
+@media (max-width: 639px) {
+  .hero__facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 14px;
+    font-size: 0.8rem;
+    line-height: 1.3;
+  }
+
+  .hero__facts strong {
+    font-size: 1.3rem;
+  }
+
+  .hero__actions .button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .hero__art {
+    width: min(78%, 300px);
+  }
+
+  .section__head {
+    align-items: center;
+  }
 }
