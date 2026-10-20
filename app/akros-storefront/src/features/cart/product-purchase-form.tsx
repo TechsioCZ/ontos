@@ -277,7 +277,8 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       </NumericInput>
       <Button
         aria-label={isPackage ? `Koupit celé balení ${label}` : `Koupit ${label}`}
-        className="akros-variant-table__buy-button @max-akros-variant-table/akros-variants:h-auto @max-akros-variant-table/akros-variants:min-h-(--dimension-44) @max-akros-variant-table/akros-variants:px-(--dimension-6) @max-akros-variant-table/akros-variants:py-(--dimension-6) @max-akros-variant-table/akros-variants:whitespace-normal! @max-akros-variant-table/akros-variants:[&>span]:flex-col! @max-akros-variant-table/akros-variants:[&>span]:items-center! @max-akros-variant-table/akros-variants:[&>span]:leading-(--akros-variant-table-compact-button-line-height)! @max-akros-variant-table/akros-variants:[&_small]:text-xs!"
+        block
+        className="akros-variant-table__buy-button @max-akros-variant-table/akros-variants:min-h-(--dimension-44) @max-akros-variant-table/akros-variants:whitespace-normal! @max-akros-variant-table/akros-variants:[&>span]:flex-col! @max-akros-variant-table/akros-variants:[&>span]:items-center! @max-akros-variant-table/akros-variants:[&>span]:leading-(--akros-variant-table-compact-button-line-height)! @max-akros-variant-table/akros-variants:[&_small]:text-xs!"
         disabled={disabled}
         onClick={() => onAdd(variant, quantityToAdd)}
         size="sm"
@@ -698,7 +699,7 @@ export function ProductPurchaseForm({
             )}
 
             <Button
-              className="akros-variant-filter-submit w-full font-bold md:ml-auto md:w-(--akros-variant-filter-submit-width)"
+              className="akros-variant-filter-submit w-full md:ml-auto md:w-(--akros-variant-filter-submit-width)"
               size="sm"
               type="submit"
               uppercase
@@ -712,7 +713,7 @@ export function ProductPurchaseForm({
 
       <>
         <DataTable
-          className="akros-variant-data-table @max-akros-variant-table/akros-variants:[--akros-variant-table-min-width:var(--dimension-0)] @max-akros-variant-table/akros-variants:[--akros-variant-table-row-gap:var(--dimension-0)] @max-akros-variant-table/akros-variants:[--akros-variant-table-button-font-size:var(--text-sm)] @max-akros-variant-table/akros-variants:[--height-form-control-sm:var(--dimension-48)] @max-akros-variant-table/akros-variants:[--text-numeric-input-sm:var(--text-base)]"
+          className="akros-variant-data-table"
           columns={variantColumns}
           data={paginatedVariants}
           enableSorting={false}

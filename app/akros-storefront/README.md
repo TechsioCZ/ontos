@@ -12,6 +12,13 @@ npm run dev
 
 Open <http://localhost:3000>.
 
+The remaining six UI-kit refactor tasks and the catalog adoption inventory are tracked in
+[UI-KIT-REFACTOR.md](./UI-KIT-REFACTOR.md).
+
+`npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
+flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
+keyboard slider changes and preservation of the search query when paging through results.
+
 With the storefront running, `npm run test:home` checks homepage overflow, product stock rows
 and reachable carousel controls at 34 widths from 320 to 2560 px, including breakpoint edges.
 It also exercises every mobile indicator, both arrows and keyboard navigation. Set

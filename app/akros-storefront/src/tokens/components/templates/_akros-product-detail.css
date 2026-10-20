@@ -110,6 +110,7 @@
 }
 
 .akros-variant-filter-submit {
+  --font-weight-button: var(--font-weight-bold);
   --height-form-control-sm: 38px;
   --text-button-sm: var(--akros-variant-filter-label-font-size);
 }
