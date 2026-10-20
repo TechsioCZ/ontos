@@ -1,6 +1,6 @@
 // Create / edit a client (company or person). On create, contact persons can be entered right away (C01-01) and
 // someone with demo.crm.assign may pick the salesperson; a salesperson always creates the client for themself.
-import { SidePanel, dialogCloseLabel } from '@app/admin-ui';
+import { SidePanel, dialogCloseLabel, foldSearchText } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -113,6 +113,15 @@ export const ClientFormDialog = ({
   const emailError = draft.email.trim() !== '' && !EMAIL.test(draft.email.trim()) ? 'Neplatný e-mail' : undefined;
   const regNoError =
     organization && draft.regNo.trim() !== '' && !/^\d{8}$/u.test(draft.regNo.trim()) ? 'IČO má 8 číslic' : undefined;
+  // C01-02: never merged automatically — only a visible hint about clients that look the same.
+  const lookalikes =
+    mode === 'create'
+      ? records.state.clients.items.filter(
+          (other) =>
+            (draft.regNo.trim() !== '' && other.regNo === draft.regNo.trim()) ||
+            (draft.name.trim().length > 3 && foldSearchText(other.name) === foldSearchText(draft.name.trim())),
+        )
+      : [];
   const filledContacts = contacts.filter((entry) => entry.name.trim() !== '');
   const contactEmailError = filledContacts.some(
     (entry) => entry.email.trim() !== '' && !EMAIL.test(entry.email.trim()),
@@ -418,6 +427,11 @@ export const ClientFormDialog = ({
               </StatusText>
             )}
           </section>
+        )}
+        {lookalikes.length > 0 && (
+          <StatusText showIcon status="warning">
+            {`Podobný klient už existuje: ${lookalikes.map((other) => other.name).join(', ')}. Systém klienty sám neslučuje — zkontrolujte, zda nejde o duplicitu.`}
+          </StatusText>
         )}
         {failure !== undefined && (
           <StatusText showIcon status="error">
