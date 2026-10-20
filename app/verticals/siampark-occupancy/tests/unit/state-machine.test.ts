@@ -2,7 +2,7 @@ import { dayOccupancy } from '../../src/routes/[lang]/siampark/occupancy/occupan
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit, Schema } from 'effect';
 
-import { OccupancySchema } from '../../shared/apis/records.ts';
+import { OccupancySchema, OccupancyStateSchema, TenantCaseDetailsSchema } from '../../shared/apis/records.ts';
 import type { Occupancy, OccupancyState } from '../../shared/apis/records.ts';
 import {
   occupancyPeriodsOverlap,
@@ -505,3 +505,95 @@ it('uses the source lease interval for each calendar day and immediately frees c
   expect(dayOccupancy([{ ...confirmed, state: 'CANCELLED' }], unitRef.resourceId, '2027-01-15')).toBeUndefined();
   expect(dayOccupancy([{ ...confirmed, state: 'DRAFT' }], unitRef.resourceId, '2027-01-15')).toBeUndefined();
 });
+
+it.effect('stores complete tenant case metadata with actor and history across later status updates', () =>
+  Effect.gen(function* caseMetadata() {
+    const actor = { ...scope, principalId: '72000000-0000-4000-8000-000000000021' };
+    const caseDetails = {
+      subject: 'Prodloužení nájmu R101',
+      owner: 'Vedení Siampark',
+      deadline: '2026-11-15',
+      estimatedValueMinor: 5_450_000,
+    };
+    const created = yield* transitionOccupancy(
+      { ...empty, occupancies: [draft] },
+      { _tag: 'UpdateTenantDossier', occupancyRef, caseState: 'IN_PROGRESS', caseDetails },
+      actor,
+      validators,
+    );
+    const changed = yield* transitionOccupancy(
+      created.snapshot,
+      { _tag: 'UpdateTenantDossier', occupancyRef, caseState: 'CONFIRMED' },
+      actor,
+      validators,
+    );
+    const reloaded = yield* Schema.decodeEffect(OccupancyStateSchema)(changed.snapshot);
+    expect(reloaded.tenantDossiers?.[0]).toMatchObject({
+      counterpartyId: customerCounterpartyRef.resourceId,
+      caseState: 'CONFIRMED',
+      caseDetails,
+    });
+    expect(reloaded.tenantDossiers?.[0]?.history).toHaveLength(3);
+    expect(reloaded.tenantDossiers?.[0]?.history.every((entry) => entry.authorPrincipalId === actor.principalId)).toBe(
+      true,
+    );
+    expect(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, estimatedValueMinor: null })._tag).toBe(
+      'Success',
+    );
+    expect(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, deadline: '2026-02-31' })._tag).toBe('Failure');
+    expect(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, estimatedValueMinor: -1 })._tag).toBe(
+      'Failure',
+    );
+  }),
+);
+
+it.effect('manually reserves a stay with people and note without creating integration observations', () =>
+  Effect.gen(function* manualStay() {
+    const record: Occupancy = {
+      ...draft,
+      kind: 'SHORT_STAY',
+      customerCounterpartyRef: null,
+      guestPartyRef: {
+        moduleId: 'party.registry',
+        resourceType: 'party.registry.party',
+        resourceId: '77777777-7777-4777-8777-777777777777',
+        tenantId,
+      },
+      peopleCount: 3,
+      note: 'Rodinný pobyt, příjezd odpoledne.',
+    };
+    const created = yield* transitionOccupancy(empty, { _tag: 'CreateDraft', record }, scope, validators);
+    const confirmed = yield* transitionOccupancy(
+      created.snapshot,
+      { _tag: 'Confirm', occupancyRef },
+      scope,
+      validators,
+    );
+    const active = yield* transitionOccupancy(
+      confirmed.snapshot,
+      { _tag: 'Activate', contractRef: null, occupancyRef },
+      scope,
+      validators,
+    );
+    const completed = yield* transitionOccupancy(
+      active.snapshot,
+      { _tag: 'Complete', occupancyRef },
+      scope,
+      validators,
+    );
+    expect(completed.snapshot.occupancies[0]).toMatchObject({
+      peopleCount: 3,
+      note: record.note,
+      state: 'COMPLETED',
+      externalBookingCorrelation: null,
+    });
+    expect(completed.snapshot.bookingObservations).toEqual([]);
+    const cancelled = yield* transitionOccupancy(
+      confirmed.snapshot,
+      { _tag: 'Cancel', occupancyRef },
+      scope,
+      validators,
+    );
+    expect(cancelled.snapshot.occupancies[0]?.state).toBe('CANCELLED');
+  }),
+);

@@ -15,6 +15,8 @@ export const PropertyTextSchema = Schema.Trim.check(Schema.isNonEmpty(), Schema.
 export const PropertyDateSchema = CalendarDateWireSchema;
 export const PropertyInstantSchema = Schema.toEncoded(Schema.DateTimeUtcFromString);
 export const PropertyRecordSchema = Schema.Struct({
+  propertyType: Schema.optionalKey(PropertyTextSchema),
+  responsiblePerson: Schema.optionalKey(PropertyTextSchema),
   address: PropertyTextSchema,
   code: PropertyTextSchema,
   createdAt: PropertyInstantSchema,

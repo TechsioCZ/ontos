@@ -2,6 +2,7 @@ import { DateTime, Effect, Match, Random, Schema } from 'effect';
 import { useState } from 'react';
 import type { PropertyCommand } from '../../../../../shared/actions/apply-command.ts';
 import { PropertyCommandSchema } from '../../../../../shared/actions/apply-command.ts';
+import { PropertyLifecycleSchema } from '../../../../../shared/apis/records.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -12,16 +13,27 @@ interface PropertyDraft {
   readonly code: string;
   readonly name: string;
   readonly note: string;
+  readonly propertyType: string;
+  readonly responsiblePerson: string;
+  readonly lifecycleState: Property['lifecycleState'];
   readonly property?: Property;
   readonly unitFor?: Property;
 }
-const emptyDraft: PropertyDraft = { address: '', code: '', name: '', note: '' };
+const emptyDraft: PropertyDraft = {
+  address: '',
+  code: '',
+  name: '',
+  note: '',
+  propertyType: '',
+  responsiblePerson: '',
+  lifecycleState: 'PLANNED',
+};
 
 export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved: () => void) => {
   const [draft, setDraft] = useState<PropertyDraft>();
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<'conflict' | 'forbidden' | 'saved' | 'unavailable' | 'validation'>();
-  const change = (field: 'address' | 'code' | 'name' | 'note', value: string) =>
+  const change = (field: 'address' | 'code' | 'name' | 'note' | 'propertyType' | 'responsiblePerson', value: string) =>
     setDraft((current) => (current === undefined ? current : { ...current, [field]: value }));
   const begin = (property?: Property) => {
     setFeedback(undefined);
@@ -33,6 +45,9 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
             code: property.code,
             name: property.name,
             note: property.note ?? '',
+            propertyType: property.propertyType ?? '',
+            responsiblePerson: property.responsiblePerson ?? '',
+            lifecycleState: property.lifecycleState,
             property,
           },
     );
@@ -81,10 +96,22 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     if (draft === undefined) {
       return;
     }
-    let raw: PropertyCommand = { _tag: 'CreateProperty', address: draft.address, code: draft.code, name: draft.name };
+    let raw: PropertyCommand = {
+      _tag: 'CreateProperty',
+      address: draft.address,
+      code: draft.code,
+      name: draft.name,
+      note: draft.note.trim() || null,
+      propertyType: draft.propertyType,
+      responsiblePerson: draft.responsiblePerson,
+      lifecycleState: draft.lifecycleState,
+    };
     if (draft.property !== undefined) {
       raw = {
         _tag: 'UpdateProperty',
+        propertyType: draft.propertyType,
+        responsiblePerson: draft.responsiblePerson,
+        lifecycleState: draft.lifecycleState,
         address: draft.address,
         name: draft.name,
         note: draft.note.trim() || null,
@@ -102,9 +129,10 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     }
     submit(raw);
   };
-  const fields: readonly ('code' | 'name' | 'address' | 'note')[] =
-    draft?.unitFor === undefined ? ['code', 'name', 'address'] : ['code', 'name'];
-  const visibleFields = draft?.property === undefined ? fields : [...fields, 'note' as const];
+  const visibleFields: readonly ('code' | 'name' | 'address' | 'note' | 'propertyType' | 'responsiblePerson')[] =
+    draft?.unitFor === undefined
+      ? ['code', 'name', 'address', 'propertyType', 'responsiblePerson', 'note']
+      : ['code', 'name'];
   let title = 'create';
   if (draft?.property !== undefined) {
     title = 'edit';
@@ -121,6 +149,10 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     busy,
     cancel: () => setDraft(undefined),
     change,
+    changeLifecycle: (value: string) => {
+      if (Schema.is(PropertyLifecycleSchema)(value))
+        setDraft((current) => (current === undefined ? current : { ...current, lifecycleState: value }));
+    },
     draft,
     feedback,
     fields: visibleFields,

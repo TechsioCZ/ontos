@@ -8,6 +8,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useState } from 'react';
 import type { OccupancyCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Occupancy, RecordsResponse, TenantContact, TenantDossier } from '../../../../../shared/apis/records.ts';
+import { parseCrowns } from './lease-story.tsx';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
 import './tenant-dossier.css';
 
@@ -49,6 +50,9 @@ export const TenantDossierCard = ({
   newContactId,
   onCommand,
   record,
+  counterpartyName,
+  contractHref,
+  taskHref,
 }: {
   readonly busy: boolean;
   readonly dossier: TenantDossier | undefined;
@@ -56,12 +60,22 @@ export const TenantDossierCard = ({
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
   readonly onCommand: (command: OccupancyCommand) => void;
   readonly record: Occupancy;
+  readonly counterpartyName: string;
+  readonly contractHref?: string | undefined;
+  readonly taskHref?: string | undefined;
 }) => {
   const [contacts, setContacts] = useState<readonly TenantContact[]>(dossier?.contacts ?? []);
   const [editing, setEditing] = useState(false);
   const [kind, setKind] = useState<'CALL' | 'EMAIL' | 'MEETING' | 'NOTE'>('CALL');
   const [summary, setSummary] = useState('');
   const [caseState, setCaseState] = useState(dossier?.caseState ?? 'NEW');
+  const [caseSubject, setCaseSubject] = useState(dossier?.caseDetails?.subject ?? '');
+  const [caseOwner, setCaseOwner] = useState(dossier?.caseDetails?.owner ?? '');
+  const [caseDeadline, setCaseDeadline] = useState(dossier?.caseDetails?.deadline ?? '');
+  const [caseValue, setCaseValue] = useState(
+    dossier?.caseDetails?.estimatedValueMinor == null ? '' : String(dossier.caseDetails.estimatedValueMinor / 100),
+  );
+  const estimatedValueMinor = caseValue.trim() === '' ? null : parseCrowns(caseValue);
   const update = (changes: Omit<DossierCommand, '_tag' | 'occupancyRef'>) =>
     onCommand({ _tag: 'UpdateTenantDossier', occupancyRef: record.occupancyRef, ...changes });
   const updateContact = (id: string, field: 'name' | 'role' | 'email' | 'phone', value: string) =>
@@ -188,6 +202,36 @@ export const TenantDossierCard = ({
         <div className="sp-tenant-contact">
           <h3>Obchodní případ · nájemní vztah</h3>
           <p className="sp-tenant-muted">Stav jednání nemění platnost smlouvy ani obsazenost jednotky.</p>
+          <DetailList items={[{ label: 'Protistrana případu', value: counterpartyName }]} />
+          <div className="sp-tenant-fields">
+            <FormInput
+              label="Předmět případu"
+              maxLength={500}
+              required
+              value={caseSubject}
+              onChange={(event) => setCaseSubject(event.target.value)}
+            />
+            <FormInput
+              label="Vlastník případu"
+              maxLength={500}
+              required
+              value={caseOwner}
+              onChange={(event) => setCaseOwner(event.target.value)}
+            />
+            <FormInput
+              label="Termín případu"
+              type="date"
+              required
+              value={caseDeadline}
+              onChange={(event) => setCaseDeadline(event.target.value)}
+            />
+            <FormInput
+              label="Odhadovaná hodnota (Kč, nepovinné)"
+              inputMode="decimal"
+              value={caseValue}
+              onChange={(event) => setCaseValue(event.target.value)}
+            />
+          </div>
           <div className="sp-tenant-actions">
             <label className="sp-tenant-stack">
               <span>Stav případu</span>
@@ -212,6 +256,43 @@ export const TenantDossierCard = ({
             >
               Uložit stav případu
             </Button>
+          </div>
+          <Button
+            disabled={
+              busy ||
+              caseSubject.trim().length === 0 ||
+              caseOwner.trim().length === 0 ||
+              caseDeadline.length === 0 ||
+              estimatedValueMinor === undefined
+            }
+            onClick={() => {
+              if (estimatedValueMinor !== undefined)
+                update({
+                  caseState,
+                  caseDetails: {
+                    subject: caseSubject.trim(),
+                    owner: caseOwner.trim(),
+                    deadline: caseDeadline,
+                    estimatedValueMinor,
+                  },
+                });
+            }}
+            size="sm"
+            variant="primary"
+          >
+            Uložit případ
+          </Button>
+          <div className="sp-tenant-actions">
+            {contractHref !== undefined && (
+              <LinkButton href={contractHref} size="sm" theme="borderless" variant="secondary">
+                Otevřít smlouvu případu →
+              </LinkButton>
+            )}
+            {taskHref !== undefined && (
+              <LinkButton href={taskHref} size="sm" theme="borderless" variant="secondary">
+                Otevřít úkol případu →
+              </LinkButton>
+            )}
           </div>
           <LinkButton
             href={`/${language}/siampark/occupancy?resourceId=${record.occupancyRef.resourceId}`}

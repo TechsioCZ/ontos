@@ -82,7 +82,12 @@ export const UnitStory = ({
       <section aria-label={t(`${K}.leases`)} className={cardClass}>
         <div className="siamparkproperty:flex siamparkproperty:items-center siamparkproperty:justify-between siamparkproperty:gap-2">
           <h3 className="siamparkproperty:text-sm siamparkproperty:font-semibold">{t(`${K}.leases`)}</h3>
-          <LinkButton href={`/${language}/siampark/occupancy`} size="sm" theme="borderless" variant="secondary">
+          <LinkButton
+            href={`/${language}/siampark/occupancy?create=lease&unitId=${unit.unitRef.resourceId}`}
+            size="sm"
+            theme="borderless"
+            variant="secondary"
+          >
             {t(`${K}.newLease`)}
           </LinkButton>
         </div>

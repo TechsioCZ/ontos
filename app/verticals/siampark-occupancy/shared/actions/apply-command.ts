@@ -10,6 +10,7 @@ import {
   RentTermsSchema,
   TenantContactSchema,
   TenantCaseStateSchema,
+  TenantCaseDetailsSchema,
   TenantActivityInputSchema,
 } from '../apis/records.ts';
 import { OccupancyRefSchema } from '../resources/occupancy.ts';
@@ -19,6 +20,7 @@ export const OccupancyCommandSchema = Schema.Union([
     occupancyRef: OccupancyRefSchema,
     contacts: Schema.optionalKey(Schema.Array(TenantContactSchema).check(Schema.isMaxLength(50))),
     caseState: Schema.optionalKey(TenantCaseStateSchema),
+    caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
     archived: Schema.optionalKey(Schema.Boolean),
     activity: Schema.optionalKey(TenantActivityInputSchema),
   }),

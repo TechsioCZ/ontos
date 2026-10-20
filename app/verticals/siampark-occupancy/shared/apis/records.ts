@@ -69,7 +69,15 @@ export const TenantActivityInputSchema = Schema.Struct({
   kind: Schema.Literals(['CALL', 'EMAIL', 'MEETING', 'NOTE']),
   summary: TextSchema,
 });
+export const TenantCaseDetailsSchema = Schema.Struct({
+  subject: TextSchema,
+  owner: TextSchema,
+  deadline: DemoDateSchema,
+  estimatedValueMinor: Schema.NullOr(MoneyMinorSchema),
+});
+export type TenantCaseDetails = typeof TenantCaseDetailsSchema.Type;
 export const TenantDossierSchema = Schema.Struct({
+  caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
   counterpartyId: Schema.String.check(Schema.isUUID()),
   contacts: Schema.Array(TenantContactSchema),
   caseState: TenantCaseStateSchema,

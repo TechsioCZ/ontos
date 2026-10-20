@@ -182,7 +182,7 @@
           "code": "Code",
           "name": "Name",
           "address": "Address",
-          "note": "Note",
+          "note": "Description",
           "save": "Save",
           "cancel": "Cancel",
           "saved": "Property saved.",
@@ -192,7 +192,9 @@
           "unavailable": "Property could not be saved. Try again.",
           "createUnit": "Add unit",
           "activate": "Activate property",
-          "deactivate": "Deactivate property"
+          "deactivate": "Deactivate property",
+          "propertyType": "Property type",
+          "responsiblePerson": "Responsible person"
         },
         "unitStory": {
           "newLease": "New lease",

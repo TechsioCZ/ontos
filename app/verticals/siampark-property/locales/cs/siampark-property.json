@@ -182,7 +182,7 @@
           "code": "Kód",
           "name": "Název",
           "address": "Adresa",
-          "note": "Poznámka",
+          "note": "Popis",
           "save": "Uložit",
           "cancel": "Zrušit",
           "saved": "Nemovitost byla uložena.",
@@ -192,7 +192,9 @@
           "unavailable": "Nemovitost se nepodařilo uložit. Zkuste to znovu.",
           "createUnit": "Přidat jednotku",
           "activate": "Aktivovat nemovitost",
-          "deactivate": "Deaktivovat nemovitost"
+          "deactivate": "Deaktivovat nemovitost",
+          "propertyType": "Typ nemovitosti",
+          "responsiblePerson": "Odpovědná osoba"
         },
         "unitStory": {
           "newLease": "Nový nájem",

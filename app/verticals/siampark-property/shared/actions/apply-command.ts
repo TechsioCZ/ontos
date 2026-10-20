@@ -17,11 +17,18 @@ import { PropertyUnavailable } from './errors/property-unavailable.ts';
 
 export const PropertyCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateProperty', {
+    propertyType: Schema.optionalKey(PropertyTextSchema),
+    responsiblePerson: Schema.optionalKey(PropertyTextSchema),
+    note: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    lifecycleState: Schema.optionalKey(PropertyLifecycleSchema),
     address: PropertyTextSchema,
     code: PropertyTextSchema,
     name: PropertyTextSchema,
   }),
   Schema.TaggedStruct('UpdateProperty', {
+    propertyType: Schema.optionalKey(PropertyTextSchema),
+    responsiblePerson: Schema.optionalKey(PropertyTextSchema),
+    lifecycleState: Schema.optionalKey(PropertyLifecycleSchema),
     address: PropertyTextSchema,
     name: PropertyTextSchema,
     note: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),

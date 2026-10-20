@@ -310,6 +310,8 @@ export const transitionOccupancy = (
         };
         if (command.caseState !== undefined && command.caseState !== previous.caseState)
           history.push(event('CASE', `Stav případu: ${states[previous.caseState]} → ${states[command.caseState]}.`));
+        if (command.caseDetails !== undefined)
+          history.push(event('CASE', `Údaje případu aktualizovány: ${command.caseDetails.subject.slice(0, 300)}.`));
         if (command.archived !== undefined && command.archived !== previous.archived)
           history.push(
             event(
@@ -325,6 +327,7 @@ export const transitionOccupancy = (
           ...previous,
           contacts: command.contacts ?? previous.contacts,
           caseState: command.caseState ?? previous.caseState,
+          ...(command.caseDetails === undefined ? {} : { caseDetails: command.caseDetails }),
           archived: command.archived ?? previous.archived,
           history,
         };

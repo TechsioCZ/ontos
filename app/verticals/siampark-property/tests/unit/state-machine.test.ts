@@ -69,3 +69,45 @@ describe('Property owner transitions', () => {
     }),
   );
 });
+
+it.effect('persists property operational metadata on creation and updates without changing its identity', () =>
+  Effect.gen(function* propertyMetadata() {
+    const created = yield* applyPropertyCommand(
+      empty,
+      {
+        ...create,
+        propertyType: 'Administrativní budova',
+        responsiblePerson: 'Jana Novotná',
+        note: 'Areál u parku',
+        lifecycleState: 'ACTIVE',
+      },
+      context,
+    );
+    const property = yield* Effect.fromNullishOr(created.state.properties[0]);
+    expect(property).toMatchObject({
+      propertyType: 'Administrativní budova',
+      responsiblePerson: 'Jana Novotná',
+      note: 'Areál u parku',
+      lifecycleState: 'ACTIVE',
+    });
+    const updated = yield* applyPropertyCommand(
+      created.state,
+      {
+        _tag: 'UpdateProperty',
+        propertyRef: property.propertyRef,
+        name: property.name,
+        address: property.address,
+        note: 'Nový správce areálu',
+        responsiblePerson: 'Petr Dvořák',
+      },
+      context,
+    );
+    expect(updated.state.properties[0]).toMatchObject({
+      propertyType: 'Administrativní budova',
+      responsiblePerson: 'Petr Dvořák',
+      note: 'Nový správce areálu',
+      lifecycleState: 'ACTIVE',
+      propertyRef: property.propertyRef,
+    });
+  }),
+);

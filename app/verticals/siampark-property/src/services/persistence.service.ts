@@ -151,9 +151,11 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
             resourceType: 'core.identity.legal-entity' as const,
             tenantId: context.tenantId,
           },
-          lifecycleState: 'PLANNED' as const,
+          lifecycleState: input.lifecycleState ?? ('PLANNED' as const),
           name: input.name,
-          note: null,
+          note: input.note ?? null,
+          ...(input.propertyType === undefined ? {} : { propertyType: input.propertyType }),
+          ...(input.responsiblePerson === undefined ? {} : { responsiblePerson: input.responsiblePerson }),
           propertyRef,
           updatedAt: context.now,
         };
@@ -195,7 +197,16 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
             ...state,
             properties: state.properties.map((record) =>
               record.propertyRef.resourceId === input.propertyRef.resourceId
-                ? { ...record, address: input.address, name: input.name, note: input.note, updatedAt: context.now }
+                ? {
+                    ...record,
+                    address: input.address,
+                    name: input.name,
+                    note: input.note,
+                    updatedAt: context.now,
+                    lifecycleState: input.lifecycleState ?? record.lifecycleState,
+                    ...(input.propertyType === undefined ? {} : { propertyType: input.propertyType }),
+                    ...(input.responsiblePerson === undefined ? {} : { responsiblePerson: input.responsiblePerson }),
+                  }
                 : record,
             ),
           },

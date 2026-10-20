@@ -31,7 +31,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { Crypto, Effect, Option, PlatformError, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, PlatformError, Schema } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../../shared/actions/apply-command.ts';
@@ -60,12 +60,23 @@ import '../../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
 import { OccupancyCalendar } from './occupancy-calendar.tsx';
 
-const RecordsSearchSchema = Schema.Struct({ resourceId: Schema.optional(OccupancyRefSchema.fields.resourceId) });
+const RecordsSearchSchema = Schema.Struct({
+  resourceId: Schema.optional(OccupancyRefSchema.fields.resourceId),
+  create: Schema.optional(Schema.Literal('lease')),
+  unitId: Schema.optional(OccupancyRefSchema.fields.resourceId),
+});
 const LABEL_CHOOSE = 'siampark-occupancy.demo.choose';
 const LABEL_UNIT = 'siampark-occupancy.demo.unit';
 const LABEL_DETAIL = 'siampark-occupancy.demo.detail';
-const DEFAULT_START_DATE = '2026-10-05';
-const DEFAULT_END_DATE = '2027-10-05';
+const currentPragueDay = () =>
+  new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+const DEFAULT_START_DATE = currentPragueDay();
+const DEFAULT_END_DATE = '';
 const LABEL_EDIT_DRAFT = 'siampark-occupancy.demo.editDraft';
 const LABEL_CREATE = 'siampark-occupancy.demo.create';
 const LABEL_SIMULATED = 'siampark-occupancy.demo.simulated';
@@ -133,12 +144,14 @@ const useRecordsPage = () => {
   const [guests, setGuests] = useState<Guests>([]);
   const [guestId, setGuestId] = useState('');
   const [guestQuery, setGuestQuery] = useState('');
+  const [peopleCount, setPeopleCount] = useState('2');
+  const [stayNote, setStayNote] = useState('');
   const [feedback, setFeedback] = useState<Feedback>('loading');
   const [unitId, setUnitId] = useState('');
   const [customerId, setCustomerId] = useState('');
   const [customersLoading, setCustomersLoading] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
-  const [editor, setEditor] = useState<'lease' | 'booking'>();
+  const [editor, setEditor] = useState<'lease' | 'stay' | 'booking'>();
   const [retryObservationId, setRetryObservationId] = useState<string>();
   const [startDate, setStartDate] = useState(DEFAULT_START_DATE);
   const [endDate, setEndDate] = useState(DEFAULT_END_DATE);
@@ -305,6 +318,8 @@ const useRecordsPage = () => {
           if (record !== undefined && linkedResourceId !== record.occupancyRef.resourceId) {
             const url = new URL(window.location.href);
             url.searchParams.set('resourceId', record.occupancyRef.resourceId);
+            url.searchParams.delete('create');
+            url.searchParams.delete('unitId');
             window.location.assign(url);
           }
           return Effect.void;
@@ -392,6 +407,53 @@ const useRecordsPage = () => {
       ),
     );
   };
+  const createStay = () => {
+    const unit = properties?.units.find((item) => item.unitRef.resourceId === unitId);
+    const guest = guests.find((item) => item.ref.resourceId === guestId);
+    const count = Number(peopleCount);
+    if (
+      unit === undefined ||
+      guest === undefined ||
+      !Number.isInteger(count) ||
+      count < 1 ||
+      endDate.length === 0 ||
+      endDate <= startDate ||
+      stayNote.length > 500
+    ) {
+      setFeedback('validation');
+      return;
+    }
+    run(
+      newUuid.pipe(
+        Effect.match({
+          onFailure: reportFailure,
+          onSuccess: (resourceId) =>
+            runCommand({
+              _tag: 'CreateDraft',
+              record: {
+                contractRef: null,
+                customerCounterpartyRef: null,
+                endDate,
+                externalBookingCorrelation: null,
+                guestPartyRef: guest.ref,
+                kind: 'SHORT_STAY',
+                note: stayNote.trim() || null,
+                peopleCount: count,
+                startDate,
+                state: 'DRAFT',
+                unitRef: unit.unitRef,
+                occupancyRef: {
+                  moduleId: 'siampark.occupancy',
+                  resourceId,
+                  resourceType: 'siampark.occupancy.occupancy',
+                  tenantId: unit.unitRef.tenantId,
+                },
+              },
+            }),
+        }),
+      ),
+    );
+  };
   const editDraft = () => {
     if (selected?.state !== 'DRAFT') {
       return;
@@ -416,7 +478,7 @@ const useRecordsPage = () => {
       ),
     );
   };
-  const newDraft = (mode: 'lease' | 'booking' = 'lease', retryId?: string) => {
+  const newDraft = (mode: 'lease' | 'stay' | 'booking' = 'lease', retryId?: string) => {
     setRetryObservationId(retryId);
     setEditingId('');
     setStartDate(DEFAULT_START_DATE);
@@ -428,11 +490,30 @@ const useRecordsPage = () => {
     setGuestId('');
     setGuests([]);
     setGuestQuery('');
+    setPeopleCount('2');
+    setStayNote('');
     setEditor(mode);
     if (mode === 'lease') {
       loadCustomers();
     }
   };
+  const consumedCreationLink = useRef(false);
+  const openLinkedLease = useEffectEvent(() => {
+    newDraft('lease');
+    setUnitId(Option.getOrUndefined(search)?.unitId ?? '');
+  });
+  useEffect(() => {
+    if (
+      !consumedCreationLink.current &&
+      linkedResourceId === undefined &&
+      Option.getOrUndefined(search)?.create === 'lease' &&
+      properties !== undefined &&
+      feedback === 'ready'
+    ) {
+      consumedCreationLink.current = true;
+      openLinkedLease();
+    }
+  }, [properties, feedback, linkedResourceId, search]);
   const saveDraft = () => {
     const rentTerms = rentTermsFromForm();
     if (selected?.state !== 'DRAFT' || selected.occupancyRef.resourceId !== editingId || rentTerms === 'invalid') {
@@ -559,6 +640,11 @@ const useRecordsPage = () => {
     tenantOf,
     unitOf,
     createDraft,
+    createStay,
+    peopleCount,
+    setPeopleCount,
+    stayNote,
+    setStayNote,
     customerId,
     customerName,
     customerNameFeedback,
@@ -779,6 +865,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
                     value: t(`siampark-occupancy.demo.kind.${selected.kind}`),
                   },
                   { label: t('siampark-occupancy.demo.startDate'), value: formatDate(selected.startDate) },
+                  ...(!isLease ? [{ label: 'Počet osob', value: String(selected.peopleCount ?? 'Neuvedeno') }] : []),
                   {
                     label: t('siampark-occupancy.demo.endDate'),
                     value:
@@ -811,6 +898,15 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
           {isLease && snapshot !== undefined && (
             <TenantDossierCard
               busy={busy}
+              counterpartyName={tenant?.displayName ?? customerLabel}
+              contractHref={
+                contract === undefined
+                  ? undefined
+                  : `/${language}/siampark/agreements?resourceId=${contract.contractRef.resourceId}`
+              }
+              taskHref={
+                tasks[0] === undefined ? undefined : `/${language}/siampark/work?resourceId=${tasks[0].ref.resourceId}`
+              }
               dossier={snapshot.tenantDossiers?.find(
                 (item) => item.counterpartyId === selected.customerCounterpartyRef?.resourceId,
               )}
@@ -1025,7 +1121,12 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
     return null;
   }
   const { guestId, guestQuery, guests, importBooking, searchGuests, setGuestId, setGuestQuery } = state;
-  const panelTitle = editor === 'booking' ? 'siampark-occupancy.demo.importBooking' : LABEL_EDIT_DRAFT;
+  const panelTitle =
+    editor === 'booking'
+      ? 'siampark-occupancy.demo.importBooking'
+      : editor === 'stay'
+        ? 'siampark-occupancy.demo.newBooking'
+        : LABEL_EDIT_DRAFT;
   const title = editor === 'lease' && editingId.length === 0 ? 'siampark-occupancy.demo.newLease' : panelTitle;
   const activeUnits = (properties?.units ?? []).filter((record) => record.lifecycleState === 'ACTIVE');
   return (
@@ -1043,6 +1144,10 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
               variant="primary"
             >
               {t(state.editingId.length > 0 ? 'siampark-occupancy.demo.saveDraft' : LABEL_CREATE)}
+            </Button>
+          ) : editor === 'stay' ? (
+            <Button disabled={busy} isLoading={feedback === 'saving'} onClick={state.createStay} variant="primary">
+              Uložit rezervaci
             </Button>
           ) : (
             <>
@@ -1157,10 +1262,12 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
             </section>
           )}
         </div>
-        {state.editor === 'booking' && (
+        {(state.editor === 'booking' || state.editor === 'stay') && (
           <section className="siamparkoccupancy:space-y-4">
             <p className="siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">
-              {t('siampark-occupancy.demo.bookingFormContext')}
+              {state.editor === 'stay'
+                ? 'Ruční rezervace bez napojení na rezervační portál. Po uložení ji můžete potvrdit, zahájit, ukončit nebo zrušit. Potvrzení kontroluje kolize termínů.'
+                : t('siampark-occupancy.demo.bookingFormContext')}
             </p>
             <div className="siamparkoccupancy:flex siamparkoccupancy:items-end siamparkoccupancy:gap-2">
               <div className="siamparkoccupancy:min-w-0 siamparkoccupancy:flex-1">
@@ -1200,7 +1307,28 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
                 </Select.Content>
               </Select.Positioner>
             </Select>
-            <Badge variant="info">{t(LABEL_SIMULATED)}</Badge>
+            {state.editor === 'stay' ? (
+              <>
+                <FormInput
+                  id="stay-people-count"
+                  label="Počet osob"
+                  type="number"
+                  min={1}
+                  required
+                  value={state.peopleCount}
+                  onChange={(event) => state.setPeopleCount(event.target.value)}
+                />
+                <FormInput
+                  id="stay-note"
+                  label="Poznámka k rezervaci"
+                  maxLength={500}
+                  value={state.stayNote}
+                  onChange={(event) => state.setStayNote(event.target.value)}
+                />
+              </>
+            ) : (
+              <Badge variant="info">{t(LABEL_SIMULATED)}</Badge>
+            )}
           </section>
         )}
       </div>
@@ -1256,12 +1384,21 @@ const RecordsPageContent = () => {
                 <>
                   <Button
                     disabled={busy || snapshot === undefined}
-                    onClick={() => state.newDraft('booking')}
+                    onClick={() => state.newDraft('stay')}
                     size="sm"
                     theme="outlined"
                     variant="secondary"
                   >
                     {t('siampark-occupancy.demo.newBooking')}
+                  </Button>
+                  <Button
+                    disabled={busy || snapshot === undefined}
+                    onClick={() => state.newDraft('booking')}
+                    size="sm"
+                    theme="borderless"
+                    variant="secondary"
+                  >
+                    Simulace importu
                   </Button>
                   <Button
                     disabled={busy || snapshot === undefined}

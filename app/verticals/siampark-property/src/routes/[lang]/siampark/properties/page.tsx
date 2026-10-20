@@ -172,16 +172,18 @@ const usePropertyRecords = () => {
             const selectedUnit = result.units.find((item) => item.unitRef.resourceId === resourceId);
             const selectedAsset = result.assets.find((item) => item.assetRef.resourceId === resourceId);
             const selectedProperty = result.properties.find((item) => item.propertyRef.resourceId === resourceId);
-            setSelection({
-              assetId: selectedAsset?.assetRef.resourceId ?? '',
+            setSelection((current) => ({
+              assetId: selectedAsset?.assetRef.resourceId ?? (resourceId === undefined ? current.assetId : ''),
               propertyId:
                 selectedProperty?.propertyRef.resourceId ??
                 selectedUnit?.propertyRef.resourceId ??
                 selectedAsset?.propertyRef.resourceId ??
-                '',
-              unitId: selectedUnit?.unitRef.resourceId ?? '',
-            });
-            setSummary({});
+                (resourceId === undefined &&
+                result.properties.some((item) => item.propertyRef.resourceId === current.propertyId)
+                  ? current.propertyId
+                  : ''),
+              unitId: selectedUnit?.unitRef.resourceId ?? (resourceId === undefined ? current.unitId : ''),
+            }));
             setMessage('');
             setPending(false);
           },
@@ -399,12 +401,12 @@ const RecordsPageContent = () => {
   }, []);
   // Building detail shows its leases, contracts and tasks at once; the explicit button stays for a manual reload.
   const loadSummaryOnSelect = useEffectEvent(model.loadSummary);
-  const selectedPropertyId = model.property?.propertyRef.resourceId;
+  const selectedProperty = model.property;
   useEffect(() => {
-    if (selectedPropertyId !== undefined) {
+    if (selectedProperty !== undefined) {
       loadSummaryOnSelect();
     }
-  }, [selectedPropertyId]);
+  }, [selectedProperty]);
   const { asset, key, relatedSections, t, unit } = model;
   const handleRefresh = model.refresh;
   const handleLoadSummary = model.loadSummary;
@@ -474,6 +476,22 @@ const RecordsPageContent = () => {
                     value={editor.draft?.[field] ?? ''}
                   />
                 ))}
+                {editor.draft.unitFor === undefined && (
+                  <label className={messageClass}>
+                    {t(`${key}.state`)}
+                    <select
+                      aria-label={t(`${key}.state`)}
+                      value={editor.draft.lifecycleState}
+                      onChange={(event) => editor.changeLifecycle(event.target.value)}
+                    >
+                      {(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((state) => (
+                        <option key={state} value={state}>
+                          {t(`${key}.states.${state}`)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <div className="siamparkproperty:flex siamparkproperty:gap-3">
                   <Button disabled={editor.busy} type="submit" variant="warning">
                     {t(`${key}.editor.save`)}
@@ -584,6 +602,17 @@ const RecordsPageContent = () => {
                   >
                     {t(`${key}.loadSummary`)}
                   </Button>
+                </div>
+                <div className={relatedCardClass}>
+                  <p className={secondaryTextClass}>
+                    {t(`${key}.editor.propertyType`)}: {model.property.propertyType ?? 'Neuvedeno'}
+                  </p>
+                  <p className={secondaryTextClass}>
+                    {t(`${key}.editor.responsiblePerson`)}: {model.property.responsiblePerson ?? 'Neuvedeno'}
+                  </p>
+                  <p className={secondaryTextClass}>
+                    {t(`${key}.editor.note`)}: {model.property.note ?? 'Neuvedeno'}
+                  </p>
                 </div>
                 <output aria-live="polite" className={messageClass}>
                   {model.summaryMessage}
