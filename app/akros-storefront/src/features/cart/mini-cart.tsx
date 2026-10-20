@@ -2,6 +2,7 @@
 
 import NextLink from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
+import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
@@ -128,12 +129,14 @@ export function MiniCart() {
           </strong>
           <span className="relative inline-flex shrink-0 items-center justify-center">
             <Icon icon="token-icon-cart-button" size="2xl" />
-            <span
-              className="absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full bg-(--color-fg-primary) px-1 text-sm leading-none font-bold text-(--color-base-light)"
+            <Badge
+              className="akros-header__cart-count absolute -top-1 -right-1 h-5 min-w-5 leading-none"
               aria-live="polite"
+              size="sm"
+              variant="secondary"
             >
-              {itemCount}
-            </span>
+              {String(itemCount)}
+            </Badge>
           </span>
         </LinkButton>
       </Popover.Anchor>

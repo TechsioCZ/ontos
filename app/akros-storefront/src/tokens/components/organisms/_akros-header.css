@@ -21,6 +21,23 @@
   --color-button-fg-secondary-borderless: var(--color-fg-primary);
 }
 
+.akros-header__personal-navigation {
+  --height-form-control-md: var(--dimension-48);
+  --padding-button-md: var(--dimension-8);
+  --radius-button-md: var(--radius-sm);
+  --text-button-md: var(--text-base);
+}
+
+.akros-header__cart-count {
+  --border-width-badge: var(--dimension-0);
+  --color-badge-bg-secondary: var(--color-fg-primary);
+  --color-badge-fg-secondary: var(--color-base-light);
+  --font-weight-badge-sm: var(--font-weight-bold);
+  --padding-badge-sm: var(--dimension-0) var(--dimension-4);
+  --radius-badge: var(--radius-full);
+  --text-badge-sm: var(--text-sm);
+}
+
 .akros-header__cart-trigger {
   --height-form-control-sm: var(--akros-header-control-height);
   --padding-button-sm: var(--dimension-0) var(--dimension-16);

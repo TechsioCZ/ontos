@@ -62,8 +62,9 @@ The Iconify Tailwind plugin loads them as the local `akros` collection, used thr
 UI-kit `Icon` component. Keep their paths, view boxes and internal padding from the design.
 
 With the storefront running, `npm run test:theme` checks that carousel dots and controls,
-product CTA weights, the mini-cart trigger and portalled preview, checkout actions and cart
-quantity inputs respond to their UI-kit tokens. It also checks the quantity input's hover/focus
+product card accents and CTA weights, header account/favorites controls, the cart count badge,
+the mini-cart trigger and portalled preview, checkout actions and cart quantity inputs respond
+to their UI-kit tokens. It also checks the quantity input's hover/focus
 surfaces. Run it alongside the responsive, account and typography browser suites when changing
 token mappings; these browser checks are separate from `npm run check`.
 
@@ -75,6 +76,10 @@ input border/radius and trigger surface still need slot utilities. Button has a 
 but no component line-height token, so checkout actions retain their line-height utility.
 Colors, input padding and font weights use scoped kit tokens. Layout and runtime measurements
 (such as the quantity's character count) remain app composition.
+The header account/favorites controls keep their widths as layout utilities; height, padding,
+radius and text size use scoped Button tokens. The cart count uses Badge tokens for appearance
+and keeps its overlay position, minimum width and height as composition. Badge has no line-height
+token in `0.56.1`, so the count retains `leading-none`.
 
 ## Prototype boundary
 

@@ -102,6 +102,48 @@ try {
   );
 
   const trigger = page.locator(".akros-header__cart-trigger");
+  const personalNavigation = page.locator(".akros-header__personal-navigation");
+  await probe(
+    personalNavigation,
+    {
+      "--height-form-control-md": "52px",
+      "--padding-button-md": "6px",
+      "--radius-button-md": "3px",
+      "--text-button-md": "18px",
+    },
+    async () => {
+      for (const control of await personalNavigation.locator("a").all()) {
+        assert.equal(await style(control, "height"), "52px");
+        assert.equal(await style(control, "padding"), "6px");
+        assert.equal(await style(control, "borderRadius"), "3px");
+        assert.equal(await style(control, "fontSize"), "18px");
+      }
+      assert.equal(await style(trigger, "height"), "64px");
+    },
+  );
+  const cartCount = trigger.locator('[aria-live="polite"]');
+  assert.equal(await cartCount.textContent(), "3");
+  await probe(
+    cartCount,
+    {
+      "--border-width-badge": "2px",
+      "--color-badge-bg-secondary": "rgb(12, 34, 56)",
+      "--color-badge-fg-secondary": "rgb(234, 245, 250)",
+      "--font-weight-badge-sm": "600",
+      "--padding-badge-sm": "0px 6px",
+      "--radius-badge": "3px",
+      "--text-badge-sm": "12px",
+    },
+    async () => {
+      assert.equal(await style(cartCount, "borderWidth"), "2px");
+      assert.equal(await style(cartCount, "backgroundColor"), "rgb(12, 34, 56)");
+      assert.equal(await style(cartCount, "color"), "rgb(234, 245, 250)");
+      assert.equal(await style(cartCount, "fontWeight"), "600");
+      assert.equal(await style(cartCount, "padding"), "0px 6px");
+      assert.equal(await style(cartCount, "borderRadius"), "3px");
+      assert.equal(await style(cartCount, "fontSize"), "12px");
+    },
+  );
   await probe(trigger, { "--color-button-bg-primary-base": "rgb(12, 34, 56)" }, async () => {
     assert.equal(await style(trigger, "backgroundColor"), "rgb(12, 34, 56)");
   });
@@ -152,7 +194,7 @@ try {
   );
 
   console.log(
-    "UI-kit theme checks passed: carousel, product cards, mini-cart and checkout tokens.",
+    "UI-kit theme checks passed: carousel, product cards, header, mini-cart and checkout tokens.",
   );
 } finally {
   await browser.close();

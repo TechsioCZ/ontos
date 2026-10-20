@@ -196,21 +196,21 @@ export function SiteHeader() {
               <LinkButton
                 as={NextLink}
                 aria-label={cs.header.account}
-                className="h-12 w-10 rounded-sm p-2"
+                className="w-10"
                 href="/muj-ucet"
                 icon="icon-[mdi-light--account]"
                 iconSize="xl"
-                size="current"
+                size="md"
                 theme="borderless"
               />
               <LinkButton
                 as={NextLink}
                 aria-label={cs.header.favorites}
-                className="h-12 w-12 rounded-sm p-2"
+                className="w-12"
                 href="/oblibene"
                 icon="icon-[mdi-light--heart]"
                 iconSize="xl"
-                size="current"
+                size="md"
                 theme="borderless"
               />
             </nav>
