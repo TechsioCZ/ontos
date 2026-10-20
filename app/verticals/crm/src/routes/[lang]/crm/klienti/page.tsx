@@ -63,7 +63,7 @@ const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
       const row = info.row.original;
       const segment = segmentLabel(row.client.segment);
       return (
-        <div className="flex min-w-0 flex-col gap-25 py-50">
+        <div className="flex min-w-0 flex-col py-50">
           <span className="flex min-w-0 items-center gap-100">
             <span
               aria-hidden
@@ -108,7 +108,7 @@ const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
         return <span className="text-fg-secondary">bez kontaktní osoby</span>;
       }
       return (
-        <div className="flex min-w-0 flex-col gap-25">
+        <div className="flex min-w-0 flex-col">
           <span className="truncate">{row.primaryContact.name}</span>
           <span className="truncate text-fg-secondary text-xs">
             {[row.primaryContact.role, row.contactCount > 1 ? `+${row.contactCount - 1} další` : undefined]

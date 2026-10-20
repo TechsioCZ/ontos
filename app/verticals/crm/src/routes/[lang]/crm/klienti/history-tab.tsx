@@ -84,7 +84,7 @@ export const HistoryTab = ({ client, records }: { readonly client: Client; reado
           <span className="z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border-primary bg-surface">
             <span aria-hidden className={`${entry.icon} size-4 text-fg-secondary`} />
           </span>
-          <div className="flex min-w-0 flex-col gap-25 pt-50">
+          <div className="flex min-w-0 flex-col pt-50">
             <span className="font-medium text-sm">{entry.title}</span>
             {entry.detail !== undefined && <span className="text-sm">{entry.detail}</span>}
             <span className="text-fg-secondary text-xs">

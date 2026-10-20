@@ -45,8 +45,8 @@ const Fact = ({
   readonly label: string;
 }) => (
   <div className="flex min-w-0 items-start gap-100">
-    <span aria-hidden className={`${icon} mt-25 size-4 shrink-0 text-fg-secondary`} />
-    <div className="flex min-w-0 flex-col gap-25">
+    <span aria-hidden className={`${icon} mt-50 size-4 shrink-0 text-fg-secondary`} />
+    <div className="flex min-w-0 flex-col">
       <dt className="text-fg-secondary text-xs">{label}</dt>
       <dd className="break-words text-sm">{children}</dd>
     </div>
@@ -280,7 +280,7 @@ const CardBody = ({
         </dl>
         {client.note !== undefined && (
           <div className="flex gap-100 rounded-lg bg-surface-secondary p-200 text-sm">
-            <span aria-hidden className="icon-[mdi--note-text-outline] mt-25 size-4 shrink-0 text-fg-secondary" />
+            <span aria-hidden className="icon-[mdi--note-text-outline] mt-50 size-4 shrink-0 text-fg-secondary" />
             <p className="whitespace-pre-line">{client.note}</p>
           </div>
         )}
