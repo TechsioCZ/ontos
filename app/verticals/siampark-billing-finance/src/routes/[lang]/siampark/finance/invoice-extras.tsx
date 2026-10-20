@@ -572,10 +572,11 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
       ) : (
         <div className="flex flex-col gap-100 text-sm">
           <Badge size="sm" variant={latest.status === 'HANDED_OVER' ? 'info' : 'success'}>
-            {latest.status === 'HANDED_OVER' ? 'Předáno – čeká na potvrzení' : 'Potvrdila účetní'}
+            {latest.status === 'HANDED_OVER' ? 'Předáno – čeká na potvrzení účetní' : 'Potvrdila účetní'}
           </Badge>
           <span className="text-fg-secondary">
-            Balíček {latest.batchNumber} (verze {latest.version}) · {at(latest.createdAt)} ·{' '}
+            Balíček {latest.batchNumber} ({latest.format === 'POHODA_XML' ? 'POHODA XML' : latest.format}, verze{' '}
+            {latest.version}) · {at(latest.createdAt)} ·{' '}
             {actorText(latest.actorLabel, latest.actorPrincipalId)}
           </span>
           <span className="text-fg-secondary text-xs">

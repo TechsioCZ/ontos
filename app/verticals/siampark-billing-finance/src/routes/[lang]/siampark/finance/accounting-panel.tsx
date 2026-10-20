@@ -16,9 +16,10 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { AccountingExport, AccountingExportFormat, Invoice } from '../../../../../shared/apis/records.ts';
-import { downloadText, outcomeMessage, SimulationBadge } from './finance-ui.tsx';
+import { downloadText, outcomeMessage } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { customerOf } from './invoice-view.ts';
+import { useInvoiceIssuer } from './use-invoice-issuer.ts';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 
@@ -34,6 +35,12 @@ const MIME: Readonly<Record<AccountingExportFormat, string>> = {
   POHODA_XML: 'application/xml',
 };
 
+const FORMAT_LABEL: Readonly<Record<AccountingExportFormat, string>> = {
+  CSV: 'CSV',
+  JSON: 'JSON',
+  POHODA_XML: 'POHODA XML',
+};
+
 const SETUP_FIELDS = [
   ['product', 'Účetní systém'],
   ['productVersion', 'Verze systému'],
@@ -43,10 +50,25 @@ const SETUP_FIELDS = [
 ] as const;
 type SetupKey = (typeof SETUP_FIELDS)[number][0];
 
+/** Identity of the selected company as an accounting unit; written to POHODA XML (dataPack ico, myIdentity). */
+const ISSUER_FIELDS = [
+  ['issuerIco', 'IČO účetní jednotky'],
+  ['issuerVatId', 'DIČ účetní jednotky'],
+  ['issuerStreet', 'Ulice a číslo popisné'],
+  ['issuerCity', 'Obec'],
+  ['issuerZip', 'PSČ'],
+] as const;
+type IssuerKey = (typeof ISSUER_FIELDS)[number][0];
+type FormKey = IssuerKey | SetupKey;
+const ALL_FIELDS = [...SETUP_FIELDS, ...ISSUER_FIELDS] as const;
+
+const present = (value: string | null | undefined): value is string =>
+  value !== null && value !== undefined && value !== '';
+
 const statusBadge = (entry: AccountingExport) =>
   entry.status === 'HANDED_OVER' ? (
     <Badge size="sm" variant="info">
-      Předáno – čeká na potvrzení
+      Předáno – čeká na potvrzení účetní
     </Badge>
   ) : (
     <Badge size="sm" variant="success">
@@ -65,12 +87,18 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [format, setFormat] = useState<AccountingExportFormat>('CSV');
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState<Partial<Record<SetupKey, string>>>({});
+  const [form, setForm] = useState<Partial<Record<FormKey, string>>>({});
+  const [formError, setFormError] = useState<string>();
+  const issuerName = useInvoiceIssuer();
   const [message, setMessage] = useState<{ readonly kind: 'error' | 'success'; readonly text: string }>();
   const [confirmTarget, setConfirmTarget] = useState<AccountingExport>();
   const [evidence, setEvidence] = useState('');
   const missing = SETUP_FIELDS.filter(([key]) => setup[key] === undefined);
   const candidates = confirmed.filter((invoice) => !onlyNew || !handedOver.has(invoice.ref.resourceId));
+  const withoutVatBreakdown = confirmed.filter(
+    (invoice) =>
+      selected.has(invoice.ref.resourceId) && invoice.vatRecap === undefined && invoice.lines === undefined,
+  ).length;
   const nameOf = (invoice: Invoice) =>
     customerOf(vm.references.customerById, invoice)?.displayName ?? invoice.counterpartyName ?? '—';
 
@@ -88,12 +116,23 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const saveSetup = async () => {
     const clean = (value: string | undefined) =>
       value === undefined || value.trim() === '' ? undefined : value.trim();
+    const ico = clean(form.issuerIco);
+    const vatId = clean(form.issuerVatId);
+    if (ico !== undefined && !/^\d{8}$/u.test(ico)) {
+      setFormError('IČO musí mít přesně 8 číslic.');
+      return;
+    }
+    if (vatId !== undefined && !/^CZ\d{8,10}$/u.test(vatId)) {
+      setFormError('DIČ musí mít tvar CZ a 8–10 číslic, např. CZ12345678.');
+      return;
+    }
+    setFormError(undefined);
     const outcome = await vm.execute(
       {
         _tag: 'UpdateAccountingSetup',
         ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
         ...Object.fromEntries(
-          SETUP_FIELDS.flatMap(([key]) => {
+          ALL_FIELDS.flatMap(([key]) => {
             const value = clean(form[key]);
             return value === undefined ? [] : [[key, value]];
           }),
@@ -121,7 +160,23 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             return name === undefined || name === '—' ? [] : [[id, name]];
           }),
         ),
+        counterparties: Object.fromEntries(
+          ids.flatMap((id) => {
+            const invoice = confirmed.find((entry) => entry.ref.resourceId === id);
+            const customer = invoice === undefined ? undefined : customerOf(vm.references.customerById, invoice);
+            if (customer === undefined) {
+              return [];
+            }
+            const identity = {
+              ...(present(customer.city) ? { city: customer.city } : {}),
+              ...(present(customer.companyId) ? { ico: customer.companyId } : {}),
+              ...(present(customer.vatId) ? { vatId: customer.vatId } : {}),
+            };
+            return Object.keys(identity).length === 0 ? [] : [[id, identity]];
+          }),
+        ),
         format,
+        ...(issuerName === undefined ? {} : { issuerName }),
         invoiceResourceIds: ids,
       },
       `Předávací balíček vytvořen (${ids.length} dokladů)`,
@@ -165,7 +220,8 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             <Button
               icon="icon-[mdi--pencil-outline]"
               onClick={() => {
-                setForm(Object.fromEntries(SETUP_FIELDS.map(([key]) => [key, setup[key] ?? ''])));
+                setForm(Object.fromEntries(ALL_FIELDS.map(([key]) => [key, setup[key] ?? ''])));
+                setFormError(undefined);
                 setEditing(true);
               }}
               size="sm"
@@ -190,7 +246,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         )}
         {editing ? (
           <div className="grid grid-cols-1 gap-200 md:grid-cols-2">
-            {SETUP_FIELDS.map(([key, label]) => (
+            {ALL_FIELDS.map(([key, label]) => (
               <FormInput
                 id={`setup-${key}`}
                 key={key}
@@ -201,8 +257,23 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                 value={form[key] ?? ''}
               />
             ))}
+            {formError !== undefined && (
+              <div className="md:col-span-2">
+                <StatusText showIcon size="sm" status="error">
+                  {formError}
+                </StatusText>
+              </div>
+            )}
             <div className="flex items-end gap-100">
-              <Button onClick={() => setEditing(false)} size="sm" theme="outlined" variant="secondary">
+              <Button
+                onClick={() => {
+                  setEditing(false);
+                  setFormError(undefined);
+                }}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
                 Zrušit
               </Button>
               <Button isLoading={vm.busy} onClick={() => void saveSetup()} size="sm" variant="primary">
@@ -211,6 +282,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             </div>
           </div>
         ) : (
+          <>
           <dl className="grid grid-cols-1 gap-x-400 gap-y-150 text-sm md:grid-cols-2 xl:grid-cols-3">
             {SETUP_FIELDS.map(([key, label]) => (
               <div className="flex flex-col gap-50" key={key}>
@@ -229,6 +301,28 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
               </div>
             ))}
           </dl>
+          <div className="flex flex-col gap-100 pt-150">
+            <h3 className="font-medium text-sm">Účetní jednotka (vystavitel dokladů)</h3>
+            <dl className="grid grid-cols-1 gap-x-400 gap-y-150 text-sm md:grid-cols-2 xl:grid-cols-3">
+              <div className="flex flex-col gap-50">
+                <dt className="text-fg-secondary text-xs">Název (vybraná firma)</dt>
+                <dd>{issuerName ?? 'Údaj neposkytnut'}</dd>
+              </div>
+              {ISSUER_FIELDS.map(([key, label]) => (
+                <div className="flex flex-col gap-50" key={key}>
+                  <dt className="text-fg-secondary text-xs">{label}</dt>
+                  <dd>
+                    {setup[key] ?? (
+                      <Badge size="sm" variant="warning">
+                        ČEKÁ NA VSTUP
+                      </Badge>
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+          </>
         )}
       </SectionCard>
 
@@ -236,7 +330,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         actions={
           vm.canWrite ? (
             <>
-              <div className="w-56">
+              <div className="w-64">
                 <SelectTemplate
                   aria-label="Formát"
                   items={FORMATS.map((entry) => ({
@@ -271,8 +365,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         <div className="flex flex-wrap items-center justify-between gap-150">
           <p className="text-fg-secondary text-sm">
             Vyberte potvrzené doklady. Balíček nese verzi schématu, identifikátory, protistranu, data, měnu, částky,
-            objekt a odkaz na doklad.{' '}
-            {format === 'POHODA_XML' && <SimulationBadge>SIMULACE formátu Pohoda</SimulationBadge>}
+            objekt a odkaz na doklad.
           </p>
           <FormCheckbox
             checked={onlyNew}
@@ -282,6 +375,29 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             size="sm"
           />
         </div>
+        {format === 'POHODA_XML' && (
+          <div className="flex flex-col gap-100">
+            <StatusText showIcon size="sm" status="default">
+              Soubor odpovídá oficiálnímu schématu STORMWARE POHODA XML (dataPack 2.0, vydané i přijaté faktury).
+              Import do POHODA a zaúčtování provádí účetní.
+            </StatusText>
+            <StatusText showIcon size="sm" status="default">
+              DUZP se vyplní datem vystavení a forma úhrady „příkazem“ – OntOS je u dokladu samostatně neeviduje.
+            </StatusText>
+            {setup.issuerIco === undefined && (
+              <StatusText showIcon size="sm" status="warning">
+                IČO účetní jednotky není vyplněné – soubor ho neponese a POHODA ho naimportuje do právě otevřené
+                účetní jednotky. Doplňte IČO v sekci Účetní jednotka výše.
+              </StatusText>
+            )}
+            {withoutVatBreakdown > 0 && (
+              <StatusText showIcon size="sm" status="warning">
+                Vybrané doklady bez rozpisu DPH: {withoutVatBreakdown}. V POHODA budou označené „Nezahrnovat do DPH“
+                s poznámkou, aby účetní doplnila členění podle originálu dokladu.
+              </StatusText>
+            )}
+          </div>
+        )}
         {message !== undefined && (
           <StatusText showIcon size="sm" status={message.kind}>
             {message.text}
@@ -380,24 +496,24 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                       <span className="flex flex-col">
                         <span className="font-medium">{entry.batchNumber}</span>
                         <span className="text-fg-secondary text-xs">
-                          verze {entry.version} · schéma {entry.schemaVersion}
+                          verze {entry.version} ·{' '}
+                          {entry.format === 'POHODA_XML' ? 'STORMWARE dataPack 2.0' : `schéma ${entry.schemaVersion}`}
                         </span>
-                        {entry.format !== 'POHODA_XML' &&
-                          !entry.content.includes('/cs/siampark/finance?resourceId=') && (
-                            <span className="text-fg-secondary text-xs">
-                              Historická verze bez webových odkazů. Použijte novější balíček; původní soubor i otisk
-                              zůstávají zachovány.
-                            </span>
-                          )}
+                        {entry.issuerName !== undefined && (
+                          <span className="text-fg-secondary text-xs">
+                            Vystavitel: {entry.issuerName}
+                            {entry.issuerIco === undefined ? ' · IČO nevyplněno' : ` · IČO ${entry.issuerIco}`}
+                          </span>
+                        )}
+                        {!entry.content.includes('/cs/siampark/finance?resourceId=') && (
+                          <span className="text-fg-secondary text-xs">
+                            Historická verze bez webových odkazů. Použijte novější balíček; původní soubor i otisk
+                            zůstávají zachovány.
+                          </span>
+                        )}
                       </span>
                     </Table.Cell>
-                    <Table.Cell>
-                      {entry.format === 'POHODA_XML' ? (
-                        <SimulationBadge>Pohoda XML – SIMULACE</SimulationBadge>
-                      ) : (
-                        entry.format
-                      )}
-                    </Table.Cell>
+                    <Table.Cell>{FORMAT_LABEL[entry.format]}</Table.Cell>
                     <Table.Cell align="end" className="tabular-nums">
                       <details>
                         <summary className="cursor-pointer whitespace-nowrap text-sm">
