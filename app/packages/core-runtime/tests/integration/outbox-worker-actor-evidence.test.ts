@@ -27,9 +27,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor e
   suite.effect('derives worker actor evidence from the exact same-Tenant Action invocation', () =>
     Effect.gen(function* workerActorEvidenceIntegration() {
       const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4;
-      const legalEntityId = yield* crypto.randomUUIDv4;
-      const principalId = yield* crypto.randomUUIDv4;
+      const tenantId = yield* crypto.randomUUIDv4();
+      const legalEntityId = yield* crypto.randomUUIDv4();
+      const principalId = yield* crypto.randomUUIDv4();
       const configuration = yield* loadDatabaseConnectionPair();
       const { executor } = yield* makeCoreDatabase(configuration.runtime);
       const { executor: adminExecutor } = yield* makeCoreDatabase(configuration.admin);

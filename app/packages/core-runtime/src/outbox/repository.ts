@@ -211,7 +211,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
               .where(eq(outboxDeliveries.outboxDeliveryId, candidate.deliveryId));
             return Option.none();
           }
-          const claimId = `${claimOwner}:${yield* crypto.randomUUIDv4}`;
+          const claimId = `${claimOwner}:${yield* crypto.randomUUIDv4()}`;
           const claimExpiresAt = addMilliseconds(now, registration.descriptor.leaseDurationMs);
           const [claimed] = yield* transaction
             .update(outboxDeliveries)

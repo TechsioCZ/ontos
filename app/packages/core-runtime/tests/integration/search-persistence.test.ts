@@ -69,9 +69,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       const issuer = yield* makeTestPgClient(identities.runtime.shell_gateway_issuer.connectionString);
       yield* installSearchTestAuthority();
       const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4;
-      const otherTenantId = yield* crypto.randomUUIDv4;
-      const principalId = yield* crypto.randomUUIDv4;
+      const tenantId = yield* crypto.randomUUIDv4();
+      const otherTenantId = yield* crypto.randomUUIDv4();
+      const principalId = yield* crypto.randomUUIDv4();
       yield* addTestGatewayScopeGrantCleanup(admin, [tenantId, otherTenantId]);
       const context = attestOutboxWorkerHandlerContext({
         attemptNumber: 1,
@@ -88,15 +88,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
         topic: 'party.registry.party-updated.v1',
         workerKey: 'party.registry.project-party-updated-to-search',
       });
-      const legalEntityId = yield* crypto.randomUUIDv4;
-      const otherLegalEntityId = yield* crypto.randomUUIDv4;
-      const partyId = yield* crypto.randomUUIDv4;
-      const removedPartyId = yield* crypto.randomUUIDv4;
-      const counterpartyId = yield* crypto.randomUUIDv4;
-      const otherCounterpartyId = yield* crypto.randomUUIDv4;
+      const legalEntityId = yield* crypto.randomUUIDv4();
+      const otherLegalEntityId = yield* crypto.randomUUIDv4();
+      const partyId = yield* crypto.randomUUIDv4();
+      const removedPartyId = yield* crypto.randomUUIDv4();
+      const counterpartyId = yield* crypto.randomUUIDv4();
+      const otherCounterpartyId = yield* crypto.randomUUIDv4();
       const aliasRef = {
         moduleId: 'party.registry',
-        resourceId: yield* crypto.randomUUIDv4,
+        resourceId: yield* crypto.randomUUIDv4(),
         resourceType: 'party.registry.party',
         tenantId,
       };

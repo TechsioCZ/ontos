@@ -29,7 +29,7 @@ import {
   outboxWorkerCompositionLayer,
 } from '../support/outbox-worker-composition.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const PRODUCER_MODULE = 'producer.host';
 const TOPIC = 'producer.host.message-created';
 const MESSAGES_PER_TOPIC = 6;

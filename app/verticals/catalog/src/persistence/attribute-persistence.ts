@@ -743,7 +743,7 @@ export const attributePersistenceForScope = (
       return yield* conflict('INVALID_INPUT', 'Controlled definition specialization is missing or inapplicable');
     }
     const crypto = yield* Crypto.Crypto;
-    const attributeDefinitionId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(unavailable));
+    const attributeDefinitionId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
     const snapshot = {
       allowsNone: input.allowsNone ? 1 : 0,
       allowsNotApplicable: input.allowsNotApplicable ? 1 : 0,
@@ -1096,7 +1096,7 @@ export const attributePersistenceForScope = (
       return yield* conflict('INVALID_STATE', 'Controlled value specialization differs from its definition');
     }
     const crypto = yield* Crypto.Crypto;
-    const controlledAttributeValueId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(unavailable));
+    const controlledAttributeValueId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
     const snapshot = {
       attributeDefinitionId: input.attributeDefinitionRef.resourceId,
       colorDetails: input.color ?? null,

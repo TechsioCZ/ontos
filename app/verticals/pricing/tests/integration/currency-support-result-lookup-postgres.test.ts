@@ -15,7 +15,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 type PricingTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 type PricingTransaction = Parameters<Parameters<PricingTestDatabase['transaction']>[0]>[0];

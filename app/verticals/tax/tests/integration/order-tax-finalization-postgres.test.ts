@@ -78,7 +78,7 @@ import {
 
 const T = '2026-06-01T10:00:00.000Z';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const invocationIdOr = (actionInvocationId: string | undefined) =>
   actionInvocationId === undefined ? nextUuid : Effect.succeed(actionInvocationId);
 

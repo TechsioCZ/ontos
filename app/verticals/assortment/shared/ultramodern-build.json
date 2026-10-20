@@ -8,8 +8,8 @@
     "sourceRevision": "workspace",
     "unitId": "app/assortment",
     "version": "0.1.0",
-    "buildMarker": "14fe7553819b4068",
-    "build": "14fe7553819b4068"
+    "buildMarker": "02ac649d0cba4cca",
+    "build": "02ac649d0cba4cca"
   },
   "kind": "ultramodern-build-artifact",
   "schemaVersion": 2,
@@ -23,8 +23,8 @@
       "sourceRevision": "workspace",
       "unitId": "app/assortment",
       "version": "0.1.0",
-      "buildMarker": "14fe7553819b4068",
-      "build": "14fe7553819b4068",
+      "buildMarker": "02ac649d0cba4cca",
+      "build": "02ac649d0cba4cca",
       "surface": "api"
     },
     "ui": {
@@ -36,15 +36,15 @@
       "sourceRevision": "workspace",
       "unitId": "app/assortment",
       "version": "0.1.0",
-      "buildMarker": "14fe7553819b4068",
-      "build": "14fe7553819b4068",
+      "buildMarker": "02ac649d0cba4cca",
+      "build": "02ac649d0cba4cca",
       "surface": "ui",
       "rendererIdentity": {
         "renderer": "react",
         "appId": "assortment",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "14fe7553819b4068"
+        "buildId": "02ac649d0cba4cca"
       },
       "rendererProfile": {
         "renderer": "react",
@@ -55,7 +55,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",

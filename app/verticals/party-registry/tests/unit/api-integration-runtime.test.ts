@@ -22,7 +22,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
 import type { AresSubjectServiceContract } from '../../src/integrations/ares/ares-subject.service.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 const principal = {
   authBindingId: 'a1000000-0000-4000-8000-000000000001',

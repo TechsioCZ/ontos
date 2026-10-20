@@ -20,7 +20,7 @@ import { taxRelations, taxSellerVatRegimeDeclarations } from '../../src/database
 import { TAX_ACTIVATION_ITEMS, assessTaxActivationReadiness } from '../../src/domain/tax-activation-readiness.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const ACTIVATION_AT = DateTime.makeUnsafe('2026-06-01T00:00:00.000Z');
 
 interface FixtureIdentity {

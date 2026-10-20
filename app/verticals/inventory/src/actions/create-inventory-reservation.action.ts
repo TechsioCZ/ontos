@@ -173,9 +173,9 @@ export const createInventoryReservationAction = defineAction(
             StockAllocationIdSchema.make(
               Hex.encode(sha256(utf8ToBytes(`${effectId}\u0000${purchaseDemandOccurrenceId}\u0000${positionId}`))),
             ),
-          makeMutationId: crypto.randomUUIDv4.pipe(
-            Effect.map((mutationId) => InventoryReservationCreateMutationIdSchema.make(mutationId)),
-          ),
+          makeMutationId: crypto
+            .randomUUIDv4()
+            .pipe(Effect.map((mutationId) => InventoryReservationCreateMutationIdSchema.make(mutationId))),
           resolver: makeCatalogToStockBindingResolver(
             makeDrizzleCatalogToStockBindingPersistence(transaction),
             catalogToStockBindingStockItemReader(makeDrizzleStockItemRepository(transaction)),

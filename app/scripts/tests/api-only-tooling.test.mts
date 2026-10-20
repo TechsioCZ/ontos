@@ -38,7 +38,6 @@ import {
 } from '@modern-js/code-tools/microvertical-api-boundary';
 import type { MicroVerticalApiBaselineExpectation } from '@modern-js/code-tools/microvertical-api-boundary';
 import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
-import { moduleFederationBridgeViolation } from '../module-federation-bridge-boundary.mts';
 import { ReleaseUiSchema } from './release-envelope-ui.fixture.mts';
 
 const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
@@ -125,7 +124,7 @@ const frameworkBaselinePackageDirectory = path.dirname(
 );
 const effectClientPackage = '@modern-js/bff-effect/effect-client';
 
-const apiBoundaryCheckerPath = 'scripts/check-ultramodern-api-boundaries.mts';
+const apiBoundaryCheckerPath = 'scripts/check-ontos-api-boundaries.mts';
 
 const topologyReferencePath = 'topology/reference-topology.json';
 
@@ -627,7 +626,7 @@ it.live(
     );
     expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
     expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
-    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.0');
+    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.5');
   }),
 );
 
@@ -2269,7 +2268,7 @@ process.stdout.write(JSON.stringify(module.exports.default.source.globalVars));
 `,
       ),
     );
-    const output = runNode([harnessPath]);
+    const output = runNode([harnessPath], { env: { ULTRAMODERN_MF_DEV_ORIGIN: shellOrigin } });
     return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(GlobalVarsSchema))(output);
   }).pipe(Effect.ensuring(Effect.promise(() => rm(temporaryRoot, { force: true, recursive: true }))));
 });
@@ -3068,7 +3067,7 @@ it.live(
       runNode([path.join(workspaceRoot, apiBoundaryCheckerPath)], {
         env: { ULTRAMODERN_WORKSPACE_ROOT: fixture },
       });
-    expect(check()).toMatch(/UltraModern API boundary check passed/u);
+    expect(check()).toMatch(/OntOS API boundary check passed/u);
     const cases = [
       {
         expected: /topology must declare this MicroVertical owner/u,
@@ -3902,42 +3901,4 @@ describe('consumer migration preserves native tooling and governed safety', () =
       expect(governed.stdout).toMatch(/rejects generated governed clients/u);
     }),
   );
-  it('manifest-aware bridge accepts TanStack without permitting disguised router capability', () => {
-    const imported = "import { createModuleFederationConfig as createConfig } from '@module-federation/modern-js-v3';";
-    const config = (body: string) => `${imported} export default createConfig(${body});`;
-    const disabled = '{ bridge: { enableBridgeRouter: false } }';
-    const enabled = '{ bridge: { enableBridgeRouter: true } }';
-    expect(moduleFederationBridgeViolation(config(disabled), {})).toBe(undefined);
-    expect(
-      moduleFederationBridgeViolation(
-        `${imported} const config = createConfig(${disabled}); export default config;`,
-        {},
-      ),
-    ).toBe(undefined);
-    expect(
-      moduleFederationBridgeViolation(config(enabled), {
-        dependencies: { 'react-router': '7.18.0' },
-      }),
-    ).toBe(undefined);
-    expect(
-      moduleFederationBridgeViolation(config(enabled), {
-        devDependencies: { 'react-router-dom': '7.18.0' },
-      }),
-    ).toBe(undefined);
-    for (const candidate of [
-      config(enabled),
-      config('{}'),
-      config('{ bridge: {} }'),
-      config('{ bridge: { enableBridgeRouter: Boolean(false) } }'),
-      config('{ bridge: { enableBridgeRouter: false, ...override } }'),
-      config('{ bridge: { enableBridgeRouter: false, [key]: true } }'),
-      config('{ bridge: { enableBridgeRouter: false, enableBridgeRouter: true } }'),
-      config('{ bridge: { enableBridgeRouter: false }, ...override }'),
-      config(disabled).replace('import {', 'import type {'),
-      `${imported} function decoy(createConfig) { return createConfig(${disabled}); } export default otherConfig;`,
-      `function createConfig(value) { return value; } export default createConfig(${disabled});`,
-    ]) {
-      expect(moduleFederationBridgeViolation(candidate, {}), candidate).not.toBe(undefined);
-    }
-  });
 });

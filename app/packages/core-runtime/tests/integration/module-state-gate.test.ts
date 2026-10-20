@@ -34,8 +34,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('module state gate', (
     () =>
       Effect.gen(function* moduleStateGate1() {
         const crypto = yield* Crypto.Crypto;
-        const tenantOne = yield* crypto.randomUUIDv4;
-        const tenantTwo = yield* crypto.randomUUIDv4;
+        const tenantOne = yield* crypto.randomUUIDv4();
+        const tenantTwo = yield* crypto.randomUUIDv4();
         const moduleKey = `gate.integration-${tenantOne}`;
         const stateModuleKey = (state: (typeof TENANT_MODULE_STATES)[number]): string =>
           `${moduleKey}.${state.replaceAll('_', '-')}`;

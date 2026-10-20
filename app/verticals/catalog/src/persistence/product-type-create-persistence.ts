@@ -123,7 +123,7 @@ export const productTypeCreatePersistenceForScope = (
   const create: ProductTypeCreatePersistence['create'] = Effect.fn('ProductTypeCreatePersistence.create')(
     function* create(input) {
       const crypto = yield* Crypto.Crypto;
-      const productTypeId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(unavailable));
+      const productTypeId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
       const productTypeRef = {
         moduleId: 'commerce.catalog' as const,
         resourceId: productTypeId,

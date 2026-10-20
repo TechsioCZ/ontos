@@ -73,7 +73,7 @@ export const registerTestGatewayScopeGrant = Effect.fn('GatewayScopeGrantTesting
     GatewayScopeGrantUnavailableError | PlatformError.PlatformError | Schema.SchemaError,
     Crypto.Crypto
   > {
-    const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+    const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
     const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const expiresAtEpochSeconds = nowSeconds + (input.ttlSeconds ?? DEFAULT_TTL_SECONDS);
     const tenantScopedInput: SyntheticGatewayAssertionInput = {

@@ -917,7 +917,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       const persistedDomainEvents = yield* Effect.forEach(
         input.evidence.domainEvents,
         (event) =>
-          crypto.randomUUIDv4.pipe(
+          crypto.randomUUIDv4().pipe(
             Effect.mapError((cause) => transactionFailure(failureReason, cause)),
             Effect.map((domainEventId) => ({
               actionInvocationId: input.actionInvocationId,

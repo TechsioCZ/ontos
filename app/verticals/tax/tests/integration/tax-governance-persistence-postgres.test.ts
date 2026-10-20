@@ -30,7 +30,7 @@ import {
 import { taxGovernedReadsForScope } from '../../src/services/tax-governed-read.service.ts';
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 const scopeFor = (principalId: string, tenant: string, legalEntityId: string) =>
   Effect.gen(function* makeTaxGovernanceScope() {

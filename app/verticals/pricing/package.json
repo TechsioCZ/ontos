@@ -37,8 +37,8 @@
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "@effect/platform-node": "4.0.0",
-    "@effect/sql-pg": "4.0.0",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/plugin-bff": "catalog:ultramodern",
@@ -46,7 +46,7 @@
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "@noble/hashes": "2.2.0",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0"
+    "effect": "4.0.5"
   },
   "devDependencies": {
     "@modern-js/app-tools": "catalog:ultramodern",

@@ -41,9 +41,9 @@
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "@effect/opentelemetry": "4.0.0",
-    "@effect/platform-node": "4.0.0",
-    "@effect/sql-pg": "4.0.0",
+    "@effect/opentelemetry": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
@@ -53,7 +53,7 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0"
+    "effect": "4.0.5"
   },
   "devDependencies": {
     "@modern-js/app-tools": "catalog:ultramodern",

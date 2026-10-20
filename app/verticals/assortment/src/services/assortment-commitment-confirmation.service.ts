@@ -284,7 +284,7 @@ const issue = Effect.fn('AssortmentCommitmentConfirmationService.issue')(functio
   const issuedAt = now;
   const expiresAt = DateTime.addDuration(issuedAt, Duration.millis(MAX_VALIDITY_MILLIS));
   const crypto = yield* Crypto.Crypto;
-  const confirmationId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(identityUnavailable));
+  const confirmationId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(identityUnavailable));
   const result = yield* Schema.decodeEffect(AssortmentCommitmentConfirmationResultSchema)({
     attemptRef: payload.attemptRef,
     candidate: payload.candidate,

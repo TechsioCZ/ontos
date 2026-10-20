@@ -99,7 +99,7 @@ interface HistoricalFixtureDatabaseResult {
  */
 const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect() {
   const crypto = yield* Crypto.Crypto;
-  const nextUuid = crypto.randomUUIDv4;
+  const nextUuid = crypto.randomUUIDv4();
   const transport = Effect.all({ correlationId: nextUuid, idempotencyKey: nextUuid });
   const adminUrl = yield* requiredEnvironment('DATABASE_ADMIN_URL');
   const runtimeUrl = yield* requiredEnvironment('DATABASE_URL');

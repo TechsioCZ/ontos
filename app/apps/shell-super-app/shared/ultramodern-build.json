@@ -8,8 +8,8 @@
     "sourceRevision": "workspace",
     "unitId": "app/shell-super-app",
     "version": "0.1.0",
-    "buildMarker": "7e26364adfac1493",
-    "build": "7e26364adfac1493"
+    "buildMarker": "a0db691763b92101",
+    "build": "a0db691763b92101"
   },
   "kind": "ultramodern-build-artifact",
   "schemaVersion": 2,
@@ -23,8 +23,8 @@
       "sourceRevision": "workspace",
       "unitId": "app/shell-super-app",
       "version": "0.1.0",
-      "buildMarker": "7e26364adfac1493",
-      "build": "7e26364adfac1493",
+      "buildMarker": "a0db691763b92101",
+      "build": "a0db691763b92101",
       "surface": "api"
     },
     "ui": {
@@ -36,15 +36,15 @@
       "sourceRevision": "workspace",
       "unitId": "app/shell-super-app",
       "version": "0.1.0",
-      "buildMarker": "7e26364adfac1493",
-      "build": "7e26364adfac1493",
+      "buildMarker": "a0db691763b92101",
+      "build": "a0db691763b92101",
       "surface": "ui",
       "rendererIdentity": {
         "renderer": "react",
         "appId": "shell-super-app",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "7e26364adfac1493"
+        "buildId": "a0db691763b92101"
       },
       "rendererProfile": {
         "renderer": "react",
@@ -55,7 +55,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",

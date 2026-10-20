@@ -173,16 +173,18 @@ export const privacyMeasureExecutionService = Effect.fn('CommercePrivacyMeasureE
           );
         }
         const now = yield* DateTime.nowAsDate;
-        const outcomeId = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) =>
-            rejected(
-              'PRIVACY_MEASURE_PERSISTENCE_UNAVAILABLE',
-              'Commerce Customer Context could not allocate a Privacy Measure outcome identity',
-              true,
-              cause,
+        const outcomeId = yield* crypto
+          .randomUUIDv4()
+          .pipe(
+            Effect.mapError((cause) =>
+              rejected(
+                'PRIVACY_MEASURE_PERSISTENCE_UNAVAILABLE',
+                'Commerce Customer Context could not allocate a Privacy Measure outcome identity',
+                true,
+                cause,
+              ),
             ),
-          ),
-        );
+          );
         const outcome = makeOutcome({
           handoff,
           now,

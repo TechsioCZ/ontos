@@ -559,7 +559,7 @@ export const catalogPersistenceForScope = (
 
   const create: CatalogPersistence['create'] = Effect.fn('CatalogPersistence.create')(function* create(input) {
     const crypto = yield* Crypto.Crypto;
-    const newId = crypto.randomUUIDv4.pipe(Effect.mapError(unavailable));
+    const newId = crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
     const productId = yield* newId;
     const variantId = input.variantId ?? (yield* newId);
     yield* transaction

@@ -83,7 +83,7 @@ import {
 import { AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject.service.ts';
 import { partyCompositionSnapshot } from './application-composition.setup.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 const subjectEvidence = [
   {
@@ -173,7 +173,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const sign = Effect.fn('AresGovernedTest.sign')(function* signAssertion(
           principal: typeof fixture.manager & { readonly legalEntityId?: string },
         ) {
-          const assertionId = yield* Effect.orDie(crypto.randomUUIDv4);
+          const assertionId = yield* Effect.orDie(crypto.randomUUIDv4());
           // Grants expire against PostgreSQL's clock, so the expiry is derived from the database time.
           const [databaseNow] = yield* adminClient<{ readonly nowSeconds: number }>`
             select floor(extract(epoch from now()))::int as "nowSeconds"

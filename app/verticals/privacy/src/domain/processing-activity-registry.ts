@@ -824,7 +824,7 @@ const makeInMemoryRegistry = (
       const createdAt = DateTime.formatIso(yield* DateTime.now);
       const resourceId =
         input.activityRef?.resourceId ??
-        (yield* crypto.randomUUIDv4.pipe(
+        (yield* crypto.randomUUIDv4().pipe(
           Effect.catchTag('PlatformError', () =>
             Effect.fail(
               new ProcessingActivityRegistryError({

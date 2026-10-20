@@ -43,12 +43,14 @@ const representativeClientEffect = representativeClient({
   defaultApiPrefix: '/representative-api',
 });
 type RepresentativeClient = Effect.Success<typeof representativeClientEffect>;
-type RepresentativeReadEffect = ReturnType<RepresentativeClient['representative']['read']>;
+// `read` is generic over its response mode, so derive the default decoded-only call rather than its widest instantiation.
+const readRepresentative = (client: RepresentativeClient) => client.representative.read({});
+type RepresentativeReadEffect = ReturnType<typeof readRepresentative>;
 type RepresentativeReadSuccess = Effect.Success<RepresentativeReadEffect>;
 type RepresentativeReadError = Effect.Error<RepresentativeReadEffect>;
 
 const preserveRepresentativeReadType = (client: RepresentativeClient): RepresentativeReadEffect =>
-  client.representative.read({});
+  readRepresentative(client);
 const preserveRepresentativeSuccessType = (success: RepresentativeReadSuccess): Readonly<{ value: string }> => success;
 const preserveRepresentativeErrorType = (error: RepresentativeReadError) => {
   if (Schema.is(RepresentativeConflictSchema)(error)) {

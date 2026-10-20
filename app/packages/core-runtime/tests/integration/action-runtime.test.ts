@@ -143,10 +143,10 @@ const testOperationalScopeResolver: OperationalScopeResolverService = {
 };
 const makeActionRuntimeSuite = Effect.gen(function* makeActionRuntimeSuite() {
   const crypto = yield* Crypto.Crypto;
-  const tenantId = yield* crypto.randomUUIDv4;
-  const legalEntityId = yield* crypto.randomUUIDv4;
-  const principalId = yield* crypto.randomUUIDv4;
-  const authBindingId = yield* crypto.randomUUIDv4;
+  const tenantId = yield* crypto.randomUUIDv4();
+  const legalEntityId = yield* crypto.randomUUIDv4();
+  const principalId = yield* crypto.randomUUIDv4();
+  const authBindingId = yield* crypto.randomUUIDv4();
   const principal = {
     authBindingId,
     authContextRef: `better-auth-session:${authBindingId}`,
@@ -1659,7 +1659,7 @@ const testProgram12 = () =>
           invocationId,
           principal: {
             ...principal,
-            principalId: yield* crypto.randomUUIDv4,
+            principalId: yield* crypto.randomUUIDv4(),
           },
         }),
       );
@@ -1961,8 +1961,8 @@ const testCompositionTransactionFence = () =>
           resolveCompositionRevision: () => Effect.succeed(revision),
         },
       );
-      const key = `composition-owner-${yield* crypto.randomUUIDv4}`;
-      const moduleStateKey = `core.composition-owner-${yield* crypto.randomUUIDv4}`;
+      const key = `composition-owner-${yield* crypto.randomUUIDv4()}`;
+      const moduleStateKey = `core.composition-owner-${yield* crypto.randomUUIDv4()}`;
       const registration = makeRegistration({
         actionKey: 'shell.test.composition-write',
         completionGate: handlerRelease,
@@ -2023,7 +2023,7 @@ const testCompositionTransactionFence = () =>
             payload: { value: 'draining' },
             principal,
             registration,
-            transport: transport(`composition-draining-${yield* crypto.randomUUIDv4}`),
+            transport: transport(`composition-draining-${yield* crypto.randomUUIDv4()}`),
           }),
         );
         expect(Schema.is(ActionTransactionError)(drainingFailure)).toBe(true);
@@ -2044,7 +2044,7 @@ const testCompositionTransactionFence = () =>
             payload: { value: 'superseded' },
             principal,
             registration,
-            transport: transport(`composition-stale-${yield* crypto.randomUUIDv4}`),
+            transport: transport(`composition-stale-${yield* crypto.randomUUIDv4()}`),
           }),
         );
         expect(Schema.is(ActionTransactionError)(staleFailure)).toBe(true);

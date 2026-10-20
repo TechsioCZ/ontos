@@ -444,8 +444,8 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
       if (Option.isNone(authenticationOption)) {
         return yield* operationContextUnavailable();
       }
-      const operationRef = yield* crypto.randomUUIDv4.pipe(Effect.mapError(operationContextUnavailable));
-      const nonce = yield* crypto.randomUUIDv4.pipe(Effect.mapError(operationContextUnavailable));
+      const operationRef = yield* crypto.randomUUIDv4().pipe(Effect.mapError(operationContextUnavailable));
+      const nonce = yield* crypto.randomUUIDv4().pipe(Effect.mapError(operationContextUnavailable));
       const request: ExternalOperationAuthenticationRequest = {
         audience: input.audience,
         authBindingId,

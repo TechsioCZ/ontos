@@ -307,9 +307,9 @@ export const GatewayIssuerLive = Layer.unwrap(
     Effect.map((catalog) =>
       makeGatewayIssuerLayer({
         currentTimeSeconds: Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000))),
-        generateJti: gatewayCrypto.randomUUIDv4.pipe(
-          Effect.mapError((failureCause) => unavailable('signing', failureCause)),
-        ),
+        generateJti: gatewayCrypto
+          .randomUUIDv4()
+          .pipe(Effect.mapError((failureCause) => unavailable('signing', failureCause))),
         loadAdmission: catalog.load.pipe(
           Effect.map(({ composition, contracts }) => ({
             audiences: new Map([

@@ -231,7 +231,7 @@
       "unitId": "app/shell-super-app",
       "packageName": "@app/shell-super-app",
       "version": "0.1.0",
-      "buildMarker": "7e26364adfac1493",
+      "buildMarker": "a0db691763b92101",
       "sourceRevision": "workspace"
     },
     "renderer": "react",
@@ -240,7 +240,7 @@
       "appId": "shell-super-app",
       "entryName": "index",
       "protocolVersion": 1,
-      "buildId": "7e26364adfac1493"
+      "buildId": "a0db691763b92101"
     },
     "rendererIdentities": {
       "index": {
@@ -248,7 +248,7 @@
         "appId": "shell-super-app",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "7e26364adfac1493"
+        "buildId": "a0db691763b92101"
       }
     },
     "rendererProfile": {
@@ -260,7 +260,7 @@
       },
       "hydration": {
         "name": "react-dom",
-        "version": "19.3.0"
+        "version": "19.3.1"
       },
       "router": {
         "name": "react-router",
@@ -327,7 +327,7 @@
           "unitId": "app/party-registry",
           "packageName": "@app/party-registry",
           "version": "0.1.0",
-          "buildMarker": "ce1850eb4219ff1e",
+          "buildMarker": "aaebe4ee5a28e557",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -395,7 +395,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/party-registry",
-              "buildMarker": "ce1850eb4219ff1e"
+              "buildMarker": "aaebe4ee5a28e557"
             }
           }
         },
@@ -423,7 +423,7 @@
         "unitId": "app/party-registry",
         "packageName": "@app/party-registry",
         "version": "0.1.0",
-        "buildMarker": "ce1850eb4219ff1e",
+        "buildMarker": "aaebe4ee5a28e557",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -637,7 +637,7 @@
         "appId": "party-registry",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "ce1850eb4219ff1e"
+        "buildId": "aaebe4ee5a28e557"
       },
       "rendererIdentities": {
         "index": {
@@ -645,7 +645,7 @@
           "appId": "party-registry",
           "entryName": "index",
           "protocolVersion": 1,
-          "buildId": "ce1850eb4219ff1e"
+          "buildId": "aaebe4ee5a28e557"
         }
       },
       "rendererProfile": {
@@ -657,7 +657,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",
@@ -1389,7 +1389,7 @@
           "unitId": "app/commerce-market-catalog",
           "packageName": "@app/commerce-market-catalog",
           "version": "0.1.0",
-          "buildMarker": "90197a2b7dff4653",
+          "buildMarker": "7d8efde38f752475",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -1457,7 +1457,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/commerce-market-catalog",
-              "buildMarker": "90197a2b7dff4653"
+              "buildMarker": "7d8efde38f752475"
             }
           }
         },
@@ -1485,7 +1485,7 @@
         "unitId": "app/commerce-market-catalog",
         "packageName": "@app/commerce-market-catalog",
         "version": "0.1.0",
-        "buildMarker": "90197a2b7dff4653",
+        "buildMarker": "7d8efde38f752475",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -1697,7 +1697,7 @@
         "appId": "commerce-market-catalog",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "90197a2b7dff4653"
+        "buildId": "7d8efde38f752475"
       },
       "rendererIdentities": {
         "index": {
@@ -1705,7 +1705,7 @@
           "appId": "commerce-market-catalog",
           "entryName": "index",
           "protocolVersion": 1,
-          "buildId": "90197a2b7dff4653"
+          "buildId": "7d8efde38f752475"
         }
       },
       "rendererProfile": {
@@ -1717,7 +1717,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",
@@ -1784,7 +1784,7 @@
           "unitId": "app/catalog",
           "packageName": "@app/catalog",
           "version": "0.1.0",
-          "buildMarker": "5a997e5dec1e8cee",
+          "buildMarker": "b5cf336487d950bb",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -1852,7 +1852,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/catalog",
-              "buildMarker": "5a997e5dec1e8cee"
+              "buildMarker": "b5cf336487d950bb"
             }
           }
         },
@@ -1880,7 +1880,7 @@
         "unitId": "app/catalog",
         "packageName": "@app/catalog",
         "version": "0.1.0",
-        "buildMarker": "5a997e5dec1e8cee",
+        "buildMarker": "b5cf336487d950bb",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -2107,7 +2107,7 @@
         "appId": "catalog",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "5a997e5dec1e8cee"
+        "buildId": "b5cf336487d950bb"
       },
       "rendererIdentities": {
         "index": {
@@ -2115,7 +2115,7 @@
           "appId": "catalog",
           "entryName": "index",
           "protocolVersion": 1,
-          "buildId": "5a997e5dec1e8cee"
+          "buildId": "b5cf336487d950bb"
         }
       },
       "rendererProfile": {
@@ -2127,7 +2127,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",
@@ -3193,7 +3193,7 @@
           "unitId": "app/inventory",
           "packageName": "@app/inventory",
           "version": "0.1.0",
-          "buildMarker": "65701c1d6634cd7b",
+          "buildMarker": "5f588cb1d6d14d10",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -3261,7 +3261,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/inventory",
-              "buildMarker": "65701c1d6634cd7b"
+              "buildMarker": "5f588cb1d6d14d10"
             }
           }
         },
@@ -3289,7 +3289,7 @@
         "unitId": "app/inventory",
         "packageName": "@app/inventory",
         "version": "0.1.0",
-        "buildMarker": "65701c1d6634cd7b",
+        "buildMarker": "5f588cb1d6d14d10",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -3523,7 +3523,7 @@
         "appId": "inventory",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "65701c1d6634cd7b"
+        "buildId": "5f588cb1d6d14d10"
       },
       "rendererIdentities": {
         "index": {
@@ -3531,7 +3531,7 @@
           "appId": "inventory",
           "entryName": "index",
           "protocolVersion": 1,
-          "buildId": "65701c1d6634cd7b"
+          "buildId": "5f588cb1d6d14d10"
         }
       },
       "rendererProfile": {
@@ -3543,7 +3543,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",
@@ -3609,7 +3609,7 @@
           "unitId": "app/assortment",
           "packageName": "@app/assortment",
           "version": "0.1.0",
-          "buildMarker": "14fe7553819b4068",
+          "buildMarker": "02ac649d0cba4cca",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -3677,7 +3677,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/assortment",
-              "buildMarker": "14fe7553819b4068"
+              "buildMarker": "02ac649d0cba4cca"
             }
           }
         },
@@ -3705,7 +3705,7 @@
         "unitId": "app/assortment",
         "packageName": "@app/assortment",
         "version": "0.1.0",
-        "buildMarker": "14fe7553819b4068",
+        "buildMarker": "02ac649d0cba4cca",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -3940,7 +3940,7 @@
         "appId": "assortment",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "14fe7553819b4068"
+        "buildId": "02ac649d0cba4cca"
       },
       "rendererIdentities": {
         "index": {
@@ -3948,7 +3948,7 @@
           "appId": "assortment",
           "entryName": "index",
           "protocolVersion": 1,
-          "buildId": "14fe7553819b4068"
+          "buildId": "02ac649d0cba4cca"
         }
       },
       "rendererProfile": {
@@ -3960,7 +3960,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",
@@ -4335,7 +4335,7 @@
           "unitId": "app/privacy",
           "packageName": "@app/privacy",
           "version": "0.1.0",
-          "buildMarker": "a9ef1effd4ab4d10",
+          "buildMarker": "c339e4f5077d2392",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -4403,7 +4403,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/privacy",
-              "buildMarker": "a9ef1effd4ab4d10"
+              "buildMarker": "c339e4f5077d2392"
             }
           }
         },
@@ -4431,7 +4431,7 @@
         "unitId": "app/privacy",
         "packageName": "@app/privacy",
         "version": "0.1.0",
-        "buildMarker": "a9ef1effd4ab4d10",
+        "buildMarker": "c339e4f5077d2392",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -4666,7 +4666,7 @@
         "appId": "privacy",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "a9ef1effd4ab4d10"
+        "buildId": "c339e4f5077d2392"
       },
       "rendererIdentities": {
         "index": {
@@ -4674,7 +4674,7 @@
           "appId": "privacy",
           "entryName": "index",
           "protocolVersion": 1,
-          "buildId": "a9ef1effd4ab4d10"
+          "buildId": "c339e4f5077d2392"
         }
       },
       "rendererProfile": {
@@ -4686,7 +4686,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",
@@ -5086,7 +5086,7 @@
           "unitId": "app/projects",
           "packageName": "@app/projects",
           "version": "0.1.0",
-          "buildMarker": "fef92f196db4d5ee",
+          "buildMarker": "73f9b5b664d77c6a",
           "sourceRevision": "workspace"
         },
         "exposes": {
@@ -5154,7 +5154,7 @@
             "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
             "expected": {
               "unitId": "app/projects",
-              "buildMarker": "fef92f196db4d5ee"
+              "buildMarker": "73f9b5b664d77c6a"
             }
           }
         },
@@ -5182,7 +5182,7 @@
         "unitId": "app/projects",
         "packageName": "@app/projects",
         "version": "0.1.0",
-        "buildMarker": "fef92f196db4d5ee",
+        "buildMarker": "73f9b5b664d77c6a",
         "sourceRevision": "workspace"
       },
       "api": {
@@ -5391,7 +5391,7 @@
         "appId": "projects",
         "entryName": "index",
         "protocolVersion": 1,
-        "buildId": "fef92f196db4d5ee"
+        "buildId": "73f9b5b664d77c6a"
       },
       "rendererIdentities": {
         "index": {
@@ -5399,7 +5399,7 @@
           "appId": "projects",
           "entryName": "index",
           "protocolVersion": 1,
-          "buildId": "fef92f196db4d5ee"
+          "buildId": "73f9b5b664d77c6a"
         }
       },
       "rendererProfile": {
@@ -5411,7 +5411,7 @@
         },
         "hydration": {
           "name": "react-dom",
-          "version": "19.3.0"
+          "version": "19.3.1"
         },
         "router": {
           "name": "react-router",

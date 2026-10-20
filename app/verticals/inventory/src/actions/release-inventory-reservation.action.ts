@@ -143,9 +143,9 @@ export const releaseInventoryReservationAction = defineAction(
             inventoryEffectLedgerPersistenceForScope(transaction, scope),
             DateTime.now.pipe(Effect.map(DateTime.formatIso)),
           ),
-          makeMutationId: crypto.randomUUIDv4.pipe(
-            Effect.map((mutationId) => ReservationReleaseMutationIdSchema.make(mutationId)),
-          ),
+          makeMutationId: crypto
+            .randomUUIDv4()
+            .pipe(Effect.map((mutationId) => ReservationReleaseMutationIdSchema.make(mutationId))),
           obligations: {
             read: (ref) =>
               obligationPersistence

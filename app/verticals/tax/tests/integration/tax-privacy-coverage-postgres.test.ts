@@ -36,7 +36,7 @@ import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-v
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const byText = (left: string, right: string) => left.localeCompare(right, 'en');
 
 type TaxPrivacyOwnerLookupEncoded = typeof TaxPrivacyOwnerLookupSchema.Encoded;

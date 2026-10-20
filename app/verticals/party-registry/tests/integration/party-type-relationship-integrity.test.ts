@@ -29,7 +29,7 @@ import {
 } from '../support/database-boundary.ts';
 
 const makeFixtureIds = Effect.fnUntraced(function* makeFixtureIds(crypto: Crypto.Crypto) {
-  const nextUuid = crypto.randomUUIDv4;
+  const nextUuid = crypto.randomUUIDv4();
   return {
     tenantId: yield* nextUuid,
     personId: yield* nextUuid,
@@ -285,13 +285,13 @@ it.live('Party Type correction and relationship creation serialize in either ord
     ).toHaveLength(1);
     expect(yield* admin.select().from(partyCorrections).where(eq(partyCorrections.tenantId, tenantId))).toHaveLength(1);
     // Compatible incoming rows must not consume the SQL limit before the outgoing conflict.
-    const compatiblePeople = yield* Effect.all(Array.from({ length: 33 }, () => crypto.randomUUIDv4));
+    const compatiblePeople = yield* Effect.all(Array.from({ length: 33 }, () => crypto.randomUUIDv4()));
     const compatibleRelationships = yield* Effect.all(
       compatiblePeople.map((fromPartyId) =>
         Effect.all({
-          actionInvocationId: crypto.randomUUIDv4,
+          actionInvocationId: crypto.randomUUIDv4(),
           fromPartyId: Effect.succeed(fromPartyId),
-          relationshipUuid: crypto.randomUUIDv4,
+          relationshipUuid: crypto.randomUUIDv4(),
         }),
       ),
     );
@@ -316,8 +316,8 @@ it.live('Party Type correction and relationship creation serialize in either ord
         policyVersion: 'party-relationship.v1',
       })),
     );
-    const extraOrganizationId = yield* crypto.randomUUIDv4;
-    const finalConflictId = `ffffffff${(yield* crypto.randomUUIDv4).slice(8)}`;
+    const extraOrganizationId = yield* crypto.randomUUIDv4();
+    const finalConflictId = `ffffffff${(yield* crypto.randomUUIDv4()).slice(8)}`;
     yield* admin.insert(parties).values({ partyId: extraOrganizationId, tenantId, currentType: 'ORGANIZATION' });
     yield* admin.insert(partyRelationships).values({
       relationshipId: finalConflictId,
@@ -327,11 +327,11 @@ it.live('Party Type correction and relationship creation serialize in either ord
       relationshipType: 'CONTACT_PERSON_OF',
       provenanceMethod: 'MANUAL_CONFIRMATION',
       provenanceSource: 'integration:bounded-conflict',
-      acceptedByActionInvocationId: yield* crypto.randomUUIDv4,
+      acceptedByActionInvocationId: yield* crypto.randomUUIDv4(),
       acceptedByPrincipalId: principalId,
       policyVersion: 'party-relationship.v1',
     });
-    const conflictInvocationId = yield* crypto.randomUUIDv4;
+    const conflictInvocationId = yield* crypto.randomUUIDv4();
     const conflict = yield* runScoped((transaction) =>
       correctPartyFactRecord(transaction, tenantId, secondCorrectionCommand, {
         actionInvocationId: conflictInvocationId,
@@ -345,12 +345,12 @@ it.live('Party Type correction and relationship creation serialize in either ord
     }
 
     for (const currentType of ['PERSON', 'ORGANIZATION'] as const) {
-      const canonicalId = yield* crypto.randomUUIDv4;
-      const intermediateAliasId = yield* crypto.randomUUIDv4;
-      const storedEndpointId = yield* crypto.randomUUIDv4;
-      const targetAssertionId = yield* crypto.randomUUIDv4;
-      const retainedRelationshipId = yield* crypto.randomUUIDv4;
-      const mergeId = yield* crypto.randomUUIDv4;
+      const canonicalId = yield* crypto.randomUUIDv4();
+      const intermediateAliasId = yield* crypto.randomUUIDv4();
+      const storedEndpointId = yield* crypto.randomUUIDv4();
+      const targetAssertionId = yield* crypto.randomUUIDv4();
+      const retainedRelationshipId = yield* crypto.randomUUIDv4();
+      const mergeId = yield* crypto.randomUUIDv4();
       const nextType = currentType === 'PERSON' ? 'ORGANIZATION' : 'PERSON';
       yield* admin.insert(parties).values(
         [canonicalId, intermediateAliasId, storedEndpointId].map((partyId) => ({
@@ -360,7 +360,7 @@ it.live('Party Type correction and relationship creation serialize in either ord
         })),
       );
       yield* admin.insert(partyFactAssertions).values({
-        acceptedByActionInvocationId: yield* crypto.randomUUIDv4,
+        acceptedByActionInvocationId: yield* crypto.randomUUIDv4(),
         acceptedByPrincipalId: principalId,
         assertionId: targetAssertionId,
         factKind: 'PARTY_TYPE',
@@ -425,7 +425,7 @@ it.live('Party Type correction and relationship creation serialize in either ord
         { aliasPartyId: storedEndpointId, canonicalPartyId: intermediateAliasId, mergeId, tenantId },
       ]);
       yield* admin.insert(partyRelationships).values({
-        acceptedByActionInvocationId: yield* crypto.randomUUIDv4,
+        acceptedByActionInvocationId: yield* crypto.randomUUIDv4(),
         acceptedByPrincipalId: principalId,
         fromPartyId: currentType === 'PERSON' ? storedEndpointId : secondPersonId,
         policyVersion: 'party-relationship.v1',
@@ -436,7 +436,7 @@ it.live('Party Type correction and relationship creation serialize in either ord
         tenantId,
         toPartyId: currentType === 'ORGANIZATION' ? storedEndpointId : secondOrganizationId,
       });
-      const rejectedInvocationId = yield* crypto.randomUUIDv4;
+      const rejectedInvocationId = yield* crypto.randomUUIDv4();
       const rejected = yield* runScoped((transaction) =>
         correctPartyFactRecord(
           transaction,

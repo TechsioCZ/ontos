@@ -50,13 +50,15 @@ const validateContent = (
 const makeCatalog = (crypto: Crypto.Crypto): PrivacyNoticeVersionCatalog => {
   const notices = new Map<string, PrivacyNoticeVersion[]>();
   const nextIdentifier = (reason: string) =>
-    crypto.randomUUIDv4.pipe(
-      Effect.catchTag('PlatformError', () =>
-        Effect.fail(
-          new PrivacyOperationPersistenceError({ code: 'privacy_operation_persistence_unavailable', reason }),
+    crypto
+      .randomUUIDv4()
+      .pipe(
+        Effect.catchTag('PlatformError', () =>
+          Effect.fail(
+            new PrivacyOperationPersistenceError({ code: 'privacy_operation_persistence_unavailable', reason }),
+          ),
         ),
-      ),
-    );
+      );
   const createVersion = (options: {
     readonly input: CreatePrivacyNoticeVersionInput;
     readonly noticeId: string;

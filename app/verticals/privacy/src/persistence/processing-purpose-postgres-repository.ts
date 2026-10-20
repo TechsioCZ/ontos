@@ -119,7 +119,7 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
 ): Effect.fn.Return<ProcessingPurposeRepositoryService, never, Crypto.Crypto> {
   const crypto = yield* Crypto.Crypto;
   const nextIdentifier = (reason: string) =>
-    crypto.randomUUIDv4.pipe(Effect.mapError((cause) => unavailable(reason, cause)));
+    crypto.randomUUIDv4().pipe(Effect.mapError((cause) => unavailable(reason, cause)));
   const assertScope = (tenantId: string, legalEntityId: string) =>
     tenantId === trustedScope.tenantId && legalEntityId === trustedScope.legalEntityId
       ? Effect.void

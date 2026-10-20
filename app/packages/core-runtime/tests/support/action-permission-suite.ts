@@ -6,7 +6,7 @@ export const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNa
   'test.staff.better-auth.v1',
 );
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 export const makePermissionSuite = Effect.gen(function* makePermissionSuite() {
   const suiteId = yield* nextUuid;

@@ -183,7 +183,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       if (existing !== undefined) {
         return yield* find(existing);
       }
-      const actionInvocationId = yield* crypto.randomUUIDv4.pipe(
+      const actionInvocationId = yield* crypto.randomUUIDv4().pipe(
         Effect.mapError((cause) =>
           createActionInvocationPersistenceErrorWithCause(
             {

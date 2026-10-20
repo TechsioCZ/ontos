@@ -14,11 +14,11 @@
   "dependencies": {
     "@app/core-runtime": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.0",
+    "effect": "4.0.5",
     "jose": "6.2.5"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0",
+    "@effect/platform-node": "4.0.5",
     "@types/node": "^26.4.1",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "@rstest/core": "0.11.12"

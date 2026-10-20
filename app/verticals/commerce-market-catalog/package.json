@@ -48,9 +48,9 @@
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@app/storefront-registry-contracts": "workspace:*",
-    "@effect/opentelemetry": "4.0.0",
-    "@effect/platform-node": "4.0.0",
-    "@effect/sql-pg": "4.0.0",
+    "@effect/opentelemetry": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
@@ -67,10 +67,10 @@
     "@noble/hashes": "2.2.0",
     "@tanstack/react-router": "1.170.39",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0",
+    "effect": "4.0.5",
     "i18next": "26.4.2",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@effect/tsgo": "0.53.1",

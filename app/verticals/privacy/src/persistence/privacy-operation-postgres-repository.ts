@@ -506,9 +506,9 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
 ): Effect.fn.Return<PrivacyOperationRepositoryService, never, Crypto.Crypto> {
   const crypto = yield* Crypto.Crypto;
   const nextIdentifier = (reason: string) =>
-    crypto.randomUUIDv4.pipe(
-      Effect.mapError((cause) => failure('privacy_operation_persistence_unavailable', reason, cause)),
-    );
+    crypto
+      .randomUUIDv4()
+      .pipe(Effect.mapError((cause) => failure('privacy_operation_persistence_unavailable', reason, cause)));
   const assertScope = (tenantId: string, legalEntityId: string) =>
     tenantId === trustedScope.tenantId && legalEntityId === trustedScope.legalEntityId
       ? Effect.void

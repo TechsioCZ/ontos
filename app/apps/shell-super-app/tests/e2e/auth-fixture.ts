@@ -130,17 +130,17 @@ const provisionContactsAccess = Effect.fn('provisionContactsAccess')(function* p
 export const createAuthenticationFixture = Effect.fn('createAuthenticationFixture')(
   function* createAuthenticationFixtureEffect() {
     const crypto = yield* Crypto.Crypto;
-    const fixtureId = yield* crypto.randomUUIDv4;
+    const fixtureId = yield* crypto.randomUUIDv4();
     const e2eCredentials = {
       email: `e2e.${fixtureId}@example.test`,
       password: 'e2e-correct-horse-battery-staple',
     };
     const makeTenant = (name: string) =>
       Effect.all({
-        legalEntityId: crypto.randomUUIDv4,
+        legalEntityId: crypto.randomUUIDv4(),
         name: Effect.succeed(name),
-        principalId: crypto.randomUUIDv4,
-        tenantId: crypto.randomUUIDv4,
+        principalId: crypto.randomUUIDv4(),
+        tenantId: crypto.randomUUIDv4(),
       });
     const e2eTenants = yield* Effect.all({
       first: makeTenant('E2E Alpha tenant'),

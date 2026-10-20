@@ -24,7 +24,7 @@ import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-v
 const MIGRATION_STARTED_AT = '2026-01-15T00:00:00.000Z';
 const T = '2026-06-01T00:00:00.000Z';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 interface FixtureIdentity {
   readonly principalId: string;

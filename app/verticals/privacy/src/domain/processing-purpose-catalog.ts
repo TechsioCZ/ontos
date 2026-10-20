@@ -55,7 +55,7 @@ const validateVersionAppend = (
 
 const makeRepository = (crypto: Crypto.Crypto): ProcessingPurposeRepositoryService => {
   const nextIdentifier = (reason: string) =>
-    crypto.randomUUIDv4.pipe(
+    crypto.randomUUIDv4().pipe(
       Effect.catchTag('PlatformError', () =>
         Effect.fail(
           new ProcessingPurposePersistenceUnavailable({

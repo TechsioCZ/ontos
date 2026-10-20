@@ -341,11 +341,19 @@ function readSubject(value: unknown, context: Context, modules: readonly string[
   }
   return subject;
 }
+/**
+ * Effect `Crypto` UUID generators. Effect 4.0.5 turned these zero-latency values into methods, so a
+ * zero-argument call keeps the verdict of the former `yield* crypto.randomUUIDv4` member accessor.
+ */
+const LOCAL_VALUE_GENERATORS: ReadonlySet<string> = new Set(['randomUUIDv4', 'randomUUIDv7']);
 function readCallee(subject: AnyNode | null, includeFunctions: boolean): AnyNode | null {
   if (subject?.type !== 'CallExpression') return null;
   const callee = unwrap(subject.callee);
   if (callee === null) return null;
-  if (MEMBER_TYPES.has(callee.type)) return callee;
+  if (MEMBER_TYPES.has(callee.type)) {
+    const generator = Array.isArray(subject.arguments) && subject.arguments.length === 0 ? memberName(callee) : null;
+    return generator !== null && LOCAL_VALUE_GENERATORS.has(generator) ? null : callee;
+  }
   return includeFunctions && callee.type === 'Identifier' ? callee : null;
 }
 

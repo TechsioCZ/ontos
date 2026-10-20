@@ -79,7 +79,7 @@ export const catalogSelectionMembershipForScope = (transaction: ScopedTransactio
     );
     const observedAt = DateTime.formatIso(yield* DateTime.now);
     const crypto = yield* Crypto.Crypto;
-    const attestationId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(unavailable));
+    const attestationId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
     const membership = yield* Schema.decodeEffect(CatalogSelectionMembershipSchema)({
       attestationId,
       observedAt,
