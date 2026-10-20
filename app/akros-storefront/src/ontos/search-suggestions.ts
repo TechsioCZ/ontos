@@ -1,6 +1,6 @@
 import type { CatalogSearchResult } from "@/mock-storefront/types";
 
-/** One header-search product suggestion returned by POST /api/ontos/search (no server-only data). */
+/** One header-search product suggestion returned by POST /api/ontos/search (no server-side data). */
 export interface RemoteSearchSuggestion {
   productId: string;
   slug: string;
