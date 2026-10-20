@@ -3460,6 +3460,9 @@ importers:
       '@app/siampark-property':
         specifier: workspace:*
         version: link:../siampark-property
+      '@app/siampark-work':
+        specifier: workspace:*
+        version: link:../siampark-work
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
