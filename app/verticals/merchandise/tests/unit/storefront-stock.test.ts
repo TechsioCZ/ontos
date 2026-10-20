@@ -1,6 +1,7 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
+import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import { evolveMerchandiseState, toProductRecord } from '../../src/services/persistence.service.ts';
 
@@ -44,8 +45,6 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
     },
   ],
 });
-
-import type { MerchandiseState } from '../../shared/apis/records.ts';
 
 const run = (current: MerchandiseState, command: unknown, resourceId: string) =>
   evolveMerchandiseState(current, Schema.decodeUnknownSync(MerchandiseCommandSchema)(command), {
