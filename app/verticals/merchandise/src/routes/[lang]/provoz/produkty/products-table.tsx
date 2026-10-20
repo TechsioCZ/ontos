@@ -50,6 +50,7 @@ export const ProductsTable = ({
       data={status === 'ready' ? [...rows] : []}
       enablePagination
       enableRowSelection
+      enableVirtualization
       enableSorting
       getRowId={(row) => row.id}
       getRowLabel={(row) => row.original.name}

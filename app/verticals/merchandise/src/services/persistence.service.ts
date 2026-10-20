@@ -274,6 +274,17 @@ const withProduct = (state: MerchandiseState, updated: Product): MerchandiseStat
 export const percentChangedPriceMinor = (currentMinor: number, percent: number): number =>
   Math.round((currentMinor * (100 + percent)) / 10_000) * 100;
 
+/** Preserve source discount breaks while a staff edit changes the base unit price. */
+const repriceTiers = (tiers: NonNullable<Product['priceTiers']>, oldNet: number | undefined, newNet: number | undefined, vat: number) => {
+  if (tiers.length === 0 || oldNet === newNet || newNet === undefined) return tiers;
+  const baseGross = tiers[0]!.priceMinor;
+  const nextGross = grossUnitPriceMinor(newNet, vat);
+  return tiers.map((tier) => ({ ...tier,
+    priceMinor: baseGross === 0 ? nextGross : Math.round(tier.priceMinor * nextGross / baseGross),
+    priceExcludingVatMinor: oldNet === undefined || oldNet === 0 ? newNet : Math.round(tier.priceExcludingVatMinor * newNet / oldNet),
+  }));
+};
+
 /** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
 const repriced = (product: Product, priceMinor: number, input: MerchandiseCommandInput): Product =>
   product.currentPriceMinor === priceMinor
@@ -281,6 +292,7 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
     : {
         ...product,
         currentPriceMinor: priceMinor,
+        ...(product.priceTiers === undefined ? {} : { priceTiers: repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor, product.vatRate) }),
         priceHistory: [...product.priceHistory, { changedBy: input.actor, effectiveFrom: input.now, priceMinor }],
         updatedAt: input.now,
       };
@@ -375,6 +387,7 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
     void _id;
     result.push({
       ...rest,
+      ...(previous?.priceTiers === undefined ? {} : { priceTiers: repriceTiers(previous.priceTiers, previous.priceMinor, variant.priceMinor, product.vatRate) }),
       ...(id === undefined ? {} : { id }),
       ...(history === undefined ? {} : { priceHistory: history }),
     });
@@ -413,6 +426,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
             { changedBy: input.actor, effectiveFrom: input.now, priceMinor: value.priceMinor },
           ],
           priceMinor: value.priceMinor,
+          ...(entry.priceTiers === undefined ? {} : { priceTiers: repriceTiers(entry.priceTiers, entry.priceMinor, value.priceMinor, product.vatRate) }),
         }
       : entry,
   );

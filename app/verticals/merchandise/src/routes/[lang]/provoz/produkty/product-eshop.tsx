@@ -90,6 +90,8 @@ interface PanelProps {
 export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
   const failure = useCommandFailure();
   const [drafts, setDrafts] = useState<readonly VariantDraft[]>(() => variantDraftsOf(product));
+  const [variantPage, setVariantPage] = useState(0);
+  const [variantSearch, setVariantSearch] = useState('');
   const [sequence, setSequence] = useState(0);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -99,6 +101,9 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
   const patchDraft = (key: string, next: Partial<VariantDraft>) =>
     setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...next } : draft)));
 
+  const visibleDrafts = drafts.filter((draft) => `${draft.name} ${draft.sku}`.toLocaleLowerCase('cs').includes(variantSearch.toLocaleLowerCase('cs')));
+  const pageCount = Math.max(1, Math.ceil(visibleDrafts.length / 20));
+  const currentPage = Math.min(variantPage, pageCount - 1);
   const errors = drafts.map((draft) => ({
     name: draft.name.trim() === '' || draft.name.trim().length > 100,
     price: parseCzk(draft.priceText) === null,
@@ -119,6 +124,7 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
           (variant) => variant.id !== undefined && variant.id === draft.id,
         );
         return {
+          ...original,
           active: draft.active,
           attributes: draft.attributes.trim(),
           ...(draft.id === undefined ? {} : { id: draft.id }),
@@ -149,6 +155,12 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
         Varianta má vlastní SKU, cenu, sklad a stav. Cena se zadává bez DPH, zákazník v e-shopu vidí cenu s DPH (
         {product.vatRate} %), kterou spočítá server.
       </p>
+      <div className="flex flex-wrap items-center gap-150">
+        <FormInput id="variant-search" label="Hledat variantu" name="variant-search" placeholder="SKU nebo název varianty" value={variantSearch} onChange={(event) => { setVariantSearch(event.target.value); setVariantPage(0); }} />
+        <Button theme="outlined" variant="secondary" disabled={currentPage === 0} onClick={() => setVariantPage(currentPage - 1)}>Předchozí</Button>
+        <span className="text-fg-secondary text-sm">Strana {currentPage + 1} z {pageCount} · {visibleDrafts.length} variant</span>
+        <Button theme="outlined" variant="secondary" disabled={currentPage + 1 >= pageCount} onClick={() => setVariantPage(currentPage + 1)}>Další</Button>
+      </div>
       <SectionCard flush title={`Varianty (${drafts.length})`}>
         {drafts.length === 0 ? (
           <p className="p-200 text-fg-secondary text-sm">
@@ -169,7 +181,8 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
               </Table.Row>
             </Table.Header>
             <Table.Body>
-              {drafts.map((draft, index) => {
+              {visibleDrafts.slice(currentPage * 20, (currentPage + 1) * 20).map((draft) => {
+                const index = drafts.indexOf(draft);
                 const record = draft.id === undefined ? undefined : records.get(draft.id);
                 const price = parseCzk(draft.priceText);
                 const error = errors[index];
@@ -200,6 +213,12 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                           size="sm"
                           value={draft.attributes}
                         />
+                        {record?.priceTiers !== undefined && (
+                          <div className="text-fg-secondary text-xs">
+                            <p>Minimum {record.minimumQuantity ?? 1} {record.sourceUnit ?? product.unit}{record.packageQuantity === undefined ? '' : ` · balení ${record.packageQuantity}`}</p>
+                            {record.priceTiers.map((tier) => <p key={tier.minimumQuantity}>Od {tier.minimumQuantity} {record.sourceUnit ?? product.unit}: {formatMoney(tier.priceMinor)} s DPH · {formatMoney(tier.priceExcludingVatMinor)} bez DPH</p>)}
+                          </div>
+                        )}
                       </div>
                     </Table.Cell>
                     <Table.Cell>
@@ -242,13 +261,13 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                       </div>
                     </Table.Cell>
                     <Table.Cell align="end" className="tabular-nums">
-                      {price === null ? '—' : formatMoney(grossUnitPriceMinor(price, product.vatRate))}
+                      {price === null ? '—' : formatMoney(record?.priceMinor === price ? record.grossPriceMinor : grossUnitPriceMinor(price, product.vatRate))}
                     </Table.Cell>
                     <Table.Cell align="end" className="tabular-nums">
                       {record === undefined ? (
                         <span className="text-fg-secondary">nová</span>
                       ) : (
-                        `${record.stockOnHand} ks`
+                        `${record.stockOnHand} ${record.sourceUnit ?? product.unit}`
                       )}
                     </Table.Cell>
                     <Table.Cell>
