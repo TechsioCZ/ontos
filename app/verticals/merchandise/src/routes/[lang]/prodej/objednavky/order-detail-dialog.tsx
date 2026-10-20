@@ -157,12 +157,18 @@ export const OrderDetailDialog = ({
       Zpět na detail
     </Button>
   ) : (
-    <>
-      <Button onClick={onClose} theme="outlined" variant="secondary">
+    <div className="flex flex-wrap items-center justify-end gap-100">
+      <Button onClick={onClose} size="sm" theme="outlined" variant="secondary">
         {t('merchandise.pages.orders.detail.close')}
       </Button>
       {cancel && (
-        <Button disabled={busy} onClick={() => onStatus(order, 'CANCELLED')} theme="outlined" variant="danger">
+        <Button
+          disabled={busy}
+          onClick={() => onStatus(order, 'CANCELLED')}
+          size="sm"
+          theme="outlined"
+          variant="danger"
+        >
           {label('CANCELLED')}
         </Button>
       )}
@@ -172,6 +178,8 @@ export const OrderDetailDialog = ({
           key={status}
           loadingText={t('merchandise.pages.orders.create.submitting')}
           onClick={() => onStatus(order, status)}
+          size="sm"
+          className="whitespace-nowrap"
           {...(index === 0
             ? { variant: 'primary' as const }
             : { theme: 'outlined' as const, variant: 'secondary' as const })}
@@ -179,12 +187,13 @@ export const OrderDetailDialog = ({
           {label(status)}
         </Button>
       ))}
-    </>
+    </div>
   );
 
   return (
     <SidePanel
       actions={actions}
+      closeOnInteractOutside={!editing}
       onOpenChange={(next) => {
         if (!next) {
           setEditingId(null);
