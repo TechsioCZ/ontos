@@ -1,5 +1,5 @@
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { Schema } from 'effect';
+import { Schema, Struct } from 'effect';
 import { WorkScopeMismatch } from '../errors/work-scope-mismatch.ts';
 import { WorkNotFound } from '../errors/work-not-found.ts';
 import { WorkLifecycleConflict } from '../errors/work-lifecycle-conflict.ts';
@@ -13,6 +13,9 @@ import {
   ContextRefSchema,
   EmployeeIdSchema,
   OpportunityIdSchema,
+  PlannedHoursSchema,
+  ProjectIdSchema,
+  ProjectSchema,
   PartyIdSchema,
   TaskPrioritySchema,
   TaskSchema,
@@ -21,6 +24,8 @@ import {
 import { TaskRefSchema } from '../resources/task.ts';
 
 const editableFields = {
+  plannedHours: Schema.optionalKey(PlannedHoursSchema),
+  projectId: Schema.optionalKey(ProjectIdSchema),
   assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   dueDate: Schema.optionalKey(CalendarDateSchema),
@@ -59,7 +64,20 @@ export const BulkWorkCommandSchema = Schema.Union([
   }),
   Schema.TaggedStruct('BulkChangeTaskState', { ids: bulkTaskIdsSchema, toState: TaskStateSchema }),
 ]);
-export const WorkCommandSchema = Schema.Union([SingleWorkCommandSchema, BulkWorkCommandSchema]);
+export const PlanningCommandSchema = Schema.Union([
+  Schema.TaggedStruct('CreateProject', {
+    ...Schema.Struct(Struct.omit(ProjectSchema.fields, ['id', 'createdAt', 'updatedAt'])).fields,
+  }),
+  Schema.TaggedStruct('UpdateProject', {
+    ...Schema.Struct(Struct.omit(ProjectSchema.fields, ['createdAt', 'updatedAt'])).fields,
+  }),
+  Schema.TaggedStruct('AddTaskComment', {
+    taskRef: TaskRefSchema,
+    text: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
+  }),
+]);
+export type PlanningCommand = typeof PlanningCommandSchema.Type;
+export const WorkCommandSchema = Schema.Union([SingleWorkCommandSchema, BulkWorkCommandSchema, PlanningCommandSchema]);
 export type SingleWorkCommand = typeof SingleWorkCommandSchema.Type;
 export type BulkWorkCommand = typeof BulkWorkCommandSchema.Type;
 export type WorkCommand = typeof WorkCommandSchema.Type;
@@ -79,6 +97,7 @@ export type BulkTaskResult = typeof BulkTaskResultSchema.Type;
 export const ApplyCommandResultSchema = Schema.Struct({
   results: Schema.optionalKey(Schema.Array(BulkTaskResultSchema)),
   revision: Schema.Int,
+  project: Schema.optionalKey(ProjectSchema),
   task: Schema.optionalKey(TaskSchema),
 });
 export const WorkErrorSchema = Schema.Union([

@@ -21,7 +21,40 @@ export const TaskPrioritySchema = Schema.Literals(['LOW', 'NORMAL', 'HIGH']);
 export const EmployeeIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('EmployeeId'));
 export const PartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PartyId'));
 export const OpportunityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('OpportunityId'));
+export const PlannedHoursSchema = Schema.Finite.check(
+  Schema.isGreaterThanOrEqualTo(0),
+  Schema.isLessThanOrEqualTo(10000),
+);
+export const ProjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+export const ProjectStateSchema = Schema.Literals(['PLANNED', 'ACTIVE', 'PAUSED', 'DONE']);
+export const ProjectSchema = Schema.Struct({
+  id: ProjectIdSchema,
+  title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  plannedStart: CalendarDateSchema,
+  plannedEnd: CalendarDateSchema,
+  responsibleEmployeeId: EmployeeIdSchema,
+  state: ProjectStateSchema,
+  milestones: Schema.Array(
+    Schema.Struct({
+      title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+      dueDate: CalendarDateSchema,
+      completed: Schema.Boolean,
+    }),
+  ).check(Schema.isMaxLength(50)),
+  createdAt: Schema.DateTimeUtcFromString,
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+export type WorkProject = typeof ProjectSchema.Type;
+export const TaskCommentSchema = Schema.Struct({
+  id: Schema.String,
+  authorPrincipalRef: PrincipalRefSchema,
+  createdAt: Schema.DateTimeUtcFromString,
+  text: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
+});
 export const TaskSchema = Schema.Struct({
+  comments: Schema.optionalKey(Schema.Array(TaskCommentSchema)),
+  plannedHours: Schema.optionalKey(PlannedHoursSchema),
+  projectId: Schema.optionalKey(ProjectIdSchema),
   assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   collectionRef: TaskCollectionRefSchema,
   contextRefs: Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12)),
@@ -52,7 +85,11 @@ export const TaskCollectionSchema = Schema.Struct({
   ref: TaskCollectionRefSchema,
   title: Schema.Trim.check(Schema.isNonEmpty()),
 });
-export const WorkStateSchema = Schema.Struct({ collection: TaskCollectionSchema, tasks: Schema.Array(TaskSchema) });
+export const WorkStateSchema = Schema.Struct({
+  collection: TaskCollectionSchema,
+  tasks: Schema.Array(TaskSchema),
+  projects: Schema.optionalKey(Schema.Array(ProjectSchema)),
+});
 export type WorkState = typeof WorkStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
   assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
@@ -67,6 +104,7 @@ export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
+  projects: Schema.optionalKey(Schema.Array(ProjectSchema)),
   canWrite: Schema.Boolean,
   collection: TaskCollectionSchema,
   indicators: Schema.Struct({

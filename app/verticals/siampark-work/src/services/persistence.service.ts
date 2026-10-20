@@ -2,12 +2,14 @@
 import { ContextAccess, OperationContextUnavailable, principalEligibilityForTransaction } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeRecordsWithAuthorization as executePropertyRecords } from '@app/siampark-property/clients/records';
+import { executeRecordsWithAuthorization as executeWorkforceRecords } from '@app/workforce/clients/records';
 import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Context, DateTime, Effect, Match, Option, Predicate, Result, Schema, Struct } from 'effect';
 
 import {
   BulkWorkCommandSchema,
+  PlanningCommandSchema,
   WorkLifecycleConflict,
   WorkNotFound,
   WorkPermissionDenied,
@@ -205,6 +207,8 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
             'opportunityId',
             'ownerPrincipalRef',
             'partyId',
+            'plannedHours',
+            'projectId',
           ]),
           priority: value.priority ?? 'NORMAL',
           ref,
@@ -413,7 +417,10 @@ export const visibleWorkTasks = Effect.fn('Work.visibleTasks')(function* visible
   ) {
     return yield* referenceUnavailable();
   }
-  return tasks.filter((_, index) => decisions[index]?.decision === 'allowed');
+  return tasks.filter(
+    (task, index) =>
+      decisions[index]?.decision === 'allowed' || task.ownerPrincipalRef?.principalId === scope.principalId,
+  );
 });
 
 const validWriteDecision = (
@@ -442,6 +449,32 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
     const injectedVerifier = yield* Effect.serviceOption(WorkReferenceVerifier);
     const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable));
     const verifier = Option.getOrElse(injectedVerifier, () => makeWorkReferenceVerifier(source));
+    const resolveAssignee = Effect.fn('Work.resolveAssignee')(function* resolveAssignee(employeeId: string) {
+      const credential = yield* source.issue('workforce').pipe(Effect.mapError(referenceUnavailable));
+      const records = yield* executeWorkforceRecords(
+        { employeeId: employeeId as NonNullable<Task['assigneeEmployeeId']> },
+        credential.authorization,
+        scope.correlationId,
+        { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
+      ).pipe(Effect.mapError(referenceUnavailable));
+      const employee = records.items.find((item) => item.id === employeeId && item.active);
+      if (employee === undefined) {
+        return yield* new WorkReferenceIneligible({
+          code: 'work_reference_ineligible',
+          reason: 'Assignee must be an active employee of the authorized company',
+        });
+      }
+      if (employee.principalRef !== undefined) {
+        const eligibility = yield* principalEligibility.resolve(employee.principalRef);
+        if (eligibility.decision === 'unavailable') return yield* referenceUnavailable();
+        if (eligibility.decision !== 'eligible')
+          return yield* new WorkReferenceIneligible({
+            code: 'work_reference_ineligible',
+            reason: 'Assignee login must be active',
+          });
+      }
+      return employee;
+    });
     const whereScope = and(eq(workStates.tenantId, scope.tenantId), eq(workStates.legalEntityId, legalEntityId));
     const load = Effect.fn('Work.load')(function* load() {
       const rows = yield* transaction.select().from(workStates).where(whereScope).limit(1);
@@ -558,7 +591,26 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       if (!change.changed) {
         return { results: change.results, revision: expectedRevision };
       }
-      const revision = yield* save(expectedRevision, change.state);
+      let updatedState = change.state;
+      if (command._tag === 'BulkAssignTasks') {
+        const employee = Option.isSome(command.assigneeEmployeeId)
+          ? yield* resolveAssignee(command.assigneeEmployeeId.value)
+          : undefined;
+        const changedIds = new Set(
+          change.results.filter((item) => item.outcome === 'changed').map((item) => item.resourceId),
+        );
+        updatedState = {
+          ...updatedState,
+          tasks: updatedState.tasks.map((task) => {
+            if (!changedIds.has(task.ref.resourceId)) return task;
+            const unowned = Struct.omit(task, ['ownerPrincipalRef']);
+            return employee?.principalRef === undefined
+              ? unowned
+              : { ...unowned, ownerPrincipalRef: employee.principalRef };
+          }),
+        };
+      }
+      const revision = yield* save(expectedRevision, updatedState);
       return { results: change.results, revision };
     });
     const apply = Effect.fn('Work.apply')(function* apply(
@@ -568,6 +620,79 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
     ) {
       if (Schema.is(BulkWorkCommandSchema)(command)) {
         return yield* applyBulk(command, expectedRevision);
+      }
+      if (Schema.is(PlanningCommandSchema)(command)) {
+        if (!(yield* contextGrant(scope, 'write_all'))) {
+          return yield* new WorkPermissionDenied({
+            code: 'work_permission_denied',
+            reason: 'Planning changes require Work write permission',
+          });
+        }
+        const snapshot = yield* load();
+        if (snapshot.revision !== expectedRevision) {
+          return yield* new WorkRevisionConflict({ code: 'work_revision_conflict', reason: workChangedReason });
+        }
+        const now = yield* DateTime.now;
+        if (command._tag === 'AddTaskComment') {
+          const task = snapshot.state.tasks.find((item) => item.ref.resourceId === command.taskRef.resourceId);
+          if (task === undefined || command.taskRef.tenantId !== scope.tenantId) {
+            return yield* new WorkNotFound({
+              code: 'work_not_found',
+              reason: 'Task does not exist in the authorized company',
+            });
+          }
+          const updated = {
+            ...task,
+            updatedAt: now,
+            comments: [
+              ...(task.comments ?? []),
+              {
+                id: resourceId,
+                authorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+                createdAt: now,
+                text: command.text,
+              },
+            ],
+          };
+          const revision = yield* save(expectedRevision, {
+            ...snapshot.state,
+            tasks: snapshot.state.tasks.map((item) => (item.ref.resourceId === task.ref.resourceId ? updated : item)),
+          });
+          return { revision, task: updated };
+        }
+        if (
+          command.plannedStart > command.plannedEnd ||
+          command.milestones.some((item) => item.dueDate < command.plannedStart || item.dueDate > command.plannedEnd)
+        ) {
+          return yield* new WorkLifecycleConflict({
+            code: 'work_lifecycle_conflict',
+            reason: 'Project dates or milestone dates are outside the planned period',
+          });
+        }
+        const projects = snapshot.state.projects ?? [];
+        const existing = command._tag === 'UpdateProject' ? projects.find((item) => item.id === command.id) : undefined;
+        if (command._tag === 'UpdateProject' && existing === undefined) {
+          return yield* new WorkNotFound({
+            code: 'work_not_found',
+            reason: 'Project does not exist in the authorized company',
+          });
+        }
+        const project = {
+          id: command._tag === 'UpdateProject' ? command.id : resourceId,
+          title: command.title,
+          plannedStart: command.plannedStart,
+          plannedEnd: command.plannedEnd,
+          responsibleEmployeeId: command.responsibleEmployeeId,
+          state: command.state,
+          milestones: command.milestones,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        };
+        const revision = yield* save(expectedRevision, {
+          ...snapshot.state,
+          projects: [...projects.filter((item) => item.id !== project.id), project],
+        });
+        return { revision, project };
       }
       if (!(yield* contextGrant(scope, 'write_all'))) {
         if (Predicate.isTagged('CreateTask')(command)) {
@@ -600,7 +725,39 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           reason: workChangedReason,
         });
       }
-      const owner = Predicate.isTagged('ChangeTaskState')(command) ? undefined : command.ownerPrincipalRef;
+      if (
+        (command._tag === 'CreateTask' || command._tag === 'UpdateTask') &&
+        command.projectId !== undefined &&
+        !(snapshot.state.projects ?? []).some((project) => project.id === command.projectId)
+      ) {
+        return yield* new WorkReferenceIneligible({
+          code: 'work_reference_ineligible',
+          reason: 'Project must belong to the authorized company',
+        });
+      }
+      let verifiedCommand = command;
+      if (
+        (command._tag === 'CreateTask' || command._tag === 'UpdateTask') &&
+        command.assigneeEmployeeId !== undefined
+      ) {
+        const employee = yield* resolveAssignee(command.assigneeEmployeeId);
+        if (command._tag === 'CreateTask') {
+          const withoutOwner = Struct.omit(command, ['ownerPrincipalRef']);
+          verifiedCommand =
+            employee.principalRef === undefined
+              ? withoutOwner
+              : { ...withoutOwner, ownerPrincipalRef: employee.principalRef };
+        } else {
+          const withoutOwner = Struct.omit(command, ['ownerPrincipalRef']);
+          verifiedCommand =
+            employee.principalRef === undefined
+              ? withoutOwner
+              : { ...withoutOwner, ownerPrincipalRef: employee.principalRef };
+        }
+      }
+      const owner = Predicate.isTagged('ChangeTaskState')(verifiedCommand)
+        ? undefined
+        : verifiedCommand.ownerPrincipalRef;
       if (owner !== undefined) {
         if (owner.tenantId !== scope.tenantId) {
           return yield* new WorkScopeMismatch({
@@ -623,7 +780,11 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         yield* verifier.verify(command.contextRefs ?? [], scope);
       }
       const now = yield* DateTime.now;
-      const change = yield* evolveWorkState(snapshot.state, command, { now, resourceId, tenantId: scope.tenantId });
+      const change = yield* evolveWorkState(snapshot.state, verifiedCommand, {
+        now,
+        resourceId,
+        tenantId: scope.tenantId,
+      });
       const revision = yield* save(expectedRevision, change.state);
       return { revision, task: change.task };
     });
@@ -652,6 +813,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite: yield* contextGrant(scope, 'write_all'),
         collection: snapshot.state.collection,
+        projects: (yield* contextGrant(scope, 'read_all')) ? (snapshot.state.projects ?? []) : [],
         indicators: {
           open: items.filter((task) => taskStatusGroup(task.state) !== 'DONE').length,
           openByAssignee: openByAssignee(items),

@@ -242,7 +242,10 @@ export const visibleEmployees = Effect.fn('Workforce.visibleEmployees')(function
   if (!decisionsMatch(decisions, refs)) {
     return yield* referenceUnavailable();
   }
-  return employees.filter((_, index) => decisions[index]?.decision === 'allowed');
+  return employees.filter(
+    (employee, index) =>
+      decisions[index]?.decision === 'allowed' || employee.principalRef?.principalId === scope.principalId,
+  );
 });
 
 const roleCounts = (employees: readonly Employee[]) => {

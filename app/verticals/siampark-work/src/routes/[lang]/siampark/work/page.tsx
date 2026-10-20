@@ -31,6 +31,7 @@ import { buildTaskColumns } from './tasks-columns.tsx';
 import type { LookupState } from './tasks-columns.tsx';
 import { TaskBulkBar, TaskFilterBar } from './tasks-filters.tsx';
 import { TaskFormDialog } from './task-form-dialog.tsx';
+import { WorkPlanning } from './work-planning.tsx';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
 import {
   TaskTabSchema,
@@ -73,7 +74,16 @@ const decodeEmployeeId = Schema.decodeUnknownOption(EmployeeIdSchema);
 type EditFields = Types.Mutable<
   Pick<
     Extract<WorkCommand, { readonly _tag: 'CreateTask' }>,
-    'assigneeEmployeeId' | 'description' | 'dueDate' | 'opportunityId' | 'partyId' | 'priority' | 'title'
+    | 'assigneeEmployeeId'
+    | 'description'
+    | 'dueDate'
+    | 'opportunityId'
+    | 'partyId'
+    | 'priority'
+    | 'title'
+    | 'plannedHours'
+    | 'projectId'
+    | 'ownerPrincipalRef'
   >
 >;
 const LoadStateSchema = Schema.Literals(['loading', 'ready', 'error', 'forbidden']);
@@ -374,8 +384,13 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     records === undefined || mineResolving
       ? []
       : filterTasks(records.items, {
-          customerNames, employeeNames, filters, mineEmployeeId,
-          minePrincipalId: records.actorPrincipalRef.principalId, tab, today,
+          customerNames,
+          employeeNames,
+          filters,
+          mineEmployeeId,
+          minePrincipalId: records.actorPrincipalRef.principalId,
+          tab,
+          today,
         });
   // The header shows the role only, so the "mine" tab names the employee it narrows to.
   const mineName = mineEmployeeId === undefined ? undefined : employeeNames.get(mineEmployeeId);
@@ -396,8 +411,14 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     filters.state !== ALL;
 
   const showFreshRecords = (fresh: RecordsResponse) => setRecords((current) => newerTaskList(current, fresh));
-  const showSavedTask = (saved: Task, revision: number) =>
+  const showSavedTask = (saved: Task, revision: number) => {
     setRecords((current) => (current === undefined ? current : withSavedTask(current, saved, revision)));
+    setEditor((current) =>
+      current?.mode === 'edit' && current.task.ref.resourceId === saved.ref.resourceId
+        ? { mode: 'edit', task: saved }
+        : current,
+    );
+  };
   const reloadRecords = requestId.pipe(
     Effect.flatMap((id) => executeRecords(partyId === undefined ? {} : { partyId }, id)),
     Effect.tap((fresh) => Effect.sync(() => showFreshRecords(fresh))),
@@ -474,7 +495,11 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     };
     if (submission.assigneeEmployeeId !== undefined) {
       fields.assigneeEmployeeId = submission.assigneeEmployeeId;
+      const owner = employees.find((employee) => employee.id === submission.assigneeEmployeeId)?.principalRef;
+      if (owner !== undefined) fields.ownerPrincipalRef = owner;
     }
+    if (submission.plannedHours !== undefined) fields.plannedHours = submission.plannedHours;
+    if (submission.projectId !== undefined) fields.projectId = submission.projectId;
     if (submission.dueDate !== undefined) {
       fields.dueDate = submission.dueDate;
     }
@@ -652,6 +677,17 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     handleOpenEdit,
     handleReload,
     handleSave: save,
+    handlePlanning: (command: WorkCommand, onDone: (outcome: CommandOutcome) => void) => {
+      if (records !== undefined) runCommand(command, records.revision, onDone);
+    },
+    handleComment: (text: string) => {
+      if (editor?.mode !== 'edit' || records === undefined) return;
+      setSaving(true);
+      runCommand({ _tag: 'AddTaskComment', taskRef: editor.task.ref, text }, records.revision, (outcome) => {
+        setSaving(false);
+        if (!outcome.ok) setFormError(outcome.message);
+      });
+    },
     handleSelectionChange: setSelection,
     handleSortingChange: setSorting,
     loadState,
@@ -699,6 +735,7 @@ const TasksPageContent = ({
   });
   const selectedCount = model.selectedIds.length;
   const narrow = useNarrowViewport();
+  const [planningOpen, setPlanningOpen] = useState(false);
 
   if (invalidFilter) {
     return <StatusText status="error">{t(`${key}.invalidFilter`)}</StatusText>;
@@ -710,14 +747,28 @@ const TasksPageContent = ({
       <PageHeader
         actions={
           model.canWrite ? (
-            <Button onClick={model.handleOpenCreate} size="sm" variant="primary">
-              {t(`${key}.newTask`)}
-            </Button>
+            <div className="flex flex-wrap gap-100">
+              <Button onClick={() => setPlanningOpen((open) => !open)} size="sm" variant="secondary" theme="outlined">
+                {planningOpen ? 'Skrýt plánování' : 'Projekty a kapacity'}
+              </Button>
+              <Button onClick={model.handleOpenCreate} size="sm" variant="primary">
+                {t(`${key}.newTask`)}
+              </Button>
+            </div>
           ) : undefined
         }
         description={t(`${key}.pageDescription`)}
         title={t(`${key}.title`)}
       />
+
+      {planningOpen && records !== undefined && (
+        <WorkPlanning
+          records={records}
+          employees={model.employees}
+          apply={model.handlePlanning}
+          openTask={model.handleOpenEdit}
+        />
+      )}
 
       {partyId !== undefined && (
         <p className="text-fg-secondary text-sm">
@@ -818,9 +869,7 @@ const TasksPageContent = ({
         loadingRowCount={8}
         maxHeight="calc(100dvh - 15rem)"
         onRowClick={(row) => {
-          if (model.canWrite) {
-            model.handleOpenEdit(row.original);
-          }
+          model.handleOpenEdit(row.original);
         }}
         onRowSelectionChange={model.handleSelectionChange}
         onSortingChange={model.handleSortingChange}
@@ -902,6 +951,9 @@ const TasksPageContent = ({
           error={model.formError}
           onClose={model.handleCloseEditor}
           onSubmit={model.handleSave}
+          readOnly={!model.canWrite}
+          onComment={model.handleComment}
+          projects={records?.projects ?? []}
           opportunities={model.opportunities}
           opportunitiesLoading={!model.lookups.opportunities}
           task={model.editor.mode === 'edit' ? model.editor.task : undefined}

@@ -10,7 +10,7 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { Option, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import type { FocusEvent, KeyboardEvent } from 'react';
 import {
@@ -19,7 +19,7 @@ import {
   PartyIdSchema,
   TaskPrioritySchema,
 } from '../../../../../shared/apis/records.ts';
-import type { Task } from '../../../../../shared/apis/records.ts';
+import type { Task, WorkProject } from '../../../../../shared/apis/records.ts';
 import { isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
 import { customerOptionItems, opportunityOptionItems, selectOption } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
@@ -37,6 +37,8 @@ type OpportunityId = typeof OpportunityIdSchema.Type;
 type PartyId = typeof PartyIdSchema.Type;
 
 export interface TaskFormSubmission {
+  readonly plannedHours: number | undefined;
+  readonly projectId: string | undefined;
   readonly assigneeEmployeeId: EmployeeId | undefined;
   readonly description: string;
   readonly dueDate: TaskDueDate | undefined;
@@ -47,6 +49,8 @@ export interface TaskFormSubmission {
 }
 
 interface FormValues {
+  readonly plannedHours: string;
+  readonly projectId: string;
   readonly assigneeId: string;
   readonly description: string;
   readonly dueDate: TaskDueDate | undefined;
@@ -76,6 +80,8 @@ interface FieldErrors {
 type FieldName = keyof FieldErrors;
 
 const initialValues = (task: Task | undefined): FormValues => ({
+  plannedHours: task?.plannedHours === undefined ? '' : String(task.plannedHours),
+  projectId: task?.projectId ?? '',
   assigneeId: task?.assigneeEmployeeId ?? '',
   description: task?.description ?? '',
   dueDate: task?.dueDate,
@@ -177,6 +183,8 @@ const hasUnsavedInput = (values: FormValues, task: Task | undefined) => {
   return (
     values.assigneeId !== initial.assigneeId ||
     values.description !== initial.description ||
+    values.plannedHours !== initial.plannedHours ||
+    values.projectId !== initial.projectId ||
     values.dueDate !== initial.dueDate ||
     values.opportunityId !== initial.opportunityId ||
     values.partyId !== initial.partyId ||
@@ -358,6 +366,9 @@ export const TaskFormDialog = ({
   error,
   onClose,
   onSubmit,
+  projects = [],
+  readOnly = false,
+  onComment,
   opportunities,
   opportunitiesLoading,
   task,
@@ -369,6 +380,9 @@ export const TaskFormDialog = ({
   readonly error: string | undefined;
   readonly onClose: () => void;
   readonly onSubmit: (submission: TaskFormSubmission) => void;
+  readonly projects?: readonly WorkProject[];
+  readonly readOnly?: boolean;
+  readonly onComment?: (text: string) => void;
   readonly opportunities: readonly OpportunityOption[];
   readonly opportunitiesLoading: boolean;
   /** `undefined` creates a task. Mount this component only while it is open. */
@@ -377,10 +391,11 @@ export const TaskFormDialog = ({
   const { t } = useModernI18n();
   const [values, setValues] = useState(() => initialValues(task));
   const [submitted, setSubmitted] = useState(false);
+  const [comment, setComment] = useState('');
   const [submitAttempts, setSubmitAttempts] = useState(0);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   // A done or cancelled task cannot change, so its panel shows the values read-only.
-  const locked = task !== undefined && isClosedTaskState(task.state);
+  const locked = readOnly || (task !== undefined && isClosedTaskState(task.state));
   const fieldsDisabled = busy || locked;
   const formRef = useRef<HTMLDivElement>(null);
   // The Řešitel, Termín or Priorita field focused last (its list content too: React focus events cross portals).
@@ -437,7 +452,18 @@ export const TaskFormDialog = ({
       setSubmitAttempts((count) => count + 1);
       return;
     }
+    if (
+      values.plannedHours !== '' &&
+      (!Number.isFinite(Number(values.plannedHours)) ||
+        Number(values.plannedHours) < 0 ||
+        Number(values.plannedHours) > 10000)
+    ) {
+      setSubmitted(true);
+      return;
+    }
     onSubmit({
+      plannedHours: values.plannedHours === '' ? undefined : Number(values.plannedHours),
+      projectId: values.projectId === '' ? undefined : values.projectId,
       assigneeEmployeeId: decoded.assigneeEmployeeId,
       description: values.description.trim(),
       dueDate: decoded.dueDate,
@@ -498,7 +524,7 @@ export const TaskFormDialog = ({
               {error}
             </StatusText>
           )}
-          {locked && <StatusText status="warning">{t(`${key}.closedTask`)}</StatusText>}
+          {locked && <StatusText status="warning">{t(readOnly ? `${key}.readOnly` : `${key}.closedTask`)}</StatusText>}
           <FormInput
             autoComplete="off"
             disabled={fieldsDisabled}
@@ -561,6 +587,43 @@ export const TaskFormDialog = ({
             />
             {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
           </div>
+          <FormInput
+            id="task-planned-hours"
+            label={t(`${key}.plannedHours`)}
+            type="number"
+            min={0}
+            max={10000}
+            step={0.5}
+            disabled={fieldsDisabled}
+            value={values.plannedHours}
+            onChange={(event) => set({ plannedHours: event.target.value })}
+            helpText={t(`${key}.plannedHoursHint`)}
+          />
+          <Select
+            disabled={fieldsDisabled}
+            label={t(`${key}.project`)}
+            labelProps={dialogLabelProps}
+            items={[
+              selectOption(t(`${key}.noProject`), NONE),
+              ...projects.map((project) => selectOption(project.title, project.id)),
+            ]}
+            value={[values.projectId === '' ? NONE : values.projectId]}
+            onValueChange={({ value }) => set({ projectId: value[0] === NONE ? '' : (value[0] ?? '') })}
+          />
+          {task !== undefined && task.contextRefs.length > 0 && (
+            <div className="flex flex-col gap-100">
+              <h3 className="font-semibold">{t(`${key}.relatedRecords`)}</h3>
+              {task.contextRefs.map((ref) => (
+                <a
+                  key={ref.resourceId}
+                  className="underline"
+                  href={`/cs/siampark/properties?resourceId=${encodeURIComponent(ref.resourceId)}`}
+                >
+                  {t(`${key}.openProperty`)}
+                </a>
+              ))}
+            </div>
+          )}
           {/* Termín takes the full width: beside Priorita its year segment was clipped. */}
           <div onFocus={rememberListField}>
             <DatePicker.Root
@@ -608,6 +671,51 @@ export const TaskFormDialog = ({
               value={[values.priority]}
             />
           </div>
+          {task !== undefined && (
+            <section className="flex flex-col gap-100 border-t border-border-primary pt-200">
+              <h3 className="font-semibold">{t(`${key}.comments`)}</h3>
+              {(task.comments ?? []).length === 0 && (
+                <p className="text-sm text-fg-secondary">{t(`${key}.noComments`)}</p>
+              )}
+              {(task.comments ?? []).map((entry) => (
+                <div key={entry.id} className="rounded-lg border border-border-primary p-150">
+                  <p className="text-sm text-fg-secondary">
+                    {employees.find(
+                      (employee) => employee.principalRef?.principalId === entry.authorPrincipalRef.principalId,
+                    )?.fullName ?? t(`${key}.teamMember`)}{' '}
+                    ·{' '}
+                    {new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' }).format(
+                      DateTime.toDateUtc(entry.createdAt),
+                    )}
+                  </p>
+                  <p className="whitespace-pre-wrap">{entry.text}</p>
+                </div>
+              ))}
+              {!readOnly && onComment !== undefined && (
+                <>
+                  <FormTextarea
+                    id="task-comment"
+                    label={t(`${key}.newComment`)}
+                    value={comment}
+                    maxLength={2000}
+                    onChange={(event) => setComment(event.target.value)}
+                    disabled={busy}
+                  />
+                  <Button
+                    disabled={busy || comment.trim() === ''}
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      onComment(comment.trim());
+                      setComment('');
+                    }}
+                  >
+                    {t(`${key}.addComment`)}
+                  </Button>
+                </>
+              )}
+            </section>
+          )}
         </div>
       </SidePanel>
       <DiscardDialog

@@ -20,7 +20,7 @@
     "pages": {
       "records": {
         "title": "Tasks",
-        "pageDescription": "Sales team tasks and their due dates.",
+        "pageDescription": "Site tasks, responsible people and deadlines.",
         "newTask": "New task",
         "create": "New task",
         "edit": "Edit task",
@@ -157,7 +157,19 @@
         },
         "invalidFilter": "The customer filter in the page URL is invalid.",
         "relatedFilter": "Showing this customer’s records in the selected legal entity.",
-        "clearRelatedFilter": "Show all customers"
+        "clearRelatedFilter": "Show all customers",
+        "plannedHours": "Planned hours",
+        "plannedHoursHint": "Estimated effort, not attendance or payroll.",
+        "project": "Project",
+        "noProject": "No project",
+        "relatedRecords": "Related records",
+        "openProperty": "Open property or unit",
+        "comments": "Comments",
+        "noComments": "No comments yet.",
+        "teamMember": "Team member",
+        "newComment": "New comment",
+        "addComment": "Add comment",
+        "readOnly": "You can only view this task."
       }
     },
     "selectPlaceholder": "Select…",

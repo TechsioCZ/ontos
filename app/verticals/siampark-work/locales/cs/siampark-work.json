@@ -20,7 +20,7 @@
     "pages": {
       "records": {
         "title": "Úkoly",
-        "pageDescription": "Úkoly obchodního týmu a jejich termíny",
+        "pageDescription": "Úkoly areálu, odpovědné osoby a termíny.",
         "newTask": "Nový úkol",
         "create": "Nový úkol",
         "edit": "Upravit úkol",
@@ -157,7 +157,19 @@
         },
         "invalidFilter": "Neplatný filtr zákazníka v adrese stránky.",
         "relatedFilter": "Zobrazeny pouze záznamy tohoto zákazníka v aktuálním právním subjektu.",
-        "clearRelatedFilter": "Zobrazit všechny zákazníky"
+        "clearRelatedFilter": "Zobrazit všechny zákazníky",
+        "plannedHours": "Plánované hodiny",
+        "plannedHoursHint": "Odhad práce řešitele. Nejde o docházku ani mzdu.",
+        "project": "Projekt",
+        "noProject": "Bez projektu",
+        "relatedRecords": "Související záznamy",
+        "openProperty": "Otevřít nemovitost nebo jednotku",
+        "comments": "Komentáře",
+        "noComments": "Zatím žádné komentáře.",
+        "teamMember": "Člen týmu",
+        "newComment": "Nový komentář",
+        "addComment": "Přidat komentář",
+        "readOnly": "Tento úkol můžete pouze prohlížet."
       }
     },
     "selectPlaceholder": "Vyberte…",

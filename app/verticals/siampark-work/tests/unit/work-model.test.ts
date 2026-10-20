@@ -67,6 +67,34 @@ const fakeAccess = (allowed: readonly string[], unavailable = false): ContextAcc
   tenants: () => Effect.succeed([]),
 });
 
+it.effect('a restricted persona sees its own tasks, never another principal’s task', () =>
+  Effect.gen(function* ownTasksOnly() {
+    const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const own = yield* evolveWorkState(
+      state,
+      {
+        _tag: 'CreateTask',
+        title: 'Vlastní úkol',
+        ownerPrincipalRef: { principalId: scope.principalId, tenantId },
+      },
+      { now, resourceId: 'own', tenantId },
+    );
+    const other = yield* evolveWorkState(
+      own.state,
+      {
+        _tag: 'CreateTask',
+        title: 'Cizí úkol',
+        ownerPrincipalRef: { principalId: scope.authBindingId, tenantId },
+      },
+      { now, resourceId: 'other', tenantId },
+    );
+    const visible = yield* visibleWorkTasks(other.state.tasks, scope).pipe(
+      Effect.provideService(ContextAccess, fakeAccess([])),
+    );
+    expect(visible.map((task) => task.title)).toEqual(['Vlastní úkol']);
+  }),
+);
+
 it.effect('Title-only creation defaults to NEW without business context or principal', () =>
   Effect.gen(function* case1() {
     const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);

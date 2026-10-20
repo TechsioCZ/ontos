@@ -16,7 +16,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { toLegalEntityAccessObjectId, toModuleAccessObjectId } from '@app/core-runtime';
+import {
+  toContextPermissionAccessObjectId,
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+} from '@app/core-runtime';
 import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 
 import { demoId, demoTenantId } from './fixture-ids.mts';
@@ -53,7 +57,7 @@ const administrators: readonly Administrator[] = [
   },
 ];
 
-const allRelationships = administrators.flatMap(({ extraModules, legalEntityId, principalId }) => {
+const administratorRelationships = administrators.flatMap(({ extraModules, legalEntityId, principalId }) => {
   const action = toSpiceDbActionObjectId(actionKey);
   const legal = toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '';
   const rel = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) => ({
@@ -77,6 +81,71 @@ const allRelationships = administrators.flatMap(({ extraModules, legalEntityId, 
   ];
 });
 
+// S13: every Siampark persona can open My tasks. These two grants deliberately do NOT include
+// read_all or an action executor: owner-scoped Reads return only the principal's assigned tasks.
+const siampark = '71000000-0000-4000-8000-000000000021';
+const management = '72000000-0000-4000-8000-000000000021';
+const ownTaskReaders = ['72000000-0000-4000-8000-000000000023', '72000000-0000-4000-8000-000000000024'];
+const ownTaskRelationships = ownTaskReaders.flatMap((principalId) =>
+  ['siampark.work', 'demo.workforce'].flatMap((moduleId) => {
+    const resourceId = toModuleAccessObjectId(demoTenantId, siampark, moduleId) ?? '';
+    return [
+      {
+        resourceType: 'module_access',
+        resourceId,
+        relation: 'legal_entity',
+        subjectType: 'legal_entity',
+        subjectId: toLegalEntityAccessObjectId(demoTenantId, siampark) ?? '',
+      },
+      {
+        resourceType: 'module_access',
+        resourceId,
+        relation: 'accessor',
+        subjectType: 'principal',
+        subjectId: principalId,
+      },
+    ];
+  }),
+);
+// The people administrator maintains the employee-to-login bindings used for real task assignment.
+const workforceAction = toSpiceDbActionObjectId('demo.workforce.apply-command');
+const workforceManagementRelationships = [
+  {
+    resourceType: 'action',
+    resourceId: workforceAction,
+    relation: 'restriction',
+    subjectType: 'action',
+    subjectId: workforceAction,
+  },
+  {
+    resourceType: 'action',
+    resourceId: workforceAction,
+    relation: 'executor',
+    subjectType: 'principal',
+    subjectId: management,
+  },
+  ...['demo.workforce.read_all', 'demo.workforce.write_all'].flatMap((permission) => {
+    const resourceId =
+      toContextPermissionAccessObjectId(demoTenantId, siampark, { moduleId: 'demo.workforce', permission }) ?? '';
+    return [
+      {
+        resourceType: 'context_permission',
+        resourceId,
+        relation: 'tenant',
+        subjectType: 'tenant',
+        subjectId: demoTenantId,
+      },
+      {
+        resourceType: 'context_permission',
+        resourceId,
+        relation: 'grantee',
+        subjectType: 'principal',
+        subjectId: management,
+      },
+    ];
+  }),
+];
+const allRelationships = [...administratorRelationships, ...ownTaskRelationships, ...workforceManagementRelationships];
 const relationships = [
   ...new Map(
     allRelationships.map((relationship) => [
