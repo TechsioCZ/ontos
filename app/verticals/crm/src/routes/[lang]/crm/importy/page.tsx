@@ -78,7 +78,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     cell: (info) => {
       const order = info.row.original;
       return order.clientId === undefined ? (
-        <div className="flex min-w-0 flex-col gap-50">
+        <div className="flex min-w-0 flex-col items-start gap-50">
           <PairingStateBadge order={order} />
           <span className="truncate text-fg-secondary text-xs">{order.customerName ?? order.externalCustomerId ?? '—'}</span>
         </div>
@@ -120,7 +120,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
       const order = info.row.original;
       return needsReview(order) ? (
         <Badge size="sm" variant="warning">
-          Vyžaduje kontrolu
+          Ke kontrole
         </Badge>
       ) : order.duplicateOf === undefined ? null : (
         <Badge size="sm" variant="outline">
@@ -130,7 +130,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     },
     header: 'Kontrola',
     id: 'review',
-    meta: { type: 'number', width: 150 },
+    meta: { type: 'number', width: 130 },
   },
 ];
 
@@ -417,7 +417,7 @@ const ImportsContent = () => {
               }
               description={t('crm.pages.imports.description')}
               meta={
-                <Badge size="sm" variant="secondary">
+                <Badge size="sm" variant="outline">
                   CSV import · bez živého napojení
                 </Badge>
               }
