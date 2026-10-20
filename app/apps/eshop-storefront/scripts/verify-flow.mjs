@@ -2,7 +2,7 @@
 //   PLAYWRIGHT_MODULE=/…/playwright/index.js BASE=http://localhost:3060 OUT=/…/shots node scripts/verify-flow.mjs
 // Never opens a visible window. Exits non-zero when a step fails.
 import { createRequire } from 'node:module';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
@@ -21,6 +21,10 @@ const run = async (browser, name, viewport) => {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(String(error)));
+  const bodies = [];
+  page.on('response', async (response) => {
+    if (response.url().startsWith(BASE)) bodies.push(await response.text().catch(() => ''));
+  });
   page.on('response', async (response) => {
     if (response.url().includes('/api/orders') || (response.url().includes('/api/') && response.status() >= 400)) {
       console.log('  ', response.status(), response.request().method(), response.url().replace(BASE, ''), (await response.text().catch(() => '')).slice(0, 200));
@@ -157,6 +161,13 @@ const run = async (browser, name, viewport) => {
   await noHorizontalScroll('confirmation');
   log(name, 'order ok', number, 'posts', orderPosts.length);
 
+  // E00-03: the server credential never reaches the browser (bundle, HTML, API answers).
+  const envFile = new URL('../../../.env.demo.local', import.meta.url);
+  const key = existsSync(envFile) ? /^ONTOS_STOREFRONT_API_KEY=(.+)$/mu.exec(readFileSync(envFile, 'utf-8'))?.[1]?.trim() : undefined;
+  if (key !== undefined && key.length > 8) {
+    assert(!bodies.some((body) => body.includes(key)), 'storefront API key leaked to the browser');
+    log(name, `credential check ok (${bodies.length} responses scanned)`);
+  }
   assert(errors.length === 0, `page errors: ${errors.join(' | ')}`);
   await context.close();
   return number;
