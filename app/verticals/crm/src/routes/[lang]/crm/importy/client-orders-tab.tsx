@@ -113,9 +113,16 @@ export const ClientOrdersTab = ({ client, records }: ClientCardTabProps) => {
                     aria-expanded={open}
                     className="cursor-pointer border-border-primary border-t"
                     onClick={() => setOpenId(open ? undefined : order.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setOpenId(open ? undefined : order.id);
+                      }
+                    }}
+                    tabIndex={0}
                   >
                     <td className="px-150 py-100">
-                      <span className="flex items-center gap-50">
+                      <span className="flex items-center gap-50 whitespace-nowrap">
                         <span
                           aria-hidden="true"
                           className={`size-200 text-fg-secondary ${open ? 'icon-[mdi--chevron-down]' : 'icon-[mdi--chevron-right]'}`}
@@ -134,9 +141,9 @@ export const ClientOrdersTab = ({ client, records }: ClientCardTabProps) => {
                       </span>
                     </td>
                     <td className="px-150 py-100">{order.source}</td>
-                    <td className="px-150 py-100">{orderDate(order)}</td>
+                    <td className="whitespace-nowrap px-150 py-100">{orderDate(order)}</td>
                     <td
-                      className={`px-150 py-100 text-right tabular-nums ${order.amount === undefined ? 'text-fg-secondary' : ''}`}
+                      className={`whitespace-nowrap px-150 py-100 text-right tabular-nums ${order.amount === undefined ? 'text-fg-secondary' : ''}`}
                     >
                       {formatAmount(order.amount, order.currency)}
                     </td>
