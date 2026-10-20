@@ -127,7 +127,7 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
       return [{ isolation: 'read committed' }];
     }
     if (text.includes('current_setting')) {
-      return [{ legal_entity_id: installed.legalEntityId, tenant_id: installed.tenantId }];
+      return [{ legal_entity_id: installed.legalEntityId, role: 'ontos_runtime', tenant_id: installed.tenantId }];
     }
     if (text.includes('transaction_timestamp')) {
       return [{ operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2027-01-02T00:00:00.000Z'))) }];

@@ -1,6 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { eq } from 'drizzle-orm';
 import {
+  Config,
   Context,
   Crypto,
   Data,
@@ -56,6 +57,7 @@ import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 
 const LIVE_FIXTURE_EXTERNAL_TIMEOUT = Duration.seconds(30);
 const LOAD_EVIDENCE_FAILURE = 'Unable to load live fixture evidence';
+const LOCAL_DATABASE_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1']);
 
 const relationship = (
   resourceType: string,
@@ -73,6 +75,11 @@ const relationship = (
 const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
+  /**
+   * Seeds Core tenancy rows. Defaults to the configured `DATABASE_ADMIN_URL`: dedicated runtime roles
+   * cannot insert tenants, Legal Entities or principals.
+   */
+  adminConnectionString: Schema.optional(Schema.Redacted(Schema.String)),
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   runtimeConnectionString: Schema.Redacted(Schema.String),
@@ -297,6 +304,10 @@ const makeFaultActionRepository = (state: FixtureFaultState, crypto: Crypto.Cryp
   return { ...repository, flushSuccess };
 };
 
+/**
+ * Reads Core evidence rows for the fixture tenant through the caller's executor. Callers pass the
+ * admin client: dedicated request roles (for example the Party request role) cannot read events.
+ */
 const loadFixtureEvidence = Effect.fn('LiveOperations.loadFixtureEvidence')(
   (executor: FixtureExecutor, tenantId: string) =>
     Effect.all(
@@ -371,6 +382,16 @@ const grantFixtureResourceAccess = Effect.fn('LiveOperations.grantResourceAccess
   },
 );
 
+const decodeDatabaseAddress = (connectionString: Redacted.Redacted) =>
+  Schema.decodeEffect(Schema.URLFromString)(Redacted.value(connectionString)).pipe(
+    Effect.mapError((cause) => fixtureFailure('Invalid live operation database URL', cause)),
+  );
+
+const parseFixtureDatabaseConfig = (connectionString: Redacted.Redacted) =>
+  parseDatabaseConfig({ DATABASE_URL: Redacted.value(connectionString) }).pipe(
+    Effect.mapError((cause) => fixtureFailure('Invalid database configuration', cause)),
+  );
+
 /** Real Core persistence and SpiceDB. Call only against a disposable local database. */
 const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperationFixture')(
   function* makeLiveOperationFixtureEffect(input: LiveOperationFixtureConfiguration) {
@@ -381,18 +402,29 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' }).pipe(
       Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
     );
-    const runtimeConnectionString = Redacted.value(configuration.runtimeConnectionString);
-    const address = yield* Schema.decodeEffect(Schema.URLFromString)(runtimeConnectionString).pipe(
-      Effect.mapError((cause) => fixtureFailure('Invalid live operation database URL', cause)),
+    const { runtimeConnectionString } = configuration;
+    const adminConnectionString =
+      configuration.adminConnectionString ??
+      (yield* Config.schema(Schema.Redacted(Schema.String), 'DATABASE_ADMIN_URL').pipe(
+        Effect.mapError((cause) => fixtureFailure('Unable to load the administrative database URL', cause)),
+      ));
+    const [address, adminAddress] = yield* Effect.all(
+      [decodeDatabaseAddress(runtimeConnectionString), decodeDatabaseAddress(adminConnectionString)],
+      { concurrency: 1 },
     );
-    if (!['localhost', '127.0.0.1'].includes(address.hostname) || !spiceDb.endpoint.startsWith('localhost:')) {
+    if (
+      !LOCAL_DATABASE_HOSTS.has(address.hostname) ||
+      !LOCAL_DATABASE_HOSTS.has(adminAddress.hostname) ||
+      !spiceDb.endpoint.startsWith('localhost:')
+    ) {
       return yield* fixtureFailure('Live test fixtures require disposable localhost services');
     }
 
     const databaseScope = yield* Scope.make();
-    const databaseConfiguration = yield* parseDatabaseConfig({
-      DATABASE_URL: runtimeConnectionString,
-    }).pipe(Effect.mapError((cause) => fixtureFailure('Invalid database configuration', cause)));
+    const [databaseConfiguration, adminDatabaseConfiguration] = yield* Effect.all(
+      [parseFixtureDatabaseConfig(runtimeConnectionString), parseFixtureDatabaseConfig(adminConnectionString)],
+      { concurrency: 1 },
+    );
     const { executor } = yield* makeCoreDatabase({ ...databaseConfiguration, maxConnections: 8 }).pipe(
       Scope.provide(databaseScope),
       Effect.mapError((cause) => fixtureFailure('Unable to initialize fixture database', cause)),
@@ -415,17 +447,25 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       Effect.andThen(Scope.close(databaseScope, Exit.void)),
     );
 
-    yield* setupLiveOperationFixture({
-      actionKeys: configuration.actionKeys ?? [],
-      actors,
-      authenticationNamespaceId: configuration.authenticationNamespaceId,
-      executor,
-      legalEntityId,
-      legalEntityOnly,
-      manager,
-      spice,
-      tenantId,
-    }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? closeResources : Effect.void)));
+    // Seed through a short-lived admin pool; the runtimes keep the runtime role's connection.
+    yield* Effect.scoped(
+      Effect.gen(function* seedLiveOperationFixture() {
+        const admin = yield* makeCoreDatabase({ ...adminDatabaseConfiguration, maxConnections: 2 }).pipe(
+          Effect.mapError((cause) => fixtureFailure('Unable to initialize the fixture admin database', cause)),
+        );
+        yield* setupLiveOperationFixture({
+          actionKeys: configuration.actionKeys ?? [],
+          actors,
+          authenticationNamespaceId: configuration.authenticationNamespaceId,
+          executor: admin.executor,
+          legalEntityId,
+          legalEntityOnly,
+          manager,
+          spice,
+          tenantId,
+        });
+      }),
+    ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? closeResources : Effect.void)));
 
     const faultState: FixtureFaultState = {
       active: null,
@@ -527,7 +567,8 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
 
     return {
       denied,
-      evidence: () => loadFixtureEvidence(executor, tenantId),
+      /** Pass the admin executor; the fixture's own runtime connection is not an evidence reader. */
+      evidence: (evidenceExecutor: FixtureExecutor) => loadFixtureEvidence(evidenceExecutor, tenantId),
       faultNextTransaction: (fault: FixtureFault) => {
         faultState.next = fault;
       },

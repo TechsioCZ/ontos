@@ -1,4 +1,6 @@
-import { Redacted } from 'effect';
+import { Option, Redacted } from 'effect';
+
+import { DATABASE_IDENTITIES, SHARED_RUNTIME_IDENTITY } from '../packages/core-runtime/src/db/database-identities.ts';
 
 const assignmentPattern = /^(?<key>[A-Z][A-Z0-9_]*)=(?<value>.*)$/u;
 
@@ -70,4 +72,39 @@ export const localSpiceDbValues = (
     SPICEDB_HTTP_PORT: httpPort,
     SPICEDB_PRESHARED_KEY: preSharedKey,
   };
+};
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+const loopbackDatabaseUrl = (value: string | undefined): Option.Option<URL> => {
+  if (value === undefined || !URL.canParse(value)) {
+    return Option.none();
+  }
+  const url = new URL(value);
+  return /^postgres(?:ql)?:$/u.test(url.protocol) && LOOPBACK_HOSTS.has(url.hostname)
+    ? Option.some(url)
+    : Option.none();
+};
+
+/**
+ * The local URLs of the dedicated database identities that the environment lacks. Each reuses the host,
+ * port and database of a loopback `DATABASE_URL`, with user and password equal to the role, as the local
+ * bootstrap creates them. Present keys are never returned, so an existing value is never overwritten.
+ */
+export const localDatabaseIdentityValues = (lines: readonly string[]): Readonly<Record<string, string>> => {
+  const existing = existingValues(lines);
+  return Option.match(loopbackDatabaseUrl(existing[SHARED_RUNTIME_IDENTITY.urlKey]), {
+    onNone: () => ({}),
+    onSome: (runtimeUrl) =>
+      Object.fromEntries(
+        DATABASE_IDENTITIES.filter(
+          (identity) => identity.id !== SHARED_RUNTIME_IDENTITY.id && existing[identity.urlKey] === undefined,
+        ).map((identity) => {
+          const url = new URL(runtimeUrl);
+          url.username = identity.role;
+          url.password = identity.role;
+          return [identity.urlKey, url.toString()] as const;
+        }),
+      ),
+  });
 };

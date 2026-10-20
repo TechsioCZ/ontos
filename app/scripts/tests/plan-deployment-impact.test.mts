@@ -547,6 +547,8 @@ for (const changedPath of [
   'scripts/run-zerops-migrator.mjs',
   'scripts/verify-application-db-schema.mts',
   'scripts/postgres/bootstrap-runtime-role.mts',
+  'scripts/postgres/database-login-roles.mts',
+  'scripts/postgres/database-role-manifest.mts',
 ]) {
   it.live(`includes the migrator for root migration contract ${changedPath}`, () =>
     Effect.gen(function* testEffect14() {
@@ -562,6 +564,32 @@ for (const changedPath of [
     }),
   );
 }
+
+it.live('includes the migrator first for the Core database identity manifest, keeping the Shell last', () =>
+  Effect.gen(function* coreDatabaseIdentityManifest() {
+    yield* withFixture((root) =>
+      Effect.gen(function* coreDatabaseIdentityManifestPlan() {
+        const plan = yield* planDeploymentImpact({
+          changedPaths: ['packages/core-runtime/src/db/database-identities.ts'],
+          rootDirectory: root,
+        });
+        const phases = plan.phases.map((phase) => phase.id);
+        expect(phases[0]).toBe('migrator');
+        expect(phases.at(-1)).toBe(SHELL_ID);
+      }),
+    );
+  }),
+);
+
+it.live('includes the migrator first for the Party Registry grant manifest', () =>
+  Effect.gen(function* partyGrantManifest() {
+    const plan = yield* planDeploymentImpact({
+      changedPaths: ['verticals/party-registry/src/db/database-grants.ts'],
+      rootDirectory: path.resolve(import.meta.dirname, '../..'),
+    });
+    expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'party-registry', 'party-registry-worker']);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.live('expands shared-package changes to every consumer in dependency order', () =>
   Effect.gen(function* testEffect18() {

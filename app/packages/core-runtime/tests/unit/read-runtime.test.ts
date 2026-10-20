@@ -189,6 +189,7 @@ const makeHarness = Effect.fn(function* makeHarness(
         ? [
             {
               legal_entity_id: options.resolvedScope?.legalEntityId ?? '',
+              role: 'ontos_runtime',
               tenant_id: scope.tenantId,
             },
           ]
@@ -2425,7 +2426,7 @@ for (const mode of ['local', 'governed'] as const) {
       expect(harness.authorityCounts()).toEqual({
         authorityLocks: mode === 'governed' ? 1 : 0,
         authorityReads: mode === 'governed' ? 1 : 0,
-        scopeInstalls: 1,
+        scopeInstalls: 2,
       });
     }),
   );

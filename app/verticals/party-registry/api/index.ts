@@ -1,5 +1,5 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { DatabaseConfigLive } from '@app/core-runtime';
+import { makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
@@ -73,9 +73,11 @@ const readShellOrigin = () => {
 };
 const shellOrigin = readShellOrigin();
 
+const partyRegistryDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY);
+
 const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(partyRegistryDatabaseConfigLive),
 );
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -84,13 +86,13 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 
 const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, NodeCrypto.layer)),
 );
 const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(partyRegistryDatabaseConfigLive),
 );
 const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, NodeCrypto.layer)),
 );
 
 type PartyRegistryApiRuntimeArguments = readonly [

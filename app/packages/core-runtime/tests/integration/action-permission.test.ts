@@ -12,6 +12,7 @@ import { makeActionRepository } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions } from '../../src/actions/runtime.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import {
   AuthenticationNamespaceIdSchema,
   AuthenticationNamespaceRegistrationSchema,
@@ -119,7 +120,7 @@ const withDatabase = <Value, Error, Requirements>(
   Effect.scoped(
     Effect.gen(function* databaseScope() {
       const suite = yield* PermissionSuite;
-      const configuration = yield* loadDatabaseConfig();
+      const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
       const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database, suite);
     }),

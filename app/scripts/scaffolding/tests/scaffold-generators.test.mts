@@ -30,6 +30,7 @@ import {
   issueGatewayContextAssertion,
   makeGatewayIssuerLayer,
 } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
+import { scopeGrantRegistrarLayer } from '../../../apps/shell-super-app/tests/support/gateway-issuer-layer.ts';
 import { defineAction } from '../../../packages/core-runtime/src/actions/definition.ts';
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
@@ -2895,7 +2896,7 @@ it.live(
                   revision: approvedSnapshot.composition.revision,
                 }),
                 loadConfig: Effect.succeed(configuration),
-              }),
+              }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
             ),
           );
         });

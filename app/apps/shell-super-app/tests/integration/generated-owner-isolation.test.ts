@@ -110,6 +110,7 @@ import {
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
 
@@ -691,7 +692,7 @@ it.live(
               revision: catalog.composition.revision,
             }),
             loadConfig: Effect.succeed(issuerConfiguration),
-          }),
+          }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
         ),
         Effect.map(({ token }) => `Bearer ${token}`),
         Effect.provide(clockLayer),

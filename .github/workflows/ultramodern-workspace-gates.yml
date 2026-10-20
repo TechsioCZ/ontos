@@ -321,7 +321,6 @@ jobs:
             working-directory: app
             run: mise exec -- pnpm action:test:unit
 
-
       # Module contract generation creates and deletes bundles inside verticals.
       # Wait for it before the i18n scanner walks those source directories.
       - name: I18n Boundaries
@@ -348,7 +347,9 @@ jobs:
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: 00000000000000000000000000000000
           ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 00000000000000000000000000000000
           ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
         run: |
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
@@ -428,10 +429,14 @@ jobs:
       ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
       ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
       ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      # One login per runtime database identity, each with its own development-only password.
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
       POSTGRES_DB: ontos_ci
       POSTGRES_PASSWORD: ontos_ci_admin
       POSTGRES_PORT: '5433'
       POSTGRES_USER: ontos_ci_admin
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
       SPICEDB_ENDPOINT: localhost:50051
       SPICEDB_GRPC_PORT: '50051'
       SPICEDB_HTTP_PORT: '8443'
@@ -554,6 +559,12 @@ jobs:
         run: |
           mise exec -- pnpm db:migrate
           mise exec -- pnpm db:verify
+
+      # Every runtime login role must hold exactly the grants the checked-in manifest assigns it.
+      - name: Audit runtime database identities against the checked-in grant manifest
+        if: matrix.suite == 'integration'
+        working-directory: app
+        run: mise exec -- pnpm database-trust:audit
 
       # Stage-shaped on the Cloudflare target: the host is materialized by its zerops.yaml build command,
       # ships only its deployFiles, polls every hosted owner's outbox against the freshly migrated
@@ -718,6 +729,9 @@ jobs:
         working-directory: app
         env:
           DATABASE_URL: postgresql://ontos_proof:ontos_proof@localhost:5432/ontos_proof
+          PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5432/ontos_proof
+          PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5432/ontos_proof
+          SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5432/ontos_proof
         run: mise exec -- pnpm node:proof
 
       # The deployed publisher derives the snapshot from exactly these artifact kinds; this proves its output
@@ -760,7 +774,9 @@ jobs:
       # PostgreSQL, its SPICEDB binding is served by a local gateway Worker and its composition KV
       # binding is a local namespace.
       ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
+      ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: 00000000000000000000000000000000
       ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
+      ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 00000000000000000000000000000000
       ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
     steps:
       - name: Harden Runner
@@ -836,6 +852,9 @@ jobs:
           DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
           DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
           ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+          PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+          PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
+          SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
           POSTGRES_DB: ontos_ci
           POSTGRES_PASSWORD: ontos_ci_admin
           POSTGRES_PORT: '5433'
@@ -850,7 +869,7 @@ jobs:
           ONTOS_GATEWAY_ISSUER: http://localhost:3020
           ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
           ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
-        run: printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_)' >> "$GITHUB_ENV"
+        run: printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_|PARTY_REGISTRY_DATABASE_URL=|PARTY_REGISTRY_WORKER_DATABASE_URL=|SHELL_GATEWAY_ISSUER_DATABASE_URL=)' >> "$GITHUB_ENV"
 
       # The topology proof's services start and migrate from source while the other shards still build.
       - name: Create the local SpiceDB TLS certificate
@@ -879,7 +898,7 @@ jobs:
         # development-only service values so every tool sees the same database and SpiceDB.
         run: |
           # SPICEDB_CA_CERT spans lines, so it goes in as one double-quoted dotenv value.
-          printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_)' | grep -v '^SPICEDB_CA_CERT=' > .env
+          printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_|PARTY_REGISTRY_DATABASE_URL=|PARTY_REGISTRY_WORKER_DATABASE_URL=|SHELL_GATEWAY_ISSUER_DATABASE_URL=)' | grep -v '^SPICEDB_CA_CERT=' > .env
           awk 'BEGIN { printf "SPICEDB_CA_CERT=\"" } NF { printf "%s\\n", $0 } END { print "\"" }' .spicedb-tls/cert.pem >> .env
           mise exec -- pnpm db:migrate
           mise exec -- pnpm local:initialize
@@ -1624,7 +1643,7 @@ jobs:
           # plane: PostgreSQL through its Hyperdrive config, SpiceDB through its Workers VPC service.
           while IFS= read -r key; do
             missing+=("buildEnvironment.$key")
-          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID", "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
+          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID", "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
           if [[ ${#missing[@]} -eq 0 ]]; then
             echo 'configured=true' >>"$GITHUB_OUTPUT"
             printf 'workers_dev_subdomain=%s\n' "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" >>"$GITHUB_OUTPUT"

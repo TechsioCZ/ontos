@@ -5,6 +5,7 @@ import { Reactivity } from 'effect/reactivity';
 import type { Connection } from 'effect/sql/SqlConnection';
 import type { SqlError } from 'effect/sql/SqlError';
 
+import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identities.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
@@ -41,7 +42,8 @@ const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
 
 /**
  * Scripted SQL transport for the real Core Read lifecycle and the registration's original owner
- * factory/handler. No service substitution. Drizzle mapping, scope installation, composition
+ * factory/handler. No service substitution. Drizzle mapping, scope installation (session settings or a
+ * gateway grant registered for `options.scope`), composition
  * admission and evidence writes execute normally; this does not prove native PostgreSQL or RLS.
  * The caller owns its Effect scope. Permissions and owner authorization default to denied.
  */
@@ -60,6 +62,8 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     yield* previous;
     yield* Effect.addFinalizer(() => Deferred.succeed(released, null));
     const scope = { legalEntityId: '', tenantId: '' };
+    // The connected role: the shared runtime until a gateway scope is established.
+    const connection = { role: SHARED_RUNTIME_IDENTITY.role };
     const execute = Effect.fn('ReadTestHarness.executeQuery')(function* executeReadTestQuery(
       sql: string,
       params: readonly unknown[],
@@ -91,9 +95,25 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       }
       if (
         text ===
-        "select current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
+        "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
       ) {
+        return [{ legal_entity_id: scope.legalEntityId, role: connection.role, tenant_id: scope.tenantId }];
+      }
+      if (
+        text ===
+        "select established_tenant_id::text as tenant_id, coalesce(established_legal_entity_id::text, '') as legal_entity_id from trust.establish_gateway_scope($1)"
+      ) {
+        // Models a gateway grant that Shell registered for the harness scope.
+        scope.tenantId = options.scope.tenantId;
+        scope.legalEntityId = options.scope.legalEntityId ?? '';
+        connection.role = PARTY_REGISTRY_REQUEST_IDENTITY.role;
         return [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }];
+      }
+      if (
+        text ===
+        "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id"
+      ) {
+        return [{ legal_entity_id: scope.legalEntityId, role: connection.role, tenant_id: scope.tenantId }];
       }
       if (text === 'select transaction_timestamp() as operation_at') {
         return [{ operation_at: options.operationTime }];

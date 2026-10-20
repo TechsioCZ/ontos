@@ -18,7 +18,13 @@ import {
 } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
 
+import {
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identities.ts';
 import { serviceIdVariable } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import {
@@ -30,14 +36,22 @@ import {
 import type { CloudflareHyperdrive, CloudflareVpcService, VpcServiceSpec } from './cloudflare-api.mts';
 import { costGuardChecks, ensureCostGuards, setKillSwitch } from './cloudflare-stage-cost-guard.mts';
 import type { CostGuardPlan } from './cloudflare-stage-cost-guard.mts';
+import {
+  DatabaseLoginRolesLive,
+  databaseIdentitySecretsState,
+  ensureDatabaseIdentities,
+} from './database-identities.mts';
+import { MIGRATOR_SERVICE_HOSTNAME, migratorSecretReference } from './database-identity-secrets.mts';
 import { OpsShellLive, runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
 import { ensureSpicedbTls, spicedbTlsState } from './spicedb-tls.mts';
 import {
   BuildEnvironmentSchema,
   COMPOSITION_KV_ID_VARIABLE,
+  GATEWAY_ISSUER_HYPERDRIVE_ID_VARIABLE,
   HYPERDRIVE_ID_VARIABLE,
   MF_DEV_ORIGIN_VARIABLE,
+  PARTY_REGISTRY_HYPERDRIVE_ID_VARIABLE,
   PLACEMENT_LABEL,
   PLACEMENT_PATH,
   PlacementSchema,
@@ -83,18 +97,67 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  * STAGE_SHELL_HOSTNAME, STAGE_ACCESS_EMAILS (comma-separated usage notification emails; Access
  * admits anyone who signs in) and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
  * without it CI receives CLOUDFLARE_API_TOKEN) and STAGE_ACCESS_ENFORCE (default false),
- * plus ZEROPS_TOKEN for the SpiceDB TLS secrets and the Shell's secrets shellsuperapp_BETTER_AUTH_SECRET
+ * plus ZEROPS_TOKEN for the SpiceDB TLS and database identity secrets, DATABASE_ADMIN_URL for the
+ * `database-identities` login roles (from a host on the Zerops VPN), and the Shell's secrets shellsuperapp_BETTER_AUTH_SECRET
  * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK, plus the caller credentials
  * ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY, ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY,
  * and ONTOS_PRICING_GATEWAY_API_KEY. Other secret values are read from Zerops with the
  * locally authenticated `zcli`. No secret value is ever printed.
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
-export const STAGE_HYPERDRIVE_NAME = 'ontos-stage-runtime';
 /** The KV namespace every placed Worker reads the active Application Composition from. */
 export const STAGE_COMPOSITION_KV_NAME = 'ontos-stage-active-application-composition';
+
+/** One stage Hyperdrive config: a database identity's login reaching db18 through the VPC service. */
+export interface StageHyperdriveSpec {
+  /** The placement build variable the config's ID is written to. */
+  readonly idVariable: string;
+  readonly name: string;
+  readonly originConnectionLimit: number;
+  readonly role: string;
+  /** The `<hostname>_<KEY>` Zerops value holding the login's password. */
+  readonly secretReference: string;
+}
+
+export const STAGE_HYPERDRIVE_NAME = 'ontos-stage-runtime';
+export const PARTY_REGISTRY_STAGE_HYPERDRIVE_NAME = 'ontos-stage-party-registry';
+export const GATEWAY_ISSUER_STAGE_HYPERDRIVE_NAME = 'ontos-stage-gateway-issuer';
+/**
+ * The three configs split one db18 connection budget: 40 for the shared runtime pool, 10 for Party
+ * Registry requests and 5 for the Shell's gateway-grant registrations, 55 origin connections in total.
+ * Raise one only when db18 `max_connections` leaves room for the sum.
+ */
 export const HYPERDRIVE_ORIGIN_CONNECTION_LIMIT = 40;
-export const HYPERDRIVE_RUNTIME_ROLE = 'ontos_runtime';
+export const PARTY_REGISTRY_HYPERDRIVE_ORIGIN_CONNECTION_LIMIT = 10;
+export const GATEWAY_ISSUER_HYPERDRIVE_ORIGIN_CONNECTION_LIMIT = 5;
+export const HYPERDRIVE_RUNTIME_ROLE = SHARED_RUNTIME_IDENTITY.role;
+
+/** Every stage Hyperdrive config. Caching is disabled on each: reads are tenant-scoped. */
+export const STAGE_HYPERDRIVES = {
+  gatewayIssuer: {
+    idVariable: GATEWAY_ISSUER_HYPERDRIVE_ID_VARIABLE,
+    name: GATEWAY_ISSUER_STAGE_HYPERDRIVE_NAME,
+    originConnectionLimit: GATEWAY_ISSUER_HYPERDRIVE_ORIGIN_CONNECTION_LIMIT,
+    role: SHELL_GATEWAY_ISSUER_IDENTITY.role,
+    secretReference: migratorSecretReference('SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
+  },
+  partyRegistry: {
+    idVariable: PARTY_REGISTRY_HYPERDRIVE_ID_VARIABLE,
+    name: PARTY_REGISTRY_STAGE_HYPERDRIVE_NAME,
+    originConnectionLimit: PARTY_REGISTRY_HYPERDRIVE_ORIGIN_CONNECTION_LIMIT,
+    role: PARTY_REGISTRY_REQUEST_IDENTITY.role,
+    secretReference: migratorSecretReference('PARTY_REGISTRY_DB_PASSWORD'),
+  },
+  runtime: {
+    idVariable: HYPERDRIVE_ID_VARIABLE,
+    name: STAGE_HYPERDRIVE_NAME,
+    originConnectionLimit: HYPERDRIVE_ORIGIN_CONNECTION_LIMIT,
+    role: HYPERDRIVE_RUNTIME_ROLE,
+    secretReference: 'db18_password',
+  },
+} as const satisfies Readonly<Record<string, StageHyperdriveSpec>>;
+export type StageHyperdriveKey = keyof typeof STAGE_HYPERDRIVES;
+const STAGE_HYPERDRIVE_KEYS: readonly StageHyperdriveKey[] = ['runtime', 'partyRegistry', 'gatewayIssuer'];
 const TUNNEL_HEALTH_POLL = Duration.seconds(10);
 const TUNNEL_HEALTH_TIMEOUT = Duration.minutes(10);
 const TUNNEL_HEALTHY = 'healthy';
@@ -180,7 +243,8 @@ export const publicOrigin = (unit: EdgeUnit, origins: StageOrigins) =>
 
 export interface DataPlaneIds {
   readonly compositionKvNamespaceId: string;
-  readonly hyperdriveId: string;
+  /** Each stage Hyperdrive config's ID. */
+  readonly hyperdriveIds: Readonly<Record<StageHyperdriveKey, string>>;
   readonly spicedbVpcServiceId: string;
 }
 
@@ -194,7 +258,10 @@ export const stageBuildEnvironment = (
   const merged = new Map([
     ...Object.entries(current),
     [COMPOSITION_KV_ID_VARIABLE, ids.compositionKvNamespaceId],
-    [HYPERDRIVE_ID_VARIABLE, ids.hyperdriveId],
+    ...STAGE_HYPERDRIVE_KEYS.map((key): [string, string] => [
+      STAGE_HYPERDRIVES[key].idVariable,
+      ids.hyperdriveIds[key],
+    ]),
     [MF_DEV_ORIGIN_VARIABLE, shellOrigin(origins)],
     [SPICEDB_VPC_SERVICE_ID_VARIABLE, ids.spicedbVpcServiceId],
     ...units.map((unit): [string, string] => [unit.publicUrlEnv, publicOrigin(unit, origins)]),
@@ -252,7 +319,7 @@ export const spicedbGatewayHostname = ({ stageZone }: StageOrigins) =>
 
 /**
  * The runtime secrets of every placed Worker (runbook A7). Workers read PostgreSQL through their
- * `HYPERDRIVE` binding, so no Worker receives a DATABASE_URL.
+ * identities' Hyperdrive bindings, so no Worker receives a database URL.
  */
 export const workerSecretPlan = (
   units: readonly EdgeUnit[],
@@ -513,7 +580,11 @@ export interface HyperdriveOrigin {
   readonly serviceId: string;
 }
 
-export const hyperdriveDrift = (hyperdrive: CloudflareHyperdrive, origin: HyperdriveOrigin): Option.Option<string> => {
+export const hyperdriveDrift = (
+  hyperdrive: CloudflareHyperdrive,
+  origin: HyperdriveOrigin,
+  spec: StageHyperdriveSpec,
+): Option.Option<string> => {
   const cachingDisabled = hyperdrive.caching.pipe(
     Option.flatMap((caching) => caching.disabled),
     Option.getOrUndefined,
@@ -524,46 +595,58 @@ export const hyperdriveDrift = (hyperdrive: CloudflareHyperdrive, origin: Hyperd
   const database = Option.getOrUndefined(hyperdrive.origin.database);
   return differences([
     cachingDisabled !== true && 'caching is enabled',
-    limit !== HYPERDRIVE_ORIGIN_CONNECTION_LIMIT && `origin connection limit ${String(limit)}`,
+    limit !== spec.originConnectionLimit && `origin connection limit ${String(limit)}`,
     Option.getOrUndefined(hyperdrive.origin.service_id) !== origin.serviceId && 'another origin service',
     scheme !== 'postgresql' && `scheme ${String(scheme)}`,
     database !== origin.database && `database ${String(database)}`,
-    user !== HYPERDRIVE_RUNTIME_ROLE && `user ${String(user)}`,
+    user !== spec.role && `user ${String(user)}`,
   ]);
 };
 
-export const ensureHyperdrive = (db18ServiceId: string) =>
+export const ensureHyperdrive = (spec: StageHyperdriveSpec, db18ServiceId: string) =>
   Effect.gen(function* ensureHyperdriveEffect() {
     const api = yield* CloudflareApi;
     const { projectId } = yield* CutoverConfiguration;
-    const current = (yield* api.hyperdrives).find((hyperdrive) => hyperdrive.name === STAGE_HYPERDRIVE_NAME);
+    const current = (yield* api.hyperdrives).find((hyperdrive) => hyperdrive.name === spec.name);
     const database = yield* readZeropsValue(projectId, DB18_DATABASE_NAME);
     if (current !== undefined) {
-      const drift = hyperdriveDrift(current, { database: Redacted.value(database), serviceId: db18ServiceId });
+      const drift = hyperdriveDrift(current, { database: Redacted.value(database), serviceId: db18ServiceId }, spec);
       if (Option.isSome(drift)) {
         return yield* new StageOperationError({
-          message: `Hyperdrive ${STAGE_HYPERDRIVE_NAME} (${current.id}) differs from the runbook: ${drift.value}; fix or delete it, then re-run`,
+          message: `Hyperdrive ${spec.name} (${current.id}) differs from the runbook: ${drift.value}; fix or delete it, then re-run`,
         });
       }
-      yield* Console.log(`Hyperdrive ${STAGE_HYPERDRIVE_NAME} exists: ${current.id}`);
+      yield* Console.log(`Hyperdrive ${spec.name} exists: ${current.id}`);
       return current.id;
     }
-    // Hyperdrive connects to the origin on creation, so the tunnel must already be healthy.
+    // Hyperdrive connects to the origin on creation, so the tunnel and the login role must already exist.
     return yield* mutate(
-      `create Hyperdrive ${STAGE_HYPERDRIVE_NAME} (role ${HYPERDRIVE_RUNTIME_ROLE}, caching disabled, origin connection limit ${String(HYPERDRIVE_ORIGIN_CONNECTION_LIMIT)})`,
+      `create Hyperdrive ${spec.name} (role ${spec.role}, caching disabled, origin connection limit ${String(spec.originConnectionLimit)})`,
       Effect.gen(function* createHyperdrive() {
         const created = yield* api.createHyperdrive({
           database,
-          name: STAGE_HYPERDRIVE_NAME,
-          originConnectionLimit: HYPERDRIVE_ORIGIN_CONNECTION_LIMIT,
-          password: yield* readZeropsValue(projectId, 'db18_password'),
+          name: spec.name,
+          originConnectionLimit: spec.originConnectionLimit,
+          password: yield* readZeropsValue(projectId, spec.secretReference),
           serviceId: db18ServiceId,
-          user: HYPERDRIVE_RUNTIME_ROLE,
+          user: spec.role,
         });
         return created.id;
       }),
-      `<${STAGE_HYPERDRIVE_NAME} id>`,
+      `<${spec.name} id>`,
     );
+  });
+
+/**
+ * Creates or reuses every stage Hyperdrive config, one after another, and returns their IDs. The shared
+ * runtime config goes first, so a drifted one stops the run before any identity config is created.
+ */
+export const ensureHyperdrives = (db18ServiceId: string) =>
+  Effect.gen(function* ensureHyperdrivesEffect() {
+    const runtime = yield* ensureHyperdrive(STAGE_HYPERDRIVES.runtime, db18ServiceId);
+    const partyRegistry = yield* ensureHyperdrive(STAGE_HYPERDRIVES.partyRegistry, db18ServiceId);
+    const gatewayIssuer = yield* ensureHyperdrive(STAGE_HYPERDRIVES.gatewayIssuer, db18ServiceId);
+    return { gatewayIssuer, partyRegistry, runtime } satisfies Readonly<Record<StageHyperdriveKey, string>>;
   });
 
 /** The composition KV namespace; CI writes the published snapshot to it, so it starts empty. */
@@ -743,6 +826,14 @@ const spicedbTlsTarget = Effect.gen(function* spicedbTlsTargetEffect() {
 /** Creates the SpiceDB gRPC and HTTP gateway TLS secrets on the Zerops `spicedb` service when they are missing. */
 export const ensureStageSpicedbTls = spicedbTlsTarget.pipe(Effect.flatMap(ensureSpicedbTls));
 
+// Database identities
+
+/** Creates the missing identity passwords on `migrator`, then the login roles Hyperdrive connects as. */
+export const ensureStageDatabaseIdentities = Effect.gen(function* ensureStageDatabaseIdentitiesEffect() {
+  const { projectId } = yield* CutoverConfiguration;
+  yield* ensureDatabaseIdentities(projectId);
+});
+
 // Cost guards
 
 /** The cost guards cover the Shell and every placed vertical's public hostname. */
@@ -785,9 +876,10 @@ export const provision = Effect.gen(function* provisionEffect() {
   yield* ensureZeropsDataLayer(tunnel);
   yield* awaitTunnelHealthy(tunnel.id);
   const vpc = yield* ensureVpcServices(tunnel.id);
-  const hyperdriveId = yield* ensureHyperdrive(vpc.db18);
+  yield* ensureStageDatabaseIdentities;
+  const hyperdriveIds = yield* ensureHyperdrives(vpc.db18);
   const compositionKvNamespaceId = yield* ensureCompositionKvNamespace;
-  yield* writeBuildEnvironment({ compositionKvNamespaceId, hyperdriveId, spicedbVpcServiceId: vpc.spicedb });
+  yield* writeBuildEnvironment({ compositionKvNamespaceId, hyperdriveIds, spicedbVpcServiceId: vpc.spicedb });
   yield* configureStageEdge;
   yield* provisionCostGuards;
   yield* setWorkerSecrets;
@@ -917,16 +1009,24 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
     );
     vpcIds.set(spec.name, current?.service_id ?? '');
   }
-  const hyperdrive = (yield* api.hyperdrives).find(({ name }) => name === STAGE_HYPERDRIVE_NAME);
   yield* check(
-    `Hyperdrive ${STAGE_HYPERDRIVE_NAME} uses ${HYPERDRIVE_RUNTIME_ROLE} through the db18 service, caching off, limit ${String(HYPERDRIVE_ORIGIN_CONNECTION_LIMIT)}`,
-    hyperdrive === undefined
-      ? Option.some(NOT_FOUND)
-      : hyperdriveDrift(hyperdrive, {
-          database: Redacted.value(yield* readZeropsValue(projectId, DB18_DATABASE_NAME)),
-          serviceId: vpcIds.get(STAGE_VPC_SERVICES.db18.name) ?? '',
-        }),
+    `the Zerops ${MIGRATOR_SERVICE_HOSTNAME} service holds every database identity password`,
+    yield* databaseIdentitySecretsState(projectId),
   );
+  const hyperdrives = yield* api.hyperdrives;
+  const database = Redacted.value(yield* readZeropsValue(projectId, DB18_DATABASE_NAME));
+  const hyperdriveIds = new Map<string, string | undefined>();
+  for (const key of STAGE_HYPERDRIVE_KEYS) {
+    const spec = STAGE_HYPERDRIVES[key];
+    const hyperdrive = hyperdrives.find(({ name }) => name === spec.name);
+    yield* check(
+      `Hyperdrive ${spec.name} uses ${spec.role} through the db18 service, caching off, limit ${String(spec.originConnectionLimit)}`,
+      hyperdrive === undefined
+        ? Option.some(NOT_FOUND)
+        : hyperdriveDrift(hyperdrive, { database, serviceId: vpcIds.get(STAGE_VPC_SERVICES.db18.name) ?? '' }, spec),
+    );
+    hyperdriveIds.set(spec.idVariable, hyperdrive?.id);
+  }
   const compositionKv = (yield* api.kvNamespaces).find(({ title }) => title === STAGE_COMPOSITION_KV_NAME);
   yield* check(
     `KV namespace ${STAGE_COMPOSITION_KV_NAME} exists`,
@@ -935,7 +1035,7 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
   const placement = yield* decodeInput(PlacementSchema, PLACEMENT_LABEL)(yield* readAppText(...PLACEMENT_PATH));
   yield* check(
     `the ${PLACEMENT_LABEL} buildEnvironment names these data-plane IDs`,
-    placement.buildEnvironment[HYPERDRIVE_ID_VARIABLE] === hyperdrive?.id &&
+    [...hyperdriveIds].every(([variable, id]) => placement.buildEnvironment[variable] === id) &&
       placement.buildEnvironment[COMPOSITION_KV_ID_VARIABLE] === compositionKv?.id &&
       placement.buildEnvironment[SPICEDB_VPC_SERVICE_ID_VARIABLE] === vpcIds.get(STAGE_VPC_SERVICES.spicedb.name)
       ? Option.none()
@@ -1055,6 +1155,8 @@ const cutoverLayer = ({ dryRun, envFile }: { readonly dryRun: boolean; readonly 
   return Layer.mergeAll(
     CloudflareApiLive.pipe(Layer.provide(credentials)),
     ZeropsPublicApiLive,
+    DatabaseLoginRolesLive,
+    Reactivity.layer,
     Layer.succeed(OpsMode, { dryRun }),
   ).pipe(Layer.provideMerge(configuration), Layer.provideMerge(ConfigProvider.layerAdd(settingsFileProvider(envFile))));
 };
@@ -1073,8 +1175,13 @@ const cli = Command.make('cloudflare-stage-cutover').pipe(
   Command.withSubcommands([
     stepCommand(
       'provision',
-      'Create or reuse the SpiceDB TLS secrets, the Tunnel, cloudflared and outbox-worker-host, VPC services, Hyperdrive, the composition KV namespace, build environment, stage-edge, cost guards and Worker secrets',
+      'Create or reuse the SpiceDB TLS secrets, the Tunnel, cloudflared and outbox-worker-host, VPC services, database identities, the Hyperdrive configs, the composition KV namespace, build environment, stage-edge, cost guards and Worker secrets',
       provision,
+    ),
+    stepCommand(
+      'database-identities',
+      'Create the missing database identity passwords as migrator service secrets, then the login roles with LOGIN and CONNECT only (needs DATABASE_ADMIN_URL)',
+      ensureStageDatabaseIdentities,
     ),
     stepCommand(
       'spicedb-tls',

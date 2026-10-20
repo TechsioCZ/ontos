@@ -3,9 +3,16 @@ import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getOrElse as getOptionOrElse, getOrUndefined as getOptionOrUndefined } from 'effect/Option';
+import {
+  getOrElse as getOptionOrElse,
+  getOrUndefined as getOptionOrUndefined,
+  isNone as isOptionNone,
+  toArray as optionToArray,
+} from 'effect/Option';
+import type { Option } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
+  Array as ArraySchema,
   Boolean as BooleanSchema,
   Literal,
   Literals,
@@ -18,8 +25,14 @@ import {
   isBetween,
   isInt,
   isMinLength,
+  makeFilter,
+  OptionFromNullOr,
+  String as StringSchema,
+  Struct,
 } from 'effect/Schema';
 import { transform } from 'effect/SchemaTransformation';
+
+import type { CloudflareHyperdriveBinding, DatabaseIdentity } from '../../core-runtime/src/db/database-identities.ts';
 
 const nodeBuiltinRequests = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));
 
@@ -64,6 +77,12 @@ const buildBooleanSchema = Literals(['true', 'yes', 'on', '1', 'y', 'false', 'no
   ),
 );
 
+/**
+ * The Hyperdrive bindings a Worker build declares: the `cloudflareHyperdrive` of each database
+ * identity the Worker serves. `null` marks an identity without a Worker binding and fails the build.
+ */
+type CloudflareHyperdriveBuildBindings = readonly DatabaseIdentity['cloudflareHyperdrive'][];
+
 interface ModernBuildContext {
   assetPrefix: string;
   buildCacheDirectory: string;
@@ -71,6 +90,7 @@ interface ModernBuildContext {
   buildTarget: 'cloudflare' | 'web';
   buildTempDirectory: string;
   cloudflareDeployEnabled: boolean;
+  cloudflareHyperdrives: CloudflareHyperdriveBuildBindings;
   cloudflarePublicUrlEnvironmentVariable: string;
   envValue: (name: string) => string | undefined;
   getBuildBoolean: (name: string) => boolean;
@@ -133,6 +153,7 @@ const getDefaultRemoteAssetPrefix = (
 
 export const createModernBuildContext = ({
   appId,
+  cloudflareHyperdrives,
   cloudflarePublicUrlEnvironmentVariable,
   cloudflareWorkerName,
   defaultPort,
@@ -141,6 +162,8 @@ export const createModernBuildContext = ({
   portEnvironmentVariable,
 }: {
   appId: string;
+  /** The Hyperdrive bindings of the database identities this unit's Worker serves. */
+  cloudflareHyperdrives: CloudflareHyperdriveBuildBindings;
   cloudflarePublicUrlEnvironmentVariable: string;
   cloudflareWorkerName: string;
   defaultPort: number;
@@ -191,6 +214,7 @@ export const createModernBuildContext = ({
     buildTarget,
     buildTempDirectory,
     cloudflareDeployEnabled,
+    cloudflareHyperdrives,
     cloudflarePublicUrlEnvironmentVariable,
     envValue,
     getBuildBoolean,
@@ -272,14 +296,50 @@ const requiredCloudflareBuildValue = (envValue: ModernBuildContext['envValue'], 
     )(envValue(name) ?? ''),
   );
 
+const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
+  OptionFromNullOr(Struct({ binding: StringSchema, idVariable: StringSchema })),
+).pipe(
+  check(
+    isMinLength(1, { message: 'A Cloudflare Worker build needs at least one Hyperdrive binding' }),
+    makeFilter((hyperdrives: readonly Option<CloudflareHyperdriveBinding>[]) =>
+      hyperdrives.some(isOptionNone)
+        ? 'A Cloudflare Worker build names a database identity that has no Worker Hyperdrive binding'
+        : undefined,
+    ),
+    makeFilter((hyperdrives: readonly Option<CloudflareHyperdriveBinding>[]) => {
+      const bindings = hyperdrives.flatMap(optionToArray).map(({ binding }) => binding);
+      const duplicate = bindings.find((binding, index) => bindings.indexOf(binding) !== index);
+      return duplicate === undefined ? undefined : `Hyperdrive binding ${duplicate} is declared more than once`;
+    }),
+  ),
+);
+
+const declaredCloudflareHyperdrives = (declared: CloudflareHyperdriveBuildBindings) =>
+  getResultOrThrow(decodeUnknownResult(DeclaredCloudflareHyperdrivesSchema)(declared)).flatMap(optionToArray);
+
+const cloudflareHyperdriveBindings = (
+  envValue: ModernBuildContext['envValue'],
+  declared: CloudflareHyperdriveBuildBindings,
+) => {
+  const hyperdrives = declaredCloudflareHyperdrives(declared);
+  return hyperdrives.map(({ binding, idVariable }) => ({
+    binding,
+    id: requiredCloudflareBuildValue(envValue, idVariable),
+  }));
+};
+
 /**
- * Every OntOS Worker reaches the private data plane through two account objects: PostgreSQL through
- * the `HYPERDRIVE` binding (Core's `#database-runtime`) and SpiceDB's HTTP gateway through the
- * `SPICEDB` Workers VPC binding (Core's `#spicedb-transport`). It reads the published active
- * Application Composition from the `ONTOS_ACTIVE_APPLICATION_COMPOSITION` Workers KV binding through
- * Core's conditional public source module. Their IDs are reviewed build inputs.
+ * Every OntOS Worker reaches the private data plane through account objects: PostgreSQL through one
+ * Hyperdrive binding per database identity it serves (`HYPERDRIVE` for the shared runtime role, read
+ * by Core's `#database-runtime`), and SpiceDB's HTTP gateway through the `SPICEDB` Workers VPC binding
+ * (Core's `#spicedb-transport`). It reads the published active Application Composition from the
+ * `ONTOS_ACTIVE_APPLICATION_COMPOSITION` Workers KV binding through Core's conditional public source
+ * module. Their IDs are reviewed build inputs.
  */
-export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['envValue']) => ({
+export const createCloudflareDataPlaneBindings = (
+  envValue: ModernBuildContext['envValue'],
+  hyperdrives: CloudflareHyperdriveBuildBindings,
+) => ({
   vpcServices: [
     {
       binding: 'SPICEDB',
@@ -287,9 +347,7 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
     },
   ],
   wrangler: {
-    hyperdrive: [
-      { binding: 'HYPERDRIVE', id: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID') },
-    ],
+    hyperdrive: cloudflareHyperdriveBindings(envValue, hyperdrives),
     kv_namespaces: [
       {
         binding: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION',
@@ -353,9 +411,17 @@ const resolveCloudflareWorkerObservability = (envValue: ModernBuildContext['envV
  */
 export const createCloudflareWorkerConfig = (
   envValue: ModernBuildContext['envValue'],
-  { cpuMs, publicUrlVariable }: { readonly cpuMs: number; readonly publicUrlVariable: string },
+  {
+    cpuMs,
+    hyperdrives,
+    publicUrlVariable,
+  }: {
+    readonly cpuMs: number;
+    readonly hyperdrives: CloudflareHyperdriveBuildBindings;
+    readonly publicUrlVariable: string;
+  },
 ) => {
-  const dataPlane = createCloudflareDataPlaneBindings(envValue);
+  const dataPlane = createCloudflareDataPlaneBindings(envValue, hyperdrives);
   const customDomain = new URL(requiredCloudflareBuildValue(envValue, publicUrlVariable)).hostname;
   return {
     ...dataPlane,
@@ -384,6 +450,7 @@ const createCloudflareDeployment = (
           worker: {
             ...createCloudflareWorkerConfig(build.envValue, {
               cpuMs: worker.cpuMs,
+              hyperdrives: build.cloudflareHyperdrives,
               publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
             }),
             compatibilityDate: '2026-06-02',
@@ -588,6 +655,7 @@ export const createWorkspaceModernConfig = <Plugin>({
         deploy: {
           worker: createCloudflareWorkerConfig(build.envValue, {
             cpuMs: cloudflareCpuMs,
+            hyperdrives: build.cloudflareHyperdrives,
             publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
           }),
         },

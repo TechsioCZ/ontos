@@ -197,24 +197,34 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   const service = Context.getOrUndefined(context, PartySearchProjectionGateway);
                   assert.isOk(service !== undefined);
                   return service
-                    .searchParties({
-                      includeArchived: false,
-                      query: 'runtime assembly proof',
-                      tenantId: principal.tenantId,
-                    })
+                    .searchParties(
+                      {
+                        includeArchived: false,
+                        query: 'runtime assembly proof',
+                        tenantId: principal.tenantId,
+                      },
+                      { ...principal, correlationId: 'runtime-assembly-proof' },
+                    )
                     .pipe(Effect.orDie, Effect.andThen(Effect.die('Party search substitute completed unexpectedly')));
                 }
                 if (registration.descriptor.readKey === 'party.registry.search.counterparties') {
                   const service = Context.getOrUndefined(context, PartySearchProjectionGateway);
                   assert.isOk(service !== undefined);
                   return service
-                    .searchCounterparties({
-                      effectiveAt: '2026-09-07T00:00:00.000Z',
-                      includeArchived: false,
-                      legalEntityId: 'a5000000-0000-4000-8000-000000000001',
-                      query: 'runtime assembly proof',
-                      tenantId: principal.tenantId,
-                    })
+                    .searchCounterparties(
+                      {
+                        effectiveAt: '2026-09-07T00:00:00.000Z',
+                        includeArchived: false,
+                        legalEntityId: 'a5000000-0000-4000-8000-000000000001',
+                        query: 'runtime assembly proof',
+                        tenantId: principal.tenantId,
+                      },
+                      {
+                        ...principal,
+                        correlationId: 'runtime-assembly-proof',
+                        legalEntityId: 'a5000000-0000-4000-8000-000000000001',
+                      },
+                    )
                     .pipe(
                       Effect.orDie,
                       Effect.andThen(Effect.die('Counterparty search substitute completed unexpectedly')),

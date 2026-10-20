@@ -27,6 +27,7 @@ const EXPECTED_APPLICATION_SCHEMAS = [
   'projects',
   'storefront_registry',
   'tax',
+  'trust',
 ] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_assortment',

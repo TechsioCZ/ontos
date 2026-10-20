@@ -14,10 +14,12 @@ import {
   isTrustedSupportRecoveryPrincipalContext,
   isTrustedSystemPrincipalContext,
   preserveSystemPrincipalContextTrust,
+  readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
-import type { CoreDatabaseExecutor } from '../db/types.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { ContextAccessService } from '../permissions/context-access.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
 import type { OperationContextError } from './errors.ts';
@@ -83,13 +85,34 @@ const operationContextUnavailable = (cause?: unknown) => {
   return failure;
 };
 
+/**
+ * A verified gateway principal resolves through a request role whose Core identity rows are
+ * tenant-bound by row-level security. Its lookup runs after the database derives the scope from the
+ * redeemed assertion, so it can read only the assertion's own tenant.
+ */
+const selectPersistedScope = <Row, E>(
+  database: { readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'> },
+  principal: TrustedPrincipalContext,
+  select: (executor: Pick<CoreTransaction, 'select'>) => Effect.Effect<readonly Row[], E>,
+) =>
+  Effect.suspend(() =>
+    readVerifiedGatewayScopeAssertion(principal) === undefined
+      ? select(database.executor)
+      : database.executor.transaction((transaction) =>
+          installOperationalScope(
+            transaction,
+            preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' }),
+          ).pipe(Effect.andThen(() => select(transaction))),
+        ),
+  );
+
 export const makeOperationalScopeRepository = (database: {
-  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+  readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'>;
 }): OperationalScopeRepository => ({
   load: (principal) =>
-    Effect.suspend(() => {
+    selectPersistedScope(database, principal, (executor) => {
       const impersonators = alias(principals, 'impersonators');
-      return database.executor
+      return executor
         .select({
           bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
           bindingPrincipalId: principalAuthBindings.principalId,

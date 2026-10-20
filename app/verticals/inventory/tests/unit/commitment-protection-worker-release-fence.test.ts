@@ -73,7 +73,7 @@ const exerciseWorkerFence = (retirePreparedRelease: boolean) =>
           return [{ phase: 'draining', revision: activeRevision, subscriptionsJson: [], unexpired: true }];
         }
         if (statement.includes('set_config')) {
-          return [{ legal_entity_id: legalEntityId, tenant_id: tenantId }];
+          return [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }];
         }
         if (statement.includes('from "core"."legal_entities"')) {
           return [{ legalEntityId, status: 'active', tenantId }];

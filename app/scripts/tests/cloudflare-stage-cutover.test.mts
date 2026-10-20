@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { Array as Arr, ConfigProvider, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
+import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
@@ -8,6 +9,7 @@ import type { CloudflareVpcService } from '../ops/cloudflare-api.mts';
 import {
   CutoverConfiguration,
   activate,
+  ensureStageDatabaseIdentities,
   provision,
   spicedbGatewayHostname,
   publicOrigin,
@@ -18,9 +20,17 @@ import {
   workerSecretPlan,
 } from '../ops/cloudflare-stage-cutover.mts';
 import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
+import { DatabaseLoginRoles } from '../ops/database-identities.mts';
+import { DATABASE_IDENTITY_SECRETS, migratorSecretReference } from '../ops/database-identity-secrets.mts';
 import { SPICEDB_GRPC_TLS, SPICEDB_HTTP_TLS, spicedbTlsState } from '../ops/spicedb-tls.mts';
 import { ciPolicy, killSwitchRule, peoplePolicy, usageAlert } from '../ops/cloudflare-stage-cost-guard.mts';
-import { edgeUnits, placementGaps } from '../ops/stage-edge-units.mts';
+import {
+  GATEWAY_ISSUER_HYPERDRIVE_ID_VARIABLE,
+  HYPERDRIVE_ID_VARIABLE,
+  PARTY_REGISTRY_HYPERDRIVE_ID_VARIABLE,
+  edgeUnits,
+  placementGaps,
+} from '../ops/stage-edge-units.mts';
 import { OpsMode, STAGE_ZEROPS_PROJECT_ID, readZeropsValue } from '../ops/stage-operations.mts';
 import {
   APP_DIRECTORY,
@@ -67,7 +77,23 @@ const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 const PLACEMENT_FILE = 'topology/cloudflare-placement.json';
 const TOPOLOGY_FILE = 'topology/reference-topology.json';
 const RUNTIME_HYPERDRIVE = 'ontos-stage-runtime';
+const PARTY_REGISTRY_HYPERDRIVE = 'ontos-stage-party-registry';
+const GATEWAY_ISSUER_HYPERDRIVE = 'ontos-stage-gateway-issuer';
 const HYPERDRIVE_ID = 'hyperdrive-1';
+const PARTY_REGISTRY_HYPERDRIVE_ID = 'hyperdrive-2';
+const GATEWAY_ISSUER_HYPERDRIVE_ID = 'hyperdrive-3';
+const HYPERDRIVE_CONFIGS_PATH = '/hyperdrive/configs';
+const OLD_HYPERDRIVE_ID = 'hyperdrive-old';
+const MIGRATOR_ID = 'migrator-id';
+/** The identity passwords a provisioned stage's migrator service holds, keyed by their `migrator_<KEY>` name. */
+const PARTY_REGISTRY_CREDENTIAL = 'party-registry-credential-secret';
+const PARTY_REGISTRY_WORKER_CREDENTIAL = 'party-registry-worker-credential-secret';
+const GATEWAY_ISSUER_CREDENTIAL = 'gateway-issuer-credential-secret';
+const IDENTITY_PASSWORDS = {
+  migrator_PARTY_REGISTRY_DB_PASSWORD: PARTY_REGISTRY_CREDENTIAL,
+  migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD: PARTY_REGISTRY_WORKER_CREDENTIAL,
+  migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD: GATEWAY_ISSUER_CREDENTIAL,
+};
 const STAGE_EDGE = 'stage-edge';
 
 const settings: CutoverSettings = {
@@ -130,6 +156,7 @@ const SECRETS = [
   PRICING_GATEWAY_API_KEY,
   'tunnel-connector-token',
   'service-token-secret',
+  ...Object.values(IDENTITY_PASSWORDS),
 ];
 
 const GATEWAY_HOSTNAME = 'ontos-stage-spicedb.stage.example.com';
@@ -151,23 +178,54 @@ const GUARDED_STAGE_EDGE = {
   variables: { [STAGE_EDGE]: { CLOUDFLARE_STAGE_ZONE_ID: 'zone-1' } },
 };
 
-/** A stage whose spicedb service already holds its TLS secrets, unless `spicedbTls` is false. */
-const newStage = (overrides: Parameters<typeof fakeStage>[0] = {}, { spicedbTls = true } = {}) => {
+/**
+ * A stage whose spicedb service already holds its TLS secrets, unless `spicedbTls` is false, and whose
+ * migrator service holds the database identity passwords, unless `databaseIdentities` is false.
+ */
+const newStage = (
+  overrides: Parameters<typeof fakeStage>[0] = {},
+  { databaseIdentities = true, spicedbTls = true } = {},
+) => {
   const tls = spicedbTls ? SPICEDB_TLS : {};
+  const identities = databaseIdentities ? IDENTITY_PASSWORDS : {};
   return fakeStage({
-    projectUserKeys: Object.keys(tls),
+    projectUserKeys: [...Object.keys(tls), ...Object.keys(identities)],
     // zcli prints these as REDACTED, so the kit must read them through the Zerops API.
-    sensitiveKeys: [...Object.keys(tls), ...SENSITIVE_KEYS],
+    sensitiveKeys: [...Object.keys(tls), ...Object.keys(identities), ...SENSITIVE_KEYS],
     services: [
       { hostname: 'db18', id: 'db18-id', status: 'ACTIVE' },
+      { hostname: 'migrator', id: MIGRATOR_ID, status: 'ACTIVE' },
       { hostname: 'spicedb', id: 'spicedb-id', status: 'ACTIVE' },
       ...VERTICAL_HOSTS.map((hostname) => ({ hostname, id: `${hostname}-id`, status: 'ACTIVE' })),
     ],
     ...overrides,
-    projectValues: { ...SECRET_VALUES, ...tls, ...overrides.projectValues },
+    projectValues: { ...SECRET_VALUES, ...tls, ...identities, ...overrides.projectValues },
     secrets: { ...GUARDED_STAGE_EDGE.secrets, ...overrides.secrets },
     variables: { ...GUARDED_STAGE_EDGE.variables, ...overrides.variables },
   });
+};
+
+interface FakeLoginRoles {
+  /** Each ensured login role with its revealed password, in call order. */
+  readonly calls: { readonly password: string; readonly role: string }[];
+  readonly layer: Layer.Layer<DatabaseLoginRoles>;
+}
+
+/** Records the login roles `database-identities` would create through DATABASE_ADMIN_URL. */
+const fakeLoginRoles = (): FakeLoginRoles => {
+  const calls: { readonly password: string; readonly role: string }[] = [];
+  return {
+    calls,
+    layer: Layer.succeed(
+      DatabaseLoginRoles,
+      DatabaseLoginRoles.of({
+        ensure: ({ password, role }) =>
+          Effect.sync(() => {
+            calls.push({ password: Redacted.value(password), role });
+          }),
+      }),
+    ),
+  };
 };
 
 const run = <A, E, R>(
@@ -176,6 +234,7 @@ const run = <A, E, R>(
     readonly account: FakeCloudflareAccount;
     readonly dryRun?: boolean;
     readonly files: FakeFiles;
+    readonly roles?: FakeLoginRoles;
     readonly settingsFile?: Readonly<Record<string, string>>;
     readonly stage: FakeStage;
     readonly zerops?: FakeZeropsApi;
@@ -195,6 +254,8 @@ const run = <A, E, R>(
         fakes.stage.layer,
         (fakes.zerops ?? fakeZeropsApi(fakes.stage)).layer,
         fakes.files.layer,
+        (fakes.roles ?? fakeLoginRoles()).layer,
+        Reactivity.layer,
         ConfigProvider.layer(ConfigProvider.fromUnknown(fakes.settingsFile ?? SHELL_SETTINGS)),
       ),
     ),
@@ -214,10 +275,29 @@ const expectNoSecretInArguments = (stage: FakeStage, account: FakeCloudflareAcco
 it.effect('provisions the whole stage data plane on an empty account, without exposing a secret', () =>
   Effect.gen(function* provisionsEmptyAccount() {
     const account = fakeCloudflareAccount({});
-    const stage = newStage();
+    const stage = newStage({}, { databaseIdentities: false });
     const files = fakeFiles();
+    const roles = fakeLoginRoles();
+    const zerops = fakeZeropsApi(stage);
 
-    yield* run(provision, { account, files, stage });
+    yield* run(provision, { account, files, roles, stage, zerops });
+
+    // database-identities generated one password per identity on migrator and created each login role with it.
+    expect(zerops.serviceSecrets.map(({ key, serviceId }) => `${serviceId} ${key}`)).toStrictEqual([
+      `${MIGRATOR_ID} PARTY_REGISTRY_DB_PASSWORD`,
+      `${MIGRATOR_ID} PARTY_REGISTRY_WORKER_DB_PASSWORD`,
+      `${MIGRATOR_ID} SHELL_GATEWAY_ISSUER_DB_PASSWORD`,
+    ]);
+    const generated = new Map(zerops.serviceSecrets.map(({ content, key }) => [key, content]));
+    for (const password of generated.values()) {
+      expect(password).toMatch(/^[\w-]{64}$/u);
+    }
+    expect(new Set(generated.values()).size).toBe(3);
+    expect(roles.calls).toStrictEqual([
+      { password: generated.get('PARTY_REGISTRY_DB_PASSWORD'), role: 'party_registry_runtime' },
+      { password: generated.get('PARTY_REGISTRY_WORKER_DB_PASSWORD'), role: 'party_registry_worker' },
+      { password: generated.get('SHELL_GATEWAY_ISSUER_DB_PASSWORD'), role: 'shell_gateway_issuer' },
+    ]);
 
     // The cost guards have their own tests; these are the data-plane objects.
     const posts = account.requests.filter(
@@ -249,7 +329,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
         },
       ],
       [
-        '/hyperdrive/configs',
+        HYPERDRIVE_CONFIGS_PATH,
         {
           caching: { disabled: true },
           name: RUNTIME_HYPERDRIVE,
@@ -261,6 +341,36 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
             user: 'ontos_runtime',
           },
           origin_connection_limit: 40,
+        },
+      ],
+      [
+        HYPERDRIVE_CONFIGS_PATH,
+        {
+          caching: { disabled: true },
+          name: PARTY_REGISTRY_HYPERDRIVE,
+          origin: {
+            database: 'ontos',
+            password: generated.get('PARTY_REGISTRY_DB_PASSWORD'),
+            scheme: 'postgresql',
+            service_id: 'vpc-1',
+            user: 'party_registry_runtime',
+          },
+          origin_connection_limit: 10,
+        },
+      ],
+      [
+        HYPERDRIVE_CONFIGS_PATH,
+        {
+          caching: { disabled: true },
+          name: GATEWAY_ISSUER_HYPERDRIVE,
+          origin: {
+            database: 'ontos',
+            password: generated.get('SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
+            scheme: 'postgresql',
+            service_id: 'vpc-1',
+            user: 'shell_gateway_issuer',
+          },
+          origin_connection_limit: 5,
         },
       ],
       ['/storage/kv/namespaces', { title: COMPOSITION_KV }],
@@ -302,7 +412,10 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
     const placement = Schema.decodeUnknownSync(PlacementJson)(files.writes.get(PLACEMENT));
     expect(placement.buildEnvironment).toMatchObject({
       ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: COMPOSITION_KV_ID,
+      // The fake account numbers every created Hyperdrive config hyperdrive-1.
+      ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: HYPERDRIVE_ID,
       ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: HYPERDRIVE_ID,
+      ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: HYPERDRIVE_ID,
       ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-2',
       ULTRAMODERN_MF_DEV_ORIGIN: SHELL_ORIGIN,
       ULTRAMODERN_PUBLIC_URL_PRICING: 'https://ontos-stage-pricing.stage.example.com',
@@ -330,17 +443,28 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
       SPICEDB_PRESHARED_KEY: SPICEDB_KEY,
     });
     expectNoSecretInArguments(stage, account);
+    const visible = [
+      ...stage.commands.map(({ args, command }) => [command, ...args].join(' ')),
+      ...account.requests.map(({ url }) => url.href),
+    ].join('\n');
+    for (const password of generated.values()) {
+      expect(visible).not.toContain(password);
+    }
   }),
 );
 
 it.effect('changes nothing in a dry run but still reads the real state', () =>
   Effect.gen(function* dryRunReadsOnly() {
     const account = fakeCloudflareAccount({});
-    const stage = newStage();
+    const stage = newStage({}, { databaseIdentities: false });
     const files = fakeFiles();
+    const roles = fakeLoginRoles();
+    const zerops = fakeZeropsApi(stage);
 
-    yield* run(provision, { account, dryRun: true, files, stage });
+    yield* run(provision, { account, dryRun: true, files, roles, stage, zerops });
 
+    expect(zerops.serviceSecrets).toStrictEqual([]);
+    expect(roles.calls).toStrictEqual([]);
     expect(account.requests.every(({ method }) => method === 'GET')).toBe(true);
     expect(mutatingCommands(stage.commands)).toStrictEqual([]);
     expect(files.writes.size).toBe(0);
@@ -469,7 +593,7 @@ it.effect('refuses to reuse a Hyperdrive config that caches tenant reads', () =>
       hyperdrives: [
         {
           caching: { disabled: false },
-          id: 'hyperdrive-old',
+          id: OLD_HYPERDRIVE_ID,
           name: RUNTIME_HYPERDRIVE,
           origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
           origin_connection_limit: 40,
@@ -497,7 +621,7 @@ it.effect('refuses to reuse a Hyperdrive config that points at another database'
       hyperdrives: [
         {
           caching: { disabled: true },
-          id: 'hyperdrive-old',
+          id: OLD_HYPERDRIVE_ID,
           name: RUNTIME_HYPERDRIVE,
           origin: { database: 'postgres', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
           origin_connection_limit: 40,
@@ -638,6 +762,20 @@ const provisionedAccount = (
           origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
           origin_connection_limit: 40,
         },
+        {
+          caching: { disabled: true },
+          id: PARTY_REGISTRY_HYPERDRIVE_ID,
+          name: PARTY_REGISTRY_HYPERDRIVE,
+          origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'party_registry_runtime' },
+          origin_connection_limit: 10,
+        },
+        {
+          caching: { disabled: true },
+          id: GATEWAY_ISSUER_HYPERDRIVE_ID,
+          name: GATEWAY_ISSUER_HYPERDRIVE,
+          origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'shell_gateway_issuer' },
+          origin_connection_limit: 5,
+        },
       ],
       kvKeys: { [COMPOSITION_KV_ID]: compositionKeys },
       kvNamespaces: [{ id: COMPOSITION_KV_ID, title: COMPOSITION_KV }],
@@ -689,7 +827,11 @@ const reviewedPlacementFiles = Effect.gen(function* reviewedPlacementFilesEffect
   const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), placementText);
   const buildEnvironment = stageBuildEnvironment({}, units, settings, {
     compositionKvNamespaceId: COMPOSITION_KV_ID,
-    hyperdriveId: HYPERDRIVE_ID,
+    hyperdriveIds: {
+      gatewayIssuer: GATEWAY_ISSUER_HYPERDRIVE_ID,
+      partyRegistry: PARTY_REGISTRY_HYPERDRIVE_ID,
+      runtime: HYPERDRIVE_ID,
+    },
     spicedbVpcServiceId: 'vpc-2',
   });
   const placement = Schema.decodeUnknownSync(JsonRecord)(placementText);
@@ -881,9 +1023,14 @@ it.effect('surfaces Cloudflare API errors with their codes', () =>
 // stage edge deploy after merge; this check runs on every pull request instead.
 it.effect('places every topology unit with its public URL and the shared data-plane variables', () =>
   Effect.gen(function* placesEveryUnit() {
-    expect(yield* placementGaps(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE))).toStrictEqual(
-      [],
-    );
+    // The identity Hyperdrive IDs stay unset until `provision` creates the configs and its PR merges;
+    // edge-deploy-readiness stops the deploy until then. Every other gap fails this check.
+    const pendingIdentityHyperdrives = new Set([
+      `buildEnvironment.${PARTY_REGISTRY_HYPERDRIVE_ID_VARIABLE}`,
+      `buildEnvironment.${GATEWAY_ISSUER_HYPERDRIVE_ID_VARIABLE}`,
+    ]);
+    const gaps = yield* placementGaps(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
+    expect(gaps.filter((gap) => !pendingIdentityHyperdrives.has(gap))).toStrictEqual([]);
   }),
 );
 
@@ -906,6 +1053,8 @@ it.effect('names the unplaced units and unset build variables of an incomplete p
     expect(yield* placementGaps(readRepositoryFile(TOPOLOGY_FILE), incomplete)).toStrictEqual([
       'units: catalog',
       'buildEnvironment.ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+      'buildEnvironment.ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID',
+      'buildEnvironment.ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID',
       'buildEnvironment.ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID',
       'buildEnvironment.ULTRAMODERN_PUBLIC_URL_PRICING',
     ]);
@@ -965,5 +1114,118 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
         }
       }
     }
+  }),
+);
+
+it('derives each Hyperdrive build variable from its database identity', () => {
+  expect([
+    HYPERDRIVE_ID_VARIABLE,
+    PARTY_REGISTRY_HYPERDRIVE_ID_VARIABLE,
+    GATEWAY_ISSUER_HYPERDRIVE_ID_VARIABLE,
+  ]).toStrictEqual([
+    'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID',
+  ]);
+  expect(DATABASE_IDENTITY_SECRETS.map(({ secretKey }) => migratorSecretReference(secretKey))).toStrictEqual(
+    Object.keys(IDENTITY_PASSWORDS),
+  );
+});
+
+it.effect('database-identities creates only the missing passwords and re-ensures every login role', () =>
+  Effect.gen(function* ensuresDatabaseIdentities() {
+    const stage = newStage({}, { databaseIdentities: false });
+    stage.projectValues.set('migrator_PARTY_REGISTRY_DB_PASSWORD', PARTY_REGISTRY_CREDENTIAL);
+    const account = fakeCloudflareAccount({});
+    const files = fakeFiles();
+    const roles = fakeLoginRoles();
+    const zerops = fakeZeropsApi(stage);
+
+    yield* run(ensureStageDatabaseIdentities, { account, files, roles, stage, zerops });
+
+    expect(zerops.serviceSecrets.map(({ key, serviceId }) => `${serviceId} ${key}`)).toStrictEqual([
+      `${MIGRATOR_ID} PARTY_REGISTRY_WORKER_DB_PASSWORD`,
+      `${MIGRATOR_ID} SHELL_GATEWAY_ISSUER_DB_PASSWORD`,
+    ]);
+    const firstRun = [...roles.calls];
+    expect(firstRun.map(({ role }) => role)).toStrictEqual([
+      'party_registry_runtime',
+      'party_registry_worker',
+      'shell_gateway_issuer',
+    ]);
+    expect(firstRun[0]?.password).toBe(PARTY_REGISTRY_CREDENTIAL);
+
+    // A re-run keeps every password and alters each role to the same one.
+    yield* run(ensureStageDatabaseIdentities, { account, files, roles, stage, zerops });
+
+    expect(zerops.serviceSecrets).toHaveLength(2);
+    expect(roles.calls.slice(3)).toStrictEqual(firstRun);
+    expect(account.requests).toStrictEqual([]);
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+  }),
+);
+
+it.effect('database-identities creates nothing and touches no role in a dry run', () =>
+  Effect.gen(function* dryRunDatabaseIdentities() {
+    const stage = newStage({}, { databaseIdentities: false });
+    const roles = fakeLoginRoles();
+    const zerops = fakeZeropsApi(stage);
+
+    yield* run(ensureStageDatabaseIdentities, {
+      account: fakeCloudflareAccount({}),
+      dryRun: true,
+      files: fakeFiles(),
+      roles,
+      stage,
+      zerops,
+    });
+
+    expect(zerops.serviceSecrets).toStrictEqual([]);
+    expect(roles.calls).toStrictEqual([]);
+  }),
+);
+
+it.effect('leaves DEPLOY_TARGET unset while the migrator service lacks the identity passwords', () =>
+  Effect.gen(function* refusesMissingIdentityPasswords() {
+    const stage = newStage(
+      { deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] },
+      { databaseIdentities: false },
+    );
+
+    const error = yield* run(activate, {
+      account: yield* provisionedAccount('healthy'),
+      files: yield* reviewedPlacementFiles,
+      stage,
+    }).pipe(Effect.flip);
+
+    expect(error.message).toContain(
+      'the Zerops migrator service holds every database identity password: missing PARTY_REGISTRY_DB_PASSWORD, PARTY_REGISTRY_WORKER_DB_PASSWORD, SHELL_GATEWAY_ISSUER_DB_PASSWORD; run database-identities',
+    );
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+  }),
+);
+
+it.effect('refuses to reuse an identity Hyperdrive config with the shared limit or another login', () =>
+  Effect.gen(function* refusesDriftedIdentityHyperdrive() {
+    const account = fakeCloudflareAccount({
+      hyperdrives: [
+        {
+          caching: { disabled: true },
+          id: OLD_HYPERDRIVE_ID,
+          name: PARTY_REGISTRY_HYPERDRIVE,
+          origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
+          origin_connection_limit: 40,
+        },
+      ],
+    });
+    const stage = newStage();
+    const files = fakeFiles();
+
+    const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
+
+    expect(error.message).toContain(
+      'Hyperdrive ontos-stage-party-registry (hyperdrive-old) differs from the runbook: origin connection limit 40, user ontos_runtime',
+    );
+    expect(files.writes.size).toBe(0);
   }),
 );

@@ -1,13 +1,10 @@
+import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import { NodeCrypto } from '@effect/platform-node';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  makeTestDatabaseFromClient,
-  makeTestPgClient,
-} from '../../../../packages/core-runtime/tests/support/database.ts';
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { makeTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { PartyCorrectionCommandSchema, PartyCorrectionConflict } from '../../shared/domain/correction-contracts.ts';
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import type { PartyType } from '../../shared/domain/identity-contracts.ts';
@@ -24,7 +21,12 @@ import {
 import type { PartyTransaction } from '../../src/db/types.ts';
 import { correctPartyFactRecord } from '../../src/services/party-correction.service.ts';
 import { createPartyRelationshipRecord } from '../../src/services/party-relationship-persistence.service.ts';
-import { openBoundaryDatabases } from '../support/database-boundary.ts';
+import {
+  establishPartyGatewayScope,
+  openBoundaryDatabases,
+  openPartyBoundaryClients,
+  registerPartyGatewayScope,
+} from '../support/database-boundary.ts';
 
 const makeFixtureIds = Effect.fnUntraced(function* makeFixtureIds(crypto: Crypto.Crypto) {
   const nextUuid = crypto.randomUUIDv4;
@@ -173,18 +175,19 @@ it.live('Party Type correction and relationship creation serialize in either ord
       secondRelationshipInvocationId,
       tenantId,
     } = ids;
-    const connections = yield* loadDatabaseConnectionPair();
+    const clients = yield* openPartyBoundaryClients({ runtimeMaxConnections: 2 });
     const { admin, runtime } = yield* openBoundaryDatabases(
       (client) => makeTestDatabaseFromClient(client, partyRelations),
-      {
-        admin: yield* makeTestPgClient(connections.admin.connectionString),
-        runtime: yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 2 }),
-      },
+      clients,
     );
+    const gatewayScope = yield* registerPartyGatewayScope(clients, { tenantId }).pipe(
+      Effect.provideService(Crypto.Crypto, crypto),
+    );
+    yield* addTestGatewayScopeGrantCleanup(clients.admin, [tenantId]);
     const runScoped = <Value, Failure>(operation: (transaction: PartyTransaction) => Effect.Effect<Value, Failure>) =>
       runtime.transaction((transaction) =>
         Effect.gen(function* scopedOperation() {
-          yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
+          yield* establishPartyGatewayScope(transaction, gatewayScope);
           return yield* operation(transaction);
         }),
       );

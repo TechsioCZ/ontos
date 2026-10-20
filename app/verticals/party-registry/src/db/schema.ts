@@ -1,4 +1,11 @@
-import { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '@app/core-runtime';
+import {
+  gatewayScopedTenantLegalEntityRlsPolicies,
+  gatewayScopedTenantRlsPolicies,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  PARTY_REGISTRY_WORKER_IDENTITY,
+  sessionScopedTenantLegalEntityReadRlsPolicy,
+  sessionScopedTenantReadRlsPolicy,
+} from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import {
   boolean,
@@ -210,7 +217,8 @@ export const parties = enableGovernedRls(
         sql`${table.currentDisplayName} is null or (${table.currentDisplayName} = btrim(${table.currentDisplayName}) and length(${table.currentDisplayName}) > 0)`,
       ),
       check('party_parties_revision_ck', sql`${table.revision} > 0`),
-      ...tenantRlsPolicies('party_parties_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies('party_parties_tenant', table.tenantId, PARTY_REGISTRY_REQUEST_IDENTITY.role),
+      sessionScopedTenantReadRlsPolicy('party_parties_tenant', table.tenantId, PARTY_REGISTRY_WORKER_IDENTITY.role),
     ],
   ),
 );
@@ -262,7 +270,11 @@ export const partyFactAssertions = enableGovernedRls(
         sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or ${table.verifiedAt} is not null)`,
       ),
       externalEvidenceConstraint('party_fact_assertions_external_evidence_ck', table.externalEvidence),
-      ...tenantRlsPolicies('party_fact_assertions_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_fact_assertions_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -320,7 +332,16 @@ export const partyOfficialIdentifiers = enableGovernedRls(
         sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or ${table.verifiedAt} is not null)`,
       ),
       externalEvidenceConstraint('party_official_identifiers_external_evidence_ck', table.externalEvidence),
-      ...tenantRlsPolicies('party_official_identifiers_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_official_identifiers_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+      sessionScopedTenantReadRlsPolicy(
+        'party_official_identifiers_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_WORKER_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -358,7 +379,11 @@ export const partyIdentifierClaims = enableGovernedRls(
       }).onDelete('restrict'),
       index('party_identifier_claims_party_lookup_idx').on(table.tenantId, table.partyId),
       check('party_identifier_claims_type_ck', sql`${table.identifierTypeKey} in ('ICO', 'CZ_DIC')`),
-      ...tenantRlsPolicies('party_identifier_claims_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_identifier_claims_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -435,7 +460,16 @@ export const partyContactPoints = enableGovernedRls(
       ...contactEvidenceConstraints('party_contact_points', table),
       check('party_contact_points_revision_ck', sql`${table.revision} > 0`),
       externalEvidenceConstraint('party_contact_points_external_evidence_ck', table.externalEvidence),
-      ...tenantRlsPolicies('party_contact_points_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_contact_points_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+      sessionScopedTenantReadRlsPolicy(
+        'party_contact_points_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_WORKER_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -485,7 +519,11 @@ export const partyContactPointPurposes = enableGovernedRls(
       ...contactEvidenceConstraints('party_contact_point_purposes', table),
       check('party_contact_point_purposes_revision_ck', sql`${table.revision} > 0`),
       externalEvidenceConstraint('party_contact_point_purposes_external_evidence_ck', table.externalEvidence),
-      ...tenantRlsPolicies('party_contact_point_purposes_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_contact_point_purposes_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -568,7 +606,11 @@ export const partyRelationships = enableGovernedRls(
         'party_relationships_end_provenance_ck',
         sql`(${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null and ${table.endEvidenceReference} is null and ${table.endedByActionInvocationId} is null and ${table.endedByPrincipalId} is null and ${table.endedRecordedAt} is null and ${table.endReason} is null) or (${table.validTo} is not null and length(btrim(${table.endProvenanceSource})) > 0 and length(btrim(${table.endProvenanceMethod})) > 0 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null)`,
       ),
-      ...tenantRlsPolicies('party_relationships_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_relationships_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -620,7 +662,18 @@ export const counterparties = enableGovernedRls(
         'party_counterparties_evidence_ck',
         sql`jsonb_typeof(${table.evidenceRefs}) = 'array' and jsonb_array_length(${table.evidenceRefs}) between 1 and 32 and jsonb_typeof(${table.sourceRecordRefs}) = 'array' and jsonb_array_length(${table.sourceRecordRefs}) <= 32`,
       ),
-      ...tenantLegalEntityRlsPolicies('party_counterparties_scope', table.tenantId, table.legalEntityId),
+      ...gatewayScopedTenantLegalEntityRlsPolicies(
+        'party_counterparties_scope',
+        table.tenantId,
+        table.legalEntityId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+      sessionScopedTenantLegalEntityReadRlsPolicy(
+        'party_counterparties_scope',
+        table.tenantId,
+        table.legalEntityId,
+        PARTY_REGISTRY_WORKER_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -683,7 +736,18 @@ export const counterpartyRolePeriods = enableGovernedRls(
         'party_counterparty_role_periods_end_evidence_ck',
         sql`((${table.state} = 'ACTIVE' and ((${table.validTo} is null and ${table.endReason} is null and ${table.endEvidenceRefs} is null and ${table.endedByActionInvocationId} is null and ${table.endedByPrincipalId} is null and ${table.endedRecordedAt} is null) or (${table.validTo} is not null and length(btrim(${table.endReason})) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) between 1 and 32 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null))) or (${table.state} = 'ENDED' and ${table.validTo} is not null and length(btrim(${table.endReason})) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) between 1 and 32 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null) or (${table.state} in ('SUPERSEDED', 'RETRACTED', 'DISPUTED'))) and ((${table.validTo} is null and ${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null) or (${table.validTo} is not null and ${table.endProvenanceSource} = btrim(${table.endProvenanceSource}) and length(${table.endProvenanceSource}) > 0 and ${table.endProvenanceMethod} = btrim(${table.endProvenanceMethod}) and length(${table.endProvenanceMethod}) > 0))`,
       ),
-      ...tenantLegalEntityRlsPolicies('party_role_periods_scope', table.tenantId, table.legalEntityId),
+      ...gatewayScopedTenantLegalEntityRlsPolicies(
+        'party_role_periods_scope',
+        table.tenantId,
+        table.legalEntityId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+      sessionScopedTenantLegalEntityReadRlsPolicy(
+        'party_role_periods_scope',
+        table.tenantId,
+        table.legalEntityId,
+        PARTY_REGISTRY_WORKER_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -716,7 +780,11 @@ export const counterpartyAdminReadModels = enableGovernedRls(
         foreignColumns: [parties.tenantId, parties.partyId],
         name: 'party_counterparty_admin_model_party_fk',
       }).onDelete('restrict'),
-      ...tenantRlsPolicies('counterparty_admin_read_models_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'counterparty_admin_read_models_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -781,7 +849,11 @@ export const counterpartyRoleAdminReadModels = enableGovernedRls(
         'party_counterparty_role_admin_models_end_evidence_ck',
         sql`(${table.validTo} is null and ${table.endReason} is null and ${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null and ${table.endEvidenceRefs} is null) or (${table.validTo} is not null and length(btrim(${table.endReason})) > 0 and length(btrim(${table.endProvenanceSource})) > 0 and length(btrim(${table.endProvenanceMethod})) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) between 1 and 32)`,
       ),
-      ...tenantRlsPolicies('counterparty_role_admin_read_models_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'counterparty_role_admin_read_models_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -844,7 +916,11 @@ export const duplicateCandidateCases = enableGovernedRls(
         'party_duplicate_cases_resolution_ck',
         sql`${table.resolutionOutcome} is null or ${table.resolutionOutcome} in ('MATCH_EXISTING', 'CREATE_NEW', 'CORRECT_CLAIM_AND_MATCH', 'NEEDS_EVIDENCE', 'DISMISSED_AS_NON_SUBJECT', 'CONFIRMED_DUPLICATE_PARTIES')`,
       ),
-      ...tenantRlsPolicies('party_duplicate_cases_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_duplicate_cases_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -874,7 +950,11 @@ export const duplicateCandidateCaseParties = enableGovernedRls(
         name: 'party_duplicate_candidate_case_parties_tenant_party_fk',
       }).onDelete('restrict'),
       check('party_case_parties_rank_ck', sql`${table.rank} > 0`),
-      ...tenantRlsPolicies('party_case_parties_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_case_parties_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -927,7 +1007,11 @@ export const partyMatchDecisions = enableGovernedRls(
         'party_match_decisions_create_result_ck',
         sql`case when ${table.operation} in ('CREATE', 'REVIEW_CREATE') then ${table.committedCreateOutcome} is not null and ${table.outcome} <> 'NO_MATCH' and ${table.committedCreateOutcome} = case when ${table.outcome} = 'MATCHED' then 'MATCHED_EXISTING' else ${table.outcome} end else ${table.committedCreateOutcome} is null end`,
       ),
-      ...tenantRlsPolicies('party_match_decisions_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_match_decisions_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -976,7 +1060,7 @@ export const partyMerges = enableGovernedRls(
         ), false)
       `,
       ),
-      ...tenantRlsPolicies('party_merges_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies('party_merges_tenant', table.tenantId, PARTY_REGISTRY_REQUEST_IDENTITY.role),
     ],
   ),
 );
@@ -1011,7 +1095,8 @@ export const partyAliases = enableGovernedRls(
         name: 'party_aliases_tenant_merge_fk',
       }).onDelete('restrict'),
       check('party_aliases_not_self_ck', sql`${table.aliasPartyId} <> ${table.canonicalPartyId}`),
-      ...tenantRlsPolicies('party_aliases_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies('party_aliases_tenant', table.tenantId, PARTY_REGISTRY_REQUEST_IDENTITY.role),
+      sessionScopedTenantReadRlsPolicy('party_aliases_tenant', table.tenantId, PARTY_REGISTRY_WORKER_IDENTITY.role),
     ],
   ),
 );
@@ -1099,7 +1184,11 @@ export const partyCorrections = enableGovernedRls(
         'party_corrections_reason_ck',
         sql`${table.reason} = btrim(${table.reason}) and length(${table.reason}) > 0`,
       ),
-      ...tenantRlsPolicies('party_corrections_tenant', table.tenantId),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_corrections_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );
@@ -1147,7 +1236,12 @@ export const privacyMeasureExecutions = enableGovernedRls(
       check('party_privacy_measure_executions_handoff_ck', sql`jsonb_typeof(${table.handoff}) = 'object'`),
       check('party_privacy_measure_executions_outcome_ck', sql`jsonb_typeof(${table.outcome}) = 'object'`),
       check('party_privacy_measure_executions_fingerprint_ck', sql`${table.handoffFingerprint} ~ '^[a-f0-9]{64}$'`),
-      ...tenantLegalEntityRlsPolicies('party_privacy_measure_executions_scope', table.tenantId, table.legalEntityId),
+      ...gatewayScopedTenantLegalEntityRlsPolicies(
+        'party_privacy_measure_executions_scope',
+        table.tenantId,
+        table.legalEntityId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
     ],
   ),
 );

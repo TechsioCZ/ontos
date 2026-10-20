@@ -15,6 +15,7 @@ import {
   makeAuthenticationNamespaceRegistry,
 } from '../../src/auth/external-identity/verifier.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -114,7 +115,7 @@ const withDatabase = <Value, Error>(
 ) =>
   Effect.scoped(
     Effect.gen(function* tenantModuleStateDatabaseScope() {
-      const configuration = yield* loadDatabaseConfig();
+      const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
       const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database).pipe(
         Effect.provideService(InstalledModuleCatalogService, {

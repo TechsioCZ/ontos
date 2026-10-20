@@ -1,12 +1,19 @@
 // @effect-diagnostics globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
+import {
+  DatabaseConfig,
+  loadDatabaseConfig,
+  loadDatabaseConnectionPair,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Layer, Schema } from 'effect';
 
 import { comparePartyCatalog } from '../src/db/catalog.ts';
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
+import { PARTY_REGISTRY_WORKER_PARTY_TABLES } from '../src/db/database-grants.ts';
 import { PARTY_SCHEMA_NAME, PARTY_TABLES } from '../src/db/schema.ts';
+import { policyMismatches, rolePrivilegeMismatches } from './database-role-contract.mts';
 
 class PartyDatabaseVerificationError extends Schema.TaggedError<PartyDatabaseVerificationError>()(
   'PartyDatabaseVerificationError',
@@ -25,13 +32,6 @@ interface ColumnCatalogRow extends Readonly<Record<string, string>> {
 }
 
 interface TableInfrastructureRow extends Readonly<Record<string, boolean | number | string>> {
-  readonly force_rls: boolean;
-  readonly policy_count: number;
-  readonly row_security: boolean;
-  readonly runtime_delete: boolean;
-  readonly runtime_insert: boolean;
-  readonly runtime_select: boolean;
-  readonly runtime_update: boolean;
   readonly table_name: string;
   readonly table_owner: string;
 }
@@ -45,8 +45,6 @@ interface OwnerInfrastructureRow extends Readonly<Record<string, boolean | numbe
   readonly relationship_exclusion_count: number;
   readonly role_bypass_rls: boolean;
   readonly role_super: boolean;
-  readonly runtime_create: boolean;
-  readonly runtime_usage: boolean;
 }
 
 const expectedColumns = PARTY_TABLES.flatMap((table) => {
@@ -54,8 +52,7 @@ const expectedColumns = PARTY_TABLES.flatMap((table) => {
   return config.columns.map((column) => `${config.name}.${column.name}`);
 }).toSorted();
 
-const ownerPrivilegesMismatch = (owner: OwnerInfrastructureRow): boolean =>
-  owner.runtime_create || !owner.runtime_usage || owner.role_super || owner.role_bypass_rls;
+const ownerPrivilegesMismatch = (owner: OwnerInfrastructureRow): boolean => owner.role_super || owner.role_bypass_rls;
 
 const ownerConstraintsMismatch = (owner: OwnerInfrastructureRow): boolean =>
   owner.journal_count !== 1 ||
@@ -69,7 +66,7 @@ const ownerInfrastructureMismatch = (owner: OwnerInfrastructureRow | undefined):
   owner === undefined || ownerPrivilegesMismatch(owner) || ownerConstraintsMismatch(owner);
 
 const verification = Effect.gen(function* verifyPartyDatabase() {
-  const connections = yield* loadDatabaseConnectionPair();
+  const connections = yield* loadDatabaseConnectionPair({ identity: PARTY_REGISTRY_REQUEST_IDENTITY });
   const database = yield* PartyDatabase;
 
   for (const table of PARTY_TABLES) {
@@ -148,15 +145,7 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
       sql`
         select
           relation.relname as table_name,
-          pg_catalog.pg_get_userbyid(relation.relowner) as table_owner,
-          relation.relrowsecurity as row_security,
-          relation.relforcerowsecurity as force_rls,
-          (select count(*)::integer from pg_catalog.pg_policy as policy
-            where policy.polrelid = relation.oid) as policy_count,
-          has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'}) as runtime_select,
-          has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'}) as runtime_insert,
-          has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'}) as runtime_update,
-          has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'DELETE'}) as runtime_delete
+          pg_catalog.pg_get_userbyid(relation.relowner) as table_owner
         from pg_catalog.pg_class as relation
         inner join pg_catalog.pg_namespace as namespace
           on namespace.oid = relation.relnamespace
@@ -170,26 +159,31 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
       Effect.mapError(
         () =>
           new PartyDatabaseVerificationError({
-            reason: 'Unable to verify Party Registry table ownership, RLS, policies, or grants',
+            reason: 'Unable to verify Party Registry table ownership',
           }),
       ),
     );
-  if (
-    tables.length !== PARTY_TABLES.length ||
-    tables.some(
-      (row) =>
-        row.table_owner !== connections.admin.user ||
-        !row.row_security ||
-        !row.force_rls ||
-        row.policy_count !== 4 ||
-        !row.runtime_select ||
-        !row.runtime_insert ||
-        !row.runtime_update ||
-        !row.runtime_delete,
-    )
-  ) {
+  if (tables.length !== PARTY_TABLES.length || tables.some((row) => row.table_owner !== connections.admin.user)) {
     return yield* new PartyDatabaseVerificationError({
-      reason: 'Party Registry tables do not match their ownership, forced-RLS, policy, or runtime-grant contract',
+      reason: 'Party Registry tables are not owned by the migration owner',
+    });
+  }
+
+  const accessMismatches = yield* Effect.all([
+    rolePrivilegeMismatches(database.executor, PARTY_SCHEMA_NAME),
+    policyMismatches(database.executor, PARTY_SCHEMA_NAME, PARTY_TABLES, PARTY_REGISTRY_WORKER_PARTY_TABLES),
+  ]).pipe(
+    Effect.map((groups) => groups.flat()),
+    Effect.mapError(
+      () =>
+        new PartyDatabaseVerificationError({
+          reason: 'Unable to verify Party Registry grants and row-level security policies',
+        }),
+    ),
+  );
+  if (accessMismatches.length > 0) {
+    return yield* new PartyDatabaseVerificationError({
+      reason: `Party Registry grants or policies do not match the database role manifest: ${accessMismatches.join('; ')}`,
     });
   }
 
@@ -197,8 +191,6 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
     .execute<OwnerInfrastructureRow>(
       sql`
         select
-          has_schema_privilege(${'ontos_runtime'}, ${PARTY_SCHEMA_NAME}, ${'CREATE'}) as runtime_create,
-          has_schema_privilege(${'ontos_runtime'}, ${PARTY_SCHEMA_NAME}, ${'USAGE'}) as runtime_usage,
           runtime_role.rolsuper as role_super,
           runtime_role.rolbypassrls as role_bypass_rls,
           (select count(*)::integer from pg_catalog.pg_class as journal
@@ -253,7 +245,7 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
               and trigger_record.tgname = ${'party_corrections_append_only'}
               and not trigger_record.tgisinternal) as correction_trigger_count
         from pg_catalog.pg_roles as runtime_role
-        where runtime_role.rolname = ${'ontos_runtime'}
+        where runtime_role.rolname = ${PARTY_REGISTRY_REQUEST_IDENTITY.role}
       `,
       'objects',
     )
@@ -276,7 +268,9 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
   return { typedTableCount: PARTY_TABLES.length };
 });
 
-const runtime = PartyDatabaseLive.pipe(Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())));
+const runtime = PartyDatabaseLive.pipe(
+  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig({ identity: PARTY_REGISTRY_REQUEST_IDENTITY }))),
+);
 const result = await Effect.runPromise(Effect.provide(verification, runtime));
 
 console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${PARTY_SCHEMA_NAME}`);

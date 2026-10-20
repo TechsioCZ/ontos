@@ -1,6 +1,8 @@
-import { Effect, Predicate } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 
@@ -16,6 +18,16 @@ import {
 } from '../../src/search/projection.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
+const searchScope = (scopeTenantId: string): OperationalScope => ({
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '40000000-0000-4000-8000-000000000009',
+    authContextRef: 'better-auth-session:core-search-test',
+    authMethod: 'session',
+    principalId: '40000000-0000-4000-8000-000000000008',
+    tenantId: scopeTenantId,
+  }),
+  correlationId: 'core-search-test',
+});
 const workerContext = (overrides: Partial<OutboxWorkerHandlerContext> = {}): OutboxWorkerHandlerContext =>
   attestOutboxWorkerHandlerContext({
     attemptNumber: 1,
@@ -92,13 +104,16 @@ it.effect('ingestion rejects caller-created contexts and trusted claims with mis
     }
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     expect(
-      yield* runtime.search({
-        includeArchived: false,
-        moduleId: ref.moduleId,
-        query: 'party',
-        resourceType: ref.resourceType,
-        tenantId,
-      }),
+      yield* runtime.search(
+        {
+          includeArchived: false,
+          moduleId: ref.moduleId,
+          query: 'party',
+          resourceType: ref.resourceType,
+          tenantId,
+        },
+        searchScope(tenantId),
+      ),
     ).toEqual([]);
   });
 });
@@ -113,13 +128,16 @@ it.effect('ingests duplicate and out-of-order post-commit observations idempoten
     yield* ingestion.ingest(observation('2', 'Current title'), workerContext());
     yield* ingestion.ingest(observation('1', 'Stale title'), workerContext());
 
-    const hits = yield* runtime.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'current',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const hits = yield* runtime.search(
+      {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'current',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      searchScope(tenantId),
+    );
     expect(hits.map(({ title }) => title)).toEqual(['Current title']);
   });
 });

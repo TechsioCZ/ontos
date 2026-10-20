@@ -5,6 +5,7 @@ import { expect, it } from 'effect-rstest';
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 
 const tenantOne = '10000000-0000-4000-8000-000000000001';
@@ -20,7 +21,7 @@ const commerceAuthenticationNamespaceId = 'test.commerce.identity.v1';
 
 it.live('lists and selects multiple tenant-scoped principals and fails closed after access changes', () =>
   Effect.gen(function* principalResolverIntegration() {
-    const configuration = yield* loadDatabaseConfig();
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const { executor: database } = yield* makeCoreDatabase(configuration);
     const resolver = makePrincipalResolver(
       { executor: database },

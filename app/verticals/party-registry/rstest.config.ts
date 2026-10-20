@@ -10,6 +10,8 @@ const swc = {
   jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
 } as const;
 
+const workerCycleIntegrationTest = 'tests/integration/party-identity-runtime.test.ts';
+
 export default defineConfig({
   projects: [
     {
@@ -30,6 +32,16 @@ export default defineConfig({
       testEnvironment: 'node',
       setupFiles: ['./tests/integration/application-composition.setup.ts'],
       include: ['tests/integration/**/*.test.ts'],
+      exclude: [workerCycleIntegrationTest],
+      testTimeout: 30_000,
+    },
+    {
+      // Party worker cycles claim outbox work across every tenant, so this file
+      // must never run alongside the other integration files.
+      name: 'integration-worker-cycle',
+      testEnvironment: 'node',
+      setupFiles: ['./tests/integration/application-composition.setup.ts'],
+      include: [workerCycleIntegrationTest],
       testTimeout: 30_000,
     },
     {

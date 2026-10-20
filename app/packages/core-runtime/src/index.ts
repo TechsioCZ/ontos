@@ -120,6 +120,30 @@ export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
 export { databaseRuntime } from '#database-runtime';
 export type { DatabaseRuntime } from './db/database-runtime.ts';
+export type { DatabaseIdentityConnections } from './db/config.ts';
+export {
+  BEARER_ASSERTION_ROLE_SETTINGS,
+  DATABASE_IDENTITIES,
+  DEDICATED_IDENTITY_MODULE_KEYS,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  PARTY_REGISTRY_WORKER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+  TRUST_ROUTINES,
+  gatewayScopeGrantRoleForAudience,
+} from './db/database-identities.ts';
+export type {
+  CloudflareHyperdriveBinding,
+  DatabaseAcceptedFinding,
+  DatabaseIdentity,
+  DatabaseIdentityId,
+  DatabaseRoleGrants,
+  DatabaseScopeAuthority,
+  DatabaseSequenceGrant,
+  DatabaseTableGrant,
+  DatabaseTablePrivilege,
+  DatabaseUrlKey,
+} from './db/database-identities.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
@@ -129,6 +153,8 @@ export {
   ROOT_ENV_PATH,
   loadDatabaseConnectionPair,
   loadDatabaseConfig,
+  loadDatabaseIdentityConnections,
+  makeDatabaseConfigLive,
   parseDatabaseConnectionPair,
   parseDatabaseConfig,
 } from './db/config.ts';
@@ -143,7 +169,14 @@ export {
   PRINCIPAL_STATUSES,
 } from './db/schema.ts';
 export type { BindingStatus, BindingSubjectType, PrincipalKind, PrincipalStatus } from './db/schema.ts';
-export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from './db/scoped-transaction.ts';
+export {
+  gatewayScopedTenantLegalEntityRlsPolicies,
+  gatewayScopedTenantRlsPolicies,
+  sessionScopedTenantLegalEntityReadRlsPolicy,
+  sessionScopedTenantReadRlsPolicy,
+  tenantLegalEntityRlsPolicies,
+  tenantRlsPolicies,
+} from './db/scoped-transaction.ts';
 export type { ScopedTransactionExecutor } from './db/scoped-transaction.ts';
 export {
   SCOPED_ROUTINE_INVOCATION_ERROR_CODES,
@@ -413,9 +446,17 @@ export {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
   readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayScopeAssertion,
   trustResolvedSystemPrincipalContext,
   trustVerifiedGatewayPrincipalContext,
 } from './auth/system-principal-context-provenance.ts';
+export type { GatewayScopeAssertion } from './auth/system-principal-context-provenance.ts';
+export {
+  GatewayScopeGrantRegistrar,
+  GatewayScopeGrantRegistrarLive,
+  GatewayScopeGrantUnavailableError,
+} from './auth/gateway-scope-grant.ts';
+export type { GatewayScopeGrantInput } from './auth/gateway-scope-grant.ts';
 export {
   OperationalScopeRepositoryLive,
   OperationalScopeResolver,

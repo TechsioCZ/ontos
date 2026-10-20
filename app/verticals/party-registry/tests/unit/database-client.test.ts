@@ -8,11 +8,11 @@ it.effect('keeps Party Registry client configuration failure in the typed error 
     const error = yield* Effect.flip(
       Effect.scoped(
         makePartyDatabase({
-          connectionString: 'postgresql://ontos_runtime:test@localhost:5433/ontos?statement_timeout=1',
+          connectionString: 'postgresql://party_registry_runtime:test@localhost:5433/ontos?statement_timeout=1',
           database: 'ontos',
           host: 'localhost',
           port: 5433,
-          user: 'ontos_runtime',
+          user: 'party_registry_runtime',
         }),
       ),
     );

@@ -38,6 +38,7 @@ import type {
 } from '../../src/auth/external-identity/verifier.ts';
 import { externalIdentityRepositoryFromTransaction } from '../../src/auth/external-identity/repository.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import {
   actionInvocations,
@@ -551,7 +552,7 @@ const rollBackNeutralReservation = Effect.gen(function* externalIdentityRollback
 
 const runGeneratedReservationThroughActionRuntime = Effect.scoped(
   Effect.gen(function* governedExternalIdentityActionIntegration() {
-    const configuration = yield* loadDatabaseConfig();
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const database = yield* makeCoreDatabase(configuration);
     const crypto = yield* Crypto.Crypto;
     const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(yield* nextUuid);

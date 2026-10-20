@@ -4,8 +4,10 @@ import { isSqlError } from 'effect/sql/SqlError';
 
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
+import type { OperationalScope } from '../operations/context.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type {
   CoreSearchProjectionDocument,
@@ -539,8 +541,19 @@ const makeTransactionOperations = () => {
   );
 
   const queryCandidatesTransaction = Effect.fn('CoreSearchPersistence.queryCandidatesTransaction')(
-    function* queryCandidatesTransactionEffect(transaction: CoreTransaction, input: CoreSearchQuery) {
-      yield* installTenantScope(transaction, input.tenantId, input.selectedLegalEntityId);
+    function* queryCandidatesTransactionEffect(
+      transaction: CoreTransaction,
+      input: CoreSearchQuery,
+      scope: OperationalScope,
+    ) {
+      // The query may read only the installed scope: its tenant and exactly its legal entity, if any.
+      if (input.tenantId !== scope.tenantId || input.selectedLegalEntityId !== scope.legalEntityId) {
+        return yield* unavailable();
+      }
+      // The scope's own authority (session setting or gateway grant) decides which rows are visible.
+      yield* installOperationalScope(transaction, scope).pipe(
+        Effect.catchTag('OperationContextUnavailable', (failure) => Effect.fail(unavailable(failure))),
+      );
       const query = transaction.query.searchIndexEntries.findMany({
         // Match the bounded rebuild unit; never silently truncate before evidence filtering.
         limit: 10_001,
@@ -610,9 +623,9 @@ export const makePostgresCoreSearchProjectionStore = (
   );
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = Effect.fn(
     'CoreSearchProjectionStore.queryCandidatesPostgres',
-  )(function* queryCoreSearchCandidates(input: CoreSearchQuery) {
+  )(function* queryCoreSearchCandidates(input: CoreSearchQuery, scope: OperationalScope) {
     const transactionBody = (transaction: CoreTransaction) =>
-      transactionOperations.queryCandidatesTransaction(transaction, input);
+      transactionOperations.queryCandidatesTransaction(transaction, input, scope);
     const documents = yield* runTransaction(transactionBody);
     return yield* Schema.decodeEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(documents).pipe(
       Effect.mapError(unavailable),

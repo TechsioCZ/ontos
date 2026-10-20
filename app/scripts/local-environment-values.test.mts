@@ -1,7 +1,11 @@
 import { Config, ConfigProvider, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { localPublicClientValues, localSpiceDbValues } from './local-environment-values.mts';
+import {
+  localDatabaseIdentityValues,
+  localPublicClientValues,
+  localSpiceDbValues,
+} from './local-environment-values.mts';
 
 const spiceDbGrpcPort = '50052';
 const spiceDbHttpPort = '8444';
@@ -88,3 +92,33 @@ it.effect('writes SPICEDB_CA_CERT so the dotenv loader reads back the PEM line b
     );
   }),
 );
+
+it('derives each missing dedicated identity URL from a loopback runtime URL without overwriting', () => {
+  const existingParty = 'PARTY_REGISTRY_DATABASE_URL=postgresql://custom:custom@localhost:6543/other';
+
+  expect(
+    localDatabaseIdentityValues([
+      'DATABASE_URL=postgresql://ontos_runtime:ontos_runtime@127.0.0.1:5544/ontos_l6',
+      existingParty,
+    ]),
+  ).toStrictEqual({
+    PARTY_REGISTRY_WORKER_DATABASE_URL:
+      'postgresql://party_registry_worker:party_registry_worker@127.0.0.1:5544/ontos_l6',
+    SHELL_GATEWAY_ISSUER_DATABASE_URL: 'postgresql://shell_gateway_issuer:shell_gateway_issuer@127.0.0.1:5544/ontos_l6',
+  });
+  expect(
+    localDatabaseIdentityValues(['DATABASE_URL=postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos']),
+  ).toStrictEqual({
+    PARTY_REGISTRY_DATABASE_URL: 'postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos',
+    PARTY_REGISTRY_WORKER_DATABASE_URL: 'postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos',
+    SHELL_GATEWAY_ISSUER_DATABASE_URL: 'postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos',
+  });
+});
+
+it('derives no identity URL from a remote, malformed or missing runtime URL', () => {
+  expect(
+    localDatabaseIdentityValues(['DATABASE_URL=postgresql://ontos_runtime:secret@db.example.com:5432/ontos']),
+  ).toStrictEqual({});
+  expect(localDatabaseIdentityValues(['DATABASE_URL=not a url'])).toStrictEqual({});
+  expect(localDatabaseIdentityValues([])).toStrictEqual({});
+});

@@ -4,6 +4,7 @@ import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-t
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { presetUltramodernWorkspace, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   createHeadlessModernConfig,
   createModernBuildContext,
@@ -17,6 +18,7 @@ const bffPrefix = '/price-group-catalog-api';
 const cloudflareWorkerName = 'app-price-group-catalog';
 const build = createModernBuildContext({
   appId,
+  cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG',
   cloudflareWorkerName,
   defaultPort: 4108,

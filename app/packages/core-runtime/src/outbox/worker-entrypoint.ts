@@ -17,8 +17,16 @@ export {
 export { ContextAccess, ContextAccessLive, toBusinessPermissionAccessObjectId } from '../permissions/context-access.ts';
 export { PrincipalEligibility, PrincipalRefSchema } from '../permissions/principal-ref.ts';
 export { ReadHandlerNotFound, ReadHandlerUnavailable } from '../reads/errors.ts';
-export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '../db/scoped-transaction.ts';
-export { DatabaseConfigLive } from '../db/config.ts';
+export {
+  gatewayScopedTenantLegalEntityRlsPolicies,
+  gatewayScopedTenantRlsPolicies,
+  sessionScopedTenantLegalEntityReadRlsPolicy,
+  sessionScopedTenantReadRlsPolicy,
+  tenantLegalEntityRlsPolicies,
+  tenantRlsPolicies,
+} from '../db/scoped-transaction.ts';
+export { DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
+export { PARTY_REGISTRY_REQUEST_IDENTITY, PARTY_REGISTRY_WORKER_IDENTITY } from '../db/database-identities.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';

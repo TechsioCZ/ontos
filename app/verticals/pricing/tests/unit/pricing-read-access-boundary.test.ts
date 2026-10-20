@@ -68,7 +68,11 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
       }
       if (text.includes('current_setting')) {
         return Effect.succeed([
-          { legal_entity_id: operationalScope.legalEntityId ?? '', tenant_id: operationalScope.tenantId },
+          {
+            legal_entity_id: operationalScope.legalEntityId ?? '',
+            role: 'ontos_runtime',
+            tenant_id: operationalScope.tenantId,
+          },
         ]);
       }
       if (text.includes('read_tenant_currency_support_v1')) {

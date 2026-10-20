@@ -7,6 +7,7 @@ import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   createModernBuildContext,
   createModernConfig,
@@ -20,6 +21,7 @@ const bffPrefix = '/privacy-api';
 const cloudflareWorkerName = 'app-privacy';
 const build = createModernBuildContext({
   appId,
+  cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_PRIVACY',
   cloudflareWorkerName,
   defaultPort: 4113,

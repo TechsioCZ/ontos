@@ -5,6 +5,7 @@ import { Crypto, Deferred, Effect, Fiber, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { PARTY_REGISTRY_WORKER_IDENTITY } from '../../src/db/database-identities.ts';
 import { coreRelations, domainEvents } from '../../src/db/schema.ts';
 import type { OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
@@ -59,7 +60,8 @@ const insertPendingEvent = (
 
 const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   const crypto = yield* Crypto.Crypto;
-  const connections = yield* loadDatabaseConnectionPair();
+  // Party search generations are visible only to the Party worker login, never the shared runtime.
+  const connections = yield* loadDatabaseConnectionPair({ identity: PARTY_REGISTRY_WORKER_IDENTITY });
   yield* installSearchTestAuthority();
   const [tenantId, legalEntityId, eventId] = yield* Effect.all(
     [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],

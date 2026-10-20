@@ -6,6 +6,7 @@ import { expect, it } from 'effect-rstest';
 import type { CoreDatabase } from '../../src/db/client.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { tenantModuleStates, tenants } from '../../src/db/schema.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { decideModuleStateAccess, makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
@@ -38,7 +39,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('module state gate', (
         const moduleKey = `gate.integration-${tenantOne}`;
         const stateModuleKey = (state: (typeof TENANT_MODULE_STATES)[number]): string =>
           `${moduleKey}.${state.replaceAll('_', '-')}`;
-        const configuration = yield* loadDatabaseConfig();
+        const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
         const database = yield* makeCoreDatabase(configuration);
         yield* Effect.addFinalizer(() =>
           Effect.forEach(

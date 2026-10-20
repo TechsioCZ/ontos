@@ -220,3 +220,34 @@ it.effect('ships missing migration owners without changing other deployment file
     );
   }),
 );
+
+const databaseUrls = (section: string) => section.match(/^ {8}[A-Z_]*DATABASE_URL: .*$/gmu) ?? [];
+
+it.effect('binds Party Registry to its dedicated request identity and every other provider to the shared role', () =>
+  Effect.gen(function* providerDatabaseIdentities() {
+    const party = {
+      id: 'party-registry',
+      package: '@app/party-registry',
+      path: 'verticals/party-registry',
+      port: 4102,
+    };
+    const generated = yield* generateZeropsProviderDeployment(
+      "zerops:\n  - setup: 'party-registry'\n\n  - setup: 'shellsuperapp'\n",
+      { verticals: [party, ledger] },
+      toolchain,
+    );
+    const [partySection = '', ledgerSection = ''] = generated
+      .split(/(?=^ {2}- setup: )/mu)
+      .filter(
+        (section) => section.startsWith("  - setup: 'party-registry'") || section.startsWith("  - setup: 'ledger'"),
+      );
+    expect(databaseUrls(partySection)).toStrictEqual([
+      `        PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:\${migrator_PARTY_REGISTRY_DB_PASSWORD}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`,
+    ]);
+    expect(databaseUrls(ledgerSection)).toStrictEqual([
+      `        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`,
+    ]);
+    // Zerops environment keys stay sorted, so the dedicated URL sits between NODE_ENV and PORT.
+    expect(partySection).toMatch(/NODE_ENV: production\n {8}PARTY_REGISTRY_DATABASE_URL: [^\n]+\n {8}PORT: '4102'/u);
+  }),
+);

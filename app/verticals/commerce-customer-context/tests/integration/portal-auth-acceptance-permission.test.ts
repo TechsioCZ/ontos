@@ -37,9 +37,14 @@ import { CoreDatabase, makeCoreDatabase } from '../../../../packages/core-runtim
 import {
   DatabaseConfig,
   loadDatabaseConnectionPair,
+  loadDatabaseIdentityConnections,
   parseDatabaseConnectionPair,
 } from '../../../../packages/core-runtime/src/db/config.ts';
 import type { DatabaseConfigValue, DatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
+import {
+  DATABASE_IDENTITIES,
+  SHARED_RUNTIME_IDENTITY,
+} from '../../../../packages/core-runtime/src/db/database-identities.ts';
 import {
   dataAccessEvents,
   legalEntities,
@@ -105,11 +110,21 @@ const connectionStringForDatabase = (connectionString: string, database: string)
 const bootstrapPermissionRuntimeRole = Effect.fn('PermissionAcceptance.bootstrapRuntimeRole')(
   function* bootstrapPermissionRuntimeRole(connections: DatabaseConnectionPair) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // The bootstrap provisions every database identity, so each dedicated login targets this database too.
+    const identities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+    const database = new URL(connections.admin.connectionString).pathname.slice(1);
+    const dedicatedIdentityUrls = Object.fromEntries(
+      DATABASE_IDENTITIES.filter(({ id }) => id !== SHARED_RUNTIME_IDENTITY.id).map(({ id, urlKey }) => [
+        urlKey,
+        connectionStringForDatabase(identities.runtime[id].connectionString, database),
+      ]),
+    );
     const bootstrap = yield* spawner.spawn(
       ChildProcess.make(process.execPath, [path.join(workspaceRoot, 'scripts/postgres/bootstrap-runtime-role.mts')], {
         cwd: workspaceRoot,
         env: {
           APP_ENV_PATH: '/dev/null',
+          ...dedicatedIdentityUrls,
           DATABASE_ADMIN_URL: connections.admin.connectionString,
           DATABASE_URL: connections.runtime.connectionString,
         },

@@ -6,6 +6,7 @@ import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   createModernBuildContext,
   createWorkspaceModernConfig,
@@ -18,6 +19,7 @@ const appId = 'party-registry';
 const cloudflareWorkerName = 'app-party-registry';
 const build = createModernBuildContext({
   appId,
+  cloudflareHyperdrives: [PARTY_REGISTRY_REQUEST_IDENTITY.cloudflareHyperdrive],
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
   cloudflareWorkerName,
   defaultPort: 4102,

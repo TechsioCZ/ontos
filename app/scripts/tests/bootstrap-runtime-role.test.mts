@@ -2,7 +2,17 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 import { expect, it } from 'effect-rstest';
 
+import {
+  MANIFEST_MANAGED_SCHEMAS,
+  explicitEntries,
+  legacySharedEntries,
+  sharedRuntimeGrantedSchemas,
+  sharedRuntimeSchemaRevokeStatements,
+} from '../postgres/runtime-role-bootstrap.mts';
 import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from '../postgres/runtime-role-grants.mts';
+
+const readBootstrapSource = (): string =>
+  readFileSync(new URL('../postgres/runtime-role-bootstrap.mts', import.meta.url), 'utf-8');
 
 const pricingMigrationRoot = new URL('../../verticals/pricing/drizzle/', import.meta.url);
 const newPricingMigrationEntries = readdirSync(pricingMigrationRoot).filter((entry) =>
@@ -223,7 +233,7 @@ it('exposes only the governed Pricing routine signatures to the runtime role', (
 });
 
 it('revokes broad Pricing access before applying the exact table and routine plans', () => {
-  const bootstrap = readFileSync(new URL('../postgres/bootstrap-runtime-role.mts', import.meta.url), 'utf-8');
+  const bootstrap = readBootstrapSource();
 
   expect(bootstrap).toContain('revoke all on schema pricing from public, ontos_runtime');
   expect(bootstrap).toContain(`revoke all on table \${qualifiedTable} from public, ontos_runtime`);
@@ -235,7 +245,7 @@ it('revokes broad Pricing access before applying the exact table and routine pla
 });
 
 it('restores read-only Application Composition authority privileges after blanket Core grants', () => {
-  const bootstrap = readFileSync(new URL('../postgres/bootstrap-runtime-role.mts', import.meta.url), 'utf-8');
+  const bootstrap = readBootstrapSource();
   const broadGrant = bootstrap.indexOf('grant select, insert, update, delete on all tables in schema');
   const authorityRevoke = bootstrap.indexOf(
     'revoke all on table core.application_composition_authority from public, ontos_runtime',
@@ -257,4 +267,50 @@ it('restores read-only Application Composition authority privileges after blanke
   expect(bootstrap).toContain(
     'revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public, ontos_runtime',
   );
+});
+
+it('withholds every manifest-revoked schema from the shared runtime role, including future objects', () => {
+  expect(legacySharedEntries).toHaveLength(1);
+  for (const entry of legacySharedEntries) {
+    expect(entry.revokedSchemas).toEqual(['party', 'contacts']);
+    const granted = sharedRuntimeGrantedSchemas(entry);
+    expect(granted).toContain('core');
+    for (const schema of entry.revokedSchemas) {
+      expect(granted).not.toContain(schema);
+      expect(MANIFEST_MANAGED_SCHEMAS).toContain(schema);
+      expect(sharedRuntimeSchemaRevokeStatements(entry, schema)).toEqual([
+        `revoke all on all tables in schema "${schema}" from "ontos_runtime"`,
+        `revoke all on all sequences in schema "${schema}" from "ontos_runtime"`,
+        `revoke all on all functions in schema "${schema}" from "ontos_runtime"`,
+        `revoke all on schema "${schema}" from "ontos_runtime"`,
+        `alter default privileges in schema "${schema}" revoke all on tables from "ontos_runtime"`,
+        `alter default privileges in schema "${schema}" revoke all on sequences from "ontos_runtime"`,
+        `alter default privileges in schema "${schema}" revoke all on functions from "ontos_runtime"`,
+      ]);
+    }
+  }
+});
+
+it('follows the manifest when a schema is withheld from the shared runtime role', () => {
+  const [entry] = legacySharedEntries;
+  if (entry === undefined) {
+    throw new Error('Expected the legacy shared manifest entry');
+  }
+  const withheld = { ...entry, revokedSchemas: ['catalog'] };
+  expect(sharedRuntimeGrantedSchemas(withheld)).not.toContain('catalog');
+  expect(sharedRuntimeGrantedSchemas(withheld)).toContain('core');
+  expect(sharedRuntimeSchemaRevokeStatements(withheld, 'catalog')[3]).toBe(
+    'revoke all on schema "catalog" from "ontos_runtime"',
+  );
+});
+
+it('strips every explicit role from the trust schema and every schema the manifest assigns or withholds', () => {
+  expect(MANIFEST_MANAGED_SCHEMAS).toContain('trust');
+  expect(MANIFEST_MANAGED_SCHEMAS).not.toContain('public');
+  for (const { grants } of explicitEntries) {
+    for (const schema of grants.schemas.filter((name) => name !== 'public')) {
+      expect(MANIFEST_MANAGED_SCHEMAS).toContain(schema);
+    }
+  }
+  expect(new Set(MANIFEST_MANAGED_SCHEMAS).size).toBe(MANIFEST_MANAGED_SCHEMAS.length);
 });
