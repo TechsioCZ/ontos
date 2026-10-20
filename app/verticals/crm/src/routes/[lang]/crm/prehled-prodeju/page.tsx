@@ -130,14 +130,14 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
         )}
         {report.reviewEvents > 0 && (
           <p className="text-fg-secondary">
-            U {report.reviewEvents} započtených objednávek přišla změna stavu v nejistém pořadí (označena „Sporná změna
-            stavu“); přehled používá poslední potvrzený stav.
+            Počet započtených objednávek se změnou stavu v nejistém pořadí: {report.reviewEvents} (označení „Sporná
+            změna stavu“). Přehled používá poslední potvrzený stav.
           </p>
         )}
         {report.rowsWithReceivedDate > 0 && (
           <p className="text-fg-secondary">
-            * {report.rowsWithReceivedDate} objednávek nemá od zdroje datum objednávky — pro období se použije čas
-            přijetí.
+            * Počet objednávek bez data objednávky od zdroje: {report.rowsWithReceivedDate}. Pro období se použije
+            čas přijetí.
           </p>
         )}
       </div>
