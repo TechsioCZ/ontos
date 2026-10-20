@@ -286,6 +286,49 @@ const resolvePublicComponentPermission = Effect.fn('ShellComposition.resolvePubl
   },
 );
 
+/**
+ * Navigation entries whose page requires a context permission beyond module access (for example restricted
+ * agendas) are hidden when that permission is denied. Unavailable decisions keep the current behaviour (listed;
+ * the page itself still enforces access).
+ */
+const resolveDeniedNavigationEntrypoints = Effect.fn('ShellComposition.resolveDeniedNavigationEntrypoints')(
+  function* resolveDeniedNavigationEntrypointsEffect(
+    sources: ShellCompositionSources,
+    context: ShellCompositionContext & { readonly legalEntityId: string },
+    catalog: ShellInstalledCatalog,
+    permissionByModule: ReadonlyMap<string, string>,
+  ) {
+    const check = sources.contextAccess.contextPermissions;
+    if (check === undefined) {
+      return new Set<string>();
+    }
+    const targets = new Map<string, { readonly moduleId: string; readonly permission: string }>();
+    for (const contract of catalog.contracts) {
+      const moduleId = contract.manifest.module.id;
+      if (permissionByModule.get(moduleId) !== 'allowed') {
+        continue;
+      }
+      for (const contribution of contract.manifest.publicSurface.shellContributions.navigation) {
+        const { authorization } = contribution.entrypoint;
+        if (authorization.kind === 'context_permission' && authorization.permission !== 'module.access') {
+          const target = { moduleId, permission: authorization.permission };
+          targets.set(toContextPermissionAccessKey(target), target);
+        }
+      }
+    }
+    if (targets.size === 0) {
+      return new Set<string>();
+    }
+    const decisions = yield* check({
+      legalEntityId: context.legalEntityId,
+      principalId: context.principalId,
+      targets: [...targets.values()],
+      tenantId: context.tenantId,
+    });
+    return new Set(decisions.flatMap(({ decision, key }) => (decision === 'denied' ? [key] : [])));
+  },
+);
+
 export const makeShellComposition = (sources: ShellCompositionSources) => {
   const compose = Effect.fn('makeShellComposition.compose')(function* composeShellEffect(
     context: ShellCompositionContext,
@@ -308,6 +351,12 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     }
     const permissionByModule = new Map(decisions.map(({ decision, key }) => [key, decision]));
     const pages = pageByContributionKey(catalog);
+    const deniedEntrypoints = yield* resolveDeniedNavigationEntrypoints(
+      sources,
+      { ...context, legalEntityId: context.legalEntityId },
+      catalog,
+      permissionByModule,
+    );
     const navigation = catalog.contracts.flatMap((contract) => {
       const moduleId = contract.manifest.module.id;
       const state = states.get(moduleId);
@@ -315,27 +364,36 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
       if (state === undefined || !isVisibleState(state) || permission === undefined || permission === 'denied') {
         return [];
       }
-      return contract.manifest.publicSurface.shellContributions.navigation.map((contribution) => {
+      return contract.manifest.publicSurface.shellContributions.navigation.flatMap((contribution) => {
+        const { authorization } = contribution.entrypoint;
+        if (
+          authorization.kind === 'context_permission' &&
+          deniedEntrypoints.has(toContextPermissionAccessKey({ moduleId, permission: authorization.permission }))
+        ) {
+          return [];
+        }
         const page = pages.get(contribution.pageKey);
         const unavailable = permission === 'unavailable' || page === undefined;
-        return withOptionalProperty(
-          {
-            appId: contract.deployment.appId,
-            enabled: !unavailable,
-            groupKey: contribution.groupKey,
-          },
-          !unavailable,
-          'href',
-          page?.routePath ?? '',
-          {
-            label: contract.manifest.module.displayName,
-            moduleId,
-            order: Number(contribution.order),
-            state,
-            unavailable,
-            writable: state === 'active',
-          },
-        );
+        return [
+          withOptionalProperty(
+            {
+              appId: contract.deployment.appId,
+              enabled: !unavailable,
+              groupKey: contribution.groupKey,
+            },
+            !unavailable,
+            'href',
+            page?.routePath ?? '',
+            {
+              label: contract.manifest.module.displayName,
+              moduleId,
+              order: Number(contribution.order),
+              state,
+              unavailable,
+              writable: state === 'active',
+            },
+          ),
+        ];
       });
     });
     const composition = yield* Schema.decodeEffect(ShellCompositionSchema)({
