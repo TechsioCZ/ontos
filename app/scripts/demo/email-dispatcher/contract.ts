@@ -31,6 +31,11 @@ export type EmailDeliveryStatus = 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNK
 
 export const emailDeliverySources: readonly EmailDeliverySource[] = ['akros-order', 'siampark-reminder'];
 
+/** Result of one SMTP attempt as recorded in the ledger (status leaves SENDING exactly once per attempt). */
+export type DeliveryOutcome =
+  | { readonly messageId: string; readonly status: 'SENT' }
+  | { readonly errorTag: string; readonly status: 'RETRY' | 'FAILED' | 'UNKNOWN' };
+
 /** One e-mail derived from persisted domain state. `dedupeKey` is the never-twice identity. */
 export interface PlannedEmail {
   readonly dedupeKey: string;
