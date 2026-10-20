@@ -361,8 +361,9 @@ p {
   }
 
   .site-nav a {
-    padding: 8px 12px;
-    font-size: 0.95rem;
+    padding: 8px 10px;
+    font-size: 0.93rem;
+    white-space: nowrap;
   }
 
   .site-nav__search {
@@ -374,10 +375,10 @@ p {
   }
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1200px) {
   .site-header__search {
     display: block;
-    max-width: 280px;
+    max-width: 230px;
   }
 
   .cart-button {

@@ -65,7 +65,7 @@ ESHOP_STOREFRONT_PORT="$PORT" nohup mise exec -- node apps/eshop-storefront/serv
   >"$LOG_DIR/eshop-storefront.log" 2>&1 </dev/null &
 echo $! >"$PID_FILE"
 for _ in $(seq 1 40); do
-  if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/api/health"; then
+  if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev/null; then
     echo "[storefront] UP: http://localhost:$PORT  (log: $LOG_DIR/eshop-storefront.log)"
     exit 0
   fi

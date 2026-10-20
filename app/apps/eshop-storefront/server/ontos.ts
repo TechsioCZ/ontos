@@ -161,8 +161,18 @@ const post = async (
 
 /** Governed records read of a vertical (fresh assertion per call: assertions are single-use). */
 export const readRecords = async (vertical: string, readName: string, query: unknown): Promise<unknown> => {
-  const context = await gatewayContext(vertical);
-  return await post(context, `/reads/${segment(readName)}`, query);
+  // Reads are safe to repeat: ride out a shell/vertical restart (503) or a just-published composition (409).
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const context = await gatewayContext(vertical);
+      return await post(context, `/reads/${segment(readName)}`, query);
+    } catch (error) {
+      const retryable = error instanceof OntosError && (error.status === 503 || error.status === 409 || error.status === 502) && error.code !== 'storefront_not_configured';
+      if (!retryable || attempt >= 2) throw error;
+      if (error.status === 409) liveRevision = undefined;
+      await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+    }
+  }
 };
 
 /** Governed action. `idempotencyKey` must be reused verbatim (with the identical payload) on retries. */
