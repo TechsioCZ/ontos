@@ -264,6 +264,7 @@ export const AiApprovalsPage = () => {
   const { state, busy, load, submit } = useCrmRecords();
   const [filter, setFilter] = useState<'all' | 'pending'>('pending');
   const [message, setMessage] = useState('');
+  const [showFullLog, setShowFullLog] = useState(false);
   return (
     <CrmPage titleKey="crm.pages.ai.title">
       <PageHeader
@@ -337,17 +338,34 @@ export const AiApprovalsPage = () => {
                   }
                 />
               ) : (
-                batches.map((batch) => (
-                  <BatchCard
-                    key={batch.id}
-                    batch={batch}
-                    changes={slice.changes.filter((change) => change.batchId === batch.id)}
-                    records={records}
-                    busy={busy}
-                    submit={submit}
-                    feedback={setMessage}
-                  />
-                ))
+                batches.map((batch, index) => {
+                  const changes = slice.changes.filter((change) => change.batchId === batch.id);
+                  const card = (
+                    <BatchCard
+                      batch={batch}
+                      changes={changes}
+                      records={records}
+                      busy={busy}
+                      submit={submit}
+                      feedback={setMessage}
+                    />
+                  );
+                  return index > 0 &&
+                    changes.every((change) => change.status !== 'pending' && change.status !== 'applied') ? (
+                    <details className="ai-review-history" key={batch.id}>
+                      <summary>
+                        <span>{batch.instruction}</span>
+                        <span className="text-fg-secondary text-xs">
+                          {formatDateTime(batch.createdAt)} ·{' '}
+                          {batch.revertedAt === undefined ? 'Vyřízeno' : 'Dávka vrácena'}
+                        </span>
+                      </summary>
+                      {card}
+                    </details>
+                  ) : (
+                    <div key={batch.id}>{card}</div>
+                  );
+                })
               )}
               <SectionCard title="Deník AI a schvalování">
                 {slice.log.length === 0 ? (
@@ -356,7 +374,7 @@ export const AiApprovalsPage = () => {
                   <ol className="ai-review-log">
                     {slice.log
                       .toReversed()
-                      .slice(0, 80)
+                      .slice(0, showFullLog ? slice.log.length : 8)
                       .map((entry) => (
                         <li key={entry.id}>
                           <div className="text-fg-secondary text-xs">
@@ -383,6 +401,11 @@ export const AiApprovalsPage = () => {
                         </li>
                       ))}
                   </ol>
+                )}
+                {slice.log.length > 8 && (
+                  <Button size="sm" theme="outlined" variant="secondary" onClick={() => setShowFullLog(!showFullLog)}>
+                    {showFullLog ? 'Zobrazit jen poslední události' : `Zobrazit celý deník (${slice.log.length})`}
+                  </Button>
                 )}
               </SectionCard>
             </div>

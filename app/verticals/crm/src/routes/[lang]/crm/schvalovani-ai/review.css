@@ -174,3 +174,21 @@
     font-size: 1rem;
   }
 }
+
+.ai-review-history {
+  border: 1px solid var(--color-border-primary, #dce3ec);
+  border-radius: 0.5rem;
+}
+.ai-review-history > summary {
+  padding: 0.875rem 1rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.ai-review-history > summary span {
+  margin-right: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.ai-review-history > summary:focus-visible {
+  outline: 2px solid #28649b;
+  outline-offset: 2px;
+}
