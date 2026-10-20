@@ -26,12 +26,15 @@ const IssuerApi = HttpApi.make('FinanceInvoiceIssuerApi').add(
 );
 const lookup = makeEffectHttpApiClient(IssuerApi, { baseUrl: '/shell-super-app-api' }).pipe(
   Effect.flatMap((client) => client.authentication.currentSession({})),
+  // The shell session read can take seconds while the demo machine is under load; a single 5 s attempt pinned
+  // "Údaj neposkytnut" for the whole document and dropped the issuer from POHODA exports created from it.
+  Effect.timeout('10 seconds'),
+  Effect.retry({ times: 2 }),
   Effect.map(invoiceIssuerName),
-  Effect.timeout('5 seconds'),
   Effect.orElseSucceed(() => undefined),
 );
 // Company switching reloads the document. Share the trusted session read within this document only.
-const issuerForDocument = financeBrowserRuntime.runSync(Effect.cached(lookup));
+export const issuerForDocument = financeBrowserRuntime.runSync(Effect.cached(lookup));
 export const useInvoiceIssuer = () => {
   const [name, setName] = useState<string>();
   useEffect(() => {

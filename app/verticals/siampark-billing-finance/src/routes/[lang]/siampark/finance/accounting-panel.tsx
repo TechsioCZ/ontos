@@ -19,7 +19,8 @@ import type { AccountingExport, AccountingExportFormat, Invoice } from '../../..
 import { downloadText, outcomeMessage } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { customerOf } from './invoice-view.ts';
-import { useInvoiceIssuer } from './use-invoice-issuer.ts';
+import { issuerForDocument, useInvoiceIssuer } from './use-invoice-issuer.ts';
+import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 
@@ -148,6 +149,8 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
 
   const createExport = async () => {
     const ids = [...selected];
+    // Await the trusted session read if it has not finished yet, so a quick click never drops the issuer.
+    const issuer = issuerName ?? (await financeBrowserRuntime.runPromise(issuerForDocument));
     const outcome = await vm.execute(
       {
         _tag: 'CreateAccountingExport',
@@ -175,7 +178,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
           }),
         ),
         format,
-        ...(issuerName === undefined ? {} : { issuerName }),
+        ...(issuer === undefined ? {} : { issuerName: issuer }),
         invoiceResourceIds: ids,
       },
       `Předávací balíček vytvořen (${ids.length} dokladů)`,
