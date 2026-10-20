@@ -162,7 +162,7 @@ const ContactCard = ({
           </span>
           <div className="flex min-w-0 flex-col">
             <span className="flex flex-wrap items-center gap-100">
-              <span className="truncate font-medium">{contact.name}</span>
+              <span className="break-words font-medium">{contact.name}</span>
               {contact.primary === true && (
                 <Badge size="sm" variant="primary">
                   Hlavní kontakt
@@ -210,7 +210,7 @@ const ContactCard = ({
           {contact.email === undefined ? (
             <span className="text-fg-secondary">e-mail neuveden</span>
           ) : (
-            <Link className="truncate" href={`mailto:${contact.email}`}>
+            <Link className="min-w-0 break-all" href={`mailto:${contact.email}`}>
               {contact.email}
             </Link>
           )}
@@ -319,10 +319,10 @@ export const ContactsTab = ({
           title="Bez kontaktních osob"
         />
       ) : (
-        <ul className="grid grid-cols-1 gap-150 md:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-150">
           {active.map((contact) =>
             editing === contact.id ? (
-              <li className="md:col-span-2" key={contact.id}>
+              <li key={contact.id}>
                 <ContactForm
                   busy={busy}
                   contact={contact}
@@ -365,7 +365,7 @@ export const ContactsTab = ({
             {showRemoved ? 'Skrýt odebrané osoby' : `Zobrazit odebrané osoby (${removed.length})`}
           </Button>
           {showRemoved && (
-            <ul className="grid grid-cols-1 gap-150 md:grid-cols-2">
+            <ul className="grid grid-cols-1 gap-150">
               {removed.map((contact) => (
                 <ContactCard
                   contact={contact}

@@ -76,7 +76,7 @@ const failTag = (state: CrmState, command: CrmCommand, viewer: CrmViewer) => {
   if (Exit.isSuccess(exit)) {
     return 'success';
   }
-  return JSON.stringify(exit.cause).match(/"_tag":"(Crm[A-Za-z]+)"/u)?.[1] ?? 'unknown';
+  return JSON.stringify(exit.cause).match(/"_tag":"(Crm[A-Za-z]+)"/u)?.[1] ?? String(exit.cause);
 };
 
 describe('CRM clients', () => {
@@ -200,6 +200,40 @@ describe('CRM clients', () => {
     const seenByB = projectCrmState(moved, repB);
     expect(seenByB.clients.items.map((entry) => entry.id)).toEqual(['x', 'y']);
     expect(seenByB.visits.items.map((entry) => entry.authorPrincipalId)).toEqual(['p-a']);
+  });
+
+  it('C00-03: a direct API reassignment or unassignment requires a nonempty reason', () => {
+    expect(failTag(base, { _tag: 'AssignClient', clientId: 'x', toSalespersonId: 'b' }, lead)).toBe(
+      'CrmReferenceIneligible',
+    );
+    expect(failTag(base, { _tag: 'AssignClient', clientId: 'x' }, lead)).toBe('CrmReferenceIneligible');
+    // Initial assignment of an unowned client does not need a handover reason.
+    expect(
+      ok(base, { _tag: 'AssignClient', clientId: 'z', toSalespersonId: 'a' }, lead).state.clients.items.find(
+        (entry) => entry.id === 'z',
+      )?.ownerSalespersonId,
+    ).toBe('a');
+  });
+
+  it('C01-02: companies sharing a contact email remain distinct', () => {
+    const email = 'nakup@spolecny-kontakt.demo';
+    const first = ok(
+      base,
+      {
+        _tag: 'CreateClient',
+        kind: 'organization',
+        name: 'Kavárna Lipová',
+        contacts: [{ name: 'Jana Lipová', email }],
+      },
+      lead,
+    );
+    const second = ok(
+      first.state,
+      { _tag: 'CreateClient', kind: 'organization', name: 'Bistro Lipové', contacts: [{ name: 'Jana Lipová', email }] },
+      lead,
+    );
+    expect(first.entityIds[0]).not.toBe(second.entityIds[0]);
+    expect(second.state.clients.contacts.filter((contact) => contact.email === email)).toHaveLength(2);
   });
 
   it('C01-03: archive hides nothing from history and can be undone', () => {

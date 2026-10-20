@@ -122,7 +122,10 @@ export const ClientFormDialog = ({
             (draft.name.trim().length > 3 && foldSearchText(other.name) === foldSearchText(draft.name.trim())),
         )
       : [];
-  const filledContacts = contacts.filter((entry) => entry.name.trim() !== '');
+  const incompleteContact = (entry: ContactDraft) =>
+    entry.name.trim() === '' && [entry.role, entry.phone, entry.email].some((value) => value.trim() !== '');
+  const contactNameError = mode === 'create' && organization && contacts.some(incompleteContact);
+  const filledContacts = organization ? contacts.filter((entry) => entry.name.trim() !== '') : [];
   const contactEmailError = filledContacts.some(
     (entry) => entry.email.trim() !== '' && !EMAIL.test(entry.email.trim()),
   );
@@ -130,7 +133,13 @@ export const ClientFormDialog = ({
   const save = () => {
     setTouched(true);
     setFailure(undefined);
-    if (draft.name.trim() === '' || emailError !== undefined || regNoError !== undefined || contactEmailError) {
+    if (
+      draft.name.trim() === '' ||
+      emailError !== undefined ||
+      regNoError !== undefined ||
+      contactEmailError ||
+      contactNameError
+    ) {
       return;
     }
     const segment = draft.segment === NONE ? '' : draft.segment;
@@ -382,6 +391,8 @@ export const ClientFormDialog = ({
                   id={`crm-new-contact-${entry.key}-name`}
                   label={index === 0 ? 'Jméno (hlavní kontakt)' : 'Jméno'}
                   onChange={(event) => patchContact(entry.key, { name: event.target.value })}
+                  validateStatus={touched && incompleteContact(entry) ? 'error' : 'default'}
+                  {...(touched && incompleteContact(entry) ? { helpText: 'Doplňte jméno kontaktní osoby.' } : {})}
                   value={entry.name}
                 />
                 <FormInput

@@ -247,7 +247,13 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         }
         const kind = value.patch.kind ?? client.kind;
         const patch =
-          kind === 'person' ? { ...value.patch, regNo: client.regNo === undefined ? undefined : '', vatNo: client.vatNo === undefined ? undefined : '' } : value.patch;
+          kind === 'person'
+            ? {
+                ...value.patch,
+                regNo: client.regNo === undefined ? undefined : '',
+                vatNo: client.vatNo === undefined ? undefined : '',
+              }
+            : value.patch;
         const { changed, next } = applyPatch(client, patch);
         if (changed.length === 0) {
           return { entityIds: [client.id], state };
@@ -307,7 +313,8 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           status: 'active',
           updatedAt: context.now,
         };
-        const others = value.primary === true ? withPrimary(state.clients.contacts, client.id, id) : state.clients.contacts;
+        const others =
+          value.primary === true ? withPrimary(state.clients.contacts, client.id, id) : state.clients.contacts;
         return {
           entityIds: [id],
           state: withClients(state, { contacts: [...others, contact] }, [
@@ -337,7 +344,8 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           return { entityIds: [contact.id], state };
         }
         updated = { ...updated, updatedAt: context.now };
-        const base = primary === true ? withPrimary(state.clients.contacts, contact.clientId, contact.id) : state.clients.contacts;
+        const base =
+          primary === true ? withPrimary(state.clients.contacts, contact.clientId, contact.id) : state.clients.contacts;
         return {
           entityIds: [contact.id],
           state: withClients(state, { contacts: replaceContact(base, updated) }, [
@@ -374,6 +382,10 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         }
         if (client.ownerSalespersonId === value.toSalespersonId) {
           return yield* conflict('Klient je již přidělen tomuto obchodníkovi');
+        }
+        // A direct API call must meet the same handover requirements as the dialog (C00-03).
+        if (client.ownerSalespersonId !== undefined && (value.reason?.trim() ?? '') === '') {
+          return yield* invalid('Uveďte důvod převodu, zapíše se do historie klienta');
         }
         const { ownerSalespersonId: previous, ...rest } = client;
         const next: Client =
