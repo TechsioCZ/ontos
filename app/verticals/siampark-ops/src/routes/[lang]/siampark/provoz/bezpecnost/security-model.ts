@@ -3,6 +3,7 @@
 // The task is created through siampark-work's PUBLIC apply-command Action (its own gateway audience),
 // never by touching that module's tables; the incident only stores the returned TaskRef snapshot.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { executeApplyCommand as executeWorkCommand } from '@app/siampark-work/clients/apply-command';
 import { executeRecords as executeWorkRecords } from '@app/siampark-work/clients/records';
 import type { ContextRef } from '@app/siampark-work/contracts/records';
@@ -113,8 +114,8 @@ export type TaskCreation =
   | { readonly ok: false };
 
 /**
- * Creates one task in siampark-work: reads its current revision, sends CreateTask with a fresh idempotency key and
- * the device's property/unit as context. If the context reference is refused, retries once without it.
+ * Creates one task with its structured property/unit link and a same-principal owner-read credential.
+ * Only a revision conflict is retried. Never hide a refused reference by creating an unlinked task.
  */
 export const createServiceTask = async (
   draft: LinkedTaskDraft,
@@ -127,20 +128,24 @@ export const createServiceTask = async (
       Effect.flatMap((records) =>
         correlation.pipe(
           Effect.flatMap((idempotencyKey) =>
-            executeWorkCommand(
-              {
-                command: {
-                  _tag: 'CreateTask',
-                  ...(contextRefs.length === 0 ? {} : { contextRefs }),
-                  description: draft.description.slice(0, 2000),
-                  dueDate: draft.dueDate,
-                  priority: priorityOf(draft.severity),
-                  title: draft.title.slice(0, 200),
-                },
-                expectedRevision: records.revision,
-              },
-              idempotencyKey,
-              { idempotencyKey },
+            makeReferenceGatewayCredentials(contextRefs.map(() => 'siampark-property')).pipe(
+              Effect.flatMap((referenceCredentials) =>
+                executeWorkCommand(
+                  {
+                    command: {
+                      _tag: 'CreateTask',
+                      ...(contextRefs.length === 0 ? {} : { contextRefs }),
+                      description: draft.description.slice(0, 2000),
+                      dueDate: draft.dueDate,
+                      priority: priorityOf(draft.severity),
+                      title: draft.title.slice(0, 200),
+                    },
+                    expectedRevision: records.revision,
+                  },
+                  idempotencyKey,
+                  { idempotencyKey, referenceCredentials },
+                ),
+              ),
             ),
           ),
         ),
@@ -148,12 +153,8 @@ export const createServiceTask = async (
     );
   const refs = contextRefsOf(device.location, tenantId);
 
-  // One retry covers a concurrent revision bump; the last one drops a refused context reference.
-  const program = Effect.firstSuccessOf([
-    attempt(refs),
-    Effect.suspend(() => attempt(refs)),
-    Effect.suspend(() => attempt([])),
-  ]).pipe(
+  const program = attempt(refs).pipe(
+    Effect.catchTag('ApplyCommandActionConflictProblem', () => attempt(refs)),
     Effect.map((result): TaskCreation =>
       result.task === undefined
         ? { ok: false }

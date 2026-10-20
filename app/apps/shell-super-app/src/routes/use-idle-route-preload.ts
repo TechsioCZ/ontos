@@ -15,9 +15,9 @@ interface PreloadableNavigationItem {
   readonly href?: string;
 }
 
-/** Lets the settled page paint and start its own reads before the menu is preloaded. */
-const SETTLE_DELAY = '300 millis';
-const ROUTE_PRELOAD_CONCURRENCY = 4;
+/** Finish the foreground page's owner reads before speculative menu traffic starts. */
+const SETTLE_DELAY = '5 seconds';
+const ROUTE_PRELOAD_CONCURRENCY = 1;
 /** Long enough for a preloaded route chunk to resolve its lazy component. */
 const LAZY_WARM_WINDOW = '2 seconds';
 const ignoreRenderError = () => {

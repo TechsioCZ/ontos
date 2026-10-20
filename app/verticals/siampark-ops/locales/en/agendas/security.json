@@ -128,7 +128,7 @@
     "taskDescription": "Security device fault „{{device}}“ ({{location}}). Severity: {{severity}}. {{description}} Device card: {{url}}. Evidence only; OntOS does not control the device.",
     "done": "Fault reported",
     "doneWithTask": "Fault reported and service task created",
-    "taskFailed": "The fault is saved but the task could not be created. Use „Create service task“ in the detail."
+    "taskFailed": "The fault is saved, but the task could not be created with its verified property or unit link. We do not silently create a task without that link. Use „Create service task“ in the detail to retry."
   },
   "create": {
     "title": "New device",

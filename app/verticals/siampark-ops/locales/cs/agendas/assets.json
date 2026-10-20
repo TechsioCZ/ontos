@@ -235,7 +235,7 @@
     "remainingShort": "Zůstatek",
     "indicative": "Orientační rozpis*",
     "indicativeNote": "* Orientační rovnoměrné rozdělení základu, pouze pro kontrolu; nikoli právní výpočet a neukládá se.",
-    "notApproved": "neschváleno",
+    "notApproved": "plán · neschváleno",
     "recordedBy": "Zapsal",
     "partial": "část hodnoty",
     "showAll": "Zobrazit celý rozpis ({{count}} období)",

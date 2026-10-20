@@ -78,13 +78,15 @@ const plan = (
       documentRef?: string,
       partial?: boolean,
       note?: string,
+      recordedOn?: string,
     ])[];
   },
 ): EncodedPlan => {
   const { confirmedOn, createdOn, entries = [], ...rest } = fields;
-  const recorded = entries.map(([period, crowns, documentRef, partial, note]) => ({
+  const recorded = entries.map(([period, crowns, documentRef, partial, note, recordedOn]) => ({
     amountMinor: kc(crowns),
-    at: ts(period.length === 4 ? `${period}-12-31` : `${period}-28`, '14:00:00'),
+    // The period is not an audit timestamp: a partial-year write uses its actual document date.
+    at: ts(recordedOn ?? (period.length === 4 ? `${period}-12-31` : `${period}-28`), '14:00:00'),
     by: finance,
     id: nextId('entry'),
     period,
@@ -933,7 +935,7 @@ const buildAssets = (): EncodedAsset[] => [
           ['2023', 16_500, 'ID-2023-ODP'],
           ['2024', 16_500, 'ID-2024-ODP'],
           ['2025', 16_500, 'ID-2025-ODP'],
-          ['2026', 35_000, 'PS-2026-04', true, 'Odpis části hodnoty – poškození regálu při manipulaci'],
+          ['2026', 35_000, 'PS-2026-04', true, 'Odpis části hodnoty – poškození regálu při manipulaci', '2026-04-30'],
         ],
         interval: 'yearly',
         method: 'Rovnoměrný',

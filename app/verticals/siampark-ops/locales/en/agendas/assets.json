@@ -235,7 +235,7 @@
     "remainingShort": "Remaining",
     "indicative": "Indicative split*",
     "indicativeNote": "* Indicative straight-line split of the base for orientation only; not a legal calculation and never stored.",
-    "notApproved": "not approved",
+    "notApproved": "planned · not approved",
     "recordedBy": "Recorded by",
     "partial": "partial",
     "showAll": "Show full schedule ({{count}} periods)",

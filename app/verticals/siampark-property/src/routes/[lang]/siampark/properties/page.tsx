@@ -5,7 +5,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { executeRecords as readAgreements } from '@app/siampark-agreements/clients/records';
 import { executeRecords as readOccupancy } from '@app/siampark-occupancy/clients/records';
 import { executeRecords as readFinance } from '@app/siampark-billing-finance/clients/records';
@@ -134,8 +134,18 @@ const usePropertyRecords = () => {
   const [records, setRecords] = useState<RecordsResponse>();
   const [selection, setSelection] = useState({ assetId: '', propertyId: '', unitId: '' });
   const { assetId, propertyId, unitId } = selection;
-  const setUnitId = (selectedUnitId: string) => setSelection((current) => ({ ...current, unitId: selectedUnitId }));
-  const setAssetId = (selectedAssetId: string) => setSelection((current) => ({ ...current, assetId: selectedAssetId }));
+  const navigate = useNavigate();
+  const selectResource = (id: string) => {
+    void navigate({ replace: true, search: { resourceId: id }, to: '.' });
+  };
+  const setUnitId = (selectedUnitId: string) => {
+    setSelection((current) => ({ ...current, assetId: '', unitId: selectedUnitId }));
+    selectResource(selectedUnitId || propertyId);
+  };
+  const setAssetId = (selectedAssetId: string) => {
+    setSelection((current) => ({ ...current, assetId: selectedAssetId, unitId: '' }));
+    selectResource(selectedAssetId || propertyId);
+  };
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
   const [summary, setSummary] = useState<{
@@ -147,6 +157,7 @@ const usePropertyRecords = () => {
   const { agreements, finance, occupancy, work } = summary;
   const [summaryMessage, setSummaryMessage] = useState('');
   const selectProperty = (selectedPropertyId: string) => {
+    selectResource(selectedPropertyId);
     setSelection({ assetId: '', propertyId: selectedPropertyId, unitId: '' });
     setSummary({});
     setSummaryMessage('');
@@ -226,7 +237,7 @@ const usePropertyRecords = () => {
             Effect.result,
           ),
         },
-        { concurrency: 1 },
+        { concurrency: 4 },
       ).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {

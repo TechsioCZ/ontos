@@ -128,7 +128,7 @@
     "taskDescription": "Porucha bezpečnostního zařízení „{{device}}“ ({{location}}). Závažnost: {{severity}}. {{description}} Karta zařízení: {{url}}. Pouze evidence; OntOS zařízení neovládá.",
     "done": "Porucha nahlášena",
     "doneWithTask": "Porucha nahlášena a servisní úkol založen",
-    "taskFailed": "Porucha je uložená, ale úkol se nepodařilo založit. Zkuste „Založit servisní úkol“ v detailu."
+    "taskFailed": "Porucha je uložená, ale úkol se nepodařilo založit včetně ověření vazby na nemovitost či jednotku. Úkol bez této vazby nevytváříme. Zkuste „Založit servisní úkol“ v detailu."
   },
   "create": {
     "title": "Nové zařízení",

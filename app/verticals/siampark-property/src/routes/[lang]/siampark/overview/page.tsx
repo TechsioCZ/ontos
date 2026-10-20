@@ -143,7 +143,8 @@ const loadOverview = () => {
       property: governedSource(requestId.pipe(Effect.flatMap((id) => executeProperty({}, id)))),
       work: governedSource(requestId.pipe(Effect.flatMap((id) => executeWork({}, id)))),
     },
-    { concurrency: 2 },
+    // Independent owners: do not serialize the five governed reads into three waves.
+    { concurrency: 5 },
   );
 };
 const sourceLabels: Record<keyof OverviewSources, string> = {

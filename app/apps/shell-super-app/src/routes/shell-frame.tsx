@@ -437,8 +437,8 @@ type Translate = (key: string) => string;
 
 /**
  * LinkButton always forwards `href`; the localized router link derives it from `to`, so drop the empty one.
- * Links preload as soon as they scroll into view: the route loader answers the Shell reads from the browser cache
- * and starts the destination's remote page and remembered module reads, so a click renders the page at once.
+ * Preload on user intent, not viewport visibility: opening one page must not compete with every sidebar
+ * destination's owner reads. Idle warming handles the remaining menu after the current page has settled.
  */
 export const ShellRouteLink = ({
   href: _unusedHref,
@@ -446,7 +446,7 @@ export const ShellRouteLink = ({
 }: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => (
   // Router-active styling matches a destination only when the location equals it. Without `exact`, the home link
   // ("/") counts as active on every page and is marked as the current page beside the real destination.
-  <LocalizedLink activeOptions={{ exact: true }} prefetch="viewport" {...props} />
+  <LocalizedLink activeOptions={{ exact: true }} prefetch="intent" {...props} />
 );
 
 const presentationOrder = (entry: DashboardNavigationItem) => {
