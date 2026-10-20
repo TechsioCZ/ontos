@@ -3,7 +3,7 @@
 import Image from "next/image";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Label } from "@techsio/ui-kit/atoms/label";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -16,7 +16,8 @@ import {
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
-import { useCatalog } from "@/ontos/catalog-provider";
+import { useCatalog, useDataSource } from "@/ontos/catalog-provider";
+import type { RemoteSearchResponse } from "@/ontos/search-suggestions";
 
 type SuggestionData =
   | { kind: "category"; trail: string }
@@ -42,7 +43,47 @@ export function HeaderSearch() {
   const [open, setOpen] = useState(false);
   const trimmedQuery = query.trim();
   const ready = trimmedQuery.length >= 2;
-  const results = useMemo(() => (ready ? searchCatalog(trimmedQuery) : []), [ready, trimmedQuery]);
+  // OntOS mode: the browser only holds featured products, so product suggestions come from the BFF.
+  const ontos = useDataSource() === "ontos";
+  const [remote, setRemote] = useState<RemoteSearchResponse & { query: string }>({
+    query: "",
+    items: [],
+    total: 0,
+  });
+  useEffect(() => {
+    if (!ontos || !ready) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch("/api/ontos/search", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ q: trimmedQuery }),
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : { items: [], total: 0 }))
+        .then((body: Partial<RemoteSearchResponse>) =>
+          setRemote({
+            query: trimmedQuery,
+            items: Array.isArray(body.items) ? body.items : [],
+            total: typeof body.total === "number" ? body.total : 0,
+          }),
+        )
+        .catch(() => undefined);
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [ontos, ready, trimmedQuery]);
+  const remoteItems = useMemo(
+    () => (ontos && remote.query === trimmedQuery ? remote.items : []),
+    [ontos, remote, trimmedQuery],
+  );
+  const remoteTotal = ontos && remote.query === trimmedQuery ? remote.total : 0;
+  const results = useMemo(
+    () => (ready && !ontos ? searchCatalog(trimmedQuery) : []),
+    [ready, ontos, trimmedQuery],
+  );
   const categories = useMemo(() => {
     if (!ready) return [];
     const normalizedQuery = normalizeCatalogSearchTerm(trimmedQuery);
@@ -80,27 +121,44 @@ export function HeaderSearch() {
       {
         id: "products",
         label: cs.search.suggestions,
-        items: results.slice(0, 6).map(({ product, matchingVariants }) => {
-          const variant = matchingVariants.length === 1 ? matchingVariants[0] : undefined;
-          const params = new URLSearchParams({ variant: variant?.sku ?? trimmedQuery });
+        items: ontos
+          ? remoteItems.map((item) => {
+              const params = new URLSearchParams({ variant: item.variant?.sku ?? trimmedQuery });
+              return {
+                value: `product:${item.productId}`,
+                label: item.variant ? `${item.name} – ${item.variant.label}` : item.name,
+                href: `/produkt/${item.slug}${item.matchingVariantCount ? `?${params}#product-variants` : ""}`,
+                data: {
+                  kind: "product",
+                  imageSrc: item.imageSrc,
+                  variantSku: item.variant?.sku,
+                  priceMinor: item.priceMinor,
+                  priceIsFrom: item.priceIsFrom,
+                  currency: item.currency,
+                },
+              };
+            })
+          : results.slice(0, 6).map(({ product, matchingVariants }) => {
+              const variant = matchingVariants.length === 1 ? matchingVariants[0] : undefined;
+              const params = new URLSearchParams({ variant: variant?.sku ?? trimmedQuery });
 
-          return {
-            value: `product:${product.id}`,
-            label: variant ? `${product.name} – ${variant.label}` : product.name,
-            href: `/produkt/${product.slug}${matchingVariants.length ? `?${params}#product-variants` : ""}`,
-            data: {
-              kind: "product",
-              imageSrc: variant?.imageSrc ?? product.imageSrc,
-              variantSku: variant?.sku,
-              priceMinor: variant?.priceMinor ?? product.priceMinor,
-              priceIsFrom: !variant && product.detail.variants.length > 0,
-              currency: product.currency,
-            },
-          };
-        }),
+              return {
+                value: `product:${product.id}`,
+                label: variant ? `${product.name} – ${variant.label}` : product.name,
+                href: `/produkt/${product.slug}${matchingVariants.length ? `?${params}#product-variants` : ""}`,
+                data: {
+                  kind: "product",
+                  imageSrc: variant?.imageSrc ?? product.imageSrc,
+                  variantSku: variant?.sku,
+                  priceMinor: variant?.priceMinor ?? product.priceMinor,
+                  priceIsFrom: !variant && product.detail.variants.length > 0,
+                  currency: product.currency,
+                },
+              };
+            }),
       },
     ],
-    [categories, results, trimmedQuery],
+    [categories, ontos, remoteItems, results, trimmedQuery],
   );
   const resultsHref = `/vyhledavani?q=${encodeURIComponent(trimmedQuery)}`;
 
@@ -159,7 +217,7 @@ export function HeaderSearch() {
             size="md"
             allResultsLink={
               <Link as={NextLink} href={resultsHref} onClick={() => setOpen(false)}>
-                {cs.search.allResults(results.length)}
+                {cs.search.allResults(ontos ? remoteTotal : results.length)}
               </Link>
             }
             resultSlot={(item) =>
