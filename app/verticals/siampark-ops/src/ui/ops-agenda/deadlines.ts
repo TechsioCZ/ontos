@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off
 // S13 calendar: deadlines DERIVED from their source records (never copied, never edited here).
 // Pure functions over minimal structural shapes of the public reads, so they are unit-testable without the
 // other verticals. Owned by the ops-agenda lane. Each deadline has a stable `key` (source + record + field + date):

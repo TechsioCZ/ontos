@@ -285,7 +285,7 @@ const markRead = Effect.fn('SiamparkOps.Agenda.markRead')(function* markRead(
     return { ...entry, readAt: input.now };
   });
   if (ids !== 'all') {
-    const own = new Set(
+    const own = new Set<string>(
       notificationsOf(state)
         .filter((entry) => samePrincipal(entry.recipient, input.actor))
         .map((entry) => entry.id),

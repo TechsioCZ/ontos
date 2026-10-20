@@ -1,10 +1,20 @@
 {
   "title": "Moje agenda",
-  "description": "Kalendář termínů, revizí a připomínek (S13).",
+  "description": "Společný kalendář termínů ze smluv, nájmů, úkolů, faktur, majetku a provozu, vaše upozornění a vlastní události (S13).",
+  "open": "Otevřít",
+  "tabs": {
+    "kalendar": "Kalendář",
+    "moje": "Moje agenda",
+    "notifikace": "Upozornění",
+    "nastaveni": "Nastavení a exporty"
+  },
   "fields": {
     "title": "Název",
     "date": "Datum",
-    "kind": "Druh"
+    "kind": "Druh",
+    "assignee": "Přiřazeno",
+    "nobody": "Nikomu",
+    "owner": "Odpovídá"
   },
   "kind": {
     "DEADLINE": "Termín",
@@ -12,16 +22,361 @@
     "MEETING": "Schůzka",
     "REMINDER": "Připomínka"
   },
+  "eventStatus": {
+    "PLANNED": "Naplánováno",
+    "DONE": "Hotovo",
+    "CANCELLED": "Zrušeno"
+  },
   "create": {
     "title": "Nová událost",
+    "description": "Vlastní událost kalendáře (schůzka, revize, připomínka). Přiřazená osoba dostane upozornění.",
     "submit": "Uložit událost"
   },
   "created": "Událost uložena",
   "stats": {
     "count": "Událostí"
   },
+  "event": {
+    "edit": "Upravit",
+    "done": "Označit jako hotové",
+    "reopen": "Znovu otevřít",
+    "cancel": "Zrušit událost",
+    "comments": "Komentáře k události",
+    "openSource": "Otevřít v modulu {{source}}",
+    "derivedNote": "Termín se čte ze zdroje ({{source}}). Změňte ho v původním záznamu – kalendář ho po načtení ukáže sám, bez druhého zápisu."
+  },
+  "personas": {
+    "management": "Vedení",
+    "operations": "Provoz",
+    "finance": "Účetní",
+    "external": "Externí obchodník"
+  },
+  "sources": {
+    "property": "Nemovitosti",
+    "occupancy": "Nájmy a pobyty",
+    "agreements": "Smlouvy",
+    "work": "Úkoly",
+    "finance": "Faktury",
+    "ops": "Provoz areálu",
+    "parties": "Klienti"
+  },
+  "state": {
+    "loading": "Načítám…",
+    "ready": "načteno",
+    "forbidden": "Bez oprávnění",
+    "forbiddenDescription": "K tomuto zdroji nemáte oprávnění, proto se nezobrazuje ani nezapočítává.",
+    "unavailable": "Zdroj nedostupný",
+    "unavailableDescription": "Zdroj teď neodpovídá. Údaj nezobrazujeme jako nulu – zkuste obnovit.",
+    "noData": "bez dat",
+    "noDataDescription": "Zdroj neobsahuje údaje potřebné k výpočtu.",
+    "loadingDescription": "Načítám data ze zdroje.",
+    "readyDescription": "",
+    "agendaUnavailable": "Agenda kalendáře není dostupná – vlastní události a upozornění se nezobrazí."
+  },
+  "category": {
+    "contractEnd": "Konec smlouvy",
+    "contractNotice": "Výpovědní lhůta",
+    "contractStart": "Začátek smlouvy",
+    "leaseStart": "Začátek nájmu",
+    "leaseEnd": "Konec nájmu",
+    "assetService": "Servis majetku",
+    "inspection": "Revize / kontrola",
+    "meterReading": "Odečet",
+    "invoiceDue": "Splatnost faktury",
+    "task": "Úkol",
+    "event": "Událost",
+    "opsDeadline": "Provozní termín"
+  },
+  "urgency": {
+    "done": "Hotovo",
+    "overdue": "Po termínu",
+    "today": "Dnes",
+    "soon": "Do 7 dnů",
+    "later": "Později"
+  },
+  "relative": {
+    "today": "dnes",
+    "inDays_one": "za {{count}} den",
+    "inDays_few": "za {{count}} dny",
+    "inDays_many": "za {{count}} dne",
+    "inDays_other": "za {{count}} dní",
+    "daysAgo_one": "před {{count}} dnem",
+    "daysAgo_few": "před {{count}} dny",
+    "daysAgo_many": "před {{count}} dne",
+    "daysAgo_other": "před {{count}} dny"
+  },
+  "columns": {
+    "title": "Název",
+    "detail": "Detail",
+    "date": "Datum",
+    "status": "Stav",
+    "amount": "Částka",
+    "link": "Odkaz",
+    "type": "Typ",
+    "source": "Zdroj",
+    "category": "Druh",
+    "location": "Místo"
+  },
+  "export": {
+    "csv": "Export CSV"
+  },
+  "calendar": {
+    "previous": "Předchozí",
+    "next": "Další",
+    "today": "Dnes",
+    "mode": {
+      "mesic": "Měsíc",
+      "tyden": "Týden",
+      "seznam": "Seznam"
+    },
+    "mineOnly": "Jen moje",
+    "overdueOnly": "Po termínu",
+    "showDone": "Zobrazit dokončené",
+    "filter": "Filtrovat termíny…",
+    "overduePeriod": "Termíny po splatnosti / po termínu",
+    "more_one": "+ {{count}} další",
+    "more_few": "+ {{count}} další",
+    "more_many": "+ {{count}} dalších",
+    "more_other": "+ {{count}} dalších",
+    "free": "Bez termínů",
+    "empty": "V tomto období nejsou žádné termíny.",
+    "emptyDescription": "Zkuste jiné období nebo zrušte filtry.",
+    "missingSources": "Kalendář nezahrnuje: {{sources}}.",
+    "readOnlyNote": "Kalendář termíny pouze čte z původních záznamů (smlouvy, nájmy, úkoly, faktury, majetek, provoz). Upravují se tam; vlastní události lze upravit zde."
+  },
+  "notifications": {
+    "title": "Upozornění",
+    "unreadBadge_one": "{{count}} nepřečtené upozornění",
+    "unreadBadge_few": "{{count}} nepřečtená upozornění",
+    "unreadBadge_many": "{{count}} nepřečteného upozornění",
+    "unreadBadge_other": "{{count}} nepřečtených upozornění",
+    "filter": {
+      "all": "Vše ({{count}})",
+      "unread": "Nepřečtené ({{count}})"
+    },
+    "category": {
+      "ASSIGNED": "Přiřazeno vám",
+      "DEADLINE": "Blíží se termín",
+      "OVERDUE": "Po termínu",
+      "CHANGE": "Změna"
+    },
+    "check": "Zkontrolovat termíny",
+    "checkResult": "Nová upozornění: {{delivered}} · již doručené události přeskočeny: {{duplicates}}",
+    "checkDescription": "Každá událost se stejným ID se zobrazí jen jednou.",
+    "newToast_one": "Máte {{count}} nové upozornění",
+    "newToast_few": "Máte {{count}} nová upozornění",
+    "newToast_many": "Máte {{count}} nového upozornění",
+    "newToast_other": "Máte {{count}} nových upozornění",
+    "markRead": "Přečteno",
+    "markAll": "Označit vše jako přečtené",
+    "readAt": "přečteno {{time}}",
+    "due": "termín {{date}}",
+    "from": "od {{who}}",
+    "explain": "Upozornění vznikají při přiřazení, změně termínu a u blížících se či prošlých termínů ve zdrojích, které smíte číst. Stejná událost se doručí jen jednou.",
+    "readOnly": "Upozornění můžete číst; označovat je nemůžete (jen čtecí oprávnění).",
+    "empty": "Zatím žádná upozornění.",
+    "emptyUnread": "Vše přečteno.",
+    "emptyDescription": "Nová upozornění se objeví při přiřazení úkolu či události nebo před termínem."
+  },
+  "mine": {
+    "intro": "Termíny, úkoly a události přiřazené osobě {{who}}.",
+    "you": "vám",
+    "overdue": "Po termínu",
+    "today": "Dnes",
+    "week": "Příštích 7 dní",
+    "unread": "Nepřečtená upozornění",
+    "tasks_one": "Moje úkoly ({{count}})",
+    "tasks_few": "Moje úkoly ({{count}})",
+    "tasks_many": "Moje úkoly ({{count}})",
+    "tasks_other": "Moje úkoly ({{count}})",
+    "events_one": "Moje události ({{count}})",
+    "events_few": "Moje události ({{count}})",
+    "events_many": "Moje události ({{count}})",
+    "events_other": "Moje události ({{count}})",
+    "allTasks": "Všechny úkoly",
+    "noTasks": "Nemáte žádné otevřené úkoly s termínem.",
+    "noEvents": "Nemáte žádné naplánované události.",
+    "byCategory": "Moje otevřené termíny podle druhu",
+    "nothing": "Nic otevřeného."
+  },
+  "settings": {
+    "title": "Nastavení upozornění",
+    "leadDays": "Upozornit na termín předem",
+    "days_one": "{{count}} den předem",
+    "days_few": "{{count}} dny předem",
+    "days_many": "{{count}} dne předem",
+    "days_other": "{{count}} dní předem",
+    "email": "Posílat upozornění i e-mailem",
+    "emailNote": "E-mail zatím není nastaven; preference se uloží, doručení e-mailem je simulované.",
+    "default": "Používá se výchozí nastavení: {{count}} dní předem.",
+    "savedAt": "Uloženo {{time}}."
+  },
+  "exportsLog": {
+    "title": "Záznam exportů",
+    "empty": "Zatím žádné exporty.",
+    "emptyDescription": "Každý export CSV z kalendáře, přehledu a vyhledávání se zde zaznamená (kdo, kdy, co, kolik řádků).",
+    "when": "Kdy",
+    "who": "Kdo",
+    "list": "Seznam a filtr",
+    "rows": "Řádků"
+  },
+  "search": {
+    "label": "Hledat v záznamech Siamparku",
+    "placeholder": "Hledat nemovitost, jednotku, nájemce, smlouvu, fakturu, úkol, zařízení…",
+    "clear": "Vymazat",
+    "results_one": "Výsledky pro „{{query}}“: {{count}} záznam",
+    "results_few": "Výsledky pro „{{query}}“: {{count}} záznamy",
+    "results_many": "Výsledky pro „{{query}}“: {{count}} záznamu",
+    "results_other": "Výsledky pro „{{query}}“: {{count}} záznamů",
+    "scope": "Hledá se jen v záznamech, které smíte číst ({{count}} záznamů).",
+    "hidden": "Nepřístupné zdroje se neprohledávají: {{sources}}.",
+    "empty": "Nic nenalezeno.",
+    "emptyDescription": "Zkuste jiný výraz; diakritika ani velikost písmen nevadí.",
+    "kind": {
+      "property": "Nemovitost",
+      "unit": "Jednotka",
+      "asset": "Majetek",
+      "contract": "Smlouva",
+      "lease": "Nájem",
+      "task": "Úkol",
+      "invoice": "Faktura",
+      "party": "Klient",
+      "event": "Událost",
+      "ops": "Provoz"
+    }
+  },
+  "status": {
+    "availability": {
+      "OCCUPIED": "Obsazeno",
+      "RESERVED": "Rezervováno",
+      "AVAILABLE": "Volné"
+    },
+    "lifecycle": {
+      "ACTIVE": "Aktivní"
+    },
+    "lease": {
+      "ACTIVE": "Aktivní",
+      "CONFIRMED": "Potvrzeno"
+    },
+    "direction": {
+      "OUTGOING": "Vydaná",
+      "INCOMING": "Přijatá"
+    },
+    "task": {
+      "NEW": "Nový",
+      "IN_PROGRESS": "Řeší se",
+      "WAITING": "Čeká"
+    },
+    "incident": {
+      "OPEN": "Otevřený"
+    },
+    "contract": {
+      "ENDING": "Končí",
+      "EXPIRED": "Prošlá"
+    },
+    "category": {
+      "contractEnd": "Konec smlouvy",
+      "contractNotice": "Výpovědní lhůta",
+      "contractStart": "Začátek smlouvy",
+      "leaseStart": "Začátek nájmu",
+      "leaseEnd": "Konec nájmu",
+      "assetService": "Servis majetku",
+      "inspection": "Revize / kontrola",
+      "meterReading": "Odečet",
+      "invoiceDue": "Splatnost faktury",
+      "task": "Úkol",
+      "event": "Událost",
+      "opsDeadline": "Provozní termín"
+    }
+  },
+  "kpi": {
+    "occupancy": {
+      "label": "Obsazenost dnes",
+      "definition": "Podíl aktivních jednotek, které mají k dnešku aktivní nájem nebo pobyt, ze všech aktivních jednotek. Rezervace (potvrzené budoucí nájmy) se do obsazenosti nepočítají.",
+      "secondary": "{{occupied}} z {{total}} jednotek · {{reserved}} rezervováno"
+    },
+    "properties": {
+      "label": "Aktivní nemovitosti",
+      "definition": "Počet nemovitostí ve stavu Aktivní. Vyřazené a neaktivní se nepočítají; rozkliknutí ukazuje přesně započtené nemovitosti.",
+      "secondary": "{{units}} aktivních jednotek · {{disposed}} vyřazených či neaktivních"
+    },
+    "leases": {
+      "label": "Aktivní nájmy",
+      "definition": "Nájmy a pobyty ve stavu Aktivní. Potvrzené budoucí nájmy jsou v rozkliknutí uvedeny zvlášť.",
+      "secondary": "+ {{confirmed}} potvrzených budoucích"
+    },
+    "overdueInvoices": {
+      "label": "Faktury po splatnosti",
+      "definition": "Potvrzené, nestornované faktury (vydané i přijaté), které nejsou plně uhrazené a jejich splatnost uplynula před dneškem (Europe/Prague). Koncepty se nepočítají.",
+      "secondary": "Neuhrazeno {{amount}}"
+    },
+    "openTasks": {
+      "label": "Otevřené úkoly",
+      "definition": "Úkoly ve stavu Nový, Řeší se nebo Čeká. „Po termínu“ = termín před dneškem.",
+      "secondary": "z toho {{overdue}} po termínu"
+    },
+    "incidents": {
+      "label": "Otevřené incidenty",
+      "definition": "Nevyřešené incidenty a poruchy z agend provozu areálu (např. bezpečnost). Vyžaduje oprávnění k interním agendám provozu.",
+      "secondary": ""
+    },
+    "deadlines": {
+      "label": "Termíny na 30 dní",
+      "definition": "Otevřené termíny v příštích 30 dnech ze všech zdrojů, které smíte číst: konce a výpovědní lhůty smluv, začátky a konce nájmů, úkoly, splatnosti faktur, revize majetku a zařízení, odečty a vlastní události.",
+      "secondary": "{{week}} v příštích 7 dnech"
+    },
+    "contracts": {
+      "label": "Smlouvy končící do 60 dní",
+      "definition": "Aktivní smlouvy, jejichž datum konce je do 60 dnů od dneška (nebo už uplynulo).",
+      "secondary": "z {{active}} aktivních smluv"
+    }
+  },
   "overview": {
     "title": "Přehled provozu",
-    "description": "Souhrn agend provozu areálu, vyhledávání a export (S15)."
+    "description": "Klíčové ukazatele Siamparku z řízených zdrojů, nejbližší termíny a vyhledávání napříč záznamy, ke kterým máte oprávnění (S15).",
+    "refresh": "Obnovit data",
+    "openCalendar": "Kalendář",
+    "dataAt": "Data k {{time}}",
+    "greeting": {
+      "morning": "Dobré ráno",
+      "day": "Dobrý den",
+      "evening": "Dobrý večer"
+    },
+    "summary": "Dnes {{today}} termínů, v příštích 7 dnech {{week}}, po termínu {{overdue}}. Nepřečtená upozornění: {{unread}}.",
+    "todayLabel": "dnes",
+    "weekLabel": "do 7 dnů",
+    "overdueLabel": "po termínu",
+    "unreadLabel": "nepřečteno",
+    "occupiedToday": "obsazeno dnes",
+    "legend": {
+      "occupied": "Obsazeno: {{count}}",
+      "reserved": "Rezervováno: {{count}}",
+      "free": "Volné: {{count}}"
+    },
+    "sourcesLabel": "Zdroje:",
+    "kpiSection": "Klíčové ukazatele",
+    "drill": "Rozkliknout",
+    "sourceLine": "Zdroj: {{sources}} · aktualizováno {{time}}",
+    "definition": "Definice",
+    "records_one": "{{count}} záznam",
+    "records_few": "{{count}} záznamy",
+    "records_many": "{{count}} záznamu",
+    "records_other": "{{count}} záznamů",
+    "noRecords": "Žádné záznamy",
+    "zeroConfirmed": "Zdroj je dostupný a k dnešku neobsahuje žádný odpovídající záznam – nula je tedy skutečná.",
+    "upcomingTitle": "Nejbližší termíny",
+    "fullCalendar": "Celý kalendář",
+    "overdueBanner_one": "{{count}} termín je po termínu – zobrazit",
+    "overdueBanner_few": "{{count}} termíny jsou po termínu – zobrazit",
+    "overdueBanner_many": "{{count}} termínu je po termínu – zobrazit",
+    "overdueBanner_other": "{{count}} termínů je po termínu – zobrazit",
+    "noUpcoming": "Žádné nadcházející termíny",
+    "noUpcomingDescription": "Ve zdrojích, které smíte číst, nejsou žádné otevřené budoucí termíny.",
+    "showMore": "Zobrazit dalších {{count}}",
+    "showLess": "Zobrazit méně",
+    "byBuilding": "Obsazenost podle budov",
+    "buildingLine": "Obsazeno {{occupied}} · rezervováno {{reserved}} · volné {{free}}",
+    "noBuildingsDescription": "Žádná aktivní nemovitost s jednotkami.",
+    "opsTitle": "Agendy provozu areálu"
   }
 }
