@@ -125,10 +125,19 @@ const SearchPage = () => {
       <section className="grid w-full max-w-2xl gap-200 rounded-lg border border-border-primary bg-base p-300">
         <h1 className="font-semibold text-xl">{t('shell.search.agenda_title')}</h1>
         <p className="text-fg-secondary text-sm">{t('shell.search.agenda_hint')}</p>
-        <ul className="grid gap-100">
+        <ul className="grid gap-150 md:grid-cols-2">
           {agendaLinks.map((link) => (
             <li key={link.key}>
-              <LinkButton as={ShellRouteLink} icon={link.icon} size="sm" to={link.href ?? '/'} variant="secondary">
+              <LinkButton
+                as={ShellRouteLink}
+                block
+                className="justify-start hover:bg-overlay"
+                icon={link.icon}
+                size="sm"
+                theme="unstyled"
+                to={link.href ?? '/'}
+                variant="secondary"
+              >
                 {link.label}
               </LinkButton>
             </li>
@@ -165,7 +174,11 @@ const SearchPage = () => {
       </section>
     );
   return (
-    <ShellContentLayout controls={controls} shell={model.shell} title={t('shell.search.title')}>
+    <ShellContentLayout
+      controls={controls}
+      shell={model.shell}
+      title={t(model.state === 'unavailable' ? 'shell.search.agenda_title' : 'shell.search.title')}
+    >
       {content}
     </ShellContentLayout>
   );
