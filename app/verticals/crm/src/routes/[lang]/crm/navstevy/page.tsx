@@ -225,7 +225,11 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
           return last === undefined || daysBetween(localDay(last.occurredAt), today) > 60;
         });
         const filtered =
-          search.trim() !== '' || clientFilter !== ALL || salespersonFilter !== ALL || kindFilter !== ALL;
+          search.trim() !== '' ||
+          clientFilter !== ALL ||
+          salespersonFilter !== ALL ||
+          kindFilter !== ALL ||
+          period !== '90';
         const detail = all.find((visit) => visit.id === detailId);
         const correcting = all.find((visit) => visit.id === correctId);
         const writableIds = new Set(writableClients(records).map((client) => client.id));
@@ -234,6 +238,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
           setClientFilter(ALL);
           setSalespersonFilter(ALL);
           setKindFilter(ALL);
+          setPeriod('90');
         };
         return (
           <>

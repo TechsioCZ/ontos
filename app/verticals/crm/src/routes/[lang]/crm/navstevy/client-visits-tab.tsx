@@ -10,6 +10,7 @@ import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Visit } from '../../../../../shared/domain/visits.ts';
@@ -98,6 +99,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
   const [draft, setDraft] = useState<VisitDraft>(() => emptyVisitDraft(records, client.id));
   const [planDate, setPlanDate] = useState(() => shiftDay(today, 7));
   const [planNote, setPlanNote] = useState('');
+  const [planSalesperson, setPlanSalesperson] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [openVisitId, setOpenVisitId] = useState<string | undefined>();
@@ -107,6 +109,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
     setMode('none');
     setDraft(emptyVisitDraft(records, client.id));
     setPlanNote('');
+    setPlanSalesperson('');
     setPlanDate(shiftDay(today, 7));
     setSubmitted(false);
     setError(undefined);
@@ -124,6 +127,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
       occurredAt,
       result: draft.result.trim(),
       ...(draft.note.trim() === '' ? {} : { note: draft.note.trim() }),
+      ...(records.viewer.writeAll && draft.salespersonId !== '' ? { salespersonId: draft.salespersonId } : {}),
       ...(draft.nextStep.trim() === '' ? {} : { nextStep: draft.nextStep.trim() }),
       ...(draft.nextStepDate === '' ? {} : { addToPlan: draft.addToPlan, nextStepDate: draft.nextStepDate }),
     }).then((outcome) => {
@@ -145,6 +149,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
       clientId: client.id,
       dueDate: planDate,
       ...(planNote.trim() === '' ? {} : { note: planNote.trim() }),
+      ...(records.viewer.writeAll && planSalesperson !== '' ? { salespersonId: planSalesperson } : {}),
     }).then((outcome) => {
       if (outcome.ok) {
         toaster.create({ description: formatDay(planDate), title: 'Kontakt naplánován', type: 'success' });
@@ -235,7 +240,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
                 onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
                 records={records}
                 showClient={false}
-                showSalesperson={false}
+                showSalesperson={records.viewer.writeAll}
                 submitted={submitted}
               />
               {draft.nextStepDate !== '' && (
@@ -251,6 +256,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
           ) : (
             <>
               <FormInput
+                size="sm"
                 helpText={`${formatDay(planDate)} · ${relativeDay(planDate, today)}`}
                 id="crm-card-plan-date"
                 label="Ozvat se dne"
@@ -262,6 +268,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
                 value={planDate}
               />
               <FormTextarea
+                size="sm"
                 id="crm-card-plan-note"
                 label="Poznámka"
                 name="note"
@@ -269,6 +276,21 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
                 rows={2}
                 value={planNote}
               />
+              {records.viewer.writeAll && (
+                <SelectTemplate
+                  items={[
+                    { label: 'Přidělený obchodník klienta', value: '' },
+                    ...records.state.salespeople
+                      .filter((person) => person.active)
+                      .map((person) => ({ label: person.name, value: person.id })),
+                  ]}
+                  label="Odpovědný obchodník"
+                  name="planSalesperson"
+                  onValueChange={(details) => setPlanSalesperson(details.value[0] ?? '')}
+                  size="sm"
+                  value={[planSalesperson]}
+                />
+              )}
               <span className="text-fg-secondary text-xs">Ruční plán obchodníka, nejde o doporučení systému.</span>
             </>
           )}

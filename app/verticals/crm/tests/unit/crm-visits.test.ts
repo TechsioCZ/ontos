@@ -124,8 +124,34 @@ describe('CRM visits (C02)', () => {
     expect(byLead.visits.items[0]?.authorPrincipalId).toBe('p-lead');
   });
 
-  it('a visit far in the future is rejected', () => {
-    expect(Exit.isFailure(run(base, { ...visitX, occurredAt: '2026-11-15T09:00:00.000Z' }, repA))).toBe(true);
+  it('future contacts, including later today, belong in the plan rather than history', () => {
+    for (const occurredAt of ['2026-10-20T08:01:00.000Z', '2026-10-21T07:00:00.000Z', '2026-11-15T09:00:00.000Z']) {
+      expect(Exit.isFailure(run(base, { ...visitX, occurredAt }, repA))).toBe(true);
+    }
+  });
+
+  it('impossible visit and next-step calendar dates are rejected', () => {
+    expect(Exit.isFailure(run(base, { ...visitX, occurredAt: '2026-02-30T09:00:00.000Z' }, repA))).toBe(true);
+    expect(Exit.isFailure(run(base, { ...visitX, nextStepDate: '2026-11-31', addToPlan: true }, repA))).toBe(true);
+    const visited = ok(base, visitX, repA);
+    expect(
+      Exit.isFailure(
+        run(
+          visited.state,
+          {
+            _tag: 'CorrectVisit',
+            visitId: visited.entityIds[0] ?? '',
+            nextStepDate: '2026-02-30',
+          },
+          repA,
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('a lead cannot attribute a new visit to an inactive salesperson', () => {
+    const inactive = { ...base, salespeople: base.salespeople.map((person) => ({ ...person, active: false })) };
+    expect(Exit.isFailure(run(inactive, { ...visitX, salespersonId: 'a' }, lead))).toBe(true);
   });
 
   it('next step can be added to the manual plan, linked to the visit', () => {
@@ -139,6 +165,29 @@ describe('CRM visits (C02)', () => {
 });
 
 describe('CRM manual plan (C06)', () => {
+  it('rejects impossible plan dates on creation, rescheduling and completion', () => {
+    expect(Exit.isFailure(run(base, { _tag: 'PlanContact', clientId: 'x', dueDate: '2026-02-30' }, repA))).toBe(true);
+    const planned = ok(base, { _tag: 'PlanContact', clientId: 'x', dueDate: '2026-11-15' }, repA);
+    const planItemId = planned.entityIds[0] ?? '';
+    expect(
+      Exit.isFailure(run(planned.state, { _tag: 'UpdatePlanItem', planItemId, dueDate: '2026-11-31' }, repA)),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        run(
+          planned.state,
+          {
+            _tag: 'CompletePlanItem',
+            planItemId,
+            visit: { kind: 'call', occurredAt: now, result: 'Domluveno', nextStepDate: '2026-11-31' },
+          },
+          repA,
+        ),
+      ),
+    ).toBe(true);
+    expect(planned.state.visits.plan[0]?.status).toBe('open');
+  });
+
   it('C06-01 a planned contact appears in the rep plan; C06-03 completion keeps it as done', () => {
     const planned = ok(base, { _tag: 'PlanContact', clientId: 'x', dueDate: '2026-11-15', note: 'Ozvat se' }, repA);
     const planItemId = planned.entityIds[0] ?? '';

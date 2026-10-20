@@ -149,7 +149,7 @@ const VISITS: readonly VisitSeed[] = [
     kind: 'visit',
     note: 'Zájem o pravidelné dodávky 2× týdně.',
     rep: 'a',
-    result: 'Představení jarní nabídky mouky',
+    result: 'Představení podzimní nabídky mouky',
   },
   {
     client: 'hotel-podhradi',

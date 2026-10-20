@@ -26,7 +26,6 @@ import {
   localInputs,
   principalLabel,
   salespersonLabel,
-  shiftDay,
   visitKindMeta,
   writableClients,
 } from './visits-model.ts';
@@ -95,6 +94,7 @@ export const VisitFields = ({
     <>
       {showClient && (
         <Combobox
+          size="sm"
           clearable={false}
           helpText={submitted && draft.clientId === '' ? 'Vyberte klienta.' : 'Jen klienti, ke kterým smíte zapisovat.'}
           items={clients.map((client) => ({ label: client.name, value: client.id }))}
@@ -131,10 +131,11 @@ export const VisitFields = ({
       </RadioGroup>
       <div className="grid grid-cols-2 gap-150">
         <FormInput
+          size="sm"
           helpText={dateError}
           id={`${idPrefix}-date`}
           label="Datum"
-          max={shiftDay(today, 1)}
+          max={today}
           name="date"
           onChange={(event) => onChange({ date: event.target.value })}
           required
@@ -143,6 +144,7 @@ export const VisitFields = ({
           value={draft.date}
         />
         <FormInput
+          size="sm"
           id={`${idPrefix}-time`}
           label="Čas"
           name="time"
@@ -168,6 +170,7 @@ export const VisitFields = ({
         />
       )}
       <FormInput
+        size="sm"
         autoComplete="off"
         helpText={resultError ?? 'Jedna věta: s čím jednání skončilo.'}
         id={`${idPrefix}-result`}
@@ -180,6 +183,7 @@ export const VisitFields = ({
         value={draft.result}
       />
       <FormTextarea
+        size="sm"
         id={`${idPrefix}-note`}
         label="Poznámka"
         maxLength={4000}
@@ -192,6 +196,7 @@ export const VisitFields = ({
         <div className="flex flex-col gap-150 rounded-md border border-border-primary p-200">
           <span className="font-medium text-sm">Další krok (volitelně)</span>
           <FormInput
+            size="sm"
             autoComplete="off"
             id={`${idPrefix}-next-step`}
             label="Co udělat"
@@ -200,6 +205,7 @@ export const VisitFields = ({
             value={draft.nextStep}
           />
           <FormInput
+            size="sm"
             id={`${idPrefix}-next-date`}
             label="Termín"
             name="nextStepDate"
@@ -293,7 +299,7 @@ export const RecordVisitPanel = ({
       onOpenChange={(next) => (next ? onOpenChange(true) : close())}
       open={open}
       resizeLabel={RESIZE_LABEL}
-      size="md"
+      size="lg"
       title="Zapsat návštěvu"
     >
       <form
@@ -432,7 +438,7 @@ export const CorrectVisitPanel = ({
       }}
       open
       resizeLabel={RESIZE_LABEL}
-      size="md"
+      size="lg"
       title="Opravit záznam"
     >
       <form
@@ -460,6 +466,7 @@ export const CorrectVisitPanel = ({
           submitted
         />
         <FormInput
+          size="sm"
           autoComplete="off"
           id="crm-visit-fix-reason"
           label="Důvod opravy"
@@ -516,7 +523,7 @@ export const VisitDetailPanel = ({
       }}
       open
       resizeLabel={RESIZE_LABEL}
-      size="md"
+      size="lg"
       title={visit.result}
     >
       <div className="flex flex-col gap-300 py-200">

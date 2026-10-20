@@ -79,15 +79,24 @@ const visitFieldLabels = {
 type CorrectableField = keyof typeof visitFieldLabels;
 const correctableFields = Object.keys(visitFieldLabels) as readonly CorrectableField[];
 
-/** A visit cannot be recorded more than a day ahead: future contacts belong to the plan. */
+/** Calendar dates are validated in the reducer too: callers can bypass native date inputs via the API. */
+const requireDay = (day: string) => {
+  const parsed = DateTime.make(`${day}T12:00:00.000Z`);
+  return /^\d{4}-\d{2}-\d{2}$/u.test(day) && Option.isSome(parsed) && DateTime.formatIsoDate(parsed.value) === day
+    ? Effect.void
+    : invalid('Neplatné kalendářní datum');
+};
+
+/** Only contacts that really happened belong in history. Future contacts belong to the manual plan. */
 const requirePast = (context: CommandContext, occurredAt: string) =>
   Effect.gen(function* checkPast() {
+    yield* requireDay(occurredAt.slice(0, 10));
     const occurred = DateTime.make(occurredAt);
     const now = DateTime.make(context.now);
     if (Option.isNone(occurred)) {
       return yield* invalid('Neplatné datum a čas návštěvy');
     }
-    if (Option.isSome(now) && DateTime.isGreaterThan(occurred.value, DateTime.add(now.value, { days: 1 }))) {
+    if (Option.isSome(now) && DateTime.isGreaterThan(occurred.value, now.value)) {
       return yield* invalid('Budoucí kontakt patří do plánu K oslovení, ne do historie návštěv');
     }
     return occurredAt;
@@ -109,8 +118,8 @@ const resolveSalesperson = (
       return own ?? fallback;
     }
     const chosen = requested ?? own ?? fallback;
-    if (chosen !== undefined && !state.salespeople.some((person) => person.id === chosen)) {
-      return yield* invalid('Zvolený obchodník neexistuje');
+    if (chosen !== undefined && !state.salespeople.some((person) => person.id === chosen && person.active)) {
+      return yield* invalid('Zvolený obchodník neexistuje nebo není aktivní');
     }
     return chosen;
   });
@@ -163,6 +172,9 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
       Effect.gen(function* recordVisit() {
         const client = yield* requireWritableClient(state, context, value.clientId);
         yield* requirePast(context, value.occurredAt);
+        if (value.nextStepDate !== undefined) {
+          yield* requireDay(value.nextStepDate);
+        }
         const salespersonId = yield* resolveSalesperson(state, context, value.salespersonId, client.ownerSalespersonId);
         const id = newId(context, 'visit');
         const visit = buildVisit(context, id, client.id, value, { salespersonId });
@@ -205,6 +217,9 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         yield* requireWritableClient(state, context, visit.clientId);
         if (value.occurredAt !== undefined) {
           yield* requirePast(context, value.occurredAt);
+        }
+        if (value.nextStepDate !== undefined && value.nextStepDate !== '') {
+          yield* requireDay(value.nextStepDate);
         }
         const reason = stringOf(value.reason);
         const corrections: VisitCorrection[] = [];
@@ -263,6 +278,7 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
     ),
     Match.tag('PlanContact', (value) =>
       Effect.gen(function* planContact() {
+        yield* requireDay(value.dueDate);
         const client = yield* requireWritableClient(state, context, value.clientId);
         const salespersonId = yield* resolveSalesperson(state, context, value.salespersonId, client.ownerSalespersonId);
         if (
@@ -297,6 +313,9 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         if (value.dueDate === undefined && value.note === undefined) {
           return yield* invalid('Záznam se nezměnil');
         }
+        if (value.dueDate !== undefined) {
+          yield* requireDay(value.dueDate);
+        }
         const note = value.note === undefined ? item.note : stringOf(value.note);
         const { note: _previousNote, ...rest } = item;
         const next: PlanItem = {
@@ -319,6 +338,9 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         const visits: Visit[] = [];
         if (visitInput !== undefined && visitId !== undefined) {
           yield* requirePast(context, visitInput.occurredAt);
+          if (visitInput.nextStepDate !== undefined) {
+            yield* requireDay(visitInput.nextStepDate);
+          }
           const salespersonId = yield* resolveSalesperson(state, context, undefined, item.salespersonId);
           visits.push(buildVisit(context, visitId, item.clientId, visitInput, { planItemId: item.id, salespersonId }));
         }

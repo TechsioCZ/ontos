@@ -116,7 +116,7 @@ export const PlanContactPanel = ({
       }}
       open
       resizeLabel={RESIZE_LABEL}
-      size="md"
+      size="lg"
       title={editing ? 'Přeplánovat kontakt' : 'Naplánovat kontakt'}
     >
       <form
@@ -135,6 +135,7 @@ export const PlanContactPanel = ({
           <DetailList items={[{ label: 'Klient', value: clientLabel(records, client) }]} />
         ) : (
           <Combobox
+            size="sm"
             clearable={false}
             helpText={submitted && client === '' ? 'Vyberte klienta.' : 'Jen klienti, ke kterým smíte zapisovat.'}
             items={writableClients(records).map((entry) => ({ label: entry.name, value: entry.id }))}
@@ -149,6 +150,7 @@ export const PlanContactPanel = ({
           />
         )}
         <FormInput
+          size="sm"
           helpText={`${formatDay(dueDate)} · ${relativeDay(dueDate, today)}`}
           id="crm-plan-due"
           label="Ozvat se dne"
@@ -173,6 +175,7 @@ export const PlanContactPanel = ({
           ))}
         </div>
         <FormTextarea
+          size="sm"
           id="crm-plan-note"
           label="Poznámka"
           maxLength={4000}
@@ -280,7 +283,7 @@ export const CompletePlanPanel = ({
       }}
       open
       resizeLabel={RESIZE_LABEL}
-      size="md"
+      size="lg"
       title="Vyřídit kontakt"
     >
       <form
@@ -311,6 +314,7 @@ export const CompletePlanPanel = ({
           ]}
         />
         <FormInput
+          size="sm"
           autoComplete="off"
           id="crm-plan-done-note"
           label="Jak to dopadlo (krátce)"
