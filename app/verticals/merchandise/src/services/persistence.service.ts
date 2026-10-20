@@ -755,6 +755,7 @@ interface PricedUnit {
   readonly name: string;
   readonly stock: number;
   readonly sku: string;
+  readonly unitLabel: string;
   readonly variantId?: string;
   readonly variantName?: string;
 }
@@ -798,6 +799,7 @@ const sellableUnitOf = (
         name: product.name,
         sku: variant.sku,
         stock: variant.stockOnHand,
+        unitLabel: variant.unit ?? product.unit,
         variantId: variant.id,
         variantName: variant.name,
       },
@@ -816,6 +818,7 @@ const sellableUnitOf = (
       name: product.name,
       sku: product.sku,
       stock: record.stockOnHand,
+      unitLabel: product.unit,
     },
   };
 };
@@ -890,7 +893,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
         availability: unit.availability,
         availableQuantity: unit.stock,
         code: 'INSUFFICIENT_STOCK',
-        message: `${label}: k dispozici je jen ${unit.stock} ks.`,
+        message: `${label}: k dispozici je jen ${unit.stock} ${unit.unitLabel}.`,
       });
       continue;
     }
