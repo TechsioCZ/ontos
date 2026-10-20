@@ -41,6 +41,8 @@ export const MinorAmountSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(
 const TextSchema = (maximum: number) => Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
 
 export const PriceHistoryEntrySchema = Schema.Struct({
+  /** Snapshot before the edit; optional for legacy and initial-price entries. */
+  previousPriceMinor: Schema.optionalKey(MinorAmountSchema),
   changedBy: Schema.optionalKey(PrincipalRefSchema),
   effectiveFrom: Schema.DateTimeUtcFromString,
   priceMinor: MinorAmountSchema,
@@ -56,8 +58,16 @@ export type VariantId = typeof VariantIdSchema.Type;
  * `name` is the customer-facing label, e.g. „250 g / zrnková“.
  */
 /** Source catalog gross tiers; legacy priceMinor remains net. */
-export const CatalogParameterSchema = Schema.Struct({ label: Schema.String, value: Schema.String, unit: Schema.String });
-export const PriceTierSchema = Schema.Struct({ minimumQuantity: Schema.Finite, priceMinor: MinorAmountSchema, priceExcludingVatMinor: MinorAmountSchema });
+export const CatalogParameterSchema = Schema.Struct({
+  label: Schema.String,
+  value: Schema.String,
+  unit: Schema.String,
+});
+export const PriceTierSchema = Schema.Struct({
+  minimumQuantity: Schema.Finite,
+  priceMinor: MinorAmountSchema,
+  priceExcludingVatMinor: MinorAmountSchema,
+});
 export const CatalogFieldsSchema = Schema.Struct({
   minimumQuantity: Schema.optionalKey(Schema.Finite),
   packageQuantity: Schema.optionalKey(Schema.Finite),
@@ -214,6 +224,12 @@ export const shippingMethods: Readonly<
   PPL: { grossPriceMinor: 12_900, label: 'PPL – doručení na adresu (simulace)' },
   ZASILKOVNA: { grossPriceMinor: 7_900, label: 'Zásilkovna – výdejní místo (simulace)' },
 };
+
+/** Keep pickup identity consistent across storefront placement, staff editing and audit snapshots. */
+export const shippingMethodFor = (method: ShippingMethod, akros = false) =>
+  method === 'OSOBNI_ODBER' && akros
+    ? { ...shippingMethods[method], label: 'Osobní odběr – AKROS (simulace)' }
+    : shippingMethods[method];
 
 export const OrderShippingSchema = Schema.Struct({
   label: Schema.String,

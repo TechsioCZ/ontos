@@ -710,14 +710,26 @@ export const ProductDetailView = ({
           title={product.name}
         />
         <Tabs onValueChange={setTab} value={tab} variant="line">
-          <Tabs.List>
-            <Tabs.Trigger value="detail">{k('detail.tab')}</Tabs.Trigger>
-            <Tabs.Trigger value="variants">Varianty a ceny</Tabs.Trigger>
-            <Tabs.Trigger value="eshop">E-shop a obrázky</Tabs.Trigger>
-            <Tabs.Trigger value="prices">{k('prices.tab')}</Tabs.Trigger>
-            <Tabs.Trigger value="movements">{k('movements.tab')}</Tabs.Trigger>
-            <Tabs.Indicator />
-          </Tabs.List>
+          <div style={{ overflowX: 'auto' }}>
+            <Tabs.List style={{ minWidth: '100%', width: 'max-content' }}>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="detail">
+                {k('detail.tab')}
+              </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="variants">
+                Varianty a ceny
+              </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="eshop">
+                E-shop a obrázky
+              </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="prices">
+                {k('prices.tab')}
+              </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="movements">
+                {k('movements.tab')}
+              </Tabs.Trigger>
+              <Tabs.Indicator />
+            </Tabs.List>
+          </div>
           <Tabs.Content className="py-200" value="detail">
             <DetailForm
               busy={busy}

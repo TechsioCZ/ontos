@@ -13,7 +13,11 @@ import { useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
-import { grossUnitPriceMinor, shippingMethods } from '../../../../../shared/domain/merchandise-model.ts';
+import {
+  grossUnitPriceMinor,
+  shippingMethodFor,
+  shippingMethods,
+} from '../../../../../shared/domain/merchandise-model.ts';
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
@@ -313,8 +317,9 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
     setPick(null);
   };
 
+  const akros = products.some((product) => product.sourceGroupId !== undefined);
   const methodItems = shippingOptions.map((option) => ({
-    label: `${option.label} · ${formatMoney(option.priceMinor)}`,
+    label: `${shippingMethodFor(option.method, akros).label} · ${formatMoney(option.priceMinor)}`,
     value: option.method,
   }));
 

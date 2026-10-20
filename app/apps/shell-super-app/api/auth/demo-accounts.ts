@@ -162,6 +162,13 @@ const companyRoles: Readonly<Record<string, CompanyRoles>> = {
     ],
     seeded: { 'eshop@kavarna.demo': 'eshopAdmin', 'expedice@kavarna.demo': 'fulfilment' },
   },
+  '71000000-0000-4000-8000-000000000024': {
+    roles: [
+      role('akrosAdmin', 'Správce e-shopu', 'eshop@akros.demo', 'Katalog, objednávky, zákazníci a správa lidí.', true),
+      role('fulfilment', 'Expedice', 'expedice@akros.demo', 'Vyřizování a odesílání objednávek.'),
+    ],
+    seeded: { 'eshop@akros.demo': 'akrosAdmin', 'expedice@akros.demo': 'fulfilment' },
+  },
 };
 
 export class DemoAccountForbidden extends Data.TaggedError('DemoAccountForbidden')<{ readonly reason: string }> {}

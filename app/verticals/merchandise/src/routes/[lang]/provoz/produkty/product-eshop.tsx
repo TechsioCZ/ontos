@@ -101,7 +101,9 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
   const patchDraft = (key: string, next: Partial<VariantDraft>) =>
     setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...next } : draft)));
 
-  const visibleDrafts = drafts.filter((draft) => `${draft.name} ${draft.sku}`.toLocaleLowerCase('cs').includes(variantSearch.toLocaleLowerCase('cs')));
+  const visibleDrafts = drafts.filter((draft) =>
+    `${draft.name} ${draft.sku}`.toLocaleLowerCase('cs').includes(variantSearch.toLocaleLowerCase('cs')),
+  );
   const pageCount = Math.max(1, Math.ceil(visibleDrafts.length / 20));
   const currentPage = Math.min(variantPage, pageCount - 1);
   const errors = drafts.map((draft) => ({
@@ -156,10 +158,36 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
         {product.vatRate} %), kterou spočítá server.
       </p>
       <div className="flex flex-wrap items-center gap-150">
-        <FormInput id="variant-search" label="Hledat variantu" name="variant-search" placeholder="SKU nebo název varianty" value={variantSearch} onChange={(event) => { setVariantSearch(event.target.value); setVariantPage(0); }} />
-        <Button theme="outlined" variant="secondary" disabled={currentPage === 0} onClick={() => setVariantPage(currentPage - 1)}>Předchozí</Button>
-        <span className="text-fg-secondary text-sm">Strana {currentPage + 1} z {pageCount} · {visibleDrafts.length} variant</span>
-        <Button theme="outlined" variant="secondary" disabled={currentPage + 1 >= pageCount} onClick={() => setVariantPage(currentPage + 1)}>Další</Button>
+        <FormInput
+          id="variant-search"
+          label="Hledat variantu"
+          name="variant-search"
+          placeholder="SKU nebo název varianty"
+          value={variantSearch}
+          onChange={(event) => {
+            setVariantSearch(event.target.value);
+            setVariantPage(0);
+          }}
+        />
+        <Button
+          theme="outlined"
+          variant="secondary"
+          disabled={currentPage === 0}
+          onClick={() => setVariantPage(currentPage - 1)}
+        >
+          Předchozí
+        </Button>
+        <span className="text-fg-secondary text-sm">
+          Strana {currentPage + 1} z {pageCount} · {visibleDrafts.length} variant
+        </span>
+        <Button
+          theme="outlined"
+          variant="secondary"
+          disabled={currentPage + 1 >= pageCount}
+          onClick={() => setVariantPage(currentPage + 1)}
+        >
+          Další
+        </Button>
       </div>
       <SectionCard flush title={`Varianty (${drafts.length})`}>
         {drafts.length === 0 ? (
@@ -196,7 +224,9 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                           label={<span className="sr-only">Název varianty</span>}
                           name={`variant-label-${draft.key}`}
                           onChange={(event) => patchDraft(draft.key, { name: event.target.value })}
-                          placeholder={product.sourceGroupId === undefined ? "např. 250 g / zrnková" : "např. M6 × 20 / A2"}
+                          placeholder={
+                            product.sourceGroupId === undefined ? 'např. 250 g / zrnková' : 'např. M6 × 20 / A2'
+                          }
                           size="sm"
                           value={draft.name}
                           {...(submitted && error?.name === true
@@ -209,14 +239,27 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                           label={<span className="sr-only">Vlastnosti varianty</span>}
                           name={`variant-attrs-${draft.key}`}
                           onChange={(event) => patchDraft(draft.key, { attributes: event.target.value })}
-                          placeholder={product.sourceGroupId === undefined ? "Hmotnost: 250 g; Forma: zrnková" : "Vlastnosti varianty (nepovinné)"}
+                          placeholder={
+                            product.sourceGroupId === undefined
+                              ? 'Hmotnost: 250 g; Forma: zrnková'
+                              : 'Vlastnosti varianty (nepovinné)'
+                          }
                           size="sm"
                           value={draft.attributes}
                         />
                         {record?.priceTiers !== undefined && (
                           <div className="text-fg-secondary text-xs">
-                            <p>Minimum {record.minimumQuantity ?? 1} {record.sourceUnit ?? product.unit}{record.packageQuantity === undefined ? '' : ` · balení ${record.packageQuantity}`}</p>
-                            {record.priceTiers.map((tier) => <p key={tier.minimumQuantity}>Od {tier.minimumQuantity} {record.sourceUnit ?? product.unit}: {formatMoney(tier.priceMinor)} s DPH · {formatMoney(tier.priceExcludingVatMinor)} bez DPH</p>)}
+                            <p>
+                              Minimum {record.minimumQuantity ?? 1} {record.sourceUnit ?? product.unit}
+                              {record.packageQuantity === undefined ? '' : ` · balení ${record.packageQuantity}`}
+                            </p>
+                            {record.priceTiers.map((tier) => (
+                              <p key={tier.minimumQuantity}>
+                                Od {tier.minimumQuantity} {record.sourceUnit ?? product.unit}:{' '}
+                                {formatMoney(tier.priceMinor)} s DPH · {formatMoney(tier.priceExcludingVatMinor)} bez
+                                DPH
+                              </p>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -261,7 +304,13 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                       </div>
                     </Table.Cell>
                     <Table.Cell align="end" className="tabular-nums">
-                      {price === null ? '—' : formatMoney(record?.priceMinor === price ? record.grossPriceMinor : grossUnitPriceMinor(price, product.vatRate))}
+                      {price === null
+                        ? '—'
+                        : formatMoney(
+                            record?.priceMinor === price
+                              ? record.grossPriceMinor
+                              : grossUnitPriceMinor(price, product.vatRate),
+                          )}
                     </Table.Cell>
                     <Table.Cell align="end" className="tabular-nums">
                       {record === undefined ? (
@@ -475,7 +524,7 @@ const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) =
       key: `${variant.id}-${index}`,
       name: variant.name,
       net: entry.priceMinor,
-      previous: index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor,
+      previous: entry.previousPriceMinor ?? (index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor),
     })),
   );
   const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
@@ -524,7 +573,7 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
-  const storefrontHref = `${product.sourceGroupId === undefined ? STOREFRONT_ORIGIN : "http://localhost:3070"}/produkt/${product.slug ?? product.id}`;
+  const storefrontHref = `${product.sourceGroupId === undefined ? STOREFRONT_ORIGIN : 'http://localhost:3070'}/produkt/${product.slug ?? product.id}`;
   const slugInvalid = slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
 
   const save = () => {

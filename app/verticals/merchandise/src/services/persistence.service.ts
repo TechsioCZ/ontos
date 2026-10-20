@@ -27,7 +27,7 @@ import {
   grossUnitPriceMinor,
   isRealVariant,
   sameSku,
-  shippingMethods,
+  shippingMethodFor,
 } from '../../shared/domain/merchandise-model.ts';
 import type {
   Availability,
@@ -171,7 +171,8 @@ export const toProductRecord = (product: Product, movements: readonly StockMovem
         stockTracked: product.stockTracked !== false,
         threshold: product.lowStockThreshold,
       }),
-      grossPriceMinor: product.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
+      grossPriceMinor:
+        product.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
       lowStock: stockOnHand <= product.lowStockThreshold,
       stockOnHand,
       stockValueMinor: Math.round(stockOnHand * product.currentPriceMinor),
@@ -192,9 +193,10 @@ export const toProductRecord = (product: Product, movements: readonly StockMovem
       (variant) => variant.availability === 'LOW_STOCK' || variant.availability === 'OUT_OF_STOCK',
     ),
     stockOnHand,
-    stockValueMinor:
-      Math.round(sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
-      (stockOnHand - variantStock) * product.currentPriceMinor),
+    stockValueMinor: Math.round(
+      sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
+        (stockOnHand - variantStock) * product.currentPriceMinor,
+    ),
     variantRecords: variants,
   };
 };
@@ -276,13 +278,20 @@ export const percentChangedPriceMinor = (currentMinor: number, percent: number):
   Math.round((currentMinor * (100 + percent)) / 10_000) * 100;
 
 /** Preserve source discount breaks while a staff edit changes the base unit price. */
-const repriceTiers = (tiers: NonNullable<Product['priceTiers']>, oldNet: number | undefined, newNet: number | undefined, vat: number) => {
+const repriceTiers = (
+  tiers: NonNullable<Product['priceTiers']>,
+  oldNet: number | undefined,
+  newNet: number | undefined,
+  vat: number,
+) => {
   if (tiers.length === 0 || oldNet === newNet || newNet === undefined) return tiers;
   const baseGross = tiers[0]!.priceMinor;
   const nextGross = grossUnitPriceMinor(newNet, vat);
-  return tiers.map((tier) => ({ ...tier,
-    priceMinor: baseGross === 0 ? nextGross : Math.round(tier.priceMinor * nextGross / baseGross),
-    priceExcludingVatMinor: oldNet === undefined || oldNet === 0 ? newNet : Math.round(tier.priceExcludingVatMinor * newNet / oldNet),
+  return tiers.map((tier) => ({
+    ...tier,
+    priceMinor: baseGross === 0 ? nextGross : Math.round((tier.priceMinor * nextGross) / baseGross),
+    priceExcludingVatMinor:
+      oldNet === undefined || oldNet === 0 ? newNet : Math.round((tier.priceExcludingVatMinor * newNet) / oldNet),
   }));
 };
 
@@ -293,8 +302,18 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
     : {
         ...product,
         currentPriceMinor: priceMinor,
-        ...(product.priceTiers === undefined ? {} : { priceTiers: repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor, product.vatRate) }),
-        priceHistory: [...product.priceHistory, { changedBy: input.actor, effectiveFrom: input.now, priceMinor }],
+        ...(product.priceTiers === undefined
+          ? {}
+          : { priceTiers: repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor, product.vatRate) }),
+        priceHistory: [
+          ...product.priceHistory,
+          {
+            previousPriceMinor: product.currentPriceMinor,
+            changedBy: input.actor,
+            effectiveFrom: input.now,
+            priceMinor,
+          },
+        ],
         updatedAt: input.now,
       };
 
@@ -381,14 +400,21 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
           ? (previous.priceHistory ?? variant.priceHistory ?? [])
           : [
               ...(previous?.priceHistory ?? variant.priceHistory ?? []),
-              { changedBy: input.actor, effectiveFrom: input.now, priceMinor: variant.priceMinor },
+              {
+                ...(previous?.priceMinor === undefined ? {} : { previousPriceMinor: previous.priceMinor }),
+                changedBy: input.actor,
+                effectiveFrom: input.now,
+                priceMinor: variant.priceMinor,
+              },
             ];
     const { priceHistory: _ignored, id: _id, ...rest } = variant;
     void _ignored;
     void _id;
     result.push({
       ...rest,
-      ...(previous?.priceTiers === undefined ? {} : { priceTiers: repriceTiers(previous.priceTiers, previous.priceMinor, variant.priceMinor, product.vatRate) }),
+      ...(previous?.priceTiers === undefined
+        ? {}
+        : { priceTiers: repriceTiers(previous.priceTiers, previous.priceMinor, variant.priceMinor, product.vatRate) }),
       ...(id === undefined ? {} : { id }),
       ...(history === undefined ? {} : { priceHistory: history }),
     });
@@ -424,10 +450,17 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
           ...entry,
           priceHistory: [
             ...(entry.priceHistory ?? []),
-            { changedBy: input.actor, effectiveFrom: input.now, priceMinor: value.priceMinor },
+            {
+              previousPriceMinor: variant.priceMinor,
+              changedBy: input.actor,
+              effectiveFrom: input.now,
+              priceMinor: value.priceMinor,
+            },
           ],
           priceMinor: value.priceMinor,
-          ...(entry.priceTiers === undefined ? {} : { priceTiers: repriceTiers(entry.priceTiers, entry.priceMinor, value.priceMinor, product.vatRate) }),
+          ...(entry.priceTiers === undefined
+            ? {}
+            : { priceTiers: repriceTiers(entry.priceTiers, entry.priceMinor, value.priceMinor, product.vatRate) }),
         }
       : entry,
   );
@@ -702,7 +735,8 @@ interface PricedUnit {
 }
 
 export const tierPriceForQuantity = (tiers: Product['priceTiers'], quantity: number): number | undefined =>
-  tiers?.filter((tier) => tier.minimumQuantity <= quantity).toSorted((a, b) => b.minimumQuantity - a.minimumQuantity)[0]?.priceMinor;
+  tiers?.filter((tier) => tier.minimumQuantity <= quantity).toSorted((a, b) => b.minimumQuantity - a.minimumQuantity)[0]
+    ?.priceMinor;
 
 /** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
 const sellableUnitOf = (
@@ -750,7 +784,10 @@ const sellableUnitOf = (
       minimumQuantity: product.minimumQuantity ?? 1,
       packageQuantity: product.packageQuantity,
       availability: record.availability ?? 'UNKNOWN',
-      grossPriceMinor: tierPriceForQuantity(product.priceTiers, line.quantity) ?? record.grossPriceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
+      grossPriceMinor:
+        tierPriceForQuantity(product.priceTiers, line.quantity) ??
+        record.grossPriceMinor ??
+        grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
       name: product.name,
       sku: product.sku,
       stock: record.stockOnHand,
@@ -784,11 +821,23 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     requested.set(key, quantity);
     const label = unit.variantName === undefined ? unit.name : `${unit.name} (${unit.variantName})`;
     if (line.quantity < (unit.minimumQuantity ?? 1)) {
-      issues.push({ ...ids, code: 'MINIMUM_QUANTITY', message: `${label}: minimální množství je ${unit.minimumQuantity}.` });
+      issues.push({
+        ...ids,
+        code: 'MINIMUM_QUANTITY',
+        message: `${label}: minimální množství je ${unit.minimumQuantity}.`,
+      });
       continue;
     }
-    if (unit.packageQuantity !== undefined && unit.packageQuantity > 0 && Math.abs(line.quantity / unit.packageQuantity - Math.round(line.quantity / unit.packageQuantity)) > 0.000001) {
-      issues.push({ ...ids, code: 'PACKAGE_QUANTITY', message: `${label}: objednávejte v násobcích balení ${unit.packageQuantity}.` });
+    if (
+      unit.packageQuantity !== undefined &&
+      unit.packageQuantity > 0 &&
+      Math.abs(line.quantity / unit.packageQuantity - Math.round(line.quantity / unit.packageQuantity)) > 0.000001
+    ) {
+      issues.push({
+        ...ids,
+        code: 'PACKAGE_QUANTITY',
+        message: `${label}: objednávejte v násobcích balení ${unit.packageQuantity}.`,
+      });
       continue;
     }
     if (unit.availability === 'UNKNOWN') {
@@ -841,10 +890,10 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       vatRate: product.vatRate,
     });
   }
-  const configuredMethod = shippingMethods[value.shippingMethod];
-  const method = value.shippingMethod === 'OSOBNI_ODBER' && state.products.some((product) => product.sourceGroupId !== undefined)
-    ? { ...configuredMethod, label: 'Osobní odběr – AKROS (simulace)' }
-    : configuredMethod;
+  const method = shippingMethodFor(
+    value.shippingMethod,
+    state.products.some((product) => product.sourceGroupId !== undefined),
+  );
   if (value.expectedShippingPriceMinor !== undefined && value.expectedShippingPriceMinor !== method.grossPriceMinor) {
     issues.push({
       code: 'SHIPPING_PRICE_CHANGED',
@@ -1043,7 +1092,10 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
     }
   }
   if (value.shipping !== undefined) {
-    const method = shippingMethods[value.shipping.method];
+    const method = shippingMethodFor(
+      value.shipping.method,
+      state.products.some((product) => product.sourceGroupId !== undefined),
+    );
     const shipping = {
       label: method.label,
       method: value.shipping.method,
@@ -1237,23 +1289,36 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           (!storefront || (record.active && record.published !== false)) &&
           (view.productId === undefined || record.id === view.productId) &&
           (view.slug === undefined || record.slug === view.slug) &&
-          (view.categoryId === undefined || record.categoryId === view.categoryId || record.categoryPathIds?.includes(view.categoryId)) &&
-          (view.search === undefined || `${record.name} ${record.sku} ${record.variants?.map((variant) => `${variant.sku} ${variant.name}`).join(' ') ?? ''}`.toLocaleLowerCase('cs').includes(view.search.toLocaleLowerCase('cs'))) &&
+          (view.categoryId === undefined ||
+            record.categoryId === view.categoryId ||
+            record.categoryPathIds?.includes(view.categoryId)) &&
+          (view.search === undefined ||
+            `${record.name} ${record.sku} ${record.variants?.map((variant) => `${variant.sku} ${variant.name}`).join(' ') ?? ''}`
+              .toLocaleLowerCase('cs')
+              .includes(view.search.toLocaleLowerCase('cs'))) &&
           (view.active === undefined || record.active === view.active) &&
           (view.category === undefined || record.category === view.category) &&
           (view.lowStockOnly !== true || record.lowStock),
       );
-      const filteredProducts = matchingProducts.slice(view.offset ?? 0, view.limit === undefined ? undefined : (view.offset ?? 0) + view.limit).map((product) => {
-        if (view.summary !== true) {
-          if (!storefront) return product;
-          const { variants: _rawVariants, ...publicProduct } = product;
-          return { ...publicProduct, priceHistory: [], ...(product.variantRecords === undefined ? {} : {
-            variantRecords: product.variantRecords.map((variant) => ({ ...variant, priceHistory: [] })),
-          }) };
-        }
-        const { variants: _variants, variantRecords: _records, ...summary } = product;
-        return { ...summary, priceHistory: [] };
-      });
+      const filteredProducts = matchingProducts
+        .slice(view.offset ?? 0, view.limit === undefined ? undefined : (view.offset ?? 0) + view.limit)
+        .map((product) => {
+          if (view.summary !== true) {
+            if (!storefront) return product;
+            const { variants: _rawVariants, ...publicProduct } = product;
+            return {
+              ...publicProduct,
+              priceHistory: [],
+              ...(product.variantRecords === undefined
+                ? {}
+                : {
+                    variantRecords: product.variantRecords.map((variant) => ({ ...variant, priceHistory: [] })),
+                  }),
+            };
+          }
+          const { variants: _variants, variantRecords: _records, ...summary } = product;
+          return { ...summary, priceHistory: [] };
+        });
       const filteredMovements = storefront
         ? []
         : movements.filter((movement) => view.productId === undefined || movement.productId === view.productId);
