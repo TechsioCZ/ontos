@@ -14,7 +14,8 @@ import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
-import { getCatalog } from "@/ontos/catalog-server";
+import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
+import { isOntos } from "@/ontos/config";
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
@@ -25,28 +26,27 @@ const isQuantityPricingCopy = (paragraph: string) =>
   /množstevních slev|snížená cena|snížení ceny/i.test(paragraph);
 
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
-  const {
-    getCategoryById,
-    getCategoryTrail,
-    getProductBySlug,
-    getRecommendedProducts,
-    toProductSummary,
-  } = await getCatalog();
   const { slug } = await params;
+  const { getProductBySlug } = isOntos()
+    ? (await getCatalogPage({ slug, pageSize: 1 })).model
+    : await getCatalog();
   const product = getProductBySlug(slug);
 
   return { title: product?.name ?? "Produkt" };
 }
 
 export default async function ProductPage({ params, searchParams }: ProductPageProps) {
+  const ontos = isOntos();
+  const { slug } = await params;
+  // Default snapshot = OntOS homepage selection (ontos) or Kai's full prototype catalog (mock).
+  const featuredCatalog = await getCatalog();
   const {
     getCategoryById,
     getCategoryTrail,
     getProductBySlug,
     getRecommendedProducts,
     toProductSummary,
-  } = await getCatalog();
-  const { slug } = await params;
+  } = ontos ? (await getCatalogPage({ slug, pageSize: 1 })).model : featuredCatalog;
   const { variant: requestedVariantSearch } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();
@@ -85,7 +85,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     materialMarkers.filter((marker) =>
       candidateName.toLocaleUpperCase("cs-CZ").includes(marker.toLocaleUpperCase("cs-CZ")),
     ).length;
-  const recommendations = getRecommendedProducts()
+  const recommendations = (
+    ontos ? featuredCatalog.getHomepageFeaturedProducts() : getRecommendedProducts()
+  )
     .filter(
       (candidate) =>
         candidate.id !== product.id &&

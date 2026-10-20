@@ -6,7 +6,8 @@ import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
-import { getCatalog } from "@/ontos/catalog-server";
+import { getCatalog, getCatalogPage, type CatalogModel } from "@/ontos/catalog-server";
+import { isOntos } from "@/ontos/config";
 import { getProductStockStatus } from "@/lib/product-stock";
 
 export const metadata: Metadata = { title: "Novinky a akce" };
@@ -14,7 +15,20 @@ export const metadata: Metadata = { title: "Novinky a akce" };
 const isGenericPromotionGroup = (name: string) => name.trim().toLocaleUpperCase("cs-CZ") === "AKCE";
 
 export default async function NewsPage() {
-  const { getNewProducts, getPromotionItems, toProductSummary } = await getCatalog();
+  const baseCatalog = await getCatalog();
+  // OntOS: one flagged owner page per section; the model below still filters isNew/isAction/isSale locally.
+  const flagged = async (flag: "new" | "promotion"): Promise<CatalogModel> => {
+    try {
+      return (await getCatalogPage({ flag, pageSize: 48 })).model;
+    } catch (error) {
+      console.error("[AKROS] novinky", flag, error instanceof Error ? error.message : error);
+      return baseCatalog;
+    }
+  };
+  const ontos = isOntos();
+  const { getNewProducts } = ontos ? await flagged("new") : baseCatalog;
+  const { getPromotionItems } = ontos ? await flagged("promotion") : baseCatalog;
+  const { toProductSummary } = baseCatalog;
   const promotedItems = getPromotionItems()
     .filter(({ product }) => !isGenericPromotionGroup(product.name))
     .filter(({ product, variant }) => {
