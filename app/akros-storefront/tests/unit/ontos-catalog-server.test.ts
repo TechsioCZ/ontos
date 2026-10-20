@@ -82,4 +82,37 @@ describe("OntOS catalog server reads", () => {
       "Velmi dlouhý popis kategorie",
     );
   });
+  it("maps storefront sections to owner labels and merges promotion reads", async () => {
+    vi.mocked(readRecords).mockImplementation(async (_v, _r, query) => {
+      const label = (query as { view: { storefrontCatalog: { label?: string } } }).view
+        .storefrontCatalog.label;
+      const product = (id: string) => ({
+        id,
+        slug: id,
+        name: id,
+        grossPriceMinor: 121,
+        currentPriceMinor: 100,
+        stockOnHand: 5,
+        minimumQuantity: 1,
+      });
+      return {
+        ...body,
+        products:
+          label === "action"
+            ? [product("p-action"), product("p-both")]
+            : [product("p-both"), product("p-sale")],
+      };
+    });
+    const page = await server.getCatalogPage({ flag: "promotion", pageSize: 48 });
+    const sent = vi.mocked(readRecords).mock.calls.map((call) => call[2]);
+    expect(sent).toEqual([
+      { view: { storefront: true, storefrontCatalog: { pageSize: 48, label: "action" } } },
+      { view: { storefront: true, storefrontCatalog: { pageSize: 48, label: "sale" } } },
+    ]);
+    expect(page.products.map((product) => product.id)).toEqual(["p-action", "p-both", "p-sale"]);
+    await server.getCatalogPage({ flag: "new", pageSize: 48 });
+    expect(vi.mocked(readRecords).mock.calls.at(-1)?.[2]).toEqual({
+      view: { storefront: true, storefrontCatalog: { pageSize: 48, label: "new" } },
+    });
+  });
 });

@@ -20,7 +20,9 @@ export interface CatalogQuery {
   maxMinor?: number;
   availability?: "in-stock" | "out-of-stock";
   sort?: "name" | "price-asc" | "price-desc";
-  /** Requested from backend at 23:35; the storefront also filters locally, so ignoring it is safe. */
+  /** Owner label filter (STATUS.md 23:44 contract FINAL). */
+  label?: "action" | "recommended" | "sale" | "new";
+  /** Storefront section: sent to OntOS as `label` (promotion = action + sale). Never sent as-is. */
   flag?: "new" | "promotion" | "recommended";
 }
 export type CatalogModel = ReturnType<typeof createCatalog>;
@@ -39,10 +41,12 @@ const CACHE_LIMIT = 100;
 const homeQuery: CatalogQuery = { featured: true, pageSize: 16 };
 const snapshots = new Map<string, { at: number; snapshot: CatalogSnapshot }>();
 
-/** Drop unset keys so the owner schema never sees `undefined`/"" and equal queries share a cache key. */
+/** Drop unset keys (and the storefront-only `flag`, which OntOS rejects) so equal queries share a cache key. */
 const compact = (query: CatalogQuery): CatalogQuery =>
   Object.fromEntries(
-    Object.entries(query).filter(([, value]) => value !== undefined && value !== ""),
+    Object.entries(query).filter(
+      ([key, value]) => key !== "flag" && value !== undefined && value !== "",
+    ),
   ) as CatalogQuery;
 
 async function mockSnapshot(): Promise<CatalogSnapshot> {
@@ -111,9 +115,38 @@ export const getCatalog = cache(async (query?: CatalogQuery): Promise<CatalogMod
   return createCatalog(snapshot.catalog, snapshot.categories);
 });
 
+/** OntOS has no `flag` key: map a storefront section to one or more owner `label` reads. */
+const ownerQueries = ({ flag, ...query }: CatalogQuery): CatalogQuery[] =>
+  flag === undefined
+    ? [query]
+    : flag === "promotion"
+      ? [
+          { ...query, label: "action" },
+          { ...query, label: "sale" },
+        ]
+      : [{ ...query, label: flag }];
+
+const mergeSnapshots = (snapshots: CatalogSnapshot[]): CatalogSnapshot => {
+  const [first, ...rest] = snapshots;
+  if (rest.length === 0) return first;
+  const seen = new Set<string>();
+  const products = snapshots
+    .flatMap((snapshot) => snapshot.catalog.products)
+    .filter((product) => !seen.has(product.id) && Boolean(seen.add(product.id)));
+  return {
+    ...first,
+    catalog: { ...first.catalog, products },
+    total: products.length,
+    page: 1,
+    pageSize: products.length,
+  };
+};
+
 /** One owner page (category, search, slug, flag). Use only when `isOntos()`; mock pages keep Kai's code. */
 export async function getCatalogPage(query: CatalogQuery): Promise<CatalogPage> {
-  const snapshot = await getSnapshot(false, query);
+  const snapshot = mergeSnapshots(
+    await Promise.all(ownerQueries(query).map((owner) => getSnapshot(false, owner))),
+  );
   return {
     snapshot,
     model: createCatalog(snapshot.catalog, snapshot.categories),
