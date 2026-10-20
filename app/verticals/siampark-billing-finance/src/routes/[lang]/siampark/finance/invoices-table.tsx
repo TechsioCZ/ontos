@@ -96,7 +96,7 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
           </span>
         );
       },
-      header: t(`${ns}.columns.customer`),
+      header: 'Odběratel / dodavatel',
       id: 'customer',
       meta: { width: 200 },
     },

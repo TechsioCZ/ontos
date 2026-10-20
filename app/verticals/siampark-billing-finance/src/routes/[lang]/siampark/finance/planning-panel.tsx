@@ -38,7 +38,7 @@ import { BUDGET_CATEGORIES } from './incoming-invoice-dialog.tsx';
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 const wholeKc = (minor: number) => formatMoney(Math.round(minor / 100) * 100);
 const axisKc = (value: number) =>
-  `${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 0, notation: 'compact' }).format(value)} Kč`;
+  `${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: Math.abs(value) >= 1_000_000 ? 3 : 0, notation: 'compact' }).format(value)} Kč`;
 const percent = (value: number) =>
   `${value > 0 ? '+' : ''}${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 1 }).format(value * 100)} %`;
 
@@ -64,7 +64,12 @@ const newDraft = (): BudgetDraft => ({
 const PlanActualBars = ({
   rows,
 }: {
-  readonly rows: readonly { readonly actual: number; readonly label: string; readonly planned: number }[];
+  readonly rows: readonly {
+    readonly actual: number;
+    readonly label: string;
+    readonly over: boolean;
+    readonly planned: number;
+  }[];
 }) => {
   const max = Math.max(1, ...rows.flatMap((row) => [row.actual, row.planned]));
   return (
@@ -75,7 +80,7 @@ const PlanActualBars = ({
           <span className="flex flex-col gap-50">
             <span className="flex items-center gap-100">
               <span
-                className="h-3 rounded-sm bg-(--color-chart-series-2)"
+                className="h-3 rounded-sm bg-fg-secondary opacity-35"
                 style={{ width: `${Math.max(1, (row.planned / max) * 100)}%` }}
               />
               <span className="whitespace-nowrap text-fg-secondary text-xs tabular-nums">
@@ -84,7 +89,7 @@ const PlanActualBars = ({
             </span>
             <span className="flex items-center gap-100">
               <span
-                className={`h-3 rounded-sm ${row.actual > row.planned ? 'bg-(--color-fg-danger,#d14343)' : 'bg-(--color-chart-series-1)'}`}
+                className={`h-3 rounded-sm ${row.over ? 'bg-danger' : 'bg-success'}`}
                 style={{ width: `${Math.max(1, (row.actual / max) * 100)}%` }}
               />
               <span className="whitespace-nowrap text-xs tabular-nums">skutečnost {wholeKc(row.actual)}</span>
@@ -221,7 +226,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         <StatCard label="Uhrazeno v období (netto)" value={wholeKc(totals.paid)} />
         <StatCard label="Očekávané doklady (netto)" value={wholeKc(totals.expected)} />
         <StatCard
-          label={`Odhad zůstatku ke konci ${last === undefined ? '' : monthLabel(last.month)}`}
+          label={`Odhad zůstatku – ${last === undefined ? '' : monthLabel(last.month)}`}
           value={
             last?.forecastBalanceMinor === undefined ? 'bez počátečního stavu' : wholeKc(last.forecastBalanceMinor)
           }
@@ -383,6 +388,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
               rows={budgetRows.map(({ actual, budget }) => ({
                 actual,
                 label: `${budget.category} (${budget.kind === 'COST' ? 'výdaj' : 'příjem'})`,
+                over: budget.kind === 'COST' ? actual > budget.plannedMinor : actual < budget.plannedMinor,
                 planned: budget.plannedMinor,
               }))}
             />
@@ -424,7 +430,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                           </span>
                         </span>
                       </Table.Cell>
-                      <Table.Cell align="end" className={`tabular-nums ${over ? 'text-fg-danger' : ''}`}>
+                      <Table.Cell align="end" className={`tabular-nums ${over ? 'text-danger' : ''}`}>
                         {formatMoney(variance.differenceMinor)}
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
