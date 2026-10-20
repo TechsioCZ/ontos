@@ -67,7 +67,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
               ariaDescription={`Počet objednávek od ${firstMonth} do ${lastMonth}. Přesná čísla včetně stavů jsou v datové tabulce pod grafy.`}
               ariaLabel="Počet objednávek po měsících"
               data={countData}
-              formatValue={(value) => String(Math.round(value))}
+              formatValue={(value) => (Number.isInteger(value) ? formatNumber(value) : '')}
               height={260}
               type="bar"
               x="month"
