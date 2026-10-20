@@ -74,6 +74,32 @@ try {
   });
   const card = page.locator(".akros-product-card").first();
   assert.match(await style(card, "boxShadow"), /0px 2px 6px/);
+  const favorite = card.locator(".akros-product-card__favorite");
+  await probe(
+    favorite,
+    { "--color-button-fg-secondary-borderless": "rgb(12, 34, 56)" },
+    async () => {
+      assert.equal(await style(favorite, "color"), "rgb(12, 34, 56)");
+    },
+  );
+  const stockRow = page
+    .locator(".akros-product-card__stock-row")
+    .filter({ has: page.locator("span") })
+    .first();
+  const variantBadge = stockRow.locator("span");
+  await probe(
+    stockRow,
+    {
+      "--color-badge-bg-secondary": "rgb(12, 34, 56)",
+      "--color-badge-border-secondary": "rgb(23, 45, 67)",
+      "--color-badge-fg-secondary": "rgb(234, 245, 250)",
+    },
+    async () => {
+      assert.equal(await style(variantBadge, "backgroundColor"), "rgb(12, 34, 56)");
+      assert.equal(await style(variantBadge, "borderColor"), "rgb(23, 45, 67)");
+      assert.equal(await style(variantBadge, "color"), "rgb(234, 245, 250)");
+    },
+  );
 
   const trigger = page.locator(".akros-header__cart-trigger");
   await probe(trigger, { "--color-button-bg-primary-base": "rgb(12, 34, 56)" }, async () => {
@@ -125,7 +151,9 @@ try {
     },
   );
 
-  console.log("UI-kit theme checks passed: carousel, product CTA, mini-cart and checkout tokens.");
+  console.log(
+    "UI-kit theme checks passed: carousel, product cards, mini-cart and checkout tokens.",
+  );
 } finally {
   await browser.close();
 }

@@ -33,6 +33,16 @@
   --font-weight-button: var(--font-weight-bold);
 }
 
+.akros-product-card__favorite {
+  --color-button-fg-secondary-borderless: var(--color-neutral-400);
+}
+
+.akros-product-card__stock-row {
+  --color-badge-bg-secondary: var(--color-base-dark);
+  --color-badge-border-secondary: var(--color-base-dark);
+  --color-badge-fg-secondary: var(--color-base-light);
+}
+
 @media (max-width: 760px) {
   :root {
     --text-product-card-price-size: var(--text-base);

@@ -81,13 +81,13 @@ export function ProductGrid({
               <div className="relative">
                 <NextLink
                   aria-label={product.name}
-                  className="akros-catalog-product-card__image-link flex items-center justify-center"
+                  className="akros-catalog-product-card__image-link"
                   href={detailHref}
                 >
                   <ProductCard.Image
                     as={Image}
                     alt={product.imageAlt}
-                    className="akros-catalog-product-card__image object-contain"
+                    className="akros-catalog-product-card__image"
                     height={480}
                     loading={index < 4 ? "eager" : "lazy"}
                     sizes={imageSizes}
@@ -127,7 +127,7 @@ export function ProductGrid({
                 <LinkButton
                   aria-label="Zobrazit oblíbené produkty"
                   as={NextLink}
-                  className="absolute top-0 right-0 size-11 rounded-full p-0 text-(--color-neutral-400)"
+                  className="akros-product-card__favorite absolute top-0 right-0 size-11 rounded-full p-0"
                   href="/oblibene"
                   icon="icon-[mdi--heart-outline]"
                   iconSize="lg"
@@ -151,14 +151,7 @@ export function ProductGrid({
                   {stockLabels[product.stock.status]}
                 </ProductCard.Stock>
                 {product.hasVariants && (
-                  <Badge
-                    bgColor="var(--color-base-dark)"
-                    borderColor="var(--color-base-dark)"
-                    className="whitespace-nowrap"
-                    fgColor="var(--color-base-light)"
-                    size="sm"
-                    variant="dynamic"
-                  >
+                  <Badge className="whitespace-nowrap" size="sm" variant="secondary">
                     Více variant
                   </Badge>
                 )}
