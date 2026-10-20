@@ -552,14 +552,19 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
     expect(readdirSync(directory).some((name) => name.startsWith(proofDirectoryPrefix))).toBe(false);
     const shellFields = readFileSync(shellFile, 'utf-8').trim().split('\n');
     const partyFields = readFileSync(partyFile, 'utf-8').trim().split('\n');
-    const existingKeys = [
-      'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE',
-      'SPICEDB_ENDPOINT',
-      'SPICEDB_PRESHARED_KEY',
-    ];
-    expect(partyFields.length).toBe(3);
+    const hyperdriveLogins = {
+      CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_GATEWAY_ISSUER_HYPERDRIVE: 'shell_gateway_issuer',
+      CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE: 'ontos_runtime',
+      CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_PARTY_REGISTRY_HYPERDRIVE: 'party_registry_runtime',
+    };
+    const existingKeys = [...Object.keys(hyperdriveLogins), 'SPICEDB_ENDPOINT', 'SPICEDB_PRESHARED_KEY'];
+    expect(partyFields.length).toBe(5);
     expect(partyFields.map((line) => line.split('=', 1)[0])).toEqual(expect.arrayContaining(existingKeys));
-    expect(shellFields.length).toBe(5);
+    for (const [key, login] of Object.entries(hyperdriveLogins)) {
+      const url = partyFields.find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1);
+      expect(new URL(url ?? '').username).toBe(login);
+    }
+    expect(shellFields.length).toBe(7);
     expect(shellFields.map((line) => line.split('=', 1)[0])).toEqual(
       expect.arrayContaining([...existingKeys, 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET']),
     );
