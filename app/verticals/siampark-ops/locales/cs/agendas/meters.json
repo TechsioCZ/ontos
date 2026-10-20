@@ -1,6 +1,7 @@
 {
   "title": "Měřidla a energie",
   "description": "Měřidla médií u nemovitostí a jednotek, odečty, spotřeba a náklady za období. Spotřeba se počítá jen ze dvou navazujících odečtů stejného měřidla ve stejné jednotce.",
+  "operationalDescription": "Provozní odečty a spotřeba měřidel. Můžete zapsat odečet; náklady, smlouvy, fotografie a interní poznámky zůstávají chráněné.",
   "fields": {
     "serialNumber": "Výrobní číslo",
     "medium": "Médium",
@@ -66,7 +67,10 @@
     "anomaly": "Nárůst {{change}}",
     "normal": "V normě",
     "retired": "Vyřazené",
-    "days": "za {{days}} dní",
+    "days_one": "za {{count}} den",
+    "days_few": "za {{count}} dny",
+    "days_many": "za {{count}} dne",
+    "days_other": "za {{count}} dní",
     "perDay": "{{value}} / den",
     "anomalyPeriod": "období do {{date}}"
   },
@@ -156,6 +160,7 @@
   },
   "byUnit": {
     "title": "Spotřeba a náklady podle místa",
+    "operationalTitle": "Spotřeba podle místa",
     "description": "Měsíční spotřeba měřidel vybrané nemovitosti nebo jednotky. Média a jednotky měření se nikdy nesčítají dohromady.",
     "place": "Místo",
     "allPlaces": "Celý areál",

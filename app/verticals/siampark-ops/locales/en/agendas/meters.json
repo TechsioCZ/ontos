@@ -1,6 +1,7 @@
 {
   "title": "Meters and energy",
   "description": "Utility meters of properties and units, readings, consumption and period costs. Consumption is only computed from two consecutive readings of the same meter in the same unit.",
+  "operationalDescription": "Operational meter readings and consumption. You may record readings; costs, contracts, photos and internal notes remain protected.",
   "fields": {
     "serialNumber": "Serial number",
     "medium": "Medium",
@@ -66,7 +67,8 @@
     "anomaly": "Up {{change}}",
     "normal": "Normal",
     "retired": "Retired",
-    "days": "over {{days}} days",
+    "days_one": "over {{count}} day",
+    "days_other": "over {{count}} days",
     "perDay": "{{value}} / day",
     "anomalyPeriod": "period to {{date}}"
   },
@@ -156,6 +158,7 @@
   },
   "byUnit": {
     "title": "Consumption and costs by location",
+    "operationalTitle": "Consumption by location",
     "description": "Monthly consumption of the meters of the selected property or unit. Media and units of measure are never added together.",
     "place": "Location",
     "allPlaces": "Whole site",

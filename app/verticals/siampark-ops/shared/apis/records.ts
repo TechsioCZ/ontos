@@ -59,7 +59,13 @@ export const RecordsResponseSchema = Schema.Struct({
     agenda: Schema.optionalKey(envelope(AgendaStateSchema)),
     assets: Schema.optionalKey(envelope(AssetsStateSchema)),
     documents: Schema.optionalKey(envelope(DocumentsStateSchema)),
-    meters: Schema.optionalKey(envelope(MetersStateSchema)),
+    meters: Schema.optionalKey(
+      Schema.Struct({
+        ...envelope(MetersStateSchema).fields,
+        canReadFinancial: Schema.Boolean,
+        canManage: Schema.Boolean,
+      }),
+    ),
     purchasing: Schema.optionalKey(envelope(PurchasingStateSchema)),
     security: Schema.optionalKey(envelope(SecurityStateSchema)),
   }),

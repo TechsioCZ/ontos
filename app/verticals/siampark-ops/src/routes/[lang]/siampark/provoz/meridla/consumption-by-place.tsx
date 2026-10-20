@@ -15,9 +15,11 @@ import { SITE, formatQuantity, metersAt, monthLabel, monthLongLabel, placeOption
 const k = 'siampark-ops.meters';
 
 export const ConsumptionByPlace = ({
+  canReadFinancial,
   language,
   meters,
 }: {
+  readonly canReadFinancial: boolean;
   readonly language: string;
   readonly meters: readonly Meter[];
 }) => {
@@ -49,7 +51,10 @@ export const ConsumptionByPlace = ({
               value={[place]}
             />
           </div>
-          <fieldset aria-label={t(`${k}.byUnit.medium`)} className="inline-flex rounded-button-sm border border-border-primary p-50">
+          <fieldset
+            aria-label={t(`${k}.byUnit.medium`)}
+            className="inline-flex rounded-button-sm border border-border-primary p-50"
+          >
             {media.map((entry) => (
               <Button
                 aria-pressed={entry === medium}
@@ -65,7 +70,7 @@ export const ConsumptionByPlace = ({
           </fieldset>
         </div>
       }
-      title={t(`${k}.byUnit.title`)}
+      title={t(`${k}.byUnit.${canReadFinancial ? 'title' : 'operationalTitle'}`)}
     >
       <p className="text-fg-secondary text-sm">{t(`${k}.byUnit.description`)}</p>
       {medium === undefined || unit === undefined || series.length === 0 ? (
@@ -103,7 +108,7 @@ export const ConsumptionByPlace = ({
                 <Table.Row>
                   <Table.ColumnHeader>{t(`${k}.byUnit.month`)}</Table.ColumnHeader>
                   <Table.ColumnHeader align="end">{t(`${k}.byUnit.consumption`)}</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">{t(`${k}.byUnit.cost`)}</Table.ColumnHeader>
+                  {canReadFinancial && <Table.ColumnHeader align="end">{t(`${k}.byUnit.cost`)}</Table.ColumnHeader>}
                 </Table.Row>
               </Table.Header>
               <Table.Body>
@@ -122,18 +127,22 @@ export const ConsumptionByPlace = ({
                     <Table.Cell align="end" className="tabular-nums">
                       {formatQuantity(point.consumption, point.unit)}
                     </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
-                      <div className="flex flex-col items-end">
-                        <span>
-                          {point.costMinor === undefined ? t('siampark-ops.common.noData') : formatMoney(point.costMinor)}
-                        </span>
-                        {point.costMinor !== undefined && point.periodsWithoutCost > 0 && (
-                          <span className="text-fg-secondary text-xs">
-                            {t(`${k}.byUnit.costPartial`, { count: point.periodsWithoutCost })}
+                    {canReadFinancial && (
+                      <Table.Cell align="end" className="tabular-nums">
+                        <div className="flex flex-col items-end">
+                          <span>
+                            {point.costMinor === undefined
+                              ? t('siampark-ops.common.noData')
+                              : formatMoney(point.costMinor)}
                           </span>
-                        )}
-                      </div>
-                    </Table.Cell>
+                          {point.costMinor !== undefined && point.periodsWithoutCost > 0 && (
+                            <span className="text-fg-secondary text-xs">
+                              {t(`${k}.byUnit.costPartial`, { count: point.periodsWithoutCost })}
+                            </span>
+                          )}
+                        </div>
+                      </Table.Cell>
+                    )}
                   </Table.Row>
                 ))}
               </Table.Body>

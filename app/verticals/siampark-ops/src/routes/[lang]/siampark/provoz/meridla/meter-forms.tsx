@@ -320,6 +320,7 @@ const previewOf = (meter: Meter, date: string, value: number) => {
 };
 
 export const ReadingForm = ({
+  canRecordCosts,
   canUploadPhoto,
   meters,
   fixedMeterId,
@@ -327,6 +328,7 @@ export const ReadingForm = ({
   onSaved,
   run,
 }: {
+  readonly canRecordCosts: boolean;
   readonly canUploadPhoto: boolean;
   readonly meters: readonly Meter[];
   readonly fixedMeterId?: string;
@@ -396,7 +398,7 @@ export const ReadingForm = ({
       date,
       meterId: meter.id,
       value: parsed,
-      ...(costValue === undefined ? {} : { costMinor: Math.round(costValue * 100) }),
+      ...(!canRecordCosts || costValue === undefined ? {} : { costMinor: Math.round(costValue * 100) }),
       ...(stored === undefined ? {} : { photo: stored }),
       ...optional('readBy', readBy),
       ...optional('note', note),
@@ -504,16 +506,18 @@ export const ReadingForm = ({
           onChange={(event) => setReadBy(event.target.value)}
           value={readBy}
         />
-        <FormInput
-          autoComplete="off"
-          helpText={t(`${k}.reading.costHelp`)}
-          id="reading-cost"
-          inputMode="decimal"
-          label={t(`${k}.reading.cost`)}
-          onChange={(event) => setCost(event.target.value)}
-          validateStatus={cost.trim() !== '' && parseDecimal(cost) === undefined ? 'error' : 'default'}
-          value={cost}
-        />
+        {canRecordCosts && (
+          <FormInput
+            autoComplete="off"
+            helpText={t(`${k}.reading.costHelp`)}
+            id="reading-cost"
+            inputMode="decimal"
+            label={t(`${k}.reading.cost`)}
+            onChange={(event) => setCost(event.target.value)}
+            validateStatus={cost.trim() !== '' && parseDecimal(cost) === undefined ? 'error' : 'default'}
+            value={cost}
+          />
+        )}
       </div>
       <FormTextarea
         id="reading-note"

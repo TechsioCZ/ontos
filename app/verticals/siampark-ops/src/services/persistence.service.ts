@@ -18,6 +18,8 @@ import type { FileUploadCommand } from '../../shared/agendas.ts';
 import type { RecordsRequest, RecordsResponse, StoredFile } from '../../shared/apis/records.ts';
 import { agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
 import type { AgendaState } from '../../shared/domain/agenda.ts';
+import { canApplyMeterCommand, meterAccess, operationalMetersState } from '../../shared/domain/meters-access.ts';
+import type { MetersState } from '../../shared/domain/meters.ts';
 import { FileIdSchema, entityIdOf, mintId, opsConflict } from '../../shared/domain/common.ts';
 import type { AgendaId, AgendaSensitivity } from '../../shared/domain/common.ts';
 import { agendaStates, files } from '../database/schema.ts';
@@ -70,7 +72,9 @@ interface Grants {
 
 /** Access matrix: restricted agendas need *_all; operational agendas accept *_operational too. */
 export const canReadAgenda = (grants: Grants, sensitivity: AgendaSensitivity) =>
-  grants.readAll || grants.writeAll || (sensitivity === 'operational' && (grants.readOperational || grants.writeOperational));
+  grants.readAll ||
+  grants.writeAll ||
+  (sensitivity === 'operational' && (grants.readOperational || grants.writeOperational));
 export const canWriteAgenda = (grants: Grants, sensitivity: AgendaSensitivity) =>
   grants.writeAll || (sensitivity === 'operational' && grants.writeOperational);
 
@@ -272,7 +276,15 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
         return yield* opsConflict(`No agenda handles command ${command._tag}`);
       }
       const granted = yield* grants();
-      if (!canWriteAgenda(granted, definition.sensitivity)) {
+      const meterCommand =
+        command._tag === 'MeterCreate' ||
+        command._tag === 'MeterUpdate' ||
+        command._tag === 'MeterReadingRecord' ||
+        command._tag === 'MeterReadingVoid';
+      const mayApply = meterCommand
+        ? canApplyMeterCommand(granted, command)
+        : canWriteAgenda(granted, definition.sensitivity);
+      if (!mayApply) {
         return yield* permissionDenied(`Changes in agenda ${definition.id} require write permission`);
       }
       const snapshot = yield* load(definition.id);
@@ -289,9 +301,12 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
     const records = Effect.fn('SiamparkOps.records')(function* records(request: RecordsRequest) {
       const granted = yield* grants();
       const requested = request.agendas ?? agendaIds;
+      const meters = meterAccess(granted);
       const accessList = agendaIds.map((agenda) => {
         const { sensitivity } = agendaDefinitions[agenda];
-        return { agenda, canRead: canReadAgenda(granted, sensitivity), canWrite: canWriteAgenda(granted, sensitivity) };
+        return agenda === 'meters'
+          ? { agenda, canRead: meters.canRead, canWrite: meters.canWrite }
+          : { agenda, canRead: canReadAgenda(granted, sensitivity), canWrite: canWriteAgenda(granted, sensitivity) };
       });
       const agendas: Record<string, unknown> = {};
       for (const entry of accessList) {
@@ -301,16 +316,21 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
         const snapshot = yield* load(entry.agenda);
         agendas[entry.agenda] = {
           canWrite: entry.canWrite,
+          ...(entry.agenda === 'meters'
+            ? { canReadFinancial: meters.canReadFinancial, canManage: meters.canManage }
+            : {}),
           revision: snapshot.revision,
-          state: entry.agenda === 'agenda'
-            ? agendaStateForPrincipal(snapshot.state as AgendaState, actor as RecordsResponse['actorPrincipalRef'])
-            : snapshot.state,
+          state:
+            entry.agenda === 'agenda'
+              ? agendaStateForPrincipal(snapshot.state as AgendaState, actor as RecordsResponse['actorPrincipalRef'])
+              : entry.agenda === 'meters' && !meters.canReadFinancial
+                ? operationalMetersState(snapshot.state as MetersState)
+                : snapshot.state,
           updatedAt: snapshot.updatedAt,
         };
       }
       const documentsReadable = accessList.find((entry) => entry.agenda === 'documents')?.canRead === true;
-      const file =
-        request.fileId !== undefined && documentsReadable ? yield* readFile(request.fileId) : undefined;
+      const file = request.fileId !== undefined && documentsReadable ? yield* readFile(request.fileId) : undefined;
       // The read definition validates the result against RecordsResponseSchema (agenda states are typed values).
       const response: RecordsResponse = {
         access: accessList,

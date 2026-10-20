@@ -39,6 +39,8 @@ export const MeterDetail = ({
   canReadPhotos,
   canUploadPhotos,
   canWrite,
+  canManage,
+  canReadFinancial,
   language,
   meter,
   meters,
@@ -50,6 +52,8 @@ export const MeterDetail = ({
   readonly canReadPhotos: boolean;
   readonly canUploadPhotos: boolean;
   readonly canWrite: boolean;
+  readonly canManage: boolean;
+  readonly canReadFinancial: boolean;
   readonly language: string;
   readonly meter: Meter;
   readonly meters: readonly Meter[];
@@ -126,7 +130,7 @@ export const MeterDetail = ({
     }
   };
 
-  if (mode === 'edit') {
+  if (mode === 'edit' && canManage) {
     return (
       <MeterForm
         meter={meter}
@@ -139,9 +143,10 @@ export const MeterDetail = ({
       />
     );
   }
-  if (mode === 'reading') {
+  if (mode === 'reading' && canWrite) {
     return (
       <ReadingForm
+        canRecordCosts={canManage}
         canUploadPhoto={canUploadPhotos}
         fixedMeterId={meter.id}
         meters={meters}
@@ -175,9 +180,11 @@ export const MeterDetail = ({
         <span className="flex-1" />
         {canWrite && (
           <>
-            <Button onClick={() => onModeChange('edit')} size="sm" theme="outlined" variant="secondary">
-              {t(`${k}.actions.edit`)}
-            </Button>
+            {canManage && (
+              <Button onClick={() => onModeChange('edit')} size="sm" theme="outlined" variant="secondary">
+                {t(`${k}.actions.edit`)}
+              </Button>
+            )}
             {meter.status !== 'RETIRED' && (
               <Button onClick={() => onModeChange('reading')} size="sm" variant="primary">
                 {t(`${k}.actions.recordReading`)}
@@ -295,7 +302,7 @@ export const MeterDetail = ({
                             )}
                           </span>
                           <span className="text-fg-secondary text-xs">
-                            {t(`${k}.row.days`, { days: row.days ?? 0 })}
+                            {t(`${k}.row.days`, { count: row.days ?? 0 })}
                             {row.dailyRate === undefined
                               ? ''
                               : ` · ${t(`${k}.row.perDay`, { value: formatRate(row.dailyRate, reading.unit) })}`}
@@ -303,15 +310,17 @@ export const MeterDetail = ({
                         </>
                       )}
                     </div>
-                    <div className="flex flex-col items-end tabular-nums">
-                      <span className="text-fg-secondary text-xs">{t(`${k}.detail.cost`)}</span>
-                      {reading.costMinor === undefined ? (
-                        <span className="text-fg-secondary text-sm">{t('siampark-ops.common.noData')}</span>
-                      ) : (
-                        <span className="text-sm">{formatMoney(reading.costMinor)}</span>
-                      )}
-                    </div>
-                    {canWrite && voided === undefined && (
+                    {canReadFinancial && (
+                      <div className="flex flex-col items-end tabular-nums">
+                        <span className="text-fg-secondary text-xs">{t(`${k}.detail.cost`)}</span>
+                        {reading.costMinor === undefined ? (
+                          <span className="text-fg-secondary text-sm">{t('siampark-ops.common.noData')}</span>
+                        ) : (
+                          <span className="text-sm">{formatMoney(reading.costMinor)}</span>
+                        )}
+                      </div>
+                    )}
+                    {canManage && voided === undefined && (
                       <Button
                         onClick={() => {
                           setVoiding(reading);
@@ -408,10 +417,14 @@ export const MeterDetail = ({
                 ),
             },
             { label: t(`${k}.fields.supplyPoint`), value: optionalText(meter.supplyPoint) },
-            { label: t(`${k}.fields.supplier`), value: optionalText(meter.supplier) },
-            { label: t(`${k}.fields.consumer`), value: optionalText(meter.consumer) },
-            { label: t(`${k}.fields.contract`), value: optionalText(meter.contract) },
-            { label: t(`${k}.fields.note`), value: optionalText(meter.note) },
+            ...(canReadFinancial
+              ? [
+                  { label: t(`${k}.fields.supplier`), value: optionalText(meter.supplier) },
+                  { label: t(`${k}.fields.consumer`), value: optionalText(meter.consumer) },
+                  { label: t(`${k}.fields.contract`), value: optionalText(meter.contract) },
+                  { label: t(`${k}.fields.note`), value: optionalText(meter.note) },
+                ]
+              : []),
             {
               label: t('siampark-ops.common.createdAt'),
               value: `${formatDateTime(iso(meter.createdAt))} · ${who(meter.createdBy)}`,

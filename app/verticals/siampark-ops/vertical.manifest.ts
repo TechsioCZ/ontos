@@ -144,7 +144,8 @@ export const siamparkOpsManifest = defineOntosModuleManifest({
           contributionKey: 'demo.siampark-ops.navigation.meters',
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
+            // Governed records expose only the operational projection without read_all.
+            authorization: moduleAccess,
             entrypointKey: pageKey('meters'),
             moduleKey,
             role: 'page',
@@ -247,7 +248,8 @@ export const siamparkOpsManifest = defineOntosModuleManifest({
           contributionKey: pageKey('meters'),
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
+            // Governed records expose only the operational projection without read_all.
+            authorization: moduleAccess,
             entrypointKey: pageKey('meters'),
             moduleKey,
             role: 'page',

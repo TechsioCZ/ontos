@@ -98,6 +98,8 @@ const MetersView = () => {
   const envelope = ops.data?.agendas.meters;
   const meters = envelope?.state.meters ?? [];
   const canWrite = envelope?.canWrite === true;
+  const canReadFinancial = envelope?.canReadFinancial === true;
+  const canManage = envelope?.canManage === true;
   const actor = ops.data?.actorPrincipalRef;
   const fileAccess = ops.data?.access.find((entry) => entry.agenda === 'documents');
 
@@ -210,7 +212,7 @@ const MetersView = () => {
         return (
           <div className="flex flex-col tabular-nums">
             <strong>{formatQuantity(last.consumption ?? 0, last.reading.unit)}</strong>
-            <span className="text-fg-secondary text-xs">{t(`${k}.row.days`, { days: last.days ?? 0 })}</span>
+            <span className="text-fg-secondary text-xs">{t(`${k}.row.days`, { count: last.days ?? 0 })}</span>
           </div>
         );
       },
@@ -280,9 +282,11 @@ const MetersView = () => {
         actions={
           canWrite ? (
             <>
-              <Button onClick={() => setCreating(true)} theme="outlined" variant="secondary">
-                {t(`${k}.actions.newMeter`)}
-              </Button>
+              {canManage && (
+                <Button onClick={() => setCreating(true)} theme="outlined" variant="secondary">
+                  {t(`${k}.actions.newMeter`)}
+                </Button>
+              )}
               <Button onClick={() => setRecording(true)} variant="primary">
                 {t(`${k}.actions.recordReading`)}
               </Button>
@@ -293,7 +297,7 @@ const MetersView = () => {
             </Badge>
           )
         }
-        description={t(`${k}.description`)}
+        description={t(`${k}.${canReadFinancial ? 'description' : 'operationalDescription'}`)}
         title={t(`${k}.title`)}
       />
       <AgendaGate onRetry={() => void ops.reload()} readable={envelope !== undefined} status={ops.status}>
@@ -317,15 +321,17 @@ const MetersView = () => {
             label={t(`${k}.stats.anomalies`)}
             value={String(anomalies.length)}
           />
-          <StatCard
-            hint={costMissing > 0 ? t(`${k}.stats.costMissing`, { count: costMissing }) : t(`${k}.stats.costHint`)}
-            label={
-              costMonth === undefined
-                ? t(`${k}.stats.cost`, { month: '' })
-                : t(`${k}.stats.cost`, { month: monthLongLabel(costMonth, language) })
-            }
-            value={costMonth === undefined ? t('siampark-ops.common.noData') : formatMoney(costTotal)}
-          />
+          {canReadFinancial && (
+            <StatCard
+              hint={costMissing > 0 ? t(`${k}.stats.costMissing`, { count: costMissing }) : t(`${k}.stats.costHint`)}
+              label={
+                costMonth === undefined
+                  ? t(`${k}.stats.cost`, { month: '' })
+                  : t(`${k}.stats.cost`, { month: monthLongLabel(costMonth, language) })
+              }
+              value={costMonth === undefined ? t('siampark-ops.common.noData') : formatMoney(costTotal)}
+            />
+          )}
         </StatRow>
 
         <div className="flex flex-wrap items-center gap-150">
@@ -392,7 +398,9 @@ const MetersView = () => {
           />
         )}
 
-        {meters.length > 0 && <ConsumptionByPlace language={language} meters={meters} />}
+        {meters.length > 0 && (
+          <ConsumptionByPlace canReadFinancial={canReadFinancial} language={language} meters={meters} />
+        )}
       </AgendaGate>
 
       <SidePanel
@@ -423,6 +431,8 @@ const MetersView = () => {
               canReadPhotos={fileAccess?.canRead === true}
               canUploadPhotos={fileAccess?.canWrite === true}
               canWrite={canWrite}
+              canManage={canManage}
+              canReadFinancial={canReadFinancial}
               language={language}
               meter={detail}
               meters={meters}
@@ -471,6 +481,7 @@ const MetersView = () => {
         {recording && (
           <div className="py-200">
             <ReadingForm
+              canRecordCosts={canManage}
               canUploadPhoto={fileAccess?.canWrite === true}
               meters={meters}
               onCancel={() => setRecording(false)}
