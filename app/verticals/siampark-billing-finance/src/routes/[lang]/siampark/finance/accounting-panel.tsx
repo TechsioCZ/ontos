@@ -442,7 +442,9 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                         onChange={() => toggle(invoice.ref.resourceId)}
                       />
                     </Table.Cell>
-                    <Table.Cell className="font-medium">{invoice.number ?? invoice.documentNumber}</Table.Cell>
+                    <Table.Cell className="whitespace-nowrap font-medium">
+                      {invoice.number ?? invoice.documentNumber}
+                    </Table.Cell>
                     <Table.Cell>{invoice.direction === 'OUTGOING' ? 'Vydaná' : 'Přijatá'}</Table.Cell>
                     <Table.Cell>{nameOf(invoice)}</Table.Cell>
                     <Table.Cell>{formatDate(invoice.issueDate)}</Table.Cell>
@@ -493,7 +495,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                   <Table.Row key={entry.id}>
                     <Table.Cell>
                       <span className="flex flex-col">
-                        <span className="font-medium">{entry.batchNumber}</span>
+                        <span className="whitespace-nowrap font-medium">{entry.batchNumber}</span>
                         <span className="text-fg-secondary text-xs">
                           verze {entry.version} ·{' '}
                           {entry.format === 'POHODA_XML' ? 'STORMWARE dataPack 2.0' : `schéma ${entry.schemaVersion}`}
