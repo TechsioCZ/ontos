@@ -196,151 +196,158 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
             variantu, pokud se prodává například ve více gramážích nebo provedeních.
           </p>
         ) : (
-          <Table size="sm" variant="line">
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>Název a vlastnosti</Table.ColumnHeader>
-                <Table.ColumnHeader>SKU</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Cena bez DPH (Kč)</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">S DPH</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Sklad</Table.ColumnHeader>
-                <Table.ColumnHeader>Dostupnost</Table.ColumnHeader>
-                <Table.ColumnHeader>Aktivní</Table.ColumnHeader>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {visibleDrafts.slice(currentPage * 20, (currentPage + 1) * 20).map((draft) => {
-                const index = drafts.indexOf(draft);
-                const record = draft.id === undefined ? undefined : records.get(draft.id);
-                const price = parseCzk(draft.priceText);
-                const error = errors[index];
-                return (
-                  <Table.Row key={draft.key}>
-                    <Table.Cell>
-                      <div className="flex min-w-48 flex-col gap-50">
-                        <FormInput
-                          disabled={!canWrite}
-                          id={`variant-label-${draft.key}`}
-                          label={<span className="sr-only">Název varianty</span>}
-                          name={`variant-label-${draft.key}`}
-                          onChange={(event) => patchDraft(draft.key, { name: event.target.value })}
-                          placeholder={
-                            product.sourceGroupId === undefined ? 'např. 250 g / zrnková' : 'např. M6 × 20 / A2'
-                          }
-                          size="sm"
-                          value={draft.name}
-                          {...(submitted && error?.name === true
-                            ? { helpText: 'Zadejte název', validateStatus: 'error' as const }
-                            : {})}
-                        />
-                        <FormInput
-                          disabled={!canWrite}
-                          id={`variant-attrs-${draft.key}`}
-                          label={<span className="sr-only">Vlastnosti varianty</span>}
-                          name={`variant-attrs-${draft.key}`}
-                          onChange={(event) => patchDraft(draft.key, { attributes: event.target.value })}
-                          placeholder={
-                            product.sourceGroupId === undefined
-                              ? 'Hmotnost: 250 g; Forma: zrnková'
-                              : 'Vlastnosti varianty (nepovinné)'
-                          }
-                          size="sm"
-                          value={draft.attributes}
-                        />
-                        {record?.priceTiers !== undefined && (
-                          <div className="text-fg-secondary text-xs">
-                            <p>
-                              Minimum {record.minimumQuantity ?? 1} {record.sourceUnit ?? product.unit}
-                              {record.packageQuantity === undefined ? '' : ` · balení ${record.packageQuantity}`}
-                            </p>
-                            {record.priceTiers.map((tier) => (
-                              <p key={tier.minimumQuantity}>
-                                Od {tier.minimumQuantity} {record.sourceUnit ?? product.unit}:{' '}
-                                {formatMoney(tier.priceMinor)} s DPH · {formatMoney(tier.priceExcludingVatMinor)} bez
-                                DPH
+          <div
+            aria-label="Varianty — posuňte vodorovně pro cenu, sklad a aktivitu"
+            role="region"
+            style={{ maxWidth: '100%', overflowX: 'auto' }}
+            tabIndex={0}
+          >
+            <Table size="sm" variant="line">
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeader>Název a vlastnosti</Table.ColumnHeader>
+                  <Table.ColumnHeader>SKU</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Cena bez DPH (Kč)</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">S DPH</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Sklad</Table.ColumnHeader>
+                  <Table.ColumnHeader>Dostupnost</Table.ColumnHeader>
+                  <Table.ColumnHeader>Aktivní</Table.ColumnHeader>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {visibleDrafts.slice(currentPage * 20, (currentPage + 1) * 20).map((draft) => {
+                  const index = drafts.indexOf(draft);
+                  const record = draft.id === undefined ? undefined : records.get(draft.id);
+                  const price = parseCzk(draft.priceText);
+                  const error = errors[index];
+                  return (
+                    <Table.Row key={draft.key}>
+                      <Table.Cell>
+                        <div className="flex min-w-48 flex-col gap-50">
+                          <FormInput
+                            disabled={!canWrite}
+                            id={`variant-label-${draft.key}`}
+                            label={<span className="sr-only">Název varianty</span>}
+                            name={`variant-label-${draft.key}`}
+                            onChange={(event) => patchDraft(draft.key, { name: event.target.value })}
+                            placeholder={
+                              product.sourceGroupId === undefined ? 'např. 250 g / zrnková' : 'např. M6 × 20 / A2'
+                            }
+                            size="sm"
+                            value={draft.name}
+                            {...(submitted && error?.name === true
+                              ? { helpText: 'Zadejte název', validateStatus: 'error' as const }
+                              : {})}
+                          />
+                          <FormInput
+                            disabled={!canWrite}
+                            id={`variant-attrs-${draft.key}`}
+                            label={<span className="sr-only">Vlastnosti varianty</span>}
+                            name={`variant-attrs-${draft.key}`}
+                            onChange={(event) => patchDraft(draft.key, { attributes: event.target.value })}
+                            placeholder={
+                              product.sourceGroupId === undefined
+                                ? 'Hmotnost: 250 g; Forma: zrnková'
+                                : 'Vlastnosti varianty (nepovinné)'
+                            }
+                            size="sm"
+                            value={draft.attributes}
+                          />
+                          {record?.priceTiers !== undefined && (
+                            <div className="text-fg-secondary text-xs">
+                              <p>
+                                Minimum {record.minimumQuantity ?? 1} {record.sourceUnit ?? product.unit}
+                                {record.packageQuantity === undefined ? '' : ` · balení ${record.packageQuantity}`}
                               </p>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </Table.Cell>
-                    <Table.Cell>
-                      <div className="w-48">
-                        <FormInput
-                          disabled={!canWrite}
-                          id={`variant-sku-${draft.key}`}
-                          label={<span className="sr-only">SKU</span>}
-                          name={`variant-sku-${draft.key}`}
-                          onChange={(event) => patchDraft(draft.key, { sku: event.target.value })}
-                          size="sm"
-                          value={draft.sku}
-                          {...(submitted && error?.sku === true
-                            ? { helpText: 'Zadejte SKU', validateStatus: 'error' as const }
-                            : {})}
-                        />
-                      </div>
-                    </Table.Cell>
-                    <Table.Cell align="end">
-                      <div className="ml-auto w-32">
-                        <FormNumericInput
-                          disabled={!canWrite}
-                          formatOptions={MONEY_FORMAT}
-                          id={`variant-price-${draft.key}`}
-                          label={<span className="sr-only">Cena bez DPH</span>}
-                          locale="cs-CZ"
-                          min={0}
-                          name={`variant-price-${draft.key}`}
-                          onValueChange={(details) => patchDraft(draft.key, { priceText: details.value })}
-                          size="sm"
-                          value={draft.priceText}
-                          {...(submitted && error?.price === true
-                            ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const }
-                            : {})}
-                        >
-                          <NumericInput.Control>
-                            <NumericInput.Input />
-                          </NumericInput.Control>
-                        </FormNumericInput>
-                      </div>
-                    </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
-                      {price === null
-                        ? '—'
-                        : formatMoney(
-                            record?.priceMinor === price
-                              ? record.grossPriceMinor
-                              : grossUnitPriceMinor(price, product.vatRate),
+                              {record.priceTiers.map((tier) => (
+                                <p key={tier.minimumQuantity}>
+                                  Od {tier.minimumQuantity} {record.sourceUnit ?? product.unit}:{' '}
+                                  {formatMoney(tier.priceMinor)} s DPH · {formatMoney(tier.priceExcludingVatMinor)} bez
+                                  DPH
+                                </p>
+                              ))}
+                            </div>
                           )}
-                    </Table.Cell>
-                    <Table.Cell align="end" className="tabular-nums">
-                      {record === undefined ? (
-                        <span className="text-fg-secondary">nová</span>
-                      ) : (
-                        `${record.stockOnHand} ${record.sourceUnit ?? product.unit}`
-                      )}
-                    </Table.Cell>
-                    <Table.Cell>
-                      {record === undefined ? (
-                        <span className="text-fg-secondary">—</span>
-                      ) : (
-                        <AvailabilityBadge value={record.availability} />
-                      )}
-                    </Table.Cell>
-                    <Table.Cell>
-                      <Switch
-                        checked={draft.active}
-                        disabled={!canWrite}
-                        name={`variant-active-${draft.key}`}
-                        onCheckedChange={(checked: boolean) => patchDraft(draft.key, { active: checked })}
-                      >
-                        <span className="sr-only">Aktivní</span>
-                      </Switch>
-                    </Table.Cell>
-                  </Table.Row>
-                );
-              })}
-            </Table.Body>
-          </Table>
+                        </div>
+                      </Table.Cell>
+                      <Table.Cell>
+                        <div className="w-48">
+                          <FormInput
+                            disabled={!canWrite}
+                            id={`variant-sku-${draft.key}`}
+                            label={<span className="sr-only">SKU</span>}
+                            name={`variant-sku-${draft.key}`}
+                            onChange={(event) => patchDraft(draft.key, { sku: event.target.value })}
+                            size="sm"
+                            value={draft.sku}
+                            {...(submitted && error?.sku === true
+                              ? { helpText: 'Zadejte SKU', validateStatus: 'error' as const }
+                              : {})}
+                          />
+                        </div>
+                      </Table.Cell>
+                      <Table.Cell align="end">
+                        <div className="ml-auto w-32">
+                          <FormNumericInput
+                            disabled={!canWrite}
+                            formatOptions={MONEY_FORMAT}
+                            id={`variant-price-${draft.key}`}
+                            label={<span className="sr-only">Cena bez DPH</span>}
+                            locale="cs-CZ"
+                            min={0}
+                            name={`variant-price-${draft.key}`}
+                            onValueChange={(details) => patchDraft(draft.key, { priceText: details.value })}
+                            size="sm"
+                            value={draft.priceText}
+                            {...(submitted && error?.price === true
+                              ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const }
+                              : {})}
+                          >
+                            <NumericInput.Control>
+                              <NumericInput.Input />
+                            </NumericInput.Control>
+                          </FormNumericInput>
+                        </div>
+                      </Table.Cell>
+                      <Table.Cell align="end" className="tabular-nums">
+                        {price === null
+                          ? '—'
+                          : formatMoney(
+                              record?.priceMinor === price
+                                ? record.grossPriceMinor
+                                : grossUnitPriceMinor(price, product.vatRate),
+                            )}
+                      </Table.Cell>
+                      <Table.Cell align="end" className="tabular-nums">
+                        {record === undefined ? (
+                          <span className="text-fg-secondary">nová</span>
+                        ) : (
+                          `${record.stockOnHand} ${record.sourceUnit ?? product.unit}`
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        {record === undefined ? (
+                          <span className="text-fg-secondary">—</span>
+                        ) : (
+                          <AvailabilityBadge value={record.availability} />
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Switch
+                          checked={draft.active}
+                          disabled={!canWrite}
+                          name={`variant-active-${draft.key}`}
+                          onCheckedChange={(checked: boolean) => patchDraft(draft.key, { active: checked })}
+                        >
+                          <span className="sr-only">Aktivní</span>
+                        </Switch>
+                      </Table.Cell>
+                    </Table.Row>
+                  );
+                })}
+              </Table.Body>
+            </Table>
+          </div>
         )}
       </SectionCard>
       {submitted && duplicateSku && (

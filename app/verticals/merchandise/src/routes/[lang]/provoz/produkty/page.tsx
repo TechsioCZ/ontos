@@ -102,7 +102,9 @@ const bulkFailureKey = (reason: FailureReason): string => {
 
 /** Folded name and SKU contain the folded query, so diacritics on either side do not matter. */
 const matchesSearch = (product: ProductRecord, foldedQuery: string): boolean =>
-  foldSearchText(`${product.name} ${product.sku} ${product.variants?.map((variant) => `${variant.name} ${variant.sku ?? ""}`).join(" ") ?? ""}`).includes(foldedQuery);
+  foldSearchText(
+    `${product.name} ${product.sku} ${product.variants?.map((variant) => `${variant.name} ${variant.sku ?? ''}`).join(' ') ?? ''}`,
+  ).includes(foldedQuery);
 
 const RecordsPageContent = () => {
   const { language, t } = useModernI18n();
@@ -300,6 +302,16 @@ const RecordsPageContent = () => {
           onTags={() => openDialog('tags')}
         />
 
+        {state.status === 'error' && state.reason === 'reload-required' && (
+          <div className="flex flex-col gap-200">
+            <StatusText showIcon status="warning">
+              {k('states.reloadRequired')}
+            </StatusText>
+            <Button onClick={() => window.location.reload()} variant="secondary">
+              {k('common.reloadPage')}
+            </Button>
+          </div>
+        )}
         {state.status === 'error' && state.reason === 'forbidden' && (
           <StatusText showIcon status="error">
             {k('states.forbidden')}
@@ -313,6 +325,10 @@ const RecordsPageContent = () => {
           onCreate={() => openDialog('create')}
           onOpen={openDetail}
           onRetry={() => {
+            if (state.status === 'error' && state.reason === 'reload-required') {
+              window.location.reload();
+              return;
+            }
             reload();
             productTags.refetch();
           }}

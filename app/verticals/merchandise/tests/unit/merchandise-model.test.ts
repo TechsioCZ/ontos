@@ -126,3 +126,15 @@ it('detail query resolves only the requested product and preserves read-only cap
   stop();
   stopMissing();
 });
+
+it('detail query keeps release-change failures distinct from record revision conflicts', () => {
+  const callbacks: ((outcome: LoadOutcome) => void)[] = [];
+  const query = createProductDetailQuery('product-1', (callback) => callbacks.push(callback));
+  const stop = query.subscribe(() => {});
+  callbacks[0]?.({ ok: false, reason: 'reload-required' });
+  expect(query.getSnapshot()).toEqual({ reason: 'reload-required', status: 'error' });
+  query.reload();
+  callbacks[1]?.({ ok: false, reason: 'conflict' });
+  expect(query.getSnapshot()).toEqual({ reason: 'conflict', status: 'error' });
+  stop();
+});

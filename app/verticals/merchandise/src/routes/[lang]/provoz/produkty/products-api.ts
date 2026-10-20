@@ -12,7 +12,14 @@ import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
  * `conflict` is a stale revision (someone else changed the data); `rejected` is a business rule the
  * current state refuses, such as an issue larger than the stock on hand.
  */
-const FailureReasonSchema = Schema.Literals(['conflict', 'forbidden', 'invalid', 'rejected', 'unavailable']);
+const FailureReasonSchema = Schema.Literals([
+  'conflict',
+  'forbidden',
+  'invalid',
+  'rejected',
+  'reload-required',
+  'unavailable',
+]);
 export type FailureReason = typeof FailureReasonSchema.Type;
 
 export type LoadOutcome =
@@ -40,7 +47,11 @@ const recordsReason = (error: RecordsFailure): FailureReason =>
     Match.tag('RecordsInvalidProblem', 'RecordsPolicyProblem', (): FailureReason => 'invalid'),
     Match.tag('GatewayAuthenticationRequiredProblem', 'GatewayForbiddenProblem', (): FailureReason => 'forbidden'),
     Match.tag('GatewayAudienceInvalidProblem', (): FailureReason => 'invalid'),
-    Match.tag('GatewayReloadRequiredProblem', 'DocumentCompositionRevisionError', (): FailureReason => 'conflict'),
+    Match.tag(
+      'GatewayReloadRequiredProblem',
+      'DocumentCompositionRevisionError',
+      (): FailureReason => 'reload-required',
+    ),
     Match.tag(
       'RecordsNotFoundProblem',
       'RecordsUnavailableProblem',

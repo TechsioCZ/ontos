@@ -194,6 +194,7 @@
           "vat": "DPH"
         },
         "common": {
+          "reloadPage": "Obnovit stránku",
           "cancel": "Zrušit",
           "clearFilters": "Zrušit filtry",
           "close": "Zavřít",
@@ -294,6 +295,7 @@
           "title": "Příjem zboží"
         },
         "states": {
+          "reloadRequired": "Aplikace byla aktualizována. Obnovte stránku pro načtení aktuální verze.",
           "empty": "Zatím tu nejsou žádné produkty.",
           "emptyDescription": "Založte první produkt a začněte evidovat sklad.",
           "error": "Data se nepodařilo načíst.",

@@ -56,7 +56,14 @@ const ProductDetailPageContent = ({ routeParams }: ProductDetailPageProps) => {
   const handleReload = () => {
     query.reload();
   };
+  const reloadRequired =
+    (state.status === 'error' && state.reason === 'reload-required') ||
+    (state.status === 'ready' && state.refreshFailure === 'reload-required');
   const handleRetry = () => {
+    if (reloadRequired) {
+      window.location.reload();
+      return;
+    }
     setQuery(createProductDetailQuery(routeParams.id));
   };
   const committed = (message: string) => {
@@ -67,7 +74,16 @@ const ProductDetailPageContent = ({ routeParams }: ProductDetailPageProps) => {
     <>
       <UltramodernRouteHead />
       {state.status === 'ready' && state.refreshFailure !== undefined && (
-        <StatusText status="warning">{k('states.errorDescription')}</StatusText>
+        <div className="flex flex-col gap-200">
+          <StatusText status="warning">
+            {k(reloadRequired ? 'states.reloadRequired' : 'states.errorDescription')}
+          </StatusText>
+          {reloadRequired && (
+            <Button onClick={handleRetry} variant="secondary">
+              {k('common.reloadPage')}
+            </Button>
+          )}
+        </div>
       )}
       {state.status === 'ready' ? (
         <ProductDetailView
@@ -88,14 +104,20 @@ const ProductDetailPageContent = ({ routeParams }: ProductDetailPageProps) => {
               Match.when({ status: 'invalid' }, () => k('states.invalidId')),
               Match.when({ status: 'not-found' }, () => k('states.notFound')),
               Match.when({ status: 'error' }, ({ reason }) =>
-                k(reason === 'forbidden' ? 'states.forbidden' : 'states.errorDescription'),
+                k(
+                  reason === 'reload-required'
+                    ? 'states.reloadRequired'
+                    : reason === 'forbidden'
+                      ? 'states.forbidden'
+                      : 'states.errorDescription',
+                ),
               ),
               Match.exhaustive,
             )}
           </StatusText>
           {state.status === 'error' && (
             <Button onClick={handleRetry} variant="secondary">
-              {k('common.retry')}
+              {k(reloadRequired ? 'common.reloadPage' : 'common.retry')}
             </Button>
           )}
           <Button onClick={back} theme="outlined" variant="secondary">

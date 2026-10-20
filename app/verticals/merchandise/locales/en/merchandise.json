@@ -194,6 +194,7 @@
           "vat": "VAT"
         },
         "common": {
+          "reloadPage": "Reload page",
           "cancel": "Cancel",
           "clearFilters": "Clear filters",
           "close": "Close",
@@ -294,6 +295,7 @@
           "title": "Goods receipt"
         },
         "states": {
+          "reloadRequired": "The application was updated. Reload the page to load the current version.",
           "empty": "No products yet.",
           "emptyDescription": "Create the first product and start tracking stock.",
           "error": "Data could not be loaded.",
