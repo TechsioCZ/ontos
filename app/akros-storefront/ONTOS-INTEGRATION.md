@@ -180,10 +180,24 @@ the `mock` mode.
 ### Catalog read
 
 ```json
-{ "view": { "storefront": true, "storefrontCatalog": {
-    "page": 1, "pageSize": 24, "categorySlug": "kava", "q": "espresso",
-    "label": "recommended", "availability": "in-stock", "sort": "price-asc",
-    "minMinor": 10000, "maxMinor": 50000, "fields": "card", "includeCategories": true } } }
+{
+  "view": {
+    "storefront": true,
+    "storefrontCatalog": {
+      "page": 1,
+      "pageSize": 24,
+      "categorySlug": "kava",
+      "q": "espresso",
+      "label": "recommended",
+      "availability": "in-stock",
+      "sort": "price-asc",
+      "minMinor": 10000,
+      "maxMinor": 50000,
+      "fields": "card",
+      "includeCategories": true
+    }
+  }
+}
 ```
 
 - Filters: `slug`, `categorySlug`, `q`, `featured`, `label` (`action|recommended|sale|new`), `productIds` (up to 200),
@@ -200,21 +214,26 @@ the `mock` mode.
 ### Order status
 
 ```json
-{ "view": { "storefront": true, "storefrontOrderStatus": { "orderId": "…", "clientRequestId": "…" } } }
+{
+  "view": {
+    "storefront": true,
+    "storefrontOrderStatus": { "orderId": "…", "clientRequestId": "…" }
+  }
+}
 ```
 
 Response: `orderStatus: { id, number, status, statusLabel, updatedAt } | null` and `products: []`. Both `orderId` and
 `clientRequestId` must match, so the lookup cannot enumerate orders. No contact, address, lines or totals are ever
 returned.
 
-| Status | Czech label |
-|---|---|
-| NEW | Přijatá |
-| CONFIRMED | Zpracovává se |
-| PACKING | Připravujeme k předání |
-| SHIPPED | Předáno dopravci (simulace) |
-| DELIVERED | Dokončená |
-| CANCELLED | Stornovaná |
+| Status    | Czech label                 |
+| --------- | --------------------------- |
+| NEW       | Přijatá                     |
+| CONFIRMED | Zpracovává se               |
+| PACKING   | Připravujeme k předání      |
+| SHIPPED   | Předáno dopravci (simulace) |
+| DELIVERED | Dokončená                   |
+| CANCELLED | Stornovaná                  |
 
 ### Order placement and stock
 
