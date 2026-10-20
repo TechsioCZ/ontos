@@ -199,7 +199,9 @@
     "bookValues": "Net value per recorded depreciation",
     "created": "Created",
     "updated": "Last changed",
-    "disposedNote": "The asset is disposed; its card, values and history stay available read-only."
+    "disposedNote": "The asset is disposed; its card, values and history stay available read-only.",
+    "inProperty": "In this property",
+    "units": "Units:"
   },
   "history": {
     "empty": "No events yet.",

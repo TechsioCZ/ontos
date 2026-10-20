@@ -32,6 +32,7 @@ import {
   instantLabel,
   isoDateLabel,
   money,
+  nextDueOf,
   planOf,
   principalLabel,
   propertyHref,
@@ -41,6 +42,7 @@ import {
 import { CommentThread } from '../../../../../ui/comment-thread.tsx';
 import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
 import { AssetDepreciation, ConnectionBadge } from './depreciation.tsx';
+import { usePropertyTree } from './property-tree.ts';
 
 export type DetailMode =
   | { readonly kind: 'view' }
@@ -219,14 +221,90 @@ const ServicesTable = ({ actor, asset }: { readonly actor: PrincipalRef | undefi
   );
 };
 
+/** S02-01: from a building card open its units (siampark-property) and every asset with its next revision. */
+const BuildingContents = ({
+  asset,
+  language,
+  onOpenAsset,
+  state,
+}: {
+  readonly asset: Asset;
+  readonly language: string;
+  readonly onOpenAsset: (asset: Asset) => void;
+  readonly state: AssetsState;
+}) => {
+  const k = useK();
+  const tree = usePropertyTree();
+  const today = todayIsoDate();
+  const propertyId = asset.propertyId ?? (asset.location?.kind === 'property' ? asset.location.id : undefined);
+  if (propertyId === undefined) {
+    return null;
+  }
+  const units = tree.status === 'ready' ? (tree.nodes.find((node) => node.ref.id === propertyId)?.units ?? []) : [];
+  const contained = state.assets.filter(
+    (entry) => entry.id !== asset.id && entry.propertyId === propertyId && isActiveAsset(entry),
+  );
+  return (
+    <div className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+      <p className="font-semibold text-sm">{k('card.inProperty')}</p>
+      {units.length > 0 && (
+        <div className="flex flex-wrap items-center gap-100 text-sm">
+          <span className="text-fg-secondary">{k('card.units')}</span>
+          {units.map((unit) => (
+            <a
+              className="rounded-md border border-border-primary px-100 py-50 hover:bg-surface-hover"
+              href={propertyHref(language, unit.id)}
+              key={unit.id}
+            >
+              {unit.label.split(' › ').at(-1)}
+            </a>
+          ))}
+        </div>
+      )}
+      <ul className="flex flex-col divide-y divide-border-primary text-sm">
+        {contained.map((entry) => {
+          const next = nextDueOf(entry);
+          return (
+            <li key={entry.id}>
+              <button
+                className="flex w-full flex-wrap items-center justify-between gap-100 py-100 text-left hover:bg-surface-hover"
+                onClick={() => onOpenAsset(entry)}
+                type="button"
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="font-medium">{entry.name}</span>
+                  <span className="text-fg-secondary text-xs tabular-nums">
+                    {entry.inventoryNumber} · {entry.location?.label.split(' › ').at(-1) ?? ''}
+                  </span>
+                </span>
+                {next?.nextDueOn === undefined ? (
+                  <span className="text-fg-secondary text-xs">{k('due.none')}</span>
+                ) : (
+                  <Badge size="sm" variant={dueBadgeVariant(dueState(next.nextDueOn, today))}>
+                    {`${next.title} · ${isoDateLabel(next.nextDueOn)}`}
+                  </Badge>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+};
+
 const CardTab = ({
   actor,
   asset,
   language,
+  onOpenAsset,
+  state,
 }: {
   readonly actor: PrincipalRef | undefined;
   readonly asset: Asset;
   readonly language: string;
+  readonly onOpenAsset: (asset: Asset) => void;
+  readonly state: AssetsState;
 }) => {
   const k = useK();
   const missing = k('notProvided');
@@ -347,6 +425,9 @@ const CardTab = ({
           <p className="whitespace-pre-line">{asset.note}</p>
         </div>
       )}
+      {asset.kind === 'building' && (
+        <BuildingContents asset={asset} language={language} onOpenAsset={onOpenAsset} state={state} />
+      )}
     </div>
   );
 };
@@ -358,6 +439,7 @@ export const AssetDetailPanel = ({
   canWrite,
   language,
   onClose,
+  onOpenAsset,
   onSubmit,
   state,
 }: {
@@ -367,6 +449,7 @@ export const AssetDetailPanel = ({
   readonly canWrite: boolean;
   readonly language: string;
   readonly onClose: () => void;
+  readonly onOpenAsset: (asset: Asset) => void;
   /** Runs the command; resolves true when it was saved (the page reloads data and toasts). */
   readonly onSubmit: (command: OpsCommand, successKey: string) => Promise<boolean>;
   readonly state: AssetsState;
@@ -459,7 +542,7 @@ export const AssetDetailPanel = ({
               <Tabs.Indicator />
             </Tabs.List>
             <Tabs.Content className="py-250" value="card">
-              <CardTab actor={actor} asset={asset} language={language} />
+              <CardTab actor={actor} asset={asset} language={language} onOpenAsset={onOpenAsset} state={state} />
             </Tabs.Content>
             <Tabs.Content className="flex flex-col gap-200 py-250" value="history">
               {canWrite && active && (

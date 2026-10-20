@@ -431,6 +431,7 @@ const AssetsView = () => {
           canWrite={canWrite}
           language={language}
           onClose={() => setOpenId(undefined)}
+          onOpenAsset={(asset) => setOpenId(asset.id)}
           onSubmit={submit}
           state={state}
         />

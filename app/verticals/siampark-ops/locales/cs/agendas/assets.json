@@ -199,7 +199,9 @@
     "bookValues": "Zůstatková hodnota podle evidovaných odpisů",
     "created": "Založeno",
     "updated": "Naposledy změněno",
-    "disposedNote": "Majetek je vyřazen; karta, hodnoty a historie zůstávají zachovány pouze pro čtení."
+    "disposedNote": "Majetek je vyřazen; karta, hodnoty a historie zůstávají zachovány pouze pro čtení.",
+    "inProperty": "V této nemovitosti",
+    "units": "Jednotky:"
   },
   "history": {
     "empty": "Zatím bez událostí.",
