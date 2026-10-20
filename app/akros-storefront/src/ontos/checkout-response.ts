@@ -29,6 +29,9 @@ export async function readOrderResponse(response: Response) {
   )
     throw new Error(checkoutSaveError);
   return {
+    ...(typeof value.orderId === "string" && value.orderId.trim()
+      ? { orderId: value.orderId }
+      : {}),
     orderNumber: value.orderNumber,
     totalMinor: value.totalMinor,
     totalVatMinor: value.totalVatMinor,

@@ -127,6 +127,8 @@ function CheckoutCartProvider({
     if (!delivery || !payment) return null;
 
     let orderNumber: string | undefined;
+    let orderId: string | undefined;
+    let clientRequestId: string | undefined;
     let serverTotals: { totalMinor?: number; totalVatMinor?: number } | undefined;
     if (ontos) {
       try {
@@ -163,6 +165,8 @@ function CheckoutCartProvider({
         });
         const result = await readOrderResponse(response);
         orderNumber = result.orderNumber;
+        orderId = result.orderId;
+        clientRequestId = pending.clientRequestId;
         serverTotals = result;
       } catch (error) {
         checkoutDispatch({
@@ -196,6 +200,7 @@ function CheckoutCartProvider({
       paymentStatus: "not-processed",
       totals,
       ...(orderNumber ? { source: "ontos" as const } : {}),
+      ...(orderNumber && orderId && clientRequestId ? { orderId, clientRequestId } : {}),
     };
     try {
       if (!storageRef.current) throw new Error("Session storage unavailable");

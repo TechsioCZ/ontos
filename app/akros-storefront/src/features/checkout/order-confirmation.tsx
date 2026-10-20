@@ -10,6 +10,7 @@ import { getDeliveryAddress, getDeliveryLocation } from "@/mock-storefront/check
 import { type CartLine, formatQuantity, getLineTotal } from "@/mock-storefront/cart";
 import { formatPrice } from "@/lib/format";
 import { AddressText } from "./address-fields";
+import { LiveOrderStatus } from "./live-order-status";
 
 const columns: ColumnDef<CartLine, unknown>[] = [
   {
@@ -88,6 +89,9 @@ export function OrderConfirmation() {
         <p>
           Číslo objednávky: <strong>{order.id}</strong>
         </p>
+        {order.source === "ontos" && order.orderId && order.clientRequestId && (
+          <LiveOrderStatus orderId={order.orderId} clientRequestId={order.clientRequestId} />
+        )}
         {order.source === "ontos" && (
           <p
             role="note"

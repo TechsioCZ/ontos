@@ -5,6 +5,9 @@ export const orderStorageKey = "akros-demo-order-v1";
 export interface LocalOrder {
   version: 1;
   source?: "ontos";
+  /** OntOS order id + the persisted submission id: lets the confirmation read the live status. */
+  orderId?: string;
+  clientRequestId?: string;
   id: string;
   createdAt: string;
   cart: CartState;
@@ -22,6 +25,8 @@ export function parseLocalOrder(value: string | null): LocalOrder | null {
       !order ||
       order.version !== 1 ||
       typeof order.id !== "string" ||
+      (order.orderId !== undefined && typeof order.orderId !== "string") ||
+      (order.clientRequestId !== undefined && typeof order.clientRequestId !== "string") ||
       typeof order.createdAt !== "string" ||
       !Number.isFinite(Date.parse(order.createdAt)) ||
       order.paymentStatus !== "not-processed" ||

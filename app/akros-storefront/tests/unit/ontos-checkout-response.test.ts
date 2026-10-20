@@ -26,6 +26,18 @@ describe("connected checkout response boundary", () => {
       readOrderResponse(Response.json(body, { status: status as number })),
     ).rejects.toThrow(checkoutSaveError);
   });
+  it("keeps the OntOS order id for the live status when the owner returns it", async () => {
+    expect(
+      await readOrderResponse(
+        Response.json({ ...valid, orderId: "e12a77c6-c624-46bf-88fe-13d8c386e099" }),
+      ),
+    ).toEqual({
+      orderId: "e12a77c6-c624-46bf-88fe-13d8c386e099",
+      orderNumber: valid.orderNumber,
+      totalMinor: 12100,
+      totalVatMinor: 2100,
+    });
+  });
   it("rejects non-JSON success without inventing a local order", async () => {
     await expect(readOrderResponse(new Response("<html>error</html>"))).rejects.toThrow(
       checkoutSaveError,
