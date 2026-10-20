@@ -136,6 +136,7 @@ const toVariantRecord = (
   const active = product.active && variant.active !== false;
   return {
     ...variant,
+    unit: variant.unit ?? variant.sourceUnit ?? product.unit,
     active: variant.active !== false,
     attributes: variant.attributes,
     availability: availabilityOf({
@@ -840,7 +841,10 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       vatRate: product.vatRate,
     });
   }
-  const method = shippingMethods[value.shippingMethod];
+  const configuredMethod = shippingMethods[value.shippingMethod];
+  const method = value.shippingMethod === 'OSOBNI_ODBER' && state.products.some((product) => product.sourceGroupId !== undefined)
+    ? { ...configuredMethod, label: 'Osobní odběr – AKROS (simulace)' }
+    : configuredMethod;
   if (value.expectedShippingPriceMinor !== undefined && value.expectedShippingPriceMinor !== method.grossPriceMinor) {
     issues.push({
       code: 'SHIPPING_PRICE_CHANGED',
@@ -1240,7 +1244,13 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           (view.lowStockOnly !== true || record.lowStock),
       );
       const filteredProducts = matchingProducts.slice(view.offset ?? 0, view.limit === undefined ? undefined : (view.offset ?? 0) + view.limit).map((product) => {
-        if (view.summary !== true) return product;
+        if (view.summary !== true) {
+          if (!storefront) return product;
+          const { variants: _rawVariants, ...publicProduct } = product;
+          return { ...publicProduct, priceHistory: [], ...(product.variantRecords === undefined ? {} : {
+            variantRecords: product.variantRecords.map((variant) => ({ ...variant, priceHistory: [] })),
+          }) };
+        }
         const { variants: _variants, variantRecords: _records, ...summary } = product;
         return { ...summary, priceHistory: [] };
       });

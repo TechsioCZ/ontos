@@ -102,7 +102,7 @@ const bulkFailureKey = (reason: FailureReason): string => {
 
 /** Folded name and SKU contain the folded query, so diacritics on either side do not matter. */
 const matchesSearch = (product: ProductRecord, foldedQuery: string): boolean =>
-  foldSearchText(`${product.name} ${product.sku}`).includes(foldedQuery);
+  foldSearchText(`${product.name} ${product.sku} ${product.variants?.map((variant) => `${variant.name} ${variant.sku ?? ""}`).join(" ") ?? ""}`).includes(foldedQuery);
 
 const RecordsPageContent = () => {
   const { language, t } = useModernI18n();

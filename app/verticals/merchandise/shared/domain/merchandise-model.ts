@@ -69,6 +69,7 @@ export const CatalogFieldsSchema = Schema.Struct({
 });
 export const ProductVariantSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
+  unit: Schema.optionalKey(Schema.String),
   active: Schema.optionalKey(Schema.Boolean),
   attributes: Schema.Trim.check(Schema.isMaxLength(1000)),
   id: Schema.optionalKey(VariantIdSchema),
@@ -150,6 +151,7 @@ export const grossUnitPriceMinor = (netMinor: number, vatRate: number): number =
 /** Variant plus derived stock, availability and gross price. */
 export const VariantRecordSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
+  unit: Schema.optionalKey(Schema.String),
   active: Schema.Boolean,
   attributes: Schema.String,
   availability: AvailabilitySchema,

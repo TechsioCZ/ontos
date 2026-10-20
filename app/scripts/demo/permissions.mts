@@ -459,7 +459,7 @@ export const eshopDemoRoles = {
   akrosAdmin: {
     identityAdmin: true,
     label: 'Správce e-shopu',
-    modules: { 'demo.merchandise': 'write', 'party.registry': 'write', 'siampark.work': 'write', 'demo.workforce': 'write' },
+    modules: { 'demo.merchandise': 'write', 'demo.tagging': 'read', 'party.registry': 'write', 'siampark.work': 'write', 'demo.workforce': 'write' },
   },
   eshopAdmin: {
     identityAdmin: false,

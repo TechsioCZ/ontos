@@ -196,7 +196,7 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                           label={<span className="sr-only">Název varianty</span>}
                           name={`variant-label-${draft.key}`}
                           onChange={(event) => patchDraft(draft.key, { name: event.target.value })}
-                          placeholder="např. 250 g / zrnková"
+                          placeholder={product.sourceGroupId === undefined ? "např. 250 g / zrnková" : "např. M6 × 20 / A2"}
                           size="sm"
                           value={draft.name}
                           {...(submitted && error?.name === true
@@ -209,7 +209,7 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                           label={<span className="sr-only">Vlastnosti varianty</span>}
                           name={`variant-attrs-${draft.key}`}
                           onChange={(event) => patchDraft(draft.key, { attributes: event.target.value })}
-                          placeholder="Hmotnost: 250 g; Forma: zrnková"
+                          placeholder={product.sourceGroupId === undefined ? "Hmotnost: 250 g; Forma: zrnková" : "Vlastnosti varianty (nepovinné)"}
                           size="sm"
                           value={draft.attributes}
                         />
@@ -524,7 +524,7 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
-  const storefrontHref = `${STOREFRONT_ORIGIN}/produkt/${product.slug ?? product.id}`;
+  const storefrontHref = `${product.sourceGroupId === undefined ? STOREFRONT_ORIGIN : "http://localhost:3070"}/produkt/${product.slug ?? product.id}`;
   const slugInvalid = slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
 
   const save = () => {

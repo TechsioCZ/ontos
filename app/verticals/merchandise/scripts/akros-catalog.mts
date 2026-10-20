@@ -67,7 +67,7 @@ export const buildAkrosEncoded = (): Encoded => {
     description: product.detail.descriptionParagraphs.join('\n\n') || product.description,
     images: [product.imageSrc, ...(product.secondaryImageSrc === undefined ? [] : [product.secondaryImageSrc])],
     variants: product.detail.variants.map((variant) => ({
-      ...fieldsFor(variant), id: variant.id, sourceId: variant.sourceId, sku: variant.sku, name: variant.label,
+      ...fieldsFor(variant), unit: variant.unit, id: variant.id, sourceId: variant.sourceId, sku: variant.sku, name: variant.label,
       active: true, attributes: variant.parameters.map((parameter) => `${parameter.label}: ${parameter.value} ${parameter.unit}`).join('; ').slice(0, 1000),
       imageSrc: variant.imageSrc ?? product.imageSrc,
       priceMinor: variant.priceTiers[0]?.priceExcludingVatMinor ?? Math.round(variant.priceMinor / 1.21), priceHistory: [],
