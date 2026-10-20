@@ -1,9 +1,147 @@
-import type { DemoGuide } from '../demo-guide-types.ts';
+import type { DemoGuide, DemoGuidePersona } from '../demo-guide-types.ts';
+
+const eshop: DemoGuidePersona = { email: 'eshop@akros.demo', role: 'Správce e-shopu' };
+const expedice: DemoGuidePersona = { email: 'expedice@akros.demo', role: 'Expedice' };
+
+/** Kai Uwe's standalone AKROS storefront, connected to OntOS; opened in a new tab as an anonymous customer. */
+const storefront = 'http://localhost:3070';
+const productUrl = `${storefront}/produkt/srouby-s-valcovou-hlavou-s-vnitrnim-sestihranem-din-912-a2?variant=10091200010004`;
 
 export const akrosGuide: DemoGuide = {
-  chapters: [],
+  chapters: [
+    {
+      id: 'nakup',
+      steps: [
+        {
+          click: 'Otevřete v novém anonymním okně prohlížeče.',
+          id: 'akros-katalog',
+          persona: null,
+          say: 'Tohle je zákaznický e-shop AKROS se zachovaným vlastním designem. Katalog, ceny a dostupnost mu dodává OntOS.',
+          target: { kind: 'external', label: 'e-shop AKROS', url: `${storefront}/` },
+          title: 'E-shop AKROS',
+        },
+        {
+          click: 'U SKU 10091200010004 vložte do košíku minimální balení 500 ks.',
+          id: 'akros-varianta',
+          persona: null,
+          say: 'Zákazník vybírá konkrétní variantu a minimum i balení se řídí zdrojovými daty. Množstevní slevy neslibujeme, zdroj je nemá.',
+          target: { kind: 'external', label: 'produkt v e-shopu', url: productUrl },
+          title: 'Konkrétní varianta šroubu',
+        },
+        {
+          click: 'Počkejte na hlášku „Ceny, množství a dostupnost byly ověřeny v OntOS.“',
+          id: 'akros-kosik',
+          persona: null,
+          say: 'Před objednáním si e-shop ceny, množství a dostupnost znovu ověří přímo v OntOS.',
+          target: { kind: 'external', label: 'košík', url: `${storefront}/kosik` },
+          title: 'Košík ověřený v OntOS',
+        },
+        {
+          click:
+            'Osobní odběr → Dodací údaje → fiktivní kontakt Pavel Dvořák, pavel.dvorak@example.invalid → Souhrn objednávky → jednou Potvrdit DEMO objednávku → opište číslo objednávky.',
+          id: 'akros-objednavka',
+          persona: null,
+          say: 'Objednávka se skutečně uloží do OntOS a dostane číslo. Nic se ale neplatí a nic se nepředává dopravci.',
+          target: { kind: 'external', label: 'pokladnu', url: `${storefront}/kosik/doprava-platba` },
+          title: 'Dokončení DEMO objednávky',
+        },
+      ],
+      summary: 'Zákazník nakupuje v původním e-shopu AKROS, OntOS dodává varianty, ceny a dostupnost.',
+      title: 'Zákaznický nákup v e-shopu',
+    },
+    {
+      id: 'sprava',
+      steps: [
+        {
+          click:
+            'Do pole Hledat podle čísla nebo zákazníka… vložte opsané číslo → otevřete řádek → porovnejte variantu, 500 ks a součet.',
+          id: 'akros-objednavka-sprava',
+          persona: eshop,
+          say: 'Správce vidí stejnou objednávku, kterou zákazník právě odeslal, včetně varianty, množství a součtu.',
+          target: { kind: 'app', path: '/prodej/objednavky' },
+          title: 'Objednávka v administraci',
+        },
+        {
+          click:
+            'Varianty a ceny → hledat 10091200010004 → opište původní cenu → zvyšte ji o 0,01 Kč bez DPH → Uložit varianty.',
+          id: 'akros-cena',
+          persona: eshop,
+          say: 'Cenu spravuje oprávněný pracovník v OntOS. Potvrzená objednávka má uložený cenový snímek, takže se zpětně nepřecení.',
+          target: { kind: 'app', path: '/provoz/produkty/product-16732' },
+          title: 'Změna ceny varianty',
+        },
+        {
+          click: 'Asi po 16 sekundách obnovte stránku produktu v anonymním okně.',
+          id: 'akros-cena-eshop',
+          persona: null,
+          say: 'E-shop převezme novou cenu po krátké cache a přepočítá ji s DPH.',
+          target: { kind: 'external', label: 'produkt v e-shopu', url: productUrl },
+          title: 'Nová cena v e-shopu',
+        },
+      ],
+      summary: 'Správce vidí objednávku zákazníka a spravuje ceny variant.',
+      title: 'Správa e-shopu v OntOS',
+    },
+    {
+      id: 'expedice',
+      steps: [
+        {
+          click:
+            'Vyhledejte stejné číslo → detail → Začít zpracovávat → Připraveno k předání → Předat dopravci (simulace) → Dokončit.',
+          id: 'akros-expedice-stavy',
+          persona: expedice,
+          say: 'Expedice má jen svou práci: posouvá stav objednávky, ale nemůže ji upravit ani měnit ceny. Předání dopravci je výslovně simulované.',
+          target: { kind: 'app', path: '/prodej/objednavky' },
+          title: 'Zpracování objednávky',
+        },
+        {
+          click: 'Ukažte, že ceny jsou jen ke čtení a Skladový pohyb varianty je dostupný. Pohyb neukládejte.',
+          id: 'akros-expedice-sklad',
+          persona: expedice,
+          say: 'Expedice vidí ceny jen pro čtení, skladové pohyby ale může skutečně zapisovat.',
+          target: { kind: 'app', path: '/provoz/produkty/product-16732' },
+          title: 'Sklad bez práva na ceny',
+        },
+      ],
+      summary: 'Expedice posouvá objednávku, ale nemění ji ani ceny.',
+      title: 'Expedice',
+    },
+    {
+      id: 'uklid',
+      steps: [
+        {
+          click: 'Otevřete stejnou objednávku → Historie změn.',
+          id: 'akros-historie',
+          persona: eshop,
+          say: 'Každý přechod objednávky má autora a čas, nic se tiše nepřepisuje.',
+          target: { kind: 'app', path: '/prodej/objednavky' },
+          title: 'Historie změn objednávky',
+        },
+        {
+          click: 'Varianty a ceny → hledat 10091200010004 → vraťte přesně opsanou původní cenu → Uložit varianty.',
+          id: 'akros-vratit-cenu',
+          persona: eshop,
+          say: 'I úklid po ukázce je řízená změna s historií cen.',
+          target: { kind: 'app', path: '/provoz/produkty/product-16732' },
+          title: 'Vrátit původní cenu',
+        },
+        {
+          click:
+            'Otevřete právě vytvořenou objednávku → Odstranit DEMO objednávku → uveďte důvod → Potvrdit odstranění DEMO.',
+          id: 'akros-odstranit-demo',
+          persona: eshop,
+          say: 'Objednávka zmizí jen z prezentačního seznamu; doklad, historie i audit zůstávají.',
+          target: { kind: 'app', path: '/prodej/objednavky' },
+          title: 'Odstranit DEMO objednávku',
+        },
+      ],
+      summary: 'Každý krok má autora a čas; po ukázce vše vrátíme řízenou akcí.',
+      title: 'Historie a úklid',
+    },
+  ],
   companyName: 'AKROS',
   id: 'akros',
-  intro: 'Zákaznický e-shop AKROS napojený na OntOS: nákup konkrétní varianty, změna ceny v administraci a zpracování objednávky expedicí.',
+  intro:
+    'Zákaznický e-shop AKROS napojený na OntOS: nákup konkrétní varianty, změna ceny v administraci a zpracování objednávky expedicí.',
   legalEntityId: '71000000-0000-4000-8000-000000000024',
 };
