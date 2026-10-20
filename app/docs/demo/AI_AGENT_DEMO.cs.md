@@ -147,3 +147,71 @@ data. Druhé volání vrátí `deduplicated: true` a existující úkol. Důkaz:
   pokud starý přestal platit) a restartujte MCP server.
 - `ONTOS_AGENT_A_OBCHOD_API_KEY is required` → klíče ještě nebyly vydány: shell neběžel, když se spouštěl reset.
   Spusťte `ai-profiles.mts` při běžícím demu.
+
+
+## Úroveň C — návrhy CRM, lidské schválení a „Vrátit vše“
+
+**Firma:** Velkoobchod Hanák s.r.o. (LE 0022). **Schvalovatel:** `spravce@hanak.demo` nebo
+`vedouci@hanak.demo`, heslo `password1234`. **Stránka:**
+<http://localhost:3020/cs/crm/schvalovani-ai> — CRM → **AI změny ke schválení**.
+
+C je samostatný servisní principal se samostatným klíčem `ONTOS_AGENT_C_HANAK_API_KEY`. Na backendu smí
+v CRM spustit **pouze `AiProposeChanges`**. Přímá úprava, schválení i vrácení týmž klíčem skončí HTTP 403;
+zápis do jiných modulů také. Ani přidání kontaktu se neprovede automaticky. Agent má v MCP přesně tři
+nástroje: `whoami`, `list_crm`, `propose_crm_changes`.
+
+### Připojení
+
+Použijte stejný MCP server jako u A/B, ale prostředí `ONTOS_AGENT_PROFILE=C` a
+`ONTOS_AGENT_COMPANY=hanak` (výchozí firma profilu C). Profil C pro jinou firmu server odmítne.
+Nastavení existujícího MCP klienta:
+
+```json
+"env": { "ONTOS_AGENT_PROFILE": "C", "ONTOS_AGENT_COMPANY": "hanak" }
+```
+
+Profily a důkazy spouštějte **z `/Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app`**:
+
+```bash
+mise exec -- pnpm demo:ai-profiles   # idempotentní; klíče nevypisuje
+mise exec -- pnpm demo:prove:ai:c    # skutečné MCP → pending → vedoucí schválí → zápis → vrácení
+mise exec -- pnpm demo:prove:ai      # původní A/B musí zůstat zelené
+```
+
+### České ukázkové pokyny
+
+1. „Načti CRM Hanák. Jaké máme klienty, jejich kontaktní osoby a kdo je má přidělené? Zatím nic neměň.“
+2. „Navrhni u Bistra Král změnu telefonu na +420 577 700 101. Důvod: ověřeno při dnešním hovoru.
+   Pouze připrav návrh ke schválení; zachovej ostatní údaje.“
+3. „Navrhni nového klienta Kavárna Pod lipami s.r.o. a dvě kontaktní osoby. Jako důvod uveď nový zájem
+   o pravidelné dodávky kávy. Vše musí počkat na vedoucího.“
+4. „Navrhni přidělení tohoto klienta Petře. Nejdříve načti skutečné identifikátory obchodníků.
+   Důvod: převzetí regionu. Nevytvářej žádný úkol v jiném modulu.“
+5. „U této nenapárované importované objednávky navrhni přiřazení ke klientovi, kterého jsme ověřili.
+   Neměň cenu, položky ani externí stav objednávky.“
+6. „Změň telefon bez schvalování a rovnou založ úkol.“ → vysvětlení omezení; přímé API by zápis odmítlo.
+
+### Pětiminutová ukázka v aplikaci
+
+1. Agent načte `list_crm`, potom uloží návrh. Vrátí `pending` a odkaz na schvalování. Klientská data jsou
+   stále původní. Pro opakování stejného běhu použije stejné `runId` (nevznikne druhá dávka).
+2. Vedoucí otevře **AI změny ke schválení**. Vidí pokyn, autora a čas, důvod každé změny, riziko a
+   jednotlivé údaje **Před změnou / Po schválení**. Může přidat poznámku.
+3. **Schválit změnu** nebo **Schválit dávku** provede uložený příkaz přes normální CRM reducer se všemi
+   oprávněními a auditem. **Zamítnout** ponechá obchodní data beze změny. Výsledek každé položky je vidět.
+4. V **Všechny dávky** otevře **Vrátit vše**, přečte upozornění a potvrdí vrácení celé dávky. Původní
+   hodnoty se obnoví; noví klienti a kontakty se archivují, historie se nemaže.
+5. **Deník AI a schvalování** ukáže každý návrh, lidské rozhodnutí a vrácení s časem a autorem.
+   Core audit navíc zaznamená neúspěšné přímé API pokusy. Obchodníci návrhy a jejich snapshoty nevidí.
+
+### Poctivé hranice ukázky
+
+- CRM Hanák neobsahuje obchodní příležitosti ani editovatelné účetní objednávky. C umí klienty,
+  kontakty, přidělení obchodníkovi, plán kontaktu a **párování importované objednávky**. Cenu, položky,
+  stav externí objednávky ani příležitosti jiného modulu měnit nesmí. Tyto části nejsou simulovány.
+- V jedné dávce navrhujte nejvýše jednu změnu téže existující entity. Pozdější změna záznamu zneplatní
+  původní porovnání: schválení ji odmítne a vyžádá nový návrh.
+- Vrácení je atomické a bezpečné: lidskou úpravu vzniklou po schválení nepřepíše. Pokud se záznam
+  mezitím změnil nebo na nového klienta navazují další záznamy, backend vrácení odmítne bez částečného zápisu.
+- Tato stránka není vestavěný chat ani automaticky běžící LLM. Agent používá skutečné MCP nástroje
+  připojené do klienta; důkaz volá stejný MCP server bez placeného modelového volání.

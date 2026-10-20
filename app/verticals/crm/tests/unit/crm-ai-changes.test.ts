@@ -116,6 +116,23 @@ describe('AI level C governed pending batches', () => {
       ),
     ).toBe(true);
   });
+  it('approves and reverts snapshots after a JSONB-style key reordering', () => {
+    const pending = proposal(base, { _tag: 'UpdateClient', id: 'c1', patch: { phone: '+420 777 888 999' } }).state;
+    const jsonb = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.map(jsonb)
+        : value !== null && typeof value === 'object'
+          ? Object.fromEntries(
+              Object.entries(value)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, entry]) => [key, jsonb(entry)]),
+            )
+          : value;
+    const persisted = { ...pending, aiChanges: jsonb(pending.aiChanges) } as CrmState;
+    const applied = approve(persisted).state;
+    const loaded = { ...applied, aiChanges: jsonb(applied.aiChanges) } as CrmState;
+    expect(revert(loaded).state.clients.items).toEqual(base.clients.items);
+  });
   it('supports guarded assignment proposals and undo', () => {
     const pending = proposal(base, {
       _tag: 'AssignClient',

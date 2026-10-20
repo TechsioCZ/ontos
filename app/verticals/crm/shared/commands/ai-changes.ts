@@ -329,7 +329,19 @@ const collections: Record<AiEntityKind, Collection> = {
   },
 };
 const entityKinds: readonly AiEntityKind[] = ['client', 'contact', 'order', 'plan'];
-const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+/** JSONB reorders object keys on persistence; snapshots must compare values, not insertion order. */
+const canonical = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => [key, canonical(entry)]),
+    );
+  }
+  return value;
+};
+const same = (left: unknown, right: unknown) => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 
 /** Every entity the change created or modified, with its exact previous and next value. */
 const snapshotsBetween = (previous: CrmState, next: CrmState): readonly AiSnapshot[] =>
