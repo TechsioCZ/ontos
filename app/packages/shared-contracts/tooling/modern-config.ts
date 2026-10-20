@@ -249,6 +249,12 @@ export const createWorkspaceModernConfig = ({
   dev: {
     setupMiddlewares: appId === 'shell-super-app' ? [] : [createDevelopmentContractMiddleware(moduleUrl)],
   },
+  output: {
+    // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
+    // holds a cold dev server past readiness budgets. Builds keep the checker; in `modern dev`,
+    // `pnpm typecheck` owns type diagnostics.
+    disableTsChecker: readBuildEnvironmentValue('NODE_ENV') === 'development',
+  },
   server: {
     publicDir: ['./.dev-public'],
   },
