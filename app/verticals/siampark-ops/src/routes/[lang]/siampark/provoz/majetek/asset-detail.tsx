@@ -213,7 +213,14 @@ const ServicesTable = ({ actor, asset }: { readonly actor: PrincipalRef | undefi
                 <span className="text-fg-secondary line-through">{isoDateLabel(record.nextDueOn)}</span>
               )}
             </Table.Cell>
-            <Table.Cell>{record.supplier ?? '—'}</Table.Cell>
+            <Table.Cell>
+              <span className="flex flex-col gap-50">
+                <span>{record.supplier ?? k('notProvided')}</span>
+                <span className="text-fg-secondary text-xs">
+                  {k('fields.responsible')}: {record.responsible ?? k('notProvided')}
+                </span>
+              </span>
+            </Table.Cell>
           </Table.Row>
         ))}
       </Table.Body>
@@ -529,16 +536,22 @@ export const AssetDetailPanel = ({
       default:
         return (
           <Tabs onValueChange={setTab} value={tab} variant="line">
-            <Tabs.List>
-              <Tabs.Trigger value="card">{k('detail.tabs.card')}</Tabs.Trigger>
-              <Tabs.Trigger value="history">
+            <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="card">
+                {k('detail.tabs.card')}
+              </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="history">
                 {k('detail.tabs.history', { count: (asset.events ?? []).length })}
               </Tabs.Trigger>
-              <Tabs.Trigger value="services">
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="services">
                 {k('detail.tabs.services', { count: (asset.services ?? []).length })}
               </Tabs.Trigger>
-              <Tabs.Trigger value="depreciation">{k('detail.tabs.depreciation')}</Tabs.Trigger>
-              <Tabs.Trigger value="documents">{k('detail.tabs.documents')}</Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="depreciation">
+                {k('detail.tabs.depreciation')}
+              </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="documents">
+                {k('detail.tabs.documents')}
+              </Tabs.Trigger>
               <Tabs.Indicator />
             </Tabs.List>
             <Tabs.Content className="py-250" value="card">
@@ -578,8 +591,12 @@ export const AssetDetailPanel = ({
               />
             </Tabs.Content>
             <Tabs.Content className="flex flex-col gap-300 py-250" value="documents">
-              <LinkedDocuments subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }} />
-              <CommentThread subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }} />
+              <LinkedDocuments
+                subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }}
+              />
+              <CommentThread
+                subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }}
+              />
             </Tabs.Content>
           </Tabs>
         );

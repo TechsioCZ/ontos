@@ -2,7 +2,17 @@
 // Siampark provoz — Majetek a odpisy (S02 evidence majetku, revize, inventury + S03 odpisové plány).
 // OWNED BY THE `assets` LANE (ops-assets). Data: governed records read (agenda `assets`); every change is one
 // command through the apply-command Action (shared/commands/assets.ts), then the agenda is reloaded.
-import { PageHeader, SidePanel, dataTableRowLabels, paginationTranslations, StatCard, StatRow, foldSearchText, formatMoney, formatNumber } from '@app/admin-ui';
+import {
+  PageHeader,
+  SidePanel,
+  dataTableRowLabels,
+  paginationTranslations,
+  StatCard,
+  StatRow,
+  foldSearchText,
+  formatMoney,
+  formatNumber,
+} from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -44,7 +54,8 @@ type CreatePanel =
   | { readonly kind: 'followUp'; readonly inventory: Inventory; readonly item: InventoryItem };
 
 const csvCell = (value: string) => (/[";\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value);
-const csvAmount = (minor: number | undefined) => (minor === undefined ? '' : (minor / 100).toFixed(2).replace('.', ','));
+const csvAmount = (minor: number | undefined) =>
+  minor === undefined ? '' : (minor / 100).toFixed(2).replace('.', ',');
 
 /** Downloads the currently filtered register as CSV (semicolon separated, UTF-8 BOM for Excel). */
 const exportCsv = (rows: readonly Asset[], k: (key: string) => string) => {
@@ -159,7 +170,7 @@ const AssetsView = () => {
       accessorKey: 'inventoryNumber',
       cell: (info) => <span className="whitespace-nowrap tabular-nums">{info.row.original.inventoryNumber}</span>,
       header: k('fields.inventoryNumber'),
-      meta: { width: 110 },
+      meta: { width: 125 },
     },
     {
       accessorKey: 'name',
@@ -170,23 +181,23 @@ const AssetsView = () => {
         </span>
       ),
       header: k('fields.name'),
-      meta: { width: 280 },
+      meta: { width: 240 },
     },
     {
       cell: (info) => <KindBadge asset={info.row.original} />,
       header: k('fields.kind'),
       id: 'kind',
-      meta: { width: 120 },
+      meta: { width: 100 },
     },
     {
       cell: (info) => (
-        <span className="truncate text-sm">
+        <span className="block truncate text-sm">
           {info.row.original.location?.label.replace(/ \([^)]*\)$/, '') ?? k('notProvided')}
         </span>
       ),
       header: k('fields.location'),
       id: 'location',
-      meta: { width: 240 },
+      meta: { width: 180 },
     },
     {
       cell: (info) => (
@@ -194,7 +205,7 @@ const AssetsView = () => {
       ),
       header: k('columns.acquisitionValue'),
       id: 'acquisition',
-      meta: { align: 'end', width: 150 },
+      meta: { align: 'end', width: 135 },
     },
     {
       cell: (info) => (
@@ -202,7 +213,7 @@ const AssetsView = () => {
       ),
       header: k('columns.currentValue'),
       id: 'current',
-      meta: { align: 'end', width: 150 },
+      meta: { align: 'end', width: 135 },
     },
     {
       cell: (info) => {
@@ -225,7 +236,7 @@ const AssetsView = () => {
       },
       header: k('columns.nextDue'),
       id: 'nextDue',
-      meta: { width: 200 },
+      meta: { width: 170 },
     },
   ];
 
@@ -278,7 +289,12 @@ const AssetsView = () => {
               </Button>
               {canWrite && (
                 <>
-                  <Button onClick={() => setPanel({ kind: 'inventory' })} size="sm" theme="outlined" variant="secondary">
+                  <Button
+                    onClick={() => setPanel({ kind: 'inventory' })}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                  >
                     {k('actions.newInventory')}
                   </Button>
                   <Button onClick={() => setPanel({ kind: 'asset' })} size="sm" variant="primary">
@@ -325,11 +341,19 @@ const AssetsView = () => {
           <StatCard label={k('stats.openFollowUps')} value={formatNumber(stats.openFollowUps)} />
         </StatRow>
         <Tabs onValueChange={setTab} value={tab} variant="line">
-          <Tabs.List>
-            <Tabs.Trigger value="register">{k('tabs.register')}</Tabs.Trigger>
-            <Tabs.Trigger value="services">{k('tabs.services', { count: dues.length })}</Tabs.Trigger>
-            <Tabs.Trigger value="inventories">{k('tabs.inventories')}</Tabs.Trigger>
-            <Tabs.Trigger value="depreciation">{k('tabs.depreciation')}</Tabs.Trigger>
+          <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
+            <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="register">
+              {k('tabs.register')}
+            </Tabs.Trigger>
+            <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="services">
+              {k('tabs.services', { count: dues.length })}
+            </Tabs.Trigger>
+            <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="inventories">
+              {k('tabs.inventories')}
+            </Tabs.Trigger>
+            <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="depreciation">
+              {k('tabs.depreciation')}
+            </Tabs.Trigger>
             <Tabs.Indicator />
           </Tabs.List>
           <Tabs.Content className="flex flex-col gap-200 py-250" value="register">

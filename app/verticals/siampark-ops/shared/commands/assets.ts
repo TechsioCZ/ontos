@@ -485,6 +485,7 @@ const confirmPlan = Effect.fn('SiamparkOps.Assets.confirmPlan')(function* confir
   input: OpsCommandInput,
 ) {
   const asset = yield* findAsset(state, value.assetId);
+  yield* requireActive(asset);
   const plan = yield* findPlan(asset, value.planId);
   if (plan.status === 'confirmed') {
     return yield* opsConflict('The plan is already confirmed');
@@ -512,6 +513,7 @@ const recordEntry = Effect.fn('SiamparkOps.Assets.recordEntry')(function* record
   input: OpsCommandInput,
 ) {
   const asset = yield* findAsset(state, value.assetId);
+  yield* requireActive(asset);
   const plan = yield* findPlan(asset, value.planId);
   const monthly = /^\d{4}-\d{2}$/.test(value.period);
   if (monthly !== (plan.interval === 'monthly')) {

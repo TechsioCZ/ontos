@@ -321,3 +321,42 @@ it.effect('seed decodes with the state schema', () =>
     expect(state.assets.length).toBeGreaterThanOrEqual(20);
   }),
 );
+
+it.effect('disposed depreciation evidence stays read-only for confirmation and approved amounts', () =>
+  Effect.gen(function* disposedDepreciation() {
+    const state = yield* withAsset;
+    const planned = yield* apply(
+      state,
+      {
+        _tag: 'AssetDepreciationPlanCreate',
+        assetId: 'asset-1',
+        baseMinor: 10_000_000,
+        interval: 'yearly',
+        method: 'rovnoměrný',
+        startDate: '2026-01-01',
+        type: 'accounting',
+        years: 5,
+      },
+      'readonly-plan',
+    );
+    const planId = planned.state.assets[0]?.depreciationPlans?.[0]?.id ?? '';
+    const disposed = yield* apply(
+      planned.state,
+      {
+        _tag: 'AssetDispose',
+        assetId: 'asset-1',
+        date: '2026-10-20',
+        kind: 'retirement',
+        reason: 'Náhrada technologie',
+      },
+      'readonly-disposal',
+    );
+    for (const command of [
+      { _tag: 'AssetDepreciationPlanConfirm', assetId: 'asset-1', planId },
+      { _tag: 'AssetDepreciationEntryRecord', assetId: 'asset-1', planId, amountMinor: 150_000, period: '2026' },
+    ]) {
+      expect(Exit.isFailure(yield* Effect.exit(apply(disposed.state, command, 'readonly-change')))).toBe(true);
+    }
+    expect(disposed.state.assets[0]?.depreciationPlans?.[0]?.entries).toEqual([]);
+  }),
+);
