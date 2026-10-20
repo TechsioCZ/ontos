@@ -143,6 +143,7 @@ export const OrderDetailDialog = ({
   }
   const editing = editingId === order.id;
   const storefront = isStorefrontOrder(order);
+  const akros = products.some((product) => product.sourceGroupId !== undefined);
   const transitions = canWrite && !editing ? transitionsFrom(order.status) : [];
   // One forward step at a time keeps the footer short; the stepper shows the whole path.
   const forward = transitions.filter((status) => status !== 'CANCELLED').slice(0, 1);
@@ -294,13 +295,13 @@ export const OrderDetailDialog = ({
                   ]),
               ...(order.shipping === undefined
                 ? []
-                : [{ label: 'Doprava', value: `${order.shipping.label} · ${formatMoney(order.shipping.priceMinor)}` }]),
+                : [{ label: 'Doprava', value: `${akros ? order.shipping.label.replace("Kavárna Doma, Brno", "AKROS") : order.shipping.label} · ${formatMoney(order.shipping.priceMinor)}` }]),
               ...(storefront ? [{ label: 'Platba', value: 'Nic neplatíte (DEMO)' }] : []),
               ...(order.note === undefined || order.note === '' ? [] : [{ label: 'Poznámka', value: order.note }]),
               {
                 label: t('merchandise.pages.orders.detail.source'),
                 value: storefront ? (
-                  'E-shop Kavárna Doma (DEMO)'
+                  akros ? 'E-shop AKROS (DEMO)' : 'E-shop Kavárna Doma (DEMO)'
                 ) : order.opportunityId === undefined ? (
                   t('merchandise.pages.orders.source.manual')
                 ) : (
