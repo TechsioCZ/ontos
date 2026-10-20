@@ -2603,6 +2603,19 @@ process.stdout.write(JSON.stringify(evidence, normalize));
   ]);
 });
 
+// The OntOS workspace helper sets the TS-Go checker explicitly: it stays on for builds and is off only
+// under `modern dev` (NODE_ENV=development), which this harness never sets.
+const OntosOutputConfigSchema = Schema.Struct({
+  output: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+});
+const withOntosOutputConfig = (configuration: Schema.Json): Schema.Json => {
+  const { output } = Schema.decodeUnknownSync(OntosOutputConfigSchema)(configuration);
+  return Schema.decodeUnknownSync(Schema.Json)({
+    ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
+    output: { disableTsChecker: false, ...output },
+  });
+};
+
 // OntOS's one intended extension of a generated UI vertical config: its Worker binds the private
 // data plane (Hyperdrive and the SpiceDB Workers VPC service), with the harness's placeholder IDs.
 // Party binds only its request identity's Hyperdrive (`PARTY_REGISTRY_HYPERDRIVE`), never the shared one.
@@ -2739,8 +2752,10 @@ it.live(
                       );
                       const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
                       expect(
-                        cloudflare && fileName === modernConfigFile
-                          ? withOntosWorkerConfig(decode(expected))
+                        fileName === modernConfigFile
+                          ? withOntosOutputConfig(
+                              cloudflare ? withOntosWorkerConfig(decode(expected)) : decode(expected),
+                            )
                           : decode(expected),
                         `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
                       ).toEqual(decode(evaluated));
