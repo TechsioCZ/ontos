@@ -1,3 +1,4 @@
+import { RecordDiscussion } from '@app/siampark-ops/ui/record-discussion';
 import { UnitRefSchema } from '../../../../../shared/resources/unit.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -549,44 +550,53 @@ const RecordsPageContent = () => {
                 <p className={secondaryTextClass}>{model.property.address}</p>
                 <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
                 <div className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:gap-2">
-                <Button
-                  disabled={editor.busy}
-                  onClick={() => {
-                    if (model.property !== undefined) {
-                      editor.toggleLifecycle(model.property);
-                    }
-                  }}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
-                </Button>
-                <Button
-                  disabled={editor.busy}
-                  onClick={() => {
-                    if (model.property !== undefined) {
-                      editor.beginUnit(model.property);
-                    }
-                  }}
-                  size="sm"
-                  variant="warning"
-                >
-                  {t(`${key}.editor.createUnit`)}
-                </Button>
-                <Button
-                  disabled={model.pending}
-                  onClick={handleLoadSummary}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {t(`${key}.loadSummary`)}
-                </Button>
+                  <Button
+                    disabled={editor.busy}
+                    onClick={() => {
+                      if (model.property !== undefined) {
+                        editor.toggleLifecycle(model.property);
+                      }
+                    }}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                  >
+                    {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
+                  </Button>
+                  <Button
+                    disabled={editor.busy}
+                    onClick={() => {
+                      if (model.property !== undefined) {
+                        editor.beginUnit(model.property);
+                      }
+                    }}
+                    size="sm"
+                    variant="warning"
+                  >
+                    {t(`${key}.editor.createUnit`)}
+                  </Button>
+                  <Button
+                    disabled={model.pending}
+                    onClick={handleLoadSummary}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                  >
+                    {t(`${key}.loadSummary`)}
+                  </Button>
                 </div>
                 <output aria-live="polite" className={messageClass}>
                   {model.summaryMessage}
                 </output>
+                {unit === undefined && model.property !== undefined && (
+                  <RecordDiscussion
+                    subject={{
+                      kind: 'property',
+                      id: model.property.propertyRef.resourceId,
+                      label: model.property.name,
+                    }}
+                  />
+                )}
                 {unit !== undefined && (
                   <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
                     <h3 className={detailHeadingClass}>
@@ -604,6 +614,9 @@ const RecordsPageContent = () => {
                       t={t}
                       tasks={model.work?.items}
                       unit={unit}
+                    />
+                    <RecordDiscussion
+                      subject={{ kind: 'unit', id: unit.unitRef.resourceId, label: `${unit.code} · ${unit.name}` }}
                     />
                   </aside>
                 )}
