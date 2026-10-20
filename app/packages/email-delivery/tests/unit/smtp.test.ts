@@ -5,7 +5,7 @@ import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { formatAddressHeader, makeSmtpEmailDelivery, smtpConfigurationFromEnvironment } from '../../src/smtp.ts';
 
-type Mode = 'accept' | 'reject-rcpt' | 'drop-after-data';
+type Mode = 'accept' | 'reject-rcpt' | 'tempfail-rcpt' | 'drop-after-data';
 const startFakeSmtp = (mode: Mode = 'accept') =>
   new Promise<{ readonly close: () => Promise<void>; readonly messages: string[]; readonly port: number }>((resolve) => {
     const messages: string[] = [];
@@ -34,7 +34,7 @@ const startFakeSmtp = (mode: Mode = 'accept') =>
           buffer = buffer.slice(end + 2);
           if (line.startsWith('EHLO')) socket.write('250-fake.smtp\r\n250 8BITMIME\r\n');
           else if (line.startsWith('MAIL FROM')) socket.write('250 OK\r\n');
-          else if (line.startsWith('RCPT TO')) socket.write(mode === 'reject-rcpt' ? '550 5.1.1 no such user\r\n' : '250 OK\r\n');
+          else if (line.startsWith('RCPT TO')) socket.write(mode === 'reject-rcpt' ? '550 5.1.1 no such user\r\n' : mode === 'tempfail-rcpt' ? '451 4.3.0 try later\r\n' : '250 OK\r\n');
           else if (line === 'DATA') { inData = true; socket.write('354 go ahead\r\n'); }
           else if (line === 'QUIT') { socket.end('221 bye\r\n'); return; }
           else socket.write('502 unsupported\r\n');
@@ -68,6 +68,19 @@ describe('SMTP email delivery adapter', () => {
       const transport = makeSmtpEmailDelivery({ from: 'finance@siampark.demo', host: '127.0.0.1', port: server.port });
       const error = await Effect.runPromise(Effect.flip(transport.send(message)));
       expect(error._tag).toBe('EmailDeliveryRejected');
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('temporary SMTP failure before DATA is safe to retry', async () => {
+    const server = await startFakeSmtp('tempfail-rcpt');
+    try {
+      const transport = makeSmtpEmailDelivery({ from: 'finance@siampark.demo', host: '127.0.0.1', port: server.port });
+      const error = await Effect.runPromise(Effect.flip(transport.send(message)));
+      expect(error._tag).toBe('EmailDeliveryUnavailable');
+      expect((error as { status?: number }).status).toBe(451);
+      expect(server.messages.length).toBe(0);
     } finally {
       await server.close();
     }

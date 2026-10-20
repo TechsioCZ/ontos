@@ -66,6 +66,8 @@ export const makeSmtpEmailDelivery = (config: SmtpConfiguration): EmailDeliveryS
         const line = replies.shift();
         if (!line) throw new EmailDeliveryAcceptanceIndeterminate({ reason: 'transport' });
         const status = Number(line.slice(0, 3));
+        // SMTP 4xx is transient and means the server did not take the message: safe to retry.
+        if (status >= 400 && status < 500) throw new EmailDeliveryUnavailable({ reason: 'provider_unavailable', status });
         if (status !== expected) throw new EmailDeliveryRejected({ reason: 'provider_rejected', status });
       };
       const command = async (value: string, expected = 250) => { socket.write(`${value}\r\n`); await reply(expected); };
