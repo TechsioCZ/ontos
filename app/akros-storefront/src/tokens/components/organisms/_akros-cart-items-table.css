@@ -57,3 +57,9 @@
   --padding-input-md: var(--spacing-150) var(--dimension-4);
   --padding-numeric-input-input-sm: var(--dimension-4);
 }
+
+@container akros-cart (width < 28rem) {
+  [data-akros-cart-items] [data-scope="number-input"][data-part="root"] {
+    --text-numeric-input-sm: var(--akros-cart-compact-quantity-size);
+  }
+}

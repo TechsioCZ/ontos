@@ -172,6 +172,49 @@ try {
     assert.equal(await style(action, "fontWeight"), "600");
   });
 
+  const methods = page.locator("[data-akros-checkout-methods]");
+  for (const width of [1920, 640, 639, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const method = methods.locator('[data-part="item"]').first();
+    assert.equal(await style(method, "columnGap"), width < 640 ? "8px" : "6.08px");
+    await probe(
+      methods,
+      {
+        "--spacing-radio-group-item-sm": "10px",
+        "--spacing-radio-group-stack-vertical-sm": "6px",
+        "--radio-group-item-grid": "auto 40px minmax(0, 1fr) auto",
+      },
+      async () => {
+        assert.equal(await style(method, "columnGap"), "10px");
+        const columns = (await style(method, "gridTemplateColumns")).split(" ");
+        assert.equal(columns.length, 4);
+        assert.equal(columns[1], "40px");
+        for (const group of await methods.locator('[data-part="root"]').all()) {
+          assert.equal(
+            await style(group.locator(':scope > div[data-orientation="vertical"]'), "rowGap"),
+            "6px",
+          );
+        }
+      },
+    );
+    const steps = page.locator('[data-scope="steps"][data-part="list"]');
+    const stepTitle = steps.locator(".text-steps-title-md").first();
+    assert.equal(await style(stepTitle, "fontSize"), width < 640 ? "16px" : "20px");
+    await probe(
+      steps,
+      { "--spacing-steps-list": "4px", "--spacing-steps-trigger": "14px" },
+      async () => {
+        assert.equal(await style(steps, "gap"), "4px");
+        assert.equal(await style(steps.locator('[data-part="trigger"]').first(), "gap"), "14px");
+      },
+    );
+    await probe(stepTitle, { "--text-steps-title-md": "18px" }, async () => {
+      assert.equal(await style(stepTitle, "fontSize"), "18px");
+    });
+  }
+
+  await page.setViewportSize({ width: 1920, height: 1000 });
+
   await page.goto(new URL("/kosik", baseUrl).href, { waitUntil: "networkidle" });
   const quantity = page.locator("[data-akros-cart-quantity]").first();
   const input = quantity.locator("input");
@@ -192,6 +235,29 @@ try {
       assert.equal(await style(input, "backgroundColor"), "rgb(12, 34, 56)");
     },
   );
+
+  const carts = page.locator('[data-akros-cart-selector] [data-part="root"]');
+  const cartName = carts.locator('[data-part="item-text"]').first();
+  for (const width of [1920, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    assert.equal(await style(cartName, "fontSize"), "25px");
+    assert.equal(await style(input, "fontSize"), width === 1920 ? "25px" : "16px");
+    await probe(
+      carts,
+      { "--text-radio-group-item-sm": "22px", "--spacing-radio-group-stack-vertical-sm": "12px" },
+      async () => {
+        assert.equal(await style(cartName, "fontSize"), "22px");
+        assert.equal(
+          await style(carts.locator(':scope > div[data-orientation="vertical"]'), "rowGap"),
+          "12px",
+        );
+      },
+    );
+    await probe(quantity, { "--text-numeric-input-sm": "22px" }, async () => {
+      assert.equal(await style(input, "fontSize"), "22px");
+    });
+  }
+  await page.setViewportSize({ width: 1920, height: 1000 });
 
   await page.goto(
     new URL("/produkt/vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2", baseUrl).href,

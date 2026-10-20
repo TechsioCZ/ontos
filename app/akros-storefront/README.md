@@ -12,7 +12,7 @@ npm run dev
 
 Open <http://localhost:3000>.
 
-The remaining six UI-kit refactor tasks and the catalog adoption inventory are tracked in
+The six-part UI-kit refactor, its progress and component adoption inventories are tracked in
 [UI-KIT-REFACTOR.md](./UI-KIT-REFACTOR.md).
 
 `npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
@@ -81,6 +81,8 @@ surfaces. Run it alongside the responsive, account and typography browser suites
 token mappings; these browser checks are separate from `npm run check`.
 The theme check also probes product detail badge colors, favorite button colors/padding and
 purchase quantity padding, including isolation from the neighboring favorite button.
+It also checks checkout method columns/spacing, named-cart text/spacing, step spacing/mobile
+title size and compact quantity text, including both sides of the 640px breakpoint.
 
 Keep remaining appearance utilities tied to a verified kit limitation. In UI kit `0.56.1`,
 ProductCard uses a static `shadow-sm`, so its app shadow still needs an explicit variable utility.

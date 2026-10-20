@@ -30,7 +30,6 @@ function CartQuantity({ line }: { line: CartLine }) {
   return (
     <div className="flex items-center justify-center gap-1">
       <NumericInput
-        className="@max-akros-cart-narrow/akros-cart:[--text-numeric-input-sm:var(--akros-cart-compact-quantity-size)]"
         id={id}
         locale="cs-CZ"
         formatOptions={{ maximumFractionDigits: 6 }}

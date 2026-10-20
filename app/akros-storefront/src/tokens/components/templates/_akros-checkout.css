@@ -37,7 +37,6 @@
   --akros-checkout-total-size: 38px;
   --akros-checkout-heading-leading: 1.2;
   --akros-checkout-choice-size: 25px;
-  --akros-checkout-choice-compact-size: var(--dimension-16);
   --akros-checkout-recommendation-size: 39px;
   --akros-checkout-recommendation-color: #121a41;
   --akros-checkout-cart-glyph-size: 35.3307px;
@@ -151,4 +150,24 @@
   --color-radio-group-item-border-outline-checked: var(--akros-checkout-ink);
   --color-radio-group-item-indicator-outline: var(--akros-checkout-ink);
   --text-icon-control-md: 18.468px;
+}
+
+[data-akros-cart-selector] {
+  --text-radio-group-item-sm: var(--akros-checkout-choice-size);
+}
+
+[data-akros-checkout-methods] {
+  --radio-group-item-grid: auto 5rem minmax(0, 1fr) auto;
+  --spacing-radio-group-stack-vertical-sm: 0px;
+}
+
+@media (width < 40rem) {
+  [data-akros-checkout] {
+    --text-steps-title-md: var(--text-xs);
+  }
+
+  [data-akros-checkout-methods] {
+    --radio-group-item-grid: auto 3.5rem minmax(0, 1fr) auto;
+    --spacing-radio-group-item-sm: var(--dimension-8);
+  }
 }

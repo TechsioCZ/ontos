@@ -57,7 +57,7 @@ export function CartServices() {
             updateDraft((current) => ({ ...current, extendedReturn }))
           }
           aria-describedby="checkout-extended-return-description"
-          className="[&_[data-part=label]]:min-w-0 [&_[data-part=label]]:flex-1 [&_[data-part=control]]:border-(length:--border-width-checkbox)"
+          className="[&_[data-part=label]]:min-w-0 [&_[data-part=label]]:flex-1"
           label={
             <span className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-(--dimension-32) @max-[40rem]/cart-services:grid-cols-[auto_minmax(0,1fr)] @max-[40rem]/cart-services:gap-(--dimension-16)">
               <span

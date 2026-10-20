@@ -55,7 +55,7 @@ export function CartSelector() {
         size="sm"
       >
         <RadioGroup.Label className="sr-only">Aktivní košík</RadioGroup.Label>
-        <RadioGroup.ItemGroup className="gap-(--dimension-16)">
+        <RadioGroup.ItemGroup>
           {carts.map((cart) => (
             <div
               key={cart.id}
@@ -65,7 +65,7 @@ export function CartSelector() {
                 <RadioGroup.ItemHiddenInput />
                 <RadioGroup.ItemControl />
                 <RadioGroup.ItemContent>
-                  <RadioGroup.ItemText className="wrap-anywhere leading-(--akros-checkout-heading-leading)! font-bold text-(length:--akros-checkout-choice-size) @max-sm/cart-selector:text-(length:--akros-checkout-choice-compact-size)">
+                  <RadioGroup.ItemText className="wrap-anywhere leading-(--akros-checkout-heading-leading)! font-bold">
                     {cart.name}
                   </RadioGroup.ItemText>
                 </RadioGroup.ItemContent>
@@ -85,7 +85,8 @@ export function CartSelector() {
         variant="secondary"
         theme="outlined"
         size="sm"
-        className="mt-(--dimension-32) w-full leading-(--akros-checkout-heading-leading)"
+        block
+        className="mt-(--dimension-32) leading-(--akros-checkout-heading-leading)"
         uppercase
         disabled={!ready}
         onClick={() => {

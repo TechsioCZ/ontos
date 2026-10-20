@@ -8,7 +8,7 @@ tokens. Page composition and verified library limitations may retain local CSS/u
 | ---- | --------------------------------------------------------------------------- | -------- |
 | 1    | Catalog categories/listings, variant filters and purchase tables            | Complete |
 | 2    | Shared search/suggestions, navigation and footer                            | Complete |
-| 3    | Cart and checkout appearance overrides                                      | Pending  |
+| 3    | Cart and checkout appearance overrides                                      | Complete |
 | 4    | Account, login, registration and shared form styling                        | Pending  |
 | 5    | FAQ, blog, news, contacts and delivery information                          | Pending  |
 | 6    | Final token consolidation, exception audit and responsive regression checks | Pending  |
@@ -74,3 +74,40 @@ regression checks passed.
 All checks passed: the shared UI test at twelve widths, the catalog interaction checks,
 150 unit/component tests, the production build and the responsive/theme/account/typography
 regression suites.
+
+## Task 3 inventory
+
+| Surface                                   | Implementation                                            | Result / retained exception                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Named carts                               | `RadioGroup`, `Button`, `Dialog`, `FormInput`             | Name size uses `--text-radio-group-item-sm`; the add-cart button uses `block`. Removed the ignored group-gap override and inactive compact-name utility/token. Preserve the measured 25px names and the kit's 8px group gap at all checked widths. RadioGroup has no item-text weight/line-height token, so those utilities stay. |
+| Delivery/payment methods                  | `RadioGroup`, `size="sm"`                                 | Columns use `--radio-group-item-grid`; the vertical stack uses its spacing token. Keep the kit's measured 6.08px desktop column gap and use `--spacing-radio-group-item-sm` for the existing 8px mobile gap below 640px. Per-edge separators, carrier logos, prices and disabled-row opacity remain composition.                  |
+| Checkout steps                            | `Steps`, `size="md"`, `variant="subtle"`                  | Removed duplicate gap utilities: existing List/Trigger spacing tokens already supply 0px/8px. Mobile titles use `--text-steps-title-md` below 640px instead of a text-size utility. Keep placement, wrapping and numbered-indicator line height.                                                                                  |
+| Cart quantities                           | `NumericInput`, `size="sm"`                               | Moved the compact font token assignment into the cart token file at the same 448px container boundary. Set it on the NumericInput root because the quantity width uses its inherited font's `ch` unit. Keep separate input border/radius and trigger surface utilities: the kit hardcodes the conflicting slot styles.            |
+| Cart services                             | `FormCheckbox` and native `progress`                      | Removed the duplicate checkbox border-width utility; the control already consumes that token. The kit has no Progress component; preserve native progress semantics and its browser-specific rendering. Rich service-label content remains composition.                                                                           |
+| Summary, address, review and confirmation | Existing form controls, `DataTable`, `LinkButton`, `Icon` | Existing scoped component tokens already own the supported control appearance. Keep panel/content composition, app price/address typography and table responsive placement. No generic kit surface or complete row-card API replaces these semantics.                                                                             |
+| Mini-cart                                 | Existing `Popover`, `LinkButton`, `Badge`                 | Previously tokenized; retain the documented popup shadow and viewport-height API exceptions.                                                                                                                                                                                                                                      |
+
+This task removes 19 utility occurrences from component markup and one inactive app token.
+It preserves cart calculations, minimum/package quantities, carrier/payment rules, address
+validation, persistence and order completion.
+
+## Task 3 verification
+
+- Before/after geometry and computed styles match across all four checkout routes at twelve
+  widths from 320 to 1920px: 48 layouts and 10,110 rendered elements. Address captures include
+  the expanded billing form; shipping/payment captures include checked and disabled options.
+- Extended `npm run test:theme` probes the actual RadioGroup stack/grid/text, Steps spacing
+  and mobile title size, and compact NumericInput text tokens, including 639/640px edges.
+- Full click-through at 1920, 1024 and 390px: named payment availability after delivery changes,
+  required-payment validation, billing edit, order confirmation and cart clearing.
+- Responsive, catalog, shared UI, account and actual-font browser suites passed. The production
+  build passed on retry after the first Windows build worker exited during static generation.
+  The subsequent full `npm run check` passed formatting, lint, type checking, all 150 tests
+  and the production build.
+
+Observed library limitation for task 6: after selecting store-card payment and changing from
+personal pickup to DPD, the draft clears the payment and the visible radio becomes unchecked,
+but its disabled hidden native input retains `checked`. The installed Zag radio machine's
+`syncInputElements` excludes disabled inputs. This is existing library behavior; method handlers
+are unchanged by this refactor. The checkout blocks progression until a valid payment is chosen.
+Record it for the final UI-kit/accessibility audit rather than changing purchase behavior here.

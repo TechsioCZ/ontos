@@ -49,18 +49,18 @@ export function CheckoutLayout({
           <div className="contents min-w-0 2xl:block">
             <Steps.List
               aria-label="Kroky objednávky"
-              className="mb-(--dimension-60) order-0 min-w-0 gap-0 pt-(--dimension-24)"
+              className="mb-(--dimension-60) order-0 min-w-0 pt-(--dimension-24)"
             >
               {checkoutSteps.map((item, index) => (
                 <Steps.Item key={item.href} index={index} className="block min-w-0">
                   <Steps.Trigger
                     disabled={!ready || getReachableStep(index, cart, draft) !== index}
-                    className="relative z-1 w-full flex-col justify-center gap-2 text-center"
+                    className="relative z-1 w-full flex-col justify-center text-center"
                   >
                     <Steps.Indicator>
                       <Steps.Number className="leading-(--akros-checkout-body-leading)" />
                     </Steps.Indicator>
-                    <Steps.Title className="w-full overflow-visible text-center wrap-break-word whitespace-normal max-sm:text-xs">
+                    <Steps.Title className="w-full overflow-visible text-center wrap-break-word whitespace-normal">
                       {item.title}
                     </Steps.Title>
                   </Steps.Trigger>

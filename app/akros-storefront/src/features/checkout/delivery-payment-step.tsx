@@ -51,7 +51,10 @@ export function DeliveryPaymentStep() {
         router.push("/kosik/dodaci-udaje");
       }}
     >
-      <div className="grid gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--akros-checkout-panel-padding)">
+      <div
+        data-akros-checkout-methods
+        className="grid gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--akros-checkout-panel-padding)"
+      >
         <section aria-labelledby="delivery-title">
           <h1
             id="delivery-title"
@@ -71,7 +74,7 @@ export function DeliveryPaymentStep() {
             }}
           >
             <RadioGroup.Label className="sr-only">Způsob dopravy</RadioGroup.Label>
-            <RadioGroup.ItemGroup className="gap-0!">
+            <RadioGroup.ItemGroup>
               {checkoutDeliveryMethods.map((method) => {
                 const price =
                   getCheckoutTotals(cart, { ...draft, deliveryId: method.id }).shipping ?? 0;
@@ -79,7 +82,7 @@ export function DeliveryPaymentStep() {
                   <RadioGroup.Item
                     key={method.id}
                     value={method.id}
-                    className="min-h-20 grid-cols-[auto_5rem_minmax(0,1fr)_auto] items-center gap-x-3 border-b border-(--color-border-primary) py-3 last:border-b-0 max-sm:grid-cols-[auto_3.5rem_minmax(0,1fr)_auto] max-sm:gap-x-2"
+                    className="min-h-20 items-center border-b border-(--color-border-primary) py-3 last:border-b-0"
                   >
                     <RadioGroup.ItemHiddenInput />
                     <RadioGroup.ItemControl />
@@ -145,13 +148,13 @@ export function DeliveryPaymentStep() {
             }}
           >
             <RadioGroup.Label className="sr-only">Způsob platby</RadioGroup.Label>
-            <RadioGroup.ItemGroup className="gap-0!">
+            <RadioGroup.ItemGroup>
               {checkoutPaymentMethods.map((method) => (
                 <RadioGroup.Item
                   key={method.id}
                   value={method.id}
                   disabled={method.pickupOnly && draft.deliveryId !== "osobni"}
-                  className="min-h-16 grid-cols-[auto_5rem_minmax(0,1fr)_auto] items-center gap-x-3 border-b border-(--color-border-primary) py-3 last:border-b-0 data-disabled:opacity-50 max-sm:grid-cols-[auto_3.5rem_minmax(0,1fr)_auto] max-sm:gap-x-2"
+                  className="min-h-16 items-center border-b border-(--color-border-primary) py-3 last:border-b-0 data-disabled:opacity-50"
                 >
                   <RadioGroup.ItemHiddenInput />
                   <RadioGroup.ItemControl />
