@@ -42,6 +42,8 @@ it.effect('Riverside electrical revision matches its 2026 PDF and supersedes onl
     expect(revision?.performedOn).toBe('2026-09-18');
     expect(revision?.nextDueOn).toBe('2029-09-18');
     expect(revision?.documentRef).toBe('Revizní zpráva elektro – Riverside 2026');
+    expect(revision?.result).toBe('defects');
+    expect(revision?.supplier).toBe('Ing. Pavel Šťastný');
     expect(building.services?.some((record) => record.performedOn === '2023-11-18')).toBe(true);
     const deadlines = upcomingServiceDue(state).filter((record) => record.assetId === building.id);
     expect(deadlines.some((record) => record.nextDueOn === '2026-11-18')).toBe(false);

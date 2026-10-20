@@ -321,8 +321,9 @@ const buildAssets = (): EncodedAsset[] => [
         nextDueOn: '2029-09-18',
         performedOn: '2026-09-18',
         responsible: 'Tomáš Veselý',
-        result: 'ok',
-        note: 'Aktuální revize podle přiložené zprávy z 18. 9. 2026; nahrazuje termín revize z roku 2023.',
+        result: 'defects',
+        supplier: 'Ing. Pavel Šťastný',
+        note: 'Závady R1 a R2 dle revizní zprávy z 18. 9. 2026; odstranění dosud nepotvrzeno. Nahrazuje termín revize z roku 2023.',
         title: 'Revize elektroinstalace (budova)',
       }),
       service({
