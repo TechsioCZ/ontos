@@ -50,6 +50,28 @@ it.effect('DocumentVersionAdd keeps every earlier version (S12-02)', () =>
   }),
 );
 
+it.effect('a task attachment persists without replacing existing links or historical file versions (S12)', () =>
+  Effect.gen(function* taskAttachment() {
+    const property = { id: 'riverside', kind: 'property', label: 'Riverside Office Park' };
+    const task = { id: 'vzt-r101', kind: 'task', label: 'Revize vzduchotechniky – kavárna R101' };
+    const created = yield* step(
+      yield* empty,
+      { _tag: 'DocumentCreate', category: 'protocol', file: pdf('file-1'), links: [property], title: 'Podklady VZT' },
+      input('doc-1'),
+    );
+    const attached = yield* step(
+      created,
+      { _tag: 'DocumentUpdate', documentId: 'doc-1', links: [property, task] },
+      input('cmd-2', operations),
+    );
+    const persisted = yield* Schema.decodeUnknownEffect(DocumentsStateSchema)(
+      yield* Schema.encodeEffect(DocumentsStateSchema)(attached),
+    );
+    expect(persisted.documents[0]?.links).toEqual([property, task]);
+    expect(persisted.documents[0]?.versions).toEqual(created.documents[0]?.versions);
+  }),
+);
+
 it.effect('DocumentVersionAdd refuses the same stored file twice', () =>
   Effect.gen(function* duplicate() {
     const created = yield* step(
