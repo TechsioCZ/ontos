@@ -101,6 +101,20 @@ export const loadProducts = (onOutcome: (outcome: LoadOutcome) => void): void =>
   );
 };
 
+/** Detail read: one product with its own movements and the storefront category tree (not the whole catalog). */
+export const loadProductDetail = (productId: string, onOutcome: (outcome: LoadOutcome) => void): void => {
+  void browserRuntime.runPromise(
+    newId.pipe(
+      Effect.flatMap((correlation) => executeRecords({ view: { includeCategories: true, productId } }, correlation)),
+      Effect.match({
+        onFailure: (error): LoadOutcome => ({ ok: false, reason: recordsReason(error) }),
+        onSuccess: (response): LoadOutcome => ({ ok: true, response }),
+      }),
+      Effect.map(onOutcome),
+    ),
+  );
+};
+
 /** One command against the single merchandise apply-command action. Each call gets its own idempotency key. */
 export const runCommand = (
   command: MerchandiseCommand,
@@ -134,7 +148,10 @@ export type ProductDetailSnapshot =
     };
 
 /** One route lifetime, no global cache. React subscribes at its framework edge; stale reads cannot replace a newer result. */
-export const createProductDetailQuery = (routeId: string, read = loadProducts) => {
+export const createProductDetailQuery = (
+  routeId: string,
+  read: (onOutcome: (outcome: LoadOutcome) => void) => void = (onOutcome) => loadProductDetail(routeId, onOutcome),
+) => {
   const validId = Schema.is(ProductIdSchema)(routeId);
   const initial: ProductDetailSnapshot = validId ? { status: 'loading' } : { status: 'invalid' };
   let snapshot: ProductDetailSnapshot = initial;

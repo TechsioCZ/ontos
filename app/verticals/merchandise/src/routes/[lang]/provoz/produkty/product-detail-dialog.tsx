@@ -42,11 +42,14 @@ import {
 } from './product-forms.tsx';
 import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirty } from './product-movements.tsx';
 import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
+import { CatalogContentPanel } from './product-catalog-content.tsx';
+import type { CatalogCategory } from '../../../../../shared/domain/merchandise-model.ts';
 import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailViewProps {
   readonly canWrite: boolean;
   readonly canMoveStock?: boolean;
+  readonly categories?: readonly CatalogCategory[];
   readonly movements: readonly StockMovement[];
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
@@ -620,6 +623,7 @@ const DetailForm = (props: DetailFormProps) => {
 export const ProductDetailView = ({
   canWrite,
   canMoveStock = canWrite,
+  categories = [],
   movements,
   onBack,
   onCommitted,
@@ -724,6 +728,9 @@ export const ProductDetailView = ({
               <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="eshop">
                 E-shop a obrázky
               </Tabs.Trigger>
+              <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="content">
+                Obsah e-shopu
+              </Tabs.Trigger>
               <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="prices">
                 {k('prices.tab')}
               </Tabs.Trigger>
@@ -763,6 +770,17 @@ export const ProductDetailView = ({
             <EshopPanel
               canWrite={canWrite}
               key={`eshop-${DateTime.formatIso(product.updatedAt)}`}
+              onCommitted={onCommitted}
+              onReload={onReload}
+              product={product}
+              revision={revision}
+            />
+          </Tabs.Content>
+          <Tabs.Content className="py-200" value="content">
+            <CatalogContentPanel
+              canWrite={canWrite}
+              categories={categories}
+              key={`content-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}
               product={product}

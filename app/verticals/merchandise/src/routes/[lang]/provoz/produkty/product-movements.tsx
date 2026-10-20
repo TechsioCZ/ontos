@@ -75,7 +75,7 @@ export const MovementsTable = ({ movements }: { readonly movements: readonly Sto
             <Table.Cell align="end" className="tabular-nums">
               {formatDelta(movement.delta)}
             </Table.Cell>
-            <Table.Cell>{movement.note ?? '—'}</Table.Cell>
+            <Table.Cell>{movement.note ?? movement.reference ?? '—'}</Table.Cell>
           </Table.Row>
         ))}
       </Table.Body>
