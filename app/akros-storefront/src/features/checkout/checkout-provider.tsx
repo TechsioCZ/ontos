@@ -1,7 +1,12 @@
 "use client";
 import { useDataSource } from "@/ontos/catalog-provider";
 import { demoPayment } from "@/ontos/demo-checkout";
-import { checkoutSaveError, readCheckoutQuote, readOrderResponse } from "@/ontos/checkout-response";
+import {
+  CheckoutStockError,
+  checkoutSaveError,
+  readCheckoutQuote,
+  readOrderResponse,
+} from "@/ontos/checkout-response";
 
 import { createContext, type ReactNode, useContext, useEffect, useReducer, useRef } from "react";
 import { useCart } from "@/features/cart/cart-provider";
@@ -172,9 +177,10 @@ function CheckoutCartProvider({
         checkoutDispatch({
           type: "submit-error",
           error:
-            error instanceof Error &&
-            (error.message.startsWith("Cena se změnila") ||
-              error.message.startsWith("Košík nyní nelze ověřit"))
+            error instanceof CheckoutStockError ||
+            (error instanceof Error &&
+              (error.message.startsWith("Cena se změnila") ||
+                error.message.startsWith("Košík nyní nelze ověřit")))
               ? error.message
               : checkoutSaveError,
         });
