@@ -75,6 +75,7 @@ type EditFields = Types.Mutable<
   Pick<
     Extract<WorkCommand, { readonly _tag: 'CreateTask' }>,
     | 'assigneeEmployeeId'
+    | 'contextRefs'
     | 'description'
     | 'dueDate'
     | 'opportunityId'
@@ -481,15 +482,21 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
       Effect.all(
         {
           id: requestId,
-          referenceCredentials: makeReferenceGatewayCredentials(
-            command._tag === 'CreateProject' ||
-              command._tag === 'UpdateProject' ||
-              ((command._tag === 'CreateTask' || command._tag === 'UpdateTask') &&
-                command.assigneeEmployeeId !== undefined) ||
-              (command._tag === 'BulkAssignTasks' && Option.isSome(command.assigneeEmployeeId))
+          referenceCredentials: makeReferenceGatewayCredentials([
+            ...(command._tag === 'CreateProject' ||
+            command._tag === 'UpdateProject' ||
+            command._tag === 'AddTaskComment' ||
+            ((command._tag === 'CreateTask' || command._tag === 'UpdateTask') &&
+              command.assigneeEmployeeId !== undefined) ||
+            (command._tag === 'BulkAssignTasks' && Option.isSome(command.assigneeEmployeeId))
               ? ['workforce']
-              : [],
-          ),
+              : []),
+            ...(command._tag === 'CreateTask' || command._tag === 'UpdateTask'
+              ? (command.contextRefs ?? []).map((ref) =>
+                  ref.moduleId === 'siampark.agreements' ? 'siampark-agreements' : 'siampark-property',
+                )
+              : []),
+          ]),
         },
         { concurrency: 1 },
       ).pipe(
@@ -523,6 +530,7 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
       return;
     }
     const fields: EditFields = {
+      contextRefs: submission.contextRefs,
       description: submission.description,
       priority: submission.priority,
       title: submission.title,

@@ -60,6 +60,7 @@
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "@techsio/ui-kit": "0.56.0",
     "@app/siampark-property": "workspace:*",
+    "@app/siampark-agreements": "workspace:*",
     "@app/workforce": "workspace:*",
     "@effect/sql-pg": "4.0.0-rc.117",
     "@effect/platform-node": "4.0.0-rc.117",

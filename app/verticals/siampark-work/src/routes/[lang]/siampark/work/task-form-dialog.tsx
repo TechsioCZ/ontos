@@ -19,7 +19,8 @@ import {
   PartyIdSchema,
   TaskPrioritySchema,
 } from '../../../../../shared/apis/records.ts';
-import type { Task, WorkProject } from '../../../../../shared/apis/records.ts';
+import { TaskContextPickers } from './task-context-pickers.tsx';
+import type { ContextRef, Task, WorkProject } from '../../../../../shared/apis/records.ts';
 import { isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
 import { customerOptionItems, opportunityOptionItems, selectOption } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
@@ -37,6 +38,7 @@ type OpportunityId = typeof OpportunityIdSchema.Type;
 type PartyId = typeof PartyIdSchema.Type;
 
 export interface TaskFormSubmission {
+  readonly contextRefs: readonly ContextRef[];
   readonly plannedHours: number | undefined;
   readonly projectId: string | undefined;
   readonly assigneeEmployeeId: EmployeeId | undefined;
@@ -49,6 +51,7 @@ export interface TaskFormSubmission {
 }
 
 interface FormValues {
+  readonly contextRefs: readonly ContextRef[];
   readonly plannedHours: string;
   readonly projectId: string;
   readonly assigneeId: string;
@@ -80,6 +83,7 @@ interface FieldErrors {
 type FieldName = keyof FieldErrors;
 
 const initialValues = (task: Task | undefined): FormValues => ({
+  contextRefs: task?.contextRefs ?? [],
   plannedHours: task?.plannedHours === undefined ? '' : String(task.plannedHours),
   projectId: task?.projectId ?? '',
   assigneeId: task?.assigneeEmployeeId ?? '',
@@ -181,6 +185,7 @@ const invalidProps = (message: string | undefined) =>
 const hasUnsavedInput = (values: FormValues, task: Task | undefined) => {
   const initial = initialValues(task);
   return (
+    JSON.stringify(values.contextRefs) !== JSON.stringify(initial.contextRefs) ||
     values.assigneeId !== initial.assigneeId ||
     values.description !== initial.description ||
     values.plannedHours !== initial.plannedHours ||
@@ -462,6 +467,7 @@ export const TaskFormDialog = ({
       return;
     }
     onSubmit({
+      contextRefs: values.contextRefs,
       plannedHours: values.plannedHours === '' ? undefined : Number(values.plannedHours),
       projectId: values.projectId === '' ? undefined : values.projectId,
       assigneeEmployeeId: decoded.assigneeEmployeeId,
@@ -615,6 +621,13 @@ export const TaskFormDialog = ({
             value={[values.projectId === '' ? NONE : values.projectId]}
             onValueChange={({ value }) => set({ projectId: value[0] === NONE ? '' : (value[0] ?? '') })}
           />
+          {!readOnly && (
+            <TaskContextPickers
+              refs={values.contextRefs}
+              disabled={fieldsDisabled}
+              onChange={(contextRefs) => set({ contextRefs })}
+            />
+          )}
           {task !== undefined && task.contextRefs.length > 0 && (
             <div className="flex flex-col gap-100">
               <h3 className="font-semibold">{t(`${key}.relatedRecords`)}</h3>
@@ -622,9 +635,9 @@ export const TaskFormDialog = ({
                 <a
                   key={ref.resourceId}
                   className="underline"
-                  href={`/cs/siampark/properties?resourceId=${encodeURIComponent(ref.resourceId)}`}
+                  href={`/cs/siampark/${ref.moduleId === 'siampark.agreements' ? 'contracts' : 'properties'}?resourceId=${encodeURIComponent(ref.resourceId)}`}
                 >
-                  {t(`${key}.openProperty`)}
+                  {t(`${key}.${ref.moduleId === 'siampark.agreements' ? 'openContract' : 'openProperty'}`)}
                 </a>
               ))}
             </div>
@@ -693,9 +706,11 @@ export const TaskFormDialog = ({
               {(task.comments ?? []).map((entry) => (
                 <div key={entry.id} className="rounded-lg border border-border-primary p-150">
                   <p className="text-sm text-fg-secondary">
-                    {employees.find(
-                      (employee) => employee.principalRef?.principalId === entry.authorPrincipalRef.principalId,
-                    )?.fullName ?? t(`${key}.teamMember`)}{' '}
+                    {entry.authorDisplayName ??
+                      employees.find(
+                        (employee) => employee.principalRef?.principalId === entry.authorPrincipalRef.principalId,
+                      )?.fullName ??
+                      t(`${key}.teamMember`)}{' '}
                     ·{' '}
                     {new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' }).format(
                       DateTime.toDateUtc(entry.createdAt),

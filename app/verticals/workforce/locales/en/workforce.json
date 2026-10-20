@@ -272,6 +272,7 @@
         "emailInvalid": "Enter a valid e-mail.",
         "roleRequired": "Choose a role."
       },
+      "identities": {"management": "Siampark management", "operations": "Siampark operations", "finance": "Siampark accountant", "external": "External sales representative"},
       "panel": {
         "title": "Account",
         "close": "Close",
@@ -279,7 +280,8 @@
         "role": "Role",
         "status": "Status",
         "companies": "Other companies",
-        "principal": "Principal (Core)",
+        "principal": "Account identifier",
+        "diagnostics": "Technical details",
         "roleSection": "Role in the company",
         "changeRole": "Save role",
         "roleUnchanged": "Choose a different role.",

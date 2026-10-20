@@ -18,7 +18,7 @@ import {
   preserveSystemPrincipalContextTrust,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
-import { legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
+import { auditEvents, legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import type { ContextAccessService } from '../permissions/context-access.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
@@ -354,6 +354,7 @@ const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEnt
 export const makeOperationalScopeResolver = (
   repository: Pick<OperationalScopeRepository, 'load'>,
   contextAccess: LegalEntityScopeAccess,
+  recordInactiveDenial?: (input: ResolveOperationalScopeInput) => Effect.Effect<void>,
 ): OperationalScopeResolverService => {
   const prepareExternalAdmission = Effect.fn('OperationalScopeResolver.prepareExternalAdmission')(
     function* prepareExternalAdmissionEffect(input: ResolveOperationalScopeInput) {
@@ -464,6 +465,10 @@ export const makeOperationalScopeResolver = (
     const supportRecovery = isTrustedSupportRecoveryPrincipalContext(principal);
     const persistedFailure = validatePersistedPrincipal(principal, persisted, supportRecovery);
     if (persistedFailure !== undefined) {
+      // Cached gateway credentials bypass the session principal resolver. Audit this admission independently.
+      if (persisted.principalStatus === 'disabled' && persisted.principalTenantId === principal.tenantId) {
+        yield* recordInactiveDenial?.(input) ?? Effect.void;
+      }
       return yield* persistedFailure;
     }
 
@@ -514,6 +519,34 @@ export const makeOperationalScopeResolver = (
   return { resolve: resolveOperationalScope };
 };
 
+const inactiveOperationDenial =
+  (database: { readonly executor: Pick<CoreDatabaseExecutor, 'insert'> }) =>
+  (input: ResolveOperationalScopeInput): Effect.Effect<void> =>
+    database.executor
+      .insert(auditEvents)
+      .values({
+        auditProfile: 'sensitive',
+        authBindingId: input.principal.authBindingId,
+        authMethod: input.principal.authMethod,
+        eventType: 'authn.rejected',
+        evidenceJson: {
+          reason: 'principal_disabled',
+          source: 'operational_scope',
+          correlationId: input.correlationId,
+          audience: input.audience ?? null,
+        },
+        legalEntityId: input.principal.legalEntityId,
+        outcome: 'denied',
+        outcomeCode: 'principal_inactive',
+        outcomeStage: 'authn',
+        principalId: input.principal.principalId,
+        targetModuleKey: 'core.identity',
+        targetResourceId: input.principal.principalId,
+        targetResourceType: 'principal',
+        tenantId: input.principal.tenantId,
+      })
+      .pipe(Effect.ignore);
+
 export const OperationalScopeRepositoryLive = Layer.effect(
   OperationalScopeRepositoryContext,
   CoreDatabase.pipe(Effect.map(makeOperationalScopeRepository)),
@@ -524,7 +557,12 @@ export const OperationalScopeResolverFromRepositoryLive = Layer.effect(
   Effect.gen(function* createOperationalScopeResolverService() {
     const repository = yield* OperationalScopeRepositoryContext;
     const contextAccess = yield* ContextAccess;
-    return makeOperationalScopeResolver(repository, contextAccess);
+    const database = yield* Effect.serviceOption(CoreDatabase);
+    return makeOperationalScopeResolver(
+      repository,
+      contextAccess,
+      Option.isSome(database) ? inactiveOperationDenial(database.value) : undefined,
+    );
   }),
 );
 
@@ -533,6 +571,10 @@ export const OperationalScopeResolverLive = Layer.effect(
   Effect.gen(function* createLiveOperationalScopeResolverService() {
     const database = yield* CoreDatabase;
     const contextAccess = yield* ContextAccess;
-    return makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+    return makeOperationalScopeResolver(
+      makeOperationalScopeRepository(database),
+      contextAccess,
+      inactiveOperationDenial(database),
+    );
   }),
 );

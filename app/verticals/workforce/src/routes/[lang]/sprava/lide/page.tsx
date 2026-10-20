@@ -443,7 +443,7 @@ const PersonPanel = ({
       }}
       open
       resizeLabel={t(RESIZE_LABEL_KEY)}
-      size="md"
+      size="lg"
       title={person.displayName}
     >
       <div className="flex flex-col gap-250 py-200">
@@ -454,7 +454,10 @@ const PersonPanel = ({
         )}
         <DetailList
           items={[
-            { label: t(`${key}.panel.email`), value: person.email ?? t(`${key}.table.emailMissing`) },
+            {
+              label: t(`${key}.panel.email`),
+              value: <span className="break-all">{person.email ?? t(`${key}.table.emailMissing`)}</span>,
+            },
             { label: t(`${key}.panel.role`), value: person.roleLabel ?? t(`${key}.table.noRole`) },
             {
               label: t(`${key}.panel.status`),
@@ -468,13 +471,14 @@ const PersonPanel = ({
               label: t(`${key}.panel.companies`),
               value: person.otherCompanies.length === 0 ? t(`${key}.table.none`) : person.otherCompanies.join(', '),
             },
-            {
-              label: t(`${key}.panel.principal`),
-              value: <code className="break-all text-xs">{person.principalId}</code>,
-            },
           ]}
         />
 
+        <details className="text-fg-secondary text-xs">
+          <summary className="cursor-pointer">{t(`${key}.panel.diagnostics`)}</summary>
+          <p className="mt-100">{t(`${key}.panel.principal`)}</p>
+          <code className="break-all">{person.principalId}</code>
+        </details>
         {person.editable ? (
           <>
             <section className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
@@ -613,7 +617,19 @@ const PeoplePageContent = () => {
   useEffect(reload, []);
 
   const data = state.status === 'ready' ? state.data : undefined;
-  const people = data?.accounts ?? [];
+  const identityLabels: Readonly<Record<string, string>> = {
+    Management: t(`${key}.identities.management`),
+    Operations: t(`${key}.identities.operations`),
+    Finance: t(`${key}.identities.finance`),
+    'External Agent': t(`${key}.identities.external`),
+  };
+  const people = (data?.accounts ?? []).map((person) => ({
+    ...person,
+    displayName:
+      person.email?.endsWith('@siampark.demo') === true
+        ? (identityLabels[person.displayName] ?? person.displayName)
+        : person.displayName,
+  }));
   const opened = people.find((person) => person.principalId === openId);
   const grantsToast = (result: ManageResult) =>
     result.operation === 'change-status'

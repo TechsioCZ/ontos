@@ -272,6 +272,7 @@
         "emailInvalid": "Zadejte platný e-mail.",
         "roleRequired": "Vyberte roli."
       },
+      "identities": {"management": "Vedení Siampark", "operations": "Provoz Siampark", "finance": "Účetní Siampark", "external": "Externí obchodník"},
       "panel": {
         "title": "Účet",
         "close": "Zavřít",
@@ -279,7 +280,8 @@
         "role": "Role",
         "status": "Stav",
         "companies": "Další firmy",
-        "principal": "Principal (Core)",
+        "principal": "Identifikátor účtu",
+        "diagnostics": "Technické údaje",
         "roleSection": "Role ve firmě",
         "changeRole": "Uložit roli",
         "roleUnchanged": "Vyberte jinou roli.",

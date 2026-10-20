@@ -2,6 +2,7 @@
 import { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts';
 import { PropertyRefSchema } from '@app/siampark-property/resources/property';
 import { UnitRefSchema } from '@app/siampark-property/resources/unit';
+import { ContractRefSchema } from '@app/siampark-agreements/resources/contract';
 import { AssetRefSchema } from '@app/siampark-property/resources/asset';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
@@ -12,7 +13,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi'
 
 export { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts';
 
-export const ContextRefSchema = Schema.Union([PropertyRefSchema, UnitRefSchema, AssetRefSchema]);
+export const ContextRefSchema = Schema.Union([PropertyRefSchema, UnitRefSchema, AssetRefSchema, ContractRefSchema]);
 export type ContextRef = typeof ContextRefSchema.Type;
 export const TaskStateSchema = Schema.Literals(['NEW', 'IN_PROGRESS', 'WAITING', 'DONE', 'CANCELLED']);
 export type TaskState = typeof TaskStateSchema.Type;
@@ -47,6 +48,7 @@ export const ProjectSchema = Schema.Struct({
 export type WorkProject = typeof ProjectSchema.Type;
 export const TaskCommentSchema = Schema.Struct({
   id: Schema.String,
+  authorDisplayName: Schema.optionalKey(Schema.String),
   authorPrincipalRef: PrincipalRefSchema,
   createdAt: Schema.DateTimeUtcFromString,
   text: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
@@ -118,7 +120,7 @@ export const RecordsResponseSchema = Schema.Struct({
     overdue: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   }),
   items: Schema.Array(TaskSchema),
-  referenceDate: Schema.Literal('2026-10-05'),
+  referenceDate: CalendarDateSchema,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type RecordsResponse = typeof RecordsResponseSchema.Type;

@@ -161,9 +161,9 @@ it.effect('WAITING is in progress, overdue is derived, and resource filtering fa
     );
     const task = { ...created.task, state: 'WAITING' as const };
     expect(taskStatusGroup(task.state)).toBe('IN_PROGRESS');
-    expect(taskIsOverdue(task)).toBe(true);
-    expect(taskIsOverdue({ ...task, dueDate: '2026-10-05' })).toBe(false);
-    expect(taskIsOverdue({ ...task, state: 'DONE' })).toBe(false);
+    expect(taskIsOverdue(task, '2026-10-05')).toBe(true);
+    expect(taskIsOverdue({ ...task, dueDate: '2026-10-05' }, '2026-10-05')).toBe(false);
+    expect(taskIsOverdue({ ...task, state: 'DONE' }, '2026-10-05')).toBe(false);
     const foreignRef = yield* Schema.decodeEffect(TaskRefSchema)({ ...task.ref, resourceId: 'denied' });
     const foreign = { ...task, ref: foreignRef };
     expect(
@@ -199,5 +199,55 @@ it.effect('UpdateTask keeps an absent due date, replaces a new one and removes i
     const cleared = yield* update({ dueDate: null });
     expect(cleared.task.dueDate).toBeUndefined();
     expect(Object.keys(cleared.task)).not.toContain('dueDate');
+  }),
+);
+
+it.effect('task property, unit and contract context can be replaced or cleared on update', () =>
+  Effect.gen(function* editableContextLinks() {
+    const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      state,
+      { _tag: 'CreateTask', title: 'Kontrola nájemního prostoru' },
+      { now, resourceId: 'context-task', tenantId },
+    );
+    const contextRefs = [
+      {
+        moduleId: 'siampark.property',
+        resourceType: 'siampark.property.property',
+        resourceId: '20000000-0000-4000-8000-000000000011',
+        tenantId,
+      },
+      {
+        moduleId: 'siampark.agreements',
+        resourceType: 'siampark.agreements.contract',
+        resourceId: '20000000-0000-4000-8000-000000000012',
+        tenantId,
+      },
+    ];
+    const update = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
+      _tag: 'UpdateTask',
+      taskRef: created.task.ref,
+      contextRefs,
+    });
+    const linked = yield* evolveWorkState(created.state, update, { now, resourceId: 'unused', tenantId });
+    expect(linked.task.contextRefs).toEqual(contextRefs);
+    const clear = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
+      _tag: 'UpdateTask',
+      taskRef: created.task.ref,
+      contextRefs: [],
+    });
+    const cleared = yield* evolveWorkState(linked.state, clear, { now, resourceId: 'unused', tenantId });
+    expect(cleared.task.contextRefs).toEqual([]);
+    const foreign = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
+      _tag: 'UpdateTask',
+      taskRef: created.task.ref,
+      contextRefs: [{ ...contextRefs[0], tenantId: '20000000-0000-4000-8000-000000000099' }],
+    });
+    expect(
+      yield* Effect.flip(evolveWorkState(created.state, foreign, { now, resourceId: 'unused', tenantId })),
+    ).toBeInstanceOf(WorkScopeMismatch);
+    const due = { ...created.task, dueDate: CalendarDateSchema.make('2026-10-19') };
+    expect(taskIsOverdue(due, '2026-10-20')).toBe(true);
+    expect(taskIsOverdue(due, '2026-10-19')).toBe(false);
   }),
 );

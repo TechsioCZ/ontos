@@ -3919,6 +3919,9 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
+      '@app/siampark-agreements':
+        specifier: workspace:*
+        version: link:../siampark-agreements
       '@app/siampark-property':
         specifier: workspace:*
         version: link:../siampark-property

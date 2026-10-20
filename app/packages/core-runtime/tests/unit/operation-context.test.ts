@@ -252,3 +252,26 @@ it.effect('permits only a resolver-branded support-stop recovery through inactiv
     expect(isTrustedSupportRecoveryPrincipalContext({ ...scope })).toBe(false);
   }),
 );
+
+it.effect('audits cached-credential disabled admission without a session request or handler', () =>
+  Effect.gen(function* cachedCredentialDenial() {
+    const attempts: string[] = [];
+    const resolver = makeOperationalScopeResolver(
+      { load: () => Effect.succeed({ ...active, principalStatus: 'disabled' }) },
+      access('allowed'),
+      (input) =>
+        Effect.sync(() => {
+          attempts.push(input.correlationId);
+        }),
+    );
+    const failure = yield* Effect.flip(
+      resolver.resolve({
+        correlationId: 'cached-bearer-mutation',
+        legalEntityScope: 'required',
+        principal,
+      }),
+    );
+    expect(failure).toBeInstanceOf(OperationContextDenied);
+    expect(attempts).toEqual(['cached-bearer-mutation']);
+  }),
+);
