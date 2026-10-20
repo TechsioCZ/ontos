@@ -120,13 +120,18 @@ const OrdersPageContent = () => {
   const detailOrder = orders.find((order) => order.id === detailId);
   const filtered = query !== '' || statusFilter !== null || tagFilter.tagId !== null;
 
-  const runStatusChange = (targets: readonly Order[], status: OrderStatus) => {
+  const runStatusChange = (targets: readonly Order[], status: OrderStatus, reason?: string) => {
     if (ready === undefined) {
       return;
     }
     setBusy(true);
     void browserRuntime.runPromise(
-      changeOrderStatuses({ orders: targets, revision: ready.records.revision, status }).pipe(
+      changeOrderStatuses({
+        orders: targets,
+        revision: ready.records.revision,
+        status,
+        ...(reason === undefined ? {} : { reason }),
+      }).pipe(
         Effect.flatMap(({ changed, failed }) =>
           Effect.sync(() => {
             toaster.create(statusChangeNotification(t, status, targets.length, changed, failed));
@@ -388,7 +393,7 @@ const OrdersPageContent = () => {
 
         <OrderCancelDialog
           busy={busy}
-          onConfirm={(targets) => runStatusChange(targets, 'CANCELLED')}
+          onConfirm={(targets, reason) => runStatusChange(targets, 'CANCELLED', reason)}
           onDismiss={() => setPendingCancel(null)}
           orders={pendingCancel}
         />

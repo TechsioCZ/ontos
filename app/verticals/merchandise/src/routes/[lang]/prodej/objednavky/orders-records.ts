@@ -92,8 +92,18 @@ interface StatusProgress {
   readonly revision: number;
 }
 
-const applyStatusStep = (progress: StatusProgress, order: Order, status: OrderStatus): Effect.Effect<StatusProgress> =>
-  Effect.exit(submitCommand({ _tag: 'ChangeOrderStatus', id: order.id, status }, progress.revision)).pipe(
+const applyStatusStep = (
+  progress: StatusProgress,
+  order: Order,
+  status: OrderStatus,
+  reason: string | undefined,
+): Effect.Effect<StatusProgress> =>
+  Effect.exit(
+    submitCommand(
+      { _tag: 'ChangeOrderStatus', id: order.id, status, ...(reason === undefined ? {} : { reason }) },
+      progress.revision,
+    ),
+  ).pipe(
     Effect.map((outcome): StatusProgress =>
       Exit.isSuccess(outcome)
         ? { ...progress, changed: progress.changed + 1, revision: outcome.value.revision }
@@ -103,13 +113,15 @@ const applyStatusStep = (progress: StatusProgress, order: Order, status: OrderSt
 
 export const changeOrderStatuses = (input: {
   readonly orders: readonly Order[];
+  /** Optional audit reason; for a cancellation it also appears in the customer's e-mail. */
+  readonly reason?: string;
   readonly revision: number;
   readonly status: OrderStatus;
 }): Effect.Effect<StatusProgress> =>
   Effect.reduce(
     input.orders,
     (): StatusProgress => ({ changed: 0, failed: 0, revision: input.revision }),
-    (progress, order) => applyStatusStep(progress, order, input.status),
+    (progress, order) => applyStatusStep(progress, order, input.status, input.reason),
   );
 
 export const loadFailureKind = (error: LoadFailure): 'error' | 'forbidden' =>

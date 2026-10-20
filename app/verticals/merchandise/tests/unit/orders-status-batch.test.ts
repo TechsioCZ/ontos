@@ -76,6 +76,33 @@ describe('bulk order status commands', () => {
     }),
   );
 
+  it.effect('sends the cancellation reason with each status command', () =>
+    Effect.gen(function* cancellationReason() {
+      const commit = yield* Schema.decodeEffect(ApplyCommandResultSchema)({ entityIds: ['order-1'], revision: 11 });
+      rstest.mocked(executeApplyCommand).mockReturnValueOnce(Effect.succeed(commit));
+
+      const result = yield* changeOrderStatuses({
+        orders: [order('order-1')],
+        reason: 'Zákazník objednávku zrušil',
+        revision: 10,
+        status: 'CANCELLED',
+      });
+
+      expect(result).toEqual({ changed: 1, failed: 0, revision: 11 });
+      expect(rstest.mocked(executeApplyCommand).mock.calls.map(([payload]) => payload)).toEqual([
+        {
+          command: {
+            _tag: 'ChangeOrderStatus',
+            id: 'order-1',
+            reason: 'Zákazník objednávku zrušil',
+            status: 'CANCELLED',
+          },
+          expectedRevision: 10,
+        },
+      ]);
+    }),
+  );
+
   it.effect('does not write or advance the revision for an empty selection', () =>
     Effect.gen(function* emptySelection() {
       const result = yield* changeOrderStatuses({ orders: [], revision: 10, status: 'CONFIRMED' });
