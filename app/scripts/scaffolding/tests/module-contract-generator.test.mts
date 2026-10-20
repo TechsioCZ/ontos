@@ -397,7 +397,7 @@ it.live(
         );
         expect(packageJson.dependencies).toEqual({
           '@app/core-runtime': 'workspace:*',
-          '@effect/platform-node': '4.0.0',
+          '@effect/platform-node': '4.0.5',
           zeta: '1.0.0',
         });
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });
