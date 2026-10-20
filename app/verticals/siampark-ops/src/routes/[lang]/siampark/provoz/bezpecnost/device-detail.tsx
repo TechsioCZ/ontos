@@ -58,9 +58,9 @@ const Missing = () => {
   return <span className="text-fg-secondary">{t('siampark-ops.common.notProvided')}</span>;
 };
 
-const tasksHref = () => {
+const tasksHref = (resourceId: string) => {
   const lang = typeof window === 'undefined' ? 'cs' : (window.location.pathname.split('/')[1] ?? 'cs');
-  return `/${lang === '' ? 'cs' : lang}/siampark/work`;
+  return `/${lang === '' ? 'cs' : lang}/siampark/work?resourceId=${encodeURIComponent(resourceId)}`;
 };
 
 const formatSize = (bytes: number) =>
@@ -138,7 +138,7 @@ const IncidentCard = ({
               {incident.task.title}
             </span>
             <span className="text-fg-secondary">{liveState}</span>
-            <Link href={tasksHref()}>{k('actions.openTasks')}</Link>
+            <Link href={tasksHref(incident.task.resourceId)}>{k('actions.openTasks')}</Link>
           </>
         )}
       </div>
