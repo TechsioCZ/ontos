@@ -150,7 +150,7 @@ const SecurityView = () => {
       },
       header: k('fields.openIncidents'),
       id: 'openIncidents',
-      meta: { width: 120 },
+      meta: { width: 150 },
     },
     {
       accessorKey: 'nextInspectionDate',
@@ -177,7 +177,7 @@ const SecurityView = () => {
       ),
       header: k('fields.administrator'),
       id: 'administrator',
-      meta: { width: 200 },
+      meta: { width: 190 },
     },
   ];
 

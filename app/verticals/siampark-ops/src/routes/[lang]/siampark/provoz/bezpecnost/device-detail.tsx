@@ -25,7 +25,6 @@ import { linkNewTask } from './device-forms.tsx';
 import {
   addDays,
   deviceStateVariant,
-  deviceTypeIcon,
   incidentStateVariant,
   personaName,
   severityVariant,
@@ -46,8 +45,8 @@ const Fact = ({
   readonly label: string;
 }) => (
   <div className="flex min-w-0 items-start gap-100">
-    <span aria-hidden className={`${icon} mt-25 size-4 shrink-0 text-fg-secondary`} />
-    <div className="flex min-w-0 flex-col gap-25">
+    <span aria-hidden className={`${icon} shrink-0 text-fg-secondary text-lg`} />
+    <div className="flex min-w-0 flex-col gap-50">
       <dt className="text-fg-secondary text-xs">{label}</dt>
       <dd className="break-words text-sm">{children}</dd>
     </div>
@@ -296,8 +295,7 @@ export const DeviceDetailPanel = ({
       closeOnInteractOutside
       description={
         <span className="flex flex-wrap items-center gap-100">
-          <span aria-hidden className={`${deviceTypeIcon(device.deviceType)} size-4 text-fg-secondary`} />
-          <Badge size="sm" variant="secondary">
+          <Badge size="sm" variant="outline">
             {k(`deviceType.${device.deviceType}`)}
           </Badge>
           <Badge size="sm" variant={deviceStateVariant(device.state)}>
@@ -509,8 +507,7 @@ export const DeviceDetailPanel = ({
         <SectionCard title={k('detail.history')}>
           <ol className="flex flex-col gap-150 border-border-primary border-l pl-200">
             {history.map((entry, index) => (
-              <li className="relative flex flex-col gap-25" key={`${DateTime.toEpochMillis(entry.at)}-${index}`}>
-                <span aria-hidden className="-left-[1.3rem] absolute top-1 size-2 rounded-full bg-fg-secondary" />
+              <li className="flex flex-col gap-50" key={`${DateTime.toEpochMillis(entry.at)}-${index}`}>
                 <span className="text-sm">
                   <span className="font-medium">{k(`history.${entry.event}`)}</span> · {entry.summary}
                 </span>
