@@ -415,6 +415,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                   <Table.Cell align="end">
                     <span className="flex justify-end gap-50">
                       <Button
+                        className="whitespace-nowrap"
                         icon="icon-[mdi--download]"
                         onClick={() => downloadText(entry.content, MIME[entry.format], entry.fileName)}
                         size="sm"
@@ -424,7 +425,13 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                         Stáhnout
                       </Button>
                       {vm.canWrite && entry.status === 'HANDED_OVER' && (
-                        <Button onClick={() => setConfirmTarget(entry)} size="sm" theme="outlined" variant="secondary">
+                        <Button
+                          className="whitespace-nowrap"
+                          onClick={() => setConfirmTarget(entry)}
+                          size="sm"
+                          theme="outlined"
+                          variant="secondary"
+                        >
                           Potvrzení účetní
                         </Button>
                       )}
