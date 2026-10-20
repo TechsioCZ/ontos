@@ -328,7 +328,10 @@ const createAsset = Effect.fn('SiamparkOps.Assets.create')(function* createAsset
     ...(value.acquisitionValueMinor === undefined ? {} : { acquisitionValueMinor: value.acquisitionValueMinor }),
     ...(currentValue === undefined
       ? {}
-      : { currentValueDate: value.acquisitionDate ?? DateTime.formatIso(input.now).slice(0, 10), currentValueMinor: currentValue }),
+      : {
+          currentValueDate: value.acquisitionDate ?? DateTime.formatIso(input.now).slice(0, 10),
+          currentValueMinor: currentValue,
+        }),
     ...(value.placedInServiceDate === undefined ? {} : { placedInServiceDate: value.placedInServiceDate }),
   };
   return yield* changed({ ...state, assets: [...state.assets, record] }, id);
@@ -472,10 +475,7 @@ const createPlan = Effect.fn('SiamparkOps.Assets.createPlan')(function* createPl
     id: `${input.resourceId}:plan`,
     status: 'draft',
   };
-  const next: Asset = auditUpdated(
-    { ...asset, depreciationPlans: [...(asset.depreciationPlans ?? []), plan] },
-    input,
-  );
+  const next: Asset = auditUpdated({ ...asset, depreciationPlans: [...(asset.depreciationPlans ?? []), plan] }, input);
   return yield* changed(replaceAsset(state, next), plan.id);
 });
 

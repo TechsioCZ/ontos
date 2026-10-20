@@ -61,10 +61,7 @@ const event = (
   by = management,
 ): EncodedEvent => ({ at: ts(date), by, date, id: nextId('event'), kind, note, ...extra });
 
-const service = (
-  fields: Omit<EncodedService, 'at' | 'by' | 'id'>,
-  by = operations,
-): EncodedService => ({
+const service = (fields: Omit<EncodedService, 'at' | 'by' | 'id'>, by = operations): EncodedService => ({
   ...fields,
   at: ts(fields.performedOn ?? '2026-09-01', '10:30:00'),
   by,
@@ -75,7 +72,13 @@ const plan = (
   fields: Omit<EncodedPlan, 'createdAt' | 'createdBy' | 'entries' | 'history' | 'id'> & {
     readonly confirmedOn?: string;
     readonly createdOn: string;
-    readonly entries?: readonly (readonly [period: string, crowns: number, documentRef?: string, partial?: boolean, note?: string])[];
+    readonly entries?: readonly (readonly [
+      period: string,
+      crowns: number,
+      documentRef?: string,
+      partial?: boolean,
+      note?: string,
+    ])[];
   },
 ): EncodedPlan => {
   const { confirmedOn, createdOn, entries = [], ...rest } = fields;
@@ -98,8 +101,20 @@ const plan = (
       { at: ts(createdOn), by: finance, change: 'created' as const },
       ...(confirmedOn === undefined
         ? []
-        : [{ at: ts(confirmedOn, '11:00:00'), by: management, change: 'confirmed' as const, note: 'Schváleno vedením' }]),
-      ...recorded.map((entry) => ({ at: entry.at, by: finance, change: 'entry_recorded' as const, note: entry.period })),
+        : [
+            {
+              at: ts(confirmedOn, '11:00:00'),
+              by: management,
+              change: 'confirmed' as const,
+              note: 'Schváleno vedením',
+            },
+          ]),
+      ...recorded.map((entry) => ({
+        at: entry.at,
+        by: finance,
+        change: 'entry_recorded' as const,
+        note: entry.period,
+      })),
     ],
     id: nextId('plan'),
   };
@@ -147,7 +162,10 @@ const buildAssets = (): EncodedAsset[] => [
         baseMinor: kc(48_500_000),
         confirmedOn: '2019-09-30',
         createdOn: '2019-07-15',
-        entries: [['2019', 485_000, 'ID-2019-118', false, 'Poměrná část roku od zařazení'], ...yearly(2020, 2025, 970_000, 'ID-ODP')],
+        entries: [
+          ['2019', 485_000, 'ID-2019-118', false, 'Poměrná část roku od zařazení'],
+          ...yearly(2020, 2025, 970_000, 'ID-ODP'),
+        ],
         interval: 'yearly',
         method: 'Rovnoměrný',
         startDate: '2019-07-01',
@@ -171,11 +189,19 @@ const buildAssets = (): EncodedAsset[] => [
       }),
     ],
     events: [
-      event('construction', '2018-04-02', 'Zahájení výstavby, stavební povolení SP-2017/884', { documentRef: 'SP-2017/884' }),
+      event('construction', '2018-04-02', 'Zahájení výstavby, stavební povolení SP-2017/884', {
+        documentRef: 'SP-2017/884',
+      }),
       acquired('2019-06-15', 48_500_000, 'Kolaudační souhlas KS-2019/221'),
       event('placed_in_service', '2019-07-01', 'Zařazeno do užívání po kolaudaci'),
-      event('ownership', '2019-08-20', 'Zápis vlastnického práva do katastru nemovitostí, řízení V-5120/2019', { documentRef: 'V-5120/2019' }),
-      event('construction', '2024-05-14', 'Výměna střešní krytiny a zateplení střechy (technické zhodnocení posouzeno účetní)'),
+      event('ownership', '2019-08-20', 'Zápis vlastnického práva do katastru nemovitostí, řízení V-5120/2019', {
+        documentRef: 'V-5120/2019',
+      }),
+      event(
+        'construction',
+        '2024-05-14',
+        'Výměna střešní krytiny a zateplení střechy (technické zhodnocení posouzeno účetní)',
+      ),
       event(
         'value_change',
         '2025-12-31',
@@ -190,9 +216,31 @@ const buildAssets = (): EncodedAsset[] => [
     placedInServiceDate: '2019-07-01',
     responsible: 'Ing. Petra Malá (správa nemovitostí)',
     services: [
-      service({ kind: 'permit', note: 'Nástavba 5. NP – podáno na stavební úřad Praha 4', permitState: 'in_progress', nextDueOn: '2027-01-31', responsible: 'Ing. Petra Malá', title: 'Stavební povolení – nástavba 5. NP' }),
-      service({ kind: 'inspection', nextDueOn: '2027-04-30', performedOn: '2026-04-28', responsible: 'Ing. Petra Malá', result: 'ok', supplier: 'Statika Novák s.r.o.', title: 'Prohlídka statiky a fasády' }),
-      service({ kind: 'revision', nextDueOn: '2026-11-05', performedOn: '2025-11-05', result: 'ok', supplier: 'Hromosvody Praha', title: 'Revize hromosvodu' }),
+      service({
+        kind: 'permit',
+        note: 'Nástavba 5. NP – podáno na stavební úřad Praha 4',
+        permitState: 'in_progress',
+        nextDueOn: '2027-01-31',
+        responsible: 'Ing. Petra Malá',
+        title: 'Stavební povolení – nástavba 5. NP',
+      }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2027-04-30',
+        performedOn: '2026-04-28',
+        responsible: 'Ing. Petra Malá',
+        result: 'ok',
+        supplier: 'Statika Novák s.r.o.',
+        title: 'Prohlídka statiky a fasády',
+      }),
+      service({
+        kind: 'revision',
+        nextDueOn: '2026-11-05',
+        performedOn: '2025-11-05',
+        result: 'ok',
+        supplier: 'Hromosvody Praha',
+        title: 'Revize hromosvodu',
+      }),
     ],
   }),
   asset(2, {
@@ -209,7 +257,10 @@ const buildAssets = (): EncodedAsset[] => [
         baseMinor: kc(126_000_000),
         confirmedOn: '2021-04-30',
         createdOn: '2021-03-20',
-        entries: [['2021', 2_100_000, 'ID-2021-044', false, 'Poměrná část roku'], ...yearly(2022, 2025, 2_520_000, 'ID-ODP')],
+        entries: [
+          ['2021', 2_100_000, 'ID-2021-044', false, 'Poměrná část roku'],
+          ...yearly(2022, 2025, 2_520_000, 'ID-ODP'),
+        ],
         interval: 'yearly',
         method: 'Rovnoměrný',
         startDate: '2021-03-01',
@@ -248,9 +299,30 @@ const buildAssets = (): EncodedAsset[] => [
     placedInServiceDate: '2021-03-01',
     responsible: 'Tomáš Veselý (facility management)',
     services: [
-      service({ kind: 'permit', permitState: 'granted', performedOn: '2025-08-12', responsible: 'Tomáš Veselý', title: 'Změna užívání 3. NP na kanceláře' }),
-      service({ kind: 'revision', nextDueOn: '2026-11-18', performedOn: '2023-11-18', result: 'defects', note: 'Drobné závady odstraněny do 30 dnů.', supplier: 'Elektro Revize CZ', title: 'Revize elektroinstalace (budova)' }),
-      service({ kind: 'inspection', nextDueOn: '2026-12-15', performedOn: '2025-12-15', result: 'ok', supplier: 'HZS – odborně způsobilá osoba', title: 'Kontrola požárně bezpečnostních zařízení' }),
+      service({
+        kind: 'permit',
+        permitState: 'granted',
+        performedOn: '2025-08-12',
+        responsible: 'Tomáš Veselý',
+        title: 'Změna užívání 3. NP na kanceláře',
+      }),
+      service({
+        kind: 'revision',
+        nextDueOn: '2026-11-18',
+        performedOn: '2023-11-18',
+        result: 'defects',
+        note: 'Drobné závady odstraněny do 30 dnů.',
+        supplier: 'Elektro Revize CZ',
+        title: 'Revize elektroinstalace (budova)',
+      }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2026-12-15',
+        performedOn: '2025-12-15',
+        result: 'ok',
+        supplier: 'HZS – odborně způsobilá osoba',
+        title: 'Kontrola požárně bezpečnostních zařízení',
+      }),
     ],
   }),
   asset(3, {
@@ -269,8 +341,22 @@ const buildAssets = (): EncodedAsset[] => [
     placedInServiceDate: '2021-03-01',
     responsible: 'Tomáš Veselý',
     services: [
-      service({ kind: 'revision', nextDueOn: '2026-11-05', performedOn: '2026-05-05', result: 'ok', supplier: 'Hörmann servis', title: 'Revize garážových vrat' }),
-      service({ kind: 'inspection', nextDueOn: '2027-02-10', performedOn: '2026-02-10', result: 'ok', supplier: 'Detekce CO Praha', title: 'Kontrola detekce CO a odvětrání' }),
+      service({
+        kind: 'revision',
+        nextDueOn: '2026-11-05',
+        performedOn: '2026-05-05',
+        result: 'ok',
+        supplier: 'Hörmann servis',
+        title: 'Revize garážových vrat',
+      }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2027-02-10',
+        performedOn: '2026-02-10',
+        result: 'ok',
+        supplier: 'Detekce CO Praha',
+        title: 'Kontrola detekce CO a odvětrání',
+      }),
     ],
   }),
   // ── Technologie ──────────────────────────────────────────────────────────────────────────────────────
@@ -310,7 +396,10 @@ const buildAssets = (): EncodedAsset[] => [
         years: 10,
       }),
     ],
-    events: [acquired('2019-06-15', 1_850_000, 'Předávací protokol PP-K-01'), event('placed_in_service', '2019-07-01', 'Uvedení do provozu')],
+    events: [
+      acquired('2019-06-15', 1_850_000, 'Předávací protokol PP-K-01'),
+      event('placed_in_service', '2019-07-01', 'Uvedení do provozu'),
+    ],
     inventoryNumber: 'TEC-001',
     kind: 'technology',
     name: 'Plynová kotelna Viessmann Vitocrossal 200 (2× 160 kW)',
@@ -318,9 +407,30 @@ const buildAssets = (): EncodedAsset[] => [
     responsible: 'Jan Dvořák (technik)',
     serialNumber: 'VC200-7731-0451',
     services: [
-      service({ kind: 'revision', nextDueOn: '2026-11-12', performedOn: '2025-11-12', result: 'ok', supplier: 'Plynservis Morava s.r.o.', title: 'Revize plynového zařízení' }),
-      service({ kind: 'service', nextDueOn: '2027-09-20', performedOn: '2026-09-20', result: 'ok', supplier: 'Viessmann servis', title: 'Roční servis kotlů a čištění' }),
-      service({ kind: 'inspection', nextDueOn: '2026-10-10', performedOn: '2024-10-10', result: 'ok', supplier: 'Kominictví Šťastný', title: 'Kontrola spalinové cesty' }),
+      service({
+        kind: 'revision',
+        nextDueOn: '2026-11-12',
+        performedOn: '2025-11-12',
+        result: 'ok',
+        supplier: 'Plynservis Morava s.r.o.',
+        title: 'Revize plynového zařízení',
+      }),
+      service({
+        kind: 'service',
+        nextDueOn: '2027-09-20',
+        performedOn: '2026-09-20',
+        result: 'ok',
+        supplier: 'Viessmann servis',
+        title: 'Roční servis kotlů a čištění',
+      }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2026-10-10',
+        performedOn: '2024-10-10',
+        result: 'ok',
+        supplier: 'Kominictví Šťastný',
+        title: 'Kontrola spalinové cesty',
+      }),
     ],
   }),
   asset(5, {
@@ -340,8 +450,22 @@ const buildAssets = (): EncodedAsset[] => [
     responsible: 'Jan Dvořák',
     serialNumber: 'SCH3300-55821',
     services: [
-      service({ kind: 'inspection', nextDueOn: '2026-10-28', performedOn: '2026-07-28', result: 'ok', supplier: 'Schindler CZ', title: 'Odborná prohlídka výtahu (čtvrtletní)' }),
-      service({ kind: 'revision', nextDueOn: '2027-03-15', performedOn: '2024-03-15', result: 'ok', supplier: 'TÜV SÜD Czech', title: 'Odborná zkouška výtahu (3 roky)' }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2026-10-28',
+        performedOn: '2026-07-28',
+        result: 'ok',
+        supplier: 'Schindler CZ',
+        title: 'Odborná prohlídka výtahu (čtvrtletní)',
+      }),
+      service({
+        kind: 'revision',
+        nextDueOn: '2027-03-15',
+        performedOn: '2024-03-15',
+        result: 'ok',
+        supplier: 'TÜV SÜD Czech',
+        title: 'Odborná zkouška výtahu (3 roky)',
+      }),
     ],
   }),
   asset(6, {
@@ -361,7 +485,14 @@ const buildAssets = (): EncodedAsset[] => [
     responsible: 'Tomáš Veselý',
     serialNumber: 'KONE-MS5-24410',
     services: [
-      service({ kind: 'inspection', nextDueOn: '2026-11-12', performedOn: '2026-08-12', result: 'ok', supplier: 'KONE a.s.', title: 'Odborná prohlídka výtahu (čtvrtletní)' }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2026-11-12',
+        performedOn: '2026-08-12',
+        result: 'ok',
+        supplier: 'KONE a.s.',
+        title: 'Odborná prohlídka výtahu (čtvrtletní)',
+      }),
     ],
   }),
   asset(7, {
@@ -381,7 +512,15 @@ const buildAssets = (): EncodedAsset[] => [
     responsible: 'Tomáš Veselý',
     serialNumber: 'KONE-MS5-24411',
     services: [
-      service({ kind: 'inspection', nextDueOn: '2026-11-12', performedOn: '2026-08-12', result: 'defects', note: 'Opotřebené vodicí čelisti – objednána výměna.', supplier: 'KONE a.s.', title: 'Odborná prohlídka výtahu (čtvrtletní)' }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2026-11-12',
+        performedOn: '2026-08-12',
+        result: 'defects',
+        note: 'Opotřebené vodicí čelisti – objednána výměna.',
+        supplier: 'KONE a.s.',
+        title: 'Odborná prohlídka výtahu (čtvrtletní)',
+      }),
     ],
   }),
   asset(8, {
@@ -398,7 +537,15 @@ const buildAssets = (): EncodedAsset[] => [
         baseMinor: kc(2_160_000),
         confirmedOn: '2026-01-31',
         createdOn: '2026-01-15',
-        entries: Array.from({ length: 9 }, (_, index) => [`2026-${String(index + 1).padStart(2, '0')}`, 15_000, `ID-2026-${String(index + 1).padStart(2, '0')}-VZT`] as const),
+        entries: Array.from(
+          { length: 9 },
+          (_, index) =>
+            [
+              `2026-${String(index + 1).padStart(2, '0')}`,
+              15_000,
+              `ID-2026-${String(index + 1).padStart(2, '0')}-VZT`,
+            ] as const,
+        ),
         interval: 'monthly',
         method: 'Rovnoměrný (měsíční)',
         note: 'Od 2026 účtováno měsíčně podle pokynu účetní.',
@@ -408,7 +555,10 @@ const buildAssets = (): EncodedAsset[] => [
         years: 12,
       }),
     ],
-    events: [acquired('2023-05-10', 2_160_000, 'FP-2023-0518'), event('placed_in_service', '2023-06-01', 'Uvedení do provozu po zaregulování')],
+    events: [
+      acquired('2023-05-10', 2_160_000, 'FP-2023-0518'),
+      event('placed_in_service', '2023-06-01', 'Uvedení do provozu po zaregulování'),
+    ],
     inventoryNumber: 'TEC-005',
     kind: 'technology',
     name: 'Vzduchotechnická jednotka Atrea Duplex 8000',
@@ -416,7 +566,14 @@ const buildAssets = (): EncodedAsset[] => [
     responsible: 'Tomáš Veselý',
     serialNumber: 'ATR-D8000-1193',
     services: [
-      service({ kind: 'service', nextDueOn: '2026-11-30', performedOn: '2026-05-30', result: 'ok', supplier: 'Atrea servis', title: 'Výměna filtrů a servis VZT' }),
+      service({
+        kind: 'service',
+        nextDueOn: '2026-11-30',
+        performedOn: '2026-05-30',
+        result: 'ok',
+        supplier: 'Atrea servis',
+        title: 'Výměna filtrů a servis VZT',
+      }),
     ],
   }),
   asset(9, {
@@ -436,7 +593,14 @@ const buildAssets = (): EncodedAsset[] => [
     responsible: 'Tomáš Veselý',
     serialNumber: 'DKN-EWAD-88310',
     services: [
-      service({ kind: 'inspection', nextDueOn: '2027-04-15', performedOn: '2026-04-15', result: 'ok', supplier: 'Klima Servis Praha', title: 'Kontrola těsnosti chladiva (F-plyny)' }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2027-04-15',
+        performedOn: '2026-04-15',
+        result: 'ok',
+        supplier: 'Klima Servis Praha',
+        title: 'Kontrola těsnosti chladiva (F-plyny)',
+      }),
     ],
   }),
   asset(10, {
@@ -461,15 +625,32 @@ const buildAssets = (): EncodedAsset[] => [
         years: 20,
       }),
     ],
-    events: [acquired('2024-06-01', 890_000, 'FP-2024-0601'), event('placed_in_service', '2024-07-01', 'Připojení k distribuční soustavě PREdistribuce')],
+    events: [
+      acquired('2024-06-01', 890_000, 'FP-2024-0601'),
+      event('placed_in_service', '2024-07-01', 'Připojení k distribuční soustavě PREdistribuce'),
+    ],
     inventoryNumber: 'TEC-007',
     kind: 'technology',
     name: 'Fotovoltaická elektrárna 30 kWp (střecha)',
     placedInServiceDate: '2024-07-01',
     responsible: 'Jan Dvořák',
     services: [
-      service({ kind: 'revision', nextDueOn: '2028-06-20', performedOn: '2024-06-20', result: 'ok', supplier: 'Solar Revize s.r.o.', title: 'Výchozí revize FVE' }),
-      service({ kind: 'service', nextDueOn: '2027-05-15', performedOn: '2026-05-15', result: 'ok', supplier: 'Solar Revize s.r.o.', title: 'Čištění panelů a termovize' }),
+      service({
+        kind: 'revision',
+        nextDueOn: '2028-06-20',
+        performedOn: '2024-06-20',
+        result: 'ok',
+        supplier: 'Solar Revize s.r.o.',
+        title: 'Výchozí revize FVE',
+      }),
+      service({
+        kind: 'service',
+        nextDueOn: '2027-05-15',
+        performedOn: '2026-05-15',
+        result: 'ok',
+        supplier: 'Solar Revize s.r.o.',
+        title: 'Čištění panelů a termovize',
+      }),
     ],
   }),
   asset(11, {
@@ -488,7 +669,14 @@ const buildAssets = (): EncodedAsset[] => [
     placedInServiceDate: '2021-03-01',
     responsible: 'Tomáš Veselý',
     services: [
-      service({ kind: 'revision', nextDueOn: '2026-12-03', performedOn: '2023-12-03', result: 'ok', supplier: 'Elektro Revize CZ', title: 'Revize rozvodny NN' }),
+      service({
+        kind: 'revision',
+        nextDueOn: '2026-12-03',
+        performedOn: '2023-12-03',
+        result: 'ok',
+        supplier: 'Elektro Revize CZ',
+        title: 'Revize rozvodny NN',
+      }),
     ],
   }),
   asset(12, {
@@ -508,7 +696,14 @@ const buildAssets = (): EncodedAsset[] => [
     responsible: 'Tomáš Veselý',
     serialNumber: 'CUM-C150-77120',
     services: [
-      service({ kind: 'inspection', nextDueOn: '2026-10-15', performedOn: '2026-04-15', result: 'ok', supplier: 'Cummins servis', title: 'Zkouška pod zatížením (pololetní)' }),
+      service({
+        kind: 'inspection',
+        nextDueOn: '2026-10-15',
+        performedOn: '2026-04-15',
+        result: 'ok',
+        supplier: 'Cummins servis',
+        title: 'Zkouška pod zatížením (pololetní)',
+      }),
     ],
   }),
   asset(13, {
@@ -526,7 +721,16 @@ const buildAssets = (): EncodedAsset[] => [
     name: 'Systém MaR Siemens Desigo CC',
     placedInServiceDate: '2023-02-15',
     responsible: 'Tomáš Veselý',
-    services: [service({ kind: 'service', nextDueOn: '2027-02-15', performedOn: '2026-02-15', result: 'ok', supplier: 'Siemens Smart Infrastructure', title: 'Aktualizace a servis řídicího systému' })],
+    services: [
+      service({
+        kind: 'service',
+        nextDueOn: '2027-02-15',
+        performedOn: '2026-02-15',
+        result: 'ok',
+        supplier: 'Siemens Smart Infrastructure',
+        title: 'Aktualizace a servis řídicího systému',
+      }),
+    ],
   }),
   asset(14, {
     ...atProperty(parkova),
@@ -543,7 +747,16 @@ const buildAssets = (): EncodedAsset[] => [
     name: 'Domácí vodárna a změkčovač vody',
     placedInServiceDate: '2019-07-01',
     responsible: 'Jan Dvořák',
-    services: [service({ kind: 'service', nextDueOn: '2027-01-20', performedOn: '2026-07-20', result: 'ok', supplier: 'Aqua Servis', title: 'Regenerace a servis změkčovače' })],
+    services: [
+      service({
+        kind: 'service',
+        nextDueOn: '2027-01-20',
+        performedOn: '2026-07-20',
+        result: 'ok',
+        supplier: 'Aqua Servis',
+        title: 'Regenerace a servis změkčovače',
+      }),
+    ],
   }),
   asset(15, {
     ...atProperty(riverside),
@@ -560,7 +773,16 @@ const buildAssets = (): EncodedAsset[] => [
     name: 'Nabíjecí stanice ABB Terra AC (2× 22 kW)',
     placedInServiceDate: '2025-03-20',
     responsible: 'Tomáš Veselý',
-    services: [service({ kind: 'revision', nextDueOn: '2027-03-20', performedOn: '2025-03-20', result: 'ok', supplier: 'Elektro Revize CZ', title: 'Výchozí revize nabíjecích stanic' })],
+    services: [
+      service({
+        kind: 'revision',
+        nextDueOn: '2027-03-20',
+        performedOn: '2025-03-20',
+        result: 'ok',
+        supplier: 'Elektro Revize CZ',
+        title: 'Výchozí revize nabíjecích stanic',
+      }),
+    ],
   }),
   // ── Vybavení ─────────────────────────────────────────────────────────────────────────────────────────
   asset(16, {
@@ -623,7 +845,16 @@ const buildAssets = (): EncodedAsset[] => [
     name: 'Profesionální pračka Miele PWM 908',
     responsible: 'Jan Dvořák',
     serialNumber: 'MIE-908-44120',
-    services: [service({ kind: 'service', nextDueOn: '2027-01-16', performedOn: '2026-01-16', result: 'ok', supplier: 'Miele Professional', title: 'Roční servis pračky' })],
+    services: [
+      service({
+        kind: 'service',
+        nextDueOn: '2027-01-16',
+        performedOn: '2026-01-16',
+        result: 'ok',
+        supplier: 'Miele Professional',
+        title: 'Roční servis pračky',
+      }),
+    ],
   }),
   asset(20, {
     ...atUnit('R101'),
@@ -715,7 +946,17 @@ const buildAssets = (): EncodedAsset[] => [
     kind: 'equipment',
     name: 'Paletový regálový systém',
     responsible: 'Tomáš Veselý',
-    services: [service({ kind: 'inspection', nextDueOn: '2026-11-25', performedOn: '2025-11-25', result: 'defects', note: 'Poškozená pole označena a vyřazena z provozu.', supplier: 'Regály Revize s.r.o.', title: 'Roční kontrola regálů (ČSN EN 15635)' })],
+    services: [
+      service({
+        kind: 'inspection',
+        nextDueOn: '2026-11-25',
+        performedOn: '2025-11-25',
+        result: 'defects',
+        note: 'Poškozená pole označena a vyřazena z provozu.',
+        supplier: 'Regály Revize s.r.o.',
+        title: 'Roční kontrola regálů (ČSN EN 15635)',
+      }),
+    ],
   }),
   asset(24, {
     ...atProperty(riverside),
@@ -747,7 +988,16 @@ const buildAssets = (): EncodedAsset[] => [
     kind: 'equipment',
     name: 'Zahradní traktor Husqvarna TC 242T',
     responsible: 'Jan Dvořák',
-    services: [service({ kind: 'service', nextDueOn: '2027-03-31', performedOn: '2026-03-31', result: 'ok', supplier: 'Husqvarna servis Praha', title: 'Předsezónní servis' })],
+    services: [
+      service({
+        kind: 'service',
+        nextDueOn: '2027-03-31',
+        performedOn: '2026-03-31',
+        result: 'ok',
+        supplier: 'Husqvarna servis Praha',
+        title: 'Předsezónní servis',
+      }),
+    ],
   }),
   asset(26, {
     ...atUnit('R101'),
@@ -758,10 +1008,21 @@ const buildAssets = (): EncodedAsset[] => [
     createdOn: '2026-09-04',
     currentValueDate: '2021-04-12',
     currentValueMinor: kc(42_900),
-    disposal: { date: '2026-06-30', documentRef: 'LP-2026-06', kind: 'liquidation', reason: 'Neopravitelná závada spařovací jednotky, ekologická likvidace' },
+    disposal: {
+      date: '2026-06-30',
+      documentRef: 'LP-2026-06',
+      kind: 'liquidation',
+      reason: 'Neopravitelná závada spařovací jednotky, ekologická likvidace',
+    },
     events: [
       acquired('2021-04-12', 42_900, 'FP-2021-0412'),
-      event('liquidation', '2026-06-30', 'Neopravitelná závada spařovací jednotky, ekologická likvidace', { documentRef: 'LP-2026-06', previousValueMinor: kc(42_900) }, operations),
+      event(
+        'liquidation',
+        '2026-06-30',
+        'Neopravitelná závada spařovací jednotky, ekologická likvidace',
+        { documentRef: 'LP-2026-06', previousValueMinor: kc(42_900) },
+        operations,
+      ),
     ],
     inventoryNumber: 'VYB-011',
     kind: 'equipment',
@@ -777,10 +1038,22 @@ const buildAssets = (): EncodedAsset[] => [
     createdOn: '2026-09-04',
     currentValueDate: '2022-01-10',
     currentValueMinor: kc(38_500),
-    disposal: { date: '2026-03-18', documentRef: 'FV-2026-0318', kind: 'sale', proceedsMinor: kc(4_500), reason: 'Prodej zaměstnanci po obměně techniky' },
+    disposal: {
+      date: '2026-03-18',
+      documentRef: 'FV-2026-0318',
+      kind: 'sale',
+      proceedsMinor: kc(4_500),
+      reason: 'Prodej zaměstnanci po obměně techniky',
+    },
     events: [
       acquired('2022-01-10', 38_500, 'FP-2022-0110'),
-      event('sale', '2026-03-18', 'Prodej zaměstnanci po obměně techniky', { documentRef: 'FV-2026-0318', newValueMinor: kc(4_500), previousValueMinor: kc(38_500) }, finance),
+      event(
+        'sale',
+        '2026-03-18',
+        'Prodej zaměstnanci po obměně techniky',
+        { documentRef: 'FV-2026-0318', newValueMinor: kc(4_500), previousValueMinor: kc(38_500) },
+        finance,
+      ),
     ],
     inventoryNumber: 'VYB-012',
     kind: 'equipment',
@@ -813,11 +1086,20 @@ const buildInventories = (): EncodedInventory[] => [
     id: 'seed-inventory-2025-parkova',
     items: [
       { ...item(1, 'Bytový dům Rezidence Parková', 'BUD-001', 'found'), checkedAt: ts('2025-12-15', '10:00:00') },
-      { ...item(4, 'Plynová kotelna Viessmann Vitocrossal 200 (2× 160 kW)', 'TEC-001', 'found'), checkedAt: ts('2025-12-15', '10:20:00') },
+      {
+        ...item(4, 'Plynová kotelna Viessmann Vitocrossal 200 (2× 160 kW)', 'TEC-001', 'found'),
+        checkedAt: ts('2025-12-15', '10:20:00'),
+      },
       { ...item(5, 'Osobní výtah Schindler 3300', 'TEC-002', 'found'), checkedAt: ts('2025-12-15', '10:30:00') },
       { ...item(14, 'Domácí vodárna a změkčovač vody', 'TEC-011', 'found'), checkedAt: ts('2025-12-15', '10:40:00') },
-      { ...item(16, 'Kuchyňská linka se spotřebiči – byt A101', 'VYB-001', 'found'), checkedAt: ts('2025-12-15', '11:00:00') },
-      { ...item(17, 'Kuchyňská linka se spotřebiči – byt A102', 'VYB-002', 'found'), checkedAt: ts('2025-12-15', '11:10:00') },
+      {
+        ...item(16, 'Kuchyňská linka se spotřebiči – byt A101', 'VYB-001', 'found'),
+        checkedAt: ts('2025-12-15', '11:00:00'),
+      },
+      {
+        ...item(17, 'Kuchyňská linka se spotřebiči – byt A102', 'VYB-002', 'found'),
+        checkedAt: ts('2025-12-15', '11:10:00'),
+      },
       {
         ...item(18, 'Vybavení bytu A201 (nábytek, svítidla)', 'VYB-003', 'difference', {
           followUp: {
@@ -836,8 +1118,14 @@ const buildInventories = (): EncodedInventory[] => [
         }),
         checkedAt: ts('2025-12-15', '11:20:00'),
       },
-      { ...item(19, 'Profesionální pračka Miele PWM 908', 'VYB-004', 'found'), checkedAt: ts('2025-12-15', '11:40:00') },
-      { ...item(25, 'Zahradní traktor Husqvarna TC 242T', 'VYB-010', 'found'), checkedAt: ts('2025-12-15', '12:00:00') },
+      {
+        ...item(19, 'Profesionální pračka Miele PWM 908', 'VYB-004', 'found'),
+        checkedAt: ts('2025-12-15', '11:40:00'),
+      },
+      {
+        ...item(25, 'Zahradní traktor Husqvarna TC 242T', 'VYB-010', 'found'),
+        checkedAt: ts('2025-12-15', '12:00:00'),
+      },
     ],
     note: 'Roční inventura k 31. 12. 2025.',
     scope: atProperty(parkova).location,
@@ -876,7 +1164,9 @@ const buildInventories = (): EncodedInventory[] => [
         },
         note: 'Projektor není v R301; nájemce uvádí, že jej převzal facility management.',
       }),
-      item(23, 'Paletový regálový systém', 'VYB-008', 'difference', { note: 'Dvě pole regálu demontována po poškození, v evidenci stále jako kompletní.' }),
+      item(23, 'Paletový regálový systém', 'VYB-008', 'difference', {
+        note: 'Dvě pole regálu demontována po poškození, v evidenci stále jako kompletní.',
+      }),
       item(24, 'Podlahový mycí stroj Kärcher B 40', 'VYB-009', 'pending'),
     ],
     note: 'Mimořádná inventura před změnou nájemce v R301.',

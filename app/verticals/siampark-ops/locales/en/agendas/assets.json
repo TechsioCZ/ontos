@@ -1,17 +1,341 @@
 {
-  "title": "Assets",
-  "description": "Site assets, inventory numbers, locations and values (S02, S03).",
+  "title": "Assets and depreciation",
+  "description": "Buildings, technology and equipment of both sites: values with a justified history, revisions and service, inventory counts and depreciation plans (evidence of approved values).",
+  "notProvided": "not provided",
+  "you": "you",
+  "saving": "Saving…",
+  "resize": "Resize panel (left/right arrows)",
   "fields": {
     "inventoryNumber": "Inventory number",
     "name": "Name",
-    "category": "Category"
+    "category": "Category",
+    "kind": "Kind",
+    "serialNumber": "Serial number",
+    "location": "Location",
+    "responsible": "Responsible person",
+    "acquisitionDate": "Acquisition date",
+    "acquisitionMethod": "Acquisition method",
+    "acquisitionValue": "Acquisition value",
+    "currentValue": "Current recorded value",
+    "placedInService": "Placed in service",
+    "accountingProduct": "Accounting product card",
+    "note": "Note",
+    "newValue": "New recorded value",
+    "valueDate": "Valid as of",
+    "reason": "Reason",
+    "documentRef": "Document",
+    "eventKind": "Event kind",
+    "date": "Date",
+    "description": "Description",
+    "disposalKind": "Disposal kind",
+    "proceeds": "Sale price",
+    "serviceKind": "Record kind",
+    "serviceTitle": "Revision / task",
+    "performedOn": "Performed",
+    "nextDueOn": "Next due",
+    "permitDate": "Filed / decided on",
+    "permitDeadline": "Deadline",
+    "permitState": "Procedure state",
+    "result": "Result",
+    "supplier": "Supplier / inspector",
+    "method": "Method",
+    "taxGroup": "Tax group",
+    "base": "Base (entry price)",
+    "startDate": "Start of depreciation",
+    "years": "Depreciation period (years)",
+    "interval": "Interval",
+    "template": "Template",
+    "templateName": "Template name",
+    "planType": "Plan type",
+    "period": "Period",
+    "approvedAmount": "Approved amount",
+    "partial": "Partial write-off (e.g. after damage)",
+    "status": "Status",
+    "inventoryScope": "Inventory scope",
+    "inventoryTitle": "Inventory name",
+    "taskTitle": "Task",
+    "dueDate": "Due date",
+    "assignee": "Assignee"
+  },
+  "columns": {
+    "asset": "Asset",
+    "acquisitionValue": "Acquisition value",
+    "currentValue": "Current value",
+    "nextDue": "Next revision / check"
+  },
+  "tabs": {
+    "register": "Asset register",
+    "services": "Revisions and deadlines ({{count}})",
+    "inventories": "Inventory counts",
+    "depreciation": "Depreciation plans"
+  },
+  "kind": {
+    "building": "Building",
+    "technology": "Technology",
+    "equipment": "Equipment"
+  },
+  "status": {
+    "active": "Active",
+    "disposed": "Disposed"
+  },
+  "method": {
+    "purchase": "Purchase",
+    "construction": "Own construction",
+    "transfer": "Transfer / contribution",
+    "donation": "Donation",
+    "leasing": "Lease buy-out"
+  },
+  "disposal": {
+    "sale": "Sold",
+    "retirement": "Retired",
+    "liquidation": "Liquidated"
+  },
+  "event": {
+    "acquisition": "Acquisition",
+    "placed_in_service": "Placed in service",
+    "value_change": "Recorded value change",
+    "construction": "Construction event",
+    "ownership": "Ownership",
+    "note": "Note",
+    "sale": "Sale",
+    "retirement": "Retirement",
+    "liquidation": "Liquidation"
+  },
+  "serviceKind": {
+    "revision": "Revision",
+    "service": "Service",
+    "inspection": "Inspection",
+    "permit": "Permit / procedure"
+  },
+  "result": {
+    "ok": "No defects",
+    "defects": "With defects",
+    "failed": "Failed"
+  },
+  "permit": {
+    "requested": "Filed",
+    "in_progress": "In progress",
+    "granted": "Granted",
+    "rejected": "Rejected",
+    "expired": "Expired"
+  },
+  "due": {
+    "overdue": "Overdue",
+    "soon": "Within 30 days",
+    "planned": "Planned",
+    "none": "no deadline"
+  },
+  "interval": {
+    "yearly": "yearly",
+    "monthly": "monthly"
+  },
+  "planStatus": {
+    "draft": "Draft",
+    "confirmed": "Confirmed"
+  },
+  "planChange": {
+    "created": "Plan created",
+    "confirmed": "Plan confirmed",
+    "entry_recorded": "Approved amount recorded for {{period}}"
+  },
+  "actions": {
+    "newAsset": "New asset",
+    "createAsset": "Create asset",
+    "newInventory": "New inventory count",
+    "newTemplate": "New template",
+    "edit": "Edit card",
+    "changeValue": "Change value",
+    "recordEvent": "Record event",
+    "dispose": "Dispose",
+    "confirmDispose": "Dispose asset",
+    "recordService": "Record revision / service",
+    "createPlan": {
+      "accounting": "Create accounting plan",
+      "tax": "Create tax plan"
+    },
+    "confirmPlan": "Confirm plan",
+    "recordEntry": "Record approved amount",
+    "save": "Save",
+    "back": "Back",
+    "close": "Close"
+  },
+  "stats": {
+    "count": "Assets",
+    "active": "Active assets",
+    "disposedHint": "disposed: {{count}}",
+    "acquisitionTotal": "Total acquisition value",
+    "currentTotal": "Current recorded value",
+    "currentHint": "last confirmed values",
+    "missingValues": "without value: {{count}}",
+    "overdue": "Overdue revisions",
+    "soonHint": "within 30 days: {{count}}",
+    "openFollowUps": "Open inventory follow-ups"
+  },
+  "filters": {
+    "search": "Search assets",
+    "searchPlaceholder": "Inventory number, name, location, serial number…",
+    "status": "Status",
+    "active": "Active",
+    "disposed": "Disposed",
+    "allStatuses": "All",
+    "allKinds": "All kinds",
+    "property": "Property",
+    "allProperties": "Both properties"
+  },
+  "states": {
+    "noDisposed": "No asset has been disposed yet."
+  },
+  "detail": {
+    "tabs": {
+      "card": "Card",
+      "history": "History ({{count}})",
+      "services": "Revisions and service ({{count}})",
+      "depreciation": "Depreciation",
+      "documents": "Documents and comments"
+    }
+  },
+  "card": {
+    "confirmedOn": "confirmed as of {{date}}",
+    "bookValues": "Net value per recorded depreciation",
+    "created": "Created",
+    "updated": "Last changed",
+    "disposedNote": "The asset is disposed; its card, values and history stay available read-only."
+  },
+  "history": {
+    "empty": "No events yet.",
+    "recorded": "recorded by {{by}}, {{at}}"
+  },
+  "services": {
+    "empty": "No revisions, service or permits yet.",
+    "intro": "Current deadlines of revisions, checks and permits of active assets (latest record of each task). Click to open the asset card."
+  },
+  "depreciation": {
+    "evidenceBadge": "Evidence, not a legal calculation",
+    "evidenceNote": "The app records plan parameters and amounts approved by accounting. It does not compute statutory accounting or tax depreciation and never claims they are posted.",
+    "accounting": "Accounting",
+    "tax": "Tax",
+    "accountingPlan": "Accounting depreciation plan",
+    "taxPlan": "Tax depreciation plan",
+    "accountingShort": "accounting",
+    "taxShort": "tax",
+    "noPlan": "No plan yet.",
+    "none": "none",
+    "plans": "Depreciation plans",
+    "connection": "Accounting product link",
+    "notConnected": "not connected",
+    "manualLink": "manual reference: {{product}} (no automatic transfer)",
+    "approvedTotal": "Approved in total",
+    "remaining": {
+      "accounting": "Accounting net book value",
+      "tax": "Tax residual value"
+    },
+    "remainingShort": "Remaining",
+    "indicative": "Indicative split*",
+    "indicativeNote": "* Indicative straight-line split of the base for orientation only; not a legal calculation and never stored.",
+    "notApproved": "not approved",
+    "recordedBy": "Recorded by",
+    "partial": "partial",
+    "showAll": "Show full schedule ({{count}} periods)",
+    "collapse": "Collapse schedule",
+    "history": "Plan history",
+    "yearsValue": "{{count}} years",
+    "yearAccounting": "Approved accounting depreciation {{year}}",
+    "yearTax": "Approved tax depreciation {{year}}",
+    "draftPlans": "Plans awaiting confirmation",
+    "allPlans": "All depreciation plans"
+  },
+  "templates": {
+    "title": "Depreciation plan templates",
+    "intro": "A template stores reusable plan parameters (type, method, period, interval). Amounts are never computed automatically.",
+    "empty": "No templates yet."
+  },
+  "inventory": {
+    "emptyTitle": "No inventory count yet.",
+    "emptyDescription": "Create an inventory count for one property or the whole company.",
+    "createIntro": "The count list contains every active asset of the chosen property. Mark each item as found, missing or with a difference.",
+    "wholeCompany": "Whole company (both properties)",
+    "defaultTitlePrefix": "Inventory",
+    "candidates": "{{count}} items will be listed:",
+    "noCandidates": "The chosen property has no active assets.",
+    "status": {
+      "open": "In progress",
+      "closed": "Closed"
+    },
+    "progress": "checked {{checked}} of {{total}}",
+    "differencesCount": "differences: {{count}}",
+    "differencesOnly": "Differences only ({{count}})",
+    "close": "Close inventory",
+    "closeHint": "The inventory can be closed once every item is marked.",
+    "statFound": "Found: {{count}}",
+    "statDifferences": "Differences: {{count}}",
+    "statPending": "Not checked: {{count}}",
+    "createdBy": "created by {{by}}, {{at}}",
+    "result": "Result",
+    "followUp": "Follow-up task",
+    "actions": "Actions",
+    "results": {
+      "pending": "Not checked",
+      "found": "Found",
+      "missing": "Missing",
+      "difference": "Difference"
+    },
+    "mark": {
+      "found": "Found",
+      "missing": "Missing",
+      "difference": "Difference"
+    },
+    "createFollowUp": "Create task",
+    "followUpDefault": "Resolve inventory difference: {{name}}",
+    "resolveFollowUp": "Task resolved",
+    "followUpDone": "Resolved",
+    "followUpDue": "due {{date}}"
+  },
+  "form": {
+    "required": "Fill in the required fields.",
+    "duplicateNumber": "An asset with this inventory number already exists.",
+    "invalidAmount": "Enter an amount in CZK, e.g. 120 000 or 1 250,50.",
+    "amountHelp": "Amount in CZK",
+    "categoryPlaceholder": "E.g. Lifts, Heating, Furniture",
+    "noLocation": "No location",
+    "propertiesFailed": "The property list could not be loaded.",
+    "numberFixed": "The inventory number does not change after creation.",
+    "accountingProductHelp": "Card identifier in the accounting system, if decided. Empty = not connected.",
+    "valueIntro": "Current recorded value: {{value}}. The original value and the reason stay in history.",
+    "reasonRequired": "Fill in the date and the reason.",
+    "reasonHelp": "E.g. expert valuation, modernisation, damage.",
+    "documentHelp": "Document number or reference",
+    "disposeIntro": "„{{name}}“ moves to disposed assets. Its card, values and full history are kept.",
+    "serviceDates": "Fill in the performed date or the next due date.",
+    "serviceTitlePlaceholder": "E.g. Gas installation revision",
+    "nextDueHelp": "The deadline shows in the revisions overview and the operations calendar.",
+    "planInvalid": "Check the base, method and period (1–100 years).",
+    "noTemplate": "No template",
+    "periodMonthly": "Period as YYYY-MM (e.g. 2026-10)",
+    "periodYearly": "Period as YYYY (e.g. 2026)",
+    "overBase": "Approved amounts would exceed the base. Remaining {{remaining}}.",
+    "periodTaken": "An approved amount for this period already exists.",
+    "entryIntro": "{{type}} plan · remaining up to the base {{remaining}}. Enter the amount approved by accounting, not a computed one."
+  },
+  "messages": {
+    "created": "Asset created",
+    "updated": "Asset card saved",
+    "valueChanged": "New value saved, the original stays in history",
+    "eventRecorded": "Event recorded",
+    "disposed": "Asset disposed",
+    "serviceRecorded": "Revision / service record saved",
+    "planCreated": "Depreciation plan created as draft",
+    "planConfirmed": "Depreciation plan confirmed",
+    "entryRecorded": "Approved amount recorded",
+    "templateCreated": "Template saved",
+    "inventoryCreated": "Inventory count created",
+    "marked": "Inventory result saved",
+    "followUpCreated": "Follow-up task created",
+    "followUpResolved": "Task marked as resolved",
+    "inventoryClosed": "Inventory closed"
   },
   "create": {
     "title": "New asset",
     "submit": "Create asset"
   },
-  "created": "Asset created",
-  "stats": {
-    "count": "Assets"
-  }
+  "created": "Asset created"
 }

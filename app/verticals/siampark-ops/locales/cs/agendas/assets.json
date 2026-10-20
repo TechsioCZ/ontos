@@ -1,17 +1,341 @@
 {
-  "title": "Majetek",
-  "description": "Evidence majetku areálu, inventární čísla, umístění a hodnoty (S02, S03).",
+  "title": "Majetek a odpisy",
+  "description": "Evidence budov, technologií a vybavení obou areálů: hodnoty s odůvodněnou historií, revize a servis, inventury a odpisové plány (evidence schválených hodnot).",
+  "notProvided": "neuvedeno",
+  "you": "vy",
+  "saving": "Ukládám…",
+  "resize": "Změnit šířku panelu (šipky vlevo/vpravo)",
   "fields": {
     "inventoryNumber": "Inventární číslo",
     "name": "Název",
-    "category": "Kategorie"
+    "category": "Kategorie",
+    "kind": "Druh",
+    "serialNumber": "Výrobní číslo",
+    "location": "Umístění",
+    "responsible": "Odpovědná osoba",
+    "acquisitionDate": "Datum pořízení",
+    "acquisitionMethod": "Způsob pořízení",
+    "acquisitionValue": "Pořizovací hodnota",
+    "currentValue": "Aktuální evidovaná hodnota",
+    "placedInService": "Zařazení do užívání",
+    "accountingProduct": "Karta v účetním produktu",
+    "note": "Poznámka",
+    "newValue": "Nová evidovaná hodnota",
+    "valueDate": "Platí ke dni",
+    "reason": "Důvod",
+    "documentRef": "Doklad",
+    "eventKind": "Druh události",
+    "date": "Datum",
+    "description": "Popis",
+    "disposalKind": "Způsob vyřazení",
+    "proceeds": "Prodejní cena",
+    "serviceKind": "Druh záznamu",
+    "serviceTitle": "Revize / úkon",
+    "performedOn": "Provedeno",
+    "nextDueOn": "Příští termín",
+    "permitDate": "Datum podání / rozhodnutí",
+    "permitDeadline": "Termín (lhůta)",
+    "permitState": "Stav řízení",
+    "result": "Výsledek",
+    "supplier": "Dodavatel / revizní technik",
+    "method": "Metoda",
+    "taxGroup": "Odpisová skupina",
+    "base": "Základ (vstupní cena)",
+    "startDate": "Počátek odpisování",
+    "years": "Doba odpisování (roky)",
+    "interval": "Interval",
+    "template": "Šablona",
+    "templateName": "Název šablony",
+    "planType": "Typ plánu",
+    "period": "Období",
+    "approvedAmount": "Schválená částka",
+    "partial": "Odpis části hodnoty (např. po poškození)",
+    "status": "Stav",
+    "inventoryScope": "Rozsah inventury",
+    "inventoryTitle": "Název inventury",
+    "taskTitle": "Úkol",
+    "dueDate": "Termín",
+    "assignee": "Řešitel"
+  },
+  "columns": {
+    "asset": "Majetek",
+    "acquisitionValue": "Pořizovací hodnota",
+    "currentValue": "Aktuální hodnota",
+    "nextDue": "Příští revize / kontrola"
+  },
+  "tabs": {
+    "register": "Evidence majetku",
+    "services": "Revize a termíny ({{count}})",
+    "inventories": "Inventury",
+    "depreciation": "Odpisové plány"
+  },
+  "kind": {
+    "building": "Budova",
+    "technology": "Technologie",
+    "equipment": "Vybavení"
+  },
+  "status": {
+    "active": "Aktivní",
+    "disposed": "Vyřazeno"
+  },
+  "method": {
+    "purchase": "Koupě",
+    "construction": "Vlastní výstavba",
+    "transfer": "Převod / vklad",
+    "donation": "Dar",
+    "leasing": "Odkup z leasingu"
+  },
+  "disposal": {
+    "sale": "Prodáno",
+    "retirement": "Vyřazeno",
+    "liquidation": "Zlikvidováno"
+  },
+  "event": {
+    "acquisition": "Pořízení",
+    "placed_in_service": "Zařazení do užívání",
+    "value_change": "Změna evidované hodnoty",
+    "construction": "Stavební událost",
+    "ownership": "Vlastnictví",
+    "note": "Poznámka",
+    "sale": "Prodej",
+    "retirement": "Vyřazení",
+    "liquidation": "Likvidace"
+  },
+  "serviceKind": {
+    "revision": "Revize",
+    "service": "Servisní zásah",
+    "inspection": "Kontrola / prohlídka",
+    "permit": "Řízení / povolení"
+  },
+  "result": {
+    "ok": "Bez závad",
+    "defects": "Se závadami",
+    "failed": "Nevyhovuje"
+  },
+  "permit": {
+    "requested": "Podáno",
+    "in_progress": "Probíhá",
+    "granted": "Povoleno",
+    "rejected": "Zamítnuto",
+    "expired": "Prošlé"
+  },
+  "due": {
+    "overdue": "Po termínu",
+    "soon": "Do 30 dnů",
+    "planned": "Naplánováno",
+    "none": "bez termínu"
+  },
+  "interval": {
+    "yearly": "ročně",
+    "monthly": "měsíčně"
+  },
+  "planStatus": {
+    "draft": "Návrh",
+    "confirmed": "Potvrzeno"
+  },
+  "planChange": {
+    "created": "Plán založen",
+    "confirmed": "Plán potvrzen",
+    "entry_recorded": "Zapsána schválená částka za {{period}}"
+  },
+  "actions": {
+    "newAsset": "Nový majetek",
+    "createAsset": "Založit majetek",
+    "newInventory": "Nová inventura",
+    "newTemplate": "Nová šablona",
+    "edit": "Upravit kartu",
+    "changeValue": "Změnit hodnotu",
+    "recordEvent": "Zapsat událost",
+    "dispose": "Vyřadit",
+    "confirmDispose": "Vyřadit majetek",
+    "recordService": "Zapsat revizi / servis",
+    "createPlan": {
+      "accounting": "Založit účetní plán",
+      "tax": "Založit daňový plán"
+    },
+    "confirmPlan": "Potvrdit plán",
+    "recordEntry": "Zapsat schválenou částku",
+    "save": "Uložit",
+    "back": "Zpět",
+    "close": "Zavřít"
+  },
+  "stats": {
+    "count": "Položek majetku",
+    "active": "Aktivní majetek",
+    "disposedHint": "vyřazeno: {{count}}",
+    "acquisitionTotal": "Pořizovací hodnota celkem",
+    "currentTotal": "Aktuální evidovaná hodnota",
+    "currentHint": "poslední potvrzené hodnoty",
+    "missingValues": "bez hodnoty: {{count}} položek",
+    "overdue": "Revize po termínu",
+    "soonHint": "do 30 dnů: {{count}}",
+    "openFollowUps": "Otevřené úkoly z inventur"
+  },
+  "filters": {
+    "search": "Hledat majetek",
+    "searchPlaceholder": "Inventární číslo, název, umístění, výrobní číslo…",
+    "status": "Stav",
+    "active": "Aktivní",
+    "disposed": "Vyřazené",
+    "allStatuses": "Vše",
+    "allKinds": "Všechny druhy",
+    "property": "Nemovitost",
+    "allProperties": "Obě nemovitosti"
+  },
+  "states": {
+    "noDisposed": "Žádný majetek zatím nebyl vyřazen."
+  },
+  "detail": {
+    "tabs": {
+      "card": "Karta",
+      "history": "Historie ({{count}})",
+      "services": "Revize a servis ({{count}})",
+      "depreciation": "Odpisy",
+      "documents": "Dokumenty a komentáře"
+    }
+  },
+  "card": {
+    "confirmedOn": "potvrzeno k {{date}}",
+    "bookValues": "Zůstatková hodnota podle evidovaných odpisů",
+    "created": "Založeno",
+    "updated": "Naposledy změněno",
+    "disposedNote": "Majetek je vyřazen; karta, hodnoty a historie zůstávají zachovány pouze pro čtení."
+  },
+  "history": {
+    "empty": "Zatím bez událostí.",
+    "recorded": "zapsal(a) {{by}}, {{at}}"
+  },
+  "services": {
+    "empty": "Zatím žádné revize, servis ani řízení.",
+    "intro": "Aktuální termíny revizí, kontrol a řízení u aktivního majetku (vždy poslední záznam daného úkonu). Kliknutím otevřete kartu majetku."
+  },
+  "depreciation": {
+    "evidenceBadge": "Evidence, nikoli právní výpočet",
+    "evidenceNote": "Aplikace eviduje parametry plánu a ručně schválené částky z účetnictví. Zákonné účetní ani daňové odpisy nepočítá a netvrdí, že jsou zaúčtovány.",
+    "accounting": "Účetní",
+    "tax": "Daňový",
+    "accountingPlan": "Účetní odpisový plán",
+    "taxPlan": "Daňový odpisový plán",
+    "accountingShort": "účetní",
+    "taxShort": "daňová",
+    "noPlan": "Plán zatím nebyl založen.",
+    "none": "není",
+    "plans": "Odpisové plány",
+    "connection": "Stav napojení na účetní produkt",
+    "notConnected": "nenapojeno",
+    "manualLink": "ruční odkaz: {{product}} (bez automatického přenosu)",
+    "approvedTotal": "Schváleno celkem",
+    "remaining": {
+      "accounting": "Účetní zůstatková hodnota",
+      "tax": "Daňová zůstatková cena"
+    },
+    "remainingShort": "Zůstatek",
+    "indicative": "Orientační rozpis*",
+    "indicativeNote": "* Orientační rovnoměrné rozdělení základu, pouze pro kontrolu; nikoli právní výpočet a neukládá se.",
+    "notApproved": "neschváleno",
+    "recordedBy": "Zapsal",
+    "partial": "část hodnoty",
+    "showAll": "Zobrazit celý rozpis ({{count}} období)",
+    "collapse": "Sbalit rozpis",
+    "history": "Historie plánu",
+    "yearsValue": "{{count}} let",
+    "yearAccounting": "Schválené účetní odpisy {{year}}",
+    "yearTax": "Schválené daňové odpisy {{year}}",
+    "draftPlans": "Plány čekající na potvrzení",
+    "allPlans": "Všechny odpisové plány"
+  },
+  "templates": {
+    "title": "Šablony odpisových plánů",
+    "intro": "Šablona uloží opakovaně použitelné vstupní parametry plánu (typ, metoda, doba, interval). Částky se nikdy nepočítají automaticky.",
+    "empty": "Zatím žádné šablony."
+  },
+  "inventory": {
+    "emptyTitle": "Zatím žádná inventura.",
+    "emptyDescription": "Založte inventuru pro jednu nemovitost nebo celou firmu.",
+    "createIntro": "Inventurní soupis obsahuje veškerý aktivní majetek vybrané nemovitosti. Položky pak označíte jako nalezené, nenalezené nebo s rozdílem.",
+    "wholeCompany": "Celá firma (obě nemovitosti)",
+    "defaultTitlePrefix": "Inventura",
+    "candidates": "Do soupisu bude zařazeno {{count}} položek:",
+    "noCandidates": "Vybraná nemovitost nemá žádný aktivní majetek.",
+    "status": {
+      "open": "Probíhá",
+      "closed": "Uzavřena"
+    },
+    "progress": "zkontrolováno {{checked}} z {{total}}",
+    "differencesCount": "rozdíly: {{count}}",
+    "differencesOnly": "Jen rozdíly ({{count}})",
+    "close": "Uzavřít inventuru",
+    "closeHint": "Inventuru lze uzavřít, až budou všechny položky označeny.",
+    "statFound": "Nalezeno: {{count}}",
+    "statDifferences": "Rozdíly: {{count}}",
+    "statPending": "Nezkontrolováno: {{count}}",
+    "createdBy": "založil(a) {{by}}, {{at}}",
+    "result": "Výsledek",
+    "followUp": "Navázaný úkol",
+    "actions": "Akce",
+    "results": {
+      "pending": "Nezkontrolováno",
+      "found": "Nalezeno",
+      "missing": "Nenalezeno",
+      "difference": "Rozdíl"
+    },
+    "mark": {
+      "found": "Nalezeno",
+      "missing": "Nenalezeno",
+      "difference": "Rozdíl"
+    },
+    "createFollowUp": "Založit úkol",
+    "followUpDefault": "Vyřešit inventurní rozdíl: {{name}}",
+    "resolveFollowUp": "Úkol vyřešen",
+    "followUpDone": "Vyřešeno",
+    "followUpDue": "termín {{date}}"
+  },
+  "form": {
+    "required": "Vyplňte povinná pole.",
+    "duplicateNumber": "Majetek s tímto inventárním číslem už existuje.",
+    "invalidAmount": "Zadejte částku v Kč, např. 120 000 nebo 1 250,50.",
+    "amountHelp": "Částka v Kč",
+    "categoryPlaceholder": "Např. Výtahy, Vytápění, Nábytek",
+    "noLocation": "Bez umístění",
+    "propertiesFailed": "Seznam nemovitostí se nepodařilo načíst.",
+    "numberFixed": "Inventární číslo se po založení nemění.",
+    "accountingProductHelp": "Identifikátor karty v účetním systému, pokud je určen. Prázdné = nenapojeno.",
+    "valueIntro": "Současná evidovaná hodnota: {{value}}. Původní hodnota i důvod zůstanou v historii.",
+    "reasonRequired": "Vyplňte datum a důvod změny.",
+    "reasonHelp": "Např. znalecký posudek, modernizace, poškození.",
+    "documentHelp": "Číslo dokladu nebo odkaz na dokument",
+    "disposeIntro": "Majetek „{{name}}“ přejde mezi vyřazené. Karta, hodnoty a celá historie zůstanou zachovány.",
+    "serviceDates": "Vyplňte datum provedení nebo příští termín.",
+    "serviceTitlePlaceholder": "Např. Revize plynového zařízení",
+    "nextDueHelp": "Termín se zobrazí v přehledu revizí a v kalendáři provozu.",
+    "planInvalid": "Zkontrolujte základ, metodu a dobu odpisování (1–100 let).",
+    "noTemplate": "Bez šablony",
+    "periodMonthly": "Období ve tvaru RRRR-MM (např. 2026-10)",
+    "periodYearly": "Období ve tvaru RRRR (např. 2026)",
+    "overBase": "Schválené částky by přesáhly základ. Zbývá {{remaining}}.",
+    "periodTaken": "Pro toto období už je schválená částka zapsána.",
+    "entryIntro": "{{type}} plán · zbývá do výše základu {{remaining}}. Zadejte částku schválenou účetní, nikoli vypočtenou."
+  },
+  "messages": {
+    "created": "Majetek založen",
+    "updated": "Karta majetku uložena",
+    "valueChanged": "Nová hodnota uložena, původní zůstala v historii",
+    "eventRecorded": "Událost zapsána do historie",
+    "disposed": "Majetek vyřazen",
+    "serviceRecorded": "Záznam revize / servisu uložen",
+    "planCreated": "Odpisový plán založen jako návrh",
+    "planConfirmed": "Odpisový plán potvrzen",
+    "entryRecorded": "Schválená částka zapsána",
+    "templateCreated": "Šablona uložena",
+    "inventoryCreated": "Inventura založena",
+    "marked": "Výsledek inventury uložen",
+    "followUpCreated": "Navázaný úkol založen",
+    "followUpResolved": "Úkol označen jako vyřešený",
+    "inventoryClosed": "Inventura uzavřena"
   },
   "create": {
     "title": "Nový majetek",
     "submit": "Založit majetek"
   },
-  "created": "Majetek založen",
-  "stats": {
-    "count": "Položek majetku"
-  }
+  "created": "Majetek založen"
 }
