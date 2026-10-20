@@ -135,6 +135,10 @@
     "tenant": "Tenant / counterparty",
     "tenantPlaceholder": "e.g. Kavárna U Parku s.r.o.",
     "contractLink": "Related contract",
+    "taskLink": "Related task",
+    "pickTask": "Choose a task",
+    "tasksLoading": "Loading available tasks…",
+    "tasksUnavailable": "The task is unavailable or you do not have access.",
     "noneContract": "No related contract",
     "removeLink": "Remove link {{label}}"
   },
@@ -171,6 +175,8 @@
     "forbidden": "Documents are visible to Siampark internal roles only.",
     "upload": "Upload a file to this record",
     "attach": "Attach an existing document",
+    "taskTitle": "Task documents",
+    "backToTask": "Back to task",
     "openAll": "Open in Documents"
   },
   "comments": {

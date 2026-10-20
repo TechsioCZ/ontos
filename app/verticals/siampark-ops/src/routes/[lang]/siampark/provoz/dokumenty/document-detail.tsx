@@ -265,7 +265,7 @@ export const DocumentDetailPanel = ({
   return (
     <SidePanel
       actions={
-        <>
+        <div className="siampark-documents-actions">
           {canWrite && (
             <Button onClick={() => onEdit(document)} theme="outlined" variant="secondary">
               {t(`${k}.detail.edit`)}
@@ -279,7 +279,7 @@ export const DocumentDetailPanel = ({
           <Button onClick={onClose} variant="primary">
             {t('siampark-ops.common.close')}
           </Button>
-        </>
+        </div>
       }
       description={
         <span className="flex flex-wrap items-center gap-100">
@@ -335,8 +335,14 @@ export const DocumentDetailPanel = ({
                     ? t(`${k}.noFileYet`)
                     : `v${current.version} · ${current.file.name} · ${formatBytes(current.file.size)}`,
               },
-              { label: t('siampark-ops.common.createdBy'), value: `${principalLabel(document.createdBy)} · ${formatWhen(document.createdAt)}` },
-              { label: t(`${k}.fields.lastChange`), value: `${principalLabel(document.updatedBy)} · ${formatWhen(document.updatedAt)}` },
+              {
+                label: t('siampark-ops.common.createdBy'),
+                value: `${principalLabel(document.createdBy)} · ${formatWhen(document.createdAt)}`,
+              },
+              {
+                label: t(`${k}.fields.lastChange`),
+                value: `${principalLabel(document.updatedBy)} · ${formatWhen(document.updatedAt)}`,
+              },
               ...(document.description === undefined
                 ? []
                 : [{ label: t(`${k}.fields.description`), value: document.description }]),
@@ -398,7 +404,11 @@ export const DocumentDetailPanel = ({
               <ul className="flex flex-col gap-100">
                 {amendments.map((amendment) => (
                   <li className="flex items-center justify-between gap-100" key={amendment.id}>
-                    <button className="text-left font-medium text-sm hover:underline" onClick={() => onOpenDocument(amendment.id)} type="button">
+                    <button
+                      className="text-left font-medium text-sm hover:underline"
+                      onClick={() => onOpenDocument(amendment.id)}
+                      type="button"
+                    >
                       {amendment.title}
                     </button>
                     <span className="flex items-center gap-100">
@@ -430,7 +440,9 @@ export const DocumentDetailPanel = ({
                   <FileTypeIcon mime={version.file.mime} name={version.file.name} />
                   <div className="flex min-w-0 flex-1 flex-col gap-50">
                     <span className="flex flex-wrap items-center gap-100">
-                      <span className="font-semibold text-sm">{t(`${k}.detail.versionLabel`, { version: version.version })}</span>
+                      <span className="font-semibold text-sm">
+                        {t(`${k}.detail.versionLabel`, { version: version.version })}
+                      </span>
                       {index === 0 && (
                         <Badge size="sm" variant="info">
                           {t(`${k}.detail.current`)}
@@ -446,7 +458,10 @@ export const DocumentDetailPanel = ({
                       {version.file.name} <span className="text-fg-secondary">· {formatBytes(version.file.size)}</span>
                     </span>
                     <span className="text-fg-secondary text-xs">
-                      {t(`${k}.detail.uploadedLine`, { when: formatWhen(version.uploadedAt), who: principalLabel(version.uploadedBy) })}
+                      {t(`${k}.detail.uploadedLine`, {
+                        when: formatWhen(version.uploadedAt),
+                        who: principalLabel(version.uploadedBy),
+                      })}
                     </span>
                     {version.note !== undefined && <span className="text-xs italic">„{version.note}“</span>}
                   </div>

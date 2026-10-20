@@ -51,3 +51,33 @@
     outline-offset: 2px;
   }
 }
+
+/* Keep full Czech action labels inside their outlines at 390px; do not squeeze three fixed-height buttons. */
+.siampark-documents-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.siampark-documents-actions button {
+  white-space: nowrap;
+}
+
+@media (max-width: 639px) {
+  .siampark-documents-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .siampark-documents-actions button {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .siampark-documents-actions button:last-child:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}

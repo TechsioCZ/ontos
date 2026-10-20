@@ -28,6 +28,8 @@ import {
   usePrincipalLabel,
 } from '../../../../../ui/documents-kit.tsx';
 import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
+import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
+import { useTaskOptions } from '../../../../../ui/task-options.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import { DocumentDetailPanel } from './document-detail.tsx';
 import { DocumentFormPanel } from './document-form.tsx';
@@ -69,6 +71,9 @@ const DocumentsView = () => {
   const principalLabel = usePrincipalLabel();
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
   const ops = useAgendaRecords(['documents']);
+  const tasks = useTaskOptions();
+  const requestedTaskId = new URLSearchParams(searchStr).get('taskId');
+  const taskSubject = tasks.status === 'ready' ? tasks.options.find((task) => task.id === requestedTaskId) : undefined;
   const envelope = ops.data?.agendas.documents;
   const documents = envelope?.state.documents ?? [];
   const canWrite = envelope?.canWrite === true;
@@ -107,7 +112,10 @@ const DocumentsView = () => {
     ...new Map(
       documents
         .flatMap(documentLinks)
-        .filter((entry) => entry.kind === 'property' || entry.kind === 'unit' || entry.kind === 'tenant')
+        .filter(
+          (entry) =>
+            entry.kind === 'property' || entry.kind === 'unit' || entry.kind === 'tenant' || entry.kind === 'task',
+        )
         .map((entry) => [`${entry.kind}:${entry.id}`, entry] as const),
     ).entries(),
   ].toSorted(([, left], [, right]) => left.label.localeCompare(right.label, 'cs'));
@@ -208,6 +216,22 @@ const DocumentsView = () => {
         title={t(`${k}.title`)}
       />
       <AgendaGate onRetry={() => void ops.reload()} readable={envelope !== undefined} status={ops.status}>
+        {taskSubject !== undefined && (
+          <SectionCard title={`${t(`${k}.linked.taskTitle`)} · ${taskSubject.label}`}>
+            <a
+              className="text-sm underline"
+              href={`/cs/siampark/work?resourceId=${encodeURIComponent(taskSubject.id)}`}
+            >
+              {t(`${k}.linked.backToTask`)}
+            </a>
+            <LinkedDocuments records={ops} subject={taskSubject} />
+          </SectionCard>
+        )}
+        {requestedTaskId !== null && taskSubject === undefined && (
+          <p className="text-fg-secondary text-sm">
+            {t(`${k}.create.${tasks.status === 'loading' ? 'tasksLoading' : 'tasksUnavailable'}`)}
+          </p>
+        )}
         <StatRow>
           <StatCard label={t(`${k}.stats.count`)} value={String(documents.length)} />
           <StatCard label={t(`${k}.stats.activeContracts`)} value={String(activeContracts)} />
@@ -532,6 +556,7 @@ const DocumentsView = () => {
       )}
       <DocumentFormPanel
         contracts={contractDocs}
+        tasks={tasks}
         mode={form ?? { kind: 'create' }}
         onClose={() => setForm(undefined)}
         onSaved={(documentId) => {

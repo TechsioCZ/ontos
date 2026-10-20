@@ -11,10 +11,22 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useEffect, useState } from 'react';
 import type { OpsCommand } from '../../../../../../shared/agendas.ts';
-import type { ContractStatus, ContractTerms, DocumentRecord, SubjectRef } from '../../../../../../shared/domain/documents.ts';
+import type {
+  ContractStatus,
+  ContractTerms,
+  DocumentRecord,
+  SubjectRef,
+} from '../../../../../../shared/domain/documents.ts';
 import { documentLinks, sameSubject } from '../../../../../../shared/domain/documents.ts';
-import { documentCategories, FileTypeIcon, formatBytes, SubjectChip, useCategoryLabel } from '../../../../../ui/documents-kit.tsx';
+import {
+  documentCategories,
+  FileTypeIcon,
+  formatBytes,
+  SubjectChip,
+  useCategoryLabel,
+} from '../../../../../ui/documents-kit.tsx';
 import { usePropertyOptions } from '../../../../../ui/property-options.ts';
+import type { TaskOptionsState } from '../../../../../ui/task-options.ts';
 import type { CommandOutcome, FailureReason } from '../../../../../ui/use-agenda.ts';
 import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../../ui/use-agenda.ts';
 
@@ -103,8 +115,10 @@ export const DocumentFormPanel = ({
   onSaved,
   open,
   run,
+  tasks,
 }: {
   readonly contracts: readonly DocumentRecord[];
+  readonly tasks: TaskOptionsState;
   readonly mode: DocumentFormMode;
   readonly onClose: () => void;
   readonly onSaved: (documentId: string | undefined) => void;
@@ -259,8 +273,13 @@ export const DocumentFormPanel = ({
   })();
 
   const heading =
-    mode.kind === 'edit' ? t(`${k}.create.editTitle`) : mode.kind === 'amend' ? t(`${k}.create.amendmentTitle`) : t(`${k}.create.title`);
-  const setTerm = (key: keyof ContractDraft) => (value: string) => setContract((current) => ({ ...current, [key]: value }));
+    mode.kind === 'edit'
+      ? t(`${k}.create.editTitle`)
+      : mode.kind === 'amend'
+        ? t(`${k}.create.amendmentTitle`)
+        : t(`${k}.create.title`);
+  const setTerm = (key: keyof ContractDraft) => (value: string) =>
+    setContract((current) => ({ ...current, [key]: value }));
   const linkableContracts = contracts.filter((entry) => !(mode.kind === 'edit' && entry.id === mode.document.id));
 
   return (
@@ -352,7 +371,11 @@ export const DocumentFormPanel = ({
           value={title}
         />
         <Select
-          items={documentCategories.map((value) => ({ displayValue: categoryLabel(value), label: categoryLabel(value), value }))}
+          items={documentCategories.map((value) => ({
+            displayValue: categoryLabel(value),
+            label: categoryLabel(value),
+            value,
+          }))}
           label={t(`${k}.fields.category`)}
           name="document-category"
           onValueChange={({ value }) => setCategory(value[0] ?? 'other')}
@@ -403,9 +426,32 @@ export const DocumentFormPanel = ({
               value={[]}
             />
           )}
+          {tasks.status === 'ready' && tasks.options.length > 0 && (
+            <Select
+              items={tasks.options.map((task) => ({ displayValue: task.label, label: task.label, value: task.id }))}
+              label={t(`${k}.create.taskLink`)}
+              name="document-link-task"
+              placeholder={t(`${k}.create.pickTask`)}
+              onValueChange={({ value }) => {
+                const picked = tasks.options.find((task) => task.id === value[0]);
+                if (picked !== undefined) addLink(picked);
+              }}
+              size="md"
+              value={[]}
+            />
+          )}
+          {tasks.status !== 'ready' && (
+            <p className="text-fg-secondary text-xs">
+              {t(`${k}.create.${tasks.status === 'loading' ? 'tasksLoading' : 'tasksUnavailable'}`)}
+            </p>
+          )}
           {linkableContracts.length > 0 && category !== 'amendment' && (
             <Select
-              items={linkableContracts.map((entry) => ({ displayValue: entry.title, label: entry.title, value: entry.id }))}
+              items={linkableContracts.map((entry) => ({
+                displayValue: entry.title,
+                label: entry.title,
+                value: entry.id,
+              }))}
               label={t(`${k}.create.contractLink`)}
               name="document-link-contract"
               placeholder={t(`${k}.contract.pickOriginal`)}
@@ -459,7 +505,11 @@ export const DocumentFormPanel = ({
             {category === 'amendment' && (
               <Select
                 items={[
-                  { displayValue: t(`${k}.contract.pickOriginal`), label: t(`${k}.contract.pickOriginal`), value: NONE },
+                  {
+                    displayValue: t(`${k}.contract.pickOriginal`),
+                    label: t(`${k}.contract.pickOriginal`),
+                    value: NONE,
+                  },
                   ...contracts
                     .filter((entry) => entry.category === 'contract')
                     .map((entry) => ({ displayValue: entry.title, label: entry.title, value: entry.id })),

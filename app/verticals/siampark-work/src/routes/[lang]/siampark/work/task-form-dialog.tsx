@@ -677,6 +677,14 @@ export const TaskFormDialog = ({
             />
           </div>
           {task !== undefined && (
+            <a
+              className="text-sm underline"
+              href={`/cs/siampark/provoz/dokumenty?taskId=${encodeURIComponent(task.ref.resourceId)}`}
+            >
+              {t(`${key}.taskDocuments`)}
+            </a>
+          )}
+          {task !== undefined && (
             <section className="flex flex-col gap-100 border-t border-border-primary pt-200">
               <h3 className="font-semibold">{t(`${key}.comments`)}</h3>
               {(task.comments ?? []).length === 0 && (

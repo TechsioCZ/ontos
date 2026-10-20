@@ -136,6 +136,10 @@
     "tenant": "Nájemce / protistrana",
     "tenantPlaceholder": "Např. Kavárna U Parku s.r.o.",
     "contractLink": "Související smlouva",
+    "taskLink": "Související úkol",
+    "pickTask": "Vyberte úkol",
+    "tasksLoading": "Načítání dostupných úkolů…",
+    "tasksUnavailable": "Úkol není dostupný nebo k němu nemáte oprávnění.",
     "noneContract": "Bez vazby na smlouvu",
     "removeLink": "Odebrat vazbu {{label}}"
   },
@@ -172,6 +176,8 @@
     "forbidden": "Dokumenty vidí jen interní role Siamparku.",
     "upload": "Nahrát soubor k záznamu",
     "attach": "Připojit existující dokument",
+    "taskTitle": "Dokumenty úkolu",
+    "backToTask": "Zpět na úkol",
     "openAll": "Otevřít v Dokumentech"
   },
   "comments": {
