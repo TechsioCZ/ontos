@@ -3457,6 +3457,15 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
+      '@app/siampark-agreements':
+        specifier: workspace:*
+        version: link:../siampark-agreements
+      '@app/siampark-billing-finance':
+        specifier: workspace:*
+        version: link:../siampark-billing-finance
+      '@app/siampark-occupancy':
+        specifier: workspace:*
+        version: link:../siampark-occupancy
       '@app/siampark-property':
         specifier: workspace:*
         version: link:../siampark-property
