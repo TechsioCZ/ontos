@@ -72,7 +72,7 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
                 key={total.currency}
                 label={`Hodnota v ${total.currency}`}
                 value={formatDecimalMoney(total.amount, total.currency)}
-                hint={`${formatNumber(total.count)} objednávek · včetně případných storen`}
+                hint={`Počet objednávek: ${formatNumber(total.count)} · včetně případných storen`}
               />
             ))
           )}

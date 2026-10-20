@@ -275,8 +275,8 @@ export const SummaryTable = ({
           </table>
           {report.withoutAmount > 0 && (
             <p className="pt-150 text-fg-secondary text-xs">
-              {formatNumber(report.withoutAmount)} započtených objednávek nemá od zdroje částku nebo měnu — jsou v
-              počtech, ne v hodnotách (údaj neposkytnut).
+              Počet započtených objednávek bez částky nebo měny od zdroje: {formatNumber(report.withoutAmount)}. Do
+              hodnot se nezahrnují (údaj neposkytnut).
             </p>
           )}
         </div>
