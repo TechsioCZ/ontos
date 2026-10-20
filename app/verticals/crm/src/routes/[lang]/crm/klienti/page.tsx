@@ -90,7 +90,11 @@ const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
     accessorFn: (row) => row.client.regNo ?? '',
     cell: (info) => {
       const value = info.getValue<string>();
-      return value === '' ? <span className="text-fg-secondary">—</span> : <span className="tabular-nums">{value}</span>;
+      return value === '' ? (
+        <span className="text-fg-secondary">—</span>
+      ) : (
+        <span className="tabular-nums">{value}</span>
+      );
     },
     header: 'IČO',
     id: 'regNo',
@@ -122,7 +126,11 @@ const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
     accessorFn: (row) => row.client.phone ?? '',
     cell: (info) => {
       const value = info.getValue<string>();
-      return value === '' ? <span className="text-fg-secondary">—</span> : <span className="tabular-nums">{value}</span>;
+      return value === '' ? (
+        <span className="text-fg-secondary">—</span>
+      ) : (
+        <span className="tabular-nums">{value}</span>
+      );
     },
     header: 'Telefon',
     id: 'phone',
@@ -213,7 +221,9 @@ const ClientsList = ({
     (row) =>
       (status === 'all' || row.client.status === status) &&
       (owner === ALL ||
-        (owner === UNASSIGNED ? row.client.ownerSalespersonId === undefined : row.client.ownerSalespersonId === owner)) &&
+        (owner === UNASSIGNED
+          ? row.client.ownerSalespersonId === undefined
+          : row.client.ownerSalespersonId === owner)) &&
       (segment === ALL || row.client.segment === segment) &&
       clientMatches(records, row.client, search),
   );
@@ -341,30 +351,70 @@ const ClientsList = ({
           <CrmScopeNote records={records} />
         </div>
       </div>
-      <DataTable
-        columns={columns(manager)}
-        data={visible}
-        enablePagination
-        enableSorting
-        getRowId={(row) => row.client.id}
-        getRowLabel={(row) => row.original.client.name}
-        maxHeight="calc(100dvh - 22rem)"
-        onRowClick={(row) => onOpen(row.original.client.id)}
-        pageSizeOptions={[25, 50, 100]}
-        paginationProps={crmPaginationProps}
-        size="sm"
-        stickyHeader
-        tableLayout="fixed"
-        translations={{
-          ...crmTableTranslations,
-          emptyDescription: filtered
-            ? 'Upravte hledání nebo filtry.'
-            : manager
-              ? 'Založte prvního klienta tlačítkem Nový klient.'
-              : 'Zatím vám nebyl přidělen žádný klient.',
-          emptyTitle: filtered ? 'Žádný klient neodpovídá' : 'Zatím žádní klienti',
-        }}
-      />
+      <ul className="flex flex-col gap-100 md:hidden">
+        {visible.length === 0 && (
+          <li className="p-200 text-center text-fg-secondary text-sm">Žádný klient neodpovídá.</li>
+        )}
+        {visible.slice(0, 100).map((row) => (
+          <li key={row.client.id}>
+            <button
+              className="flex w-full flex-col gap-50 rounded-lg border border-border-primary bg-surface p-200 text-start"
+              onClick={() => onOpen(row.client.id)}
+              type="button"
+            >
+              <span className="flex items-center justify-between gap-100">
+                <span className="truncate font-medium">{row.client.name}</span>
+                {row.client.status === 'archived' && (
+                  <Badge size="sm" variant="outline">
+                    Archiv
+                  </Badge>
+                )}
+              </span>
+              <span className="truncate text-fg-secondary text-xs">
+                {[segmentLabel(row.client.segment) ?? kindLabels[row.client.kind], row.city, row.primaryContact?.name]
+                  .filter((part) => part !== undefined)
+                  .join(' · ')}
+              </span>
+              <span className="flex items-center justify-between gap-100 text-sm">
+                {manager ? (
+                  <SalespersonChip name={row.owner} />
+                ) : (
+                  <span className="tabular-nums">{row.client.phone ?? ''}</span>
+                )}
+                <span className="text-fg-secondary text-xs">
+                  {row.lastVisit === undefined ? 'bez návštěvy' : `návštěva ${formatDate(row.lastVisit)}`}
+                </span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="hidden min-w-0 md:block">
+        <DataTable
+          columns={columns(manager)}
+          data={visible}
+          enablePagination
+          enableSorting
+          getRowId={(row) => row.client.id}
+          getRowLabel={(row) => row.original.client.name}
+          maxHeight="calc(100dvh - 22rem)"
+          onRowClick={(row) => onOpen(row.original.client.id)}
+          pageSizeOptions={[25, 50, 100]}
+          paginationProps={crmPaginationProps}
+          size="sm"
+          stickyHeader
+          tableLayout="fixed"
+          translations={{
+            ...crmTableTranslations,
+            emptyDescription: filtered
+              ? 'Upravte hledání nebo filtry.'
+              : manager
+                ? 'Založte prvního klienta tlačítkem Nový klient.'
+                : 'Zatím vám nebyl přidělen žádný klient.',
+            emptyTitle: filtered ? 'Žádný klient neodpovídá' : 'Zatím žádní klienti',
+          }}
+        />
+      </div>
       {createOpen && (
         <ClientFormDialog
           busy={busy}

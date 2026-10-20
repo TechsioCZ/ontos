@@ -35,7 +35,15 @@ interface CardProps {
   readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
 }
 
-const Fact = ({ children, icon, label }: { readonly children: ReactNode; readonly icon: string; readonly label: string }) => (
+const Fact = ({
+  children,
+  icon,
+  label,
+}: {
+  readonly children: ReactNode;
+  readonly icon: string;
+  readonly label: string;
+}) => (
   <div className="flex min-w-0 items-start gap-100">
     <span aria-hidden className={`${icon} mt-25 size-4 shrink-0 text-fg-secondary`} />
     <div className="flex min-w-0 flex-col gap-25">
@@ -74,7 +82,13 @@ const NotVisible = ({ onClose }: { readonly onClose: () => void }) => (
   </SidePanel>
 );
 
-const CardBody = ({ busy, client, onClose, records, submit }: Omit<CardProps, 'clientId'> & { readonly client: Client }) => {
+const CardBody = ({
+  busy,
+  client,
+  onClose,
+  records,
+  submit,
+}: Omit<CardProps, 'clientId'> & { readonly client: Client }) => {
   const toaster = useToast();
   const [tab, setTab] = useState('contacts');
   const [editing, setEditing] = useState(false);
@@ -161,7 +175,13 @@ const CardBody = ({ busy, client, onClose, records, submit }: Omit<CardProps, 'c
       <div className="flex flex-col gap-250 py-100">
         <div className="flex flex-wrap gap-100">
           {writable && !archived && (
-            <Button icon="icon-[mdi--pencil-outline]" onClick={() => setEditing(true)} size="sm" theme="outlined" variant="secondary">
+            <Button
+              icon="icon-[mdi--pencil-outline]"
+              onClick={() => setEditing(true)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
               Upravit údaje
             </Button>
           )}
@@ -218,7 +238,10 @@ const CardBody = ({ busy, client, onClose, records, submit }: Omit<CardProps, 'c
               </>
             )}
           </Fact>
-          <Fact icon="icon-[mdi--card-account-details-outline]" label={client.kind === 'organization' ? 'IČO / DIČ' : 'Identifikace'}>
+          <Fact
+            icon="icon-[mdi--card-account-details-outline]"
+            label={client.kind === 'organization' ? 'IČO / DIČ' : 'Identifikace'}
+          >
             {client.regNo === undefined && client.vatNo === undefined ? (
               <Missing />
             ) : (
@@ -226,7 +249,11 @@ const CardBody = ({ busy, client, onClose, records, submit }: Omit<CardProps, 'c
             )}
           </Fact>
           <Fact icon="icon-[mdi--phone-outline]" label="Telefon">
-            {client.phone === undefined ? <Missing /> : <Link href={`tel:${client.phone.replaceAll(' ', '')}`}>{client.phone}</Link>}
+            {client.phone === undefined ? (
+              <Missing />
+            ) : (
+              <Link href={`tel:${client.phone.replaceAll(' ', '')}`}>{client.phone}</Link>
+            )}
           </Fact>
           <Fact icon="icon-[mdi--email-outline]" label="E-mail">
             {client.email === undefined ? <Missing /> : <Link href={`mailto:${client.email}`}>{client.email}</Link>}
@@ -281,13 +308,7 @@ const CardBody = ({ busy, client, onClose, records, submit }: Omit<CardProps, 'c
         </Tabs>
       </div>
       {assigning && (
-        <AssignDialog
-          busy={busy}
-          client={client}
-          onClose={() => setAssigning(false)}
-          records={records}
-          run={run}
-        />
+        <AssignDialog busy={busy} client={client} onClose={() => setAssigning(false)} records={records} run={run} />
       )}
       <Dialog
         actions={

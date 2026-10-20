@@ -361,9 +361,7 @@ export const ClientFormDialog = ({
               <h3 className="font-semibold text-sm">Kontaktní osoby</h3>
               <Button
                 icon="icon-[mdi--account-plus-outline]"
-                onClick={() =>
-                  setContacts((current) => [...current, emptyContact((current.at(-1)?.key ?? 0) + 1)])
-                }
+                onClick={() => setContacts((current) => [...current, emptyContact((current.at(-1)?.key ?? 0) + 1)])}
                 size="sm"
                 theme="borderless"
                 type="button"

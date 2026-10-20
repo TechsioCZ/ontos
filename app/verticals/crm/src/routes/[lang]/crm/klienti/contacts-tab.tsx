@@ -66,7 +66,9 @@ const ContactForm = ({
         }
       }}
     >
-      <h4 className="font-semibold text-sm">{contact === undefined ? 'Nová kontaktní osoba' : `Upravit: ${contact.name}`}</h4>
+      <h4 className="font-semibold text-sm">
+        {contact === undefined ? 'Nová kontaktní osoba' : `Upravit: ${contact.name}`}
+      </h4>
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
         <FormInput
           autoComplete="off"
@@ -177,8 +179,20 @@ const ContactCard = ({
         </div>
         {writable && !archived && (
           <div className="flex shrink-0 gap-50">
-            <ActionIcon aria-label={`Upravit ${contact.name}`} icon="icon-[mdi--pencil-outline]" onClick={onEdit} size="sm" tone="neutral" />
-            <ActionIcon aria-label={`Odebrat ${contact.name}`} icon="icon-[mdi--account-remove-outline]" onClick={onRemove} size="sm" tone="neutral" />
+            <ActionIcon
+              aria-label={`Upravit ${contact.name}`}
+              icon="icon-[mdi--pencil-outline]"
+              onClick={onEdit}
+              size="sm"
+              tone="neutral"
+            />
+            <ActionIcon
+              aria-label={`Odebrat ${contact.name}`}
+              icon="icon-[mdi--account-remove-outline]"
+              onClick={onRemove}
+              size="sm"
+              tone="neutral"
+            />
           </div>
         )}
       </div>
@@ -203,7 +217,9 @@ const ContactCard = ({
         </span>
       </div>
       {contact.note !== undefined && (
-        <p className="whitespace-pre-line rounded-md bg-surface-secondary px-150 py-100 text-fg-secondary text-sm">{contact.note}</p>
+        <p className="whitespace-pre-line rounded-md bg-surface-secondary px-150 py-100 text-fg-secondary text-sm">
+          {contact.note}
+        </p>
       )}
     </li>
   );
@@ -230,7 +246,13 @@ const optionalText = (draft: ContactDraft) =>
       .map((key) => [key, draft[key].trim()]),
   ) as { role?: string; phone?: string; email?: string; note?: string };
 
-export const ContactsTab = ({ busy, client, records, submit, writable }: ClientCardTabProps & { readonly writable: boolean }) => {
+export const ContactsTab = ({
+  busy,
+  client,
+  records,
+  submit,
+  writable,
+}: ClientCardTabProps & { readonly writable: boolean }) => {
   const toaster = useToast();
   const [editing, setEditing] = useState<string | 'new' | undefined>(undefined);
   const [removing, setRemoving] = useState<ContactPerson | undefined>(undefined);
@@ -289,7 +311,11 @@ export const ContactsTab = ({ busy, client, records, submit, writable }: ClientC
       )}
       {active.length === 0 && editing !== 'new' ? (
         <EmptyState
-          description={writable ? 'Přidejte první kontaktní osobu klienta.' : 'U klienta zatím není evidovaná žádná kontaktní osoba.'}
+          description={
+            writable
+              ? 'Přidejte první kontaktní osobu klienta.'
+              : 'U klienta zatím není evidovaná žádná kontaktní osoba.'
+          }
           title="Bez kontaktních osob"
         />
       ) : (
@@ -341,7 +367,13 @@ export const ContactsTab = ({ busy, client, records, submit, writable }: ClientC
           {showRemoved && (
             <ul className="grid grid-cols-1 gap-150 md:grid-cols-2">
               {removed.map((contact) => (
-                <ContactCard contact={contact} key={contact.id} onEdit={() => undefined} onRemove={() => undefined} writable={false} />
+                <ContactCard
+                  contact={contact}
+                  key={contact.id}
+                  onEdit={() => undefined}
+                  onRemove={() => undefined}
+                  writable={false}
+                />
               ))}
             </ul>
           )}

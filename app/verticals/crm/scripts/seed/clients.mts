@@ -42,8 +42,20 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Masarykova 12, 602 00 Brno',
     contacts: [
-      { email: 'jirina.mala@pekarna-mala.demo', name: 'Jiřina Malá', phone: '+420 731 100 201', primary: true, role: 'Majitelka' },
-      { email: 'nakup@pekarna-mala.demo', name: 'Tomáš Veselý', phone: '+420 731 100 202', role: 'Nákupčí', note: 'Objednává v pondělí do 10:00, mouku vždy po paletách.' },
+      {
+        email: 'jirina.mala@pekarna-mala.demo',
+        name: 'Jiřina Malá',
+        phone: '+420 731 100 201',
+        primary: true,
+        role: 'Majitelka',
+      },
+      {
+        email: 'nakup@pekarna-mala.demo',
+        name: 'Tomáš Veselý',
+        phone: '+420 731 100 202',
+        role: 'Nákupčí',
+        note: 'Objednává v pondělí do 10:00, mouku vždy po paletách.',
+      },
       { name: 'Hana Šimková', phone: '+420 731 100 203', role: 'Vedoucí výroby' },
     ],
     email: 'info@pekarna-mala.demo',
@@ -60,8 +72,19 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Nádražní 5, 779 00 Olomouc',
     contacts: [
-      { email: 'k.dvorak@restaurace-u-zlate-husy.demo', name: 'Karel Dvořák', phone: '+420 732 200 301', primary: true, role: 'Provozní' },
-      { email: 'kuchyne@restaurace-u-zlate-husy.demo', name: 'Martin Pospíšil', phone: '+420 732 200 302', role: 'Šéfkuchař' },
+      {
+        email: 'k.dvorak@restaurace-u-zlate-husy.demo',
+        name: 'Karel Dvořák',
+        phone: '+420 732 200 301',
+        primary: true,
+        role: 'Provozní',
+      },
+      {
+        email: 'kuchyne@restaurace-u-zlate-husy.demo',
+        name: 'Martin Pospíšil',
+        phone: '+420 732 200 302',
+        role: 'Šéfkuchař',
+      },
     ],
     email: 'objednavky@restaurace-u-zlate-husy.demo',
     key: 'zlata-husa',
@@ -76,7 +99,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Palackého 44, 796 01 Prostějov',
     contacts: [
-      { email: 'eva.cerna@potraviny-cerna.demo', name: 'Eva Černá', phone: '+420 733 300 401', primary: true, role: 'Vedoucí prodejny' },
+      {
+        email: 'eva.cerna@potraviny-cerna.demo',
+        name: 'Eva Černá',
+        phone: '+420 733 300 401',
+        primary: true,
+        role: 'Vedoucí prodejny',
+      },
       { name: 'Jaroslav Černý', phone: '+420 733 300 402', role: 'Jednatel' },
     ],
     email: 'prodejna@potraviny-cerna.demo',
@@ -90,9 +119,25 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Hlavní 1, 682 01 Vyškov',
     contacts: [
-      { email: 'f.benes@hotel-podhradi.demo', name: 'František Beneš', phone: '+420 734 400 501', primary: true, role: 'Ředitel hotelu' },
-      { email: 'restaurace@hotel-podhradi.demo', name: 'Zuzana Kolářová', phone: '+420 734 400 502', role: 'Vedoucí restaurace' },
-      { email: 'sklad@hotel-podhradi.demo', name: 'Pavel Urban', role: 'Skladník', note: 'Přebírá zboží po–pá 7:00–11:00.' },
+      {
+        email: 'f.benes@hotel-podhradi.demo',
+        name: 'František Beneš',
+        phone: '+420 734 400 501',
+        primary: true,
+        role: 'Ředitel hotelu',
+      },
+      {
+        email: 'restaurace@hotel-podhradi.demo',
+        name: 'Zuzana Kolářová',
+        phone: '+420 734 400 502',
+        role: 'Vedoucí restaurace',
+      },
+      {
+        email: 'sklad@hotel-podhradi.demo',
+        name: 'Pavel Urban',
+        role: 'Skladník',
+        note: 'Přebírá zboží po–pá 7:00–11:00.',
+      },
     ],
     email: 'recepce@hotel-podhradi.demo',
     key: 'hotel-podhradi',
@@ -108,8 +153,20 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Školní 8, 678 01 Blansko',
     contacts: [
-      { email: 'jidelna@zs-blansko.demo', name: 'Marie Horáková', phone: '+420 735 500 601', primary: true, role: 'Vedoucí jídelny' },
-      { email: 'ekonom@zs-blansko.demo', name: 'Ing. Ladislav Mareš', phone: '+420 516 500 602', role: 'Ekonom školy', note: 'Schvaluje rámcové smlouvy a faktury.' },
+      {
+        email: 'jidelna@zs-blansko.demo',
+        name: 'Marie Horáková',
+        phone: '+420 735 500 601',
+        primary: true,
+        role: 'Vedoucí jídelny',
+      },
+      {
+        email: 'ekonom@zs-blansko.demo',
+        name: 'Ing. Ladislav Mareš',
+        phone: '+420 516 500 602',
+        role: 'Ekonom školy',
+        note: 'Schvaluje rámcové smlouvy a faktury.',
+      },
     ],
     email: 'jidelna@zs-blansko.demo',
     key: 'zs-blansko',
@@ -122,7 +179,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Okružní 3, 767 01 Kroměříž',
     contacts: [
-      { email: 'anna@kavarna-na-rohu.demo', name: 'Anna Křížová', phone: '+420 736 600 701', primary: true, role: 'Majitelka' },
+      {
+        email: 'anna@kavarna-na-rohu.demo',
+        name: 'Anna Křížová',
+        phone: '+420 736 600 701',
+        primary: true,
+        role: 'Majitelka',
+      },
       { name: 'David Hrubý', phone: '+420 736 600 702', role: 'Barista a cukrář' },
     ],
     key: 'kavarna-na-rohu',
@@ -134,7 +197,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Náměstí 6, 692 01 Mikulov',
     contacts: [
-      { email: 'reditel@hotel-galant.demo', name: 'Ing. Robert Svoboda', phone: '+420 737 700 801', primary: true, role: 'Ředitel' },
+      {
+        email: 'reditel@hotel-galant.demo',
+        name: 'Ing. Robert Svoboda',
+        phone: '+420 737 700 801',
+        primary: true,
+        role: 'Ředitel',
+      },
       { email: 'fb@hotel-galant.demo', name: 'Kateřina Moravcová', phone: '+420 737 700 802', role: 'F&B manažerka' },
       { name: 'Jiří Staněk', phone: '+420 737 700 803', role: 'Šéfkuchař' },
     ],
@@ -155,7 +224,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Hulínská 2410, 767 01 Kroměříž',
     contacts: [
-      { email: 'obchod@morava-gastro.demo', name: 'Libor Navrátil', phone: '+420 738 800 901', primary: true, role: 'Obchodní ředitel' },
+      {
+        email: 'obchod@morava-gastro.demo',
+        name: 'Libor Navrátil',
+        phone: '+420 738 800 901',
+        primary: true,
+        role: 'Obchodní ředitel',
+      },
       { email: 'nakup@morava-gastro.demo', name: 'Simona Bartošová', phone: '+420 738 800 902', role: 'Nákupčí' },
     ],
     email: 'info@morava-gastro.demo',
@@ -183,7 +258,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Průmyslová 20, 760 01 Zlín',
     contacts: [
-      { email: 'p.kral@bistro-kral.demo', name: 'Petr Král', phone: '+420 733 600 701', primary: true, role: 'Jednatel' },
+      {
+        email: 'p.kral@bistro-kral.demo',
+        name: 'Petr Král',
+        phone: '+420 733 600 701',
+        primary: true,
+        role: 'Jednatel',
+      },
       { email: 'ucetni@bistro-kral.demo', name: 'Lucie Králová', phone: '+420 733 600 702', role: 'Účetní' },
       { name: 'Ondřej Fiala', phone: '+420 733 600 703', role: 'Vedoucí kuchyně' },
     ],
@@ -200,8 +281,19 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Zámecká 2, 686 01 Uherské Hradiště',
     contacts: [
-      { email: 'kuchyne@zamecka-restaurace.demo', name: 'Ondřej Šťastný', phone: '+420 734 700 801', primary: true, role: 'Šéfkuchař' },
-      { email: 'provoz@zamecka-restaurace.demo', name: 'Veronika Tomanová', phone: '+420 734 700 802', role: 'Provozní' },
+      {
+        email: 'kuchyne@zamecka-restaurace.demo',
+        name: 'Ondřej Šťastný',
+        phone: '+420 734 700 801',
+        primary: true,
+        role: 'Šéfkuchař',
+      },
+      {
+        email: 'provoz@zamecka-restaurace.demo',
+        name: 'Veronika Tomanová',
+        phone: '+420 734 700 802',
+        role: 'Provozní',
+      },
     ],
     email: 'kuchyne@zamecka-restaurace.demo',
     key: 'zamecka-restaurace',
@@ -215,7 +307,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Tržní 15, 695 01 Hodonín',
     contacts: [
-      { email: 'vedouci@minimarket-hodonin.demo', name: 'Radka Holubová', phone: '+420 735 800 901', primary: true, role: 'Vedoucí prodejny' },
+      {
+        email: 'vedouci@minimarket-hodonin.demo',
+        name: 'Radka Holubová',
+        phone: '+420 735 800 901',
+        primary: true,
+        role: 'Vedoucí prodejny',
+      },
       { name: 'Josef Vlček', phone: '+420 735 800 902', role: 'Majitel' },
     ],
     email: 'info@minimarket-hodonin.demo',
@@ -228,9 +326,25 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Lázeňská 9, 763 26 Luhačovice',
     contacts: [
-      { email: 'fb@lazne-hotel.demo', name: 'Zdeněk Procházka', phone: '+420 734 900 101', primary: true, role: 'F&B manažer' },
-      { email: 'nakup@lazne-hotel.demo', name: 'Ivana Machalová', phone: '+420 734 900 102', role: 'Nákup a logistika' },
-      { email: 'reditel@lazne-hotel.demo', name: 'MUDr. Aleš Kubíček', role: 'Generální ředitel', note: 'Podepisuje roční kontrakty.' },
+      {
+        email: 'fb@lazne-hotel.demo',
+        name: 'Zdeněk Procházka',
+        phone: '+420 734 900 101',
+        primary: true,
+        role: 'F&B manažer',
+      },
+      {
+        email: 'nakup@lazne-hotel.demo',
+        name: 'Ivana Machalová',
+        phone: '+420 734 900 102',
+        role: 'Nákup a logistika',
+      },
+      {
+        email: 'reditel@lazne-hotel.demo',
+        name: 'MUDr. Aleš Kubíček',
+        role: 'Generální ředitel',
+        note: 'Podepisuje roční kontrakty.',
+      },
     ],
     email: 'recepce@lazne-hotel.demo',
     key: 'lazensky-hotel',
@@ -246,7 +360,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Polní 31, 755 01 Vsetín',
     contacts: [
-      { email: 'objednavky@catering-vsetin.demo', name: 'Michaela Zbranková', phone: '+420 736 000 112', primary: true, role: 'Vedoucí provozu' },
+      {
+        email: 'objednavky@catering-vsetin.demo',
+        name: 'Michaela Zbranková',
+        phone: '+420 736 000 112',
+        primary: true,
+        role: 'Vedoucí provozu',
+      },
       { name: 'Roman Pavelka', phone: '+420 736 000 113', role: 'Jednatel' },
     ],
     key: 'catering-vsetin',
@@ -261,7 +381,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Horní Paseky 1120, 756 61 Rožnov pod Radhoštěm',
     contacts: [
-      { email: 'provoz@hotel-pod-javorniky.demo', name: 'Barbora Janíková', phone: '+420 737 100 201', primary: true, role: 'Provozní ředitelka' },
+      {
+        email: 'provoz@hotel-pod-javorniky.demo',
+        name: 'Barbora Janíková',
+        phone: '+420 737 100 201',
+        primary: true,
+        role: 'Provozní ředitelka',
+      },
       { name: 'Vlastimil Juřica', phone: '+420 737 100 202', role: 'Šéfkuchař' },
     ],
     email: 'recepce@hotel-pod-javorniky.demo',
@@ -276,7 +402,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Sklepní 14, 696 62 Strážnice',
     contacts: [
-      { email: 'vino@na-sklepich.demo', name: 'Antonín Hanáček', phone: '+420 738 200 301', primary: true, role: 'Majitel' },
+      {
+        email: 'vino@na-sklepich.demo',
+        name: 'Antonín Hanáček',
+        phone: '+420 738 200 301',
+        primary: true,
+        role: 'Majitel',
+      },
       { name: 'Klára Hanáčková', phone: '+420 738 200 302', role: 'Vedoucí restaurace' },
     ],
     email: 'restaurace@na-sklepich.demo',
@@ -303,7 +435,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Dlouhá 7, 750 02 Přerov',
     contacts: [
-      { email: 'alena@sladka-tecka.demo', name: 'Alena Pokorná', phone: '+420 739 400 501', primary: true, role: 'Majitelka' },
+      {
+        email: 'alena@sladka-tecka.demo',
+        name: 'Alena Pokorná',
+        phone: '+420 739 400 501',
+        primary: true,
+        role: 'Majitelka',
+      },
       { name: 'Tereza Pokorná', role: 'Cukrářka' },
     ],
     email: 'cukrarna@sladka-tecka.demo',
@@ -316,7 +454,13 @@ export const CLIENT_SEEDS: readonly ClientSeed[] = [
   {
     address: 'Mlýnská 3, 784 01 Litovel',
     contacts: [
-      { email: 'penzion@u-mlyna.demo', name: 'Stanislav Vrba', phone: '+420 739 500 601', primary: true, role: 'Majitel' },
+      {
+        email: 'penzion@u-mlyna.demo',
+        name: 'Stanislav Vrba',
+        phone: '+420 739 500 601',
+        primary: true,
+        role: 'Majitel',
+      },
       { name: 'Jana Vrbová', phone: '+420 739 500 602', role: 'Kuchařka' },
     ],
     email: 'penzion@u-mlyna.demo',
