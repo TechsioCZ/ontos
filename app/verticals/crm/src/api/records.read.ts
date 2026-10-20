@@ -87,15 +87,13 @@ export const recordsRead = defineRead(
     context.services.records(input).pipe(
       Effect.mapError(readFailure),
       // A clientId the viewer may not see (foreign rep's client, or none) answers 404 with no data (C00).
-      Effect.flatMap((result) =>
-        input.clientId !== undefined && result.state.clients.items.length === 0
-          ? Effect.fail(
-              new ReadHandlerNotFound({
-                code: 'read_handler_not_found',
-                reason: 'Klient neexistuje nebo k němu nemáte přístup',
-              }),
-            )
-          : Effect.succeed(result),
+      Effect.filterOrFail(
+        (result) => input.clientId === undefined || result.state.clients.items.length > 0,
+        () =>
+          new ReadHandlerNotFound({
+            code: 'read_handler_not_found',
+            reason: 'Klient neexistuje nebo k němu nemáte přístup',
+          }),
       ),
       Effect.map((result) => ({ evidence: { resultCount: result.state.clients.items.length }, result })),
     ),

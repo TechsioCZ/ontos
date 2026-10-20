@@ -45,17 +45,20 @@ export const CrmStateGate = ({
 /** "You see all clients" vs "only your clients" — makes the server-side ACL visible in the demo. */
 export const CrmScopeNote = ({ records }: { readonly records: RecordsResponse }) => {
   const { t } = useModernI18n();
-  if (canSeeEverything(records.viewer)) {
-    return (
-      <StatusText showIcon status="default">
-        {t('crm.common.scopeAll')}
-      </StatusText>
-    );
-  }
+  const all = canSeeEverything(records.viewer);
+  const key = all
+    ? 'crm.common.scopeAll'
+    : records.state.clients.items.length === 0
+      ? 'crm.common.scopeNone'
+      : 'crm.common.scopeAssigned';
   return (
-    <StatusText showIcon status="default">
-      {t(records.state.clients.items.length === 0 ? 'crm.common.scopeNone' : 'crm.common.scopeAssigned')}
-    </StatusText>
+    <p className="inline-flex w-fit items-center gap-100 rounded-full border border-border-primary bg-surface px-150 py-50 text-fg-secondary text-xs">
+      <span
+        aria-hidden
+        className={all ? 'icon-[mdi--account-group-outline] size-4' : 'icon-[mdi--shield-account-outline] size-4'}
+      />
+      {t(key)}
+    </p>
   );
 };
 
