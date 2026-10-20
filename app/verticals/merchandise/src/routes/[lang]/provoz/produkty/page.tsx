@@ -23,6 +23,7 @@ import { formatKc } from '../../../../list-cells.tsx';
 import { loadProducts, runCommand, productNavigationFailureKey } from './products-api.ts';
 import type { FailureReason, LoadOutcome } from './products-api.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
+import { CategoryAdminButton } from './category-admin-panel.tsx';
 import { CategoryDialog, CreateProductDialog, PriceChangeDialog, ReceiptDialog } from './product-forms.tsx';
 import type { ProductsTableStatus } from './products-table.tsx';
 import { ProductsTable } from './products-table.tsx';
@@ -226,6 +227,7 @@ const RecordsPageContent = () => {
           actions={
             canWrite ? (
               <div className="flex flex-wrap items-center gap-100">
+                <CategoryAdminButton onCommitted={onCommitted} />
                 <Button
                   icon="icon-[mdi--package-down]"
                   onClick={() => openDialog('receipt')}
