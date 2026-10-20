@@ -166,3 +166,105 @@ Edit a product name, description, image, label, category or variant net price, s
 shows a price-change acceptance state; new additions use the fresh price. Orders appear in
 `http://localhost:3020/cs/prodej/objednavky`; moving an order through the workflow there updates
 the open confirmation page within 10 seconds.
+
+## OntOS owner side (merchandise, two-way)
+
+OntOS is the source of truth for everything the storefront shows: product and variant names, short and long
+description (`description`, paragraphs separated by a blank line; `descriptionParagraphs` is derived), gallery
+(`images`, exposed as `gallery`), main image `imageSrc`/`imageAlt`, category tree (`categories`: id, parentId, name,
+slug, heading, description, longDescription, position, imageSrc, imageAlt, hasChildren), parameters, labels
+(`isAction` akce, `isNew` novinka, `isRecommended` doporučujeme, `isSale` výprodej, on products and variants), units,
+minimum and package quantities, price tiers, gross prices and stock. Kai's generated JSON is only the seed input and
+the `mock` mode.
+
+### Catalog read
+
+```json
+{ "view": { "storefront": true, "storefrontCatalog": {
+    "page": 1, "pageSize": 24, "categorySlug": "kava", "q": "espresso",
+    "label": "recommended", "availability": "in-stock", "sort": "price-asc",
+    "minMinor": 10000, "maxMinor": 50000, "fields": "card", "includeCategories": true } } }
+```
+
+- Filters: `slug`, `categorySlug`, `q`, `featured`, `label` (`action|recommended|sale|new`), `productIds` (up to 200),
+  `minMinor`/`maxMinor`, `availability` (`in-stock|out-of-stock`), `sort` (`name|price-asc|price-desc`).
+  `pageSize` is 1 to 250, default 24. `fields` is `card` or `full` (default `full`); `card` omits `variantRecords`,
+  `description`, `descriptionParagraphs` and `parameters`.
+- Response: `{ products, total, page, pageSize, categories?, homepageFeaturedProductIds, revision }`.
+- `featured` returns `homepageFeaturedProductIds` order first, then `isRecommended` products.
+- `in-stock` means IN_STOCK or LOW_STOCK. `out-of-stock` is everything else (OUT_OF_STOCK, UNKNOWN).
+- Price filters compare the gross `grossPriceMinor`.
+- Without `storefrontCatalog`, the legacy `{ "storefront": true }` read returns the whole published catalog
+  (about 13 MB for AKROS). Do not use it.
+
+### Order status
+
+```json
+{ "view": { "storefront": true, "storefrontOrderStatus": { "orderId": "…", "clientRequestId": "…" } } }
+```
+
+Response: `orderStatus: { id, number, status, statusLabel, updatedAt } | null` and `products: []`. Both `orderId` and
+`clientRequestId` must match, so the lookup cannot enumerate orders. No contact, address, lines or totals are ever
+returned.
+
+| Status | Czech label |
+|---|---|
+| NEW | Přijatá |
+| CONFIRMED | Zpracovává se |
+| PACKING | Připravujeme k předání |
+| SHIPPED | Předáno dopravci (simulace) |
+| DELIVERED | Dokončená |
+| CANCELLED | Stornovaná |
+
+### Order placement and stock
+
+- `PlaceStorefrontOrder` re-validates price and tier, stock, minimum and package multiples on the server.
+  A mismatch returns outcome `REJECTED` with readable issues and saves nothing.
+- Insufficient stock returns `REJECTED` with issue `INSUFFICIENT_STOCK` and `availableQuantity`.
+- A `PLACED` order writes one negative ORDER stock movement per line, in the same optimistic-revision save as the
+  order. Reference is the order number, note `Objednávka <číslo> z e-shopu`.
+- A concurrent order that loses the revision race retries up to twice against the newer state.
+- Cancelling (`ChangeOrderStatus` to CANCELLED) writes the compensating positive ORDER movement per line.
+  Removing an open DEMO order does the same.
+- Replays with the same `clientRequestId` return outcome `REPLAYED` and never move stock twice.
+- Success and replay results carry `orderId` and `orderNumber`.
+
+```diff
+  PlaceStorefrontOrder (revision N)
+    order      NEW  +1 line set
+  + ORDER movement  -2  ref=<number>  "Objednávka <number> z e-shopu"   (same save)
+  Cancel
+  + ORDER movement  +2  compensating
+```
+
+### Staff side
+
+- Product detail tab „Obsah e-shopu“: category from the tree, parameters, labels, alt text and the history
+  „Historie změn obsahu“.
+- Name and descriptions are on „Detail“. Images are on „E-shop a obrázky“.
+- „Kategorie e-shopu“ on the product list edits name, heading, descriptions and order. This is `UpdateCategory`,
+  administrator only, audited.
+- The service key may only place storefront orders and read the storefront views.
+
+### Performance
+
+The owner caches the decoded aggregate per revision. Storefront reads are paged and filtered server-side.
+Target: under 300 ms per warm read.
+
+### Seed
+
+```bash
+cd app && mise exec -- pnpm demo:seed:akros                 # import, idempotent
+cd app && mise exec -- pnpm demo:seed:akros --validate-only  # check without writing
+cd app && mise exec -- pnpm demo:seed:akros --restore-catalog # reset seed products only
+```
+
+- Full catalog: 1 289 groups, 19 025 explicit variants plus single-item groups, 20 304 sellable units, 2 125 categories.
+- Existing products, prices, stock, live orders and the 6 sample orders are kept.
+- A second run prints `already seeded … nothing changed`.
+
+### Environment
+
+Unchanged: `STOREFRONT_DATA_SOURCE`, `ONTOS_AKROS_STOREFRONT_API_KEY`, `ONTOS_SHELL_URL`,
+`ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, optional `ONTOS_COMPOSITION_REVISION`. The legal entity is pinned to
+`71000000-0000-4000-8000-000000000024`.
