@@ -6,7 +6,11 @@ vi.mock("@/ontos/config", () => ({ isOntos: () => true }));
 
 const fetchMock = vi.fn();
 function get(orderNumber: string) {
-  return GET(new Request(`http://localhost:3070/api/ontos/order-emails?orderNumber=${encodeURIComponent(orderNumber)}`));
+  return GET(
+    new Request(
+      `http://localhost:3070/api/ontos/order-emails?orderNumber=${encodeURIComponent(orderNumber)}`,
+    ),
+  );
 }
 
 afterEach(() => {
