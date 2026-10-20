@@ -203,7 +203,7 @@ export const VariantsPanel = ({ canWrite, onCommitted, onReload, product, revisi
                       </div>
                     </Table.Cell>
                     <Table.Cell>
-                      <div className="w-36">
+                      <div className="w-48">
                         <FormInput
                           disabled={!canWrite}
                           id={`variant-sku-${draft.key}`}

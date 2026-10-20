@@ -193,7 +193,7 @@ export const OrderDetailDialog = ({
       }}
       open
       resizeLabel={t('merchandise.sidePanel.resize')}
-      size="lg"
+      size="xl"
       title={
         editing
           ? `Úprava objednávky ${order.number}`
