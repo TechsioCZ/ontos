@@ -20,6 +20,7 @@
     "pages": {
       "records": {
         "title": "Úkoly",
+        "restrictedLookups": "Související údaje z agend, ke kterým nemáte přístup, se nezobrazují.",
         "pageDescription": "Úkoly areálu, odpovědné osoby a termíny.",
         "newTask": "Nový úkol",
         "create": "Nový úkol",

@@ -104,8 +104,18 @@ export const RecordsRequestSchema = Schema.Struct({
 });
 export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
+export const LookupAccessSchema = Schema.Struct({
+  customers: Schema.Literals(['allowed', 'denied', 'unavailable']),
+  employees: Schema.Literals(['allowed', 'denied', 'unavailable']),
+  opportunities: Schema.Literals(['allowed', 'denied', 'unavailable']),
+  properties: Schema.Literals(['allowed', 'denied', 'unavailable']),
+  contracts: Schema.Literals(['allowed', 'denied', 'unavailable']),
+});
+export type LookupAccess = typeof LookupAccessSchema.Type;
+
 export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
+  lookupAccess: Schema.optionalKey(LookupAccessSchema),
   projects: Schema.optionalKey(Schema.Array(ProjectSchema)),
   canWrite: Schema.Boolean,
   collection: TaskCollectionSchema,

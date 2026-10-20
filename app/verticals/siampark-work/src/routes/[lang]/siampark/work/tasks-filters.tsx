@@ -28,12 +28,14 @@ const employeeItems = (employees: readonly Employee[]) =>
 export const TaskFilterBar = ({
   active,
   employees,
+  canAssign,
   filters,
   onChange,
   onClear,
 }: {
   readonly active: boolean;
   readonly employees: readonly Employee[];
+  readonly canAssign: boolean;
   readonly filters: TaskFilters;
   readonly onChange: (next: TaskFilters) => void;
   readonly onClear: () => void;
@@ -50,26 +52,28 @@ export const TaskFilterBar = ({
           value={filters.search}
         />
       </div>
-      <div className="w-48 min-w-0">
-        <Select
-          items={[
-            selectOption(t(`${key}.filters.allAssignees`), ALL),
-            selectOption(t(`${key}.unassigned`), NONE),
-            ...employeeItems(employees),
-          ]}
-          label={t(`${key}.filters.assignee`)}
-          labelProps={filterLabelProps}
-          onValueChange={({ value }) => {
-            const [next] = value;
-            if (next !== undefined) {
-              onChange({ ...filters, assignee: next });
-            }
-          }}
-          placeholder={t(SELECT_PLACEHOLDER)}
-          size="sm"
-          value={[filters.assignee]}
-        />
-      </div>
+      {canAssign && (
+        <div className="w-48 min-w-0">
+          <Select
+            items={[
+              selectOption(t(`${key}.filters.allAssignees`), ALL),
+              selectOption(t(`${key}.unassigned`), NONE),
+              ...employeeItems(employees),
+            ]}
+            label={t(`${key}.filters.assignee`)}
+            labelProps={filterLabelProps}
+            onValueChange={({ value }) => {
+              const [next] = value;
+              if (next !== undefined) {
+                onChange({ ...filters, assignee: next });
+              }
+            }}
+            placeholder={t(SELECT_PLACEHOLDER)}
+            size="sm"
+            value={[filters.assignee]}
+          />
+        </div>
+      )}
       <div className="w-48 min-w-0">
         <Select
           items={[
@@ -144,6 +148,7 @@ export const TaskBulkBar = ({
   busy,
   count,
   employees,
+  canAssign,
   onAssign,
   onChangeState,
   onClear,
@@ -152,6 +157,7 @@ export const TaskBulkBar = ({
   readonly busy: boolean;
   readonly count: number;
   readonly employees: readonly Employee[];
+  readonly canAssign: boolean;
   readonly onAssign: (value: string) => void;
   readonly onChangeState: (state: TaskState) => void;
   readonly onClear: () => void;
@@ -180,21 +186,23 @@ export const TaskBulkBar = ({
         size="sm"
         value={[]}
       />
-      <Select
-        disabled={busy}
-        items={[selectOption(t(`${key}.unassigned`), NONE), ...employeeItems(employees)]}
-        label={t(`${key}.bulk.assign`)}
-        labelProps={bulkLabelProps}
-        onValueChange={({ value }) => {
-          const [next] = value;
-          if (next !== undefined) {
-            onAssign(next);
-          }
-        }}
-        placeholder={t(`${key}.bulk.assign`)}
-        size="sm"
-        value={[]}
-      />
+      {canAssign && (
+        <Select
+          disabled={busy}
+          items={[selectOption(t(`${key}.unassigned`), NONE), ...employeeItems(employees)]}
+          label={t(`${key}.bulk.assign`)}
+          labelProps={bulkLabelProps}
+          onValueChange={({ value }) => {
+            const [next] = value;
+            if (next !== undefined) {
+              onAssign(next);
+            }
+          }}
+          placeholder={t(`${key}.bulk.assign`)}
+          size="sm"
+          value={[]}
+        />
+      )}
     </BulkActionBar>
   );
 };

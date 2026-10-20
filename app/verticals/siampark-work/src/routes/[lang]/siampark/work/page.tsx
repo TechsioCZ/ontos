@@ -326,7 +326,9 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
   const [opportunities, setOpportunities] = useState<readonly OpportunityOption[]>([]);
   const [referenceFailed, setReferenceFailed] = useState(false);
   const [lookups, setLookups] = useState<LookupState>({ customers: false, employees: false, opportunities: false });
-  const { filters, setFilters, setTab, tab } = useTaskView(partyId, invalidFilter);
+  const { filters: storedFilters, setFilters, setTab, tab } = useTaskView(partyId, invalidFilter);
+  // A saved filter from a broader role cannot silently hide rows when its directory is no longer available.
+  const filters = records?.lookupAccess?.employees === 'allowed' ? storedFilters : { ...storedFilters, assignee: ALL };
   // Default order: the nearest due date first. Tasks without a date sort last (column option).
   const [sorting, setSorting] = useState<{ desc: boolean; id: string }[]>([{ desc: false, id: 'dueDate' }]);
   const [selection, setSelection] = useState<Record<string, true>>({});
@@ -364,12 +366,34 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     if (invalidFilter) {
       return;
     }
-    const settle = (name: keyof LookupState) => setLookups((current) => ({ ...current, [name]: true }));
     loadRecords({ setLoadState, setRecords }, partyId);
-    loadEmployees({ setEmployees, setEmployeesFailed, settle });
-    loadCustomerNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
-    loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
   }, [invalidFilter, partyId]);
+
+  const lookupAccess = records?.lookupAccess;
+  useEffect(() => {
+    if (records === undefined) return;
+    const settle = (name: keyof LookupState) => setLookups((current) => ({ ...current, [name]: true }));
+    // A denied optional directory is not a task failure. Do not send a doomed BFF read or disclose its names.
+    if (lookupAccess?.employees === 'allowed') loadEmployees({ setEmployees, setEmployeesFailed, settle });
+    else {
+      setEmployees([]);
+      setEmployeesFailed(lookupAccess?.employees === 'unavailable');
+      settle('employees');
+    }
+    if (lookupAccess?.customers === 'allowed')
+      loadCustomerNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
+    else {
+      setCustomers([]);
+      settle('customers');
+    }
+    if (lookupAccess?.opportunities === 'allowed')
+      loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
+    else {
+      setOpportunities([]);
+      settle('opportunities');
+    }
+    setReferenceFailed(lookupAccess?.customers === 'unavailable' || lookupAccess?.opportunities === 'unavailable');
+  }, [lookupAccess, records === undefined]);
 
   const linkedTaskOpened = useRef(false);
   useEffect(() => {
@@ -530,12 +554,14 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
       return;
     }
     const fields: EditFields = {
-      contextRefs: submission.contextRefs,
+      ...(lookupAccess?.properties === 'allowed' || lookupAccess?.contracts === 'allowed'
+        ? { contextRefs: submission.contextRefs }
+        : {}),
       description: submission.description,
       priority: submission.priority,
       title: submission.title,
     };
-    if (submission.assigneeEmployeeId !== undefined) {
+    if (lookupAccess?.employees === 'allowed' && submission.assigneeEmployeeId !== undefined) {
       fields.assigneeEmployeeId = submission.assigneeEmployeeId;
       const owner = employees.find((employee) => employee.id === submission.assigneeEmployeeId)?.principalRef;
       if (owner !== undefined) fields.ownerPrincipalRef = owner;
@@ -545,10 +571,10 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     if (submission.dueDate !== undefined) {
       fields.dueDate = submission.dueDate;
     }
-    if (submission.opportunityId !== undefined) {
+    if (lookupAccess?.opportunities === 'allowed' && submission.opportunityId !== undefined) {
       fields.opportunityId = submission.opportunityId;
     }
-    if (submission.partyId !== undefined) {
+    if (lookupAccess?.customers === 'allowed' && submission.partyId !== undefined) {
       fields.partyId = submission.partyId;
     }
     const command: WorkCommand =
@@ -736,6 +762,7 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     handleSortingChange: setSorting,
     loadState,
     lookups,
+    lookupAccess,
     mineName,
     mineResolving,
     mineUnlinked,
@@ -773,6 +800,7 @@ const TasksPageContent = ({
     customerNames: model.customerNames,
     employeeNames: model.employeeNames,
     lookups: model.lookups,
+    lookupAccess: model.lookupAccess,
     opportunityTitles: model.opportunityTitles,
     t,
     today: model.today,
@@ -792,9 +820,11 @@ const TasksPageContent = ({
         actions={
           model.canWrite ? (
             <div className="flex flex-wrap gap-100">
-              <Button onClick={() => setPlanningOpen((open) => !open)} size="sm" variant="secondary" theme="outlined">
-                {planningOpen ? 'Skrýt plánování' : 'Projekty a kapacity'}
-              </Button>
+              {model.lookupAccess?.employees === 'allowed' && (
+                <Button onClick={() => setPlanningOpen((open) => !open)} size="sm" variant="secondary" theme="outlined">
+                  {planningOpen ? 'Skrýt plánování' : 'Projekty a kapacity'}
+                </Button>
+              )}
               <Button onClick={model.handleOpenCreate} size="sm" variant="primary">
                 {t(`${key}.newTask`)}
               </Button>
@@ -856,6 +886,7 @@ const TasksPageContent = ({
       <TaskFilterBar
         active={model.filtersActive}
         employees={model.employees}
+        canAssign={model.lookupAccess?.employees === 'allowed'}
         filters={model.filters}
         onChange={model.handleFiltersChange}
         onClear={model.handleClearFilters}
@@ -866,6 +897,7 @@ const TasksPageContent = ({
           busy={model.bulkBusy}
           count={selectedCount}
           employees={model.employees}
+          canAssign={model.lookupAccess?.employees === 'allowed'}
           onAssign={model.handleBulkAssign}
           onChangeState={model.handleBulkChangeState}
           onClear={() => model.handleSelectionChange({})}
@@ -877,6 +909,9 @@ const TasksPageContent = ({
         <StatusText showIcon status="error">
           {t(`${key}.unavailable`)}
         </StatusText>
+      )}
+      {model.lookupAccess !== undefined && Object.values(model.lookupAccess).includes('denied') && (
+        <p className="text-fg-secondary text-sm">{t(`${key}.restrictedLookups`)}</p>
       )}
       {model.employeesFailed && (
         <StatusText showIcon status="error">
@@ -992,6 +1027,7 @@ const TasksPageContent = ({
           customers={model.customers}
           customersLoading={!model.lookups.customers}
           employees={model.employees}
+          lookupAccess={model.lookupAccess}
           error={model.formError}
           onClose={model.handleCloseEditor}
           onSubmit={model.handleSave}

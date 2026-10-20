@@ -20,7 +20,7 @@ import {
   TaskPrioritySchema,
 } from '../../../../../shared/apis/records.ts';
 import { TaskContextPickers } from './task-context-pickers.tsx';
-import type { ContextRef, Task, WorkProject } from '../../../../../shared/apis/records.ts';
+import type { ContextRef, LookupAccess, Task, WorkProject } from '../../../../../shared/apis/records.ts';
 import { isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
 import { customerOptionItems, opportunityOptionItems, selectOption, taskContextHref } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
@@ -247,6 +247,7 @@ const DiscardDialog = ({
 
 /** Zákazník and Příležitost pickers. Each keeps its typed query and its open state. */
 const ReferencePickers = ({
+  lookupAccess,
   customers,
   customersLoading,
   disabled,
@@ -259,6 +260,7 @@ const ReferencePickers = ({
   partyId,
   partyMessage,
 }: {
+  readonly lookupAccess: LookupAccess | undefined;
   readonly customers: readonly CustomerOption[];
   readonly customersLoading: boolean;
   readonly disabled: boolean;
@@ -300,70 +302,75 @@ const ReferencePickers = ({
   return (
     <>
       {/* Focus or click opens the list: the kit only opens it on typing, so an empty field looked dead. */}
-      <div onFocus={() => setCustomerOpen(true)}>
-        <Combobox
-          clearable={!isEdit}
-          disabled={disabled}
-          filterBehavior="external"
-          items={customerItems}
-          label={t(`${key}.party`)}
-          // The lists load with the page; a panel opened before they settle says so instead of an empty popup.
-          loading={customersLoading}
-          loadingMessage={t(`${key}.loadingNames`)}
-          name="party"
-          noResultsMessage={t(`${key}.comboboxEmpty`)}
-          onChange={(next) => onChange({ partyId: firstValue(next) })}
-          // No reset on open: typing into a closed list reports the text first and opens second, so a reset
-          // there would drop the first query and list every customer.
-          onInputValueChange={setCustomerQuery}
-          onOpenChange={setCustomerOpen}
-          open={customerOpen}
-          placeholder={t(`${key}.pickCustomer`)}
-          renderItem={(item) => {
-            const companyId = companyIds.get(item.value) ?? '';
-            return (
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate">{item.label}</span>
-                {companyId !== '' && (
-                  <span className="text-fg-secondary text-xs">{t(`${key}.companyId`, { id: companyId })}</span>
-                )}
-              </span>
-            );
-          }}
-          size="md"
-          translations={comboboxTranslations}
-          value={singleValue(partyId)}
-          {...invalidProps(partyMessage)}
-        />
-      </div>
-      <div onFocus={() => setOpportunityOpen(true)}>
-        <Combobox
-          clearable={!isEdit}
-          disabled={disabled}
-          filterBehavior="external"
-          footer={opportunityFooter}
-          items={opportunityItems}
-          label={t(`${key}.opportunity`)}
-          loading={opportunitiesLoading}
-          loadingMessage={t(`${key}.loadingNames`)}
-          name="opportunity"
-          noResultsMessage={t(`${key}.comboboxEmpty`)}
-          onChange={(next) => onChange({ opportunityId: firstValue(next) })}
-          onInputValueChange={setOpportunityQuery}
-          onOpenChange={setOpportunityOpen}
-          open={opportunityOpen}
-          placeholder={t(`${key}.pickOpportunity`)}
-          size="md"
-          translations={comboboxTranslations}
-          value={singleValue(opportunityId)}
-          {...invalidProps(opportunityMessage)}
-        />
-      </div>
+      {lookupAccess?.customers === 'allowed' && (
+        <div onFocus={() => setCustomerOpen(true)}>
+          <Combobox
+            clearable={!isEdit}
+            disabled={disabled}
+            filterBehavior="external"
+            items={customerItems}
+            label={t(`${key}.party`)}
+            // The lists load with the page; a panel opened before they settle says so instead of an empty popup.
+            loading={customersLoading}
+            loadingMessage={t(`${key}.loadingNames`)}
+            name="party"
+            noResultsMessage={t(`${key}.comboboxEmpty`)}
+            onChange={(next) => onChange({ partyId: firstValue(next) })}
+            // No reset on open: typing into a closed list reports the text first and opens second, so a reset
+            // there would drop the first query and list every customer.
+            onInputValueChange={setCustomerQuery}
+            onOpenChange={setCustomerOpen}
+            open={customerOpen}
+            placeholder={t(`${key}.pickCustomer`)}
+            renderItem={(item) => {
+              const companyId = companyIds.get(item.value) ?? '';
+              return (
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{item.label}</span>
+                  {companyId !== '' && (
+                    <span className="text-fg-secondary text-xs">{t(`${key}.companyId`, { id: companyId })}</span>
+                  )}
+                </span>
+              );
+            }}
+            size="md"
+            translations={comboboxTranslations}
+            value={singleValue(partyId)}
+            {...invalidProps(partyMessage)}
+          />
+        </div>
+      )}
+      {lookupAccess?.opportunities === 'allowed' && (
+        <div onFocus={() => setOpportunityOpen(true)}>
+          <Combobox
+            clearable={!isEdit}
+            disabled={disabled}
+            filterBehavior="external"
+            footer={opportunityFooter}
+            items={opportunityItems}
+            label={t(`${key}.opportunity`)}
+            loading={opportunitiesLoading}
+            loadingMessage={t(`${key}.loadingNames`)}
+            name="opportunity"
+            noResultsMessage={t(`${key}.comboboxEmpty`)}
+            onChange={(next) => onChange({ opportunityId: firstValue(next) })}
+            onInputValueChange={setOpportunityQuery}
+            onOpenChange={setOpportunityOpen}
+            open={opportunityOpen}
+            placeholder={t(`${key}.pickOpportunity`)}
+            size="md"
+            translations={comboboxTranslations}
+            value={singleValue(opportunityId)}
+            {...invalidProps(opportunityMessage)}
+          />
+        </div>
+      )}
     </>
   );
 };
 
 export const TaskFormDialog = ({
+  lookupAccess,
   busy,
   customers,
   customersLoading,
@@ -379,6 +386,7 @@ export const TaskFormDialog = ({
   task,
 }: {
   readonly busy: boolean;
+  readonly lookupAccess: LookupAccess | undefined;
   readonly customers: readonly CustomerOption[];
   readonly customersLoading: boolean;
   readonly employees: readonly Employee[];
@@ -562,7 +570,7 @@ export const TaskFormDialog = ({
             onChange={(event) => set({ description: event.target.value })}
             value={values.description}
           />
-          {task?.partyId !== undefined && !readOnly && (
+          {task?.partyId !== undefined && !readOnly && lookupAccess?.customers === 'allowed' && (
             <a className="underline" href={`/cs/siampark/finance?partyId=${encodeURIComponent(task.partyId)}`}>
               Faktury klienta
             </a>
@@ -570,6 +578,7 @@ export const TaskFormDialog = ({
           {/* The pickers sit high in the panel so their long lists open downward. Placed last, the list flipped up
               over Řešitel, Termín and Priorita. */}
           <ReferencePickers
+            lookupAccess={lookupAccess}
             customers={customers}
             customersLoading={customersLoading}
             disabled={fieldsDisabled}
@@ -582,24 +591,26 @@ export const TaskFormDialog = ({
             partyId={values.partyId}
             partyMessage={message('partyId')}
           />
-          <div className="flex flex-col gap-50" onFocus={rememberListField}>
-            <Select
-              disabled={fieldsDisabled}
-              items={assigneeItems}
-              label={t(`${key}.assignee`)}
-              labelProps={dialogLabelProps}
-              name="assignee"
-              onOpenChange={onListOpenChange}
-              onValueChange={({ value }) => {
-                const [next] = value;
-                set({ assigneeId: next === undefined || next === NONE ? '' : next });
-              }}
-              placeholder={t(`${key}.unassigned`)}
-              size="md"
-              value={[values.assigneeId === '' ? NONE : values.assigneeId]}
-            />
-            {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
-          </div>
+          {lookupAccess?.employees === 'allowed' && (
+            <div className="flex flex-col gap-50" onFocus={rememberListField}>
+              <Select
+                disabled={fieldsDisabled}
+                items={assigneeItems}
+                label={t(`${key}.assignee`)}
+                labelProps={dialogLabelProps}
+                name="assignee"
+                onOpenChange={onListOpenChange}
+                onValueChange={({ value }) => {
+                  const [next] = value;
+                  set({ assigneeId: next === undefined || next === NONE ? '' : next });
+                }}
+                placeholder={t(`${key}.unassigned`)}
+                size="md"
+                value={[values.assigneeId === '' ? NONE : values.assigneeId]}
+              />
+              {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
+            </div>
+          )}
           <FormInput
             id="task-planned-hours"
             label={t(`${key}.plannedHours`)}
@@ -625,6 +636,7 @@ export const TaskFormDialog = ({
           />
           {!readOnly && (
             <TaskContextPickers
+              lookupAccess={lookupAccess}
               refs={values.contextRefs}
               disabled={fieldsDisabled}
               onChange={(contextRefs) => set({ contextRefs })}

@@ -33,6 +33,7 @@ import { TaskRefSchema } from '../../shared/resources/task.ts';
 import type { TaskRef } from '../../shared/resources/task.ts';
 import { legalTransitions } from '../../shared/actions/task-transitions.ts';
 import { workStates } from '../database/schema.ts';
+import { taskLookupAccess } from './task-lookup-access.ts';
 
 const workModuleId = 'siampark.work' as const;
 const workChangedReason = 'Work changed; refresh before another operation' as const;
@@ -861,9 +862,12 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           (request.contextResourceId === undefined ||
             task.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
       );
-      const referenceDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(DateTime.toDateUtc(yield* DateTime.now));
+      const referenceDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(
+        DateTime.toDateUtc(yield* DateTime.now),
+      );
       return {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+        lookupAccess: yield* taskLookupAccess(scope),
         canWrite: yield* contextGrant(scope, 'write_all'),
         collection: snapshot.state.collection,
         projects: (yield* contextGrant(scope, 'read_all')) ? (snapshot.state.projects ?? []) : [],
