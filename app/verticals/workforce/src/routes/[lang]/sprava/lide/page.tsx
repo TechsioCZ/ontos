@@ -76,7 +76,7 @@ const Avatar = ({ name, muted }: { readonly muted: boolean; readonly name: strin
   <span
     aria-hidden
     className={`flex size-400 shrink-0 items-center justify-center rounded-full font-semibold text-xs ${
-      muted ? 'bg-surface-secondary text-fg-secondary' : 'bg-primary/15 text-primary'
+      muted ? 'bg-surface-secondary text-fg-secondary' : 'border border-border-primary bg-surface-secondary text-fg-primary'
     }`}
   >
     {initials(name)}
@@ -200,14 +200,16 @@ const AuditList = ({ entries }: { readonly entries: readonly AuditEntry[] }) => 
                 <span className="font-medium">{entry.actorName ?? t(`${key}.audit.unknownActor`)}</span>{' '}
                 {auditText(entry, t)}
               </p>
-              {typeof reason === 'string' && reason.length > 0 && (
+              {!denied && typeof reason === 'string' && reason.length > 0 && (
                 <p className="text-fg-secondary text-xs">{t(`${key}.audit.reason`, { reason })}</p>
               )}
               <p className="text-fg-secondary text-xs tabular-nums">{formatDateTime(entry.occurredAt)}</p>
             </div>
-            <Badge size="sm" variant={denied ? 'danger' : 'success'}>
-              {t(denied ? `${key}.audit.denied` : `${key}.audit.succeeded`)}
-            </Badge>
+            <span className="shrink-0 self-start">
+              <Badge size="sm" variant={denied ? 'danger' : 'success'}>
+                {t(denied ? `${key}.audit.denied` : `${key}.audit.succeeded`)}
+              </Badge>
+            </span>
           </li>
         );
       })}

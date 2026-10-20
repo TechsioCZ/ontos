@@ -599,6 +599,9 @@ export const manageDemoAccount = Effect.fn('DemoAccounts.manage')(function* mana
     const [person] = yield* loadPeople(tenantId, [request.principalId]);
     const previous =
       person === undefined ? undefined : roles.roles.find((entry) => entry.key === roleKeyOf(person, assigned, roles));
+    if (previous?.key === target.key) {
+      return yield* new DemoAccountInvalid({ reason: 'The person already has this role' });
+    }
     const templatePrincipalId = yield* principalByEmail(tenantId, target.templateEmail);
     const result = yield* run({
       operation: 'change-role',
