@@ -212,7 +212,9 @@ const MetersView = () => {
         return (
           <div className="flex flex-col tabular-nums">
             <strong>{formatQuantity(last.consumption ?? 0, last.reading.unit)}</strong>
-            <span className="text-fg-secondary text-xs">{t(`${k}.row.days`, { count: last.days ?? 0 })}</span>
+            <span className="text-fg-secondary text-xs">
+              {t(`${k}.row.days_${new Intl.PluralRules(language).select(last.days ?? 0)}`, { count: last.days ?? 0 })}
+            </span>
           </div>
         );
       },

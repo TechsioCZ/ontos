@@ -300,7 +300,7 @@ const SecurityView = () => {
         </div>
         <StatRow>
           <StatCard
-            hint={k('stats.countHint', { active: active.length, retired: devices.length - active.length })}
+            hint={k('stats.countSummary', { active: active.length, retired: devices.length - active.length })}
             label={k('stats.count')}
             value={String(devices.length)}
           />

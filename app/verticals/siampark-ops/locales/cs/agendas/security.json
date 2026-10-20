@@ -94,6 +94,7 @@
   "stats": {
     "count": "Zařízení",
     "countHint": "Aktivní: {{active}}, vyřazené: {{retired}}",
+    "countSummary": "Aktivní: {{active}}, vyřazené: {{retired}}",
     "openIncidents": "Otevřené poruchy",
     "openIncidentsHint": "{{critical}} vysoké nebo kritické závažnosti",
     "faulty": "Zařízení v poruše",

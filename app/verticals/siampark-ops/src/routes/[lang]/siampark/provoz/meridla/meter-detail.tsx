@@ -302,7 +302,9 @@ export const MeterDetail = ({
                             )}
                           </span>
                           <span className="text-fg-secondary text-xs">
-                            {t(`${k}.row.days`, { count: row.days ?? 0 })}
+                            {t(`${k}.row.days_${new Intl.PluralRules(language).select(row.days ?? 0)}`, {
+                              count: row.days ?? 0,
+                            })}
                             {row.dailyRate === undefined
                               ? ''
                               : ` · ${t(`${k}.row.perDay`, { value: formatRate(row.dailyRate, reading.unit) })}`}

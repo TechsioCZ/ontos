@@ -94,6 +94,7 @@
   "stats": {
     "count": "Devices",
     "countHint": "{{active}} active, {{retired}} decommissioned",
+    "countSummary": "Active: {{active}}, decommissioned: {{retired}}",
     "openIncidents": "Open faults",
     "openIncidentsHint": "{{critical}} high or critical",
     "faulty": "Devices with a fault",
