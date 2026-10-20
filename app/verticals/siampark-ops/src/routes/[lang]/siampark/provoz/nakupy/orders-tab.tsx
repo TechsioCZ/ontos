@@ -38,6 +38,7 @@ import {
 } from './purchasing-model.ts';
 import type { RunCommand } from './purchasing-model.ts';
 import { TextLink } from './stock-tab.tsx';
+import { FinanceInvoiceLink, useIncomingInvoiceLinks } from './finance-links.tsx';
 
 const statusVariant: Readonly<Record<PurchaseOrder['status'], 'outline' | 'info' | 'warning' | 'success' | 'danger'>> =
   {
@@ -179,6 +180,7 @@ export const OrderPanel = ({
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const toast = useToast();
+  const financeLinks = useIncomingInvoiceLinks();
   const [action, setAction] = useState<OrderAction | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -429,9 +431,14 @@ export const OrderPanel = ({
             <ul className="flex flex-col gap-100 text-sm">
               {order.invoices.map((invoice) => (
                 <li className="flex flex-wrap items-center justify-between gap-100" key={invoice.number}>
-                  <span className="flex items-center gap-100">
+                  <span className="flex flex-wrap items-center gap-100">
                     <span className="icon-[mdi--file-document-outline]" />
                     <span className="font-medium">{invoice.number}</span>
+                    <FinanceInvoiceLink
+                      links={financeLinks}
+                      number={invoice.number}
+                      supplier={lookup.supplier(order.supplierId)?.name ?? ''}
+                    />
                     {invoice.invoiceDate !== undefined && (
                       <span className="text-fg-secondary">{formatDate(invoice.invoiceDate)}</span>
                     )}

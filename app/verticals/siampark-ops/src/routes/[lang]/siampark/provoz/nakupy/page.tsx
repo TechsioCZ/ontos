@@ -136,24 +136,26 @@ const PurchasingView = () => {
           <>
             <Stats state={state} />
             <Tabs onValueChange={(value) => setTab(value as Tab)} size="sm" value={tab} variant="line">
-              <Tabs.List>
-                <Tabs.Trigger value="stock">{k('tabs.stock')}</Tabs.Trigger>
-                <Tabs.Trigger value="replenish">
-                  <span className="flex items-center gap-100">
-                    {k('tabs.replenish')}
-                    {suggestions > 0 && (
-                      <Badge size="sm" variant="warning">
-                        {String(suggestions)}
-                      </Badge>
-                    )}
-                  </span>
-                </Tabs.Trigger>
-                <Tabs.Trigger value="orders">{k('tabs.orders')}</Tabs.Trigger>
-                <Tabs.Trigger value="quotes">{k('tabs.quotes')}</Tabs.Trigger>
-                <Tabs.Trigger value="movements">{k('tabs.movements')}</Tabs.Trigger>
-                <Tabs.Trigger value="suppliers">{k('tabs.suppliers')}</Tabs.Trigger>
-                <Tabs.Indicator />
-              </Tabs.List>
+              <div className="max-w-full overflow-x-auto">
+                <Tabs.List className="min-w-max">
+                  <Tabs.Trigger value="stock">{k('tabs.stock')}</Tabs.Trigger>
+                  <Tabs.Trigger value="replenish">
+                    <span className="flex items-center gap-100">
+                      {k('tabs.replenish')}
+                      {suggestions > 0 && (
+                        <Badge size="sm" variant="warning">
+                          {String(suggestions)}
+                        </Badge>
+                      )}
+                    </span>
+                  </Tabs.Trigger>
+                  <Tabs.Trigger value="orders">{k('tabs.orders')}</Tabs.Trigger>
+                  <Tabs.Trigger value="quotes">{k('tabs.quotes')}</Tabs.Trigger>
+                  <Tabs.Trigger value="movements">{k('tabs.movements')}</Tabs.Trigger>
+                  <Tabs.Trigger value="suppliers">{k('tabs.suppliers')}</Tabs.Trigger>
+                  <Tabs.Indicator />
+                </Tabs.List>
+              </div>
               <Tabs.Content className="py-200" value="stock">
                 <StockTab onOpen={openItem} state={state} />
               </Tabs.Content>

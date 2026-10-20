@@ -261,6 +261,12 @@
     "receivedBy": "Received by",
     "invoices": "Received invoices",
     "invoiceNote": "Reference to the supplier invoice. Finance records and books the document itself.",
+    "finance": {
+      "open": "Open in Finance",
+      "loading": "Checking the document in Finance…",
+      "unavailable": "Finance is unavailable; the saved reference is preserved.",
+      "notFound": "Reference only — no unambiguous matching document was found in Finance."
+    },
     "noInvoice": "no invoice",
     "history": "Status history",
     "direct": "Direct order",

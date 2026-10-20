@@ -261,6 +261,12 @@
     "receivedBy": "Přijal",
     "invoices": "Přijaté faktury",
     "invoiceNote": "Odkaz na fakturu dodavatele. Doklad samotný eviduje a účtuje Finance.",
+    "finance": {
+      "open": "Otevřít ve Financích",
+      "loading": "Ověřuji doklad ve Financích…",
+      "unavailable": "Finance nejsou dostupné; uložená reference zůstává zachována.",
+      "notFound": "Pouze reference — odpovídající doklad ve Financích nebyl jednoznačně nalezen."
+    },
     "noInvoice": "bez faktury",
     "history": "Historie stavů",
     "direct": "Přímá objednávka",
