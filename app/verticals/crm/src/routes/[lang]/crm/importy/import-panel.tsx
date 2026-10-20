@@ -1,0 +1,302 @@
+// AREA: imports — owned by the crm-imports lane. CSV import: choose / drop / paste a file or take a sample, see a
+// row-by-row preview computed by the same engine the server runs, then import (C03).
+import { SidePanel, formatNumber } from '@app/admin-ui';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { useMemo, useRef, useState } from 'react';
+import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type { ImportRowOutcome } from '../../../../../shared/domain/imports.ts';
+import { parseOrdersCsv } from '../../../../../shared/imports/csv.ts';
+import { importOrders } from '../../../../../shared/imports/engine.ts';
+import { ordersCsvSamples } from '../../../../../shared/imports/samples.ts';
+import type { CrmCommandOutcome } from '../../../../crm/records.ts';
+import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+import { RESIZE_LABEL, outcomeMeta } from './order-model.ts';
+
+const MAX_BYTES = 350_000;
+
+export interface ImportDraft {
+  readonly csv: string;
+  readonly fileName: string;
+}
+
+const SummaryChip = ({ count, outcome }: { readonly count: number; readonly outcome: ImportRowOutcome }) => (
+  <div className="flex min-w-28 flex-col gap-50 rounded-lg border border-border-primary bg-surface p-150">
+    <span className="text-fg-secondary text-xs">{outcomeMeta[outcome].label}</span>
+    <span className="font-semibold text-lg tabular-nums">{formatNumber(count)}</span>
+  </div>
+);
+
+export const ImportPanel = ({
+  busy,
+  initial,
+  onClose,
+  onImported,
+  records,
+  submit,
+}: {
+  readonly busy: boolean;
+  readonly initial?: ImportDraft;
+  readonly onClose: () => void;
+  readonly onImported: (batchId: string) => void;
+  readonly records: RecordsResponse;
+  readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
+}) => {
+  const toaster = useToast();
+  const [draft, setDraft] = useState<ImportDraft | undefined>(initial);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [paste, setPaste] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [fileError, setFileError] = useState<string | undefined>();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const preview = useMemo(() => {
+    if (draft === undefined) {
+      return undefined;
+    }
+    const parsed = parseOrdersCsv(draft.csv);
+    const result = importOrders(records.state.imports, records.state.clients, parsed, {
+      batchId: 'preview',
+      by: records.viewer.principalId,
+      fileName: draft.fileName,
+      newId: (suffix) => `preview-${suffix}`,
+      now: records.now,
+    });
+    return { batch: result.batch, parsed };
+  }, [draft, records]);
+
+  const readFile = (file: File) => {
+    setFileError(undefined);
+    if (file.size > MAX_BYTES) {
+      setFileError('Soubor je pro demo import příliš velký (max. 350 kB).');
+      return;
+    }
+    void file.text().then((text) => setDraft({ csv: text, fileName: file.name }));
+  };
+
+  const confirm = () => {
+    if (draft === undefined) {
+      return;
+    }
+    void submit({ _tag: 'ImportOrdersCsv', csv: draft.csv, fileName: draft.fileName }).then((outcome) => {
+      if (outcome.ok) {
+        const batch = preview?.batch;
+        toaster.create({
+          description:
+            batch === undefined
+              ? undefined
+              : `Nové ${String(batch.created ?? 0)} · změny stavu ${String(batch.updated ?? 0)} · duplicity ${String(batch.duplicates)} · ke kontrole ${String(batch.review ?? 0)} · chyby ${String(batch.rejected)}`,
+          title: 'Import uložen',
+          type: 'success',
+        });
+        onImported(outcome.entityIds[0] ?? '');
+      } else {
+        toaster.create({ description: outcome.message, title: 'Import se nezdařil', type: 'error' });
+      }
+    });
+  };
+
+  const counts = preview?.batch;
+  const okRows = counts === undefined ? 0 : counts.accepted + counts.duplicates;
+
+  return (
+    <SidePanel
+      actions={
+        <>
+          <Button onClick={onClose} theme="outlined" variant="secondary">
+            Zrušit
+          </Button>
+          <Button
+            disabled={preview === undefined || preview.parsed.fileError !== undefined || okRows === 0}
+            icon="icon-[mdi--database-import-outline]"
+            isLoading={busy}
+            loadingText="Importuji…"
+            onClick={confirm}
+            variant="primary"
+          >
+            {counts === undefined ? 'Importovat' : `Importovat ${formatNumber(counts.rowCount)} řádků`}
+          </Button>
+        </>
+      }
+      closeOnInteractOutside={false}
+      description="Šablona crm-orders-csv-v1. Objednávky zůstávají v e-shopu a účetním systému; CRM je jen zobrazuje."
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel={RESIZE_LABEL}
+      size="xl"
+      title="Import objednávek z CSV"
+    >
+      <div className="flex flex-col gap-250">
+        <div
+          className={`flex flex-col items-center gap-150 rounded-lg border-2 border-dashed p-300 text-center ${dragging ? 'border-border-info bg-surface-secondary' : 'border-border-primary'}`}
+          onDragLeave={() => setDragging(false)}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            const file = event.dataTransfer.files[0];
+            if (file !== undefined) {
+              readFile(file);
+            }
+          }}
+        >
+          <span aria-hidden="true" className="icon-[mdi--file-delimited-outline] size-600 text-fg-secondary" />
+          <span className="text-sm">
+            {draft === undefined ? 'Přetáhněte sem soubor CSV' : `Načteno: ${draft.fileName}`}
+          </span>
+          <div className="flex flex-wrap justify-center gap-100">
+            <Button icon="icon-[mdi--folder-open-outline]" onClick={() => inputRef.current?.click()} size="sm" variant="secondary">
+              Vybrat soubor
+            </Button>
+            <Button
+              icon="icon-[mdi--clipboard-text-outline]"
+              onClick={() => setPasteOpen((value) => !value)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              Vložit text
+            </Button>
+          </div>
+          <input
+            accept=".csv,text/csv,text/plain"
+            aria-label="Soubor CSV"
+            className="hidden"
+            data-testid="crm-import-file"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file !== undefined) {
+                readFile(file);
+              }
+              event.target.value = '';
+            }}
+            ref={inputRef}
+            type="file"
+          />
+          {fileError !== undefined && <span className="text-danger text-sm">{fileError}</span>}
+        </div>
+        <div className="flex flex-col gap-100">
+          <span className="text-fg-secondary text-xs">Nebo použijte vzorový soubor:</span>
+          <div className="flex flex-wrap gap-100">
+            {ordersCsvSamples.map((sample) => (
+              <Button
+                key={sample.key}
+                onClick={() => setDraft({ csv: sample.csv, fileName: sample.fileName })}
+                size="sm"
+                theme={draft?.fileName === sample.fileName ? 'solid' : 'outlined'}
+                variant="secondary"
+              >
+                {sample.title}
+              </Button>
+            ))}
+          </div>
+        </div>
+        {pasteOpen && (
+          <div className="flex flex-col gap-100">
+            <FormTextarea
+              className="font-mono"
+              id="crm-import-paste"
+              label="Obsah CSV (první řádek je hlavička)"
+              onChange={(event) => setPaste(event.target.value)}
+              rows={6}
+              size="sm"
+              value={paste}
+            />
+            <div className="flex justify-end">
+              <Button
+                disabled={paste.trim() === ''}
+                onClick={() => {
+                  setDraft({ csv: paste, fileName: 'vlozeny-text.csv' });
+                  setPasteOpen(false);
+                }}
+                size="sm"
+                variant="secondary"
+              >
+                Zobrazit náhled
+              </Button>
+            </div>
+          </div>
+        )}
+        {preview !== undefined && (
+          <div className="flex flex-col gap-200">
+            <div className="flex flex-wrap items-baseline justify-between gap-100">
+              <h3 className="font-semibold text-md">Náhled importu</h3>
+              <span className="text-fg-secondary text-xs">
+                Výsledek spočítaný stejnými pravidly jako server; nic zatím není uloženo.
+              </span>
+            </div>
+            {preview.parsed.fileError === undefined ? (
+              <>
+                <div className="flex flex-wrap gap-100">
+                  <SummaryChip count={preview.batch.created ?? 0} outcome="created" />
+                  <SummaryChip count={preview.batch.updated ?? 0} outcome="updated" />
+                  <SummaryChip count={preview.batch.duplicates} outcome="duplicate" />
+                  <SummaryChip count={preview.batch.review ?? 0} outcome="review" />
+                  <SummaryChip count={preview.batch.rejected} outcome="error" />
+                </div>
+                {preview.parsed.unknownColumns.length > 0 && (
+                  <span className="text-fg-secondary text-xs">
+                    {`Neznámé sloupce budou ignorovány: ${preview.parsed.unknownColumns.join(', ')}`}
+                  </span>
+                )}
+                {(preview.batch.unpaired ?? 0) > 0 && (
+                  <span className="text-sm">
+                    {`${String(preview.batch.unpaired)} nových objednávek nemá schválenou vazbu na klienta – skončí ve frontě k napárování.`}
+                  </span>
+                )}
+                <RowResults results={preview.batch.results ?? []} />
+              </>
+            ) : (
+              <div className="rounded-lg border border-border-danger bg-bg-danger-subtle p-150 text-sm">
+                {preview.parsed.fileError}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </SidePanel>
+  );
+};
+
+/** Row-by-row outcome table (preview and import history detail). */
+export const RowResults = ({
+  results,
+}: {
+  readonly results: readonly { row: number; outcome: ImportRowOutcome; externalId?: string; message: string }[];
+}) => (
+  <div className="max-h-[50dvh] overflow-auto rounded-lg border border-border-primary">
+    <table className="w-full text-sm">
+      <thead className="sticky top-0 bg-surface text-fg-secondary text-xs">
+        <tr>
+          <th className="px-150 py-100 text-left font-normal">Řádek</th>
+          <th className="px-150 py-100 text-left font-normal">ID objednávky</th>
+          <th className="px-150 py-100 text-left font-normal">Výsledek</th>
+          <th className="px-150 py-100 text-left font-normal">Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {results.map((result) => (
+          <tr className="border-border-primary border-t align-top" key={`${String(result.row)}-${result.outcome}`}>
+            <td className="px-150 py-100 tabular-nums">{result.row}</td>
+            <td className="px-150 py-100 font-mono text-xs">{result.externalId ?? '—'}</td>
+            <td className="px-150 py-100">
+              <Badge size="sm" variant={outcomeMeta[result.outcome].variant}>
+                {outcomeMeta[result.outcome].label}
+              </Badge>
+            </td>
+            <td className="px-150 py-100">{result.message}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
