@@ -22,7 +22,7 @@ import {
 import { TaskContextPickers } from './task-context-pickers.tsx';
 import type { ContextRef, Task, WorkProject } from '../../../../../shared/apis/records.ts';
 import { isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
-import { customerOptionItems, opportunityOptionItems, selectOption } from './tasks-model.ts';
+import { customerOptionItems, opportunityOptionItems, selectOption, taskContextHref } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
 const NONE = 'none';
@@ -497,17 +497,19 @@ export const TaskFormDialog = ({
         actions={
           <>
             <Button onClick={requestClose} theme="outlined" variant="secondary">
-              {t(`${key}.cancel`)}
+              {t(locked ? `${key}.close` : `${key}.cancel`)}
             </Button>
-            <Button
-              disabled={fieldsDisabled}
-              isLoading={busy}
-              loadingText={t(`${key}.saving`)}
-              onClick={submit}
-              variant="primary"
-            >
-              {t(isEdit ? `${key}.submitEdit` : `${key}.submitCreate`)}
-            </Button>
+            {!locked && (
+              <Button
+                disabled={fieldsDisabled}
+                isLoading={busy}
+                loadingText={t(`${key}.saving`)}
+                onClick={submit}
+                variant="primary"
+              >
+                {t(isEdit ? `${key}.submitEdit` : `${key}.submitCreate`)}
+              </Button>
+            )}
           </>
         }
         // The form holds unsaved input; a stray pointer or focus move outside must not discard it.
@@ -630,14 +632,12 @@ export const TaskFormDialog = ({
           )}
           {task !== undefined && task.contextRefs.length > 0 && (
             <div className="flex flex-col gap-100">
-              <h3 className="font-semibold">{t(`${key}.relatedRecords`)}</h3>
+              <h3 className="font-semibold">{t(`${key}.sourceRecords`)}</h3>
               {task.contextRefs.map((ref) => (
-                <a
-                  key={ref.resourceId}
-                  className="underline"
-                  href={`/cs/siampark/${ref.moduleId === 'siampark.agreements' ? 'contracts' : 'properties'}?resourceId=${encodeURIComponent(ref.resourceId)}`}
-                >
-                  {t(`${key}.${ref.moduleId === 'siampark.agreements' ? 'openContract' : 'openProperty'}`)}
+                <a key={ref.resourceId} className="underline" href={taskContextHref(ref)}>
+                  {t(
+                    `${key}.${ref.moduleId === 'siampark.agreements' ? 'openContract' : ref.resourceType === 'siampark.property.unit' ? 'openUnit' : ref.resourceType === 'siampark.property.asset' ? 'openAsset' : 'openProperty'}`,
+                  )}
                 </a>
               ))}
             </div>

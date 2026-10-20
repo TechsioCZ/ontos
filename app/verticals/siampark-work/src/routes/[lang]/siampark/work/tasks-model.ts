@@ -4,7 +4,7 @@ import type { Employee } from '@app/workforce/contracts/records';
 import type { BulkTaskResult, BulkWorkCommand } from '../../../../../shared/actions/apply-command.ts';
 import { canTransition } from '../../../../../shared/actions/task-transitions.ts';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../../shared/apis/records.ts';
-import type { Task, TaskState } from '../../../../../shared/apis/records.ts';
+import type { ContextRef, Task, TaskState } from '../../../../../shared/apis/records.ts';
 
 export const TaskTabSchema = Schema.Literals(['mine', 'all']);
 export type TaskTab = typeof TaskTabSchema.Type;
@@ -353,3 +353,7 @@ export const withBulkResult = <List extends TaskList>(
 /** A reload answered before a newer command never replaces the rows that command already saved. */
 export const newerTaskList = <List extends TaskList>(current: List | undefined, fresh: List): List =>
   current !== undefined && current.revision > fresh.revision ? current : fresh;
+
+/** References navigate to the registered owning page, never a guessed contract route. */
+export const taskContextHref = (ref: ContextRef) =>
+  `/cs/siampark/${ref.moduleId === 'siampark.agreements' ? 'agreements' : 'properties'}?resourceId=${encodeURIComponent(ref.resourceId)}`;

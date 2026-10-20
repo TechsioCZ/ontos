@@ -1,3 +1,4 @@
+import { taskContextHref } from '../../src/routes/[lang]/siampark/work/tasks-model.ts';
 import { Option, Schema } from 'effect';
 import { expect, it, rstest } from 'effect-rstest';
 import { isClosedTaskState } from '../../shared/actions/task-transitions.ts';
@@ -222,4 +223,24 @@ it('keeps default task view when storage is blocked or a snapshot is malformed',
   } finally {
     rstest.unstubAllGlobals();
   }
+});
+
+it('context deep links use the registered property and agreement owner routes', () => {
+  const tenantId = '20000000-0000-4000-8000-000000000001';
+  expect(
+    taskContextHref({
+      moduleId: 'siampark.agreements',
+      resourceType: 'siampark.agreements.contract',
+      resourceId: 'contract-id',
+      tenantId,
+    }),
+  ).toBe('/cs/siampark/agreements?resourceId=contract-id');
+  expect(
+    taskContextHref({
+      moduleId: 'siampark.property',
+      resourceType: 'siampark.property.unit',
+      resourceId: 'unit-id',
+      tenantId,
+    }),
+  ).toBe('/cs/siampark/properties?resourceId=unit-id');
 });
