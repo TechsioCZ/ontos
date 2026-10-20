@@ -27,7 +27,13 @@ const occupancyBadge = {
   DRAFT: 'outline',
 } as const;
 const contractBadge = { ACTIVE: 'success', DRAFT: 'outline', EXPIRED: 'warning', TERMINATED: 'danger' } as const;
-const taskBadge = { CANCELLED: 'secondary', DONE: 'success', IN_PROGRESS: 'info', NEW: 'outline', WAITING: 'warning' } as const;
+const taskBadge = {
+  CANCELLED: 'secondary',
+  DONE: 'success',
+  IN_PROGRESS: 'info',
+  NEW: 'outline',
+  WAITING: 'warning',
+} as const;
 const money = new Intl.NumberFormat('cs-CZ', { currency: 'CZK', maximumFractionDigits: 0, style: 'currency' });
 const date = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'UTC' });
 const formatDay = (value: string | null | undefined) =>
@@ -37,9 +43,12 @@ const formatDay = (value: string | null | undefined) =>
 
 /** Today's calendar date in Prague, used for unit availability instead of a fixed demo date. */
 export const pragueToday = () =>
-  new Intl.DateTimeFormat('sv-SE', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Prague', year: 'numeric' }).format(
-    DateTime.toEpochMillis(DateTime.nowUnsafe()),
-  );
+  new Intl.DateTimeFormat('sv-SE', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+  }).format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
 
 /** Leases, contracts and service tasks of one unit, each linking to its owner's detail. */
 export const UnitStory = ({
@@ -64,7 +73,9 @@ export const UnitStory = ({
     .filter((item) => item.unitRef?.resourceId === unit.unitRef.resourceId)
     .toSorted((left, right) => right.startDate.localeCompare(left.startDate));
   const unitTasks = (tasks ?? []).filter((task) =>
-    task.contextRefs.some((ref) => ref.resourceType === unit.unitRef.resourceType && ref.resourceId === unit.unitRef.resourceId),
+    task.contextRefs.some(
+      (ref) => ref.resourceType === unit.unitRef.resourceType && ref.resourceId === unit.unitRef.resourceId,
+    ),
   );
   return (
     <div className="siamparkproperty:grid siamparkproperty:gap-4 siamparkproperty:lg:grid-cols-3">
@@ -87,7 +98,9 @@ export const UnitStory = ({
                 {item.rentTerms === undefined
                   ? t(`${K}.noRent`)
                   : t(`${K}.rent`, {
-                      amount: money.format((item.rentTerms.monthlyRentMinor + item.rentTerms.serviceChargesMinor) / 100),
+                      amount: money.format(
+                        (item.rentTerms.monthlyRentMinor + item.rentTerms.serviceChargesMinor) / 100,
+                      ),
                     })}
               </span>
             </div>
@@ -114,7 +127,9 @@ export const UnitStory = ({
         {contracts.map((item) => (
           <div className={rowClass} key={item.contractRef.resourceId}>
             <div className="siamparkproperty:min-w-0">
-              <span className="siamparkproperty:block siamparkproperty:font-medium">{item.subject ?? t(`${K}.contract`)}</span>
+              <span className="siamparkproperty:block siamparkproperty:font-medium">
+                {item.subject ?? t(`${K}.contract`)}
+              </span>
               <span className={mutedClass}>
                 {formatDay(item.startDate)} – {item.endDate === null ? t(`${K}.openEnd`) : formatDay(item.endDate)}
               </span>
@@ -123,7 +138,11 @@ export const UnitStory = ({
               <Badge size="sm" variant={contractBadge[item.lifecycleState]}>
                 {t(`siampark-property.pages.records.agreementStates.${item.lifecycleState}`)}
               </Badge>
-              {item.expiringSoon && <Badge size="sm" variant="warning">{t(`${K}.expiring`)}</Badge>}
+              {item.expiringSoon && (
+                <Badge size="sm" variant="warning">
+                  {t(`${K}.expiring`)}
+                </Badge>
+              )}
               <LinkButton
                 href={`/${language}/siampark/agreements?resourceId=${item.contractRef.resourceId}`}
                 size="sm"
@@ -148,7 +167,12 @@ export const UnitStory = ({
         {unitTasks.map((task) => (
           <div className={rowClass} key={task.ref.resourceId}>
             <div className="siamparkproperty:min-w-0">
-              <span className="siamparkproperty:block siamparkproperty:font-medium">{task.title}</span>
+              <a
+                className="siamparkproperty:block siamparkproperty:font-medium"
+                href={`/${language}/siampark/work?resourceId=${task.ref.resourceId}`}
+              >
+                {task.title} →
+              </a>
               {task.dueDate !== undefined && (
                 <span className={mutedClass}>{t(`${K}.due`, { date: formatDay(task.dueDate) })}</span>
               )}

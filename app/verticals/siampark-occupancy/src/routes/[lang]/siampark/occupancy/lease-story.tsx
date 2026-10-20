@@ -69,7 +69,13 @@ export const leaseContract = (record: Occupancy, contracts: readonly LeaseContra
 
 const contractBadge = { ACTIVE: 'success', DRAFT: 'outline', EXPIRED: 'warning', TERMINATED: 'danger' } as const;
 const signatureBadge = { DECLINED: 'danger', NOT_SENT: 'outline', SENT: 'info', SIGNED: 'success' } as const;
-const taskBadge = { CANCELLED: 'secondary', DONE: 'success', IN_PROGRESS: 'info', NEW: 'outline', WAITING: 'warning' } as const;
+const taskBadge = {
+  CANCELLED: 'secondary',
+  DONE: 'success',
+  IN_PROGRESS: 'info',
+  NEW: 'outline',
+  WAITING: 'warning',
+} as const;
 const invoiceBadge = { CONFIRMED: 'success', DRAFT: 'outline', VOIDED: 'danger' } as const;
 
 export interface StoryStep {
@@ -102,7 +108,10 @@ export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep
             ? 'siamparkoccupancy:border-2 siamparkoccupancy:border-(--color-fg-secondary) siamparkoccupancy:bg-(--color-surface-subtle)'
             : 'siamparkoccupancy:border-(--color-border-muted)';
         return (
-          <li className="siamparkoccupancy:flex siamparkoccupancy:items-center siamparkoccupancy:gap-2" key={step.label}>
+          <li
+            className="siamparkoccupancy:flex siamparkoccupancy:items-center siamparkoccupancy:gap-2"
+            key={step.label}
+          >
             {step.href === undefined || step.current === true ? (
               <div
                 aria-current={step.current === true ? 'step' : undefined}
@@ -395,7 +404,12 @@ export const TasksCard = ({
       <ul className="siamparkoccupancy:space-y-2">
         {tasks.map((task) => (
           <li className={rowClass} key={task.ref.resourceId}>
-            <span className="siamparkoccupancy:min-w-0 siamparkoccupancy:font-medium">{task.title}</span>
+            <a
+              className="siamparkoccupancy:min-w-0 siamparkoccupancy:font-medium"
+              href={`/${language}/siampark/work?resourceId=${task.ref.resourceId}`}
+            >
+              {task.title} →
+            </a>
             <span className="siamparkoccupancy:flex siamparkoccupancy:items-center siamparkoccupancy:gap-2">
               {task.dueDate !== undefined && (
                 <span className={mutedClass}>{t(`${P}.related.due`, { date: formatDate(task.dueDate) })}</span>
@@ -436,9 +450,7 @@ export const InvoicesCard = ({
   >
     {invoices === undefined && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
     {invoices === 'unavailable' && <p className={mutedClass}>{t(`${P}.related.invoicesUnavailable`)}</p>}
-    {isLoadedList(invoices) && invoices.length === 0 && (
-      <p className={mutedClass}>{t(`${P}.related.noInvoices`)}</p>
-    )}
+    {isLoadedList(invoices) && invoices.length === 0 && <p className={mutedClass}>{t(`${P}.related.noInvoices`)}</p>}
     {isLoadedList(invoices) && invoices.length > 0 && (
       <ul className="siamparkoccupancy:space-y-2">
         {invoices.map((invoice) => (
@@ -474,7 +486,15 @@ export const InvoicesCard = ({
   </SectionCard>
 );
 
-export const RentEditButton = ({ label, onClick, disabled }: { readonly disabled: boolean; readonly label: string; readonly onClick: () => void }) => (
+export const RentEditButton = ({
+  label,
+  onClick,
+  disabled,
+}: {
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly onClick: () => void;
+}) => (
   <Button disabled={disabled} onClick={onClick} size="sm" theme="outlined" variant="secondary">
     {label}
   </Button>
