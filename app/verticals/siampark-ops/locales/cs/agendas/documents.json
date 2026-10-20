@@ -221,5 +221,8 @@
     "finance": "Finance",
     "external": "Externí partner",
     "unknown": "Uživatel {{id}}"
-  }
+  },
+  "pdfPage": "Strana {{page}} z {{count}}",
+  "pdfPrevious": "Předchozí strana",
+  "pdfNext": "Další strana"
 }

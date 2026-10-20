@@ -1,0 +1,53 @@
+.siampark-documents-tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.siampark-documents-tabs [role='tablist'] {
+  min-width: 100%;
+  width: max-content;
+  flex-wrap: nowrap;
+}
+
+.siampark-documents-tabs [role='tab'] {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.siampark-documents-mobile {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .siampark-documents-desktop {
+    display: none;
+  }
+
+  .siampark-documents-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .siampark-documents-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    width: 100%;
+    border: 1px solid var(--color-border-primary, #d4d4d8);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    background: var(--color-surface, #fff);
+    text-align: left;
+  }
+
+  .siampark-documents-card:hover {
+    background: var(--color-highlight, #f4f4f5);
+  }
+
+  .siampark-documents-card:focus-visible {
+    outline: 2px solid var(--color-primary, #ffca28);
+    outline-offset: 2px;
+  }
+}

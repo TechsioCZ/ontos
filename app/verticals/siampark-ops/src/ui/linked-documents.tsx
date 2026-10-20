@@ -11,7 +11,14 @@ import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { StoredFileRef, SubjectRef } from '../../shared/domain/documents.ts';
 import { documentLinks, sameSubject } from '../../shared/domain/documents.ts';
-import { CategoryBadge, currentVersion, FileTypeIcon, formatBytes, formatWhen, usePrincipalLabel } from './documents-kit.tsx';
+import {
+  CategoryBadge,
+  currentVersion,
+  FileTypeIcon,
+  formatBytes,
+  formatWhen,
+  usePrincipalLabel,
+} from './documents-kit.tsx';
 import { canPreview, DownloadButton, FilePreviewDialog } from './file-preview.tsx';
 import { MAX_UPLOAD_BYTES, uploadFile, useAgendaRecords } from './use-agenda.ts';
 
@@ -163,9 +170,14 @@ export const LinkedDocuments = ({
           {others.length > 0 && (
             <div className="min-w-0 flex-1 sm:max-w-xs">
               <Select
-                items={others.map((document) => ({ displayValue: document.title, label: document.title, value: document.id }))}
+                items={others.map((document) => ({
+                  displayValue: document.title,
+                  label: document.title,
+                  value: document.id,
+                }))}
                 label={t(`${k}.linked.attach`)}
                 name={`attach-${subject.kind}-${subject.id}`}
+                placeholder={t(`${k}.linked.attach`)}
                 onValueChange={({ value }) => void attachExisting(value[0])}
                 size="sm"
                 value={[]}

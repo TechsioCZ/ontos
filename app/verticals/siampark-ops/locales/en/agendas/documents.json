@@ -219,5 +219,8 @@
     "finance": "Finance",
     "external": "External partner",
     "unknown": "User {{id}}"
-  }
+  },
+  "pdfPage": "Page {{page}} of {{count}}",
+  "pdfPrevious": "Previous page",
+  "pdfNext": "Next page"
 }

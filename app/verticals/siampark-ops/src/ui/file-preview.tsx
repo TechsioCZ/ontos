@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import type { StoredFileRef } from '../../shared/domain/documents.ts';
 import { fetchFileObjectUrl, fileKindOf, formatBytes } from './documents-kit.tsx';
 import { downloadFile } from './use-agenda.ts';
+import { PdfPreview } from './pdf-preview.tsx';
 
 const k = 'siampark-ops.documents';
 
@@ -24,7 +25,13 @@ type PreviewState =
   | { readonly status: 'ready'; readonly url: string; readonly mime: string };
 
 /** Inline preview body (PDF in an iframe, image, plain text) for one stored file. */
-export const FilePreviewBody = ({ file, height = '70vh' }: { readonly file: StoredFileRef; readonly height?: string }) => {
+export const FilePreviewBody = ({
+  file,
+  height = '70vh',
+}: {
+  readonly file: StoredFileRef;
+  readonly height?: string;
+}) => {
   const { t } = useModernI18n();
   const [state, setState] = useState<PreviewState>({ status: 'loading' });
   useEffect(() => {
@@ -67,7 +74,10 @@ export const FilePreviewBody = ({ file, height = '70vh' }: { readonly file: Stor
       </div>
     );
   }
-  if (kind === 'pdf' || kind === 'text') {
+  if (kind === 'pdf') {
+    return <PdfPreview height={height} name={file.name} url={state.url} />;
+  }
+  if (kind === 'text') {
     return (
       <iframe
         className="w-full rounded-md border border-border-primary bg-surface"
@@ -80,7 +90,13 @@ export const FilePreviewBody = ({ file, height = '70vh' }: { readonly file: Stor
   return <p className="py-300 text-center text-fg-secondary text-sm">{t(`${k}.previewUnavailable`)}</p>;
 };
 
-export const DownloadButton = ({ file, size = 'sm' }: { readonly file: StoredFileRef; readonly size?: 'sm' | 'md' }) => {
+export const DownloadButton = ({
+  file,
+  size = 'sm',
+}: {
+  readonly file: StoredFileRef;
+  readonly size?: 'sm' | 'md';
+}) => {
   const { t } = useModernI18n();
   const toast = useToast();
   const [busy, setBusy] = useState(false);

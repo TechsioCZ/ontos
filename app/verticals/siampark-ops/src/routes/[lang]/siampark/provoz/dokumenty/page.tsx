@@ -31,6 +31,7 @@ import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import { DocumentDetailPanel } from './document-detail.tsx';
 import { DocumentFormPanel } from './document-form.tsx';
+import './documents.css';
 import type { DocumentFormMode } from './document-form.tsx';
 import {
   ContractStatusBadge,
@@ -115,7 +116,8 @@ const DocumentsView = () => {
     openDocument?.amendsDocumentId === undefined
       ? undefined
       : documents.find((document) => document.id === openDocument.amendsDocumentId);
-  const amendments = openDocument === undefined ? [] : documents.filter((entry) => entry.amendsDocumentId === openDocument.id);
+  const amendments =
+    openDocument === undefined ? [] : documents.filter((entry) => entry.amendsDocumentId === openDocument.id);
   const openAttachment = (subject: SubjectRef) => {
     if (subject.kind === 'document') {
       setOpenId(subject.id);
@@ -132,7 +134,9 @@ const DocumentsView = () => {
             <span className="flex min-w-0 flex-col">
               <span className="truncate font-medium">{row.original.title}</span>
               <span className="truncate text-fg-secondary text-xs">
-                {version === undefined ? t(`${k}.noFileYet`) : `${version.file.name} · ${formatBytes(version.file.size)}`}
+                {version === undefined
+                  ? t(`${k}.noFileYet`)
+                  : `${version.file.name} · ${formatBytes(version.file.size)}`}
               </span>
             </span>
           </span>
@@ -140,6 +144,7 @@ const DocumentsView = () => {
       },
       header: t(`${k}.fields.title`),
       id: 'title',
+      meta: { width: '36%' },
     },
     {
       cell: ({ row }) => (
@@ -150,8 +155,14 @@ const DocumentsView = () => {
       ),
       header: t(`${k}.fields.category`),
       id: 'category',
+      meta: { width: '14%' },
     },
-    { cell: ({ row }) => <LinksCell document={row.original} />, header: t(`${k}.fields.links`), id: 'links' },
+    {
+      cell: ({ row }) => <LinksCell document={row.original} />,
+      header: t(`${k}.fields.links`),
+      id: 'links',
+      meta: { width: '26%' },
+    },
     {
       cell: ({ row }) =>
         row.original.versions.length === 0 ? (
@@ -163,6 +174,7 @@ const DocumentsView = () => {
         ),
       header: t(`${k}.fields.versions`),
       id: 'versions',
+      meta: { width: '8%' },
     },
     {
       cell: ({ row }) => {
@@ -178,6 +190,7 @@ const DocumentsView = () => {
       },
       header: t(`${k}.fields.uploadedBy`),
       id: 'uploaded',
+      meta: { width: '16%' },
     },
   ];
 
@@ -202,23 +215,29 @@ const DocumentsView = () => {
           <StatCard label={t(`${k}.stats.versions`)} value={String(versionCount)} />
         </StatRow>
 
-        <Tabs onValueChange={(value) => setTab(tabs.find((entry) => entry === value) ?? 'all')} value={tab} variant="line">
-          <Tabs.List>
-            {tabs.map((value) => (
-              <Tabs.Trigger key={value} value={value}>
-                {t(`${k}.tabs.${value}`)}
-                {value === 'deadlines' && deadlines.length > 0 && (
-                  <span className="ml-100">
-                    <Badge size="sm" variant={deadlineVariant(deadlines[0]?.days ?? 90)}>
-                      {String(deadlines.length)}
-                    </Badge>
-                  </span>
-                )}
-              </Tabs.Trigger>
-            ))}
-            <Tabs.Indicator />
-          </Tabs.List>
-        </Tabs>
+        <div className="siampark-documents-tabs">
+          <Tabs
+            onValueChange={(value) => setTab(tabs.find((entry) => entry === value) ?? 'all')}
+            value={tab}
+            variant="line"
+          >
+            <Tabs.List>
+              {tabs.map((value) => (
+                <Tabs.Trigger key={value} value={value}>
+                  {t(`${k}.tabs.${value}`)}
+                  {value === 'deadlines' && deadlines.length > 0 && (
+                    <span className="ml-100">
+                      <Badge size="sm" variant={deadlineVariant(deadlines[0]?.days ?? 90)}>
+                        {String(deadlines.length)}
+                      </Badge>
+                    </span>
+                  )}
+                </Tabs.Trigger>
+              ))}
+              <Tabs.Indicator />
+            </Tabs.List>
+          </Tabs>
+        </div>
 
         {tab === 'all' && (
           <>
@@ -235,7 +254,11 @@ const DocumentsView = () => {
               <div className="w-56">
                 <Select
                   items={[
-                    { displayValue: t(`${k}.filters.allCategories`), label: t(`${k}.filters.allCategories`), value: ALL },
+                    {
+                      displayValue: t(`${k}.filters.allCategories`),
+                      label: t(`${k}.filters.allCategories`),
+                      value: ALL,
+                    },
                     ...documentCategories.map((value) => ({
                       displayValue: categoryLabel(value),
                       label: categoryLabel(value),
@@ -277,24 +300,67 @@ const DocumentsView = () => {
                 </Button>
               )}
             </div>
-            <DataTable
-              columns={columns}
-              data={filtered}
-              getRowId={(row) => row.id}
-              getRowLabel={(row) => row.original.title}
-              loading={false}
-              onRowClick={(row) => setOpenId(row.original.id)}
-              translations={{
-                emptyDescription: filtersActive ? t(`${k}.filters.noMatch`) : t('siampark-ops.common.states.emptyDescription'),
-                emptyTitle: t('siampark-ops.common.states.emptyTitle'),
-              }}
-            />
+            <div className="siampark-documents-desktop">
+              <DataTable
+                tableLayout="fixed"
+                size="sm"
+                columns={columns}
+                data={filtered}
+                getRowId={(row) => row.id}
+                getRowLabel={(row) => row.original.title}
+                loading={false}
+                onRowClick={(row) => setOpenId(row.original.id)}
+                translations={{
+                  emptyDescription: filtersActive
+                    ? t(`${k}.filters.noMatch`)
+                    : t('siampark-ops.common.states.emptyDescription'),
+                  emptyTitle: t('siampark-ops.common.states.emptyTitle'),
+                }}
+              />
+            </div>
+            <div className="siampark-documents-mobile">
+              {filtered.length === 0 && (
+                <EmptyState
+                  title={t('siampark-ops.common.states.emptyTitle')}
+                  description={t(`${k}.filters.noMatch`)}
+                />
+              )}
+              {filtered.map((document) => {
+                const version = document.versions.at(-1);
+                return (
+                  <button
+                    className="siampark-documents-card"
+                    key={document.id}
+                    onClick={() => setOpenId(document.id)}
+                    type="button"
+                  >
+                    <FileTypeIcon mime={version?.file.mime ?? ''} name={version?.file.name ?? ''} />
+                    <span className="flex min-w-0 flex-1 flex-col gap-100">
+                      <span className="break-words font-semibold text-sm">{document.title}</span>
+                      <span className="flex flex-wrap items-center gap-50">
+                        <CategoryBadge category={document.category} />
+                        {version !== undefined && <Badge size="sm" variant="outline">{`v${version.version}`}</Badge>}
+                      </span>
+                      <span className="text-fg-secondary text-xs">
+                        {version === undefined
+                          ? t(`${k}.noFileYet`)
+                          : `${principalLabel(version.uploadedBy)} · ${formatWhen(version.uploadedAt)} · ${formatBytes(version.file.size)}`}
+                      </span>
+                      <LinksCell document={document} />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </>
         )}
 
         {tab === 'contracts' &&
           (register.length === 0 ? (
-            <EmptyState description={t('siampark-ops.common.states.emptyDescription')} title={t('siampark-ops.common.states.emptyTitle')} />
+            <EmptyState
+              description={t('siampark-ops.common.states.emptyDescription')}
+              title={t('siampark-ops.common.states.emptyTitle')}
+            />
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border-primary bg-surface">
               <table className="w-full text-sm" data-testid="contract-register">
@@ -338,7 +404,11 @@ const DocumentsView = () => {
                         <td className="px-200 py-150 text-xs">{contract?.owner ?? '—'}</td>
                         <td className="px-200 py-150">
                           <span className="flex flex-wrap gap-50">
-                            {contract === undefined ? <CategoryBadge category={document.category} /> : <ContractStatusBadge status={contract.status} />}
+                            {contract === undefined ? (
+                              <CategoryBadge category={document.category} />
+                            ) : (
+                              <ContractStatusBadge status={contract.status} />
+                            )}
                             {document.signature !== undefined && (
                               <Badge size="sm" variant="success">
                                 {`✓ ${formatIsoDate(document.signature.signedOn, '')}`}
@@ -377,7 +447,11 @@ const DocumentsView = () => {
                       </Badge>
                     </span>
                     <span className="flex min-w-0 flex-1 flex-col">
-                      <button className="text-left font-medium text-sm hover:underline" onClick={() => setOpenId(entry.document.id)} type="button">
+                      <button
+                        className="text-left font-medium text-sm hover:underline"
+                        onClick={() => setOpenId(entry.document.id)}
+                        type="button"
+                      >
                         {entry.document.title}
                       </button>
                       <span className="text-fg-secondary text-xs">
@@ -387,7 +461,9 @@ const DocumentsView = () => {
                           : ` · ${t(`${k}.deadlines.responsible`, { name: entry.document.contract.owner })} · ${entry.document.contract.parties.slice(1).join(', ')}`}
                       </span>
                     </span>
-                    {entry.document.contract !== undefined && <ContractStatusBadge status={entry.document.contract.status} />}
+                    {entry.document.contract !== undefined && (
+                      <ContractStatusBadge status={entry.document.contract.status} />
+                    )}
                   </li>
                 ))}
               </ol>
@@ -401,7 +477,10 @@ const DocumentsView = () => {
               <span className="font-semibold text-fg-secondary text-xs uppercase">{t(`${k}.messages.channels`)}</span>
               {channels.map((value) => {
                 const count = (envelope?.state.comments ?? []).filter(
-                  (comment) => comment.subject.kind === 'channel' && comment.subject.id === value && comment.retractedAt === undefined,
+                  (comment) =>
+                    comment.subject.kind === 'channel' &&
+                    comment.subject.id === value &&
+                    comment.retractedAt === undefined,
                 ).length;
                 return (
                   <button

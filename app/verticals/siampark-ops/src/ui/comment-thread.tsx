@@ -70,7 +70,7 @@ const CommentItem = ({
   readonly onOpenAttachment: ((attachment: SubjectRef) => void) | undefined;
   readonly run: ReturnType<typeof useAgendaRecords>['run'];
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const toast = useToast();
   const principalLabel = usePrincipalLabel();
   const [editing, setEditing] = useState(false);
@@ -172,7 +172,15 @@ const CommentItem = ({
         {comment.attachment !== undefined && !retracted && (
           <button
             className="inline-flex w-fit items-center gap-50 rounded-md border border-border-primary bg-surface px-100 py-50 text-xs hover:bg-highlight"
-            onClick={() => (comment.attachment === undefined ? undefined : onOpenAttachment?.(comment.attachment))}
+            onClick={() => {
+              if (comment.attachment === undefined) return;
+              if (onOpenAttachment !== undefined) onOpenAttachment(comment.attachment);
+              else if (comment.attachment.kind === 'document') {
+                globalThis.location.assign(
+                  `/${language ?? 'cs'}/siampark/provoz/dokumenty?doc=${encodeURIComponent(comment.attachment.id)}`,
+                );
+              }
+            }}
             type="button"
           >
             <span aria-hidden="true">📎</span>
@@ -272,7 +280,7 @@ export const CommentThread = ({
 
   const submit = async () => {
     const text = body.trim();
-    if (text === '') {
+    if (text === '' || busy) {
       return;
     }
     setBusy(true);
@@ -366,7 +374,7 @@ export const CommentThread = ({
               <span />
             )}
             <Button
-              disabled={body.trim() === ''}
+              disabled={busy || body.trim() === ''}
               isLoading={busy}
               loadingText={t('siampark-ops.common.saving')}
               onClick={() => void submit()}
